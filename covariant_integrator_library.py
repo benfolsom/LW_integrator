@@ -323,11 +323,11 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
             result['bz'][i] = (-vector['z'][i]+result['z'][i]) / (c_mmns*h*result['gamma'][i])
 
             #'real' gamma 
-            btots = np.sqrt(np.square(vector['bx'][i])+np.square(vector['by'][i])+np.square(vector['bz'][i]))
+            #btots = np.sqrt(np.square(vector['bx'][i])+np.square(vector['by'][i])+np.square(vector['bz'][i]))
             btots = np.sqrt(np.square(result['bx'][i])+np.square(result['by'][i])+np.square(result['bz'][i]))
             result['gamma'][i] = np.sqrt(np.divide(1,1-np.square(btots)))
             
-            if result['bz'][i] > 1 | btots >1 :
+            if result['bz'][i] > 1: # | btots >1 :
                 print(result['bz'][i])
                 raise Exception("Beam-axis velocity exceeded c") 
             if result['bz'][i] < -1:
@@ -466,17 +466,9 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                             /(nhat['R'][j]*k_factor))
                 
                 
-                result['bx'][l] = (-trajectory[i_traj]['x'][l]+result['x'][l])/ ( c_mmns*h  * result['gamma'][l])
-                result['by'][l] = (-trajectory[i_traj]['y'][l]+result['y'][l])/ ( c_mmns*h  * result['gamma'][l])
-                result['bz'][l] = (-trajectory[i_traj]['z'][l]+result['z'][l])/ ( c_mmns*h  * result['gamma'][l])
-                                
-                if result['bz'][l] > 1 | btots >1 :
-                    print(result['bz'][l])
-                    raise Exception("Beam-axis velocity exceeded c")
-                if result['bz'][i] < -1:
-                    print(result['bz'][i])
-                    raise Exception("Beam-axis velocity exceeded c") 
-                
+                result['bx'][l] = (-trajectory[i_traj]['x'][l]+result['x'][l])/ ( c_mmns*h * result['gamma'][l])
+                result['by'][l] = (-trajectory[i_traj]['y'][l]+result['y'][l])/ ( c_mmns*h * result['gamma'][l])
+                result['bz'][l] = (-trajectory[i_traj]['z'][l]+result['z'][l])/ ( c_mmns*h * result['gamma'][l])
                 
                 #result['bdotx'][l] = (result['bx'][l]-trajectory[i_traj]['bx'][l])/( c_mmns*h  * result['gamma'][l])
                 #result['bdoty'][l] =(result['by'][l]-trajectory[i_traj]['by'][l])/( c_mmns*h  * result['gamma'][l])
@@ -488,8 +480,15 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                 
                 #'real' gamma 
                 #btots = np.sqrt(np.square(trajectory[i_traj]['bx'][l])+np.square(trajectory[i_traj]['by'][l])+np.square(trajectory[i_traj]['bz'][l]))
-                #btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
-                #result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
+                btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
+                result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
+
+                if result['bz'][l] > 1: #try also | btots > 1 :
+                    print(result['bz'][l])
+                    raise Exception("Beam-axis velocity exceeded c")
+                if result['bz'][l] < -1:
+                    print(result['bz'][l])
+                    raise Exception("Beam-axis velocity exceeded c") 
                 
                 
                 
