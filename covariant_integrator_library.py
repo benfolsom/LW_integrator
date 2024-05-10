@@ -451,8 +451,10 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                             )
                 
                 #initial guess gamma, avoids blowups (honestly it's a huge mystery why we need both this and the 'real' gamma below, but blowups or conservation violation happen without
+                
                 result['gamma'][l] = 1/(trajectory[i_traj]['m']*c_mmns)*(result['Pt'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']\
                              *1/(nhat['R'][j]*k_factor))
+                #print(result['gamma'][l])
 
                 result['t'][l] = trajectory[i_traj]['t'][l] + h * result['gamma'][l]  #note 't' is lab time and h is in proper time, so: dt/dtau=gamma 
                 
@@ -481,7 +483,9 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                 #'real' gamma 
                 #btots = np.sqrt(np.square(trajectory[i_traj]['bx'][l])+np.square(trajectory[i_traj]['by'][l])+np.square(trajectory[i_traj]['bz'][l]))
                 btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
-                result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
+                #result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
+                #print(result['gamma'][l])
+
 
                 if result['bz'][l] > 1: #try also | btots > 1 :
                     print(result['bz'][l])
@@ -501,19 +505,19 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                 ##inserting radiation reaction force as m*a**2 instead of F_ext*a as medina derived.
                 ##this is justified on the assumption that covariant EOMs for LW potentials are equivalent to a valid 
                 ##Lorentz-force expression for covariant charged particles (see e.g. wikipedia for covariant formulation of classical charged particles)
-                # rad_frc_z_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotz'][l]**2*c_mmns**2)*result['bz'][l]*c_mmns
-                # rad_frc_z_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotz'][l]*result['bz'][l]*c_mmns**2
-                # #if rad_frc_z_rhs>(trajectory[i_traj]['char_time']/1E1) or rad_frc_z_lhs>(trajectory[i_traj]['char_time']/1E1):
-                # #print("braking")
-                # result['bdotz'][l] += trajectory[i_traj]['char_time']*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                # rad_frc_x_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotx'][l]**2*c_mmns**2)*result['bx'][l]*c_mmns
-                # rad_frc_x_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotx'][l]*result['bx'][l]*c_mmns**2
-                # rad_frc_y_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdoty'][l]**2*c_mmns**2)*result['by'][l]*c_mmns
-                # rad_frc_y_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdoty'][l]*result['by'][l]*c_mmns**2
-                # result['bdotx'][l] += trajectory[i_traj]['char_time']*(rad_frc_x_lhs+rad_frc_x_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                # result['bdoty'][l] += trajectory[i_traj]['char_time']*(rad_frc_y_lhs+rad_frc_y_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                # #result['dummy'][l] = char_time*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
-            
+                rad_frc_z_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotz'][l]**2*c_mmns**2)*result['bz'][l]*c_mmns
+                rad_frc_z_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotz'][l]*result['bz'][l]*c_mmns**2
+                if rad_frc_z_rhs>(trajectory[i_traj]['char_time']/1E1) or rad_frc_z_lhs>(trajectory[i_traj]['char_time']/1E1):
+                    #print("braking")
+                    result['bdotz'][l] += trajectory[i_traj]['char_time']*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
+                    rad_frc_x_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotx'][l]**2*c_mmns**2)*result['bx'][l]*c_mmns
+                    rad_frc_x_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotx'][l]*result['bx'][l]*c_mmns**2
+                    rad_frc_y_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdoty'][l]**2*c_mmns**2)*result['by'][l]*c_mmns
+                    rad_frc_y_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdoty'][l]*result['by'][l]*c_mmns**2
+                    result['bdotx'][l] += trajectory[i_traj]['char_time']*(rad_frc_x_lhs+rad_frc_x_rhs) / (trajectory[i_traj]['m']*c_mmns)
+                    result['bdoty'][l] += trajectory[i_traj]['char_time']*(rad_frc_y_lhs+rad_frc_y_rhs) / (trajectory[i_traj]['m']*c_mmns)
+                    #result['dummy'][l] = char_time*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
+                
                 
 
 
