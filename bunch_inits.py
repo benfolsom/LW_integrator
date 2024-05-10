@@ -32,9 +32,9 @@ def init_bunch(starting_distance,transv_mom,starting_Pz,stripped_ions,
     bdoty = np.zeros(pcount)#by*np.random.uniform(-8e-2,8e-2) 
     bdotz = np.zeros(pcount)#bz*np.random.uniform(-8e-2,8e-2)
 
-    #bdotx = bx*np.random.uniform(-8e-2,8e-2) 
-    #bdoty = by*np.random.uniform(-8e-2,8e-2) 
-    #bdotz = bz*np.random.uniform(-8e-2,8e-2)
+    #bdotx = bx*np.random.uniform(-8e-9,-7e-9) 
+    #bdoty = by*np.random.uniform(-8e-9,-7e-9) 
+    #bdotz = bz*np.random.uniform(-8e-9,-7e-9)
 
     init_bunch_dict = {'x':x, 'y':y, 'z':z, 't':t, 'Px':Px, 'Py':Py, 'Pz':Pz,'Pt':Pt,
                 'bx':bx,'by':by,'bz':bz,'bdotx':bdotx,'bdoty':bdoty,'bdotz':bdotz,'gamma':gamma,'q':q,'m':mass,'char_time':char_time}
