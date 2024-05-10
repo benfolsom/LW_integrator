@@ -245,8 +245,8 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
         nhat = dist_euclid(vector,vector_ext,i)
         for j in range(len(vector_ext['x'])): #summing all external contributions (reflected particles and/or local particles)
             #if nhat['R'][j] < 1.5*apt_R:
-            if sim_type != 2 and vector['z'][j] > 0:
-                vector_ext['q']=0
+            #if sim_type != 2 and vector['z'][j] > 0:
+            #    vector_ext['q']=0
             
             beta_vec = (vector['bx'][i],vector['by'][i],vector['bz'][i])
             beta_ext = (vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j])
@@ -483,7 +483,7 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                 #'real' gamma 
                 #btots = np.sqrt(np.square(trajectory[i_traj]['bx'][l])+np.square(trajectory[i_traj]['by'][l])+np.square(trajectory[i_traj]['bz'][l]))
                 btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
-                #result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
+                result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
                 #print(result['gamma'][l])
 
 
