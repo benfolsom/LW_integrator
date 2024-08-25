@@ -611,6 +611,6 @@ def retarded_integrator3(steps_init,steps_retarded,h_step,wall_Z,apt_R,sim_type,
             elif sim_type==0:
                 trajectory_drv_new[i] = conducting_flat(trajectory_new[i],wall_Z,apt_R) #note that init_wall is a dummy vector
             elif sim_type==2:
-                trajectory_drv_new[i] = eqsofmotion_retarded(h_step,trajectory_drv_new,trajectory_new,i-1,apt_R,sim_type)
+                trajectory_drv_new[i] = eqsofmotion_retarded(h_step*187.5,trajectory_drv_new,trajectory_new,i-1,apt_R,sim_type)
                 
     return trajectory_new,trajectory_drv_new
