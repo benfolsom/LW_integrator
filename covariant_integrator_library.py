@@ -351,8 +351,9 @@ def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
         +trajectory_ext[index_traj]['by'][l]*nhat['ny'][l]\
         +trajectory_ext[index_traj]['bz'][l]*nhat['nz'][l] #for accurate chrono-matching
         #b_nhat = trajectory[index_traj]['bz'][index_part]*nhat['nz'][l] #for speedup
-        delta_t = nhat['R'][l]*(1+b_nhat)/c_mmns
+        delta_t = nhat['R'][l]*(1+b_nhat)/c_mmns#*1/trajectory_ext[index_traj]['gamma'][l]
         t_ext_new = trajectory_ext[index_traj]['t'][l]-delta_t
+        #t_ext_new = (trajectory_ext[index_traj]['t'][l]-delta_t)/trajectory_ext[index_traj]['gamma'][l]
         if t_ext_new<0:
             index_traj_new[l] = index_traj
         else:
