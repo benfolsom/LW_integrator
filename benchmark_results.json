@@ -1,0 +1,66 @@
+{
+  "single_step_comparison": {
+    "two_particle": {
+      "system_type": "two_particle",
+      "timestep": 1e-06,
+      "original": {
+        "time": 0.0009317398071289062,
+        "dPx": -1000000.0,
+        "dPy": 0.0,
+        "dPz": 0.0,
+        "dPt": 0.0
+      },
+      "new": {
+        "time": 0.0001537799835205078,
+        "dPx": -1000000.0,
+        "dPy": 0.0,
+        "dPz": 0.0,
+        "dPt": 0.0
+      },
+      "speedup": 6.05891472868217,
+      "physics_comparison": {
+        "rel_diff_Px": 0.0,
+        "rel_diff_Py": 0,
+        "rel_diff_Pz": 0,
+        "rel_diff_Pt": 0,
+        "max_rel_diff": 0.0
+      },
+      "validation": "EXCELLENT"
+    },
+    "collision": {
+      "system_type": "collision",
+      "timestep": 1e-06,
+      "original": {
+        "time": 0.00030422210693359375,
+        "dPx": -12531.953005084002,
+        "dPy": 0.0,
+        "dPz": 0.0,
+        "dPt": 375698.4994934648
+      },
+      "new": {
+        "time": 0.00011682510375976562,
+        "dPx": -12531.953005084002,
+        "dPy": 0.0,
+        "dPz": 0.0,
+        "dPt": 1253.1953005045652
+      },
+      "speedup": 2.6040816326530614,
+      "physics_comparison": {
+        "rel_diff_Px": 0.0,
+        "rel_diff_Py": 0,
+        "rel_diff_Pz": 0,
+        "rel_diff_Pt": 0.9966643590480287,
+        "max_rel_diff": 0.9966643590480287
+      },
+      "validation": "WARNING"
+    }
+  },
+  "trajectory_comparison": {},
+  "energy_conservation_comparison": {},
+  "performance_comparison": {},
+  "overall_validation": {
+    "status": "FAILED",
+    "original_available": true,
+    "all_tests_passed": false
+  }
+}

@@ -302,11 +302,7 @@ class ComprehensiveIntegrationTester:
             
             try:
                 # Test with adaptive timestep
-                h_adaptive = self.timestep_controller.adapt_timestep(
-                    h_current=1e-6,
-                    particle_data=particles,
-                    retardation_delays=np.array([1e-6, 1e-6])
-                )
+                h_adaptive = self.timestep_controller.calculate_adaptive_timestep(particles)
                 
                 # Integration test
                 result = self.standard_integrator.eqsofmotion_static(h_adaptive, particles, particles)

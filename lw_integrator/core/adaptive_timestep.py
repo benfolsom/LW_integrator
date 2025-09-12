@@ -204,6 +204,30 @@ class AdaptiveTimestepController:
         
         return new_timestep
     
+    def calculate_adaptive_timestep(self, particle_data: Dict[str, np.ndarray]) -> float:
+        """
+        Calculate adaptive timestep for given particle data.
+        
+        CAI: Convenience method that combines assessment and adaptation.
+        
+        Args:
+            particle_data: Dictionary containing particle positions and velocities
+            
+        Returns:
+            Adaptive timestep (ns)
+        """
+        # Extract positions and velocities from particle data
+        positions = np.column_stack([particle_data['x'], particle_data['y'], particle_data['z']])
+        velocities = np.column_stack([particle_data['bx'], particle_data['by'], particle_data['bz']])
+        
+        # Assess current timestep adequacy
+        adequate, max_ratio, diagnostics = self.assess_timestep_adequacy(positions, velocities)
+        
+        if adequate:
+            return self.current_timestep
+        else:
+            return self.adapt_timestep(max_ratio)
+    
     def get_status_report(self) -> Dict[str, Any]:
         """
         Get comprehensive status report of adaptive timestep system.

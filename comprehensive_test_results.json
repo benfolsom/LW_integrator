@@ -15,9 +15,9 @@
         "particles": 6
       },
       "random": {
-        "momentum_change": 158900.2536826599,
-        "energy_change": 6.4533757865428925,
-        "max_force": 15890025368265.99,
+        "momentum_change": 78953.46928601842,
+        "energy_change": -12.971547245979309,
+        "max_force": 7895346928601.842,
         "particles": 6
       }
     },
@@ -235,32 +235,56 @@
     },
     "relativistic_validation_test": {
       "0.938": {
-        "integration_success": false,
-        "error": "AdaptiveTimestepController.adapt_timestep() got an unexpected keyword argument 'h_current'",
+        "gamma_factor": 0.9996802728338485,
+        "beta_factor": NaN,
+        "adaptive_timestep": 0.0001,
+        "mass_energy_invariant": [
+          NaN,
+          NaN
+        ],
+        "integration_success": true,
         "description": "Rest energy"
       },
       "1.0": {
-        "integration_success": false,
-        "error": "AdaptiveTimestepController.adapt_timestep() got an unexpected keyword argument 'h_current'",
+        "gamma_factor": 1.065757220505169,
+        "beta_factor": 0.3458223676976379,
+        "adaptive_timestep": 0.0001,
+        "mass_energy_invariant": [
+          89875458.0771069,
+          89875458.0771069
+        ],
+        "integration_success": true,
         "description": "1 GeV"
       },
       "10.0": {
-        "integration_success": false,
-        "error": "AdaptiveTimestepController.adapt_timestep() got an unexpected keyword argument 'h_current'",
+        "gamma_factor": 10.65757220505169,
+        "beta_factor": 0.9955882337090972,
+        "adaptive_timestep": 0.0001,
+        "mass_energy_invariant": [
+          898750222.7434978,
+          898750222.7434978
+        ],
+        "integration_success": true,
         "description": "10 GeV"
       },
       "100.0": {
-        "integration_success": false,
-        "error": "AdaptiveTimestepController.adapt_timestep() got an unexpected keyword argument 'h_current'",
+        "gamma_factor": 106.5757220505169,
+        "beta_factor": 0.9999559786865619,
+        "adaptive_timestep": 3.299314439995997e-05,
+        "mass_energy_invariant": [
+          8987501791.631155,
+          8987501791.631155
+        ],
+        "integration_success": true,
         "description": "100 GeV"
       }
     },
     "gev_stability_test": {},
     "performance_comparison_test": {
-      "standard_time": 0.012039899826049805,
-      "optimized_time": 0.34233570098876953,
-      "speedup_factor": 0.03516986335715181,
-      "physics_consistency": 81562186.09026091,
+      "standard_time": 0.011990070343017578,
+      "optimized_time": 0.3514413833618164,
+      "speedup_factor": 0.034116842553722666,
+      "physics_consistency": 52507135.7118869,
       "particles_tested": 20
     },
     "package_integration_test": {}
