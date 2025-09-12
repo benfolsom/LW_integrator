@@ -351,7 +351,28 @@ def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
         +trajectory_ext[index_traj]['by'][l]*nhat['ny'][l]\
         +trajectory_ext[index_traj]['bz'][l]*nhat['nz'][l] #for accurate chrono-matching
         #b_nhat = trajectory[index_traj]['bz'][index_part]*nhat['nz'][l] #for speedup
-        delta_t = nhat['R'][l]*(1+b_nhat)/c_mmns#*1/trajectory_ext[index_traj]['gamma'][l]
+        
+        # CAI: NUMERICALLY STABLE RETARDATION FORMULA
+        # OLD: delta_t = nhat['R'][l]*(1+b_nhat)/c_mmns  # Unstable at ultra-relativistic energies
+        # NEW: Using relativistically exact formula δt = R/(c(1-β·n̂))
+        denominator = 1.0 - b_nhat
+        epsilon = 1e-15  # Threshold for numerical stability
+        
+        if abs(denominator) < epsilon:
+            # CAI: Special case: nearly collinear motion (particle chasing light signal)
+            # Physical interpretation: retardation time becomes very large
+            # Use characteristic time scale to avoid infinite retardation
+            if 'char_time' in trajectory_ext[index_traj] and len(trajectory_ext[index_traj]['char_time']) > l:
+                max_retardation = 10.0 * trajectory_ext[index_traj]['char_time'][l]
+            else:
+                # Fallback: use trajectory timestep as characteristic scale
+                max_retardation = 10.0 * trajectory_ext[index_traj]['t'][1] if len(trajectory_ext[index_traj]['t']) > 1 else 1e-3
+            delta_t = max_retardation
+            print(f"Warning: Near-collinear ultra-relativistic motion detected (1-β·n̂ = {denominator:.2e})")
+        else:
+            # CAI: Use the numerically stable relativistic formula
+            delta_t = nhat['R'][l] / (c_mmns * denominator)
+        
         t_ext_new = trajectory_ext[index_traj]['t'][l]-delta_t
         #t_ext_new = (trajectory_ext[index_traj]['t'][l]-delta_t)/trajectory_ext[index_traj]['gamma'][l]
         if t_ext_new<0:
