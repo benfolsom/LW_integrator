@@ -336,7 +336,7 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
             
             result['bdotx'][i] = (-vector['bx'][i]+result['bx'][i])/(c_mmns*h*result['gamma'][i])
             result['bdoty'][i] = (-vector['by'][i]+result['by'][i])/(c_mmns*h*result['gamma'][i])
-            result['bdotz'][i] = (-vector['bz'][i]+result['bx'][i])/(c_mmns*h*result['gamma'][i])
+            result['bdotz'][i] = (-vector['bz'][i]+result['bz'][i])/(c_mmns*h*result['gamma'][i])
             
             #NOTE---- Momentum values below are updated 'result', implicit technically, but only needs explicit solver for extreme cases
             

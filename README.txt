@@ -1,5 +1,27 @@
 Covariant integrator libraries with demo jupyter notebooks. These demos are only configured for two-particle tests with no conducting surface.
 
+## NEW: Corrected Gaussian Self-Consistent Integrator (September 2025)
+**RECOMMENDED**: Use `gaussian_retarded_integrator_corrected.py` for improved electromagnetic field calculations.
+
+### Key Features:
+- ✅ Eliminates unphysical energy discontinuities found in original Gaussian integrator
+- ✅ Preserves exact physics of retarded_integrator3 
+- ✅ Adds self-consistent Gaussian enhancement for better accuracy
+- ✅ Same interface as existing notebooks expect
+
+### Usage:
+```python
+from gaussian_retarded_integrator_corrected import gaussian_retarded_integrator3
+# Use exactly like original integrator - same parameters and interface
+```
+
+### Demonstration:
+- **`gaussian_corrected_demo.ipynb`** - Comprehensive comparison of original vs corrected integrator
+- **`local/docs/session_progress.md`** - Complete development documentation
+- **`local/tests/verify_fix.py`** - Verification script proving the fix works
+
+## Original Documentation:
+
 The unconventional units used throughout are mm.ns.amu; these are used to avoid overflow or rounding errors across a large energy range.
 
 Note that the the conjugate momentum can be read as real, physical momentum only in the initialization step, 

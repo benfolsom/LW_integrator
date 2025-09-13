@@ -25,13 +25,16 @@ __email__ = "ben.folsom@maxlab.lu.se"
 from .core.integration import LiénardWiechertIntegrator
 from .core.optimized_integration import OptimizedLiénardWiechertIntegrator  
 from .core.adaptive_timestep import AdaptiveTimestepController
+from .core.gaussian_integrator import GaussianLiénardWiechertIntegrator
 
-# Physics constants
+# Physics constants and simulation types
 from .physics.constants import *
+from .physics.simulation_types import SimulationType, SimulationConfig, create_simulation_config
 
 # Convenience aliases
 LWIntegrator = LiénardWiechertIntegrator
 OptimizedLWIntegrator = OptimizedLiénardWiechertIntegrator
+GaussianLWIntegrator = GaussianLiénardWiechertIntegrator
 
 __all__ = [
     # Version info
@@ -40,10 +43,14 @@ __all__ = [
     # Core classes
     "LiénardWiechertIntegrator", "LWIntegrator", 
     "OptimizedLiénardWiechertIntegrator", "OptimizedLWIntegrator",
+    "GaussianLiénardWiechertIntegrator", "GaussianLWIntegrator",
     "AdaptiveTimestepController",
     
+    # Simulation configuration
+    "SimulationType", "SimulationConfig", "create_simulation_config",
+    
     # Constants (imported from physics.constants)
-    "C_MMNS", "PROTON_MASS", "ELECTRON_MASS", "ELEMENTARY_CHARGE",
+    "C_CGS", "C_MMNS", "PROTON_MASS", "ELECTRON_MASS", "ELEMENTARY_CHARGE_ESU",
     "COULOMB_CONSTANT", "TYPICAL_TIMESTEP", "TYPICAL_DISTANCE"
 ]
 
