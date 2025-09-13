@@ -21,7 +21,7 @@ import numpy as np
 from typing import Dict, Any, Tuple, List, Optional
 
 from ..physics.constants import C_MMNS, NUMERICAL_EPSILON
-from .simulation_types import SimulationType
+from ..physics.simulation_types import SimulationType
 
 
 class LiénardWiechertIntegrator:

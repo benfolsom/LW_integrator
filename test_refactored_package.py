@@ -21,7 +21,7 @@ def test_imports():
     print("🔧 Testing package imports...")
     
     try:
-        # Test main package imports
+        # Test main package imports (skip optimized modules with numba for now)
         import lw_integrator
         from lw_integrator import (
             SimulationType, SimulationConfig, create_simulation_config,

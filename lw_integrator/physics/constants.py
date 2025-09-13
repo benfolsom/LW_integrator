@@ -24,6 +24,11 @@ ELEMENTARY_CHARGE_ESU = 4.803e-10  # esu (statcoulomb)
 ELECTRON_MASS_G = 9.109e-28  # g
 PROTON_MASS_G = 1.673e-24   # g
 
+# Standard aliases for backward compatibility and convenience
+ELEMENTARY_CHARGE = ELEMENTARY_CHARGE_ESU
+ELECTRON_MASS = ELECTRON_MASS_G 
+PROTON_MASS = PROTON_MASS_G
+
 # Particle masses in energy units (MeV) - for relativistic calculations
 ELECTRON_MASS_MEV = 0.511    # MeV/c²
 PROTON_MASS_MEV = 938.3      # MeV/c²
@@ -70,6 +75,13 @@ TYPICAL_TIMESTEP_NS = 1e-6     # ns
 TYPICAL_DISTANCE_MM = 1e-6     # mm (1 nm)
 TYPICAL_ENERGY_MEV = 1000.0    # MeV (1 GeV)
 TYPICAL_GAMMA = 1000.0         # For ultra-relativistic particles
+
+# Standard aliases for legacy compatibility
+TYPICAL_TIMESTEP = TYPICAL_TIMESTEP_NS * 1e-9  # Convert to seconds
+TYPICAL_DISTANCE = TYPICAL_DISTANCE_MM * 0.1   # Convert to cm
+
+# Coulomb constant in Gaussian CGS units (k=1 in Gaussian units)
+COULOMB_CONSTANT = 1.0  # dimensionless in Gaussian CGS
 
 # Numerical precision
 NUMERICAL_EPSILON = 1e-15      # For avoiding division by zero

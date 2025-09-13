@@ -23,9 +23,11 @@ __email__ = "ben.folsom@maxlab.lu.se"
 
 # Core imports for easy access
 from .core.integration import LiénardWiechertIntegrator
-from .core.optimized_integration import OptimizedLiénardWiechertIntegrator  
 from .core.adaptive_timestep import AdaptiveTimestepController
-from .core.gaussian_integrator import GaussianLiénardWiechertIntegrator
+from .core.gaussian_integrator import GaussianLiénardWiechertIntegrator, gaussian_retarded_integrator3
+
+# Note: OptimizedLiénardWiechertIntegrator requires Numba and is imported separately
+# from .core.optimized_integration import OptimizedLiénardWiechertIntegrator  
 
 # Physics constants and simulation types
 from .physics.constants import *
@@ -33,7 +35,7 @@ from .physics.simulation_types import SimulationType, SimulationConfig, create_s
 
 # Convenience aliases
 LWIntegrator = LiénardWiechertIntegrator
-OptimizedLWIntegrator = OptimizedLiénardWiechertIntegrator
+# OptimizedLWIntegrator = OptimizedLiénardWiechertIntegrator
 GaussianLWIntegrator = GaussianLiénardWiechertIntegrator
 
 __all__ = [
@@ -42,9 +44,12 @@ __all__ = [
     
     # Core classes
     "LiénardWiechertIntegrator", "LWIntegrator", 
-    "OptimizedLiénardWiechertIntegrator", "OptimizedLWIntegrator",
+    # "OptimizedLiénardWiechertIntegrator", "OptimizedLWIntegrator",  # Requires Numba
     "GaussianLiénardWiechertIntegrator", "GaussianLWIntegrator",
     "AdaptiveTimestepController",
+    
+    # Legacy functions
+    "gaussian_retarded_integrator3",
     
     # Simulation configuration
     "SimulationType", "SimulationConfig", "create_simulation_config",
