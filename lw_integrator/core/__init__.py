@@ -13,15 +13,15 @@ from ..physics.simulation_types import (
     create_simulation_config, get_default_config
 )
 
-from .gaussian_integrator import (
-    GaussianLiénardWiechertIntegrator,
-    gaussian_retarded_integrator3
+from .self_consistent_integrator import (
+    SelfConsistentLiénardWiechertIntegrator,
+    self_consistent_retarded_integrator
 )
 
 from .integration import (
     LiénardWiechertIntegrator,
     conducting_flat, switching_flat,
-    static_integrator, retarded_integrator3
+    static_integrator, retarded_integrator
 )
 
 from .particles import ParticleEnsemble
@@ -32,8 +32,8 @@ __all__ = [
     'create_simulation_config', 'get_default_config',
     
     # Main integrators
-    'GaussianLiénardWiechertIntegrator', 'gaussian_retarded_integrator3',
-    'LiénardWiechertIntegrator', 'retarded_integrator3',
+    'SelfConsistentLiénardWiechertIntegrator', 'self_consistent_retarded_integrator',
+    'LiénardWiechertIntegrator', 'retarded_integrator',
     
     # Wall and surface functions
     'conducting_flat', 'switching_flat', 'static_integrator',

@@ -1,14 +1,14 @@
 """
-Gaussian Self-Consistent Lienard-Wiechert Integrator
+Self-Consistent Lienard-Wiechert Integrator
 
-CAI: Production-ready integrator that combines the exact physics of retarded_integrator3
-with Gaussian self-consistent field enhancement. Uses proper simulation types and 
+Production-ready integrator that combines exact retarded electromagnetic physics
+with self-consistent field enhancement. Uses proper simulation types and 
 Gaussian CGS units for optimal electromagnetic field calculations.
 
 Key Features:
 - Eliminates unphysical energy discontinuities
 - Preserves exact retarded electromagnetic physics
-- Gaussian self-consistent enhancement for improved accuracy  
+- Self-consistent field enhancement for improved accuracy  
 - Type-safe simulation configuration
 - Gaussian CGS units for natural EM calculations
 
@@ -29,9 +29,9 @@ from ..physics.simulation_types import SimulationType, SimulationConfig
 from .particles import ParticleEnsemble
 
 
-class GaussianLiénardWiechertIntegrator:
+class SelfConsistentLiénardWiechertIntegrator:
     """
-    Production-ready Gaussian self-consistent Lienard-Wiechert integrator.
+    Production-ready self-consistent Lienard-Wiechert integrator.
     
     This integrator fixes the physics violations found in earlier implementations
     while providing enhanced self-consistent electromagnetic field calculations.
@@ -50,11 +50,11 @@ class GaussianLiénardWiechertIntegrator:
         self.max_iter = config.max_iterations
         self.debug = config.debug_mode
         
-    def gaussian_enhanced_step(self, h_step: float, trajectory: List[Dict], 
+    def self_consistent_enhanced_step(self, h_step: float, trajectory: List[Dict], 
                              trajectory_drv: List[Dict], i_traj: int, 
                              apt_R: float, sim_type: SimulationType) -> Dict[str, Any]:
         """
-        Gaussian self-consistent integration step with iterative field convergence.
+        Self-consistent integration step with iterative field convergence.
         
         This replaces the standard single-step retarded integration with an iterative
         approach that converges to self-consistent electromagnetic fields.
@@ -138,7 +138,7 @@ class GaussianLiénardWiechertIntegrator:
             (rider_trajectory, driver_trajectory) tuple
         """
         if self.debug:
-            print(f"🔧 Gaussian LW integrator starting:")
+            print(f"🔧 Self-consistent LW integrator starting:")
             print(f"   Simulation type: {self.config.simulation_type.name}")
             print(f"   Total steps: {steps_tot}")
             print(f"   Step size: {h_step:.1e} ns")
@@ -176,7 +176,7 @@ class GaussianLiénardWiechertIntegrator:
                 trajectory_drv_new[i] = trajectory_drv[i-1]
             else:
                 # RETARDED INTEGRATION - Enhanced with Gaussian self-consistent method
-                trajectory_new[i] = self.gaussian_enhanced_step(
+                trajectory_new[i] = self.self_consistent_enhanced_step(
                     h_step, trajectory_new, trajectory_drv_new, i-1, apt_R, sim_type
                 )
                 
@@ -199,12 +199,12 @@ class GaussianLiénardWiechertIntegrator:
                     
                 elif sim_type == SimulationType.FREE_PARTICLE_BUNCHES:
                     # Use Gaussian enhanced step for driver too in bunch-bunch simulation
-                    trajectory_drv_new[i] = self.gaussian_enhanced_step(
+                    trajectory_drv_new[i] = self.self_consistent_enhanced_step(
                         h_step, trajectory_drv_new, trajectory_new, i-1, apt_R, sim_type
                     )
         
         if self.debug:
-            print(f"✅ Gaussian integration complete!")
+            print(f"✅ Self-consistent integration complete!")
             print(f"   Total trajectory points: rider={len(trajectory_new)}, driver={len(trajectory_drv_new)}")
             
             # Physics validation
@@ -217,13 +217,13 @@ class GaussianLiénardWiechertIntegrator:
         return trajectory_new, trajectory_drv_new
 
 
-def gaussian_retarded_integrator3(init_rider: Dict[str, Any], init_driver: Dict[str, Any],
+def self_consistent_retarded_integrator(init_rider: Dict[str, Any], init_driver: Dict[str, Any],
                                   steps_tot: int, h_step: float, wall_Z: float, apt_R: float,
                                   debug_mode: bool = False, sim_type: SimulationType = SimulationType.FREE_PARTICLE_BUNCHES) -> Tuple[List[Dict], List[Dict]]:
     """
     Convenience function that provides the same interface as the original integrator.
     
-    This is the drop-in replacement for gaussian_retarded_integrator_corrected that
+    This is the drop-in replacement for retarded_integrator that
     uses the new type-safe simulation configuration system.
     
     Args:
@@ -248,5 +248,5 @@ def gaussian_retarded_integrator3(init_rider: Dict[str, Any], init_driver: Dict[
     )
     
     # Create and run integrator
-    integrator = GaussianLiénardWiechertIntegrator(config)
+    integrator = SelfConsistentLiénardWiechertIntegrator(config)
     return integrator.integrate(init_rider, init_driver, steps_tot, h_step, wall_Z, apt_R)

@@ -24,19 +24,22 @@ __email__ = "ben.folsom@maxlab.lu.se"
 # Core imports for easy access
 from .core.integration import LiénardWiechertIntegrator
 from .core.adaptive_timestep import AdaptiveTimestepController
-from .core.gaussian_integrator import GaussianLiénardWiechertIntegrator, gaussian_retarded_integrator3
+from .core.self_consistent_integrator import SelfConsistentLiénardWiechertIntegrator, self_consistent_retarded_integrator
 
 # Note: OptimizedLiénardWiechertIntegrator requires Numba and is imported separately
 # from .core.optimized_integration import OptimizedLiénardWiechertIntegrator  
 
 # Physics constants and simulation types
-from .physics.constants import *
+from .physics.constants import (
+    C_CGS, C_MMNS, PROTON_MASS, ELECTRON_MASS, ELEMENTARY_CHARGE_ESU,
+    COULOMB_CONSTANT, TYPICAL_TIMESTEP, TYPICAL_DISTANCE
+)
 from .physics.simulation_types import SimulationType, SimulationConfig, create_simulation_config
 
 # Convenience aliases
 LWIntegrator = LiénardWiechertIntegrator
 # OptimizedLWIntegrator = OptimizedLiénardWiechertIntegrator
-GaussianLWIntegrator = GaussianLiénardWiechertIntegrator
+SelfConsistentLWIntegrator = SelfConsistentLiénardWiechertIntegrator
 
 __all__ = [
     # Version info
@@ -45,11 +48,11 @@ __all__ = [
     # Core classes
     "LiénardWiechertIntegrator", "LWIntegrator", 
     # "OptimizedLiénardWiechertIntegrator", "OptimizedLWIntegrator",  # Requires Numba
-    "GaussianLiénardWiechertIntegrator", "GaussianLWIntegrator",
+    "SelfConsistentLiénardWiechertIntegrator", "SelfConsistentLWIntegrator",
     "AdaptiveTimestepController",
     
     # Legacy functions
-    "gaussian_retarded_integrator3",
+    "self_consistent_retarded_integrator",
     
     # Simulation configuration
     "SimulationType", "SimulationConfig", "create_simulation_config",

@@ -11,9 +11,7 @@ Core Functions:
 - chrono_jn: Numerically stable retardation time calculation
 - dist_euclid: Euclidean distance and unit vector calculation
 - conducting_flat: Image charge reflection from conducting plane
-- switching_flat: Switching semiconductor simulation
-
-Author: Ben Folsom (human oversight)
+- switching_flat: Switching semiconductor simul    return trajectory_rider_new, trajectory_drv_newBen Folsom (human oversight)
 Date: 2025-09-13
 """
 
@@ -453,103 +451,37 @@ class LiénardWiechertIntegrator:
         return result
 
 
-def test_integration_algorithms():
+def static_integrator(steps_init: int, h_step: float, init_rider: Dict[str, Any], 
+                     init_driver: Dict[str, Any]) -> Tuple[List[Dict], List[Dict]]:
     """
-    Test the extracted integration algorithms.
+    Static integration with non-retarded fields.
     
-    CAI: Verify that extracted algorithms maintain compatibility with original code.
+    Args:
+        steps_init: Number of static integration steps
+        h_step: Time step size
+        init_rider: Initial rider particle state
+        init_driver: Initial driver particle state
+        
+    Returns:
+        Tuple of (rider_trajectory, driver_trajectory)
     """
-    print("🧪 TESTING EXTRACTED INTEGRATION ALGORITHMS")
-    print("="*60)
-    
-    # Initialize integrator
     integrator = LiénardWiechertIntegrator()
     
-    # Create test particle data - source particle
-    source_particle = {
-        'x': np.array([0.0]),  
-        'y': np.array([0.0]),
-        'z': np.array([0.0]),
-        't': np.array([0.0]),
-        'Px': np.array([0.0]),
-        'Py': np.array([0.0]),
-        'Pz': np.array([938.3]),  # Rest energy
-        'Pt': np.array([938.3]),
-        'gamma': np.array([1.0]),
-        'bx': np.array([0.0]),
-        'by': np.array([0.0]),
-        'bz': np.array([0.0]),
-        'bdotx': np.array([0.0]),
-        'bdoty': np.array([0.0]),
-        'bdotz': np.array([0.0]),
-        'q': 1.0,  # Elementary charge
-        'char_time': np.array([1e-4]),
-        'm': 938.3  # Proton mass
-    }
+    # Create trajectory arrays
+    trajectory_new = [init_rider]
+    trajectory_drv_new = [init_driver]
     
-    # Create external particle at 1 μm distance
-    external_particle = {
-        'x': np.array([1e-6]),  # 1 μm separation
-        'y': np.array([0.0]),
-        'z': np.array([0.0]),
-        't': np.array([0.0]),
-        'Px': np.array([0.0]),
-        'Py': np.array([0.0]),
-        'Pz': np.array([938.3]),
-        'Pt': np.array([938.3]),
-        'gamma': np.array([1.0]),
-        'bx': np.array([0.0]),
-        'by': np.array([0.0]),
-        'bz': np.array([0.0]),
-        'bdotx': np.array([0.0]),
-        'bdoty': np.array([0.0]),
-        'bdotz': np.array([0.0]),
-        'q': 1.0,
-        'char_time': np.array([1e-4]),
-        'm': 938.3
-    }
+    # Static integration loop
+    for i in range(1, steps_init + 1):
+        # Static step for rider
+        rider_state = integrator.eqsofmotion_static(h_step, trajectory_new[i-1], trajectory_drv_new[i-1])
+        trajectory_new.append(rider_state)
+        
+        # Static step for driver
+        driver_state = integrator.eqsofmotion_static(h_step, trajectory_drv_new[i-1], trajectory_new[i-1])
+        trajectory_drv_new.append(driver_state)
     
-    print("Test Configuration:")
-    print(f"  Particles: 1 source + 1 external")
-    print(f"  Separation: {external_particle['x'][0]*1e6:.1f} nm")
-    print(f"  Energy: Non-relativistic")
-    print()
-    
-    # Test static integration
-    print("Testing static integration...")
-    try:
-        h = 1e-6  # Small timestep
-        result_static = integrator.eqsofmotion_static(h, source_particle, external_particle)
-        print("✅ Static integration successful")
-        
-        # Calculate Coulomb force for verification
-        q1, q2 = source_particle['q'], external_particle['q']
-        r = external_particle['x'][0]
-        k_coulomb = 1.44e-3  # MeV⋅mm / elementary charge^2
-        F_coulomb = k_coulomb * q1 * q2 / r**2  # Force magnitude
-        
-        momentum_change = abs(result_static['Px'][0] - source_particle['Px'][0])
-        force_calculated = momentum_change / h
-        
-        print(f"   Momentum change: ΔPx = {momentum_change:.2e} MeV/c")
-        print(f"   Force calculated: {force_calculated:.2e} MeV/c/ns")
-        print(f"   Coulomb expected: {F_coulomb:.2e} MeV/mm")
-        
-    except Exception as e:
-        print(f"❌ Static integration failed: {e}")
-    
-    # Test distance calculation
-    print("\nTesting distance calculations...")
-    try:
-        nhat = integrator.dist_euclid(source_particle, external_particle, 0)
-        print("✅ Distance calculation successful")
-        print(f"   Distance to external particle: {nhat['R'][0]*1e6:.1f} nm")
-        print(f"   Unit vector: ({nhat['nx'][0]:.1f}, {nhat['ny'][0]:.1f}, {nhat['nz'][0]:.1f})")
-        
-    except Exception as e:
-        print(f"❌ Distance calculation failed: {e}")
-    
-    print(f"\n🎯 Integration algorithms extracted and tested successfully!")
+    return trajectory_new, trajectory_drv_new
 
 
 def conducting_flat(vector: Dict[str, np.ndarray], wall_Z: float, apt_R: float) -> Dict[str, np.ndarray]:
@@ -715,7 +647,7 @@ def static_integrator(steps: int, h_step: float, wall_Z: float, apt_R: float,
     return trajectory, trajectory_drv
 
 
-def retarded_integrator3(steps_init: int, steps_retarded: int, h_step: float, 
+def retarded_integrator(steps_init: int, steps_retarded: int, h_step: float, 
                         wall_Z: float, apt_R: float, sim_type: int,
                         init_rider: Dict[str, Any], init_driver: Dict[str, Any],
                         mean: float, cav_spacing: float, z_cutoff: float) -> Tuple[List[Dict], List[Dict]]:
@@ -776,17 +708,3 @@ def retarded_integrator3(steps_init: int, steps_retarded: int, h_step: float,
                 trajectory_drv_new[i] = trajectory_drv_new[i-1].copy()  # Placeholder
                 
     return trajectory_new, trajectory_drv_new
-
-
-if __name__ == "__main__":
-    print("🔧 LIENARD-WIECHERT INTEGRATION ALGORITHMS")
-    print("="*80)
-    print("Extracted and cleaned core integration algorithms")
-    print()
-    
-    test_integration_algorithms()
-    
-    print("\n" + "="*80)
-    print("✅ INTEGRATION ALGORITHM EXTRACTION COMPLETE")
-    print("="*80)
-    print("Ready for performance optimization and full integration testing!")
