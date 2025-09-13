@@ -10,6 +10,16 @@ Key Features:
 - JIT-optimized performance (670k+ force calculations/sec)
 - Comprehensive physics validation
 - Production-ready package structure
+- Unified interface with automatic optimization
+
+Quick Start:
+    from lw_integrator import LienardWiechertIntegrator
+    
+    # Auto-optimizing interface (recommended)
+    integrator = LienardWiechertIntegrator()  # Uses Numba optimization if available
+    
+    # Check implementation
+    print(f"Using: {integrator.implementation_type}")  # 'optimized' or 'standard'
 
 Author: Ben Folsom (human oversight)
 Version: 1.0.0
@@ -22,12 +32,22 @@ __author__ = "Ben Folsom"
 __email__ = "ben.folsom@maxlab.lu.se"
 
 # Core imports for easy access
-from .core.integration import LiénardWiechertIntegrator
+from .core.integrator import (
+    LienardWiechertIntegrator, 
+    create_integrator,
+    get_available_implementations,
+    print_implementation_info,
+    NUMBA_AVAILABLE
+)
 from .core.adaptive_timestep import AdaptiveTimestepController
-from .core.self_consistent_integrator import SelfConsistentLiénardWiechertIntegrator, self_consistent_retarded_integrator
+from .core.self_consistent_integrator import SelfConsistentLienardWiechertIntegrator, self_consistent_retarded_integrator
 
-# Note: OptimizedLiénardWiechertIntegrator requires Numba and is imported separately
-# from .core.optimized_integration import OptimizedLiénardWiechertIntegrator  
+# Legacy imports (for direct access to specific implementations)
+from .core.integration import LienardWiechertIntegrator as StandardLienardWiechertIntegrator
+try:
+    from .core.optimized_integration import OptimizedLienardWiechertIntegrator
+except ImportError:
+    OptimizedLienardWiechertIntegrator = None  
 
 # Physics constants and simulation types
 from .physics.constants import (
@@ -37,18 +57,23 @@ from .physics.constants import (
 from .physics.simulation_types import SimulationType, SimulationConfig, create_simulation_config
 
 # Convenience aliases
-LWIntegrator = LiénardWiechertIntegrator
-# OptimizedLWIntegrator = OptimizedLiénardWiechertIntegrator
-SelfConsistentLWIntegrator = SelfConsistentLiénardWiechertIntegrator
+LWIntegrator = LienardWiechertIntegrator  # Unified interface
+StandardLWIntegrator = StandardLienardWiechertIntegrator  # Direct standard access
+OptimizedLWIntegrator = OptimizedLienardWiechertIntegrator  # Direct optimized access (if available)
+SelfConsistentLWIntegrator = SelfConsistentLienardWiechertIntegrator
 
 __all__ = [
     # Version info
     "__version__", "__author__", "__email__",
     
-    # Core classes
-    "LiénardWiechertIntegrator", "LWIntegrator", 
-    # "OptimizedLiénardWiechertIntegrator", "OptimizedLWIntegrator",  # Requires Numba
-    "SelfConsistentLiénardWiechertIntegrator", "SelfConsistentLWIntegrator",
+    # Core unified interface
+    "LienardWiechertIntegrator", "LWIntegrator",  # Unified auto-optimizing interface
+    "create_integrator", "get_available_implementations", "print_implementation_info",
+    
+    # Direct implementation access
+    "StandardLienardWiechertIntegrator", "StandardLWIntegrator",  # Always available
+    "OptimizedLienardWiechertIntegrator", "OptimizedLWIntegrator",  # If Numba available
+    "SelfConsistentLienardWiechertIntegrator", "SelfConsistentLWIntegrator",
     "AdaptiveTimestepController",
     
     # Legacy functions

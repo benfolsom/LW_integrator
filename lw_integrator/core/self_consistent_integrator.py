@@ -29,7 +29,7 @@ from ..physics.simulation_types import SimulationType, SimulationConfig
 from .particles import ParticleEnsemble
 
 
-class SelfConsistentLiénardWiechertIntegrator:
+class SelfConsistentLienardWiechertIntegrator:
     """
     Production-ready self-consistent Lienard-Wiechert integrator.
     
@@ -72,7 +72,7 @@ class SelfConsistentLiénardWiechertIntegrator:
         """
         # Import the original retarded step function
         from . import integration
-        integrator = integration.LiénardWiechertIntegrator()
+        integrator = integration.LienardWiechertIntegrator()
         
         # Start with standard retarded step as initial guess
         traj_guess = integrator.eqsofmotion_retarded(
@@ -153,7 +153,7 @@ class SelfConsistentLiénardWiechertIntegrator:
         
         # Import required functions from the original integration module
         from . import integration
-        integrator = integration.LiénardWiechertIntegrator()
+        integrator = integration.LienardWiechertIntegrator()
         
         # Phase 1: Static integrator (identical to original)
         trajectory, trajectory_drv = integrator.static_integrator(
@@ -248,5 +248,5 @@ def self_consistent_retarded_integrator(init_rider: Dict[str, Any], init_driver:
     )
     
     # Create and run integrator
-    integrator = SelfConsistentLiénardWiechertIntegrator(config)
+    integrator = SelfConsistentLienardWiechertIntegrator(config)
     return integrator.integrate(init_rider, init_driver, steps_tot, h_step, wall_Z, apt_R)

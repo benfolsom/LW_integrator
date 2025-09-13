@@ -22,7 +22,7 @@ from ..physics.constants import C_MMNS, NUMERICAL_EPSILON
 from ..physics.simulation_types import SimulationType
 
 
-class LiénardWiechertIntegrator:
+class LienardWiechertIntegrator:
     """
     Core Lienard-Wiechert electromagnetic field integrator.
     
@@ -279,6 +279,95 @@ class LiénardWiechertIntegrator:
         
         return dPx, dPy, dPz, dPt
     
+    def _apply_radiation_reaction(self, h: float, trajectory_data: Dict[str, Any], 
+                                result: Dict[str, np.ndarray], particle_idx: int) -> None:
+        """
+        Apply Abraham-Lorentz-Dirac radiation reaction force.
+        
+        CAI: Implements relativistic radiation reaction when particle acceleration
+        becomes significant. Based on the covariant formulation where radiation
+        reaction appears as m*a² corrections to the equations of motion.
+        
+        Formula from legacy code:
+        rad_frc_rhs = -γ³(m*β̇²*c²)*β*c  
+        rad_frc_lhs = (γ_new - γ_old)/(h*γ_new) * m * β̇ * β * c²
+        
+        Args:
+            h: Integration timestep
+            trajectory_data: Previous trajectory state
+            result: Current particle state (modified in place)
+            particle_idx: Index of particle to apply radiation reaction to
+        """
+        if ('char_time' not in trajectory_data or 
+            'gamma' not in trajectory_data or 
+            'm' not in trajectory_data):
+            return
+            
+        l = particle_idx
+        char_time = trajectory_data['char_time']
+        m_particle = trajectory_data['m']
+        
+        # Get previous gamma if available
+        if ('gamma' in trajectory_data and 
+            hasattr(trajectory_data['gamma'], '__len__') and 
+            len(trajectory_data['gamma']) > l):
+            gamma_old = trajectory_data['gamma'][l]
+        else:
+            gamma_old = result['gamma'][l]  # Use current if no previous
+        
+        # Z-component radiation reaction
+        if result['gamma'][l] > 0 and 'bdotz' in result and 'bz' in result:
+            # RHS term: -γ³(m*β̇²*c²)*β*c
+            rad_frc_z_rhs = (-result['gamma'][l]**3 * 
+                            (m_particle * result['bdotz'][l]**2 * C_MMNS**2) * 
+                            result['bz'][l] * C_MMNS)
+            
+            # LHS term: (γ_new - γ_old)/(h*γ_new) * m * β̇ * β * c²
+            rad_frc_z_lhs = ((result['gamma'][l] - gamma_old) / 
+                           (h * result['gamma'][l]) * 
+                           m_particle * result['bdotz'][l] * result['bz'][l] * C_MMNS**2)
+            
+            # Apply radiation reaction if either force component exceeds threshold
+            # CAI: Legacy logic uses direct comparison (not absolute value)
+            threshold = char_time / 1e1
+            if rad_frc_z_rhs > threshold or rad_frc_z_lhs > threshold:
+                correction = char_time * (rad_frc_z_lhs + rad_frc_z_rhs) / (m_particle * C_MMNS)
+                result['bdotz'][l] += correction
+        
+        # X-component radiation reaction  
+        if result['gamma'][l] > 0 and 'bdotx' in result and 'bx' in result:
+            # RHS term: -γ³(m*β̇ₓ²*c²)*βₓ*c (note: bdotx squared for x-component)
+            rad_frc_x_rhs = (-result['gamma'][l]**3 * 
+                            (m_particle * result['bdotx'][l]**2 * C_MMNS**2) * 
+                            result['bx'][l] * C_MMNS)
+            
+            # LHS term: (γ_new - γ_old)/(h*γ_new) * m * β̇ₓ * βₓ * c²
+            rad_frc_x_lhs = ((result['gamma'][l] - gamma_old) / 
+                           (h * result['gamma'][l]) * 
+                           m_particle * result['bdotx'][l] * result['bx'][l] * C_MMNS**2)
+            
+            threshold = char_time / 1e1
+            if rad_frc_x_rhs > threshold or rad_frc_x_lhs > threshold:
+                correction = char_time * (rad_frc_x_lhs + rad_frc_x_rhs) / (m_particle * C_MMNS)
+                result['bdotx'][l] += correction
+        
+        # Y-component radiation reaction
+        if result['gamma'][l] > 0 and 'bdoty' in result and 'by' in result:
+            # RHS term: -γ³(m*β̇ᵧ²*c²)*βᵧ*c (note: bdoty squared for y-component)
+            rad_frc_y_rhs = (-result['gamma'][l]**3 * 
+                            (m_particle * result['bdoty'][l]**2 * C_MMNS**2) * 
+                            result['by'][l] * C_MMNS)
+            
+            # LHS term: (γ_new - γ_old)/(h*γ_new) * m * β̇ᵧ * βᵧ * c²
+            rad_frc_y_lhs = ((result['gamma'][l] - gamma_old) / 
+                           (h * result['gamma'][l]) * 
+                           m_particle * result['bdoty'][l] * result['by'][l] * C_MMNS**2)
+            
+            threshold = char_time / 1e1
+            if rad_frc_y_rhs > threshold or rad_frc_y_lhs > threshold:
+                correction = char_time * (rad_frc_y_lhs + rad_frc_y_rhs) / (m_particle * C_MMNS)
+                result['bdoty'][l] += correction
+    
     def eqsofmotion_static(self, h: float, 
                           vector: Dict[str, np.ndarray],
                           vector_ext: Dict[str, np.ndarray],
@@ -356,6 +445,12 @@ class LiénardWiechertIntegrator:
                 result['Py'][i] += dPy  
                 result['Pz'][i] += dPz
                 result['Pt'][i] += dPt
+        
+        # Apply radiation reaction force (Abraham-Lorentz-Dirac formula)  
+        # CAI: Implements relativistic radiation reaction for static case
+        for i in range(n_particles):
+            if 'char_time' in vector and 'bdotx' in result and 'bdoty' in result and 'bdotz' in result:
+                self._apply_radiation_reaction(h, vector, result, i)
                 
         return result
     
@@ -447,6 +542,12 @@ class LiénardWiechertIntegrator:
                 result['Py'][l] += dPy
                 result['Pz'][l] += dPz
                 result['Pt'][l] += dPt
+        
+        # Apply radiation reaction force (Abraham-Lorentz-Dirac formula)
+        # CAI: Implements relativistic radiation reaction when acceleration becomes significant
+        for l in range(n_particles):
+            if 'char_time' in traj and 'bdotx' in result and 'bdoty' in result and 'bdotz' in result:
+                self._apply_radiation_reaction(h, traj, result, l)
                 
         return result
 
@@ -465,7 +566,7 @@ def static_integrator(steps_init: int, h_step: float, init_rider: Dict[str, Any]
     Returns:
         Tuple of (rider_trajectory, driver_trajectory)
     """
-    integrator = LiénardWiechertIntegrator()
+    integrator = LienardWiechertIntegrator()
     
     # Create trajectory arrays
     trajectory_new = [init_rider]

@@ -30,7 +30,7 @@ def test_integrator_equivalence():
     
     try:
         from lw_integrator import (
-            SelfConsistentLiénardWiechertIntegrator,
+            SelfConsistentLienardWiechertIntegrator,
             SimulationType, 
             create_simulation_config
         )
@@ -82,7 +82,7 @@ def test_integrator_equivalence():
         )
         
         print("Running self-consistent integrator...")
-        integrator = SelfConsistentLiénardWiechertIntegrator(config)
+        integrator = SelfConsistentLienardWiechertIntegrator(config)
         new_result = integrator.integrate(
             init_rider, init_driver, steps_tot, h_step, wall_Z, apt_R
         )
@@ -160,7 +160,7 @@ def test_physics_conservation():
     
     try:
         from lw_integrator import (
-            SelfConsistentLiénardWiechertIntegrator,
+            SelfConsistentLienardWiechertIntegrator,
             SimulationType, 
             create_simulation_config
         )
@@ -200,7 +200,7 @@ def test_physics_conservation():
         steps_tot = 10  # Short integration
         h_step = 1e-17
         
-        integrator = SelfConsistentLiénardWiechertIntegrator(config)
+        integrator = SelfConsistentLienardWiechertIntegrator(config)
         result = integrator.integrate(
             init_rider, init_driver, steps_tot, h_step, 0.0, 1e-3
         )

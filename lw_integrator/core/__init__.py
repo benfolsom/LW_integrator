@@ -14,12 +14,12 @@ from ..physics.simulation_types import (
 )
 
 from .self_consistent_integrator import (
-    SelfConsistentLiénardWiechertIntegrator,
+    SelfConsistentLienardWiechertIntegrator,
     self_consistent_retarded_integrator
 )
 
 from .integration import (
-    LiénardWiechertIntegrator,
+    LienardWiechertIntegrator,
     conducting_flat, switching_flat,
     static_integrator, retarded_integrator
 )
@@ -32,8 +32,8 @@ __all__ = [
     'create_simulation_config', 'get_default_config',
     
     # Main integrators
-    'SelfConsistentLiénardWiechertIntegrator', 'self_consistent_retarded_integrator',
-    'LiénardWiechertIntegrator', 'retarded_integrator',
+    'SelfConsistentLienardWiechertIntegrator', 'self_consistent_retarded_integrator',
+    'LienardWiechertIntegrator', 'retarded_integrator',
     
     # Wall and surface functions
     'conducting_flat', 'switching_flat', 'static_integrator',

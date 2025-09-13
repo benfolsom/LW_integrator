@@ -185,7 +185,7 @@ def vectorized_electromagnetic_force(h: float,
     return dPx, dPy, dPz, dPt
 
 
-class OptimizedLiénardWiechertIntegrator:
+class OptimizedLienardWiechertIntegrator:
     """
     High-performance Lienard-Wiechert electromagnetic field integrator.
     
@@ -414,7 +414,7 @@ def test_performance_optimization():
     print("="*60)
     
     # Initialize optimized integrator
-    integrator = OptimizedLiénardWiechertIntegrator(enable_jit=True)
+    integrator = OptimizedLienardWiechertIntegrator(enable_jit=True)
     
     # Create test data
     n_particles = 5

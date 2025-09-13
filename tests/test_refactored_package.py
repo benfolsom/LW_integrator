@@ -8,7 +8,7 @@ and production integrator work correctly with the type-safe configuration system
 Author:         print("Key improvements implemented:")
         print("  ✅ Type-safe SimulationType enum (no more magic numbers)")
         print("  ✅ Gaussian CGS unit system for optimal EM calculations")
-        print("  ✅ Production-ready SelfConsistentLiénardWiechertIntegrator")
+        print("  ✅ Production-ready SelfConsistentLienardWiechertIntegrator")
         print("  ✅ Comprehensive simulation configuration system")
         print("  ✅ Enhanced wall functions and physics validation")
         print("  ✅ Backward compatibility maintained")som
@@ -31,7 +31,7 @@ def test_imports():
         import lw_integrator
         from lw_integrator import (
             SimulationType, SimulationConfig, create_simulation_config,
-            SelfConsistentLiénardWiechertIntegrator, LiénardWiechertIntegrator
+            SelfConsistentLienardWiechertIntegrator, LienardWiechertIntegrator
         )
         
         # Test physics constants
@@ -142,12 +142,12 @@ def test_gaussian_units():
 
 def test_self_consistent_integrator():
     """Test the production self-consistent integrator."""
-    print("\n🔧 Testing SelfConsistentLiénardWiechertIntegrator...")
+    print("\n🔧 Testing SelfConsistentLienardWiechertIntegrator...")
     
     try:
         from lw_integrator import (
             SimulationType, create_simulation_config, 
-            SelfConsistentLiénardWiechertIntegrator
+            SelfConsistentLienardWiechertIntegrator
         )
         from lw_integrator.physics.constants import ELECTRON_MASS, C_MMNS
         
@@ -161,7 +161,7 @@ def test_self_consistent_integrator():
         )
         
         # Create integrator
-        integrator = SelfConsistentLiénardWiechertIntegrator(config)
+        integrator = SelfConsistentLienardWiechertIntegrator(config)
         
         print(f"   Integrator created with simulation type: {config.simulation_type}")
         print(f"   Debug mode: {integrator.debug}")
@@ -172,7 +172,7 @@ def test_self_consistent_integrator():
         assert integrator.config.simulation_type == SimulationType.FREE_PARTICLE_BUNCHES
         assert integrator.debug == True
         
-        print("✅ SelfConsistentLiénardWiechertIntegrator initialized correctly!")
+        print("✅ SelfConsistentLienardWiechertIntegrator initialized correctly!")
         return True
         
     except Exception as e:
@@ -252,7 +252,7 @@ def main():
         print("\nKey improvements implemented:")
         print("  ✅ Type-safe SimulationType enum (no more magic numbers)")
         print("  ✅ Gaussian CGS unit system for optimal EM calculations")
-        print("  ✅ Production-ready GaussianLiénardWiechertIntegrator")
+        print("  ✅ Production-ready GaussianLienardWiechertIntegrator")
         print("  ✅ Comprehensive simulation configuration system")
         print("  ✅ Enhanced wall functions and physics validation")
         print("  ✅ Backward compatibility maintained")
