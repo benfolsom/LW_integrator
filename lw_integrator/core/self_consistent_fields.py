@@ -1,19 +1,29 @@
 """
-Self-Consistent Lienard-Wiechert Integrator
+Self-Consistent Electromagnetic Field Integration
 
-Production-ready integrator that combines exact retarded electromagnetic physics
-with self-consistent field enhancement. Uses proper simulation types and 
-Gaussian CGS units for optimal electromagnetic field calculations.
+CAI: Self-consistent electromagnetic field integration with iterative convergence
+for enhanced physical accuracy. Eliminates unphysical energy discontinuities 
+through field self-consistency and conservation validation.
 
 Key Features:
-- Eliminates unphysical energy discontinuities
-- Preserves exact retarded electromagnetic physics
-- Self-consistent field enhancement for improved accuracy  
-- Type-safe simulation configuration
-- Gaussian CGS units for natural EM calculations
+- Self-consistent field iterations
+- Energy conservation validation  
+- Elimination of unphysical discontinuities
+- Convergence tolerance controls
+- Production-ready simulation accuracy
+
+Physics Self-Consistency:
+- Iterative electromagnetic field convergence
+- Energy conservation monitoring
+- Physical constraint enforcement
+- Enhanced numerical stability
+- Field-particle interaction consistency
+
+This module provides production-ready electromagnetic simulations with
+enhanced physics fidelity through self-consistent field calculations.
 
 Author: Ben Folsom (human oversight)
-Date: 2025-09-13
+Date: 2025-09-13 (Renamed from physics_enhanced.py for clarity)
 """
 
 import numpy as np
@@ -71,7 +81,7 @@ class SelfConsistentLienardWiechertIntegrator:
             Updated trajectory point dictionary with converged fields
         """
         # Import the original retarded step function
-        from . import integration
+        from . import trajectory_integrator as integration
         integrator = integration.LienardWiechertIntegrator()
         
         # Start with standard retarded step as initial guess
@@ -152,7 +162,7 @@ class SelfConsistentLienardWiechertIntegrator:
         z_cutoff = self.config.z_cutoff
         
         # Import required functions from the original integration module
-        from . import integration
+        from . import trajectory_integrator as integration
         integrator = integration.LienardWiechertIntegrator()
         
         # Phase 1: Static integrator (identical to original)
@@ -183,7 +193,7 @@ class SelfConsistentLienardWiechertIntegrator:
                 # Handle different simulation types (identical to original)
                 if sim_type == SimulationType.SWITCHING_SEMICONDUCTOR:
                     # Import wall functions
-                    from . import integration
+                    from . import trajectory_integrator as integration
                     trajectory_drv_new[i] = integrator.switching_flat(
                         trajectory_new[i], wall_Z, apt_R, z_cutoff
                     )
@@ -192,7 +202,7 @@ class SelfConsistentLienardWiechertIntegrator:
                         wall_Z += cav_spacing
                         
                 elif sim_type == SimulationType.CONDUCTING_PLANE_WITH_APERTURE:
-                    from . import integration
+                    from . import trajectory_integrator as integration
                     trajectory_drv_new[i] = integrator.conducting_flat(
                         trajectory_new[i], wall_Z, apt_R
                     )

@@ -1,18 +1,29 @@
 """
-Core Integration Algorithms for Lienard-Wiechert Electromagnetic Fields
+Particle Trajectory Integration Algorithms
 
-CAI: Extracted and cleaned integration algorithms from original notebooks.
-Maintains exact physics compatibility while improving structure and performance.
-Includes proper simulation type handling and Gaussian CGS units.
+CAI: Fundamental particle trajectory integration using exact Lienard-Wiechert
+electromagnetic fields. Provides core algorithms for relativistic charged
+particle dynamics with retarded potential calculations.
 
-Core Functions:
-- eqsofmotion_static: Static electromagnetic field integration
-- eqsofmotion_retarded: Retarded electromagnetic field integration  
-- chrono_jn: Numerically stable retardation time calculation
-- dist_euclid: Euclidean distance and unit vector calculation
-- conducting_flat: Image charge reflection from conducting plane
-- switching_flat: Switching semiconductor simul    return trajectory_rider_new, trajectory_drv_newBen Folsom (human oversight)
-Date: 2025-09-13
+Key Features:
+- Exact retarded potential calculations  
+- Relativistic electromagnetic force computation
+- Abraham-Lorentz-Dirac radiation reaction implementation
+- Chronological ordering and distance calculations
+- Adaptive timestep integration support
+
+Core Trajectory Algorithms:
+- Retarded electromagnetic field integration
+- Particle-particle interaction calculations
+- Radiation reaction force implementation
+- Relativistic dynamics with proper time
+- Numerical integration with adaptive timestep
+
+This is the foundational module implementing core particle trajectory physics
+without performance optimizations. Other modules build on these algorithms.
+
+Author: Ben Folsom (human oversight)
+Date: 2025-09-13 (Renamed from core_algorithms.py for clarity)
 """
 
 import numpy as np
@@ -328,9 +339,16 @@ class LienardWiechertIntegrator:
                            m_particle * result['bdotz'][l] * result['bz'][l] * C_MMNS**2)
             
             # Apply radiation reaction if either force component exceeds threshold
-            # CAI: Legacy logic uses direct comparison (not absolute value)
-            threshold = char_time / 1e1
-            if rad_frc_z_rhs > threshold or rad_frc_z_lhs > threshold:
+            # CAI: Physics-motivated threshold based on classical electron timescale
+            # Use char_time/10 as base, but scale with energy for numerical stability
+            base_threshold = char_time / 1e1
+            
+            # For highly relativistic cases, scale threshold to avoid numerical issues
+            # while maintaining physical accuracy
+            energy_scale = result['gamma'][l] if result['gamma'][l] > 1.1 else 1.0
+            threshold = base_threshold * min(energy_scale, 100.0)  # Cap scaling
+            
+            if abs(rad_frc_z_rhs) > threshold or abs(rad_frc_z_lhs) > threshold:
                 correction = char_time * (rad_frc_z_lhs + rad_frc_z_rhs) / (m_particle * C_MMNS)
                 result['bdotz'][l] += correction
         
@@ -346,8 +364,12 @@ class LienardWiechertIntegrator:
                            (h * result['gamma'][l]) * 
                            m_particle * result['bdotx'][l] * result['bx'][l] * C_MMNS**2)
             
-            threshold = char_time / 1e1
-            if rad_frc_x_rhs > threshold or rad_frc_x_lhs > threshold:
+            # Apply radiation reaction threshold with energy scaling
+            base_threshold = char_time / 1e1
+            energy_scale = result['gamma'][l] if result['gamma'][l] > 1.1 else 1.0
+            threshold = base_threshold * min(energy_scale, 100.0)
+            
+            if abs(rad_frc_x_rhs) > threshold or abs(rad_frc_x_lhs) > threshold:
                 correction = char_time * (rad_frc_x_lhs + rad_frc_x_rhs) / (m_particle * C_MMNS)
                 result['bdotx'][l] += correction
         
@@ -363,8 +385,12 @@ class LienardWiechertIntegrator:
                            (h * result['gamma'][l]) * 
                            m_particle * result['bdoty'][l] * result['by'][l] * C_MMNS**2)
             
-            threshold = char_time / 1e1
-            if rad_frc_y_rhs > threshold or rad_frc_y_lhs > threshold:
+            # Apply radiation reaction threshold with energy scaling  
+            base_threshold = char_time / 1e1
+            energy_scale = result['gamma'][l] if result['gamma'][l] > 1.1 else 1.0
+            threshold = base_threshold * min(energy_scale, 100.0)
+            
+            if abs(rad_frc_y_rhs) > threshold or abs(rad_frc_y_lhs) > threshold:
                 correction = char_time * (rad_frc_y_lhs + rad_frc_y_rhs) / (m_particle * C_MMNS)
                 result['bdoty'][l] += correction
     

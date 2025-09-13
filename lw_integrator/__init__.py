@@ -32,7 +32,7 @@ __author__ = "Ben Folsom"
 __email__ = "ben.folsom@maxlab.lu.se"
 
 # Core imports for easy access
-from .core.integrator import (
+from .core.unified_interface import (
     LienardWiechertIntegrator, 
     create_integrator,
     get_available_implementations,
@@ -40,12 +40,12 @@ from .core.integrator import (
     NUMBA_AVAILABLE
 )
 from .core.adaptive_timestep import AdaptiveTimestepController
-from .core.self_consistent_integrator import SelfConsistentLienardWiechertIntegrator, self_consistent_retarded_integrator
+from .core.self_consistent_fields import SelfConsistentLienardWiechertIntegrator, self_consistent_retarded_integrator
 
-# Legacy imports (for direct access to specific implementations)
-from .core.integration import LienardWiechertIntegrator as StandardLienardWiechertIntegrator
+# Direct implementation access (for advanced users)
+from .core.trajectory_integrator import LienardWiechertIntegrator as TrajectoryLienardWiechertIntegrator
 try:
-    from .core.optimized_integration import OptimizedLienardWiechertIntegrator
+    from .core.performance import OptimizedLienardWiechertIntegrator
 except ImportError:
     OptimizedLienardWiechertIntegrator = None  
 
@@ -58,7 +58,7 @@ from .physics.simulation_types import SimulationType, SimulationConfig, create_s
 
 # Convenience aliases
 LWIntegrator = LienardWiechertIntegrator  # Unified interface
-StandardLWIntegrator = StandardLienardWiechertIntegrator  # Direct standard access
+TrajectoryLWIntegrator = TrajectoryLienardWiechertIntegrator  # Direct trajectory access
 OptimizedLWIntegrator = OptimizedLienardWiechertIntegrator  # Direct optimized access (if available)
 SelfConsistentLWIntegrator = SelfConsistentLienardWiechertIntegrator
 
@@ -71,13 +71,10 @@ __all__ = [
     "create_integrator", "get_available_implementations", "print_implementation_info",
     
     # Direct implementation access
-    "StandardLienardWiechertIntegrator", "StandardLWIntegrator",  # Always available
+    "TrajectoryLienardWiechertIntegrator", "TrajectoryLWIntegrator",  # Always available
     "OptimizedLienardWiechertIntegrator", "OptimizedLWIntegrator",  # If Numba available
     "SelfConsistentLienardWiechertIntegrator", "SelfConsistentLWIntegrator",
     "AdaptiveTimestepController",
-    
-    # Legacy functions
-    "self_consistent_retarded_integrator",
     
     # Simulation configuration
     "SimulationType", "SimulationConfig", "create_simulation_config",

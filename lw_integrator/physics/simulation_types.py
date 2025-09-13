@@ -233,27 +233,10 @@ def get_default_config(sim_type: SimulationType) -> SimulationConfig:
         raise ValueError(f"Unknown simulation type: {sim_type}")
 
 
-# Legacy support functions for backward compatibility
-def get_simulation_type_name(sim_type: Union[SimulationType, int]) -> str:
-    """Get human-readable name for simulation type (legacy support)."""
-    if isinstance(sim_type, int):
-        sim_type = SimulationType(sim_type)
-    return str(sim_type)
-
-
-def is_wall_simulation(sim_type: Union[SimulationType, int]) -> bool:
-    """Check if simulation type involves wall interactions (legacy support)."""
-    if isinstance(sim_type, int):
-        sim_type = SimulationType(sim_type)
-    return sim_type.has_wall_interactions
-
-
 # Export commonly used types and functions
 __all__ = [
     'SimulationType',
     'SimulationConfig', 
     'create_simulation_config',
-    'get_default_config',
-    'get_simulation_type_name',
-    'is_wall_simulation'
+    'get_default_config'
 ]

@@ -1,35 +1,51 @@
 """
-Integrated Lienard-Wiechert Core Module
+Unified Electromagnetic Field Integration Interface
 
-CAI: Unified integration interface with automatic fallback between optimized
-and standard implementations. Provides clean API with performance optimization
-when available.
+CAI: Main entry point for electromagnetic field simulations with automatic
+optimization selection and graceful fallback between implementations.
+Provides a clean, consistent API regardless of which backend is used.
 
 Implementation Hierarchy:
-1. StandardLienardWiechertIntegrator (base implementation)
-2. OptimizedLienardWiechertIntegrator (if Numba available) 
-3. Unified API that delegates to the standard implementation for compatibility
+1. Core algorithms (always available)
+2. Performance optimization (if Numba available) 
+3. Enhanced physics accuracy (when precision is critical)
+4. Unified interface (auto-selection and compatibility)
+
+Key Features:
+- Automatic performance optimization selection
+- Graceful fallback when dependencies unavailable
+- 100% API compatibility through inheritance
+- Real-time implementation reporting
+- Clean constructor interface
+
+Usage Patterns:
+- Auto-optimizing: `LienardWiechertIntegrator()`
+- Force standard: `LienardWiechertIntegrator(use_optimized=False)`
+- Check implementation: `integrator.implementation_type`
+
+This module provides the recommended interface for all electromagnetic
+field simulations, combining ease of use with optimal performance.
 
 Author: Ben Folsom (human oversight)  
-Date: 2025-09-13
+Date: 2025-09-13 (Renamed from integrator.py)
 """
 
 import warnings
 from typing import Optional, Dict, Any
 
 # Standard implementation (always available)
-from .integration import LienardWiechertIntegrator as StandardLienardWiechertIntegrator
+from .trajectory_integrator import LienardWiechertIntegrator as TrajectoryLienardWiechertIntegrator
 
 # Try to import optimized version
 try:
-    from .optimized_integration import OptimizedLienardWiechertIntegrator
+    from .performance import OptimizedLienardWiechertIntegrator
     NUMBA_AVAILABLE = True
 except ImportError:
     OptimizedLienardWiechertIntegrator = None
     NUMBA_AVAILABLE = False
 
 
-class LienardWiechertIntegrator(StandardLienardWiechertIntegrator):
+class LienardWiechertIntegrator(TrajectoryLienardWiechertIntegrator):
     """
     Unified Lienard-Wiechert electromagnetic field integrator.
     
@@ -158,10 +174,10 @@ def print_implementation_info():
         print(f"  # Install numba for performance: pip install numba")
 
 
-# Legacy compatibility - export both standard and optimized if available
+# Legacy compatibility - export both trajectory and optimized if available
 __all__ = [
     "LienardWiechertIntegrator",
-    "StandardLienardWiechertIntegrator", 
+    "TrajectoryLienardWiechertIntegrator", 
     "create_integrator",
     "get_available_implementations",
     "print_implementation_info",

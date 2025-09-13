@@ -180,45 +180,6 @@ def test_self_consistent_integrator():
         return False
 
 
-def test_legacy_compatibility():
-    """Test that legacy functions still work with new types."""
-    print("\n🔧 Testing legacy compatibility...")
-    
-    try:
-        from lw_integrator import self_consistent_retarded_integrator, SimulationType
-        from lw_integrator.physics.constants import C_MMNS
-        
-        # Test that the convenience function exists and can be called with new types
-        # (We won't run a full simulation, just test the interface)
-        
-        # Create dummy particle states
-        init_rider = {
-            'x': np.array([0.0]), 'y': np.array([0.0]), 'z': np.array([1e-3]),
-            'vx': np.array([0.0]), 'vy': np.array([0.0]), 'vz': np.array([0.1*C_MMNS]),
-            'gamma': np.array([1.005])  # Slightly relativistic
-        }
-        init_driver = {
-            'x': np.array([0.0]), 'y': np.array([0.0]), 'z': np.array([0.0]),
-            'vx': np.array([0.0]), 'vy': np.array([0.0]), 'vz': np.array([0.0]),
-            'gamma': np.array([1.0])
-        }
-        
-        # Test that function accepts SimulationType enum
-        # (just verify the interface, don't run full integration)
-        try:
-            # This would run if we had more time, but just test interface for now
-            print(f"   Legacy function accepts SimulationType: {SimulationType.FREE_PARTICLE_BUNCHES}")
-            print("✅ Legacy compatibility maintained!")
-            return True
-        except Exception as e:
-            print(f"⚠️  Legacy function interface issue: {e}")
-            return True  # Still pass since this is just interface testing
-            
-    except Exception as e:
-        print(f"❌ Legacy compatibility test failed: {e}")
-        return False
-
-
 def main():
     """Run all tests and report results."""
     print("=" * 60)
@@ -230,8 +191,7 @@ def main():
         test_simulation_types, 
         test_simulation_config,
         test_gaussian_units,
-        test_self_consistent_integrator,
-        test_legacy_compatibility
+        test_self_consistent_integrator
     ]
     
     results = []

@@ -69,37 +69,7 @@ class ParticleEnsemble:
             n_particles, dtype=dtype
         )  # Radiation characteristic time
 
-    @property
-    def x(self) -> np.ndarray:
-        """X coordinates (legacy interface compatibility)."""
-        return self.positions[:, 0]
-
-    @x.setter
-    def x(self, values: np.ndarray):
-        """Set X coordinates."""
-        self.positions[:, 0] = values
-
-    @property
-    def y(self) -> np.ndarray:
-        """Y coordinates (legacy interface compatibility)."""
-        return self.positions[:, 1]
-
-    @y.setter
-    def y(self, values: np.ndarray):
-        """Set Y coordinates."""
-        self.positions[:, 1] = values
-
-    @property
-    def z(self) -> np.ndarray:
-        """Z coordinates (legacy interface compatibility)."""
-        return self.positions[:, 2]
-
-    @z.setter
-    def z(self, values: np.ndarray):
-        """Set Z coordinates."""
-        self.positions[:, 2] = values
-
-    # CAI: Momentum component properties for legacy compatibility
+    # CAI: Momentum component properties for physics calculations
     @property
     def Px(self) -> np.ndarray:
         """X momentum component."""
@@ -202,37 +172,6 @@ class ParticleEnsemble:
         """Set Z acceleration component."""
         self.accelerations[:, 2] = values
 
-    # CAI: Utility properties
-    @property
-    def q(self) -> np.ndarray:
-        """Particle charges (legacy alias)."""
-        return self.charge
-
-    @q.setter
-    def q(self, values: np.ndarray):
-        """Set particle charges."""
-        self.charge = values
-
-    @property
-    def m(self) -> np.ndarray:
-        """Particle masses (legacy alias)."""
-        return self.mass
-
-    @m.setter
-    def m(self, values: np.ndarray):
-        """Set particle masses."""
-        self.mass = values
-
-    @property
-    def t(self) -> np.ndarray:
-        """Time coordinates (legacy alias)."""
-        return self.time
-
-    @t.setter
-    def t(self, values: np.ndarray):
-        """Set time coordinates."""
-        self.time = values
-
     def update_gamma(self) -> None:
         """
         Update Lorentz factors based on current velocities.
@@ -270,53 +209,6 @@ class ParticleEnsemble:
         new_ensemble.time = self.time.copy()
         new_ensemble.char_time = self.char_time.copy()
         return new_ensemble
-
-    def to_legacy_dict(self) -> dict:
-        """
-        Convert to legacy dictionary format for compatibility.
-
-        CLAI: Temporary bridge for migrating from old codebase.
-        This method will be deprecated once migration is complete.
-
-        Returns:
-            Dictionary with same structure as original implementation
-        """
-        return {
-            "x": self.x,
-            "y": self.y,
-            "z": self.z,
-            "t": self.t,
-            "Px": self.Px,
-            "Py": self.Py,
-            "Pz": self.Pz,
-            "Pt": self.Pt,
-            "bx": self.bx,
-            "by": self.by,
-            "bz": self.bz,
-            "bdotx": self.bdotx,
-            "bdoty": self.bdoty,
-            "bdotz": self.bdotz,
-            "gamma": self.gamma,
-            "q": self.q,
-            "m": self.m,
-            "char_time": self.char_time,
-        }
-
-    @classmethod
-    def from_legacy_dict(cls, data: dict) -> "ParticleEnsemble":
-        """
-        Create ParticleEnsemble from legacy dictionary format.
-
-        CLAI: Migration helper for converting old data structures.
-
-        Args:
-            data: Dictionary with legacy particle data format
-
-        Returns:
-            New ParticleEnsemble with converted data
-        """
-        n_particles = len(data["x"])
-        ensemble = cls(n_particles)
 
         # CAI: Copy position data
         ensemble.x = data["x"]
