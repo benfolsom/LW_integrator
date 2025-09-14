@@ -2,16 +2,16 @@
 Core module for particle dynamics and simulation infrastructure.
 
 Contains fundamental data structures and simulation algorithms
-including the production-ready Gaussian self-consistent integrator.
+including electromagnetic field integration and self-consistent calculations.
 
-Now organized with clear, distinct module names:
-- core_algorithms.py: Fundamental electromagnetic physics
-- performance.py: JIT-optimized high-performance implementations
-- physics_enhanced.py: Self-consistent enhanced accuracy
+Current module organization:
+- trajectory_integrator.py: Core Lienard-Wiechert electromagnetic physics
+- performance.py: JIT-optimized high-performance implementations  
+- self_consistent_fields.py: Enhanced accuracy with self-consistent calculations
 - unified_interface.py: Main entry point with auto-optimization
 
 Author: Ben Folsom (human oversight)  
-Date: 2025-09-13 (Reorganized with clear module names)
+Date: 2025-09-14 (Cleaned up legacy references)
 """
 
 # New clear module structure

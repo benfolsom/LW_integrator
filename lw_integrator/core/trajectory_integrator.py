@@ -419,66 +419,12 @@ class LienardWiechertIntegrator:
         result = {key: np.copy(vector[key]) for key in vector.keys() if isinstance(vector[key], np.ndarray)}
         result.update({key: vector[key] for key in ['q', 'char_time', 'm'] if key in vector})
         
-        n_particles = len(vector['x'])
-        
-        for i in range(n_particles):
-            nhat = self.dist_euclid(vector, vector_ext, i)
-            
-            for j in range(len(vector_ext['x'])):
-                # Skip self-interaction
-                if i == j and vector is vector_ext:
-                    continue
-                    
-                # Skip if outside aperture
-                if nhat['R'][j] > apt_R:
-                    continue
-                
-                # Skip if particles are too close (numerical stability)
-                if nhat['R'][j] < self.epsilon:
-                    continue
-                
-                # Extract particle states
-                source_particle = {
-                    'q': vector['q'][i],
-                    'gamma': vector['gamma'][i],
-                    'bx': vector['bx'][i], 'by': vector['by'][i], 'bz': vector['bz'][i]
-                }
-                
-                external_particle = {
-                    'q': vector_ext['q'][j],
-                    'gamma': vector_ext['gamma'][j],
-                    'bx': vector_ext['bx'][j], 'by': vector_ext['by'][j], 'bz': vector_ext['bz'][j],
-                    'bdotx': vector_ext['bdotx'][j], 'bdoty': vector_ext['bdoty'][j], 'bdotz': vector_ext['bdotz'][j]
-                }
-                
-                # Calculate retardation factor
-                beta_ext = np.array([vector_ext['bx'][j], vector_ext['by'][j], vector_ext['bz'][j]])
-                nhat_vec = np.array([nhat['nx'][j], nhat['ny'][j], nhat['nz'][j]])
-                k_factor = 1 - np.dot(beta_ext, nhat_vec)
-                
-                # Skip if k_factor is too small (numerical stability)
-                if abs(k_factor) < self.epsilon:
-                    continue
-                
-                # Calculate electromagnetic force
-                nhat_single = {'nx': nhat['nx'][j], 'ny': nhat['ny'][j], 'nz': nhat['nz'][j], 'R': nhat['R'][j]}
-                dPx, dPy, dPz, dPt = self.calculate_electromagnetic_force(
-                    h, source_particle, external_particle, nhat_single, k_factor
-                )
-                
-                # Update momentum
-                result['Px'][i] += dPx
-                result['Py'][i] += dPy  
-                result['Pz'][i] += dPz
-                result['Pt'][i] += dPt
-        
-        # Apply radiation reaction force (Abraham-Lorentz-Dirac formula)  
-        # CAI: Implements relativistic radiation reaction for static case
-        for i in range(n_particles):
-            if 'char_time' in vector and 'bdotx' in result and 'bdoty' in result and 'bdotz' in result:
-                self._apply_radiation_reaction(h, vector, result, i)
-                
-        return result
+        # Use unified implementation
+        return self._eqsofmotion_unified(
+            h, use_retardation=False,
+            vector=vector, vector_ext=vector_ext,
+            apt_R=apt_R, sim_type=sim_type
+        )
     
     def eqsofmotion_retarded(self, h: float,
                            trajectory: List[Dict[str, np.ndarray]],
@@ -503,23 +449,77 @@ class LienardWiechertIntegrator:
         Returns:
             Updated particle state with retardation effects
         """
-        # Initialize result
-        traj = trajectory[i_traj]
-        result = {key: np.copy(traj[key]) for key in traj.keys() if isinstance(traj[key], np.ndarray)}
-        result.update({key: traj[key] for key in ['q', 'char_time', 'm'] if key in traj})
+        return self._eqsofmotion_unified(
+            h, use_retardation=True,
+            trajectory=trajectory, trajectory_ext=trajectory_ext, i_traj=i_traj,
+            apt_R=apt_R, sim_type=sim_type
+        )
+
+    def _eqsofmotion_unified(self, h: float,
+                           use_retardation: bool,
+                           **kwargs) -> Dict[str, np.ndarray]:
+        """
+        Unified electromagnetic field integration step.
         
-        n_particles = len(traj['x'])
+        CAI: Unified implementation supporting both static and retarded field calculations.
+        Eliminates code duplication between static/retarded methods.
         
+        Args:
+            h: Integration timestep
+            use_retardation: If True, uses retarded field calculations
+            **kwargs: Method-specific arguments (vector/vector_ext for static,
+                     trajectory/trajectory_ext/i_traj for retarded)
+            
+        Returns:
+            Updated particle state
+        """
+        # Parse arguments based on integration type
+        if use_retardation:
+            trajectory = kwargs['trajectory']
+            trajectory_ext = kwargs['trajectory_ext']
+            i_traj = kwargs['i_traj']
+            apt_R = kwargs.get('apt_R', np.inf)
+            sim_type = kwargs.get('sim_type', 1)
+            
+            # Initialize result from current trajectory
+            traj = trajectory[i_traj]
+            result = {key: np.copy(traj[key]) for key in traj.keys() if isinstance(traj[key], np.ndarray)}
+            result.update({key: traj[key] for key in ['q', 'char_time', 'm'] if key in traj})
+            current_data = traj
+            
+        else:
+            vector = kwargs['vector']
+            vector_ext = kwargs['vector_ext']
+            apt_R = kwargs.get('apt_R', np.inf)
+            sim_type = kwargs.get('sim_type', 1)
+            
+            # Initialize result from current vector
+            result = {key: np.copy(vector[key]) for key in vector.keys() if isinstance(vector[key], np.ndarray)}
+            result.update({key: vector[key] for key in ['q', 'char_time', 'm'] if key in vector})
+            current_data = vector
+        
+        n_particles = len(current_data['x'])
+        
+        # Main electromagnetic force calculation loop
         for l in range(n_particles):
-            # Calculate retarded time indices
-            i_new = self.chrono_jn_stable(trajectory, trajectory_ext, i_traj, l)
+            if use_retardation:
+                # Calculate retarded time indices
+                i_new = self.chrono_jn_stable(trajectory, trajectory_ext, i_traj, l)
+                # Calculate retarded distances
+                nhat = self.dist_euclid_ret(trajectory, trajectory_ext, i_traj, l, i_new)
+                ext_data = trajectory_ext
+                ext_indices = i_new
+            else:
+                # Use current distances for static calculation
+                nhat = self.dist_euclid(vector, vector_ext, l)
+                ext_data = [vector_ext]  # Wrap for consistent indexing
+                ext_indices = [0] * len(vector_ext['x'])
             
-            # Calculate retarded distances
-            nhat = self.dist_euclid_ret(trajectory, trajectory_ext, i_traj, l, i_new)
-            
-            for j in range(len(trajectory_ext[0]['x'])):
+            # Force calculation loop over external particles
+            for j in range(len(ext_data[0]['x'])):
                 # Skip self-interaction
-                if l == j and trajectory is trajectory_ext:
+                if l == j and (not use_retardation and vector is vector_ext or 
+                             use_retardation and trajectory is trajectory_ext):
                     continue
                     
                 # Skip if outside aperture
@@ -530,22 +530,20 @@ class LienardWiechertIntegrator:
                 if nhat['R'][j] < self.epsilon:
                     continue
                 
-                # Extract retarded particle states
+                # Extract source particle state
                 source_particle = {
-                    'q': traj['q'][l],
-                    'gamma': traj['gamma'][l],
-                    'bx': traj['bx'][l], 'by': traj['by'][l], 'bz': traj['bz'][l]
+                    'q': current_data['q'][l],
+                    'gamma': current_data['gamma'][l],
+                    'bx': current_data['bx'][l], 'by': current_data['by'][l], 'bz': current_data['bz'][l]
                 }
                 
+                # Extract external particle state (retarded or current)
+                ext_idx = ext_indices[j] if use_retardation else 0
                 external_particle = {
-                    'q': trajectory_ext[i_new[j]]['q'][j],
-                    'gamma': trajectory_ext[i_new[j]]['gamma'][j],
-                    'bx': trajectory_ext[i_new[j]]['bx'][j], 
-                    'by': trajectory_ext[i_new[j]]['by'][j], 
-                    'bz': trajectory_ext[i_new[j]]['bz'][j],
-                    'bdotx': trajectory_ext[i_new[j]]['bdotx'][j], 
-                    'bdoty': trajectory_ext[i_new[j]]['bdoty'][j], 
-                    'bdotz': trajectory_ext[i_new[j]]['bdotz'][j]
+                    'q': ext_data[ext_idx]['q'][j],
+                    'gamma': ext_data[ext_idx]['gamma'][j],
+                    'bx': ext_data[ext_idx]['bx'][j], 'by': ext_data[ext_idx]['by'][j], 'bz': ext_data[ext_idx]['bz'][j],
+                    'bdotx': ext_data[ext_idx]['bdotx'][j], 'bdoty': ext_data[ext_idx]['bdoty'][j], 'bdotz': ext_data[ext_idx]['bdotz'][j]
                 }
                 
                 # Calculate retardation factor
@@ -557,7 +555,7 @@ class LienardWiechertIntegrator:
                 if abs(k_factor) < self.epsilon:
                     continue
                 
-                # Calculate retarded electromagnetic force
+                # Calculate electromagnetic force
                 nhat_single = {'nx': nhat['nx'][j], 'ny': nhat['ny'][j], 'nz': nhat['nz'][j], 'R': nhat['R'][j]}
                 dPx, dPy, dPz, dPt = self.calculate_electromagnetic_force(
                     h, source_particle, external_particle, nhat_single, k_factor
@@ -570,10 +568,9 @@ class LienardWiechertIntegrator:
                 result['Pt'][l] += dPt
         
         # Apply radiation reaction force (Abraham-Lorentz-Dirac formula)
-        # CAI: Implements relativistic radiation reaction when acceleration becomes significant
         for l in range(n_particles):
-            if 'char_time' in traj and 'bdotx' in result and 'bdoty' in result and 'bdotz' in result:
-                self._apply_radiation_reaction(h, traj, result, l)
+            if 'char_time' in current_data and 'bdotx' in result and 'bdoty' in result and 'bdotz' in result:
+                self._apply_radiation_reaction(h, current_data, result, l)
                 
         return result
 
