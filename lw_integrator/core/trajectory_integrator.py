@@ -222,6 +222,52 @@ class LienardWiechertIntegrator:
         Returns:
             (dPx, dPy, dPz, dPt) - 4-momentum changes
         """
+        # Extract and organize calculation data
+        q_source, q_ext, gamma_source, gamma_ext, beta_source, beta_ext, bdot_ext, nhat_vec, R = \
+            self._extract_force_calculation_data(source_particle, external_particle, nhat)
+        
+        # Calculate relativistic invariants
+        betas_scalar, bdot_scalar_ext, v_betas_scalar, v_beta_dot_mixed_scalar = \
+            self._calculate_relativistic_invariants(gamma_source, gamma_ext, beta_source, beta_ext, bdot_ext)
+        
+        # Common factor for all force components
+        common_factor = (h * q_source * q_ext / 
+                        (k_factor**3 * C_MMNS**3 * R**2 * gamma_ext**3))
+        
+        # Calculate spatial force components (x, y, z)
+        dPx = self._calculate_force_component(0, common_factor, beta_ext, v_betas_scalar,
+                                            v_beta_dot_mixed_scalar, bdot_ext, nhat_vec,
+                                            k_factor, gamma_ext, R, bdot_scalar_ext)
+        
+        dPy = self._calculate_force_component(1, common_factor, beta_ext, v_betas_scalar,
+                                            v_beta_dot_mixed_scalar, bdot_ext, nhat_vec,
+                                            k_factor, gamma_ext, R, bdot_scalar_ext)
+        
+        dPz = self._calculate_force_component(2, common_factor, beta_ext, v_betas_scalar,
+                                            v_beta_dot_mixed_scalar, bdot_ext, nhat_vec,
+                                            k_factor, gamma_ext, R, bdot_scalar_ext)
+        
+        # Calculate energy component
+        dPt = self._calculate_energy_component(common_factor, v_beta_dot_mixed_scalar,
+                                             v_betas_scalar, k_factor, gamma_ext,
+                                             R, bdot_scalar_ext)
+        
+        return dPx, dPy, dPz, dPt
+
+    def _extract_force_calculation_data(self, source_particle: Dict[str, Any],
+                                       external_particle: Dict[str, Any], 
+                                       nhat: Dict[str, float]) -> Tuple[float, float, float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+        """
+        Extract and organize data needed for electromagnetic force calculations.
+        
+        Args:
+            source_particle: Source particle state
+            external_particle: External particle state  
+            nhat: Unit vector and distance data
+            
+        Returns:
+            (q_source, q_ext, gamma_source, gamma_ext, beta_source, beta_ext, bdot_ext, nhat_vec, R)
+        """
         # Extract particle properties
         q_source = source_particle['q']
         q_ext = external_particle['q']
@@ -235,10 +281,28 @@ class LienardWiechertIntegrator:
         # Acceleration vectors
         bdot_ext = np.array([external_particle['bdotx'], external_particle['bdoty'], external_particle['bdotz']])
         
-        # Unit vector
+        # Unit vector and distance
         nhat_vec = np.array([nhat['nx'], nhat['ny'], nhat['nz']])
         R = nhat['R']
         
+        return q_source, q_ext, gamma_source, gamma_ext, beta_source, beta_ext, bdot_ext, nhat_vec, R
+
+    def _calculate_relativistic_invariants(self, gamma_source: float, gamma_ext: float,
+                                         beta_source: np.ndarray, beta_ext: np.ndarray,
+                                         bdot_ext: np.ndarray) -> Tuple[float, float, float, float]:
+        """
+        Calculate relativistic invariants needed for force computation.
+        
+        Args:
+            gamma_source: Source particle Lorentz factor
+            gamma_ext: External particle Lorentz factor
+            beta_source: Source particle velocity vector
+            beta_ext: External particle velocity vector
+            bdot_ext: External particle acceleration vector
+            
+        Returns:
+            (betas_scalar, bdot_scalar_ext, v_betas_scalar, v_beta_dot_mixed_scalar)
+        """
         # Scalar products
         betas_scalar = np.dot(beta_ext, beta_source)
         bdot_scalar_ext = np.dot(beta_ext, bdot_ext)
@@ -252,43 +316,64 @@ class LienardWiechertIntegrator:
                                                                 bdot_ext * C_MMNS * gamma_ext**2 +
                                                                 beta_ext * bdot_scalar_ext * C_MMNS * gamma_ext**4))
         
-        # Common factor
-        common_factor = (h * q_source * q_ext / 
-                        (k_factor**3 * C_MMNS**3 * R**2 * gamma_ext**3))
+        return betas_scalar, bdot_scalar_ext, v_betas_scalar, v_beta_dot_mixed_scalar
+
+    def _calculate_force_component(self, component_idx: int, common_factor: float,
+                                  beta_ext: np.ndarray, v_betas_scalar: float,
+                                  v_beta_dot_mixed_scalar: float, bdot_ext: np.ndarray,
+                                  nhat_vec: np.ndarray, k_factor: float, gamma_ext: float,
+                                  R: float, bdot_scalar_ext: float) -> float:
+        """
+        Calculate electromagnetic force component for a specific spatial direction.
         
-        # Force components
-        dPx = common_factor * (
-            -beta_ext[0] * v_betas_scalar * k_factor * C_MMNS * gamma_ext**2 +
-            v_beta_dot_mixed_scalar * k_factor * gamma_ext * nhat_vec[0] * R +
-            gamma_ext**2 * nhat_vec[0]**2 * R * v_betas_scalar * 
-            (bdot_ext[0] + bdot_ext[0] * bdot_scalar_ext * gamma_ext**2) +
-            v_betas_scalar * C_MMNS * nhat_vec[0]
+        Args:
+            component_idx: Spatial component index (0=x, 1=y, 2=z)
+            common_factor: Common multiplicative factor
+            beta_ext: External particle velocity vector
+            v_betas_scalar: Relativistic velocity scalar invariant
+            v_beta_dot_mixed_scalar: Relativistic acceleration scalar invariant
+            bdot_ext: External particle acceleration vector
+            nhat_vec: Unit direction vector
+            k_factor: Retardation factor
+            gamma_ext: External particle Lorentz factor
+            R: Distance
+            bdot_scalar_ext: External particle acceleration scalar
+            
+        Returns:
+            Force component value
+        """
+        return common_factor * (
+            -beta_ext[component_idx] * v_betas_scalar * k_factor * C_MMNS * gamma_ext**2 +
+            v_beta_dot_mixed_scalar * k_factor * gamma_ext * nhat_vec[component_idx] * R +
+            gamma_ext**2 * nhat_vec[component_idx]**2 * R * v_betas_scalar * 
+            (bdot_ext[component_idx] + bdot_ext[component_idx] * bdot_scalar_ext * gamma_ext**2) +
+            v_betas_scalar * C_MMNS * nhat_vec[component_idx]
         )
+
+    def _calculate_energy_component(self, common_factor: float, v_beta_dot_mixed_scalar: float,
+                                   v_betas_scalar: float, k_factor: float, gamma_ext: float,
+                                   R: float, bdot_scalar_ext: float) -> float:
+        """
+        Calculate electromagnetic force energy component (dPt).
         
-        dPy = common_factor * (
-            -beta_ext[1] * v_betas_scalar * k_factor * C_MMNS * gamma_ext**2 +
-            v_beta_dot_mixed_scalar * k_factor * gamma_ext * nhat_vec[1] * R +
-            gamma_ext**2 * nhat_vec[1]**2 * R * v_betas_scalar * 
-            (bdot_ext[1] + bdot_ext[1] * bdot_scalar_ext * gamma_ext**2) +
-            v_betas_scalar * C_MMNS * nhat_vec[1]
-        )
-        
-        dPz = common_factor * (
-            -beta_ext[2] * v_betas_scalar * k_factor * C_MMNS * gamma_ext**2 +
-            v_beta_dot_mixed_scalar * k_factor * gamma_ext * nhat_vec[2] * R +
-            gamma_ext**2 * nhat_vec[2]**2 * R * v_betas_scalar * 
-            (bdot_ext[2] + bdot_ext[2] * bdot_scalar_ext * gamma_ext**2) +
-            v_betas_scalar * C_MMNS * nhat_vec[2]
-        )
-        
-        dPt = common_factor * (
+        Args:
+            common_factor: Common multiplicative factor
+            v_beta_dot_mixed_scalar: Relativistic acceleration scalar invariant
+            v_betas_scalar: Relativistic velocity scalar invariant
+            k_factor: Retardation factor
+            gamma_ext: External particle Lorentz factor
+            R: Distance
+            bdot_scalar_ext: External particle acceleration scalar
+            
+        Returns:
+            Energy component force value
+        """
+        return common_factor * (
             v_beta_dot_mixed_scalar * k_factor * gamma_ext * R -
             v_betas_scalar * k_factor * C_MMNS * gamma_ext**2 -
             bdot_scalar_ext * v_betas_scalar * gamma_ext**4 * R +
             v_betas_scalar * C_MMNS
         )
-        
-        return dPx, dPy, dPz, dPt
     
     def _apply_radiation_reaction(self, h: float, trajectory_data: Dict[str, Any], 
                                 result: Dict[str, np.ndarray], particle_idx: int) -> None:
@@ -473,7 +558,60 @@ class LienardWiechertIntegrator:
         Returns:
             Updated particle state
         """
-        # Parse arguments based on integration type
+        # Parse arguments and initialize result
+        current_data, result, apt_R, sim_type = self._parse_integration_arguments(use_retardation, **kwargs)
+        n_particles = len(current_data['x'])
+        
+        # Main electromagnetic force calculation loop
+        for l in range(n_particles):
+            # Get interaction data (distances, external data, indices)
+            nhat, ext_data, ext_indices = self._get_interaction_data(use_retardation, l, **kwargs)
+            
+            # Force calculation loop over external particles
+            for j in range(len(ext_data[0]['x'])):
+                # Skip interaction if necessary (self-interaction, aperture, numerical issues)
+                if self._should_skip_interaction(l, j, nhat, use_retardation, **kwargs):
+                    continue
+                
+                # Extract particle states for force calculation
+                source_particle, external_particle = self._extract_particle_states(
+                    l, j, current_data, ext_data, ext_indices, use_retardation)
+                
+                # Calculate retardation factor
+                k_factor = self._calculate_retardation_factor(external_particle, nhat, j)
+                
+                # Skip if k_factor is too small (numerical stability)
+                if abs(k_factor) < self.epsilon:
+                    continue
+                
+                # Calculate electromagnetic force
+                nhat_single = {'nx': nhat['nx'][j], 'ny': nhat['ny'][j], 'nz': nhat['nz'][j], 'R': nhat['R'][j]}
+                dPx, dPy, dPz, dPt = self.calculate_electromagnetic_force(
+                    h, source_particle, external_particle, nhat_single, k_factor
+                )
+                
+                # Update momentum
+                result['Px'][l] += dPx
+                result['Py'][l] += dPy
+                result['Pz'][l] += dPz
+                result['Pt'][l] += dPt
+        
+        # Apply radiation reaction force (Abraham-Lorentz-Dirac formula)
+        self._apply_radiation_reaction_all_particles(h, current_data, result)
+                
+        return result
+
+    def _parse_integration_arguments(self, use_retardation: bool, **kwargs) -> Tuple[Dict[str, Any], Dict[str, Any], float, int]:
+        """
+        Parse integration arguments based on integration type.
+        
+        Args:
+            use_retardation: If True, parse retarded arguments; else static
+            **kwargs: Integration-specific arguments
+            
+        Returns:
+            (current_data, result, apt_R, sim_type)
+        """
         if use_retardation:
             trajectory = kwargs['trajectory']
             trajectory_ext = kwargs['trajectory_ext']
@@ -497,82 +635,147 @@ class LienardWiechertIntegrator:
             result = {key: np.copy(vector[key]) for key in vector.keys() if isinstance(vector[key], np.ndarray)}
             result.update({key: vector[key] for key in ['q', 'char_time', 'm'] if key in vector})
             current_data = vector
-        
-        n_particles = len(current_data['x'])
-        
-        # Main electromagnetic force calculation loop
-        for l in range(n_particles):
-            if use_retardation:
-                # Calculate retarded time indices
-                i_new = self.chrono_jn_stable(trajectory, trajectory_ext, i_traj, l)
-                # Calculate retarded distances
-                nhat = self.dist_euclid_ret(trajectory, trajectory_ext, i_traj, l, i_new)
-                ext_data = trajectory_ext
-                ext_indices = i_new
-            else:
-                # Use current distances for static calculation
-                nhat = self.dist_euclid(vector, vector_ext, l)
-                ext_data = [vector_ext]  # Wrap for consistent indexing
-                ext_indices = [0] * len(vector_ext['x'])
             
-            # Force calculation loop over external particles
-            for j in range(len(ext_data[0]['x'])):
-                # Skip self-interaction
-                if l == j and (not use_retardation and vector is vector_ext or 
-                             use_retardation and trajectory is trajectory_ext):
-                    continue
-                    
-                # Skip if outside aperture
-                if nhat['R'][j] > apt_R:
-                    continue
-                
-                # Skip if particles are too close (numerical stability)
-                if nhat['R'][j] < self.epsilon:
-                    continue
-                
-                # Extract source particle state
-                source_particle = {
-                    'q': current_data['q'][l],
-                    'gamma': current_data['gamma'][l],
-                    'bx': current_data['bx'][l], 'by': current_data['by'][l], 'bz': current_data['bz'][l]
-                }
-                
-                # Extract external particle state (retarded or current)
-                ext_idx = ext_indices[j] if use_retardation else 0
-                external_particle = {
-                    'q': ext_data[ext_idx]['q'][j],
-                    'gamma': ext_data[ext_idx]['gamma'][j],
-                    'bx': ext_data[ext_idx]['bx'][j], 'by': ext_data[ext_idx]['by'][j], 'bz': ext_data[ext_idx]['bz'][j],
-                    'bdotx': ext_data[ext_idx]['bdotx'][j], 'bdoty': ext_data[ext_idx]['bdoty'][j], 'bdotz': ext_data[ext_idx]['bdotz'][j]
-                }
-                
-                # Calculate retardation factor
-                beta_ext = np.array([external_particle['bx'], external_particle['by'], external_particle['bz']])
-                nhat_vec = np.array([nhat['nx'][j], nhat['ny'][j], nhat['nz'][j]])
-                k_factor = 1 - np.dot(beta_ext, nhat_vec)
-                
-                # Skip if k_factor is too small (numerical stability)
-                if abs(k_factor) < self.epsilon:
-                    continue
-                
-                # Calculate electromagnetic force
-                nhat_single = {'nx': nhat['nx'][j], 'ny': nhat['ny'][j], 'nz': nhat['nz'][j], 'R': nhat['R'][j]}
-                dPx, dPy, dPz, dPt = self.calculate_electromagnetic_force(
-                    h, source_particle, external_particle, nhat_single, k_factor
-                )
-                
-                # Update momentum
-                result['Px'][l] += dPx
-                result['Py'][l] += dPy
-                result['Pz'][l] += dPz
-                result['Pt'][l] += dPt
+        return current_data, result, apt_R, sim_type
+
+    def _get_interaction_data(self, use_retardation: bool, l: int, **kwargs) -> Tuple[Any, Any, List[int]]:
+        """
+        Get interaction data (distances and external particle data) for particle l.
         
-        # Apply radiation reaction force (Abraham-Lorentz-Dirac formula)
+        Args:
+            use_retardation: If True, calculate retarded interactions
+            l: Source particle index
+            **kwargs: Integration-specific arguments
+            
+        Returns:
+            (nhat, ext_data, ext_indices)
+        """
+        if use_retardation:
+            trajectory = kwargs['trajectory']
+            trajectory_ext = kwargs['trajectory_ext']
+            i_traj = kwargs['i_traj']
+            
+            # Calculate retarded time indices
+            i_new = self.chrono_jn_stable(trajectory, trajectory_ext, i_traj, l)
+            # Calculate retarded distances
+            nhat = self.dist_euclid_ret(trajectory, trajectory_ext, i_traj, l, i_new)
+            ext_data = trajectory_ext
+            ext_indices = i_new
+        else:
+            vector = kwargs['vector']
+            vector_ext = kwargs['vector_ext']
+            
+            # Use current distances for static calculation
+            nhat = self.dist_euclid(vector, vector_ext, l)
+            ext_data = [vector_ext]  # Wrap for consistent indexing
+            ext_indices = [0] * len(vector_ext['x'])
+            
+        return nhat, ext_data, ext_indices
+
+    def _should_skip_interaction(self, l: int, j: int, nhat: Dict,  
+                                use_retardation: bool, **kwargs) -> bool:
+        """
+        Determine if particle interaction should be skipped.
+        
+        Args:
+            l: Source particle index
+            j: External particle index
+            nhat: Distance/direction data
+            use_retardation: Integration type flag
+            **kwargs: Integration arguments (including apt_R)
+            
+        Returns:
+            True if interaction should be skipped
+        """
+        apt_R = kwargs.get('apt_R', np.inf)
+        
+        # Skip self-interaction
+        if use_retardation:
+            trajectory = kwargs['trajectory']
+            trajectory_ext = kwargs['trajectory_ext']
+            if l == j and trajectory is trajectory_ext:
+                return True
+        else:
+            vector = kwargs['vector']
+            vector_ext = kwargs['vector_ext']
+            if l == j and vector is vector_ext:
+                return True
+                
+        # Skip if outside aperture
+        if nhat['R'][j] > apt_R:
+            return True
+        
+        # Skip if particles are too close (numerical stability)
+        if nhat['R'][j] < self.epsilon:
+            return True
+            
+        return False
+
+    def _extract_particle_states(self, l: int, j: int, current_data: Dict, 
+                                ext_data: Any, ext_indices: List[int], 
+                                use_retardation: bool) -> Tuple[Dict, Dict]:
+        """
+        Extract source and external particle states for force calculation.
+        
+        Args:
+            l: Source particle index
+            j: External particle index
+            current_data: Current particle data
+            ext_data: External particle data (list for retarded, dict for static)
+            ext_indices: External particle time indices
+            use_retardation: Integration type flag
+            
+        Returns:
+            (source_particle, external_particle)
+        """
+        # Extract source particle state
+        source_particle = {
+            'q': current_data['q'][l],
+            'gamma': current_data['gamma'][l],
+            'bx': current_data['bx'][l], 'by': current_data['by'][l], 'bz': current_data['bz'][l]
+        }
+        
+        # Extract external particle state (retarded or current)
+        ext_idx = ext_indices[j] if use_retardation else 0
+        external_particle = {
+            'q': ext_data[ext_idx]['q'][j],
+            'gamma': ext_data[ext_idx]['gamma'][j],
+            'bx': ext_data[ext_idx]['bx'][j], 'by': ext_data[ext_idx]['by'][j], 'bz': ext_data[ext_idx]['bz'][j],
+            'bdotx': ext_data[ext_idx]['bdotx'][j], 'bdoty': ext_data[ext_idx]['bdoty'][j], 'bdotz': ext_data[ext_idx]['bdotz'][j]
+        }
+        
+        return source_particle, external_particle
+
+    def _calculate_retardation_factor(self, external_particle: Dict, nhat: Dict, j: int) -> float:
+        """
+        Calculate retardation factor k = 1 - β·n̂.
+        
+        Args:
+            external_particle: External particle state
+            nhat: Distance/direction data
+            j: External particle index
+            
+        Returns:
+            Retardation factor k
+        """
+        beta_ext = np.array([external_particle['bx'], external_particle['by'], external_particle['bz']])
+        nhat_vec = np.array([nhat['nx'][j], nhat['ny'][j], nhat['nz'][j]])
+        k_factor = 1 - np.dot(beta_ext, nhat_vec)
+        return k_factor
+
+    def _apply_radiation_reaction_all_particles(self, h: float, current_data: Dict, result: Dict) -> None:
+        """
+        Apply radiation reaction force to all particles.
+        
+        Args:
+            h: Integration timestep
+            current_data: Current particle data
+            result: Result data to update
+        """
+        n_particles = len(current_data['x'])
         for l in range(n_particles):
             if 'char_time' in current_data and 'bdotx' in result and 'bdoty' in result and 'bdotz' in result:
                 self._apply_radiation_reaction(h, current_data, result, l)
-                
-        return result
 
 
 def static_integrator(steps_init: int, h_step: float, init_rider: Dict[str, Any], 
