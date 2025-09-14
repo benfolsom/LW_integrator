@@ -238,6 +238,17 @@ class OptimizedLienardWiechertIntegrator:
         """
         n_particles = len(vector['x'])
         
+        # Handle both scalar and array inputs for charges and masses
+        if np.isscalar(vector['q']) or (hasattr(vector['q'], '__len__') and len(vector['q']) == 1):
+            charges = np.full(n_particles, vector['q'])
+        else:
+            charges = np.asarray(vector['q'])
+            
+        if np.isscalar(vector['m']) or (hasattr(vector['m'], '__len__') and len(vector['m']) == 1):
+            masses = np.full(n_particles, vector['m'])
+        else:
+            masses = np.asarray(vector['m'])
+        
         return {
             'positions': np.column_stack([vector['x'], vector['y'], vector['z']]),  # (N, 3)
             'momenta': np.column_stack([vector['Px'], vector['Py'], vector['Pz']]),  # (N, 3)
@@ -245,8 +256,8 @@ class OptimizedLienardWiechertIntegrator:
             'accelerations': np.column_stack([vector['bdotx'], vector['bdoty'], vector['bdotz']]),  # (N, 3)
             'gamma_factors': vector['gamma'],  # (N,)
             'energies': vector['Pt'],  # (N,)
-            'charges': np.full(n_particles, vector['q']),  # (N,)
-            'masses': np.full(n_particles, vector['m'])  # (N,)
+            'charges': charges,  # (N,)
+            'masses': masses  # (N,)
         }
     
     def compute_interaction_mask(self, distances: np.ndarray,
@@ -274,6 +285,116 @@ class OptimizedLienardWiechertIntegrator:
             mask &= (external_indices != source_idx)
             
         return mask
+
+    def _calculate_vectorized_distances(self, source_pos: np.ndarray, 
+                                       external_positions: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calculate distances and unit vectors efficiently.
+        
+        Args:
+            source_pos: Source particle position (3,)
+            external_positions: External particle positions (N, 3)
+            
+        Returns:
+            (distances, unit_vectors) - shapes (N,) and (N, 3)
+        """
+        if self.enable_jit:
+            return vectorized_distance_calculation(
+                source_pos, external_positions, self.epsilon
+            )
+        else:
+            # Fallback non-JIT implementation
+            sep_vectors = source_pos[np.newaxis, :] - external_positions
+            distances = np.linalg.norm(sep_vectors, axis=1)
+            unit_vectors = np.zeros_like(sep_vectors)
+            valid = distances > self.epsilon
+            unit_vectors[valid] = sep_vectors[valid] / distances[valid, np.newaxis]
+            unit_vectors[~valid, 2] = 1.0  # Default z-direction
+            return distances, unit_vectors
+
+    def _calculate_vectorized_forces(self, h: float, source_data: Dict, external_data: Dict,
+                                   distances: np.ndarray, unit_vectors: np.ndarray,
+                                   k_factors: np.ndarray, interaction_mask: np.ndarray,
+                                   source_idx: int) -> Tuple[float, float, float, float]:
+        """
+        Calculate electromagnetic forces using vectorized operations.
+        
+        Args:
+            h: Integration timestep
+            source_data: Source particle arrays
+            external_data: External particle arrays
+            distances: Distances to external particles
+            unit_vectors: Unit direction vectors
+            k_factors: Retardation factors
+            interaction_mask: Valid interaction mask
+            source_idx: Index of source particle
+            
+        Returns:
+            (dPx, dPy, dPz, dPt) - Force components
+        """
+        if self.enable_jit and np.any(interaction_mask):
+            return vectorized_electromagnetic_force(
+                h,
+                source_data['charges'][source_idx],
+                external_data['charges'],
+                source_data['gamma_factors'][source_idx],
+                external_data['gamma_factors'],
+                source_data['velocities'][source_idx],
+                external_data['velocities'],
+                external_data['accelerations'],
+                distances,
+                unit_vectors,
+                k_factors,
+                interaction_mask
+            )
+        else:
+            # Fallback implementation for non-JIT
+            return 0.0, 0.0, 0.0, 0.0
+
+    def _process_single_particle_interactions(self, h: float, source_idx: int,
+                                           source_arrays: Dict, external_arrays: Dict,
+                                           aperture_radius: float) -> Tuple[np.ndarray, float]:
+        """
+        Process all electromagnetic interactions for a single source particle.
+        
+        Args:
+            h: Integration timestep
+            source_idx: Index of source particle
+            source_arrays: Source particle data arrays
+            external_arrays: External particle data arrays
+            aperture_radius: Interaction cutoff radius
+            
+        Returns:
+            (momentum_change, energy_change) - shapes (3,) and scalar
+        """
+        source_pos = source_arrays['positions'][source_idx]
+        n_external = external_arrays['positions'].shape[0]
+        
+        # Calculate distances and unit vectors
+        distances, unit_vectors = self._calculate_vectorized_distances(
+            source_pos, external_arrays['positions']
+        )
+        
+        # Calculate retardation factors
+        k_factors = 1 - np.sum(external_arrays['velocities'] * unit_vectors, axis=1)
+        
+        # Compute interaction validity mask
+        external_indices = np.arange(n_external)
+        interaction_mask = self.compute_interaction_mask(
+            distances, aperture_radius, k_factors, source_idx, external_indices
+        )
+        
+        # Calculate electromagnetic forces
+        dPx, dPy, dPz, dPt = self._calculate_vectorized_forces(
+            h, source_arrays, external_arrays, distances, unit_vectors,
+            k_factors, interaction_mask, source_idx
+        )
+        
+        # Update performance statistics
+        self.performance_stats['total_force_calculations'] += np.sum(interaction_mask)
+        self.performance_stats['total_distance_calculations'] += len(distances)
+        
+        return np.array([dPx, dPy, dPz]), dPt
     
     def vectorized_static_integration(self, h: float,
                                     source_arrays: Dict[str, np.ndarray],
@@ -286,64 +407,19 @@ class OptimizedLienardWiechertIntegrator:
         and JIT compilation for maximum computational efficiency.
         """
         n_source = source_arrays['positions'].shape[0]
-        n_external = external_arrays['positions'].shape[0]
         
         # Initialize result arrays
         delta_momenta = np.zeros_like(source_arrays['momenta'])
         delta_energies = np.zeros_like(source_arrays['energies'])
         
-        # Process each source particle
+        # Process each source particle using functionalized approach
         for i in range(n_source):
-            source_pos = source_arrays['positions'][i]
-            
-            # Vectorized distance calculation
-            if self.enable_jit:
-                distances, unit_vectors = vectorized_distance_calculation(
-                    source_pos, external_arrays['positions'], self.epsilon
-                )
-            else:
-                # Fallback non-JIT implementation
-                sep_vectors = source_pos[np.newaxis, :] - external_arrays['positions']
-                distances = np.linalg.norm(sep_vectors, axis=1)
-                unit_vectors = np.zeros_like(sep_vectors)
-                valid = distances > self.epsilon
-                unit_vectors[valid] = sep_vectors[valid] / distances[valid, np.newaxis]
-                unit_vectors[~valid, 2] = 1.0  # Default z-direction
-                
-            # Calculate k-factors
-            k_factors = 1 - np.sum(external_arrays['velocities'] * unit_vectors, axis=1)
-            
-            # Compute interaction mask
-            external_indices = np.arange(n_external)
-            interaction_mask = self.compute_interaction_mask(
-                distances, aperture_radius, k_factors, i, external_indices
+            momentum_change, energy_change = self._process_single_particle_interactions(
+                h, i, source_arrays, external_arrays, aperture_radius
             )
             
-            # Vectorized electromagnetic force calculation
-            if self.enable_jit and np.any(interaction_mask):
-                dPx, dPy, dPz, dPt = vectorized_electromagnetic_force(
-                    h,
-                    source_arrays['charges'][i],
-                    external_arrays['charges'],
-                    source_arrays['gamma_factors'][i],
-                    external_arrays['gamma_factors'],
-                    source_arrays['velocities'][i],
-                    external_arrays['velocities'],
-                    external_arrays['accelerations'],
-                    distances,
-                    unit_vectors,
-                    k_factors,
-                    interaction_mask
-                )
-                
-                delta_momenta[i, 0] += dPx
-                delta_momenta[i, 1] += dPy
-                delta_momenta[i, 2] += dPz
-                delta_energies[i] += dPt
-                
-            # Update performance statistics
-            self.performance_stats['total_force_calculations'] += np.sum(interaction_mask)
-            self.performance_stats['total_distance_calculations'] += n_external
+            delta_momenta[i] = momentum_change
+            delta_energies[i] = energy_change
             
         self.performance_stats['total_integration_steps'] += 1
         
@@ -411,6 +487,88 @@ class OptimizedLienardWiechertIntegrator:
         
         print(f"\n✅ Benchmark complete!")
         return results
+
+    # Compatibility methods for unified testing interface
+    def eqsofmotion_static(self, h: float, 
+                          vector: Dict[str, np.ndarray],
+                          vector_ext: Dict[str, np.ndarray],
+                          apt_R: float = np.inf,
+                          sim_type: int = 1) -> Dict[str, np.ndarray]:
+        """
+        Compatibility wrapper for eqsofmotion_static interface.
+        
+        CAI: Provides compatibility with the standard trajectory integrator interface
+        while using optimized vectorized implementation underneath.
+        
+        Args:
+            h: Integration timestep
+            vector: Source particle data
+            vector_ext: External particle data
+            apt_R: Aperture radius (interaction cutoff)
+            sim_type: Simulation type flag
+            
+        Returns:
+            Updated particle state (compatible format)
+        """
+        # Convert dictionary format to optimized array format
+        source_arrays = self.extract_particle_arrays(vector)
+        external_arrays = self.extract_particle_arrays(vector_ext)
+        
+        # Run optimized integration
+        optimized_result = self.vectorized_static_integration(
+            h, source_arrays, external_arrays, apt_R
+        )
+        
+        # Convert back to standard dictionary format
+        result = {key: np.copy(vector[key]) for key in vector.keys() if isinstance(vector[key], np.ndarray)}
+        result.update({key: vector[key] for key in ['q', 'char_time', 'm'] if key in vector})
+        
+        # Update momentum and energy from optimized results
+        delta_momenta = optimized_result['delta_momenta']
+        delta_energies = optimized_result['delta_energies']
+        
+        result['Px'] += delta_momenta[:, 0]
+        result['Py'] += delta_momenta[:, 1] 
+        result['Pz'] += delta_momenta[:, 2]
+        result['Pt'] += delta_energies
+        
+        return result
+
+    def eqsofmotion_retarded(self, h: float,
+                           trajectory: List[Dict[str, np.ndarray]],
+                           trajectory_ext: List[Dict[str, np.ndarray]], 
+                           i_traj: int,
+                           apt_R: float = np.inf,
+                           sim_type: int = 1) -> Dict[str, np.ndarray]:
+        """
+        Compatibility wrapper for eqsofmotion_retarded interface.
+        
+        CAI: Placeholder for retarded integration - currently falls back to static
+        for optimized implementation. Full retarded optimization pending.
+        
+        Args:
+            h: Integration timestep
+            trajectory: Source trajectory data
+            trajectory_ext: External trajectory data
+            i_traj: Current trajectory index
+            apt_R: Aperture radius
+            sim_type: Simulation type
+            
+        Returns:
+            Updated particle state with retardation effects
+        """
+        # For now, use static integration as fallback
+        # TODO: Implement optimized retarded integration
+        current_vector = trajectory[i_traj]
+        
+        # Extract external data at retarded time (simplified)
+        # This is a placeholder - full retarded optimization requires more work
+        if i_traj > 0:
+            external_vector = trajectory_ext[i_traj - 1]  # Simple retardation approximation
+        else:
+            external_vector = trajectory_ext[i_traj]
+            
+        return self.eqsofmotion_static(h, current_vector, external_vector, apt_R, sim_type)
 
 
 def test_performance_optimization():
