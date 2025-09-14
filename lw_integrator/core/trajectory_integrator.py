@@ -315,8 +315,8 @@ class LienardWiechertIntegrator:
             return
             
         l = particle_idx
-        char_time = trajectory_data['char_time']
-        m_particle = trajectory_data['m']
+        char_time = trajectory_data['char_time'][l]
+        m_particle = trajectory_data['m'][l]
         
         # Get previous gamma if available
         if ('gamma' in trajectory_data and 
@@ -439,13 +439,13 @@ class LienardWiechertIntegrator:
                 
                 # Extract particle states
                 source_particle = {
-                    'q': vector['q'],
+                    'q': vector['q'][i],
                     'gamma': vector['gamma'][i],
                     'bx': vector['bx'][i], 'by': vector['by'][i], 'bz': vector['bz'][i]
                 }
                 
                 external_particle = {
-                    'q': vector_ext['q'],
+                    'q': vector_ext['q'][j],
                     'gamma': vector_ext['gamma'][j],
                     'bx': vector_ext['bx'][j], 'by': vector_ext['by'][j], 'bz': vector_ext['bz'][j],
                     'bdotx': vector_ext['bdotx'][j], 'bdoty': vector_ext['bdoty'][j], 'bdotz': vector_ext['bdotz'][j]
@@ -532,13 +532,13 @@ class LienardWiechertIntegrator:
                 
                 # Extract retarded particle states
                 source_particle = {
-                    'q': traj['q'],
+                    'q': traj['q'][l],
                     'gamma': traj['gamma'][l],
                     'bx': traj['bx'][l], 'by': traj['by'][l], 'bz': traj['bz'][l]
                 }
                 
                 external_particle = {
-                    'q': trajectory_ext[i_new[j]]['q'],
+                    'q': trajectory_ext[i_new[j]]['q'][j],
                     'gamma': trajectory_ext[i_new[j]]['gamma'][j],
                     'bx': trajectory_ext[i_new[j]]['bx'][j], 
                     'by': trajectory_ext[i_new[j]]['by'][j], 
