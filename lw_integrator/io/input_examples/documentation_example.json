@@ -1,0 +1,58 @@
+{
+  "description": "LW Integrator Standard Input Format",
+  "version": "1.0",
+  "beam": {
+    "particle_type": "electron",
+    "total_energy_mev": 10000.0,
+    "n_particles": 1000,
+    "particles_per_macroparticle": 1000000,
+    "emit_x": 1e-09,
+    "emit_y": 1e-11,
+    "beta_x": 10.0,
+    "beta_y": 5.0,
+    "sigma_z": 0.0001,
+    "sigma_dp": 0.0001,
+    "distribution_x": "gaussian",
+    "distribution_y": "gaussian",
+    "distribution_z": "gaussian"
+  },
+  "lattice": [
+    {
+      "name": "entrance_drift",
+      "type": "drift",
+      "length": 0.5,
+      "aperture": {
+        "aperture_type": "circular",
+        "aperture_limits": [
+          0.01
+        ],
+        "material": "copper",
+        "thickness": 0.001
+      }
+    },
+    {
+      "name": "focusing_quad",
+      "type": "quadrupole",
+      "length": 0.3,
+      "strength": 2.5,
+      "aperture": {
+        "aperture_type": "circular",
+        "aperture_limits": [
+          0.005
+        ]
+      }
+    }
+  ],
+  "simulation": {
+    "n_turns": 0,
+    "n_steps_per_element": 500,
+    "integration_method": "adaptive",
+    "radiation_reaction": true,
+    "space_charge": false,
+    "wake_fields": false,
+    "force_threshold": 1e-08,
+    "energy_threshold": 1e-08,
+    "output_frequency": 10,
+    "save_trajectories": true
+  }
+}

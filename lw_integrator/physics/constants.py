@@ -59,9 +59,14 @@ PROTON_MASS_AMU = 1.007319468  # amu
 
 # Charge conversion factors (for legacy code)
 ELEMENTARY_CHARGE_LEGACY = 1.0  # Elementary charge units
+ELEMENTARY_CHARGE_STATC = 4.803e-10  # statC (same as ESU)
 
 # Coulomb constant in legacy units
 COULOMB_CONSTANT_LEGACY = 1.44e-3  # MeV⋅mm/e²
+
+# Additional physical constants for aperture verification
+AMU_TO_KG = 1.66053907e-27  # kg/amu
+ELECTRON_CHARGE_C = 1.602176634e-19  # Coulombs
 
 # ==============================================================================
 # DERIVED QUANTITIES AND TYPICAL SCALES

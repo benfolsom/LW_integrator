@@ -1,0 +1,37 @@
+{
+  "beam": {
+    "particle_type": "proton",
+    "reference_momentum_mev": 399998.8995555538,
+    "total_energy_mev": 400000.0,
+    "kinetic_energy_mev": 399061.728,
+    "gamma": 426.3156099723747,
+    "beta": 0.9999972488888845,
+    "n_particles": 100,
+    "particles_per_macroparticle": 100000000000.0,
+    "emit_x": 3.75e-06,
+    "emit_y": 3.75e-06,
+    "beta_x": 1.0,
+    "beta_y": 1.0,
+    "alpha_x": 0.0,
+    "alpha_y": 0.0,
+    "sigma_z": 0.075,
+    "sigma_dp": 0.00011,
+    "distribution_x": "gaussian",
+    "distribution_y": "gaussian",
+    "distribution_z": "gaussian"
+  },
+  "simulation": {
+    "n_turns": 1,
+    "n_steps_per_element": 100,
+    "integration_method": "self_consistent",
+    "radiation_reaction": false,
+    "space_charge": true,
+    "wake_fields": true,
+    "force_threshold": 1e-06,
+    "energy_threshold": 1e-06,
+    "field_gradient_threshold": 1e-05,
+    "output_frequency": 1,
+    "save_trajectories": true,
+    "save_distributions": true
+  }
+}
