@@ -495,18 +495,20 @@ class LienardWiechertIntegrator:
                 + result["by"][particle_idx] ** 2
                 + result["bz"][particle_idx] ** 2
             )
-            
+
             # Velocity magnitude check: only limit if total velocity exceeds c due to numerical artifacts
             # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
             if btot_squared >= 1.0:
                 # Limit to very close to c to avoid mathematical singularities
-                btot_limited_squared = 0.9999999999999998  # Allows up to PeV-scale particles
+                btot_limited_squared = (
+                    0.9999999999999998  # Allows up to PeV-scale particles
+                )
                 scale_factor = np.sqrt(btot_limited_squared / btot_squared)
                 result["bx"][particle_idx] *= scale_factor
                 result["by"][particle_idx] *= scale_factor
                 result["bz"][particle_idx] *= scale_factor
                 btot_squared = btot_limited_squared
-            
+
             result["gamma"][particle_idx] = 1.0 / np.sqrt(1.0 - btot_squared)
 
             # Radiation reaction forces (if enabled)
