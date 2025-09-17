@@ -3,16 +3,25 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^legacy/
       - id: check-json
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
+        exclude: ^legacy/
       - id: mixed-line-ending
+        exclude: ^legacy/
       - id: check-byte-order-marker
+        exclude: ^legacy/
       - id: check-executables-have-shebangs
+        exclude: ^legacy/
       - id: check-merge-conflict
+        exclude: ^legacy/
       - id: check-symlinks
+        exclude: ^legacy/
       - id: check-yaml
+        exclude: ^legacy/
       - id: end-of-file-fixer
+        exclude: ^legacy/
       - id: check-added-large-files
 
   - repo: https://github.com/psf/black-pre-commit-mirror
@@ -21,7 +30,7 @@ repos:
       - id: black
         language_version: python3
         args: [--line-length=88]
-        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/)
+        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/|legacy/)
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.7
@@ -29,12 +38,12 @@ repos:
       # Run the linter (but not the formatter to avoid conflicts with black).
       - id: ruff
         args: [ --fix ]
-        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/)
+        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/|legacy/)
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.2
     hooks:
       - id: mypy
-        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/|tests/physics_tests/|docs/)
+        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/|tests/physics_tests/|docs/|legacy/)
         additional_dependencies: [types-PyYAML]
         args: [--ignore-missing-imports]
