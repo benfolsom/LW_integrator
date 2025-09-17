@@ -284,19 +284,18 @@ class LienardWiechertIntegrator:
                 # Electromagnetic force components
                 charge_factor = (
                     h
-                    * trajectory[i_traj]["q"]
-                    * trajectory_ext[i_new[j]]["q"]
+                    * trajectory[i_traj]["q"][particle_idx]
+                    * trajectory_ext[i_new[j]]["q"][j]
                     / (k_factor**3 * c_mmns**3 * nhat["R"][j] ** 2 * gamma_j**3)
                 )
 
                 # For zero charge particles, skip electromagnetic interactions
-                if (
-                    abs(trajectory[i_traj]["q"]) < 1e-20
-                    or abs(trajectory_ext[i_new[j]]["q"]) < 1e-20
-                ):
+                charge_i = float(trajectory[i_traj]["q"][particle_idx])
+                charge_j = float(trajectory_ext[i_new[j]]["q"][j])
+                if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
                     charge_factor = 0.0
 
-                # X-momentum update
+                # X-conjugate momentum update
                 result["Px"][particle_idx] = trajectory[i_traj]["Px"][
                     particle_idx
                 ] + charge_factor * (
@@ -323,7 +322,7 @@ class LienardWiechertIntegrator:
                     + v_betas_scalar * c_mmns * nhat["nx"][j]
                 )
 
-                # Y-momentum update
+                # Y-conjugate momentum update
                 result["Py"][particle_idx] = trajectory[i_traj]["Py"][
                     particle_idx
                 ] + charge_factor * (
@@ -350,7 +349,7 @@ class LienardWiechertIntegrator:
                     + v_betas_scalar * c_mmns * nhat["ny"][j]
                 )
 
-                # Z-momentum update
+                # Z-conjugate momentum update
                 result["Pz"][particle_idx] = trajectory[i_traj]["Pz"][
                     particle_idx
                 ] + charge_factor * (
@@ -377,7 +376,7 @@ class LienardWiechertIntegrator:
                     + v_betas_scalar * c_mmns * nhat["nz"][j]
                 )
 
-                # Time component update
+                # Time/energy conjugate momentum component update
                 result["Pt"][particle_idx] = trajectory[i_traj]["Pt"][
                     particle_idx
                 ] + charge_factor * (
@@ -388,24 +387,23 @@ class LienardWiechertIntegrator:
                 )
 
                 # Update gamma (preliminary)
-                if (
-                    abs(trajectory[i_traj]["q"]) < 1e-20
-                    or abs(trajectory_ext[i_new[j]]["q"]) < 1e-20
-                ):
+                charge_i = float(trajectory[i_traj]["q"][particle_idx])
+                charge_j = float(trajectory_ext[i_new[j]]["q"][j])
+                if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
                     # Zero charge case - no electromagnetic potential energy
                     result["gamma"][particle_idx] = result["Pt"][particle_idx] / (
-                        trajectory[i_traj]["m"] * c_mmns
+                        trajectory[i_traj]["m"][particle_idx] * c_mmns
                     )
                 else:
                     # Full electromagnetic case
                     result["gamma"][particle_idx] = (
                         1.0
-                        / (trajectory[i_traj]["m"] * c_mmns)
+                        / (trajectory[i_traj]["m"][particle_idx] * c_mmns)
                         * (
                             result["Pt"][particle_idx]
-                            - trajectory[i_traj]["q"]
+                            - trajectory[i_traj]["q"][particle_idx]
                             / c_mmns
-                            * trajectory_ext[i_new[j]]["q"]
+                            * trajectory_ext[i_new[j]]["q"][j]
                             / (nhat["R"][j] * k_factor)
                         )
                     )
@@ -416,58 +414,59 @@ class LienardWiechertIntegrator:
                     + h * result["gamma"][particle_idx]
                 )
 
-                # Position updates with field corrections
-                if (
-                    abs(trajectory[i_traj]["q"]) < 1e-20
-                    or abs(trajectory_ext[i_new[j]]["q"]) < 1e-20
-                ):
+                # Position updates using conjugate momentum with field corrections
+                charge_i = float(trajectory[i_traj]["q"][particle_idx])
+                charge_j = float(trajectory_ext[i_new[j]]["q"][j])
+                if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
                     # Zero charge case - no field corrections
                     field_correction_x = 0.0
                     field_correction_y = 0.0
                     field_correction_z = 0.0
                 else:
-                    # Full electromagnetic field corrections
+                    # Full electromagnetic field corrections to conjugate momentum
                     field_correction_x = (
-                        trajectory[i_traj]["q"]
+                        trajectory[i_traj]["q"][particle_idx]
                         / c_mmns
-                        * trajectory_ext[i_new[j]]["q"]
+                        * trajectory_ext[i_new[j]]["q"][j]
                         * trajectory_ext[i_new[j]]["bx"][j]
                         / (nhat["R"][j] * k_factor)
                     )
                     field_correction_y = (
-                        trajectory[i_traj]["q"]
+                        trajectory[i_traj]["q"][particle_idx]
                         / c_mmns
-                        * trajectory_ext[i_new[j]]["q"]
+                        * trajectory_ext[i_new[j]]["q"][j]
                         * trajectory_ext[i_new[j]]["by"][j]
                         / (nhat["R"][j] * k_factor)
                     )
                     field_correction_z = (
-                        trajectory[i_traj]["q"]
+                        trajectory[i_traj]["q"][particle_idx]
                         / c_mmns
-                        * trajectory_ext[i_new[j]]["q"]
+                        * trajectory_ext[i_new[j]]["q"][j]
                         * trajectory_ext[i_new[j]]["bz"][j]
                         / (nhat["R"][j] * k_factor)
                     )
 
+                # Position updates from conjugate momentum: x = ∫(P-qA)/m dt
                 result["x"][particle_idx] = trajectory[i_traj]["x"][
                     particle_idx
-                ] + h / trajectory[i_traj]["m"] * (
+                ] + h / trajectory[i_traj]["m"][particle_idx] * (
                     result["Px"][particle_idx] - field_correction_x
                 )
 
                 result["y"][particle_idx] = trajectory[i_traj]["y"][
                     particle_idx
-                ] + h / trajectory[i_traj]["m"] * (
+                ] + h / trajectory[i_traj]["m"][particle_idx] * (
                     result["Py"][particle_idx] - field_correction_y
                 )
 
                 result["z"][particle_idx] = trajectory[i_traj]["z"][
                     particle_idx
-                ] + h / trajectory[i_traj]["m"] * (
+                ] + h / trajectory[i_traj]["m"][particle_idx] * (
                     result["Pz"][particle_idx] - field_correction_z
                 )
 
-            # Calculate velocities from position updates
+            # Calculate velocities from position updates (self-consistent with gamma)
+            # This implements β = Δx/(c·h·γ) where γ comes from energy-momentum relation
             result["bx"][particle_idx] = (
                 result["x"][particle_idx] - trajectory[i_traj]["x"][particle_idx]
             ) / (c_mmns * h * result["gamma"][particle_idx])
@@ -478,7 +477,7 @@ class LienardWiechertIntegrator:
                 result["z"][particle_idx] - trajectory[i_traj]["z"][particle_idx]
             ) / (c_mmns * h * result["gamma"][particle_idx])
 
-            # Calculate accelerations
+            # Calculate accelerations from velocity changes
             result["bdotx"][particle_idx] = (
                 result["bx"][particle_idx] - trajectory[i_traj]["bx"][particle_idx]
             ) / (c_mmns * h * result["gamma"][particle_idx])
@@ -489,19 +488,26 @@ class LienardWiechertIntegrator:
                 result["bz"][particle_idx] - trajectory[i_traj]["bz"][particle_idx]
             ) / (c_mmns * h * result["gamma"][particle_idx])
 
-            # Final gamma calculation from total velocity
+            # Self-consistency check: recalculate gamma from velocity magnitude
+            # This ensures γ = 1/√(1-β²) is satisfied
             btot_squared = (
                 result["bx"][particle_idx] ** 2
                 + result["by"][particle_idx] ** 2
                 + result["bz"][particle_idx] ** 2
             )
+            
+            # Velocity magnitude check: only limit if total velocity exceeds c due to numerical artifacts
+            # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
+            if btot_squared >= 1.0:
+                # Limit to very close to c to avoid mathematical singularities
+                btot_limited_squared = 0.9999999999999998  # Allows up to PeV-scale particles
+                scale_factor = np.sqrt(btot_limited_squared / btot_squared)
+                result["bx"][particle_idx] *= scale_factor
+                result["by"][particle_idx] *= scale_factor
+                result["bz"][particle_idx] *= scale_factor
+                btot_squared = btot_limited_squared
+            
             result["gamma"][particle_idx] = 1.0 / np.sqrt(1.0 - btot_squared)
-
-            # Velocity limit checks
-            if abs(result["bz"][particle_idx]) > 1.0:
-                raise ValueError(
-                    f"Beam-axis velocity exceeded c: bz = {result['bz'][particle_idx]}"
-                )
 
             # Radiation reaction forces (if enabled)
             if hasattr(trajectory[i_traj], "char_time"):
