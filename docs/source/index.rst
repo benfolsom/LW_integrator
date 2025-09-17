@@ -6,7 +6,7 @@ Welcome to the LW (Liénard-Wiechert) Integrator documentation. This is a covari
 .. toctree::
    :maxdepth: 2
    :caption: User Documentation
-   
+
    user_manual/index
    user_manual/getting_started
    user_manual/input_formats
@@ -16,7 +16,7 @@ Welcome to the LW (Liénard-Wiechert) Integrator documentation. This is a covari
 .. toctree::
    :maxdepth: 2
    :caption: API Reference
-   
+
    api_reference/index
    api_reference/core
    api_reference/physics
@@ -26,7 +26,7 @@ Welcome to the LW (Liénard-Wiechert) Integrator documentation. This is a covari
 .. toctree::
    :maxdepth: 2
    :caption: Developer Guide
-   
+
    developer_guide/index
    developer_guide/architecture
    developer_guide/contributing
@@ -35,7 +35,7 @@ Welcome to the LW (Liénard-Wiechert) Integrator documentation. This is a covari
 .. toctree::
    :maxdepth: 2
    :caption: Tutorials and Examples
-   
+
    examples/index
    examples/basic_tracking
    examples/aperture_studies
@@ -58,14 +58,14 @@ Quick Start
 .. code-block:: python
 
    from lw_integrator import StandardInputFormat, run_simulation
-   
+
    # Load configuration
    config = StandardInputFormat()
    config.load_from_file('my_simulation.json')
-   
+
    # Run simulation
    results = run_simulation(config)
-   
+
    # Analyze results
    results.plot_trajectories()
    results.save_distributions('output.h5')
@@ -93,7 +93,7 @@ Getting Help
 ------------
 
 * :doc:`user_manual/getting_started` - Start here for basic usage
-* :doc:`examples/index` - Working examples and tutorials  
+* :doc:`examples/index` - Working examples and tutorials
 * :doc:`api_reference/index` - Complete API documentation
 * `GitHub Issues <https://github.com/lw-integrator/lw-integrator/issues>`_ - Bug reports and feature requests
 * `Discussions <https://github.com/lw-integrator/lw-integrator/discussions>`_ - General questions and community

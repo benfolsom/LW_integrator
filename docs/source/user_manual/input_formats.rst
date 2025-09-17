@@ -36,7 +36,7 @@ The JSON format provides complete access to all LW Integrator features:
        "sigma_z": 1e-4,
        "sigma_dp": 1e-4,
        "distribution_x": "gaussian",
-       "distribution_y": "gaussian", 
+       "distribution_y": "gaussian",
        "distribution_z": "gaussian"
      },
      "lattice": [
@@ -124,7 +124,7 @@ Supported lattice element types:
 
    {
      "name": "drift1",
-     "type": "drift", 
+     "type": "drift",
      "length": 1.0,
      "aperture": {
        "aperture_type": "circular",
@@ -142,7 +142,7 @@ Supported lattice element types:
      "length": 0.5,
      "strength": 2.5,
      "aperture": {
-       "aperture_type": "rectangular", 
+       "aperture_type": "rectangular",
        "aperture_limits": [0.02, 0.015]
      }
    }
@@ -166,7 +166,7 @@ Supported lattice element types:
 
    {
      "name": "sext1",
-     "type": "sextupole", 
+     "type": "sextupole",
      "length": 0.2,
      "strength": 100.0
    }
@@ -191,7 +191,7 @@ Apertures define physical boundaries and material interactions:
 Aperture types:
 
 * ``"circular"``: Single radius limit
-* ``"rectangular"``: [half_width, half_height]  
+* ``"rectangular"``: [half_width, half_height]
 * ``"elliptical"``: [semi_major, semi_minor]
 * ``"custom"``: User-defined boundary function
 
@@ -205,7 +205,7 @@ Control integration and physics models:
    :widths: 30 20 50
 
    * - Parameter
-     - Type  
+     - Type
      - Description
    * - ``integration_method``
      - string
@@ -238,28 +238,28 @@ YAML provides the same functionality as JSON with improved readability:
 
    description: "10 GeV electron aperture study"
    version: "1.0"
-   
+
    beam:
      particle_type: electron
      total_energy_mev: 10000.0
      n_particles: 500
      particles_per_macroparticle: 1000000
-     
+
      # Transverse parameters
      emit_x: 1.0e-9    # 1 nm⋅rad
      emit_y: 1.0e-11   # 10 pm⋅rad
      beta_x: 12.0      # m
      beta_y: 8.0       # m
-     
-     # Longitudinal parameters  
+
+     # Longitudinal parameters
      sigma_z: 1.0e-4   # 0.1 mm
      sigma_dp: 1.0e-4  # 0.01%
-     
+
      # Distribution types
      distribution_x: gaussian
      distribution_y: gaussian
      distribution_z: gaussian
-   
+
    lattice:
      - name: entrance
        type: drift
@@ -268,7 +268,7 @@ YAML provides the same functionality as JSON with improved readability:
          aperture_type: circular
          aperture_limits: [0.01]
          material: copper
-     
+
      - name: focus_quad
        type: quadrupole
        length: 0.3
@@ -276,7 +276,7 @@ YAML provides the same functionality as JSON with improved readability:
        aperture:
          aperture_type: circular
          aperture_limits: [0.005]
-   
+
    simulation:
      n_turns: 0
      n_steps_per_element: 1000
@@ -296,11 +296,11 @@ Basic MAD-X lattice definitions can be imported:
 
    ! MAD-X input file
    BEAM, PARTICLE=ELECTRON, ENERGY=10.0;
-   
+
    QF: QUADRUPOLE, L=0.5, K1=2.0;
    QD: QUADRUPOLE, L=0.5, K1=-2.0;
    DRIFT1: DRIFT, L=1.0;
-   
+
    LATTICE: LINE=(QF, DRIFT1, QD);
 
 Import using:
@@ -308,13 +308,13 @@ Import using:
 .. code-block:: python
 
    from lw_integrator.io import StandardInputFormat
-   
+
    config = StandardInputFormat()
    config.load_from_file('lattice.madx')
 
 Note: MAD-X parsing is simplified and may not support all MAD-X features. For complex lattices, use the native JSON/YAML formats.
 
-ELEGANT Compatibility  
+ELEGANT Compatibility
 ---------------------
 
 Import beam distributions from ELEGANT:
@@ -326,7 +326,7 @@ Import beam distributions from ELEGANT:
      p_central_mev = 10000,
      default_order = 2
    &end
-   
+
    &bunched_beam
      n_particles_per_bunch = 1000,
      emit_x = 1e-9, emit_y = 1e-11,
@@ -344,10 +344,10 @@ For complex setups, generate input files programmatically:
    from lw_integrator.io import StandardInputFormat, BeamParameters, LatticeElement
    from lw_integrator.io import ApertureDefinition, SimulationParameters
    from lw_integrator.io import ParticleType, DistributionType
-   
+
    # Create configuration
    config = StandardInputFormat()
-   
+
    # Define beam
    config.beam_parameters = BeamParameters.from_energy(
        particle_type=ParticleType.ELECTRON,
@@ -358,30 +358,30 @@ For complex setups, generate input files programmatically:
        beta_x=10.0,
        beta_y=5.0
    )
-   
+
    # Build lattice
    aperture = ApertureDefinition(
        aperture_type="circular",
        aperture_limits=[0.005],
        material="copper"
    )
-   
+
    quad = LatticeElement(
        name="focusing_quad",
-       element_type="quadrupole", 
+       element_type="quadrupole",
        length=0.5,
        aperture=aperture
    )
-   
+
    config.lattice_elements = [quad]
-   
+
    # Set simulation parameters
    config.simulation_parameters = SimulationParameters(
        integration_method='adaptive',
        radiation_reaction=True,
        n_steps_per_element=500
    )
-   
+
    # Save configuration
    config.save_to_file('generated_config.yaml')
 
@@ -414,7 +414,7 @@ For detailed validation messages, enable debug logging:
 
    import logging
    logging.basicConfig(level=logging.DEBUG)
-   
+
    config = StandardInputFormat()
    config.load_from_file('input.yaml')  # Detailed validation output
 

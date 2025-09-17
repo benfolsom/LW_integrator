@@ -52,14 +52,14 @@ Create a file ``first_simulation.yaml``:
 .. code-block:: yaml
 
    description: "First LW Integrator simulation - 10 GeV electrons"
-   
+
    beam:
      particle_type: "electron"
      total_energy_mev: 10000.0
      n_particles: 100
      particles_per_macroparticle: 1000000
      emit_x: 1.0e-9        # 1 nm⋅rad horizontal emittance
-     emit_y: 1.0e-11       # 10 pm⋅rad vertical emittance  
+     emit_y: 1.0e-11       # 10 pm⋅rad vertical emittance
      beta_x: 10.0          # 10 m horizontal beta function
      beta_y: 5.0           # 5 m vertical beta function
      sigma_z: 1.0e-4       # 0.1 mm bunch length
@@ -67,7 +67,7 @@ Create a file ``first_simulation.yaml``:
      distribution_x: "gaussian"
      distribution_y: "gaussian"
      distribution_z: "gaussian"
-   
+
    lattice:
      - name: "entrance_drift"
        type: "drift"
@@ -77,14 +77,14 @@ Create a file ``first_simulation.yaml``:
          aperture_limits: [0.005]  # 5 mm radius
          material: "copper"
          thickness: 0.001
-     
-     - name: "main_drift"  
+
+     - name: "main_drift"
        type: "drift"
        length: 2.0
        aperture:
          aperture_type: "circular"
          aperture_limits: [0.002]  # 2 mm radius (tight aperture)
-   
+
    simulation:
      n_turns: 0                    # Single pass
      n_steps_per_element: 500      # Integration steps per element
@@ -106,24 +106,24 @@ Running the Simulation
 
    from lw_integrator.io import StandardInputFormat
    from lw_integrator.simulation import run_simulation
-   
+
    # Load configuration
    config = StandardInputFormat()
    config.load_from_file('first_simulation.yaml')
-   
+
    # Run simulation
    print("Starting simulation...")
    results = run_simulation(config)
-   
+
    # Basic analysis
    print(f"Initial particles: {results.initial_particle_count}")
    print(f"Final particles: {results.final_particle_count}")
    print(f"Survival rate: {results.survival_rate:.2%}")
-   
+
    # Plot results
    results.plot_trajectories(save_path='trajectories.png')
    results.plot_beam_evolution(save_path='beam_evolution.png')
-   
+
    # Save detailed results
    results.save_to_hdf5('simulation_results.h5')
 
@@ -138,17 +138,17 @@ The simulation should complete and display output similar to:
    Initializing 100 macroparticles for 10.0 GeV electrons
    Setting up lattice: 2 elements, total length 2.5 m
    Adaptive integration with radiation reaction enabled
-   
+
    Element 1/2: entrance_drift (0.5 m drift)
    - Integration steps: 500
    - Particles lost to aperture: 0
    - Radiation energy loss: 2.34e-6 MeV average
-   
-   Element 2/2: main_drift (2.0 m drift)  
+
+   Element 2/2: main_drift (2.0 m drift)
    - Integration steps: 500
    - Particles lost to aperture: 3
    - Radiation energy loss: 8.91e-6 MeV average
-   
+
    Simulation complete.
    Initial particles: 100
    Final particles: 97
@@ -181,21 +181,21 @@ For detailed analysis:
    import h5py
    import matplotlib.pyplot as plt
    import numpy as np
-   
+
    # Load results
    with h5py.File('simulation_results.h5', 'r') as f:
        # Particle trajectories
        x_trajectory = f['trajectories/x'][:]
        y_trajectory = f['trajectories/y'][:]
        z_trajectory = f['trajectories/z'][:]
-       
+
        # Energy evolution
        energy = f['particle_data/energy'][:]
-       
+
        # Aperture losses
        loss_positions = f['losses/z_position'][:]
        loss_times = f['losses/time'][:]
-   
+
    # Plot energy loss due to radiation
    plt.figure(figsize=(10, 6))
    plt.subplot(1, 2, 1)
@@ -203,14 +203,14 @@ For detailed analysis:
    plt.xlabel('Position (m)')
    plt.ylabel('Average Energy (MeV)')
    plt.title('Radiation Energy Loss')
-   
+
    # Plot aperture loss positions
    plt.subplot(1, 2, 2)
    plt.hist(loss_positions, bins=20, alpha=0.7)
    plt.xlabel('Loss Position (m)')
    plt.ylabel('Number of Lost Particles')
    plt.title('Aperture Loss Distribution')
-   
+
    plt.tight_layout()
    plt.savefig('detailed_analysis.png')
    plt.show()
@@ -221,7 +221,7 @@ Next Steps
 Now that you've run your first simulation:
 
 1. **Explore Input Formats**: Learn about the :doc:`input_formats` for more complex setups
-2. **Physics Models**: Understand the :doc:`physics_models` implemented in the code  
+2. **Physics Models**: Understand the :doc:`physics_models` implemented in the code
 3. **Advanced Examples**: Try the :doc:`../examples/index` for specific use cases
 4. **Customize Physics**: Modify integration parameters and physics flags for your application
 

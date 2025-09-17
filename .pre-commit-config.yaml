@@ -1,0 +1,40 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-json
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+      - id: check-byte-order-marker
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 24.8.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: [--line-length=88]
+        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/)
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.7
+    hooks:
+      # Run the linter (but not the formatter to avoid conflicts with black).
+      - id: ruff
+        args: [ --fix ]
+        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/)
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        exclude: ^(LW_local_refs/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/|tests/physics_tests/|docs/)
+        additional_dependencies: [types-PyYAML]
+        args: [--ignore-missing-imports]

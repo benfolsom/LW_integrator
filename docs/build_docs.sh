@@ -97,7 +97,7 @@ else
 
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Documentation built successfully!${NC}"
-        
+
         case $BUILD_TYPE in
             html)
                 echo "HTML documentation: $BUILD_DIR/html/index.html"

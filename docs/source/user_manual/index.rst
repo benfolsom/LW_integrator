@@ -5,7 +5,7 @@ The LW Integrator User Manual provides comprehensive guidance for using the soft
 
 .. toctree::
    :maxdepth: 2
-   
+
    getting_started
    input_formats
    physics_models
@@ -19,7 +19,7 @@ Overview
 The LW (Liénard-Wiechert) Integrator is designed for high-precision electromagnetic particle tracking in accelerator physics applications. It provides:
 
 * Covariant electromagnetic field calculations
-* Self-consistent radiation reaction treatment  
+* Self-consistent radiation reaction treatment
 * Adaptive integration with field-based step control
 * Macroparticle population dynamics
 * Standard accelerator physics I/O compatibility
