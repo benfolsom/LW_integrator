@@ -1,0 +1,62 @@
+{
+	"description": "High energy proton beam for wakefield studies",
+	"version": "1.0",
+	"beam": {
+		"particle_type": "proton",
+		"total_energy_mev": 400000.0,
+		"n_particles": 50,
+		"particles_per_macroparticle": 100000000000,
+		"emit_x": 3.75e-6,
+		"emit_y": 3.75e-6,
+		"beta_x": 55.0,
+		"beta_y": 55.0,
+		"alpha_x": 0.0,
+		"alpha_y": 0.0,
+		"sigma_z": 0.075,
+		"sigma_dp": 0.00011,
+		"distribution_x": "gaussian",
+		"distribution_y": "gaussian",
+		"distribution_z": "gaussian"
+	},
+	"lattice": [
+		{
+			"name": "drift_section",
+			"type": "drift",
+			"length": 5.0,
+			"aperture": {
+				"aperture_type": "circular",
+				"aperture_limits": [
+					0.02
+				],
+				"material": "stainless_steel",
+				"thickness": 0.005
+			}
+		},
+		{
+			"name": "focusing_quad",
+			"type": "quadrupole",
+			"length": 1.0,
+			"strength": 2.0,
+			"aperture": {
+				"aperture_type": "circular",
+				"aperture_limits": [
+					0.015
+				]
+			}
+		}
+	],
+	"simulation": {
+		"n_turns": 1,
+		"n_steps_per_element": 200,
+		"integration_method": "self_consistent",
+		"radiation_reaction": false,
+		"space_charge": true,
+		"wake_fields": true,
+		"force_threshold": 1.0e-6,
+		"energy_threshold": 1.0e-6,
+		"field_gradient_threshold": 1.0e-5,
+		"output_frequency": 5,
+		"save_trajectories": true,
+		"save_distributions": true
+	}
+}

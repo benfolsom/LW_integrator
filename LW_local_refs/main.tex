@@ -1,0 +1,565 @@
+\documentclass[reprint,
+              %boxit,        % check whether paper is inside correct margins
+              %titlepage,    % separate title page
+              %refpage       % separate references
+              %biblatex,     % biblatex is used
+               amsmath,amssymb,nofootinbib, aps% flushend option: not to un-indent last line in References
+              %nospread,     % flushend option: do not fill with whitespace to balance columns
+              %hyphens,      % allow \url to hyphenate at "-" (hyphens)
+              %xetex,        % use XeLaTeX to process the file
+              %luatex,       % use LuaLaTeX to process the file
+              ]{revtex4-2}
+%
+% ONLY FOR \footnote in table/tabular
+%
+%\usepackage{pdfpages,multirow,ragged2e}
+\usepackage{subcaption}
+\usepackage{graphicx}% Include figure files
+\usepackage{dcolumn}% Align table columns on decimal point
+\usepackage{bm}% bold math
+\usepackage[hidelinks]{hyperref}
+
+\renewcommand{\thesubsection}{\thesection-\arabic{subsection}}
+%\renewcommand{\thesubsection}{\arabic{subsection}}
+\makeatletter
+\renewcommand{\p@subsection}{}
+\makeatother
+
+%\DeclareUnicodeCharacter{2212}{-}
+%
+%
+% CHANGE SEQUENCE OF GRAPHICS EXTENSION TO BE EMBEDDED
+% ----------------------------------------------------
+% test for XeTeX where the sequence is by default eps-> pdf, jpg, png, pdf, ...
+%    and the JACoW template provides JACpic2v3.eps and JACpic2v3.jpg which
+%    might generates errors, therefore PNG and JPG first
+%
+\makeatletter%
+% 	\ifboolexpr{bool{xetex}}
+% 	 {\renewcommand{\Gin@extensions}{.pdf,%
+% 	                    .png,.jpg,.bmp,.pict,.tif,.psd,.mac,.sga,.tga,.gif,%
+% 	                    .eps,.ps,%
+% 	                    }}{}
+\DeclareRobustCommand{\cev}[1]{%
+  {\mathpalette\do@cev{#1}}%
+}
+\newcommand{\do@cev}[2]{%
+  \vbox{\offinterlineskip
+    \sbox\z@{$\m@th#1 x$}%
+    \ialign{##\cr
+      \hidewidth\reflectbox{$\m@th#1\vec{}\mkern4mu$}\hidewidth\cr
+      \noalign{\kern-\ht\z@}
+      $\m@th#1#2$\cr
+    }%
+  }%
+}
+\makeatother
+
+% CHECK FOR XeTeX/LuaTeX BEFORE DEFINING AN INPUT ENCODING
+% --------------------------------------------------------
+%   utf8  is default for XeTeX/LuaTeX
+%   utf8  in LaTeX only realises a small portion of codes
+%
+% \ifboolexpr{bool{xetex} or bool{luatex}} % test for XeTeX/LuaTeX
+%  {}                                      % input encoding is utf8 by default
+%  {\usepackage[utf8]{inputenc}}           % switch to utf8
+
+% \usepackage[USenglish]{babel}
+
+
+% %
+% % if BibLaTeX is used
+% %
+% \ifboolexpr{bool{jacowbiblatex}}%
+%  {%
+%   \addbibresource{biblio.bib}
+%  }{}
+% \listfiles
+
+%%
+%%   Lengths for the spaces in the title
+%%   \setlength\titleblockstartskip{..}  %before title, default 3pt
+%%   \setlength\titleblockmiddleskip{..} %between title + author, default 1emhttps://www.overleaf.com/project/600150e3137957354b405579
+%%   \setlength\titleblockendskip{..}    %afterauthor, default 1em
+
+\begin{document}
+
+
+
+\title{
+Relativistic beam loading, recoil-reduction, and residual-wake acceleration \\ with a covariant retarded-potential integrator}
+
+\author{B. Folsom}
+\email{ben.folsom@ess.eu}
+ \altaffiliation[Also at ]{Department of Physics, University Milano-Biccoca.}%Lines break automatically or can be forced with \\
+\author{E. Laface}% 
+\email{emanuele.laface@ess.eu}
+\affiliation{%
+ European Spallation Source, ERIC\\
+ Lund, Sweden
+}%
+
+
+
+\begin{abstract}
+An algorithm is demonstrated that performs first-principles tracking of relativistic charged-particles. A covariant approach is used which relies on retarded vector potentials for trajectory integration instead of performing electromagnetic field calculations. When accounting for retardation effects, the peak vector potential and corresponding Lorentz force in the direction of travel increase asymptotically for high-$\beta$ particles. This produces a very strong field distribution at small angles from the particle's direction of travel, which can result in considerable change in momentum when approaching a conducting surface or another charged particle. We quantify the former effect for protons and electrons at various energies and aperture sizes, where substantial power deposition can be avoided by ensuring that particles do not pass within roughly 10 microns of the aperture surface.
+
+We also simulate breaking a test particle's line of sight with a conductor or other charged body. After this instant, the test particle continues to accelerate due to residual fields, but no longer produces an opposing force on any charged or conducting object; thus any recoil on the enclosing structure is effectively reduced. 
+
+Resulting acceleration dynamics are characterized using protons and electrons at various energies; with, for example, a 1\% energy gain for an 85\,MeV electron traversing its reflected wake while approaching a pinhole aperture. We then integrate a micro-scale dielectric laser acceleration (DLA) device into our simulations: compared with a solitary 2\,mm DLA, we find a factor of two increase in energy gain when combining the DLA with a series of conducting-surface choppers.
+
+
+
+% begin{description}
+% \item[Usage]
+% Secondary publications and information retrieval purposes.
+% \item[Structure]
+% You may use the \texttt{description} environment to structure your abstract;
+% use the optional argument of the \verb+\item+ command to give the category of each item. 
+% \end{description}
+\end{abstract}
+
+\maketitle
+\section{\label{sec:Introduction}Introduction}
+
+The covariant Lorentz forces can be derived from the electric and magnetic field form of the retarded Liénard--Wiechert potentials for a charged particle~\cite{jackson2012classical}
+\begin{equation}
+\begin{gathered}
+\mathbf{B}=[\mathbf{n} \times \mathbf{E}]_{\mathrm{ret}} \\
+\mathbf{E}=e\left[\frac{\mathbf{n}-\boldsymbol{\beta}}{\gamma^{2}(1-\boldsymbol{\beta} \cdot \mathbf{n})^{3} R^{2}}\right]_{\mathrm{ret}}+\frac{e}{c}\left[\frac{\mathbf{n} \times\{(\mathbf{n}-\boldsymbol{\beta}) \times \dot{\boldsymbol{\beta}}\}}{(1-\boldsymbol{\beta} \cdot \mathbf{n})^{3} R}\right]_{\mathrm{ret}}
+\nonumber \\
+\label{LW_forces_jackson}
+\end{gathered}
+\end{equation}
+\vspace{-0.2cm}
+
+\noindent Here, $\mathbf{n}$ is a unit vector pointing from a source particle toward an observation point; $R$ is the distance between the source and observation point; $\boldsymbol{\beta}$ and $\gamma$ are the relativistic velocity three vector ($\textbf{v}/c$) and Lorentz factor, respectively; $\dot{\boldsymbol{\beta}}$ is the acceleration in terms of $\boldsymbol{\beta}$; and $e$ and $c$ are the particle charge and speed of light, respectively. Note also that all terms are evaluated at retarded time $t = R / c$ prior to the present trajectory step, and Gaussian units are used throughout the article. When we refer to a test particle, this means that it is positioned at the observation point, where it ``witnesses'' the source particle. In other words, the charge and all of the $\beta$-dependent factors in Eq.~(\ref{LW_forces_jackson}) belong to the source particle.
+
+The theory and simulation of beam loading in cavities is well-understood~\cite{wolski2014beam}, where the usual approach is to track a particle's averaged Lorentz force on the cavity walls, so that $\boldsymbol{n}$ and $\boldsymbol{\beta}$ can be taken as approximately perpendicular such that
+\begin{equation}
+    \boldsymbol{E_\perp} \propto e\frac{1}{\gamma^2 R^2}
+\end{equation}
+\noindent Although the $1/R^2$ terms are suppressed on average for high-$\beta$ particles by the large $1/\gamma^2$ factor, there is a critical exception:
+
+For a charged particle moving at a constant high-$\beta$ velocity, or being accelerated along its predominant $\boldsymbol{\beta}$ vector component, the magnetic and acceleration-dependent terms for an observation point on-axis with $\boldsymbol{\beta}$ (i.e. in the direction of $\mathbf{n}$) become negligible, and Eq.~(\ref{LW_forces_jackson}) can be approximated as
+
+\begin{align}
+\label{eq:E_n_headon}
+\mathbf{E}_n&=e\left[\frac{\mathbf{n}-\boldsymbol{\beta}}{\gamma^{2}(1-\boldsymbol{\beta} \cdot \mathbf{n})^{3} R^{2}}\right]
+\nonumber \\
+&=e\left[\frac{(1-\beta_n)\mathbf{n}}{\gamma^{2}(1-\beta_n)^{3} R^{2}}\right]
+\nonumber \\
+&\approx e\left[\frac{(1-\beta)}{(1+\beta) R^{2}}\right]\mathbf{n}
+\end{align}
+
+\noindent where we treat transverse components as negligible such that $\boldsymbol{\beta}\approx\beta_n$ and where we have dropped the ``ret'' subscript for brevity. Thus, in this case the Lorentz force for a charged particle at the observation point is simply $e_o\mathbf{E}_n$, where $e_o$ is the observer charge.
+
+Figure~\ref{fig:rel_lortz_force_both} illustrates the asymptotic increase of such fields for a high-$\beta$ particle approaching an observation point head-on (with the departing particle's field decreasing to zero).
+
+\begin{figure}
+    \includegraphics[width=0.46\textwidth,trim={0 0.65cm 0.5cm 0.5cm},clip]{figures/WEPL105_f1b.png}
+    \label{fig:rel_lor_force_1d}
+  \caption{Electric field strengths from a charged particle approaching head-on ($\boldsymbol{\beta}>0$) or departing antiparallel ($\boldsymbol{\beta}<0$) to an observer at $R=0.01$\,mm.}
+  \label{fig:rel_lortz_force_both}
+\end{figure}
+
+As particle velocities exceed $\gamma\,{\approx}${\,}20, the distances $R$ for which $\mathbf{E}_n$ is non-negligible become comparable to those typical of cavity or cavity-cell lengths. This highly peaked energy distribution is directed toward the cavity exit, indicating that for high-energy beams, an analysis of radiated power near cavity exit apertures is warranted.
+
+Moreover, when these fields reflect from a leading particle in a bunch passing an exit aperture, subsequent particles in the bunch will experience large corresponding Lorentz forces. These appear to the trailing particles as off-axis $\boldsymbol{\beta}$ dependent forces, and thus the $\boldsymbol{\dot{\beta}}$ dependent terms and magnetic terms in Eq.~(\ref{LW_forces_jackson}) must also be taken into account. While perfectly on-axis reflected fields are accelerating in nature, the off-axis $1/R$ dependent ones are essentially incoherent. Thus, in terms of exit-aperture geometry, it may be beneficial to make reflected fields as on-axis as possible.
+
+We first lay the theoretical groundwork for such studies, introducing a simulation framework and then providing an qualitative discussion of secondary effects radiation pressure and the radiation-reaction force, along with a pedagogical model examining acceleration and recoil effects due to residual fields (i.e. where a test particle has no line of sight with its source).
+
+This is followed with simulation results analyzing the energy shift and power deposition of high-$\beta$ test particles passing through narrow conducting apertures. These simulations are applicable to cavity exit-apertures as well as lost or dumped particles or those impinging on conducting surfaces. It is shown that rapidly withdrawing such a surface (i.e. opening a conducting iris or chopper) allows the test particles to continue accelerating in the residual fields while reducing the longitudinal recoil on the system.
+
+Building from these results, an additional scenario is modeled where a low-$\beta$ but highly populated ``driving'' bunch passes transversely to the beam axis behind a fixed aperture in a dielectric plate such that the oncoming high-$\beta$ test bunch travels through its wake. The dielectric plate allows for line of sight to be abruptly broken between the test particle and driving bunch, similarly to the rapidly disappearing conducting surface of the previous scenario. Here, the discrepancy between the change in momentum of the driving and the test bunches is the measure of recoil reduction.
+
+Finally, we compare the acceleration of the models developed here with recent studies in dielectric-laser acceleration using an inverse Cherenkov radiation effect (ICR-DLA)~\cite{liu_2020}. For this arrangement, the GeV/m scale acceleration of ICR-DLAs is increased by a factor of two when adding a cascading iris/chopper structure of 2\,mm in length.
+
+\section{Integrator}
+Since all terms in Eq.~(\ref{LW_forces_jackson}) must be tracked in order to determine off-axis field contributions (i.e. to optimize exit-aperture geometry or otherwise account for forces where $\boldsymbol{\beta}\cdot\mathbf{n}\not\approx 1$) we use a fully covariant tracking algorithm similar to one derived in previous works~\cite{folsom:ipac2021-tupab218,laface_2020_covariant} following the formalism of~\cite{jackson2012classical} and \cite{bordovitsyn_technique_2003} where
+
+\begin{equation}
+A^{\alpha}(x^\alpha)=\left.\frac{\vec{e}~V^{\alpha}(\tau)}{V \cdot[x-r(\tau)]}\right|_{\tau=\tau_{0}}
+\label{LW_pots}
+\end{equation}
+
+\noindent are the Liénard--Wiechart potentials and $\vec{e}$ is source charge, $x^\alpha$ is the observer position, and $r^\alpha(\tau)$ is the source charge position. To avoid confusion with contravariant vectors' subscripts, we use the typical arrow accent to label the ``source'' parameters where necessary, and a reversed left-pointing arrow for observer parameters (for example: $e_o\equiv\cev{e}$).\footnote{These accents do \textit{not} designate 3-vectors, which are set in boldface type.}
+
+The source particle's four-position and four-velocity are defined in the usual way:
+\begin{align}
+    r^\alpha(\tau) &= \{c\tau,\boldsymbol{r}\}
+    \nonumber \\
+    V^\alpha(\tau) &= \{c\gamma,\gamma\boldsymbol{u}\}
+\end{align}
+where $\tau$ is the proper time for the observer point, \textbf{u} is the velocity three-vector, and the metric $g^{\alpha \beta}=\{1, -1, -1, -1\}$ is used throughout. The retarded time $\tau_0$ can be defined using the light-cone constraint
+\begin{align*}
+    \left[x-r(\tau_0)\right]^2 = 0
+\end{align*}
+
+As with Eq.~(\ref{LW_forces_jackson}), the condition $\tau=\tau_0$ is used when evaluating any instance of the retarded potential or its resulting fields. This constraint can also be used to define $R\equiv x_0-r_0(\tau_0)=|\boldsymbol{x}-\boldsymbol{r}(\tau_0)|$ along with $R^\rho=\{R,\vec{\textbf{n}} R\}$. Thus, the denominator of Eq.~(\ref{LW_pots}) can be reduced to
+\begin{equation}
+    V\cdot [x-r] = V^\rho R_\rho =  \gamma c R(1-\boldsymbol{\beta}\cdot \vec{\textbf{n}})
+\end{equation}
+where $\vec{\textbf{n}}$ is the unit vector between the source and observer (we use the right-pointing arrow, since it is defined as pointing in the source-to-objective direction).
+
+The covariant equations of motion for an objective particle can be defined using the conjugate momentum
+\vspace{0.2cm}
+\begin{equation}
+    \mathcal{P}^\alpha = \cev{m} \cev{V}^\alpha + \frac{\cev{e}}{c}A^\alpha 
+    \label{mom_conj}
+\end{equation}
+
+\noindent where $\cev{m}$ is the observer's mass. The Hamiltonian for a charged particle in an external field is then~\cite{jackson2012classical,barut1980electrodynamics}
+
+\begin{align}
+    H&=\frac{1}{\cev{m}}\left(P_{\alpha}-\frac{e A_{\alpha}}{c}\right)\left(P^{\alpha}-\frac{e A^{\alpha}}{c}\right)
+\nonumber \\
+&~~-c \sqrt{\left(P_{\alpha}-\frac{e}{c} A_{\alpha}\right)\left(P^{\alpha}-\frac{e}{c} A^{\alpha}\right)}
+\end{align}
+
+\noindent which yields the following equations of motion for conjugate momentum:
+
+\begin{align}
+\frac{d\mathcal{P}^\alpha}{d\tau}&= -\frac{\partial H}{\partial x} = \frac{\cev{e}}{\cev{m} c} \left(\mathcal{P}_{\beta}-\frac{\cev{e}}{c} A_{\beta}\right) \partial^{\alpha} A^{\beta}
+\nonumber \\
+&= \frac{\cev{e}}{c} \cev{V}_{\beta} \partial^{\alpha} A^{\beta}
+\nonumber \\
+&=\cev{e}\cev{V}_\beta\,\vec{e} \left[
+\frac{\dot{\vec{V}}^{\beta
+} R^{\alpha} - \vec{V}^\alpha \vec{V}^\beta }{\kappa^{2} \vec{\gamma}^2 R^2 c^{3}}
++\frac{R^\alpha \vec{V}^\beta }{\kappa^3 \vec{\gamma}^3 R^3 c^2} - \frac{ \dot{\vec{V}}^{\alpha}_\tau \vec{V}^{\beta} R^{\alpha} R_{\alpha}}{\kappa^3  \vec{\gamma}^3 R^3 c^4}
+\right] \nonumber \\
+\label{EOM_mom_nospin}
+\end{align}
+
+\noindent and where we have used the shorthand 
+\begin{equation*}
+%\kappa \equiv \gamma R  (1-\boldsymbol{\beta}\cdot \vec{\boldsymbol{n}})
+\kappa \equiv (1-\boldsymbol{\beta}\cdot \vec{\boldsymbol{n}})
+\end{equation*}
+
+A number of identities are helpful both in finding an expression for $\partial^{\alpha} A^{\beta}$ and determining component-wise expressions for Eq.~(\ref{EOM_mom_nospin})~\cite{jackson2012classical,bordovitsyn_technique_2003}
+\begin{align}
+\frac{d V^{\alpha}}{d \tau}&=\left[c \gamma^{4} \boldsymbol{\beta} \cdot \dot{\boldsymbol{\beta}}, c \gamma^{2} \dot{\boldsymbol{\beta}}+c \gamma^{4} \boldsymbol{\beta}(\boldsymbol{\beta} \cdot \dot{\boldsymbol{\beta}})\right]\equiv \dot{V}_\tau
+\nonumber\\
+\frac{d}{d\tau} \left[  V^{\rho} R_{\rho} \right] &= -c^2 + R_\rho \dot{V}_\tau^\rho
+\nonumber\\
+{V}^\rho V_\rho &= c^2
+\end{align}
+
+where $\dot{\beta}$ is the derivative with respect to lab time, as opposed to $\dot{V}_\tau$.
+\noindent It should be emphasized that, for constructing an integrator, all $\beta$-indexed vectors should be contracted while all $\alpha$-indexed ones should be taken compenent-wise. For example, the identity $R^{\rho} R_{\rho} = 0 $ should \textit{not} be used with Eq.~(\ref{EOM_mom_nospin}), since it has nonzero contributions to the individual components of $\mathcal{P}^{\alpha}$.
+
+As an example, the final expression for the zero-index component of Eq.~(\ref{EOM_mom_nospin}) can be reduced to 
+\begin{align}
+    \frac{d \mathcal{P}^0}{d \tau} &= 
+    \cev{e}  \vec{e} \, \cev{V}_{\beta} \left[ 
+    \frac{\dot{\vec{V}}^\beta_\tau} {\kappa^{2} c^{3} \gamma^{2} R}
+    \nonumber - \frac{ \vec{V}^{\beta}} {\kappa^{2} c^{2} \gamma R^{2}} \right.
+    \noindent \\
+    & \left. -\frac{\boldsymbol{\beta}\cdot\dot{\boldsymbol{\beta}} \gamma \vec{V}^{\beta}}{\kappa^3 c^{3} R} 
+    +  \frac{\vec{V}^{\beta} }{\kappa^3 c^{2} \gamma^{3} R^{2}}
+    \right]
+    \label{eq:eoms_mom_trans}
+\end{align}
+
+\noindent The spatial components reduce in a similar manner. For example:
+\vspace{-0.2cm}
+\begin{align}
+    \frac{d \mathcal{P}^z}{d \tau} &= 
+    \cev{e}  \vec{e} \, \cev{V}_{\beta} \left[ 
+    \frac{\dot{\vec{V}}^\beta_\tau \hat{n}^{z}} {\kappa^2 c^{3} \gamma^{2} R}
+    \nonumber - \frac{ \vec{V}^{\beta} \vec{\beta}^{z}} {\kappa^2 c^{2} \gamma R^{2}} \right.
+    \noindent \\
+    &- \left. \frac{ \vec{V}^{\beta} (\hat{n}^z)^2 \left(\dot{\vec{\beta}}^z + \vec{\beta}^z \vec{\boldsymbol{\beta}}\cdot\dot{\vec{\boldsymbol{\beta}}} \gamma^{2}\right)}{\kappa^3 c^{3} R \gamma} 
+    +  \frac{\vec{V}^{\beta} \hat{n}^{z} }{\kappa^3 c^{2} \gamma^{3} R^{2}}
+    \right]
+    \label{eq:eoms_mom_long}
+\end{align}
+
+The equations of motion for the position coordinates are more straightforward:
+\vspace{0.1cm}
+\begin{equation}
+\frac{d x^{\alpha}}{d \tau}= \frac{\partial H}{\partial \mathcal{P}} = \frac{1}{\cev{m}}\left(\mathcal{P}^{\alpha}-\frac{\cev{e}}{c} A^{\alpha}\right) 
+\label{eq:eoms_pos}
+\end{equation}
+
+When updating a particle's velocity and acceleration components at the end of an integration step, care should be taken to first convert the conjugate momentum values back into real momentum values using Eq.~(\ref{mom_conj}). One should not that proper time $\tau$ remains constant as the defined integrator step size, while the $\boldsymbol{\dot{\beta}}$ dependent factors are dependent on lab-frame time (see \cite{laface_2020_covariant} for a discussion on the handling of proper time as an independent variable in a similar context).
+
+This formalism bypasses analyzing the Lorentz forces in terms of field distributions, which is practical in this case since each field source is a point particle with a known trajectory. In other words, in typical contexts field-dependent approaches (i.e. Poisson solvers) are robust and well-understood and the integration of retarded fields may be more intuitive conceptually (for examples, see~\cite{Ryne:IPAC2018-THPAK044,ryne:ipac12-tuppp036,quattromini_LW_2009}). However, in terms of computing trajectories between interacting particles, working directly with the $A^{\alpha}$ potentials is more straightforward.
+
+\section{Model Examination}\label{model_verification}
+Before discussing the numerical results, we consider a simple qualitative case to develop an intuition of the forces acting on any test particles and the enclosing system, particularly the recoil reduction effect. We then check that all the forces that may arise in such a simulation are accounted for properly on the scales relevant to modern particle accelerators. 
+
+%\vspace{-0.2cm}
+\subsection{Screened source recoil reduction: A simple test case }\label{sec:recoil_reduct_pedagog}
+\vspace{-0.2cm}
+Although the examination of energy shift and power deposition with a retarded covariant integrator is relatively uncomplicated, the recoil reduction due to a rapidly disappearing or screened source of charge is a more complicated effect. We provide a basic conceptual model here to clarify the concept.
+
+The cavity for this model is taken as a perfectly absorbing blackbody, with an two openings aligned along a beam axis. We denote the right-hand direction along the beam axis as $+\hat{z}$.
+% %(see Fig.{XXX}).
+%A non-conducting injection channel is placed a few millimeters from the interior wall of the cavity's left-hand side, aligned with the beam axis so that it can inject a test particle onto the beam axis with negligible momentum in all directions. 
+Two oncoming, oppositely charged, high-$\beta$ particles approach the cavity from opposite directions along $\hat{z}$ with equal-magnitude velocities and equal distances to the cavity center. We label these $\rho_L$ and $\rho_{R}$ for the particles entering from the left and right side of the cavity, respectively.
+
+Instead of entering the cavity, the openings are instantaneously closed just before the particles enter. Instead, both particles collide with the now-closed apertures, depositing their kinetic energy at the same instant in opposite directions for a zero change in net momentum.
+
+\begin{figure}
+  \begin{subfigure}{\columnwidth}
+    \centering
+    \includegraphics[width=0.92\linewidth]{figures/model_a.pdf}
+    \caption{}
+    \label{fig:model_setup}
+  \end{subfigure}
+  
+  \begin{subfigure}{\columnwidth}
+    \centering
+    \includegraphics[width=0.92\linewidth]{figures/model_b.pdf}
+    \caption{}
+    \label{fig:model_residuals}
+  \end{subfigure}
+  \vspace{-1\baselineskip}
+  \caption{(a) Two positively charged particles $\rho_L$ and  $\rho_R$ approach a blackbody cavity with relativistic velocities in opposite directions. A test particle $\rho_T$ is injected through a dielectric channel with negligible energy. (b)~The two entrances are closed shortly before the particles enter the cavity, and the test particle's arrival is timed such that it only interacts with the residual field from $\rho_R$, denoted as ($\rho_R$).}
+  \label{fig:model_cavity}
+\end{figure}
+
+However, the residual fields from the two particles continue to propagate through the cavity. No further changes occur to the system apart from these fields depositing their energy into the blackbody cavity walls as heat and radiation pressure. Again, these are aligned in opposite directions with respect to the beam axis and no recoil effects are observed. 
+
+Moving beyond this benchmark case, we consider injecting a test particle, which we will denote as $\rho_{T}$. The injection apparatus is assumed to be perfectly dielectric; it is placed a short distance from the interior wall of the cavity's left-hand side, and aligned so that it can inject a test particle onto the beam axis with negligible momentum. We then take time $t_0$ to be the instant where the apertures are shut and time $t_1=t_0+\epsilon$ to be the instant where the test particle is emitted, such that the fields emitted from $\rho_L$ have traversed beyond the injection point. Thus, $\rho_T$ only interacts with the incoming fields emitted from $\rho_R$. This scenario is illustrated in Fig.~\ref{fig:model_cavity}.
+
+The key result is that $\rho_T$ undergoes a small, but non-negligible acceleration in the $+\hat{z}$ direction and ultimately collides with the cavity wall on the right-hand side, for a net $z$-momentum gain to the system (having redirected momentum from $\rho_R$'s residual field into the $+z$ direction). This is what we refer to as a screened-source recoil reduction -- a net, one-dimensional momentum shift arising not from direct, static interactions between charged bodies, but between a single charged body and residual fields from sources that are screened or otherwise neutralized. In other words, as $\rho_T$ accelerates, its resulting fields reach no charged or conducting body and thus cause no restoring force in the $-z$ direction.
+
+For most cases, even highly relativistic ones, this momentum shift is insignificant. However, as discussed above and highlighted in Fig.~\ref{fig:rel_lortz_force_both}, there is an asymptotic growth for velocity-dependent fields (i.e.~non-radiative fields) for head-on, high-$\beta$ interactions. In these circumstances, this momentum shift becomes more appreciable. The case of a high-$\beta$ particle approaching a perfectly conducting surface is particularly relevant here, since the particle remains perfectly aligned with its image charge (or nearly perfectly, when accounting for retardation effects). This topic is addressed further in Section~\ref{sec:results_conducting_surface}.
+
+%\vspace{-0.2cm}
+\subsection{Cross-checking relevant forces on the modeled system}
+\vspace{-0.2cm}
+For completeness, we also consider any other forces which may come into play in the pedagogical model discussed in the preceding section. 
+\vspace{-0.2cm}
+\subsubsection*{Radiation pressure}
+\vspace{-0.2cm}
+To examine the case where $\rho_L$ and $\rho_R$ are accelerating toward one another before colliding with their respective apertures, we should check whether the radiation pressure exerted by their residual fields is negligible with respect to the momentum gain for $\rho_T$. To do so, we can draw from Jackson's formalism~\cite{jackson2012classical}, defining the momentum shift on the test particle due to radiation pressure as
+\begin{align}
+    \frac{dP_{RP}}{dt} = \frac{P_R}{c} \frac{a_T}{A_R}
+\end{align}
+where $P_R$ is the radiated power from particle $\rho_R$, $a_T$ is the effective cross-sectional area of the test particle, and $A_R$ is the cross-sectional area of the radiated power. This can be expanded to  
+\begin{align}
+    \frac{dP_{RP}}{dt} = \left[\frac{2}{3}\frac{e_s^2}{m_s c^4} \left(\frac{d\mathcal{P}_R}{dt}\right)^2\right] \cdot \frac{\pi r^2}{\Omega R^2}
+\end{align}
+
+\noindent where $\mathcal{P}_R$ is the momentum of particle $\rho_R$, $r$ is the test particle's radius, $\Omega$ is the solid angle of the the radiated power from $\rho_R$, and $R$ is the distance between the two particles at the retarded time, as defined above.
+
+The force from this radiation is negligible compared with the Coulomb force from the test particle's acceleration by several orders of magnitude for typical cases. Still, noting the nonlinear growth in Eq.~(\ref{eq:E_n_headon}), we should avoid the presumption that radiation effects can be ignored for extreme cases (e.g.~electrons with $\gamma>10000$ and cavity lengths of 10\,mm or less).
+
+Although radiation is perpendicular to the direction of travel for non-relativistic charged particles, it becomes highly forward-biased for relativistic ones, forming a double-peaked distribution with the proportionalities
+
+\vspace{-0.2cm}
+\begin{align}
+    \label{radiation_max}
+    \theta_{max}&\rightarrow \frac{1}{2 \gamma} 
+    \\
+    \theta_{rms}&\rightarrow \frac{1}{\gamma}
+\end{align}
+
+This allows for easy estimation of the solid angle of radiated power from $\rho_T$. One can then calculate $d\mathcal{P}_T / dt$ using Eq.~(\ref{EOM_mom_nospin}), noting that the relation between proper time $\tau$ and lab-frame time $t$ is $\frac{dt}{d \tau}=\gamma$. The resulting effect is at least tens of orders of magnitude less than the change in momentum of $\rho_T$, and can thus be ignored (even for heavy ions with a comparatively large surface area, or $d\mathcal{P}_T / dt$ values representing the upper limit of conventional accelerator capabilities).
+\vspace{-0.2cm}
+\subsubsection*{Radiation reaction force}
+\vspace{-0.2cm}
+Having determined the radiation pressure exerted by the incoming EM wave as negligible, there is another phenomenon needing consideration. This is the radiation reaction force, which is effectively a damping or self-recoil of a charged particle as it is accelerated by an external field and, in turn, releases radiation.
+
+To simulate this force, we use Medina's approach~\cite{medinaRadiationReactionClassical2006} which is compatible with our integrator, and which is based on the well-known Lorentz--Abraham--Dirac equation. Medina's equation for the radiation-reaction force can be written as
+\begin{equation}
+    F^{RAD} = \frac{2}{3}\frac{e^2}{mc^3}\left[ \frac{d\gamma}{dt}F_{ext}-\frac{\gamma^3}{c^2}\left( F_{ext}\cdot a) \right)v \right]
+\end{equation}
+In this equation, $m$ is not the typical rest mass, but an electrodynamic or ``dressed'' mass, defined as $m=m_0+ U_e/c^2$ where $U_e$ is the electrostatic energy and $m_0$ is rest mass.\,\footnote{There are theoretical difficulties in choosing an appropriate electrostatic energy and, in turn, particle radius. Such concerns can be ignored so long as any length scales considered in a given problem are considerably greater than the radius of the particle. For further reading, see \cite{rafelski_2022_rad_reaction, rohrlichDynamicsChargedParticle2008,martin-lunaNovelReactionForce2022,griffithsAbrahamLorentzLandau2010a,steaneReducedorderAbrahamLorentzDiracEquation2015} along with some experimental studies complementing the topic \cite{hammondRadiationReactionUltrahigh2010,liInducedCurrentDue2022,sampathExtremelyDenseGammaRay2021}.} This model for radiation reaction force can be easily incorporated into a tracking algorithm based on Eq.~(\ref{EOM_mom_nospin}). In general, it is negligible compared with the Lorentz forces due to a high-$\beta$ particle passing through an aperture in a conducting surface or the forces associated with screened-source recoil reduction.
+
+However, tracking this reaction force is useful in the cases where charged particles ultimately collide with a conducting surface: in the final time steps before an impending collision, accounting for the radiation reaction force prevents runaway solutions that would otherwise occur between the incoming particle and its image. Thus, the particle's approach can be probed for a final total energy preceding collision to a precision on the order of its Compton wavelength. For improved precision, the Eliezer--Ford--O'Connell formulation of this force may also be worth investigating~\cite{rafelski_2022_rad_reaction}.
+
+A more robust covariant retarded-potential integrator would also incorporate magnetic-dipole moment contributions, as discussed in a prior work~\cite{folsom:ipac2021-tupab218} (see also \cite{steinmetzMagneticDipoleMoment2019a}). 
+%Accounting for these effects, along with the radiation reaction force, would allow for first-principles simulation of charged-particle dynamics at picometer scales. Such a tracking code could be used as an input generator for, e.g., quantum-scale calculations of high energy beam--beam interactions or for Coulomb scattering simulations (where the formalism presented here can be seen as complementary to those presented in~\cite{kumar_lw_scattering_2017,matzdorfElasticCollisionsHeavy1987}). However, for the present purposes of examining energy deposition and millimeter--micron scale interactions between high-$\beta$ charged particles, we can conclude that Eqs.~\ref{eq:eoms_mom_trans}--\ref{eq:eoms_pos} constitute an adequate formalism.
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.45\textwidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.15_35MeV_electron_pinholev0.png}
+    \caption{Change in energy of a 35\,MeV electron passing through a pinhole aperture (1\,$\mu$m) in a flat conducting surface. Cavity length is 300~mm with the exit aperture positioned at z=0.}
+\label{fig:e_dep_35_MeV_elec}
+\end{figure}
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.45\textwidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.17_35MeV_electron_proton_power_v1.png}
+    \caption{Average radiated power at each integration step for an electron and proton following Eq.~(\ref{eq:lw_power}) (the cross product is ignored). Cavity length is 300~mm, with a 1\,$\mu$m pinhole aperture positioned at $z=0$.}
+\label{fig:pow_dep_elec_prot}
+\end{figure}
+
+\vspace{-0.2cm}
+\section{RESULTS} \label{results}
+\vspace{-0.2cm}
+\subsection{Power radiated toward an exit aperture}
+The basic model simulated here is a single charged particle approaching a conducting surface, which is treated as a single image charge so that reflected fields may be simulated. Although it is highly non-trivial to assert that the Liénard--Wiechert potentials can be used to model such scenarios when considering surface effects, we assume the surface to be a perfectly reflecting conductor (e.g. a superconducting film with negligible defects).
+
+This model is simple from a computational standpoint because it can be easily adapted for estimating the change in energy for a particle approaching a flat conducting surface and then passing through an idealized pinhole aperture or wider aperture in the same surface. It also allows for the simulation of a particle's trajectroy after the neutralization of the image charge (i.e. the retraction or screening via dielectric of the conducting surface) such that the test particle only interacts afterwards with residual fields. 
+
+%Results for this basic model are shown in Figs.~\ref{fig:e_dep_35_MeV_elec}, \ref{fig:pow_dep_elec_prot}, and \ref{fig:e_dep_apertures}.
+One should keep in mind that this model assumes a perfectly conducting surface surrounding the fixed or variable aperture. A critical illustration of the head-on field dependence is the steep increase in $\Delta E$ for the particle approaching an exit aperture, as shown in Fig.~\ref{fig:e_dep_35_MeV_elec}. Here, the use of a pinhole aperture on the micron scale gives an rough limit for the maximum energy shift due to reflected fields. In this case the field from the image charge is simply cut off at a radius of $R\simeq a$ where $R$ is the source--image distance and $a$ is the aperture radius.
+
+For Fig.~\ref{fig:pow_dep_elec_prot}, the full expression for radiated power from the particle is
+\begin{equation}
+P=\frac{2}{3} \frac{e^2}{c} \gamma^6\left[(\dot{\boldsymbol{\beta}})^2-(\boldsymbol{\beta} \times \dot{\boldsymbol{\beta}})^2\right]
+\label{eq:lw_power}
+\end{equation}
+
+\noindent which reduces to the familiar Larmor equation for nonrelativistic velocities. Although the peak power deposition shown here scales to the mW range for bunch populations of $10^9$, the effect diminishes for larger apertures.
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.49\textwidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.15_proton_300GeV_30GeV_dualax_edep_aperture.png}
+    \caption{Dependence of maximum energy shift on aperture size for protons with starting energies of 30\,GeV (blue) and 300\,GeV (red). Cavity length is 1\,m.}
+\label{fig:e_dep_apertures}
+\end{figure}
+
+To study more realistic aperture sizes, the previous image-charge model is no longer accurate once the distance between the particle and the aperture is reduced to the scale of the aperture radius. To correct this, a transverse shift is added to the image particle's position, corresponding to the solid angle defined by the source--image distance $R$. The shift can be defined as $\Delta x = R \operatorname{tan}\theta$, where $\theta$ is the apex angle related to the solid angle by $\Omega = 2\pi (1-cos\theta)$. Then, to ensure that the empty space of the aperture itself does not contribute any charge when calculating the reflected potentials, we adjust the image charge magnitude to the available solid-angle fraction of reflected charge:
+
+\begin{equation}
+    e_{img} = e\left( 1- \frac{2 a^2}{R^2\left[1 - \operatorname{cos}(\pi / 2)\right]} \right)
+    \label{eq:image_charge_fraction}
+\end{equation}
+
+Results for total energy shift for protons passing through a variety of apertures using these approximations are shown in Fig.~\ref{fig:e_dep_apertures}. The protons simulated here are positioned on the beam axis and have negligible keV-scale transverse momentum. From these variable-aperture results, we can see that the energy shift is roughly 5\% for the 300\,GeV protons and essentially negligible for 30\,GeV ones, thus providing numerical verification for the nonlinear $\gamma$ dependence predicted analytically by Eq.~(\ref{eq:E_n_headon}). % and illustrated in Fig.~\ref{fig:rel_lortz_force_2d}.
+ As with Fig~\ref{fig:e_dep_35_MeV_elec}, the minimum-aperture values from these simulations provide an estimate on upper limit on the possible energy change of the test particles. 
+
+
+\subsection{Approaching a conducting iris or chopper}\label{sec:results_conducting_surface}
+Here we illustrate screened-source recoil reduction, which was discussed as a conceptual model in Section~\ref{sec:recoil_reduct_pedagog}. In this case we simulate a more simplified scenario in which the test particle approaches a flat conducting iris which is opened instantaneously. We approximate this by tracking an image charge of the test particle with the appropriate retardation parameters and then eliminating it at an arbitrary time step. This can be seen as a coarse approximation of a fully closed conducting chopper or iris being opened for the test particle to pass through.
+
+In Fig.~\ref{fig:mom_switch_85MeV_elec}, the chopper is opened at 100\,mm from impact, leaving the test charge accelerating in the residual field. In other words, the energy shift of the test charge after the cutoff point is solely due to the fields which were emitted from the conductor before its disappearance. We should emphasize that this is a phenomenon uniquely suited to retarded-potential analysis: for a static integrator, the test particle's acceleration would immediately cease. 
+
+The momentum change after this cut-off is 0.6\,MeV/c over a span of 220\,ps, indicating an average force of roughly 200\,pN. This constitutes an uncompensated $+z$ momentum shift carried by the test particle to be absorbed downstream by a target, beam stop, or other machine element. When scaled to a bunch population of, e.g., 1 billion particles, this force is on the order of 0.1\,N. %However, one should keep in mind that this 
+\vspace{-0.25cm}
+
+It could be assumed equivalently that the chopper is not opened at all but instead blocked by a rapidly inserted dielectric surface having high electronic stopping power to maximize momentum transfer~\cite{datz_stoppingpow_1996,lindhard_stopping_1996}. In this case, the particle deposits the majority of its momentum into the dielectric surface, and any acceleration beyond the opening/switching point will result in recoil-less deposition of momentum in the $+z$ direction as discussed previously. What is critical here is that, in either scenario the particle's fields due to acceleration after the switching/opening instant cause no countervailing force in the $-z$ direction (with the exception of radiation pressure, which, as verified above, is orders of magnitude smaller at these scales).
+
+To justify allowing the chopper or iris to open instantaneously, we note the sharp falloff of energy shift with respect to aperture radius in Fig.~\ref{fig:e_dep_apertures}.\,\footnote{This plot shows results for protons, although a similar aperture dependence is observed for electrons)} In other words, most of the energy from the narrowly forward-biased field emitted from the test electron is no longer reflected once a chopper has opened beyond roughly 1\,{$\mu$}m.
+
+In general, this test case verifies the integrator's tracking of residual fields (i.e. tracking the image charge's properly correlated retarded time steps) with the noteworthy result of an electron being accelerated by its own wake by roughly 1\% of its initial kinetic energy in a 1\,m cavity, where more than half of the acceleration is produced by residual fields in the final 100\,mm.
+
+\begin{figure}[htp!]
+    \centering
+    \includegraphics[width=0.45\textwidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.15_electron_86MeV_switching.png}
+    \caption{Residual-field kinetic energy gain for a single 85~MeV electron traversing a 1000\,mm cavity toward a conductive iris or chopper. The $y$-axis shows energy increase in MeV from the initial value. The vertical line indicates the integration step where the iris is opened.}
+\label{fig:mom_switch_85MeV_elec}
+\end{figure}
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.45\textwidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.15_2GeV_prot_stat_v_ret.jpg}
+    \caption{ Energy shift of a 2\,GeV proton traversing the wake of a heavy-ion bunch (scale on left axis). Total charge for the heavy-ion bunch relative to the proton's position (scale on right axis).}
+\label{fig:real_bunch_accel_stat_ret}
+\end{figure}
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.45\textwidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.16_200GeV_switch_vs_repeat.png}
+    \caption{Acceleration of 200\,GeV protons from cascading series of heavy-ion driving bunches (as in Fig.~\ref{fig:real_bunch_accel_stat_ret}) and conductive-surface choppers (as in Fig.~\ref{fig:mom_switch_85MeV_elec}).}
+\label{fig:switching_v_realbunch_repeatingcav_200GeV}
+\end{figure}
+
+\subsection{Residual wake acceleration from a\\low-$\beta$ heavy ion bunch}\label{subsec:residual_wake_bunch}
+
+In order produce the screening effect without using mechanical apertures, we consider a test particle approaching a fixed aperture in a dielectric surface (i.e. a test particle traversing a dielectric collimator). A low-$\beta$, highly-populated driving bunch of heavy ions is then synchronized to cross transversely to the beam axis, on the opposite side of the aperture. With this arrangement, transverse forces on the test particle are minimized and it still undergoes residual-field acceleration for a duration proportional to $R/c$ (after the time step where the driving particle has traversed the full diameter of the aperture and thus passes from line of sight).
+
+Despite its low velocity, the driving bunch is sufficient to provide a short accelerating pulse to the test particle. In practice, a single pair or several pairs of driving bunches crossing from opposite directions on a transverse axis could be used to negate any transverse force on the test particle.
+
+For the present study, we simplified the dynamics of the driving bunch, treating it as a time-dependent, Gaussian charge distribution which is synchronized to have a maximum at some arbitrary $R$ value. Then, instead of giving it a transverse velocity, the bunch is placed at rest at the position $\textrm{z}=\textrm{x}=\textrm{y}=0$. Modeling the system in this way gives a coarse approximation of having a dielectric aperture screening the test--driver line of sight, with the critical characteristics being a reduction of transverse forces and allowing for a variable pulse-length from the driving bunch.
+
+Results for a single bunch crossing with this model are shown in Fig.~\ref{fig:real_bunch_accel_stat_ret}. We also show here a static (i.e. non-retarded) version of Eqs.~\ref{eq:eoms_mom_trans}--\ref{eq:eoms_pos} for comparison. 
+Here, the driving bunch is modeled as a macroparticle consisting of gold hexafluoride ions with a mass of 315\,amu and a charge of $-2$, and reaches a peak total charge when the test particle arrives at $\textrm{z}=-20$\,mm (the peak bunch population is $10^9$ or, in terms of total charge, roughly 0.33\,fC). We should emphasize that the charge is being artificially increased and decreased here to simulate the particles of the driving bunch becoming visible and then blocked due to an obstructing aperture wall. 
+
+To compare with the model from Section~\ref{sec:results_conducting_surface}, Fig.~\ref{fig:switching_v_realbunch_repeatingcav_200GeV} simulates single protons passing through several cycles of a bunch-driven versus a series of conducting-surface choppers. In this case, the driving bunches are identical in mass and charge to those in the previous example, but are placed at 200\,mm intervals starting at $z=0$ and are synchronized to reach a maximum population of $10^8$ when the incoming proton is 20\,mm upstream. For the surface-driven test, the choppers are synchronized to open (instantaneously) when the incoming proton is 50\,mm upstream. The magnitude of the acceleration depends heavily on the test particle's location when the chopper is opened for the conducting-surface model, and when the real-bunch charge density is maximum for bunch-driven model. Thus, in practice, the performance of these methods would depend largely on the attainable precision in terms of chopper speed and driving-bunch synchronization. 
+
+
+\subsection{Computational and practical limitations}
+It is important to note that the conducting surface model is essentially a two-particle system, whereas the real-bunch model uses a well-aligned macroparticle. Preliminary multiparticle tests have also been performed with the conducting surface approach using tens of particles and a variety of transverse spot sizes; these so far have not shown significant deviation from the single-particle simulations, likely due to the highly forward-biased potentials radiating from the test particles. However, multiparticle simulations with a higher particle count using a retarded integrator are extremely CPU intensive, since each integration step for a test particle requires pairwise distance calculations for all image charges and/or driving charges in the system (i.e. for the conducting surface model, this includes a single test particle's own image charge and all other test particles' image charges). Because of this, simulations for more than 1000 particles are unfeasible on ordinary workstations. Further multiparticle simulation would likely require cluster computing resources, and may benefit from pairwise-distance calculation optimization (see~\cite[pp.~62--69]{folsom_thesis}). %One should note, however, that the acceleration dynamics considered here are only substantial for high-$\beta$ velocities between test particles and their real or image counterparts, meaning that intrabunch dynamics (i.e. space charge) will be orders of magnitude lower and could be calculated with more conventional methods.
+
+Additionally, some screening may occur between a leading and trailing particles in a test bunch, with a leading particle's acceleration away from the bunch creating an additional wake (this is an intrabunch effect, \textit{not} involving image charges or a driving bunch). However, one can check using Eq.~(\ref{LW_forces_jackson}) that for receding particles (i.e. $\boldsymbol{\beta}\cdot\boldsymbol{n}\approx-1$) the resulting forces are highly attenuated, being proportional to the Coulomb force times $1/(4\gamma^2)$.
+
+Regardless of computational methods, an overall caveat to these models is that the strong $1/R^2$ dependence (where $R$ is test particle to source/image particle distance) is likely to lead to significant longitudinal energy spread, with leading particles in a test bunch undergoing much stronger acceleration than trailing one with respect to an oncoming conducting surface or bunch . To address this issue, beam-shaping methods are worth considering, such as using bunches with a transverse spot size that widens from front to rear longitudinally in order to increase the trailing particles' exposure to the conducting surface or driving-bunch wake; using a hollowed or heavily haloed driving-bunch distribution; or by microbunching of the test-particle beam.
+
+For the bunch-driven case, we must also assume that the results shown here are over-optimistic in terms of the driving bunch's transverse size, since only a single macroparticle of $10^8$--$10^9$ particles was used with a random 10\,{$\mu$}m scale transverse alignment error, and interaction with the high-$\beta$ test particle falls off strongly for test particle--driver bunch misalignments beyond this range (as can also be inferred from Fig.~\ref{fig:e_dep_apertures}). Thus, in practice, a large driving-bunch population would need to occupy a small, micron-scale transverse footprint corresponding to the charge-density curve in Fig.~\ref{fig:real_bunch_accel_stat_ret} in order to achieve the energy shifts shown therein. The method mentioned above of using several pairs of driving bunches crossing on antiparallel trajectories transverse to the beam axis may help to accomplish this (i.e. minimizing space charge until the instant all pairs of driving bunches reach the beam axis).
+
+To address this issue, systematic multiparticle simulation would be necessary for determining the most effective spot sizes, but at high CPU cost. An alternative approach would consist of including appropriate transverse trajectories for a few pairs of macroparticles, while continuing to use time-dependent charge distributions to approximate their being screened by an aperture. We note also that the conducting-surface method does not suffer from this drawback, as the test particle's image charges remain transversely aligned until the conductor is withdrawn or screened.
+
+In general, there is a tradeoff between the two models simulated here: in the surface-driven case, the test particle witnesses a high-$\beta$ image charge, leading to an approximate $8\vec{e}\,\cev{e}\gamma^5 / R^2$ proportionality in the velocity-dependent terms of Eq.~(\ref{EOM_mom_nospin});\,\footnote{This can demonstrated for the image-charge scenario by taking $\cev{\beta}\cdot\vec{\beta}=|\beta|^2 cos(\theta) \approx -|\beta|^2$ and $\cev{\gamma}\approx\vec{\gamma}$.} whereas in the bunch-driven case, the driving particles have a negligible longitudinal velocity, thus $\vec{\gamma}\approx 1$ and must be compensated by a high bunch population. Specifically, in a driving-bunch particle's integration steps, it is accelerated by a $8\cev{e}\vec{e}\,\cev{\gamma}^4 / R^2$ dependent force from the test particle; but the test-particle is only accelerated in response by a $\cev{e}\vec{e}\,\cev{\gamma} / R^2$ force.
+
+An alternative model, which would be simpler from an experimental standpoint, would be to use a series of semiconducting plates with fixed-radius apertures. With this setup, changing from conducting to dielectric states would still allow for low-recoil acceleration of a test particle, albeit with a penalty due to the fixed aperture preventing a significant fraction of the particle's fields from being reflected while in the conducting state and added complexity due to surface-charge effects. %Analyzing surface space-charge effects would be crucial for such a system, where the incoming energy from the test particle may cause the semiconductor's surface layers to produce an image charge comparable to that of a metal surface~\cite{ILCHENKO1992L147}. Bearing this in mind, the use of wide-band semiconductors or semi-insulators would likely be necessary to allow for a conducting state at large $R$ for acceleration (accounting for \textit{both} bias voltage and surface effects from the test charge's incoming fields) and an insulating state at small $R$ for recoil reduction.  
+
+
+\subsection{Test case: comparison with dielectric laser micro-acceleration}
+As a final example, we draw from recent advances in micro-scale dielectric laser accelerators (DLAs) where an inverse Cherenkov radiation (ICR) effect has shown promising results~\cite{liu_2020,sun_bin_2023,sun_li_2023,volkov_2022,Sun_li_2021,Kozak_17}. In its simplest implementation, this scheme uses a dielectric prism with its hypotenuse edge aligned parallel to the axis of an accelerating electron beam. A laser pulse is directed through an upper surface of the prism such that induced Cherenkov radiation in the prism is totally reflected away from the beam axis. The phase velocity of the resulting surface waves which do reach the beam axis can be synchronized with an incoming electron beam. This arrangement results in a cancellation of the Lorentz force of these surface waves' transverse magnetic and electric components, leaving a single longitudinal accelerating field, $E_z$.
+
+This ICR-DLA type structure is well-suited for comparison with the methods of the present work, since the dielectric surroundings eliminate the need to consider transverse beam effects such as beam loading. In particular, we draw from \cite{liu_2020}, which simulated 10\,MeV electrons accelerating through a quartz ICR-DLA for an energy gain of $\Delta E = 0.3$\,MeV over a span of 200\,{${\mu}$}m; the electric field intensity of the incident laser was 5\,GV/m and the magnitude of the resulting longitudinal surface field $E_z$ oscillated around a value of approximately $-1.5$\,GV/m.
+
+\begin{figure}
+  \begin{subfigure}{\columnwidth}
+    \centering
+    \includegraphics[width=0.92\linewidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.23_10MeV_electron_external_compare_irisv3.png}
+    \caption{}
+    \label{fig:external_DLA_vs_iris_single}
+  \end{subfigure}
+  
+  \begin{subfigure}{\columnwidth}
+    \centering
+    \includegraphics[width=0.92\linewidth,trim={0 0.7cm 0 0.5cm},clip]{figures/6.23_10MeV_electron_external_repeat_irisv6.png}
+    \caption{}
+    \label{fig:external_DLA_vs_iris_repeat}
+  \end{subfigure}
+  \vspace{-1\baselineskip}
+  \caption{Energy shift comparison and combination with an external field $E_z$ of $-1.5$\,GV/m for 10\,MeV electrons traversing an (a)~200\,{${\mu}$}m cavity having a single iris opening at $\Delta z = 1\,\mu$m and (b) a 2.75\,mm cavity having a series of irises opening at $\Delta z = 100\,\mu$m.}
+  \label{fig:external_DLA_vs_iris}
+\end{figure}
+
+In Fig.~\ref{fig:external_DLA_vs_iris_single}, we simulate a simplified version of such an ICR-DLA, taking its surface field $E_z$ as a constant $-1.5$\,GV/m, where an energy gain of roughly 0.1\,MeV is observed. In covariant terms, this can be added as a time-independent field to Eq.~(\ref{eq:eoms_mom_long}) as follows
+\begin{align}
+    \frac{d \mathcal{P}^z_{ext}}{d \tau} &= \frac{e}{c}V_{\beta}\partial^z A^0_{ext}
+    \nonumber \\
+    &=  e\gamma\left(1-\boldsymbol{\beta}\right)\partial^z A^0_{ext}
+    \nonumber \\
+    &=  e\gamma\left(1-\boldsymbol{\beta}\right)E_z
+\end{align}
+\noindent where the \textit{ext} subscript indicated an externally applied potential. Here, we have used the definition $E_z = \partial^z A^0 - \partial^0 A^z$ where the time derivative is zero. The results using this external potential are compared with an identical electron approaching a retracting iris, similar to the result shown in Fig.~\ref{fig:mom_switch_85MeV_elec}. We also show results for a case which combines both the retracting iris and the ICR-DLA.
+
+For this simulation, the iris is located at $z=0$ and is opened instantaneously when the incoming electron reaches $z=-1$\,${\mu}$m. At this scale, the conducting-surface acceleration is negligible once the iris has opened by roughly 50\,nm, yet the actuation speed of such an iris or chopper may be unrealistically high in practice (i.e. retracting a conducting surface a distance of 50\,nm in the span of roughly 3.3\,fs, or at a speed of roughly 0.05$c$).
+
+In Fig.~\ref{fig:external_DLA_vs_iris_repeat}, we consider instead a cascading series of irises spaced 500\,{$\mu$}m apart along a 2.75\,mm ICR-DLA device (or series of devices) and with an initial electron position of $z=-200\,\mu$m. Here, each iris opens when the incoming electron beam is at a distance of 100\,{$\mu$}m, resulting in an approximate factor of two gain versus the $E_z$-only trial.
+
+Although we have elected to show results using the conductive surface model for its computational simplicity, the driving bunch model may in fact be more feasible on such a scale, since it only requires synchronizing a series of low-$\beta$ bunches passing transversely along the downstream side of a dielectric aperture, instead of requiring high-frequency conductive irises or choppers.
+
+
+\section{Conclusion}
+We have demonstrated a retarded, covariant simulation framework for testing power deposition and acceleration of high-$\beta$ protons and electrons traveling toward conducting surfaces and passing though a variety of apertures which were either fixed-radius or allowed to open instantaneously. We also simulated acceleration due to residual fields from either conducting surfaces or external charges after breaking line of sight with the test particle.
+
+The deposited power from single electrons and protons passing a micron-scale pinhole aperture is shown to reach the 10\,pW scale, driven solely by the particles' reflected fields. However, as apertures are opened beyond a radius of roughly $1\,\mu$m, there is a sharp decrease in deposited power, thanks to the narrowly forward-biased shape of the incoming particles' fields. 
+
+An acceleration of roughly 1\% is observed for 85~MeV electrons approaching a disappearing conducting surface (i.e. an iris or chopper), with the majority of acceleration occurring after the surface has withdrawn. Although this result is noteworthy, in practice it is may be more complicated when accounting for surface roughness or surface charge accumulation.
+
+The external-particle driven acceleration results are shown to have comparable performance with the surface-driven acceleration for driving-bunch populations upwards of $10^8$. In this case, the distance between the test particle and driving bunch is critical.
+
+A resulting longitudinal energy spread is likely to be a fundamental issue for either model, thanks to the leading test particles witnessing stronger $R^2$-dependent fields than trailing ones. Beam shaping or microbunching may help mitigate this issue. Another concern is that it is costly to run multiparticle retarded-potential simulations due to an $N^2$ scaling of pairwise distance calculations. However, the high-$\beta$ inter-bunch effects discussed herein will typically supersede low-$\beta$ space charge interactions, which could be calculated using conventional methods.
+
+A comparison was also made between the conducting surface model and the ICR-DLA micro-acceleration technique, where we treated the accelerating gradient from an ICR-DLA device as a static $E$ field. When combining such a device with a series of conducting irises over a length of 2\,mm, we observed a factor of two gain in energy shift versus a solitary ICR-DLA.
+
+An alternative method using a series of thin semiconducting plates with fixed apertures could be a viable alternative to the systems we have simulated here (and less complex experimentally). For this case, the test particle is synchronized similarly to the conducting surface method, but the reflected fields are cut off by switching the semiconductor to its dielectric state at a distance where the aperture is still small relative to the solid angle of the particle's forward-biased field distribution.
+
+For the screened-source cases where the conducting iris or chopper is opened or the driving bunch is blocked from line of sight at large $R$, the test particle continues to accelerate from residual fields without having a charged or conducting body to interact with; it thus causes no countervailing force in the $-z$ direction. In other words, no recoil occurs on the encompassing structure beyond the opening/screening instant. This phenomenon may prove particularly useful for reducing structural vibrations in, for example, micro-accelerator applications.
+
+In general, the concepts of reflected self-wake acceleration and screened-source wake acceleration are dependent upon retarded-potential analysis, and may merit further study in the context of space-limited or high-precision experiments.
+
+%In general, this integrator could be used in the context of beam loss studies for high-precision or high-energy accelerator components, particularly with respect to choppers or cavity exit-apertures.
+
+%\bibliographystyle{h-physrev}
+%\bibliographystyle{plain}
+%\bibliographystyle{IEEEtran}
+%\bibliographystyle{apsrev42}
+\bibliography{biblio}
+\end{document}
+%
+% ****** End of file apssamp.tex ******

@@ -1,0 +1,103 @@
+/* Custom CSS for LW Integrator Documentation */
+
+/* Color scheme based on electromagnetic theme */
+:root {
+	--primary-color: #2980B9;
+	--secondary-color: #E74C3C;
+	--accent-color: #F39C12;
+	--text-color: #2C3E50;
+	--bg-light: #ECF0F1;
+}
+
+/* Custom styling for code blocks */
+.highlight {
+	background-color: #f8f9fa;
+	border-left: 4px solid var(--primary-color);
+	padding: 1rem;
+	margin: 1rem 0;
+}
+
+/* Math equation styling */
+.math {
+	font-size: 1.1em;
+	margin: 0.5rem 0;
+}
+
+/* Parameter tables */
+.table-wrapper table {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 1rem 0;
+}
+
+.table-wrapper th {
+	background-color: var(--primary-color);
+	color: white;
+	padding: 0.75rem;
+	text-align: left;
+}
+
+.table-wrapper td {
+	padding: 0.5rem 0.75rem;
+	border-bottom: 1px solid #ddd;
+}
+
+/* Warning and note boxes */
+.admonition {
+	margin: 1rem 0;
+	padding: 0.75rem 1rem;
+	border-radius: 4px;
+}
+
+.admonition.warning {
+	background-color: #fff3cd;
+	border-left: 4px solid #ffc107;
+}
+
+.admonition.note {
+	background-color: #d1ecf1;
+	border-left: 4px solid #17a2b8;
+}
+
+/* Physics formula highlighting */
+.physics-formula {
+	background-color: #f8f9fa;
+	border: 1px solid #dee2e6;
+	border-radius: 4px;
+	padding: 1rem;
+	margin: 1rem 0;
+	font-family: 'Computer Modern', serif;
+}
+
+/* Code parameter highlighting */
+.param {
+	background-color: #e7f3ff;
+	padding: 0.2rem 0.4rem;
+	border-radius: 3px;
+	font-family: monospace;
+	font-weight: bold;
+	color: var(--primary-color);
+}
+
+/* Navigation improvements */
+.wy-nav-content {
+	max-width: 1200px;
+}
+
+/* Jupyter notebook styling */
+.nbinput .highlight,
+.nboutput .highlight {
+	margin: 0;
+}
+
+/* Table of contents styling */
+.toctree-wrapper {
+	margin: 1.5rem 0;
+}
+
+.toctree-wrapper p.caption {
+	font-weight: bold;
+	font-size: 1.1em;
+	color: var(--primary-color);
+	margin-bottom: 0.5rem;
+}
