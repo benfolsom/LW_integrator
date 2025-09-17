@@ -6,6 +6,9 @@ __pycache__/
 # Archive directory - development and analysis files
 archive/
 
+# Development tests directory - working tests not ready for main repo
+tests/development/
+
 # C extensions
 *.so
 
