@@ -19,22 +19,21 @@ import numpy as np
 from typing import Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 
-# Physical constants in SI units
-C_LIGHT = 2.998e8  # m/s
-ELECTRON_MASS = 9.109e-31  # kg
-PROTON_MASS = 1.673e-27  # kg
-# CORRECTED: Use Gaussian unit charge for consistency with legacy integrator
-# Legacy factor: 1.6E-19 C => 4.8032047E-10 statC => [mm^(3/2)*amu^(1/2)*ns^(-1)]
-ELEMENTARY_CHARGE = 1.178734e-5  # Gaussian units, amu-mm-ns system
-AMU_TO_KG = 1.661e-27  # kg/amu
+# Physical constants in amu*mm*ns units (consistent with legacy system)
+C_LIGHT = 299.792458  # mm/ns (speed of light)
+ELECTRON_MASS = 5.485799e-4  # amu (electron mass)
+PROTON_MASS = 1.007276466812  # amu (proton mass)
+# Charge in Gaussian units consistent with amu*mm*ns system
+# Legacy factor from Benjamin Folsom's system
+ELEMENTARY_CHARGE = 1.178734e-5  # Gaussian units, amu*mm*ns system
 
 
 @dataclass
 class ParticleSpecies:
-    """Standard particle species with mass and charge in Gaussian units"""
+    """Standard particle species with mass and charge in amu*mm*ns units"""
 
-    mass_kg: float
-    charge_gaussian: float  # Gaussian units [mm^(3/2)*amu^(1/2)*ns^(-1)]
+    mass_amu: float  # Mass in amu
+    charge_gaussian: float  # Gaussian units [amu*mm*ns system]
     name: str
 
     @classmethod
@@ -49,7 +48,7 @@ class ParticleSpecies:
     def ion(
         cls, mass_amu: float, charge_state: int, name: str = "ion"
     ) -> "ParticleSpecies":
-        return cls(mass_amu * AMU_TO_KG, charge_state * ELEMENTARY_CHARGE, name)
+        return cls(mass_amu, charge_state * ELEMENTARY_CHARGE, name)
 
 
 def create_particle_bunch(
@@ -58,13 +57,13 @@ def create_particle_bunch(
     energy_mev: Optional[float] = None,
     gamma: Optional[float] = None,
     momentum_mev_c: Optional[float] = None,
-    position: Tuple[float, float, float] = (0.0, 0.0, 0.0),  # (x, y, z) in meters
+    position: Tuple[float, float, float] = (0.0, 0.0, 0.0),  # (x, y, z) in mm
     momentum_direction: Tuple[float, float, float] = (
         0.0,
         0.0,
         1.0,
     ),  # (px, py, pz) normalized
-    bunch_size: Tuple[float, float] = (0.0, 0.0),  # (sigma_x, sigma_y) in meters
+    bunch_size: Tuple[float, float] = (0.0, 0.0),  # (sigma_x, sigma_y) in mm
     momentum_spread: float = 0.0,  # relative momentum spread
     distribution: str = "gaussian",  # "gaussian" or "uniform"
     seed: Optional[int] = None,
@@ -78,9 +77,9 @@ def create_particle_bunch(
         energy_mev: Total energy in MeV (specify one of energy_mev, gamma, or momentum_mev_c)
         gamma: Lorentz factor
         momentum_mev_c: Momentum in MeV/c units
-        position: Center position (x, y, z) in meters
+        position: Center position (x, y, z) in mm
         momentum_direction: Momentum direction (px, py, pz) normalized
-        bunch_size: Transverse size (sigma_x, sigma_y) in meters
+        bunch_size: Transverse size (sigma_x, sigma_y) in mm
         momentum_spread: Relative momentum spread (0.0 = monoenergetic)
         distribution: "gaussian" or "uniform"
         seed: Random seed for reproducibility
@@ -97,8 +96,9 @@ def create_particle_bunch(
             "Must specify exactly one of: energy_mev, gamma, or momentum_mev_c"
         )
 
-    # Calculate rest energy in MeV (use SI constants for energy conversion, not Gaussian charge)
-    rest_energy_mev = species.mass_kg * C_LIGHT**2 / (1.602e-19 * 1e6)  # MeV
+    # Calculate rest energy in MeV using amu*c^2 relationship
+    # 1 amu = 931.494 MeV/c^2, so rest energy = mass_amu * 931.494 MeV
+    rest_energy_mev = species.mass_amu * 931.494  # MeV
 
     if gamma is not None:
         gamma_val = gamma
@@ -109,9 +109,9 @@ def create_particle_bunch(
         gamma_val = np.sqrt(1 + (momentum_mev_c / rest_energy_mev) ** 2)
         energy_mev = gamma_val * rest_energy_mev
 
-    # Calculate base momentum
+    # Calculate base momentum in amu*mm/ns units
     beta = np.sqrt(1 - 1 / gamma_val**2)
-    momentum_magnitude = gamma_val * species.mass_kg * beta * C_LIGHT
+    momentum_magnitude = gamma_val * species.mass_amu * beta * C_LIGHT
 
     # Normalize momentum direction
     p_dir = np.array(momentum_direction)
@@ -158,14 +158,14 @@ def create_particle_bunch(
     Py = momentum_magnitude * momentum_factors * p_dir[1]
     Pz = momentum_magnitude * momentum_factors * p_dir[2]
 
-    # Calculate relativistic quantities for each particle
-    Pt = np.sqrt(Px**2 + Py**2 + Pz**2 + (species.mass_kg * C_LIGHT) ** 2)
-    gamma_array = Pt / (species.mass_kg * C_LIGHT)
+    # Calculate relativistic quantities for each particle in amu*mm/ns units
+    Pt = np.sqrt(Px**2 + Py**2 + Pz**2 + (species.mass_amu * C_LIGHT) ** 2)
+    gamma_array = Pt / (species.mass_amu * C_LIGHT)
 
     # Velocities in units of c
-    bx = Px / (gamma_array * species.mass_kg * C_LIGHT)
-    by = Py / (gamma_array * species.mass_kg * C_LIGHT)
-    bz = Pz / (gamma_array * species.mass_kg * C_LIGHT)
+    bx = Px / (gamma_array * species.mass_amu * C_LIGHT)
+    by = Py / (gamma_array * species.mass_amu * C_LIGHT)
+    bz = Pz / (gamma_array * species.mass_amu * C_LIGHT)
 
     # Initialize acceleration to zero
     bdotx = np.zeros(n_particles)
@@ -220,9 +220,9 @@ def bunch_info(bunch: Dict[str, np.ndarray]) -> None:
     # Calculate energies
     gamma_mean = np.mean(bunch["gamma"])
     if n_particles > 0:
-        # Estimate mass from first particle
-        mass_kg = bunch["Pt"][0] / (bunch["gamma"][0] * C_LIGHT)
-        rest_energy_mev = mass_kg * C_LIGHT**2 / (1.602e-19 * 1e6)
+        # Estimate mass from first particle in amu units
+        mass_amu = bunch["Pt"][0] / (bunch["gamma"][0] * C_LIGHT)
+        rest_energy_mev = mass_amu * 931.494  # Convert amu to MeV
         total_energy_mev = gamma_mean * rest_energy_mev
 
         print("Particle bunch information:")
@@ -232,13 +232,13 @@ def bunch_info(bunch: Dict[str, np.ndarray]) -> None:
         print(f"  Total energy: {total_energy_mev:.3f} MeV")
         print(f"  Kinetic energy: {total_energy_mev - rest_energy_mev:.3f} MeV")
 
-        # Position statistics
+        # Position statistics (already in mm)
         print(
-            f"  Position (mean): x={np.mean(bunch['x'])*1e3:.3f} mm, y={np.mean(bunch['y'])*1e3:.3f} mm, z={np.mean(bunch['z'])*1e3:.3f} mm"
+            f"  Position (mean): x={np.mean(bunch['x']):.3f} mm, y={np.mean(bunch['y']):.3f} mm, z={np.mean(bunch['z']):.3f} mm"
         )
         if np.std(bunch["x"]) > 0 or np.std(bunch["y"]) > 0:
             print(
-                f"  Position (σ): x={np.std(bunch['x'])*1e3:.3f} mm, y={np.std(bunch['y'])*1e3:.3f} mm"
+                f"  Position (σ): x={np.std(bunch['x']):.3f} mm, y={np.std(bunch['y']):.3f} mm"
             )
 
         # Momentum statistics

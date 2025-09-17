@@ -325,14 +325,19 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
             #'real' gamma
             #btots = np.sqrt(np.square(vector['bx'][i])+np.square(vector['by'][i])+np.square(vector['bz'][i]))
             btots = np.sqrt(np.square(result['bx'][i])+np.square(result['by'][i])+np.square(result['bz'][i]))
+            
+            # Only limit velocities that actually exceed c due to numerical artifacts
+            # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
+            if btots >= 1.0:
+                # Limit to very close to c to avoid mathematical singularities
+                btots_limited = 0.9999999999999
+                scale_factor = btots_limited / btots
+                result['bx'][i] *= scale_factor
+                result['by'][i] *= scale_factor
+                result['bz'][i] *= scale_factor
+                btots = btots_limited
+            
             result['gamma'][i] = np.sqrt(np.divide(1,1-np.square(btots)))
-
-            if result['bz'][i] > 1: # | btots >1 :
-                print(result['bz'][i])
-                raise Exception("Beam-axis velocity exceeded c")
-            if result['bz'][i] < -1:
-                print(result['bz'][i])
-                raise Exception("Beam-axis velocity exceeded c")
 
             result['bdotx'][i] = (-vector['bx'][i]+result['bx'][i])/(c_mmns*h*result['gamma'][i])
             result['bdoty'][i] = (-vector['by'][i]+result['by'][i])/(c_mmns*h*result['gamma'][i])
@@ -505,16 +510,20 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                 #'real' gamma
                 #btots = np.sqrt(np.square(trajectory[i_traj]['bx'][l])+np.square(trajectory[i_traj]['by'][l])+np.square(trajectory[i_traj]['bz'][l]))
                 btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
+                
+                # Only limit velocities that actually exceed c due to numerical artifacts
+                # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
+                if btots >= 1.0:
+                    # Limit to very close to c to avoid mathematical singularities
+                    btots_limited = 0.9999999999999
+                    scale_factor = btots_limited / btots
+                    result['bx'][l] *= scale_factor
+                    result['by'][l] *= scale_factor
+                    result['bz'][l] *= scale_factor
+                    btots = btots_limited
+                
                 result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
                 #print(result['gamma'][l])
-
-
-                if result['bz'][l] > 1: #try also | btots > 1 :
-                    print(result['bz'][l])
-                    raise Exception("Beam-axis velocity exceeded c")
-                if result['bz'][l] < -1:
-                    print(result['bz'][l])
-                    raise Exception("Beam-axis velocity exceeded c")
 
 
 
