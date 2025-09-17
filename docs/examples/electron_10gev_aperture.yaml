@@ -6,7 +6,7 @@ beam:
   total_energy_mev: 10000.0
   n_particles: 100
   particles_per_macroparticle: 1000000
-  
+
   # Transverse parameters
   emit_x: 1.0e-9     # 1 nm⋅rad horizontal emittance
   emit_y: 1.0e-11    # 10 pm⋅rad vertical emittance (flat beam)
@@ -14,11 +14,11 @@ beam:
   beta_y: 5.0        # 5 m vertical beta function
   alpha_x: 0.0       # No correlation
   alpha_y: 0.0       # No correlation
-  
+
   # Longitudinal parameters
   sigma_z: 1.0e-4    # 0.1 mm RMS bunch length
   sigma_dp: 1.0e-4   # 0.01% RMS momentum spread
-  
+
   # Distribution types
   distribution_x: "gaussian"
   distribution_y: "gaussian"
@@ -33,16 +33,16 @@ lattice:
       aperture_limits: [0.01]    # 10 mm radius
       material: "copper"
       thickness: 0.001   # 1 mm wall thickness
-  
+
   - name: "tight_aperture"
-    type: "drift" 
+    type: "drift"
     length: 1.0        # 1.0 m length
     aperture:
       aperture_type: "circular"
       aperture_limits: [0.002]   # 2 mm radius (tight!)
       material: "copper"
       thickness: 0.001
-  
+
   - name: "focusing_quad"
     type: "quadrupole"
     length: 0.3        # 0.3 m length
@@ -56,17 +56,17 @@ simulation:
   n_turns: 0                     # Single pass (0 turns)
   n_steps_per_element: 500       # 500 integration steps per element
   integration_method: "adaptive" # Use adaptive step size control
-  
+
   # Physics flags
   radiation_reaction: true       # Include synchrotron radiation
   space_charge: false           # Ignore space charge for this study
   wake_fields: false            # No wake fields
-  
+
   # Adaptive integration thresholds
   force_threshold: 1.0e-8        # Force magnitude threshold (N)
   energy_threshold: 1.0e-8       # Energy change threshold (relative)
   field_gradient_threshold: 1.0e-6  # Field gradient threshold (T/m)
-  
+
   # Output control
   output_frequency: 10           # Save data every 10 steps
   save_trajectories: true        # Save full particle trajectories
