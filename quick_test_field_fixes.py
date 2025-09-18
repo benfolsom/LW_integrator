@@ -11,7 +11,7 @@ sys.path.append("./core")
 sys.path.append("./legacy")
 sys.path.append(".")
 
-from trajectory_integrator import LienardWiechertIntegrator
+from core.trajectory_integrator import LienardWiechertIntegrator
 from physics.constants import C_MMNS
 
 

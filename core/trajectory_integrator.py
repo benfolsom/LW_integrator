@@ -26,10 +26,46 @@ class LienardWiechertIntegrator:
     - Chronological ordering for retarded times
     - Radiation reaction forces
     - Aperture effects and boundary conditions
+    
+    By default, this class automatically returns the optimized version 
+    (OptimizedLienardWiechertIntegrator) if available. To force the standard
+    version, pass use_optimized=False.
     """
 
-    def __init__(self, config: Optional[SimulationConfig] = None):
-        """Initialize the integrator with configuration."""
+    def __new__(cls, config: Optional[SimulationConfig] = None, use_optimized: Optional[bool] = None):
+        """
+        Create a new integrator instance.
+        
+        Args:
+            config: Simulation configuration
+            use_optimized: If None (default), uses optimized version if available.
+                          If True, forces optimized (with fallback warning).
+                          If False, forces standard version.
+        """
+        # Only apply smart factory behavior for direct instantiation of this class
+        if cls is LienardWiechertIntegrator:
+            should_use_optimized = use_optimized if use_optimized is not None else True
+            
+            if should_use_optimized:
+                try:
+                    from .performance import OptimizedLienardWiechertIntegrator
+                    return OptimizedLienardWiechertIntegrator(config)
+                except ImportError:
+                    if use_optimized is True:  # Explicitly requested
+                        print("⚠️  Optimized integrator requested but not available. Using standard integrator.")
+                    # Fall through to create standard instance
+            
+        # Create standard instance (either explicitly requested or as fallback)
+        return super().__new__(cls)
+
+    def __init__(self, config: Optional[SimulationConfig] = None, use_optimized: Optional[bool] = None):
+        """
+        Initialize the integrator with configuration.
+        
+        Args:
+            config: Simulation configuration
+            use_optimized: Parameter for compatibility (ignored in base class)
+        """
         self.config = config or SimulationConfig()
         self.c_mmns = C_MMNS
         self.charge_gaussian = ELEMENTARY_CHARGE_GAUSSIAN
@@ -1158,3 +1194,57 @@ class LienardWiechertIntegrator:
             # (no electromagnetic interactions)
 
         return result
+
+
+# ============================================================================
+# OPTIMIZED INTEGRATOR FACTORY AND DEFAULT EXPORT
+# ============================================================================
+
+# Try to import and use the optimized version by default
+_DEFAULT_USE_OPTIMIZED = True
+_OPTIMIZED_AVAILABLE = False
+
+try:
+    from .performance import OptimizedLienardWiechertIntegrator
+    _OPTIMIZED_AVAILABLE = True
+except ImportError:
+    # Optimized version not available, will fall back to standard
+    OptimizedLienardWiechertIntegrator = None
+
+
+def create_integrator(
+    config: Optional[SimulationConfig] = None, 
+    use_optimized: Optional[bool] = None
+) -> "LienardWiechertIntegrator":
+    """
+    Factory function to create a Lienard-Wiechert integrator.
+    
+    Args:
+        config: Simulation configuration
+        use_optimized: Whether to use optimized version. If None, uses default (True)
+                      If True but optimized unavailable, falls back to standard with warning
+    
+    Returns:
+        LienardWiechertIntegrator instance (optimized by default if available)
+    """
+    should_use_optimized = use_optimized if use_optimized is not None else _DEFAULT_USE_OPTIMIZED
+    
+    if should_use_optimized and _OPTIMIZED_AVAILABLE:
+        return OptimizedLienardWiechertIntegrator(config)
+    elif should_use_optimized and not _OPTIMIZED_AVAILABLE:
+        print("⚠️  Optimized integrator requested but not available. Using standard integrator.")
+        return LienardWiechertIntegrator(config)
+    else:
+        return LienardWiechertIntegrator(config)
+
+
+# Create a default instance factory that applications can import as the main class
+def LienardWiechertIntegratorFactory(
+    config: Optional[SimulationConfig] = None,
+    use_optimized: Optional[bool] = None
+):
+    """
+    Default factory that returns optimized integrator by default.
+    This maintains backward compatibility while providing optimized performance.
+    """
+    return create_integrator(config, use_optimized)
