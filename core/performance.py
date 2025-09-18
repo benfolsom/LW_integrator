@@ -316,7 +316,7 @@ class OptimizedLienardWiechertIntegrator(LienardWiechertIntegrator):
     """
 
     def __init__(
-        self, config: Optional[SimulationConfig] = None, use_jit: bool = True
+        self, config: Optional[SimulationConfig] = None, use_jit: bool = True, use_optimized: Optional[bool] = None
     ) -> None:
         """
         Initialize the optimized integrator.
@@ -324,8 +324,9 @@ class OptimizedLienardWiechertIntegrator(LienardWiechertIntegrator):
         Args:
             config: Simulation configuration
             use_jit: Whether to use JIT compilation (default: True, auto-disabled if numba unavailable)
+            use_optimized: Parameter for compatibility with base class (ignored here)
         """
-        super().__init__(config)
+        super().__init__(config, use_optimized)
         self.use_jit = use_jit and NUMBA_AVAILABLE
         self._jit_warmup_done = False
 
@@ -543,6 +544,9 @@ def create_optimized_integrator(
 ) -> "LienardWiechertIntegrator":
     """
     Factory function to create the best available integrator.
+    
+    Note: This function is now largely redundant since LienardWiechertIntegrator()
+    automatically returns the optimized version by default.
 
     Args:
         config: Simulation configuration
@@ -552,10 +556,9 @@ def create_optimized_integrator(
         OptimizedLienardWiechertIntegrator or LienardWiechertIntegrator
     """
     if prefer_performance:
-        try:
-            return OptimizedLienardWiechertIntegrator(config, use_jit=True)
-        except ImportError:
-            # Fall back to base integrator if numba not available
-            return LienardWiechertIntegrator(config)
+        # Force optimized version
+        return OptimizedLienardWiechertIntegrator(config, use_jit=True)
     else:
-        return LienardWiechertIntegrator(config)
+        # Force standard version
+        from .trajectory_integrator import LienardWiechertIntegrator
+        return LienardWiechertIntegrator(config, use_optimized=False)
