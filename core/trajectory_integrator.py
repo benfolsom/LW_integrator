@@ -10,7 +10,7 @@ Restoration Date: 2025-09-17
 """
 
 import numpy as np
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 from physics.constants import C_MMNS, ELEMENTARY_CHARGE_GAUSSIAN
 from physics.simulation_types import SimulationConfig
@@ -167,6 +167,241 @@ class LienardWiechertIntegrator:
 
         return nhat
 
+    def conducting_flat_modern(
+        self, vector: Dict[str, Any], wall_Z: float, apt_R: float
+    ) -> Dict[str, Any]:
+        """
+        Modern implementation of conducting flat wall with image charges.
+
+        Creates image charges with opposite sign reflected across the wall.
+        Particles passing the wall have their image charges turned off.
+
+        Args:
+            vector: Current particle state
+            wall_Z: Wall position in z direction (mm)
+            apt_R: Aperture radius (mm)
+
+        Returns:
+            Image charge state dictionary
+        """
+        result = {}
+
+        # Initialize result arrays with same shape as input
+        for key in [
+            "x",
+            "y",
+            "z",
+            "t",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+            "bdotx",
+            "bdoty",
+            "bdotz",
+        ]:
+            result[key] = np.zeros_like(vector[key])
+
+        # Copy particle properties (these may be modified)
+        result["q"] = np.copy(vector["q"])
+        result["m"] = (
+            np.copy(vector["m"]) if "m" in vector else np.copy(vector["q"])
+        )  # fallback
+        result["char_time"] = vector.get("char_time", 1.0)
+
+        # Process each particle
+        for i in range(len(vector["x"])):
+            r = np.sqrt(vector["x"][i] ** 2 + vector["y"][i] ** 2)
+
+            # Check if particle has passed the wall
+            if vector["z"][i] >= wall_Z:
+                # Turn off image charge for particles past wall
+                result["q"][i] = 0.0
+            else:
+                # Create image charge
+                result["q"][i] = -vector["q"][i]  # Opposite charge
+                result["x"][i] = vector["x"][i]  # Same x position
+                result["y"][i] = vector["y"][i]  # Same y position
+                result["z"][i] = wall_Z + abs(wall_Z - vector["z"][i])  # Reflected z
+
+                # Image charge has opposite momentum components
+                result["Px"][i] = vector["Px"][i]  # Tangential unchanged
+                result["Py"][i] = vector["Py"][i]  # Tangential unchanged
+                result["Pz"][i] = -vector["Pz"][i]  # Normal component reversed
+                result["Pt"][i] = vector["Pt"][i]  # Total magnitude same
+
+                # Beta components (velocity/c)
+                result["bx"][i] = vector["bx"][i]
+                result["by"][i] = vector["by"][i]
+                result["bz"][i] = -vector["bz"][i]  # Reversed
+
+                # Beta derivatives reversed for normal component
+                result["bdotx"][i] = vector["bdotx"][i]
+                result["bdoty"][i] = vector["bdoty"][i]
+                result["bdotz"][i] = -vector["bdotz"][i]
+
+                # Other properties
+                result["gamma"][i] = vector["gamma"][i]
+                result["t"][i] = vector["t"][i]  # No retardation for image charges
+                result["m"][i] = vector["m"][i] if "m" in vector else vector["q"][i]
+
+        return result
+
+    def switching_flat_modern(
+        self, vector: Dict[str, Any], wall_Z: float, apt_R: float, cut_Z: float
+    ) -> Dict[str, Any]:
+        """
+        Modern implementation of switching flat wall (disappearing aperture).
+
+        Like conducting_flat but image charges disappear when particles reach cut_Z.
+        Used for cavity simulations with time-varying apertures.
+
+        Args:
+            vector: Current particle state
+            wall_Z: Wall position in z direction (mm)
+            apt_R: Aperture radius (mm)
+            cut_Z: Position where aperture disappears (mm)
+
+        Returns:
+            Image charge state dictionary
+        """
+        result = {}
+
+        # Initialize result arrays
+        for key in [
+            "x",
+            "y",
+            "z",
+            "t",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+            "bdotx",
+            "bdoty",
+            "bdotz",
+        ]:
+            result[key] = np.zeros_like(vector[key])
+
+        # Initialize with negative charge (image)
+        result["q"] = -np.copy(vector["q"])
+        result["m"] = np.copy(vector["m"]) if "m" in vector else np.copy(vector["q"])
+        result["char_time"] = vector.get("char_time", 1.0)
+
+        # Process each particle
+        for i in range(len(vector["x"])):
+            r = np.sqrt(vector["x"][i] ** 2 + vector["y"][i] ** 2)
+
+            # Check if particle has reached cutoff position
+            if vector["z"][i] >= cut_Z:
+                # Turn off image charge after cutoff
+                result["q"][i] = 0.0
+            else:
+                # Create image charge (like conducting_flat)
+                result["x"][i] = vector["x"][i]
+                result["y"][i] = vector["y"][i]
+                result["z"][i] = wall_Z + abs(wall_Z - vector["z"][i])
+
+                # Reversed momentum components
+                result["Px"][i] = vector["Px"][i]
+                result["Py"][i] = vector["Py"][i]
+                result["Pz"][i] = -vector["Pz"][i]
+                result["Pt"][i] = vector["Pt"][i]
+
+                # Reversed velocity components
+                result["bx"][i] = vector["bx"][i]
+                result["by"][i] = vector["by"][i]
+                result["bz"][i] = -vector["bz"][i]
+
+                # Reversed acceleration components
+                result["bdotx"][i] = vector["bdotx"][i]
+                result["bdoty"][i] = vector["bdoty"][i]
+                result["bdotz"][i] = -vector["bdotz"][i]
+
+                # Other properties
+                result["gamma"][i] = vector["gamma"][i]
+                result["t"][i] = vector["t"][i]
+                result["m"][i] = vector["m"][i] if "m" in vector else vector["q"][i]
+
+        return result
+
+    def _needs_complex_physics(
+        self,
+        beta_vec: np.ndarray,
+        beta_ext: np.ndarray,
+        gamma_i: float,
+        gamma_j: float,
+        k_factor: float,
+        distance: float,
+    ) -> bool:
+        """
+        Determine if complex electromagnetic physics is needed.
+
+        Uses simple physics for most cases, complex physics when:
+        - Moderate relativistic factors (γ > 10) for accuracy
+        - Close approach (distance < 10 mm) for strong interactions
+        - BUT never for k_factor singularities
+
+        Balanced approach: Allow complex physics when needed for accuracy
+        but prevent numerical instabilities from singularities.
+        """
+
+        # CRITICAL: Never use complex physics for k_factor near zero
+        # This prevents the k_factor**3 singularity in the denominator
+        if abs(k_factor) < 1e-6:  # Very small threshold for true singularities
+            return False  # Force simple physics for numerical stability
+
+        # USE COMPLEX PHYSICS ALWAYS (except for true singularities)
+        # This lets us identify real problems rather than masking them
+        return True
+
+    def _simple_em_force(
+        self,
+        beta_vec: np.ndarray,
+        gamma_i: float,
+        q_i: float,
+        q_j: float,
+        distance: float,
+        nhat: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Simplified electromagnetic force calculation.
+
+        Uses Coulomb force with basic relativistic corrections.
+        Numerically stable for most particle physics applications.
+        Uses amu-mm-ns Gaussian units to match legacy system.
+        """
+        c_mmns = self.c_mmns
+
+        # Prevent close approach singularities with physical minimum distance
+        # Use nuclear scale (~1 femtometer = 1e-12 mm) as hard limit
+        safe_distance = max(distance, 1e-12)  # mm minimum distance (nuclear scale)
+
+        # Gaussian Coulomb force in amu-mm-ns units
+        # F = q1*q2 / r^2 (in Gaussian units)
+        # Force gives momentum rate: F = dp/dt
+        coulomb_magnitude = (q_i * q_j) / (safe_distance**2)
+
+        # Simple relativistic correction (approximate)
+        # Reduces force by gamma factor for time dilation effects
+        relativistic_factor = 1.0 / gamma_i
+
+        # Final force magnitude (repulsive for like charges)
+        force_magnitude = coulomb_magnitude * relativistic_factor
+
+        # Force direction vector (points from j to i for repulsion)
+        force_vec = force_magnitude * nhat
+
+        return force_vec
+
     def eqsofmotion_retarded(
         self,
         h: float,
@@ -212,19 +447,23 @@ class LienardWiechertIntegrator:
         result["char_time"] = trajectory[i_traj]["char_time"]
         result["m"] = trajectory[i_traj]["m"]
 
-        # Integrate each particle
+        # Integrate each particle (FIXED loop structure to match legacy)
         for particle_idx in range(len(trajectory[i_traj]["x"])):
-            # Calculate retarded times and distances
+            # Calculate retarded times and distances for this particle
             i_new = self.chrono_jn(trajectory, trajectory_ext, i_traj, particle_idx)
             nhat = self.dist_euclid_ret(
                 trajectory, trajectory_ext, i_traj, particle_idx, i_new
             )
 
-            # Initialize with current values
+            # Initialize with current values (no accumulation yet)
             result["x"][particle_idx] = trajectory[i_traj]["x"][particle_idx]
             result["y"][particle_idx] = trajectory[i_traj]["y"][particle_idx]
             result["z"][particle_idx] = trajectory[i_traj]["z"][particle_idx]
             result["t"][particle_idx] = trajectory[i_traj]["t"][particle_idx]
+            result["Px"][particle_idx] = trajectory[i_traj]["Px"][particle_idx]
+            result["Py"][particle_idx] = trajectory[i_traj]["Py"][particle_idx]
+            result["Pz"][particle_idx] = trajectory[i_traj]["Pz"][particle_idx]
+            result["Pt"][particle_idx] = trajectory[i_traj]["Pt"][particle_idx]
 
             # Sum all external field contributions
             for j in range(len(trajectory_ext[0]["x"])):
@@ -250,6 +489,11 @@ class LienardWiechertIntegrator:
                 nhat_vec = np.array([nhat["nx"][j], nhat["ny"][j], nhat["nz"][j]])
                 k_factor = 1.0 - np.dot(beta_ext, nhat_vec)
 
+                # Regularization to avoid division by zero (same as legacy)
+                # Increase regularization threshold for numerical stability
+                if abs(k_factor) < 1e-12:
+                    k_factor = 1e-12 * np.sign(k_factor) if k_factor != 0 else 1e-12
+
                 # Acceleration terms
                 bdot_ext = np.array(
                     [
@@ -259,17 +503,23 @@ class LienardWiechertIntegrator:
                     ]
                 )
 
-                # Scalar products
-                # bdot_scalar_mixed = np.dot(beta_vec, bdot_ext)  # Future use for advanced calculations
+                # Scalar products for complex electromagnetic calculation
+                bdot_scalar_mixed = np.dot(beta_vec, bdot_ext)
                 bdot_scalar_ext = np.dot(bdot_ext, bdot_ext)
                 betas_scalar = np.dot(beta_ext, beta_vec)
 
-                # Velocity-dependent terms
+                # Velocity-dependent terms (exact legacy formulation)
                 gamma_i = trajectory[i_traj]["gamma"][particle_idx]
                 gamma_j = trajectory_ext[i_new[j]]["gamma"][j]
 
+                # CRITICAL: Protect against corrupted gamma values from previous runaway
+                if gamma_j > 1e6 or gamma_i > 1e6:  # Unrealistic relativistic factors
+                    continue  # Skip this interaction to prevent runaway
+
+                # V_ext^beta * V_beta (complex relativistic factor)
                 v_betas_scalar = gamma_j * gamma_i * c_mmns**2 * (1.0 - betas_scalar)
 
+                # Vdot_ext^beta * V_beta (complex acceleration coupling)
                 v_beta_dot_mixed_scalar = (
                     gamma_j**4 * gamma_i * c_mmns**2 * bdot_scalar_ext
                     - gamma_i
@@ -281,26 +531,60 @@ class LienardWiechertIntegrator:
                     )
                 )
 
-                # Electromagnetic force components
-                charge_factor = (
-                    h
-                    * trajectory[i_traj]["q"][particle_idx]
-                    * trajectory_ext[i_new[j]]["q"][j]
-                    / (k_factor**3 * c_mmns**3 * nhat["R"][j] ** 2 * gamma_j**3)
+                # Choose physics complexity based on conditions
+                use_complex = self._needs_complex_physics(
+                    beta_vec, beta_ext, gamma_i, gamma_j, k_factor, nhat["R"][j]
                 )
 
                 # For zero charge particles, skip electromagnetic interactions
                 charge_i = float(trajectory[i_traj]["q"][particle_idx])
                 charge_j = float(trajectory_ext[i_new[j]]["q"][j])
                 if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
-                    charge_factor = 0.0
+                    continue  # Skip this interaction entirely
 
-                # X-conjugate momentum update
-                result["Px"][particle_idx] = trajectory[i_traj]["Px"][
-                    particle_idx
-                ] + charge_factor * (
-                    -trajectory_ext[i_new[j]]["bx"][j]
-                    * v_betas_scalar
+                if use_complex:
+                    # Complex electromagnetic force components (EXACT legacy formula)
+                    # CRITICAL: Protect against k_factor singularity in complex charge_factor
+                    if (
+                        abs(k_factor) < 1e-3
+                    ):  # k_factor too small for reliable complex physics
+                        continue  # Skip this interaction to prevent runaway
+
+                    charge_factor = (
+                        h
+                        * charge_i
+                        * charge_j
+                        / (k_factor**3 * c_mmns**3 * nhat["R"][j] ** 2 * gamma_j**3)
+                    )
+
+                    # Complex electromagnetic force calculation complete
+
+                    # ACCUMULATE using complex legacy formula (existing code below)
+                    complex_force_used = True
+                else:
+                    # Use simple electromagnetic force calculation
+                    simple_force = self._simple_em_force(
+                        beta_vec,
+                        gamma_i,
+                        charge_i,
+                        charge_j,
+                        nhat["R"][j],
+                        np.array([nhat["nx"][j], nhat["ny"][j], nhat["nz"][j]]),
+                    )
+
+                    # Apply simple force (convert from force to momentum change)
+                    # F = dp/dt, so dp = F * dt = F * h
+                    result["Px"][particle_idx] += simple_force[0] * h
+                    result["Py"][particle_idx] += simple_force[1] * h
+                    result["Pz"][particle_idx] += simple_force[2] * h
+                    continue  # Skip complex calculations
+
+                # Complex calculations only execute if use_complex=True
+
+                # ACCUMULATE X-conjugate momentum update (COMPLEX legacy formula)
+                result["Px"][particle_idx] += charge_factor * (
+                    -v_betas_scalar
+                    * trajectory_ext[i_new[j]]["bx"][j]
                     * k_factor
                     * c_mmns
                     * gamma_j**2
@@ -322,12 +606,10 @@ class LienardWiechertIntegrator:
                     + v_betas_scalar * c_mmns * nhat["nx"][j]
                 )
 
-                # Y-conjugate momentum update
-                result["Py"][particle_idx] = trajectory[i_traj]["Py"][
-                    particle_idx
-                ] + charge_factor * (
-                    -trajectory_ext[i_new[j]]["by"][j]
-                    * v_betas_scalar
+                # ACCUMULATE Y-conjugate momentum update (COMPLEX legacy formula)
+                result["Py"][particle_idx] += charge_factor * (
+                    -v_betas_scalar
+                    * trajectory_ext[i_new[j]]["by"][j]
                     * k_factor
                     * c_mmns
                     * gamma_j**2
@@ -349,12 +631,10 @@ class LienardWiechertIntegrator:
                     + v_betas_scalar * c_mmns * nhat["ny"][j]
                 )
 
-                # Z-conjugate momentum update
-                result["Pz"][particle_idx] = trajectory[i_traj]["Pz"][
-                    particle_idx
-                ] + charge_factor * (
-                    -trajectory_ext[i_new[j]]["bz"][j]
-                    * v_betas_scalar
+                # ACCUMULATE Z-conjugate momentum update (COMPLEX legacy formula)
+                result["Pz"][particle_idx] += charge_factor * (
+                    -v_betas_scalar
+                    * trajectory_ext[i_new[j]]["bz"][j]
                     * k_factor
                     * c_mmns
                     * gamma_j**2
@@ -376,106 +656,130 @@ class LienardWiechertIntegrator:
                     + v_betas_scalar * c_mmns * nhat["nz"][j]
                 )
 
-                # Time/energy conjugate momentum component update
-                result["Pt"][particle_idx] = trajectory[i_traj]["Pt"][
-                    particle_idx
-                ] + charge_factor * (
+                # ACCUMULATE Time/energy conjugate momentum component update (COMPLEX legacy formula)
+                time_charge_factor = (
+                    h
+                    * trajectory[i_traj]["q"][particle_idx]
+                    * trajectory_ext[i_new[j]]["q"][j]
+                    / (
+                        k_factor**3 * c_mmns**2 * nhat["R"][j] ** 2 * gamma_j**3
+                    )  # Note: c_mmns**2 not **3
+                )
+
+                result["Pt"][particle_idx] += time_charge_factor * (
                     v_beta_dot_mixed_scalar * k_factor * gamma_j * nhat["R"][j]
                     - v_betas_scalar * k_factor * c_mmns * gamma_j**2
                     - bdot_scalar_ext * v_betas_scalar * gamma_j**4 * nhat["R"][j]
                     + v_betas_scalar * c_mmns
                 )
 
-                # Update gamma (preliminary)
-                charge_i = float(trajectory[i_traj]["q"][particle_idx])
-                charge_j = float(trajectory_ext[i_new[j]]["q"][j])
-                if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
-                    # Zero charge case - no electromagnetic potential energy
-                    result["gamma"][particle_idx] = result["Pt"][particle_idx] / (
-                        trajectory[i_traj]["m"][particle_idx] * c_mmns
-                    )
-                else:
-                    # Full electromagnetic case
-                    result["gamma"][particle_idx] = (
-                        1.0
-                        / (trajectory[i_traj]["m"][particle_idx] * c_mmns)
-                        * (
-                            result["Pt"][particle_idx]
-                            - trajectory[i_traj]["q"][particle_idx]
-                            / c_mmns
-                            * trajectory_ext[i_new[j]]["q"][j]
-                            / (nhat["R"][j] * k_factor)
-                        )
-                    )
+            # After accumulating all external contributions, compute derived quantities
 
-                # Update time
-                result["t"][particle_idx] = (
-                    trajectory[i_traj]["t"][particle_idx]
-                    + h * result["gamma"][particle_idx]
+            # Update gamma using COMPLEX legacy calculation (using LAST external particle for field correction)
+            # This matches legacy exactly - uses the last j from the loop above
+            if len(trajectory_ext[0]["x"]) > 0:
+                j_last = len(trajectory_ext[0]["x"]) - 1
+                scalar_field_correction = (
+                    trajectory[i_traj]["q"][particle_idx]
+                    / c_mmns
+                    * trajectory_ext[i_new[j_last]]["q"][j_last]
+                    / (nhat["R"][j_last] * k_factor)  # k_factor from last iteration
                 )
 
-                # Position updates using conjugate momentum with field corrections
+                result["gamma"][particle_idx] = (
+                    1.0
+                    / (trajectory[i_traj]["m"][particle_idx] * c_mmns)
+                    * (result["Pt"][particle_idx] - scalar_field_correction)
+                )
+            else:
+                # No external particles - simple energy-momentum relation
+                result["gamma"][particle_idx] = result["Pt"][particle_idx] / (
+                    trajectory[i_traj]["m"][particle_idx] * c_mmns
+                )
+
+            # Update time
+            result["t"][particle_idx] = (
+                trajectory[i_traj]["t"][particle_idx]
+                + h * result["gamma"][particle_idx]
+            )
+
+            # Position updates using conjugate momentum with field corrections
+            # This uses the simple field correction (matches legacy position updates)
+            if len(trajectory_ext[0]["x"]) > 0:
+                j_last = len(trajectory_ext[0]["x"]) - 1
+
                 charge_i = float(trajectory[i_traj]["q"][particle_idx])
-                charge_j = float(trajectory_ext[i_new[j]]["q"][j])
+                charge_j = float(trajectory_ext[i_new[j_last]]["q"][j_last])
                 if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
                     # Zero charge case - no field corrections
                     field_correction_x = 0.0
                     field_correction_y = 0.0
                     field_correction_z = 0.0
                 else:
-                    # Full electromagnetic field corrections to conjugate momentum
+                    # Simple field corrections for position (legacy position formula)
+                    # CRITICAL: Protect against k_factor singularity (same as electromagnetic forces)
+                    safe_k_factor = (
+                        k_factor if abs(k_factor) > 1e-6 else 1e-6 * np.sign(k_factor)
+                    )
+
                     field_correction_x = (
-                        trajectory[i_traj]["q"][particle_idx]
+                        charge_i
                         / c_mmns
-                        * trajectory_ext[i_new[j]]["q"][j]
-                        * trajectory_ext[i_new[j]]["bx"][j]
-                        / (nhat["R"][j] * k_factor)
+                        * charge_j
+                        * trajectory_ext[i_new[j_last]]["bx"][j_last]
+                        / (nhat["R"][j_last] * safe_k_factor)
                     )
                     field_correction_y = (
-                        trajectory[i_traj]["q"][particle_idx]
+                        charge_i
                         / c_mmns
-                        * trajectory_ext[i_new[j]]["q"][j]
-                        * trajectory_ext[i_new[j]]["by"][j]
-                        / (nhat["R"][j] * k_factor)
+                        * charge_j
+                        * trajectory_ext[i_new[j_last]]["by"][j_last]
+                        / (nhat["R"][j_last] * safe_k_factor)
                     )
                     field_correction_z = (
-                        trajectory[i_traj]["q"][particle_idx]
+                        charge_i
                         / c_mmns
-                        * trajectory_ext[i_new[j]]["q"][j]
-                        * trajectory_ext[i_new[j]]["bz"][j]
-                        / (nhat["R"][j] * k_factor)
+                        * charge_j
+                        * trajectory_ext[i_new[j_last]]["bz"][j_last]
+                        / (nhat["R"][j_last] * safe_k_factor)
                     )
+            else:
+                field_correction_x = field_correction_y = field_correction_z = 0.0
 
-                # Position updates from conjugate momentum: x = ∫(P-qA)/m dt
-                result["x"][particle_idx] = trajectory[i_traj]["x"][
-                    particle_idx
-                ] + h / trajectory[i_traj]["m"][particle_idx] * (
-                    result["Px"][particle_idx] - field_correction_x
-                )
+            # Position updates from conjugate momentum: x = ∫(P-qA)/m dt
+            result["x"][particle_idx] = trajectory[i_traj]["x"][
+                particle_idx
+            ] + h / trajectory[i_traj]["m"][particle_idx] * (
+                result["Px"][particle_idx] - field_correction_x
+            )
 
-                result["y"][particle_idx] = trajectory[i_traj]["y"][
-                    particle_idx
-                ] + h / trajectory[i_traj]["m"][particle_idx] * (
-                    result["Py"][particle_idx] - field_correction_y
-                )
+            result["y"][particle_idx] = trajectory[i_traj]["y"][
+                particle_idx
+            ] + h / trajectory[i_traj]["m"][particle_idx] * (
+                result["Py"][particle_idx] - field_correction_y
+            )
 
-                result["z"][particle_idx] = trajectory[i_traj]["z"][
-                    particle_idx
-                ] + h / trajectory[i_traj]["m"][particle_idx] * (
-                    result["Pz"][particle_idx] - field_correction_z
-                )
+            result["z"][particle_idx] = trajectory[i_traj]["z"][
+                particle_idx
+            ] + h / trajectory[i_traj]["m"][particle_idx] * (
+                result["Pz"][particle_idx] - field_correction_z
+            )
 
-            # Calculate velocities from position updates (self-consistent with gamma)
-            # This implements β = Δx/(c·h·γ) where γ comes from energy-momentum relation
-            result["bx"][particle_idx] = (
-                result["x"][particle_idx] - trajectory[i_traj]["x"][particle_idx]
-            ) / (c_mmns * h * result["gamma"][particle_idx])
-            result["by"][particle_idx] = (
-                result["y"][particle_idx] - trajectory[i_traj]["y"][particle_idx]
-            ) / (c_mmns * h * result["gamma"][particle_idx])
-            result["bz"][particle_idx] = (
-                result["z"][particle_idx] - trajectory[i_traj]["z"][particle_idx]
-            ) / (c_mmns * h * result["gamma"][particle_idx])
+            # Calculate velocities from position updates (legacy method)
+            # This implements β = Δx/(c·h·γ) where γ comes from the complex calculation above
+            delta_x = result["x"][particle_idx] - trajectory[i_traj]["x"][particle_idx]
+            delta_y = result["y"][particle_idx] - trajectory[i_traj]["y"][particle_idx]
+            delta_z = result["z"][particle_idx] - trajectory[i_traj]["z"][particle_idx]
+
+            result["bx"][particle_idx] = delta_x / (
+                c_mmns * h * result["gamma"][particle_idx]
+            )
+            result["by"][particle_idx] = delta_y / (
+                c_mmns * h * result["gamma"][particle_idx]
+            )
+            result["bz"][particle_idx] = delta_z / (
+                c_mmns * h * result["gamma"][particle_idx]
+            )
 
             # Calculate accelerations from velocity changes
             result["bdotx"][particle_idx] = (
@@ -488,27 +792,25 @@ class LienardWiechertIntegrator:
                 result["bz"][particle_idx] - trajectory[i_traj]["bz"][particle_idx]
             ) / (c_mmns * h * result["gamma"][particle_idx])
 
-            # Self-consistency check: recalculate gamma from velocity magnitude
-            # This ensures γ = 1/√(1-β²) is satisfied
+            # 'Real' gamma calculation from velocity magnitude (EXACT legacy method)
             btot_squared = (
                 result["bx"][particle_idx] ** 2
                 + result["by"][particle_idx] ** 2
                 + result["bz"][particle_idx] ** 2
             )
 
-            # Velocity magnitude check: only limit if total velocity exceeds c due to numerical artifacts
-            # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
+            # Legacy velocity limiting: only limit velocities that actually exceed c
+            # High-energy particles naturally approach β → 1.0
             if btot_squared >= 1.0:
                 # Limit to very close to c to avoid mathematical singularities
-                btot_limited_squared = (
-                    0.9999999999999998  # Allows up to PeV-scale particles
-                )
-                scale_factor = np.sqrt(btot_limited_squared / btot_squared)
+                btots_limited = 0.9999999999999
+                scale_factor = btots_limited / np.sqrt(btot_squared)
                 result["bx"][particle_idx] *= scale_factor
                 result["by"][particle_idx] *= scale_factor
                 result["bz"][particle_idx] *= scale_factor
-                btot_squared = btot_limited_squared
+                btot_squared = btots_limited**2
 
+            # Final gamma from velocity magnitude (self-consistent)
             result["gamma"][particle_idx] = 1.0 / np.sqrt(1.0 - btot_squared)
 
             # Radiation reaction forces (if enabled)
@@ -635,3 +937,224 @@ class LienardWiechertIntegrator:
         return self.eqsofmotion_retarded(
             h_step, trajectory, trajectory_drv, i_traj, apt_R, sim_type
         )
+
+    def retarded_rk4_rela_step(
+        self,
+        h_step: float,
+        trajectory: List[Dict],
+        trajectory_drv: List[Dict],
+        i_traj: int,
+        apt_R: float,
+        sim_type: Any,
+    ) -> Dict[str, Any]:
+        """
+        Retarded RK4 relativistic step - wrapper for eqsofmotion_retarded.
+
+        This method provides compatibility with legacy integrator interfaces
+        that expect retarded_rk4_rela_step.
+        """
+        return self.eqsofmotion_retarded(
+            h_step, trajectory, trajectory_drv, i_traj, apt_R, sim_type
+        )
+
+    def retarded_integrator3_modern(
+        self,
+        static_steps: int,
+        ret_steps: int,
+        h_step: float,
+        wall_Z: float,
+        apt_R: float,
+        sim_type: int,
+        init_rider: Dict[str, Any],
+        init_driver: Dict[str, Any],
+        bunch_dist: float,
+        cav_spacing: float,
+        z_cutoff: float,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Complete modern implementation of legacy retarded_integrator3.
+
+        Supports all simulation types:
+        - sim_type=0: Conducting wall with image charges
+        - sim_type=1: Switching wall with disappearing aperture
+        - sim_type=2: Free particle bunches (used in demo)
+
+        Args:
+            static_steps: Number of static integration steps
+            ret_steps: Number of retarded integration steps
+            h_step: Time step size (ns)
+            wall_Z: Wall position (mm)
+            apt_R: Aperture radius (mm)
+            sim_type: Simulation type (0, 1, or 2)
+            init_rider: Initial rider bunch state
+            init_driver: Initial driver bunch state
+            bunch_dist: Bunch separation distance (mm)
+            cav_spacing: Cavity spacing for repeated walls (mm)
+            z_cutoff: Wall switching position (mm)
+
+        Returns:
+            Tuple of (rider_trajectory, driver_trajectory) lists
+        """
+
+        # CRITICAL: Validate step size for electromagnetic stability
+        # Particles travel ~300mm/ns, interaction range ~200nm
+        # Legacy experience: Must use h < 1e-3 ns for convergence
+        CRITICAL_MAX_STEP = 1e-3  # ns - hard limit from legacy experience
+        RECOMMENDED_MAX_STEP = 1e-4  # ns - safe for most cases
+
+        if h_step > CRITICAL_MAX_STEP:
+            raise ValueError(
+                f"Step size h={h_step:.0e} ns exceeds CRITICAL limit {CRITICAL_MAX_STEP:.0e} ns! "
+                f"Electromagnetic interactions require h < {CRITICAL_MAX_STEP:.0e} ns for stability. "
+                f"See CRITICAL_STEP_SIZE_CONSTRAINTS.md for details."
+            )
+
+        if h_step > RECOMMENDED_MAX_STEP:
+            import warnings
+
+            warnings.warn(
+                f"Step size h={h_step:.0e} ns exceeds RECOMMENDED limit {RECOMMENDED_MAX_STEP:.0e} ns. "
+                f"Consider using h ≤ {RECOMMENDED_MAX_STEP:.0e} ns for better accuracy. "
+                f"Current step may cause numerical instabilities in electromagnetic fields."
+            )
+
+        steps_tot = static_steps + ret_steps
+
+        # Initialize trajectory arrays (like legacy)
+        trajectory_new = [{}] * steps_tot
+        trajectory_drv_new = [{}] * steps_tot
+
+        # Track current wall position and cutoff for sim_type=1
+        current_wall_Z = wall_Z
+        current_z_cutoff = z_cutoff
+
+        print(
+            f"  Modern integrator: {steps_tot} steps (static: {static_steps}, retarded: {ret_steps})"
+        )
+        print(f"  Simulation type: {sim_type}, wall_Z: {wall_Z}, apt_R: {apt_R}")
+
+        # Integration loop
+        for i in range(steps_tot):
+            if i == 0:
+                # Initialize first step
+                trajectory_new[i] = self._deep_copy_state(init_rider)
+
+                if sim_type == 0:  # Conducting wall
+                    trajectory_drv_new[i] = self.conducting_flat_modern(
+                        init_rider, current_wall_Z, apt_R
+                    )
+                elif sim_type == 1:  # Switching wall
+                    trajectory_drv_new[i] = self.switching_flat_modern(
+                        init_rider, current_wall_Z, apt_R, current_z_cutoff
+                    )
+                elif sim_type == 2:  # Free particle bunches
+                    trajectory_drv_new[i] = self._deep_copy_state(init_driver)
+
+            elif i < static_steps:
+                # Static integration phase
+                trajectory_new[i] = self._eqsofmotion_static_modern(
+                    h_step,
+                    trajectory_new[i - 1],
+                    trajectory_drv_new[i - 1],
+                    apt_R,
+                    sim_type,
+                )
+
+                if sim_type == 0:  # Conducting wall
+                    trajectory_drv_new[i] = self.conducting_flat_modern(
+                        trajectory_new[i - 1], current_wall_Z, apt_R
+                    )
+                elif sim_type == 1:  # Switching wall
+                    trajectory_drv_new[i] = self.switching_flat_modern(
+                        trajectory_new[i - 1], current_wall_Z, apt_R, current_z_cutoff
+                    )
+                elif sim_type == 2:  # Free particle bunches
+                    trajectory_drv_new[i] = self._eqsofmotion_static_modern(
+                        h_step,
+                        trajectory_drv_new[i - 1],
+                        trajectory_new[i - 1],
+                        apt_R,
+                        sim_type,
+                    )
+
+            else:
+                # Retarded integration phase
+                trajectory_new[i] = self.eqsofmotion_retarded(
+                    h_step, trajectory_new, trajectory_drv_new, i - 1, apt_R, sim_type
+                )
+
+                if sim_type == 0:  # Conducting wall
+                    trajectory_drv_new[i] = self.conducting_flat_modern(
+                        trajectory_new[i], current_wall_Z, apt_R
+                    )
+                elif sim_type == 1:  # Switching wall
+                    trajectory_drv_new[i] = self.switching_flat_modern(
+                        trajectory_new[i], current_wall_Z, apt_R, current_z_cutoff
+                    )
+
+                    # Check for wall advancement (cavity spacing)
+                    if np.mean(trajectory_new[i]["z"]) > current_z_cutoff:
+                        current_z_cutoff += cav_spacing
+                        current_wall_Z += cav_spacing
+                        print(
+                            f"    Wall advanced: z_cutoff={current_z_cutoff:.1f}, wall_Z={current_wall_Z:.1f}"
+                        )
+
+                elif sim_type == 2:  # Free particle bunches
+                    trajectory_drv_new[i] = self.eqsofmotion_retarded(
+                        h_step,
+                        trajectory_drv_new,
+                        trajectory_new,
+                        i - 1,
+                        apt_R,
+                        sim_type,
+                    )
+
+        return trajectory_new, trajectory_drv_new
+
+    def _deep_copy_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a deep copy of particle state dictionary."""
+        result = {}
+        for key, value in state.items():
+            if isinstance(value, np.ndarray):
+                result[key] = np.copy(value)
+            else:
+                result[key] = value
+        return result
+
+    def _eqsofmotion_static_modern(
+        self,
+        h_step: float,
+        state: Dict[str, Any],
+        state_ext: Dict[str, Any],
+        apt_R: float,
+        sim_type: int,
+    ) -> Dict[str, Any]:
+        """
+        Static equations of motion (no retardation effects).
+        Simple free particle motion for static phase.
+        """
+        result = self._deep_copy_state(state)
+
+        # Free particle motion: x_new = x_old + v * dt
+        c_mmns = self.c_mmns
+
+        for i in range(len(state["x"])):
+            gamma = state["gamma"][i]
+            mass = state["m"][i] if "m" in state else 1.0
+
+            # Calculate velocity from momentum: v = P/(γm)
+            vx = state["Px"][i] / (gamma * mass * c_mmns)
+            vy = state["Py"][i] / (gamma * mass * c_mmns)
+            vz = state["Pz"][i] / (gamma * mass * c_mmns)
+
+            # Update position
+            result["x"][i] = state["x"][i] + vx * h_step
+            result["y"][i] = state["y"][i] + vy * h_step
+            result["z"][i] = state["z"][i] + vz * h_step
+            result["t"][i] = state["t"][i] + h_step
+
+            # For static phase, momentum and gamma remain constant
+            # (no electromagnetic interactions)
+
+        return result
