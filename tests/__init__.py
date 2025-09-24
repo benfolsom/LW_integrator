@@ -1,11 +1,13 @@
 """
 Tests module for the Lienard-Wiechert integrator system.
 
-This module contains unit tests and integration tests.
+This module contains unit tests, integration tests, and benchmarks.
 """
 
-# Import test components
-from . import unit_tests
-from . import physics_tests
+# Test module for the LW integrator
+__version__ = "1.0.0"
 
-__all__ = ["unit_tests", "physics_tests"]
+# Test categories available
+TEST_CATEGORIES = ["unit", "integration", "benchmarks", "performance", "physics"]
+
+__all__ = ["TEST_CATEGORIES"]

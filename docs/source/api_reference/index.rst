@@ -1,33 +1,39 @@
 API Reference
 =============
 
-Complete API documentation for the LW Integrator. This section provides detailed information about all classes, functions, and modules.
+Complete API documentation for the LW Integrator. This section provides detailed information about the core electromagnetic integration classes, mathematical foundations, and stability requirements.
 
 .. toctree::
    :maxdepth: 2
 
    core
-   physics
-   integrators
-   io
-   utilities
 
 Quick Reference
 ---------------
 
-Core Classes
-~~~~~~~~~~~~
+Core Integration Classes
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autosummary::
 
-   lw_integrator.StandardInputFormat
-   lw_integrator.BeamParameters
-   lw_integrator.LatticeElement
-   lw_integrator.SimulationParameters
-   lw_integrator.MacroParticle
-   lw_integrator.MacroParticleEnsemble
+   LW_integrator.covariant_integrator_library_heavyion.LienardWiechertIntegrator
 
-Physics Modules
+**Key Features:**
+
+* **Conjugate Momentum Formulation**: Canonical momentum P = γmv + qA ensuring gauge invariance
+* **Explicit Integration Scheme**: Computationally efficient predictor-corrector method
+* **Liénard-Wiechert Fields**: Exact electromagnetic field calculations with retardation
+* **Energy Conservation Monitoring**: Advanced stability control and accuracy validation
+* **Adaptive Time Stepping**: Energy-dependent integration parameters for numerical stability
+
+**Critical Usage Requirements:**
+
+* **Minimal Transverse Momentum**: Initialize with px_fraction, py_fraction ≤ 1e-6
+* **Early Cutoff Mechanisms**: Terminate integration after physical events to prevent runaway behavior
+* **Energy-Dependent Time Steps**: Use smaller Δt for lower energy particles
+* **Conservation Monitoring**: Maintain |ΔE/E| < 10⁻⁶ for stable integration
+
+Mathematical Foundation
 ~~~~~~~~~~~~~~~
 
 .. autosummary::
