@@ -1,7 +1,7 @@
 LW Integrator Documentation
 ==========================
 
-Welcome to the LW (Liénard-Wiechert) Integrator documentation. This is a covariant electromagnetic particle tracking code designed for high-precision accelerator physics simulations with particular emphasis on radiation reaction effects and electromagnetic field accuracy.
+Welcome to the LW (Liénard-Wiechert) Integrator documentation. This is a covariant electromagnetic particle tracking code designed for high-precision accelerator physics simulations with particular emphasis on radiation reaction effects, conjugate momentum formulation, and explicit electromagnetic field integration.
 
 .. toctree::
    :maxdepth: 2
@@ -28,9 +28,7 @@ Welcome to the LW (Liénard-Wiechert) Integrator documentation. This is a covari
    :caption: Developer Guide
 
    developer_guide/index
-   developer_guide/architecture
-   developer_guide/contributing
-   developer_guide/testing
+   developer_guide/archive
 
 .. toctree::
    :maxdepth: 2
@@ -46,8 +44,11 @@ Key Features
 ------------
 
 * **Covariant Formulation**: Relativistically correct electromagnetic field calculations using Liénard-Wiechert potentials
+* **Conjugate Momentum**: Canonical momentum formulation ensuring gauge invariance and Hamiltonian consistency
+* **Explicit Integration**: Computationally efficient explicit predictor-corrector scheme with adaptive time stepping
 * **Radiation Reaction**: Self-consistent treatment of synchrotron radiation and radiation reaction forces
-* **Adaptive Integration**: Intelligent step size control based on field gradients and force magnitudes
+* **Energy Conservation**: Advanced monitoring and stability control for long-term integration accuracy
+* **Interactive Debugging**: Comprehensive Jupyter notebook environment for parameter testing and visualization
 * **Macroparticle Support**: Population bleeding and space charge effects for realistic beam simulations
 * **Standard Compatibility**: Input/output formats compatible with MAD-X, ELEGANT, and other accelerator physics codes
 * **High Precision**: Designed for studies requiring electromagnetic field accuracy beyond standard tracking codes

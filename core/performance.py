@@ -316,7 +316,10 @@ class OptimizedLienardWiechertIntegrator(LienardWiechertIntegrator):
     """
 
     def __init__(
-        self, config: Optional[SimulationConfig] = None, use_jit: bool = True, use_optimized: Optional[bool] = None
+        self,
+        config: Optional[SimulationConfig] = None,
+        use_jit: bool = True,
+        use_optimized: Optional[bool] = None,
     ) -> None:
         """
         Initialize the optimized integrator.
@@ -544,7 +547,7 @@ def create_optimized_integrator(
 ) -> "LienardWiechertIntegrator":
     """
     Factory function to create the best available integrator.
-    
+
     Note: This function is now largely redundant since LienardWiechertIntegrator()
     automatically returns the optimized version by default.
 
@@ -561,4 +564,5 @@ def create_optimized_integrator(
     else:
         # Force standard version
         from .trajectory_integrator import LienardWiechertIntegrator
+
         return LienardWiechertIntegrator(config, use_optimized=False)
