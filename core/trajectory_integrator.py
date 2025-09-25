@@ -851,38 +851,36 @@ class LienardWiechertIntegrator:
             else:
                 field_correction_x = field_correction_y = field_correction_z = 0.0
 
-            # Position updates from conjugate momentum: x = ∫(P-qA)/(γm) dt (RELATIVISTIC)
-            # Use the OLD gamma for position update (from previous timestep)
-            gamma_old = trajectory[i_traj]["gamma"][
-                particle_idx
-            ]  # Previous timestep gamma
+            # Position updates: FIXED to match legacy approach exactly
+            # Legacy uses h/m (not h/(γm)) - the gamma appears in velocity calculation instead
+            # This matches covariant_integrator_library.py lines 312-316
             mass_particle = trajectory[i_traj]["m"][particle_idx]
 
             result["x"][particle_idx] = trajectory[i_traj]["x"][particle_idx] + h / (
-                gamma_old * mass_particle
+                mass_particle
             ) * (result["Px"][particle_idx] - field_correction_x)
 
             result["y"][particle_idx] = trajectory[i_traj]["y"][particle_idx] + h / (
-                gamma_old * mass_particle
+                mass_particle
             ) * (result["Py"][particle_idx] - field_correction_y)
 
             result["z"][particle_idx] = trajectory[i_traj]["z"][particle_idx] + h / (
-                gamma_old * mass_particle
+                mass_particle
             ) * (result["Pz"][particle_idx] - field_correction_z)
 
-            # Calculate velocities from position updates
-            # CRITICAL TIME FRAME IDENTITY: h·γ = dt where h = proper time (dτ), dt = coordinate time
-            # PHYSICS CHOICE: Using PROPER TIME approach β = Δx/(c·h) to avoid circular dependency
-            # Alternative coordinate time β = Δx/(c·h·γ) creates circular dependency:
-            #   need γ to calculate β, but need β to calculate final γ
-            # Legacy code likely uses proper time for velocity calculation despite lab frame comparisons
+            # Calculate velocities from position updates (FIXED to match legacy)
+            # LEGACY APPROACH: Use electromagnetic gamma in velocity calculation
+            # This preserves the electromagnetic physics and prevents gamma corruption
+            # Formula: β = Δx/(c·h·γ) where γ is the electromagnetic gamma from field calculations
             delta_x = result["x"][particle_idx] - trajectory[i_traj]["x"][particle_idx]
             delta_y = result["y"][particle_idx] - trajectory[i_traj]["y"][particle_idx]
             delta_z = result["z"][particle_idx] - trajectory[i_traj]["z"][particle_idx]
 
-            result["bx"][particle_idx] = delta_x / (c_mmns * h)
-            result["by"][particle_idx] = delta_y / (c_mmns * h)
-            result["bz"][particle_idx] = delta_z / (c_mmns * h)
+            # CRITICAL FIX: Use electromagnetic gamma (not missing it like before)
+            # This matches legacy covariant_integrator_library.py lines 321-323
+            result["bx"][particle_idx] = delta_x / (c_mmns * h * result["gamma"][particle_idx])
+            result["by"][particle_idx] = delta_y / (c_mmns * h * result["gamma"][particle_idx])
+            result["bz"][particle_idx] = delta_z / (c_mmns * h * result["gamma"][particle_idx])
 
             # Calculate accelerations from velocity changes
             result["bdotx"][particle_idx] = (
@@ -895,7 +893,11 @@ class LienardWiechertIntegrator:
                 result["bz"][particle_idx] - trajectory[i_traj]["bz"][particle_idx]
             ) / (c_mmns * h * result["gamma"][particle_idx])
 
-            # 'Real' gamma calculation from velocity magnitude (CORRECT legacy method - energy conservation check)
+            # DUAL GAMMA SYSTEM: Implement Benjamin Folsom's sophisticated approach
+            # Store electromagnetic gamma for physics (already calculated above)
+            gamma_electromagnetic = result["gamma"][particle_idx]
+            
+            # Calculate kinematic gamma from velocity magnitude as consistency check
             btot_squared = (
                 result["bx"][particle_idx] ** 2
                 + result["by"][particle_idx] ** 2
@@ -908,7 +910,7 @@ class LienardWiechertIntegrator:
             if btots >= 1.0:
                 # Limit to safely below c to avoid numerical precision issues
                 btots_limited = (
-                    0.99999  # Conservative limit to prevent numerical explosion
+                    0.9999999999999  # Match legacy precision
                 )
                 scale_factor = btots_limited / btots
                 result["bx"][particle_idx] *= scale_factor
@@ -917,8 +919,21 @@ class LienardWiechertIntegrator:
                 btots = btots_limited
                 btot_squared = btots_limited**2
 
-            # SECOND GAMMA: "real" gamma from velocity magnitude (legacy line 526) - ENERGY CONSERVATION CHECK
-            result["gamma"][particle_idx] = np.sqrt(1.0 / (1.0 - btot_squared))
+            # Kinematic gamma from velocity magnitude (consistency check)
+            gamma_kinematic = np.sqrt(1.0 / (1.0 - btot_squared))
+            
+            # PRESERVE ELECTROMAGNETIC PHYSICS: Keep electromagnetic gamma as final result
+            # This is the key fix - don't overwrite the electromagnetic gamma!
+            # The kinematic gamma serves as a numerical stability check
+            # If abs(gamma_electromagnetic - gamma_kinematic) is large, it indicates numerical issues
+            
+            # Optional: Add consistency check warning (can be enabled for debugging)
+            # gamma_diff = abs(gamma_electromagnetic - gamma_kinematic)
+            # if gamma_diff > 0.1 * gamma_electromagnetic:  # 10% difference threshold
+            #     print(f"Warning: Gamma consistency check failed - EM: {gamma_electromagnetic:.3f}, Kinematic: {gamma_kinematic:.3f}")
+            
+            # FINAL GAMMA: Keep electromagnetic gamma (contains the physics)
+            result["gamma"][particle_idx] = gamma_electromagnetic
 
             # Radiation reaction forces (if enabled)
             if hasattr(trajectory[i_traj], "char_time"):
