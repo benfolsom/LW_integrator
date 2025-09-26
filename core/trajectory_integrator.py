@@ -447,8 +447,8 @@ class LienardWiechertIntegrator:
 
         # CRITICAL: Never use complex physics for k_factor near zero
         # This prevents the k_factor**3 singularity in the denominator
-        if abs(k_factor) < 1e-6:  # Very small threshold for true singularities
-            return False  # Force simple physics for numerical stability
+        if abs(k_factor) < 1e-15:  # Very small threshold for true singularities
+           return False  # Force simple physics for numerical stability
 
         # USE COMPLEX PHYSICS ALWAYS (except for true singularities)
         # This lets us identify real problems rather than masking them
@@ -1212,6 +1212,11 @@ class LienardWiechertIntegrator:
 
             else:
                 # Retarded integration phase
+                # CRITICAL FIX: Store previous state to ensure simultaneous interaction
+                # Both particles must use the same retarded time reference (i-1)
+                trajectory_prev_state = trajectory_new[i - 1] if i > 0 else trajectory_new[0]
+                trajectory_drv_prev_state = trajectory_drv_new[i - 1] if i > 0 else trajectory_drv_new[0]
+                
                 trajectory_new[i] = self.eqsofmotion_retarded(
                     h_step,
                     trajectory_new,
@@ -1239,10 +1244,15 @@ class LienardWiechertIntegrator:
                         )
 
                 elif sim_type == 2:  # Free particle bunches
+                    # CRITICAL FIX: Use stored previous states to ensure simultaneity
+                    # Create temporary trajectory arrays with the previous state
+                    trajectory_temp = trajectory_new.copy()
+                    trajectory_temp[i] = trajectory_prev_state  # Restore previous state
+                    
                     trajectory_drv_new[i] = self.eqsofmotion_retarded(
                         h_step,
                         trajectory_drv_new,
-                        trajectory_new,
+                        trajectory_temp,  # Use trajectory state from time i-1
                         i - 1,
                         apt_R,
                         str(sim_type),
@@ -1397,7 +1407,7 @@ class LienardWiechertIntegrator:
                 ]  # i_traj instead of i_new[j]
 
                 # Protection against corrupted gamma (EXACT copy from retarded)
-                if gamma_j > 1e6 or gamma_i > 1e6:
+                if gamma_j > 1e12 or gamma_i > 1e12:
                     continue
 
                 # V_ext^beta * V_beta (EXACT copy from retarded)

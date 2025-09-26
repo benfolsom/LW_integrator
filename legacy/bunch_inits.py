@@ -25,7 +25,7 @@ def init_bunch(starting_distance,transv_mom,starting_Pz,stripped_ions,
 
     x = np.random.uniform(transv_dist, transv_dist, pcount)
     y = np.random.uniform(transv_dist, transv_dist, pcount)
-    z = np.random.uniform(starting_distance, starting_distance, pcount)
+    z = np.random.uniform(starting_distance-1e-6, starting_distance+1e-6, pcount)
     t = np.zeros(pcount)
 
     bdotx = np.zeros(pcount)#bx*np.random.uniform(-8e-2,8e-2)
