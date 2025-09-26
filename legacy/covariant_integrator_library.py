@@ -426,7 +426,7 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                 beta_ext = (trajectory_ext[i_new[j]]['bx'][j],trajectory_ext[i_new[j]]['by'][j],trajectory_ext[i_new[j]]['bz'][j])
                 k_factor = (1-np.dot(beta_ext,(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))
                 bdot_ext = (trajectory_ext[i_new[j]]['bdotx'][j],trajectory_ext[i_new[j]]['bdoty'][j],trajectory_ext[i_new[j]]['bdotz'][j])
-                bdot_scalar_mixed = np.dot(beta_vec,bdot_ext)
+                bdot_scalar_mixed = np.dot(beta_vec,bdot_ext) #deprecated
                 bdot_scalar_ext = np.dot(beta_ext,bdot_ext)
                 betas_scalar =  np.dot(beta_ext,beta_vec)
                 #V_ext^beta * V_beta
