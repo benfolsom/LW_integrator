@@ -555,11 +555,14 @@ class LienardWiechertIntegrator:
                 trajectory, trajectory_ext, i_traj, particle_idx, i_new
             )
 
-            # Initialize with current values (no accumulation yet)
+            # Initialize with current values to start force accumulation
+            # Position and time will be calculated later using covariant approach
             result["x"][particle_idx] = trajectory[i_traj]["x"][particle_idx]
             result["y"][particle_idx] = trajectory[i_traj]["y"][particle_idx]
             result["z"][particle_idx] = trajectory[i_traj]["z"][particle_idx]
             result["t"][particle_idx] = trajectory[i_traj]["t"][particle_idx]
+            
+            # Start momentum accumulation from current values (matching legacy)
             result["Px"][particle_idx] = trajectory[i_traj]["Px"][particle_idx]
             result["Py"][particle_idx] = trajectory[i_traj]["Py"][particle_idx]
             result["Pz"][particle_idx] = trajectory[i_traj]["Pz"][particle_idx]
@@ -635,9 +638,24 @@ class LienardWiechertIntegrator:
                     beta_vec, beta_ext, gamma_i, gamma_j, k_factor, nhat["R"][j]
                 )
 
+                # Handle charge values (scalar or array)
+                if np.isscalar(trajectory[i_traj]["q"]):
+                    charge_i = float(trajectory[i_traj]["q"])
+                else:
+                    if particle_idx < len(trajectory[i_traj]["q"]):
+                        charge_i = float(trajectory[i_traj]["q"][particle_idx])
+                    else:
+                        charge_i = 0.0  # Default for missing indices
+
+                if np.isscalar(trajectory_ext[i_new[j]]["q"]):
+                    charge_j = float(trajectory_ext[i_new[j]]["q"])
+                else:
+                    if j < len(trajectory_ext[i_new[j]]["q"]):
+                        charge_j = float(trajectory_ext[i_new[j]]["q"][j])
+                    else:
+                        charge_j = 0.0  # Default for missing indices
+
                 # For zero charge particles, skip electromagnetic interactions
-                charge_i = float(trajectory[i_traj]["q"][particle_idx])
-                charge_j = float(trajectory_ext[i_new[j]]["q"][j])
                 if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
                     continue  # Skip this interaction entirely
 
@@ -656,9 +674,97 @@ class LienardWiechertIntegrator:
                         / (k_factor**3 * c_mmns**3 * nhat["R"][j] ** 2 * gamma_j**3)
                     )
 
-                    # Complex electromagnetic force calculation complete
+                    # ACCUMULATE X-conjugate momentum update (COMPLEX legacy formula)
+                    result["Px"][particle_idx] += charge_factor * (
+                        -v_betas_scalar
+                        * trajectory_ext[i_new[j]]["bx"][j]
+                        * k_factor
+                        * c_mmns
+                        * gamma_j**2
+                        + v_beta_dot_mixed_scalar
+                        * k_factor
+                        * gamma_j
+                        * nhat["nx"][j]
+                        * nhat["R"][j]
+                        + gamma_j**2
+                        * nhat["nx"][j] ** 2
+                        * nhat["R"][j]
+                        * v_betas_scalar
+                        * (
+                            trajectory_ext[i_new[j]]["bdotx"][j]
+                            + trajectory_ext[i_new[j]]["bdotx"][j]
+                            * bdot_scalar_ext
+                            * gamma_j**2
+                        )
+                        + v_betas_scalar * c_mmns * nhat["nx"][j]
+                    )
 
-                    # ACCUMULATE using complex legacy formula (existing code below)
+                    # ACCUMULATE Y-conjugate momentum update (COMPLEX legacy formula)
+                    result["Py"][particle_idx] += charge_factor * (
+                        -v_betas_scalar
+                        * trajectory_ext[i_new[j]]["by"][j]
+                        * k_factor
+                        * c_mmns
+                        * gamma_j**2
+                        + v_beta_dot_mixed_scalar
+                        * k_factor
+                        * gamma_j
+                        * nhat["ny"][j]
+                        * nhat["R"][j]
+                        + gamma_j**2
+                        * nhat["ny"][j] ** 2
+                        * nhat["R"][j]
+                        * v_betas_scalar
+                        * (
+                            trajectory_ext[i_new[j]]["bdoty"][j]
+                            + trajectory_ext[i_new[j]]["bdoty"][j]
+                            * bdot_scalar_ext
+                            * gamma_j**2
+                        )
+                        + v_betas_scalar * c_mmns * nhat["ny"][j]
+                    )
+
+                    # ACCUMULATE Z-conjugate momentum update (COMPLEX legacy formula)
+                    result["Pz"][particle_idx] += charge_factor * (
+                        -v_betas_scalar
+                        * trajectory_ext[i_new[j]]["bz"][j]
+                        * k_factor
+                        * c_mmns
+                        * gamma_j**2
+                        + v_beta_dot_mixed_scalar
+                        * k_factor
+                        * gamma_j
+                        * nhat["nz"][j]
+                        * nhat["R"][j]
+                        + gamma_j**2
+                        * nhat["nz"][j] ** 2
+                        * nhat["R"][j]
+                        * v_betas_scalar
+                        * (
+                            trajectory_ext[i_new[j]]["bdotz"][j]
+                            + trajectory_ext[i_new[j]]["bdotz"][j]
+                            * bdot_scalar_ext
+                            * gamma_j**2
+                        )
+                        + v_betas_scalar * c_mmns * nhat["nz"][j]
+                    )
+
+                    # ACCUMULATE Time/energy conjugate momentum component update (COMPLEX legacy formula)
+                    time_charge_factor = (
+                        h
+                        * charge_i
+                        * charge_j
+                        / (
+                            k_factor**3 * c_mmns**2 * nhat["R"][j] ** 2 * gamma_j**3
+                        )  # Note: c_mmns**2 not **3
+                    )
+
+                    result["Pt"][particle_idx] += time_charge_factor * (
+                        v_beta_dot_mixed_scalar * k_factor * gamma_j * nhat["R"][j]
+                        - v_betas_scalar * k_factor * c_mmns * gamma_j**2
+                        - bdot_scalar_ext * v_betas_scalar * gamma_j**4 * nhat["R"][j]
+                        + v_betas_scalar * c_mmns
+                    )
                 else:
                     # Use simple electromagnetic force calculation
                     simple_force, energy_rate = self._simple_em_force(
@@ -679,101 +785,6 @@ class LienardWiechertIntegrator:
                     # Apply energy rate for covariant Pt update
                     # dE/dt, so dE = (dE/dt) * dt = energy_rate * h
                     result["Pt"][particle_idx] += energy_rate * h
-                    continue  # Skip complex calculations
-
-                # Complex calculations only execute if use_complex=True
-
-                # ACCUMULATE X-conjugate momentum update (COMPLEX legacy formula)
-                result["Px"][particle_idx] += charge_factor * (
-                    -v_betas_scalar
-                    * trajectory_ext[i_new[j]]["bx"][j]
-                    * k_factor
-                    * c_mmns
-                    * gamma_j**2
-                    + v_beta_dot_mixed_scalar
-                    * k_factor
-                    * gamma_j
-                    * nhat["nx"][j]
-                    * nhat["R"][j]
-                    + gamma_j**2
-                    * nhat["nx"][j] ** 2
-                    * nhat["R"][j]
-                    * v_betas_scalar
-                    * (
-                        trajectory_ext[i_new[j]]["bdotx"][j]
-                        + trajectory_ext[i_new[j]]["bdotx"][j]
-                        * bdot_scalar_ext
-                        * gamma_j**2
-                    )
-                    + v_betas_scalar * c_mmns * nhat["nx"][j]
-                )
-
-                # ACCUMULATE Y-conjugate momentum update (COMPLEX legacy formula)
-                result["Py"][particle_idx] += charge_factor * (
-                    -v_betas_scalar
-                    * trajectory_ext[i_new[j]]["by"][j]
-                    * k_factor
-                    * c_mmns
-                    * gamma_j**2
-                    + v_beta_dot_mixed_scalar
-                    * k_factor
-                    * gamma_j
-                    * nhat["ny"][j]
-                    * nhat["R"][j]
-                    + gamma_j**2
-                    * nhat["ny"][j] ** 2
-                    * nhat["R"][j]
-                    * v_betas_scalar
-                    * (
-                        trajectory_ext[i_new[j]]["bdoty"][j]
-                        + trajectory_ext[i_new[j]]["bdoty"][j]
-                        * bdot_scalar_ext
-                        * gamma_j**2
-                    )
-                    + v_betas_scalar * c_mmns * nhat["ny"][j]
-                )
-
-                # ACCUMULATE Z-conjugate momentum update (COMPLEX legacy formula)
-                result["Pz"][particle_idx] += charge_factor * (
-                    -v_betas_scalar
-                    * trajectory_ext[i_new[j]]["bz"][j]
-                    * k_factor
-                    * c_mmns
-                    * gamma_j**2
-                    + v_beta_dot_mixed_scalar
-                    * k_factor
-                    * gamma_j
-                    * nhat["nz"][j]
-                    * nhat["R"][j]
-                    + gamma_j**2
-                    * nhat["nz"][j] ** 2
-                    * nhat["R"][j]
-                    * v_betas_scalar
-                    * (
-                        trajectory_ext[i_new[j]]["bdotz"][j]
-                        + trajectory_ext[i_new[j]]["bdotz"][j]
-                        * bdot_scalar_ext
-                        * gamma_j**2
-                    )
-                    + v_betas_scalar * c_mmns * nhat["nz"][j]
-                )
-
-                # ACCUMULATE Time/energy conjugate momentum component update (COMPLEX legacy formula)
-                time_charge_factor = (
-                    h
-                    * trajectory[i_traj]["q"][particle_idx]
-                    * trajectory_ext[i_new[j]]["q"][j]
-                    / (
-                        k_factor**3 * c_mmns**2 * nhat["R"][j] ** 2 * gamma_j**3
-                    )  # Note: c_mmns**2 not **3
-                )
-
-                result["Pt"][particle_idx] += time_charge_factor * (
-                    v_beta_dot_mixed_scalar * k_factor * gamma_j * nhat["R"][j]
-                    - v_betas_scalar * k_factor * c_mmns * gamma_j**2
-                    - bdot_scalar_ext * v_betas_scalar * gamma_j**4 * nhat["R"][j]
-                    + v_betas_scalar * c_mmns
-                )
 
             # After accumulating all external contributions, compute derived quantities
 
@@ -782,24 +793,57 @@ class LienardWiechertIntegrator:
             if len(trajectory_ext[0]["x"]) > 0:
                 j_last = len(trajectory_ext[0]["x"]) - 1
 
-                # Field correction calculation from legacy implementation
+                # Handle charge values for field correction (scalar or array)
+                if np.isscalar(trajectory[i_traj]["q"]):
+                    charge_i_field = float(trajectory[i_traj]["q"])
+                else:
+                    if particle_idx < len(trajectory[i_traj]["q"]):
+                        charge_i_field = float(trajectory[i_traj]["q"][particle_idx])
+                    else:
+                        charge_i_field = 0.0
+
+                if np.isscalar(trajectory_ext[i_new[j_last]]["q"]):
+                    charge_j_field = float(trajectory_ext[i_new[j_last]]["q"])
+                else:
+                    if j_last < len(trajectory_ext[i_new[j_last]]["q"]):
+                        charge_j_field = float(trajectory_ext[i_new[j_last]]["q"][j_last])
+                    else:
+                        charge_j_field = 0.0
 
                 scalar_field_correction = (
-                    trajectory[i_traj]["q"][particle_idx]
+                    charge_i_field
                     / c_mmns
-                    * trajectory_ext[i_new[j_last]]["q"][j_last]
+                    * charge_j_field
                     / (nhat["R"][j_last] * k_factor)  # k_factor from last iteration
                 )
 
+                # Handle mass values (scalar or array)
+                if np.isscalar(trajectory[i_traj]["m"]):
+                    mass_i = float(trajectory[i_traj]["m"])
+                else:
+                    if particle_idx < len(trajectory[i_traj]["m"]):
+                        mass_i = float(trajectory[i_traj]["m"][particle_idx])
+                    else:
+                        mass_i = 1.0  # Default mass
+
                 result["gamma"][particle_idx] = (
                     1.0
-                    / (trajectory[i_traj]["m"][particle_idx] * c_mmns)
+                    / (mass_i * c_mmns)
                     * (result["Pt"][particle_idx] - scalar_field_correction)
                 )
             else:
                 # No external particles - simple energy-momentum relation
+                # Handle mass values (scalar or array)
+                if np.isscalar(trajectory[i_traj]["m"]):
+                    mass_i = float(trajectory[i_traj]["m"])
+                else:
+                    if particle_idx < len(trajectory[i_traj]["m"]):
+                        mass_i = float(trajectory[i_traj]["m"][particle_idx])
+                    else:
+                        mass_i = 1.0  # Default mass
+
                 result["gamma"][particle_idx] = result["Pt"][particle_idx] / (
-                    trajectory[i_traj]["m"][particle_idx] * c_mmns
+                    mass_i * c_mmns
                 )
 
             # Update time
@@ -813,9 +857,24 @@ class LienardWiechertIntegrator:
             if len(trajectory_ext[0]["x"]) > 0:
                 j_last = len(trajectory_ext[0]["x"]) - 1
 
-                charge_i = float(trajectory[i_traj]["q"][particle_idx])
-                charge_j = float(trajectory_ext[i_new[j_last]]["q"][j_last])
-                if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
+                # Handle charge values for field corrections (scalar or array)
+                if np.isscalar(trajectory[i_traj]["q"]):
+                    charge_i_pos = float(trajectory[i_traj]["q"])
+                else:
+                    if particle_idx < len(trajectory[i_traj]["q"]):
+                        charge_i_pos = float(trajectory[i_traj]["q"][particle_idx])
+                    else:
+                        charge_i_pos = 0.0
+
+                if np.isscalar(trajectory_ext[i_new[j_last]]["q"]):
+                    charge_j_pos = float(trajectory_ext[i_new[j_last]]["q"])
+                else:
+                    if j_last < len(trajectory_ext[i_new[j_last]]["q"]):
+                        charge_j_pos = float(trajectory_ext[i_new[j_last]]["q"][j_last])
+                    else:
+                        charge_j_pos = 0.0
+
+                if abs(charge_i_pos) < 1e-20 or abs(charge_j_pos) < 1e-20:
                     # Zero charge case - no field corrections
                     field_correction_x = 0.0
                     field_correction_y = 0.0
@@ -828,23 +887,23 @@ class LienardWiechertIntegrator:
                     )
 
                     field_correction_x = (
-                        charge_i
+                        charge_i_pos
                         / c_mmns
-                        * charge_j
+                        * charge_j_pos
                         * trajectory_ext[i_new[j_last]]["bx"][j_last]
                         / (nhat["R"][j_last] * safe_k_factor)
                     )
                     field_correction_y = (
-                        charge_i
+                        charge_i_pos
                         / c_mmns
-                        * charge_j
+                        * charge_j_pos
                         * trajectory_ext[i_new[j_last]]["by"][j_last]
                         / (nhat["R"][j_last] * safe_k_factor)
                     )
                     field_correction_z = (
-                        charge_i
+                        charge_i_pos
                         / c_mmns
-                        * charge_j
+                        * charge_j_pos
                         * trajectory_ext[i_new[j_last]]["bz"][j_last]
                         / (nhat["R"][j_last] * safe_k_factor)
                     )
@@ -854,7 +913,17 @@ class LienardWiechertIntegrator:
             # Position updates: FIXED to match legacy approach exactly
             # Legacy uses h/m (not h/(γm)) - the gamma appears in velocity calculation instead
             # This matches covariant_integrator_library.py lines 312-316
-            mass_particle = trajectory[i_traj]["m"][particle_idx]
+            # Handle mass values (scalar or array) - reuse mass_i from above if available
+            if 'mass_i' not in locals():
+                if np.isscalar(trajectory[i_traj]["m"]):
+                    mass_particle = float(trajectory[i_traj]["m"])
+                else:
+                    if particle_idx < len(trajectory[i_traj]["m"]):
+                        mass_particle = float(trajectory[i_traj]["m"][particle_idx])
+                    else:
+                        mass_particle = 1.0  # Default mass
+            else:
+                mass_particle = mass_i
 
             result["x"][particle_idx] = trajectory[i_traj]["x"][particle_idx] + h / (
                 mass_particle
