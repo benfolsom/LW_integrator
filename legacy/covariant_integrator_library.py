@@ -1,4 +1,3 @@
-
 #for running interactively
 from scipy.special import j0, j1
 import numpy as np
@@ -305,18 +304,18 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
 
 
             result['gamma'][i] = 1/(vector['m']*c_mmns)*(result['Pt'][i]-vector['q']/c_mmns*vector_ext['q']\
-                        /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
+                        /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vectorExt['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
 
             result['t'][i] = vector['t'][i] + h * result['gamma'][i]  #note 't' is lab time and h is in proper time, so: dt/dtau=gamma
 
-            result['x'][i] += vector['x'][i] + h/vector['m']*(result['Px'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['bx'][j]\
-                        /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
+            result['x'][i] += vector['x'][i] + h/vector['m']*(result['Px'][i]-vector['q']/c_mmns*vectorExt['q']*vectorExt['bx'][j]\
+                        /(nhat['R'][j]*(1-np.dot((vectorExt['bx'][j],vectorExt['by'][j],vectorExt['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
 
-            result['y'][i] += vector['y'][i] + h/vector['m']*(result['Py'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['by'][j]\
-                        /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
+            result['y'][i] += vector['y'][i] + h/vector['m']*(result['Py'][i]-vector['q']/c_mmns*vectorExt['q']*vectorExt['by'][j]\
+                        /(nhat['R'][j]*(1-np.dot((vectorExt['bx'][j],vectorExt['by'][j],vectorExt['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
 
-            result['z'][i] += vector['z'][i] + h/vector['m']*(result['Pz'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['bz'][j]\
-                        /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
+            result['z'][i] += vector['z'][i] + h/vector['m']*(result['Pz'][i]-vector['q']/c_mmns*vectorExt['q']*vectorExt['bz'][j]\
+                        /(nhat['R'][j]*(1-np.dot((vectorExt['bx'][j],vectorExt['by'][j],vectorExt['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
 
         result['bx'][i] = (-vector['x'][i]+result['x'][i]) / (c_mmns*h*result['gamma'][i])
         result['by'][i] = (-vector['y'][i]+result['y'][i]) / (c_mmns*h*result['gamma'][i])
@@ -389,169 +388,210 @@ def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
                     break
     return(index_traj_new)
 
-def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # nhat includes R and fnhat components, need to generate this per particle pair
+def eqsofmotion_retarded(h, trajectory, trajectory_ext, i_traj, apt_R, sim_type):
     result = {}
-    result['x'] = np.zeros_like(trajectory[i_traj]['x'])
-    result['y'] = np.zeros_like(trajectory[i_traj]['y'])
-    result['z'] = np.zeros_like(trajectory[i_traj]['z'])
-    result['t'] = np.zeros_like(trajectory[i_traj]['t'])
-    result['Px'] = np.zeros_like(trajectory[i_traj]['Px'])
-    result['Py'] = np.zeros_like(trajectory[i_traj]['Py'])
-    result['Pz'] = np.zeros_like(trajectory[i_traj]['Pz'])
-    result['Pt'] = np.zeros_like(trajectory[i_traj]['Pt'])
-    result['gamma'] = np.zeros_like(trajectory[i_traj]['gamma'])
-    result['bx'] = np.zeros_like(trajectory[i_traj]['bx'])
-    result['by'] = np.zeros_like(trajectory[i_traj]['by'])
-    result['bz'] = np.zeros_like(trajectory[i_traj]['bz'])
-    result['bdotx'] = np.zeros_like(trajectory[i_traj]['bdotx'])
-    result['bdoty'] =np.zeros_like(trajectory[i_traj]['bdoty'])
-    result['bdotz'] = np.zeros_like(trajectory[i_traj]['bdotz'])
+    # Initialize result arrays with copies
+    result['x'] = np.copy(trajectory[i_traj]['x'])
+    result['y'] = np.copy(trajectory[i_traj]['y']) 
+    result['z'] = np.copy(trajectory[i_traj]['z'])
+    result['t'] = np.copy(trajectory[i_traj]['t'])
+    result['Px'] = np.copy(trajectory[i_traj]['Px'])
+    result['Py'] = np.copy(trajectory[i_traj]['Py'])
+    result['Pz'] = np.copy(trajectory[i_traj]['Pz'])
+    result['Pt'] = np.copy(trajectory[i_traj]['Pt'])
+    result['gamma'] = np.copy(trajectory[i_traj]['gamma'])
+    result['bx'] = np.copy(trajectory[i_traj]['bx'])
+    result['by'] = np.copy(trajectory[i_traj]['by'])
+    result['bz'] = np.copy(trajectory[i_traj]['bz'])
+    result['bdotx'] = np.copy(trajectory[i_traj]['bdotx'])
+    result['bdoty'] = np.copy(trajectory[i_traj]['bdoty'])
+    result['bdotz'] = np.copy(trajectory[i_traj]['bdotz'])
     result['q'] = trajectory[i_traj]['q']
     result['char_time'] = trajectory[i_traj]['char_time']
     result['m'] = trajectory[i_traj]['m']
-    result['dummy'] =  np.zeros_like(trajectory[i_traj]['bdotz'])
-    for l in range(len(trajectory[i_traj]['x'])):   #iterating over all real particles OR all reflection points (these must be done in separate steps)
-            i_new = chrono_jn(trajectory,trajectory_ext,i_traj,l)  #notes: i_new is a list corresponding to the j index.... also, an intermediate nhat is being calculated here
-            nhat = dist_euclid_ret(trajectory,trajectory_ext,i_traj,l,i_new)
-
-            for j in range(len(trajectory_ext[0]['x'])): #summing all external contributions (reflected particles and/or local particles)
-                #if nhat['R'][j] < 1.5*apt_R:
-                #print(nhat)
-                result['x'][l] = trajectory[i_traj]['x'][l]
-                result['y'][l] = trajectory[i_traj]['y'][l]
-                result['z'][l] = trajectory[i_traj]['z'][l]
-                result['t'][l] = trajectory[i_traj]['t'][l]
-
-                beta_vec = (trajectory[i_traj]['bx'][l],trajectory[i_traj]['by'][l],trajectory[i_traj]['bz'][l])
-                beta_ext = (trajectory_ext[i_new[j]]['bx'][j],trajectory_ext[i_new[j]]['by'][j],trajectory_ext[i_new[j]]['bz'][j])
-                k_factor = (1-np.dot(beta_ext,(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))
-                bdot_ext = (trajectory_ext[i_new[j]]['bdotx'][j],trajectory_ext[i_new[j]]['bdoty'][j],trajectory_ext[i_new[j]]['bdotz'][j])
-                bdot_scalar_mixed = np.dot(beta_vec,bdot_ext) #deprecated
-                bdot_scalar_ext = np.dot(beta_ext,bdot_ext)
-                betas_scalar =  np.dot(beta_ext,beta_vec)
-                #V_ext^beta * V_beta
-                v_betas_scalar = trajectory_ext[i_new[j]]['gamma'][j]*trajectory[i_traj]['gamma'][l]*c_mmns**2*(1-betas_scalar)
-                #Vdot_ext^beta * V_beta
-                v_beta_dot_mixed_scalar = trajectory_ext[i_new[j]]['gamma'][j]**4*trajectory[i_traj]['gamma'][l]*c_mmns**2*bdot_scalar_ext\
-                            -trajectory[i_traj]['gamma'][l]*c_mmns*np.dot(beta_vec,\
-                            np.multiply(bdot_ext,c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2)\
-                            +np.multiply(beta_ext,bdot_scalar_ext)*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**4)
-
-                result['Px'][l] += trajectory[i_traj]['Px'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
-                            *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
-                            *(-trajectory_ext[i_new[j]]['bx'][j]*v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
-                               +v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['nx'][j]*nhat['R'][j]\
-                               +trajectory_ext[i_new[j]]['gamma'][j]**2*nhat['nx'][j]**2*nhat['R'][j]\
-                               *v_betas_scalar*(trajectory_ext[i_new[j]]['bdotx'][j]\
-                               +trajectory_ext[i_new[j]]['bdotx'][j]*bdot_scalar_ext*trajectory_ext[i_new[j]]['gamma'][j]**2)\
-                               +v_betas_scalar*c_mmns*nhat['nx'][j]
-                             )
-
-
-                result['Py'][l] += trajectory[i_traj]['Py'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
-                            *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
-                            *(-trajectory_ext[i_new[j]]['by'][j]*v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
-                               +v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['ny'][j]*nhat['R'][j]\
-                               +trajectory_ext[i_new[j]]['gamma'][j]**2*nhat['ny'][j]**2*nhat['R'][j]\
-                               *v_betas_scalar*(trajectory_ext[i_new[j]]['bdoty'][j]\
-                               +trajectory_ext[i_new[j]]['bdoty'][j]*bdot_scalar_ext*trajectory_ext[i_new[j]]['gamma'][j]**2)\
-                               +v_betas_scalar*c_mmns*nhat['ny'][j]
-                             )
-
-                result['Pz'][l] += trajectory[i_traj]['Pz'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
-                            *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
-                            *(-trajectory_ext[i_new[j]]['bz'][j]*v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
-                               +v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['nz'][j]*nhat['R'][j]\
-                               +trajectory_ext[i_new[j]]['gamma'][j]**2*nhat['nz'][j]**2*nhat['R'][j]\
-                               *v_betas_scalar*(trajectory_ext[i_new[j]]['bdotz'][j]\
-                               +trajectory_ext[i_new[j]]['bdotz'][j]*bdot_scalar_ext*trajectory_ext[i_new[j]]['gamma'][j]**2)\
-                               +v_betas_scalar*c_mmns*nhat['nz'][j]
-                            )#+h*trajectory[i_traj]['q']*trajectory[i_traj]['gamma'][l]*(-1.22E7-np.dot(beta_vec,[-1.22E7,-1.22E7,-1.22E7])) #adding 1.5GV/m ext. field
-
-
-                result['Pt'][l] += trajectory[i_traj]['Pt'][l] + h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
-                            *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
-                            *(v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['R'][j]\
-                              -v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
-                              -bdot_scalar_ext*v_betas_scalar*trajectory_ext[i_new[j]]['gamma'][j]**4*nhat['R'][j]\
-                              +v_betas_scalar*c_mmns
-                            )
-
-                #initial guess gamma, avoids blowups (honestly it's a huge mystery why we need both this and the 'real' gamma below, but blowups or conservation violation happen without
-
-                result['gamma'][l] = 1/(trajectory[i_traj]['m']*c_mmns)*(result['Pt'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']\
-                                *1/(nhat['R'][j]*k_factor))
-                #print(result['gamma'][l])
-
-                result['t'][l] = trajectory[i_traj]['t'][l] + h * result['gamma'][l]  #note 't' is lab time and h is in proper time, so: dt/dtau=gamma
-
-                result['x'][l] += trajectory[i_traj]['x'][l] + h/trajectory[i_traj]['m']*(result['Px'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['bx'][j]\
-                            /(nhat['R'][j]*k_factor))
-
-                result['y'][l] += trajectory[i_traj]['y'][l] + h/trajectory[i_traj]['m']*(result['Py'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['by'][j]\
-                            /(nhat['R'][j]*k_factor))
-
-                result['z'][l] += trajectory[i_traj]['z'][l] + h/trajectory[i_traj]['m']*(result['Pz'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['bz'][j]\
-                            /(nhat['R'][j]*k_factor))
-
-
-            result['bx'][l] = (-trajectory[i_traj]['x'][l]+result['x'][l])/ ( c_mmns*h * result['gamma'][l])
-            result['by'][l] = (-trajectory[i_traj]['y'][l]+result['y'][l])/ ( c_mmns*h * result['gamma'][l])
-            result['bz'][l] = (-trajectory[i_traj]['z'][l]+result['z'][l])/ ( c_mmns*h * result['gamma'][l])
-
-            #result['bdotx'][l] = (result['bx'][l]-trajectory[i_traj]['bx'][l])/( c_mmns*h  * result['gamma'][l])
-            #result['bdoty'][l] =(result['by'][l]-trajectory[i_traj]['by'][l])/( c_mmns*h  * result['gamma'][l])
-            #result['bdotz'][l] = (result['bz'][l]-trajectory[i_traj]['bz'][l])/( c_mmns*h  * result['gamma'][l])
-
-            result['bdotx'][l] = (-trajectory[i_traj]['bx'][l]+result['bx'][l])/( c_mmns*h  * result['gamma'][l])
-            result['bdoty'][l] = (-trajectory[i_traj]['by'][l]+result['by'][l])/( c_mmns*h  * result['gamma'][l])
-            result['bdotz'][l] = (-trajectory[i_traj]['bz'][l]+result['bz'][l])/( c_mmns*h  * result['gamma'][l])
-
-            #'real' gamma
-            #btots = np.sqrt(np.square(trajectory[i_traj]['bx'][l])+np.square(trajectory[i_traj]['by'][l])+np.square(trajectory[i_traj]['bz'][l]))
-            btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
+    result['dummy'] = np.zeros_like(trajectory[i_traj]['bdotz'])
+    
+    for l in range(len(trajectory[i_traj]['x'])):
+        # Get retarded time indices and distances
+        i_new = chrono_jn(trajectory, trajectory_ext, i_traj, l)
+        
+        # Check bounds for i_new to prevent index out of range
+        max_ext_traj_idx = len(trajectory_ext) - 1
+        i_new_bounded = [min(max(idx, 0), max_ext_traj_idx) for idx in i_new]
+        
+        nhat = dist_euclid_ret(trajectory, trajectory_ext, i_traj, l, i_new_bounded)
+        
+        # Reset position and time to initial values before force summation
+        result['x'][l] = trajectory[i_traj]['x'][l]
+        result['y'][l] = trajectory[i_traj]['y'][l]
+        result['z'][l] = trajectory[i_traj]['z'][l]
+        result['t'][l] = trajectory[i_traj]['t'][l]
+        
+        # Initialize momentum accumulators (start from current values)
+        accumulated_Px = trajectory[i_traj]['Px'][l]
+        accumulated_Py = trajectory[i_traj]['Py'][l] 
+        accumulated_Pz = trajectory[i_traj]['Pz'][l]
+        accumulated_Pt = trajectory[i_traj]['Pt'][l]
+        
+        # Initialize position accumulators for electromagnetic field contributions
+        accumulated_x_field = 0.0
+        accumulated_y_field = 0.0
+        accumulated_z_field = 0.0
+        
+        # Get charge values (handle both scalar and array formats)
+        if hasattr(trajectory[i_traj]['q'], '__getitem__'):
+            charge_i = trajectory[i_traj]['q'][l]
+        else:
+            charge_i = trajectory[i_traj]['q']
             
-            # Only limit velocities that actually exceed c due to numerical artifacts
-            # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
-            if btots >= 1.0:
-                # Limit to very close to c to avoid mathematical singularities
-                btots_limited = 0.9999999999999
-                scale_factor = btots_limited / btots
-                result['bx'][l] *= scale_factor
-                result['by'][l] *= scale_factor
-                result['bz'][l] *= scale_factor
-                btots = btots_limited
+        if hasattr(trajectory[i_traj]['m'], '__getitem__'):
+            mass_i = trajectory[i_traj]['m'][l]
+        else:
+            mass_i = trajectory[i_traj]['m']
+        
+        # FORCE SUMMATION LOOP - accumulate ALL external contributions
+        for j in range(len(trajectory_ext[0]['x'])):
+            # Check bounds for external trajectory access
+            ext_traj_idx = i_new_bounded[j] 
+            if ext_traj_idx >= len(trajectory_ext) or j >= len(trajectory_ext[ext_traj_idx]['x']):
+                continue
+                
+            # Get external charge (handle both scalar and array formats)
+            if hasattr(trajectory_ext[ext_traj_idx]['q'], '__getitem__'):
+                charge_j = trajectory_ext[ext_traj_idx]['q'][j]
+            else:
+                charge_j = trajectory_ext[ext_traj_idx]['q']
+                
+            # Calculate electromagnetic quantities for this external particle
+            beta_vec = (trajectory[i_traj]['bx'][l], trajectory[i_traj]['by'][l], trajectory[i_traj]['bz'][l])
+            beta_ext = (trajectory_ext[ext_traj_idx]['bx'][j], trajectory_ext[ext_traj_idx]['by'][j], trajectory_ext[ext_traj_idx]['bz'][j])
+            k_factor = (1 - np.dot(beta_ext, (nhat['nx'][j], nhat['ny'][j], nhat['nz'][j])))
             
-            result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
-            #print(result['gamma'][l])
-
-
-
-            #theta = 2/trajectory_ext[i_new[j]]['gamma'][j]    #2* rms angle for radiated power, see jackson chapter 14
-            #omega = 2*np.pi*(1-np.cos(theta))
-            #radiation pressure checker --- negligible for all tests so far
-            #result['bdotz'][l] += -(char_time*(trajectory_ext[i_new[j]]['bdotz'][j]*m_particle)**2 *np.pi*radius**2 / (omega*nhat['R'][j]) * c/m_particle) #NOTE: m_particle must be identical here, for non-alike masses, new m_particle_ext must be defined
-
-
-            ##inserting radiation reaction force as m*a**2 instead of F_ext*a as medina derived.
-            ##this is justified on the assumption that covariant EOMs for LW potentials are equivalent to a valid
-            ##Lorentz-force expression for covariant charged particles (see e.g. wikipedia for covariant formulation of classical charged particles)
-            rad_frc_z_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotz'][l]**2*c_mmns**2)*result['bz'][l]*c_mmns
-            rad_frc_z_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotz'][l]*result['bz'][l]*c_mmns**2
-            if rad_frc_z_rhs>(trajectory[i_traj]['char_time']/1E1) or rad_frc_z_lhs>(trajectory[i_traj]['char_time']/1E1):
-                #print("braking")
-                result['bdotz'][l] += trajectory[i_traj]['char_time']*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                rad_frc_x_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotx'][l]**2*c_mmns**2)*result['bx'][l]*c_mmns
-                rad_frc_x_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotx'][l]*result['bx'][l]*c_mmns**2
-                rad_frc_y_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdoty'][l]**2*c_mmns**2)*result['by'][l]*c_mmns
-                rad_frc_y_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdoty'][l]*result['by'][l]*c_mmns**2
-                result['bdotx'][l] += trajectory[i_traj]['char_time']*(rad_frc_x_lhs+rad_frc_x_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                result['bdoty'][l] += trajectory[i_traj]['char_time']*(rad_frc_y_lhs+rad_frc_y_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                #result['dummy'][l] = char_time*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
-
-
-
-
+            if abs(k_factor) < 1e-15:  # Avoid division by zero
+                continue
+                
+            bdot_ext = (trajectory_ext[ext_traj_idx]['bdotx'][j], trajectory_ext[ext_traj_idx]['bdoty'][j], trajectory_ext[ext_traj_idx]['bdotz'][j])
+            bdot_scalar_ext = np.dot(beta_ext, bdot_ext)
+            betas_scalar = np.dot(beta_ext, beta_vec)
+            
+            # Covariant force terms (exact legacy physics)
+            v_betas_scalar = trajectory_ext[ext_traj_idx]['gamma'][j] * trajectory[i_traj]['gamma'][l] * c_mmns**2 * (1 - betas_scalar)
+            v_beta_dot_mixed_scalar = (trajectory_ext[ext_traj_idx]['gamma'][j]**4 * trajectory[i_traj]['gamma'][l] * c_mmns**2 * bdot_scalar_ext
+                                     - trajectory[i_traj]['gamma'][l] * c_mmns * np.dot(beta_vec,
+                                       np.multiply(bdot_ext, c_mmns * trajectory_ext[ext_traj_idx]['gamma'][j]**2)
+                                       + np.multiply(beta_ext, bdot_scalar_ext) * c_mmns * trajectory_ext[ext_traj_idx]['gamma'][j]**4))
+            
+            # Common force factor
+            force_factor = (h * charge_i * charge_j 
+                          / (k_factor**3 * c_mmns**3 * nhat['R'][j]**2 * trajectory_ext[ext_traj_idx]['gamma'][j]**3))
+            
+            # ACCUMULATE momentum changes (conjugate momentum)
+            accumulated_Px += force_factor * (
+                -trajectory_ext[ext_traj_idx]['bx'][j] * v_betas_scalar * k_factor * c_mmns * trajectory_ext[ext_traj_idx]['gamma'][j]**2
+                + v_beta_dot_mixed_scalar * k_factor * trajectory_ext[ext_traj_idx]['gamma'][j] * nhat['nx'][j] * nhat['R'][j]
+                + trajectory_ext[ext_traj_idx]['gamma'][j]**2 * nhat['nx'][j]**2 * nhat['R'][j] * v_betas_scalar 
+                * (trajectory_ext[ext_traj_idx]['bdotx'][j] + trajectory_ext[ext_traj_idx]['bdotx'][j] * bdot_scalar_ext * trajectory_ext[ext_traj_idx]['gamma'][j]**2)
+                + v_betas_scalar * c_mmns * nhat['nx'][j]
+            )
+            
+            accumulated_Py += force_factor * (
+                -trajectory_ext[ext_traj_idx]['by'][j] * v_betas_scalar * k_factor * c_mmns * trajectory_ext[ext_traj_idx]['gamma'][j]**2
+                + v_beta_dot_mixed_scalar * k_factor * trajectory_ext[ext_traj_idx]['gamma'][j] * nhat['ny'][j] * nhat['R'][j]
+                + trajectory_ext[ext_traj_idx]['gamma'][j]**2 * nhat['ny'][j]**2 * nhat['R'][j] * v_betas_scalar
+                * (trajectory_ext[ext_traj_idx]['bdoty'][j] + trajectory_ext[ext_traj_idx]['bdoty'][j] * bdot_scalar_ext * trajectory_ext[ext_traj_idx]['gamma'][j]**2)
+                + v_betas_scalar * c_mmns * nhat['ny'][j]
+            )
+            
+            accumulated_Pz += force_factor * (
+                -trajectory_ext[ext_traj_idx]['bz'][j] * v_betas_scalar * k_factor * c_mmns * trajectory_ext[ext_traj_idx]['gamma'][j]**2
+                + v_beta_dot_mixed_scalar * k_factor * trajectory_ext[ext_traj_idx]['gamma'][j] * nhat['nz'][j] * nhat['R'][j]
+                + trajectory_ext[ext_traj_idx]['gamma'][j]**2 * nhat['nz'][j]**2 * nhat['R'][j] * v_betas_scalar
+                * (trajectory_ext[ext_traj_idx]['bdotz'][j] + trajectory_ext[ext_traj_idx]['bdotz'][j] * bdot_scalar_ext * trajectory_ext[ext_traj_idx]['gamma'][j]**2)
+                + v_betas_scalar * c_mmns * nhat['nz'][j]
+            )
+            
+            accumulated_Pt += (h * charge_i * charge_j
+                             / (k_factor**3 * c_mmns**3 * nhat['R'][j]**2 * trajectory_ext[ext_traj_idx]['gamma'][j]**3)) * (
+                v_beta_dot_mixed_scalar * k_factor * trajectory_ext[ext_traj_idx]['gamma'][j] * nhat['R'][j]
+                - v_betas_scalar * k_factor * c_mmns * trajectory_ext[ext_traj_idx]['gamma'][j]**2
+                - bdot_scalar_ext * v_betas_scalar * trajectory_ext[ext_traj_idx]['gamma'][j]**4 * nhat['R'][j]
+                + v_betas_scalar * c_mmns
+            )
+            
+            # ACCUMULATE electromagnetic field contributions to position (covariant mechanics)
+            # These are the qA terms in the covariant position equation: dx/dτ = (1/m)[P - qA]
+            field_contribution_factor = h / mass_i * charge_i / c_mmns * charge_j
+            
+            accumulated_x_field += field_contribution_factor * trajectory_ext[ext_traj_idx]['bx'][j] / (nhat['R'][j] * k_factor)
+            accumulated_y_field += field_contribution_factor * trajectory_ext[ext_traj_idx]['by'][j] / (nhat['R'][j] * k_factor)
+            accumulated_z_field += field_contribution_factor * trajectory_ext[ext_traj_idx]['bz'][j] / (nhat['R'][j] * k_factor)
+        
+        # AFTER force summation, apply accumulated results
+        result['Px'][l] = accumulated_Px
+        result['Py'][l] = accumulated_Py
+        result['Pz'][l] = accumulated_Pz
+        result['Pt'][l] = accumulated_Pt
+        
+        # Calculate intermediate gamma from accumulated Pt (needed for position updates)
+        result['gamma'][l] = result['Pt'][l] / (mass_i * c_mmns)
+        
+        # Update time
+        result['t'][l] = trajectory[i_traj]['t'][l] + h * result['gamma'][l]
+        
+        # COVARIANT POSITION UPDATE: dx/dτ = (1/m)[P - qA]
+        # This includes both momentum term AND electromagnetic field contributions
+        result['x'][l] = (trajectory[i_traj]['x'][l] + 
+                         h / mass_i * (result['Px'][l] - accumulated_x_field * mass_i))
+        result['y'][l] = (trajectory[i_traj]['y'][l] + 
+                         h / mass_i * (result['Py'][l] - accumulated_y_field * mass_i))
+        result['z'][l] = (trajectory[i_traj]['z'][l] + 
+                         h / mass_i * (result['Pz'][l] - accumulated_z_field * mass_i))
+        
+        # Calculate velocities from position changes
+        result['bx'][l] = (result['x'][l] - trajectory[i_traj]['x'][l]) / (c_mmns * h * result['gamma'][l])
+        result['by'][l] = (result['y'][l] - trajectory[i_traj]['y'][l]) / (c_mmns * h * result['gamma'][l])
+        result['bz'][l] = (result['z'][l] - trajectory[i_traj]['z'][l]) / (c_mmns * h * result['gamma'][l])
+        
+        # Velocity limiting and final gamma calculation
+        btots = np.sqrt(result['bx'][l]**2 + result['by'][l]**2 + result['bz'][l]**2)
+        if btots >= 1.0:
+            btots_limited = 0.9999999999999
+            scale_factor = btots_limited / btots
+            result['bx'][l] *= scale_factor
+            result['by'][l] *= scale_factor
+            result['bz'][l] *= scale_factor
+            btots = btots_limited
+            
+        result['gamma'][l] = 1.0 / np.sqrt(1 - btots**2)
+        
+        # Calculate accelerations
+        result['bdotx'][l] = (result['bx'][l] - trajectory[i_traj]['bx'][l]) / (c_mmns * h * result['gamma'][l])
+        result['bdoty'][l] = (result['by'][l] - trajectory[i_traj]['by'][l]) / (c_mmns * h * result['gamma'][l])
+        result['bdotz'][l] = (result['bz'][l] - trajectory[i_traj]['bz'][l]) / (c_mmns * h * result['gamma'][l])
+        
+        # Radiation reaction (preserve existing implementation)
+        rad_frc_z_rhs = -result['gamma'][l]**3 * (mass_i * result['bdotz'][l]**2 * c_mmns**2) * result['bz'][l] * c_mmns
+        rad_frc_z_lhs = ((result['gamma'][l] - trajectory[i_traj]['gamma'][l]) / (h * result['gamma'][l]) * 
+                        mass_i * result['bdotz'][l] * result['bz'][l] * c_mmns**2)
+        
+        if hasattr(trajectory[i_traj]['char_time'], '__getitem__'):
+            char_time_i = trajectory[i_traj]['char_time'][l]
+        else:
+            char_time_i = trajectory[i_traj]['char_time']
+            
+        if rad_frc_z_rhs > (char_time_i / 1e1) or rad_frc_z_lhs > (char_time_i / 1e1):
+            result['bdotz'][l] += char_time_i * (rad_frc_z_lhs + rad_frc_z_rhs) / (mass_i * c_mmns)
+            
+            rad_frc_x_rhs = -result['gamma'][l]**3 * (mass_i * result['bdotx'][l]**2 * c_mmns**2) * result['bx'][l] * c_mmns
+            rad_frc_x_lhs = ((result['gamma'][l] - trajectory[i_traj]['gamma'][l]) / (h * result['gamma'][l]) * 
+                            mass_i * result['bdotx'][l] * result['bx'][l] * c_mmns**2)
+            rad_frc_y_rhs = -result['gamma'][l]**3 * (mass_i * result['bdoty'][l]**2 * c_mmns**2) * result['by'][l] * c_mmns
+            rad_frc_y_lhs = ((result['gamma'][l] - trajectory[i_traj]['gamma'][l]) / (h * result['gamma'][l]) * 
+                            mass_i * result['bdoty'][l] * result['by'][l] * c_mmns**2)
+            
+            result['bdotx'][l] += char_time_i * (rad_frc_x_lhs + rad_frc_x_rhs) / (mass_i * c_mmns)
+            result['bdoty'][l] += char_time_i * (rad_frc_y_lhs + rad_frc_y_rhs) / (mass_i * c_mmns)
+    
     return result
 
 def static_integrator(steps,h_step,wall_Z,apt_R,sim_type,init_rider,init_driver,mean,cav_spacing,z_cutoff):
