@@ -23,8 +23,8 @@ def init_bunch(starting_distance,transv_mom,starting_Pz,stripped_ions,
     bz = Pz/(gamma*mass*c_mmns)
     beta_avg  = np.sqrt(bx**2+by**2+bz**2)
 
-    x = np.random.uniform(transv_dist, transv_dist, pcount)
-    y = np.random.uniform(transv_dist, transv_dist, pcount)
+    x = np.random.uniform(-transv_dist, transv_dist, pcount)
+    y = np.random.uniform(-transv_dist, transv_dist, pcount)
     z = np.random.uniform(starting_distance-1e-6, starting_distance+1e-6, pcount)
     t = np.zeros(pcount)
 

@@ -263,7 +263,7 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
                         np.multiply(bdot_ext,c_mmns*vector_ext['gamma'][j]**2)\
                         +np.multiply(beta_ext,bdot_scalar_ext)*c_mmns*vector_ext['gamma'][j]**4)
 
-            result['Px'][i] = vector['Px'][i] +  h*vector['q']*vector_ext['q']\
+            result['Px'][i] += vector['Px'][i] +  h*vector['q']*vector_ext['q']\
                         *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*vector_ext['gamma'][j]**3)\
                         *(-v_betas_scalar*vector_ext['bx'][j]*k_factor*c_mmns*vector_ext['gamma'][j]**2\
                            +v_beta_dot_mixed_scalar*k_factor*vector_ext['gamma'][j]*nhat['nx'][j]*nhat['R'][j]\
@@ -274,7 +274,7 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
                          )
 
 
-            result['Py'][i] = vector['Py'][i] +  h*vector['q']*vector_ext['q']\
+            result['Py'][i] += vector['Py'][i] +  h*vector['q']*vector_ext['q']\
                         *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*vector_ext['gamma'][j]**3)\
                         *(-v_betas_scalar*vector_ext['by'][j]*k_factor*c_mmns*vector_ext['gamma'][j]**2\
                            +v_beta_dot_mixed_scalar*k_factor*vector_ext['gamma'][j]*nhat['ny'][j]*nhat['R'][j]\
@@ -284,7 +284,7 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
                            +v_betas_scalar*c_mmns*nhat['ny'][j]
                          )
 
-            result['Pz'][i] = vector['Pz'][i] +  h*vector['q']*vector_ext['q']\
+            result['Pz'][i] += vector['Pz'][i] +  h*vector['q']*vector_ext['q']\
                         *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*vector_ext['gamma'][j]**3)\
                         *(-v_betas_scalar*vector_ext['bz'][j]*k_factor*c_mmns*vector_ext['gamma'][j]**2\
                            +v_beta_dot_mixed_scalar*k_factor*vector_ext['gamma'][j]*nhat['nz'][j]*nhat['R'][j]\
@@ -295,7 +295,7 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
                         )
 
 
-            result['Pt'][i] = vector['Pt'][i] + h*vector['q']*vector_ext['q']\
+            result['Pt'][i] += vector['Pt'][i] + h*vector['q']*vector_ext['q']\
                         *1/(k_factor**3*c_mmns**2*nhat['R'][j]**2*vector_ext['gamma'][j]**3)\
                         *(v_beta_dot_mixed_scalar*k_factor*vector_ext['gamma'][j]*nhat['R'][j]\
                           -v_betas_scalar*k_factor*c_mmns*vector_ext['gamma'][j]**2\
@@ -309,39 +309,39 @@ def eqsofmotion_static(h, vector,vector_ext,apt_R,sim_type): # nhat includes R a
 
             result['t'][i] = vector['t'][i] + h * result['gamma'][i]  #note 't' is lab time and h is in proper time, so: dt/dtau=gamma
 
-            result['x'][i] = vector['x'][i] + h/vector['m']*(result['Px'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['bx'][j]\
+            result['x'][i] += vector['x'][i] + h/vector['m']*(result['Px'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['bx'][j]\
                         /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
 
-            result['y'][i] = vector['y'][i] + h/vector['m']*(result['Py'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['by'][j]\
+            result['y'][i] += vector['y'][i] + h/vector['m']*(result['Py'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['by'][j]\
                         /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
 
-            result['z'][i] = vector['z'][i] + h/vector['m']*(result['Pz'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['bz'][j]\
+            result['z'][i] += vector['z'][i] + h/vector['m']*(result['Pz'][i]-vector['q']/c_mmns*vector_ext['q']*vector_ext['bz'][j]\
                         /(nhat['R'][j]*(1-np.dot((vector_ext['bx'][j],vector_ext['by'][j],vector_ext['bz'][j]),(nhat['nx'][j],nhat['ny'][j],nhat['nz'][j])))))
 
-            result['bx'][i] = (-vector['x'][i]+result['x'][i]) / (c_mmns*h*result['gamma'][i])
-            result['by'][i] = (-vector['y'][i]+result['y'][i]) / (c_mmns*h*result['gamma'][i])
-            result['bz'][i] = (-vector['z'][i]+result['z'][i]) / (c_mmns*h*result['gamma'][i])
+        result['bx'][i] = (-vector['x'][i]+result['x'][i]) / (c_mmns*h*result['gamma'][i])
+        result['by'][i] = (-vector['y'][i]+result['y'][i]) / (c_mmns*h*result['gamma'][i])
+        result['bz'][i] = (-vector['z'][i]+result['z'][i]) / (c_mmns*h*result['gamma'][i])
 
-            #'real' gamma
-            #btots = np.sqrt(np.square(vector['bx'][i])+np.square(vector['by'][i])+np.square(vector['bz'][i]))
-            btots = np.sqrt(np.square(result['bx'][i])+np.square(result['by'][i])+np.square(result['bz'][i]))
-            
-            # Only limit velocities that actually exceed c due to numerical artifacts
-            # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
-            if btots >= 1.0:
-                # Limit to very close to c to avoid mathematical singularities
-                btots_limited = 0.9999999999999
-                scale_factor = btots_limited / btots
-                result['bx'][i] *= scale_factor
-                result['by'][i] *= scale_factor
-                result['bz'][i] *= scale_factor
-                btots = btots_limited
-            
-            result['gamma'][i] = np.sqrt(np.divide(1,1-np.square(btots)))
+        #'real' gamma
+        #btots = np.sqrt(np.square(vector['bx'][i])+np.square(vector['by'][i])+np.square(vector['bz'][i]))
+        btots = np.sqrt(np.square(result['bx'][i])+np.square(result['by'][i])+np.square(result['bz'][i]))
+        
+        # Only limit velocities that actually exceed c due to numerical artifacts
+        # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
+        if btots >= 1.0:
+            # Limit to very close to c to avoid mathematical singularities
+            btots_limited = 0.9999999999999
+            scale_factor = btots_limited / btots
+            result['bx'][i] *= scale_factor
+            result['by'][i] *= scale_factor
+            result['bz'][i] *= scale_factor
+            btots = btots_limited
+        
+        result['gamma'][i] = np.sqrt(np.divide(1,1-np.square(btots)))
 
-            result['bdotx'][i] = (-vector['bx'][i]+result['bx'][i])/(c_mmns*h*result['gamma'][i])
-            result['bdoty'][i] = (-vector['by'][i]+result['by'][i])/(c_mmns*h*result['gamma'][i])
-            result['bdotz'][i] = (-vector['bz'][i]+result['bz'][i])/(c_mmns*h*result['gamma'][i])
+        result['bdotx'][i] = (-vector['bx'][i]+result['bx'][i])/(c_mmns*h*result['gamma'][i])
+        result['bdoty'][i] = (-vector['by'][i]+result['by'][i])/(c_mmns*h*result['gamma'][i])
+        result['bdotz'][i] = (-vector['bz'][i]+result['bz'][i])/(c_mmns*h*result['gamma'][i])
 
             #NOTE---- Momentum values below are updated 'result', implicit technically, but only needs explicit solver for extreme cases
 
@@ -437,7 +437,7 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                             np.multiply(bdot_ext,c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2)\
                             +np.multiply(beta_ext,bdot_scalar_ext)*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**4)
 
-                result['Px'][l] = trajectory[i_traj]['Px'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
+                result['Px'][l] += trajectory[i_traj]['Px'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
                             *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
                             *(-trajectory_ext[i_new[j]]['bx'][j]*v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
                                +v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['nx'][j]*nhat['R'][j]\
@@ -448,7 +448,7 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                              )
 
 
-                result['Py'][l] = trajectory[i_traj]['Py'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
+                result['Py'][l] += trajectory[i_traj]['Py'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
                             *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
                             *(-trajectory_ext[i_new[j]]['by'][j]*v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
                                +v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['ny'][j]*nhat['R'][j]\
@@ -458,7 +458,7 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                                +v_betas_scalar*c_mmns*nhat['ny'][j]
                              )
 
-                result['Pz'][l] = trajectory[i_traj]['Pz'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
+                result['Pz'][l] += trajectory[i_traj]['Pz'][l] +  h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
                             *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
                             *(-trajectory_ext[i_new[j]]['bz'][j]*v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
                                +v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['nz'][j]*nhat['R'][j]\
@@ -469,7 +469,7 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                             )#+h*trajectory[i_traj]['q']*trajectory[i_traj]['gamma'][l]*(-1.22E7-np.dot(beta_vec,[-1.22E7,-1.22E7,-1.22E7])) #adding 1.5GV/m ext. field
 
 
-                result['Pt'][l] = trajectory[i_traj]['Pt'][l] + h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
+                result['Pt'][l] += trajectory[i_traj]['Pt'][l] + h*trajectory[i_traj]['q']*trajectory_ext[i_new[j]]['q']\
                             *1/(k_factor**3*c_mmns**3*nhat['R'][j]**2*trajectory_ext[i_new[j]]['gamma'][j]**3)\
                             *(v_beta_dot_mixed_scalar*k_factor*trajectory_ext[i_new[j]]['gamma'][j]*nhat['R'][j]\
                               -v_betas_scalar*k_factor*c_mmns*trajectory_ext[i_new[j]]['gamma'][j]**2\
@@ -480,74 +480,74 @@ def eqsofmotion_retarded(h, trajectory,trajectory_ext,i_traj,apt_R,sim_type): # 
                 #initial guess gamma, avoids blowups (honestly it's a huge mystery why we need both this and the 'real' gamma below, but blowups or conservation violation happen without
 
                 result['gamma'][l] = 1/(trajectory[i_traj]['m']*c_mmns)*(result['Pt'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']\
-                             *1/(nhat['R'][j]*k_factor))
+                                *1/(nhat['R'][j]*k_factor))
                 #print(result['gamma'][l])
 
                 result['t'][l] = trajectory[i_traj]['t'][l] + h * result['gamma'][l]  #note 't' is lab time and h is in proper time, so: dt/dtau=gamma
 
-                result['x'][l] = trajectory[i_traj]['x'][l] + h/trajectory[i_traj]['m']*(result['Px'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['bx'][j]\
+                result['x'][l] += trajectory[i_traj]['x'][l] + h/trajectory[i_traj]['m']*(result['Px'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['bx'][j]\
                             /(nhat['R'][j]*k_factor))
 
-                result['y'][l] = trajectory[i_traj]['y'][l] + h/trajectory[i_traj]['m']*(result['Py'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['by'][j]\
+                result['y'][l] += trajectory[i_traj]['y'][l] + h/trajectory[i_traj]['m']*(result['Py'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['by'][j]\
                             /(nhat['R'][j]*k_factor))
 
-                result['z'][l] = trajectory[i_traj]['z'][l] + h/trajectory[i_traj]['m']*(result['Pz'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['bz'][j]\
+                result['z'][l] += trajectory[i_traj]['z'][l] + h/trajectory[i_traj]['m']*(result['Pz'][l]-trajectory[i_traj]['q']/c_mmns*trajectory_ext[i_new[j]]['q']*trajectory_ext[i_new[j]]['bz'][j]\
                             /(nhat['R'][j]*k_factor))
 
 
-                result['bx'][l] = (-trajectory[i_traj]['x'][l]+result['x'][l])/ ( c_mmns*h * result['gamma'][l])
-                result['by'][l] = (-trajectory[i_traj]['y'][l]+result['y'][l])/ ( c_mmns*h * result['gamma'][l])
-                result['bz'][l] = (-trajectory[i_traj]['z'][l]+result['z'][l])/ ( c_mmns*h * result['gamma'][l])
+            result['bx'][l] = (-trajectory[i_traj]['x'][l]+result['x'][l])/ ( c_mmns*h * result['gamma'][l])
+            result['by'][l] = (-trajectory[i_traj]['y'][l]+result['y'][l])/ ( c_mmns*h * result['gamma'][l])
+            result['bz'][l] = (-trajectory[i_traj]['z'][l]+result['z'][l])/ ( c_mmns*h * result['gamma'][l])
 
-                #result['bdotx'][l] = (result['bx'][l]-trajectory[i_traj]['bx'][l])/( c_mmns*h  * result['gamma'][l])
-                #result['bdoty'][l] =(result['by'][l]-trajectory[i_traj]['by'][l])/( c_mmns*h  * result['gamma'][l])
-                #result['bdotz'][l] = (result['bz'][l]-trajectory[i_traj]['bz'][l])/( c_mmns*h  * result['gamma'][l])
+            #result['bdotx'][l] = (result['bx'][l]-trajectory[i_traj]['bx'][l])/( c_mmns*h  * result['gamma'][l])
+            #result['bdoty'][l] =(result['by'][l]-trajectory[i_traj]['by'][l])/( c_mmns*h  * result['gamma'][l])
+            #result['bdotz'][l] = (result['bz'][l]-trajectory[i_traj]['bz'][l])/( c_mmns*h  * result['gamma'][l])
 
-                result['bdotx'][l] = (-trajectory[i_traj]['bx'][l]+result['bx'][l])/( c_mmns*h  * result['gamma'][l])
-                result['bdoty'][l] = (-trajectory[i_traj]['by'][l]+result['by'][l])/( c_mmns*h  * result['gamma'][l])
-                result['bdotz'][l] = (-trajectory[i_traj]['bz'][l]+result['bz'][l])/( c_mmns*h  * result['gamma'][l])
+            result['bdotx'][l] = (-trajectory[i_traj]['bx'][l]+result['bx'][l])/( c_mmns*h  * result['gamma'][l])
+            result['bdoty'][l] = (-trajectory[i_traj]['by'][l]+result['by'][l])/( c_mmns*h  * result['gamma'][l])
+            result['bdotz'][l] = (-trajectory[i_traj]['bz'][l]+result['bz'][l])/( c_mmns*h  * result['gamma'][l])
 
-                #'real' gamma
-                #btots = np.sqrt(np.square(trajectory[i_traj]['bx'][l])+np.square(trajectory[i_traj]['by'][l])+np.square(trajectory[i_traj]['bz'][l]))
-                btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
-                
-                # Only limit velocities that actually exceed c due to numerical artifacts
-                # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
-                if btots >= 1.0:
-                    # Limit to very close to c to avoid mathematical singularities
-                    btots_limited = 0.9999999999999
-                    scale_factor = btots_limited / btots
-                    result['bx'][l] *= scale_factor
-                    result['by'][l] *= scale_factor
-                    result['bz'][l] *= scale_factor
-                    btots = btots_limited
-                
-                result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
-                #print(result['gamma'][l])
-
-
-
-                #theta = 2/trajectory_ext[i_new[j]]['gamma'][j]    #2* rms angle for radiated power, see jackson chapter 14
-                #omega = 2*np.pi*(1-np.cos(theta))
-                #radiation pressure checker --- negligible for all tests so far
-                #result['bdotz'][l] += -(char_time*(trajectory_ext[i_new[j]]['bdotz'][j]*m_particle)**2 *np.pi*radius**2 / (omega*nhat['R'][j]) * c/m_particle) #NOTE: m_particle must be identical here, for non-alike masses, new m_particle_ext must be defined
+            #'real' gamma
+            #btots = np.sqrt(np.square(trajectory[i_traj]['bx'][l])+np.square(trajectory[i_traj]['by'][l])+np.square(trajectory[i_traj]['bz'][l]))
+            btots = np.sqrt(np.square(result['bx'][l])+np.square(result['by'][l])+np.square(result['bz'][l]))
+            
+            # Only limit velocities that actually exceed c due to numerical artifacts
+            # High-energy particles naturally approach β → 1.0 (e.g., 30 GeV proton: β ≈ 0.999511)
+            if btots >= 1.0:
+                # Limit to very close to c to avoid mathematical singularities
+                btots_limited = 0.9999999999999
+                scale_factor = btots_limited / btots
+                result['bx'][l] *= scale_factor
+                result['by'][l] *= scale_factor
+                result['bz'][l] *= scale_factor
+                btots = btots_limited
+            
+            result['gamma'][l] = np.sqrt(np.divide(1,1-np.square(btots)))
+            #print(result['gamma'][l])
 
 
-                ##inserting radiation reaction force as m*a**2 instead of F_ext*a as medina derived.
-                ##this is justified on the assumption that covariant EOMs for LW potentials are equivalent to a valid
-                ##Lorentz-force expression for covariant charged particles (see e.g. wikipedia for covariant formulation of classical charged particles)
-                rad_frc_z_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotz'][l]**2*c_mmns**2)*result['bz'][l]*c_mmns
-                rad_frc_z_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotz'][l]*result['bz'][l]*c_mmns**2
-                if rad_frc_z_rhs>(trajectory[i_traj]['char_time']/1E1) or rad_frc_z_lhs>(trajectory[i_traj]['char_time']/1E1):
-                    #print("braking")
-                    result['bdotz'][l] += trajectory[i_traj]['char_time']*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                    rad_frc_x_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotx'][l]**2*c_mmns**2)*result['bx'][l]*c_mmns
-                    rad_frc_x_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotx'][l]*result['bx'][l]*c_mmns**2
-                    rad_frc_y_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdoty'][l]**2*c_mmns**2)*result['by'][l]*c_mmns
-                    rad_frc_y_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdoty'][l]*result['by'][l]*c_mmns**2
-                    result['bdotx'][l] += trajectory[i_traj]['char_time']*(rad_frc_x_lhs+rad_frc_x_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                    result['bdoty'][l] += trajectory[i_traj]['char_time']*(rad_frc_y_lhs+rad_frc_y_rhs) / (trajectory[i_traj]['m']*c_mmns)
-                    #result['dummy'][l] = char_time*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
+
+            #theta = 2/trajectory_ext[i_new[j]]['gamma'][j]    #2* rms angle for radiated power, see jackson chapter 14
+            #omega = 2*np.pi*(1-np.cos(theta))
+            #radiation pressure checker --- negligible for all tests so far
+            #result['bdotz'][l] += -(char_time*(trajectory_ext[i_new[j]]['bdotz'][j]*m_particle)**2 *np.pi*radius**2 / (omega*nhat['R'][j]) * c/m_particle) #NOTE: m_particle must be identical here, for non-alike masses, new m_particle_ext must be defined
+
+
+            ##inserting radiation reaction force as m*a**2 instead of F_ext*a as medina derived.
+            ##this is justified on the assumption that covariant EOMs for LW potentials are equivalent to a valid
+            ##Lorentz-force expression for covariant charged particles (see e.g. wikipedia for covariant formulation of classical charged particles)
+            rad_frc_z_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotz'][l]**2*c_mmns**2)*result['bz'][l]*c_mmns
+            rad_frc_z_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotz'][l]*result['bz'][l]*c_mmns**2
+            if rad_frc_z_rhs>(trajectory[i_traj]['char_time']/1E1) or rad_frc_z_lhs>(trajectory[i_traj]['char_time']/1E1):
+                #print("braking")
+                result['bdotz'][l] += trajectory[i_traj]['char_time']*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
+                rad_frc_x_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdotx'][l]**2*c_mmns**2)*result['bx'][l]*c_mmns
+                rad_frc_x_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdotx'][l]*result['bx'][l]*c_mmns**2
+                rad_frc_y_rhs = -result['gamma'][l]**3*(trajectory[i_traj]['m']*result['bdoty'][l]**2*c_mmns**2)*result['by'][l]*c_mmns
+                rad_frc_y_lhs = (result['gamma'][l]-trajectory[i_traj]['gamma'][l])/(h*result['gamma'][l])*trajectory[i_traj]['m']*result['bdoty'][l]*result['by'][l]*c_mmns**2
+                result['bdotx'][l] += trajectory[i_traj]['char_time']*(rad_frc_x_lhs+rad_frc_x_rhs) / (trajectory[i_traj]['m']*c_mmns)
+                result['bdoty'][l] += trajectory[i_traj]['char_time']*(rad_frc_y_lhs+rad_frc_y_rhs) / (trajectory[i_traj]['m']*c_mmns)
+                #result['dummy'][l] = char_time*(rad_frc_z_lhs+rad_frc_z_rhs) / (trajectory[i_traj]['m']*c_mmns)
 
 
 
