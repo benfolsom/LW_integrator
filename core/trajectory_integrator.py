@@ -555,20 +555,26 @@ class LienardWiechertIntegrator:
                 trajectory, trajectory_ext, i_traj, particle_idx, i_new
             )
 
-            # Initialize with current values to start force accumulation
-            # Position and time will be calculated later using covariant approach
+            # Initialize with current values (covariant mechanics: positions and momentum start from current state)
             result["x"][particle_idx] = trajectory[i_traj]["x"][particle_idx]
             result["y"][particle_idx] = trajectory[i_traj]["y"][particle_idx]
             result["z"][particle_idx] = trajectory[i_traj]["z"][particle_idx]
             result["t"][particle_idx] = trajectory[i_traj]["t"][particle_idx]
-            
-            # Start momentum accumulation from current values (matching legacy)
             result["Px"][particle_idx] = trajectory[i_traj]["Px"][particle_idx]
             result["Py"][particle_idx] = trajectory[i_traj]["Py"][particle_idx]
             result["Pz"][particle_idx] = trajectory[i_traj]["Pz"][particle_idx]
             result["Pt"][particle_idx] = trajectory[i_traj]["Pt"][particle_idx]
 
-            # Sum all external field contributions
+            # Handle mass values (scalar or array) - needed for covariant position updates
+            if np.isscalar(trajectory[i_traj]["m"]):
+                mass_i = float(trajectory[i_traj]["m"])
+            else:
+                if particle_idx < len(trajectory[i_traj]["m"]):
+                    mass_i = float(trajectory[i_traj]["m"][particle_idx])
+                else:
+                    mass_i = 1.0  # Default mass
+
+            # COVARIANT ELECTROMAGNETIC INTERACTIONS: Both momentum AND position updated per interaction
             for j in range(len(trajectory_ext[0]["x"])):
                 # Current particle velocity
                 beta_vec = np.array(
@@ -765,6 +771,15 @@ class LienardWiechertIntegrator:
                         - bdot_scalar_ext * v_betas_scalar * gamma_j**4 * nhat["R"][j]
                         + v_betas_scalar * c_mmns
                     )
+
+                    # COVARIANT POSITION UPDATE: Apply electromagnetic field contribution from this interaction
+                    # dx/dτ = (1/m)[P - qA] - the qA term comes from each electromagnetic interaction
+                    field_contribution_factor = h / mass_i * charge_i / c_mmns * charge_j / (nhat["R"][j] * k_factor)
+                    
+                    result["x"][particle_idx] += field_contribution_factor * trajectory_ext[i_new[j]]["bx"][j]
+                    result["y"][particle_idx] += field_contribution_factor * trajectory_ext[i_new[j]]["by"][j]  
+                    result["z"][particle_idx] += field_contribution_factor * trajectory_ext[i_new[j]]["bz"][j]
+                    
                 else:
                     # Use simple electromagnetic force calculation
                     simple_force, energy_rate = self._simple_em_force(
@@ -785,6 +800,14 @@ class LienardWiechertIntegrator:
                     # Apply energy rate for covariant Pt update
                     # dE/dt, so dE = (dE/dt) * dt = energy_rate * h
                     result["Pt"][particle_idx] += energy_rate * h
+
+                    # COVARIANT POSITION UPDATE: Apply electromagnetic field contribution from this interaction
+                    # For simple case, use the same electromagnetic field contribution
+                    field_contribution_factor = h / mass_i * charge_i / c_mmns * charge_j / (nhat["R"][j] * k_factor)
+                    
+                    result["x"][particle_idx] += field_contribution_factor * trajectory_ext[i_new[j]]["bx"][j]
+                    result["y"][particle_idx] += field_contribution_factor * trajectory_ext[i_new[j]]["by"][j]
+                    result["z"][particle_idx] += field_contribution_factor * trajectory_ext[i_new[j]]["bz"][j]
 
             # After accumulating all external contributions, compute derived quantities
 
@@ -1614,6 +1637,15 @@ class LienardWiechertIntegrator:
                         + v_betas_scalar * c_mmns
                     )
 
+                    # COVARIANT POSITION UPDATE: Apply electromagnetic field contribution from this interaction
+                    # dx/dτ = (1/m)[P - qA] - the qA term comes from each electromagnetic interaction
+                    mass_i = float(trajectory[i_traj]["m"][particle_idx])
+                    field_contribution_factor = h / mass_i * charge_i / c_mmns * charge_j / (nhat["R"][j] * k_factor)
+                    
+                    result["x"][particle_idx] += field_contribution_factor * trajectory_ext[i_traj]["bx"][j]
+                    result["y"][particle_idx] += field_contribution_factor * trajectory_ext[i_traj]["by"][j]  
+                    result["z"][particle_idx] += field_contribution_factor * trajectory_ext[i_traj]["bz"][j]
+
                 else:
                     # Use simple electromagnetic force (EXACT copy from retarded)
                     simple_force, energy_rate = self._simple_em_force(
@@ -1632,6 +1664,15 @@ class LienardWiechertIntegrator:
                     result["Pz"][particle_idx] += simple_force[2] * h
                     result["Pt"][particle_idx] += energy_rate * h  # Energy conservation
                     momentum_accumulation_count += 1
+
+                    # COVARIANT POSITION UPDATE: Apply electromagnetic field contribution from this interaction
+                    # For simple case, use the same electromagnetic field contribution
+                    mass_i = float(trajectory[i_traj]["m"][particle_idx])
+                    field_contribution_factor = h / mass_i * charge_i / c_mmns * charge_j / (nhat["R"][j] * k_factor)
+                    
+                    result["x"][particle_idx] += field_contribution_factor * trajectory_ext[i_traj]["bx"][j]
+                    result["y"][particle_idx] += field_contribution_factor * trajectory_ext[i_traj]["by"][j]
+                    result["z"][particle_idx] += field_contribution_factor * trajectory_ext[i_traj]["bz"][j]
                     # REMOVED continue - allow processing to continue for field corrections and position updates
 
             # After accumulating all external contributions, compute derived quantities (EXACT copy from retarded)
@@ -1705,8 +1746,11 @@ class LienardWiechertIntegrator:
             else:
                 field_correction_x = field_correction_y = field_correction_z = 0.0
 
-            # Position updates from relativistic velocity: dx/dt = p/(γm)
-            # First calculate gamma from momentum
+            # COVARIANT MECHANICS: Positions are now updated within each electromagnetic interaction loop
+            # This ensures proper coupling between momentum and position updates as required by covariant physics
+            # However, we still need to calculate gamma and derived quantities after all interactions
+            
+            # Calculate gamma from final momentum after all electromagnetic interactions
             momentum_magnitude = np.sqrt(
                 result["Px"][particle_idx] ** 2
                 + result["Py"][particle_idx] ** 2
@@ -1720,11 +1764,6 @@ class LienardWiechertIntegrator:
                 )
                 ** 2
             )
-
-            # Then position from velocity
-            result["x"][particle_idx] = trajectory[i_traj]["x"][particle_idx] + h / (
-                current_gamma * trajectory[i_traj]["m"][particle_idx]
-            ) * (result["Px"][particle_idx] - field_correction_x)
             result["y"][particle_idx] = trajectory[i_traj]["y"][particle_idx] + h / (
                 current_gamma * trajectory[i_traj]["m"][particle_idx]
             ) * (result["Py"][particle_idx] - field_correction_y)
