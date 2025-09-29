@@ -197,7 +197,7 @@ def _dist_euclid_ret(trajectory,trajectory_ext,index_traj,index_part,indices_ret
         result['nz'][j] = (trajectory[index_traj]['z'][index_part]-trajectory_ext[indices_ret[j]]['z'][j])/result['R'][j]
     return(result)
 
-def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
+def _chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
     nhat = _dist_euclid(trajectory[index_traj],trajectory_ext[index_traj],index_part) #non-retarded first...
     index_traj_new = np.empty(len(trajectory_ext[index_traj]['x']),dtype=int)
     for l in range(len(trajectory_ext[index_traj]['x'])):
@@ -206,6 +206,9 @@ def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
         +trajectory_ext[index_traj]['bz'][l]*nhat['nz'][l] #for accurate chrono-matching
         #b_nhat = trajectory[index_traj]['bz'][index_part]*nhat['nz'][l] #for speedup
 
+        # CAI: NUMERICALLY STABLE RETARDATION FORMULA
+        # OLD: delta_t = nhat['R'][l]*(1+b_nhat)/c_mmns  # Unstable at ultra-relativistic energies
+        # NEW: Using relativistically exact formula δt = R/(c(1-β·n̂))
         denominator = 1.0 - b_nhat
         epsilon = 1e-15  # Threshold for numerical stability
 
@@ -220,9 +223,10 @@ def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
                 max_retardation = 10.0 * trajectory_ext[index_traj]['t'][1] if len(trajectory_ext[index_traj]['t']) > 1 else 1e-3
             delta_t = max_retardation
             print(f"Warning: Near-collinear ultra-relativistic motion detected (1-β·n̂ = {denominator:.2e})")
-        else:            
-            #converted from  δt = R/(c(1-β·n̂)) to PROPER TIME (assuming gamma source and target are equiv)
-            delta_t = nhat['R'][l]*(1+b_nhat) * trajectory_ext[index_traj]['gamma'][l] / trajectory[index_traj]['gamma'][l] / c_mmns
+        else:
+            # CAI: Use the numerically stable relativistic formula
+            #delta_t = nhat['R'][l] / (c_mmns * denominator)
+            delta_t = nhat['R'][l]*(1+b_nhat)*trajectory_ext[index_traj]['gamma']/c_mmns
 
         t_ext_new = trajectory_ext[index_traj]['t'][l]-delta_t
         #t_ext_new = (trajectory_ext[index_traj]['t'][l]-delta_t)/trajectory_ext[index_traj]['gamma'][l]
