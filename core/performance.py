@@ -435,7 +435,8 @@ class OptimizedLienardWiechertIntegrator(LienardWiechertIntegrator):
 
         # For complex physics, delegate to the base implementation
         # In production, this would contain the full JIT-optimized physics
-        if not self.use_jit or len(trajectory[i_traj]["x"]) > 100:
+        # TEMPORARY FIX: Always use base implementation until JIT optimization is complete
+        if True:  # Force base implementation for now
             # Use base implementation for complex cases or when JIT disabled
             return super().eqsofmotion_retarded(
                 h, trajectory, trajectory_ext, i_traj, apt_R, sim_type
