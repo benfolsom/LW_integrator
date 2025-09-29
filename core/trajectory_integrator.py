@@ -519,6 +519,7 @@ class LienardWiechertIntegrator:
         - Relativistic corrections
         - Radiation reaction forces
         """
+
         c_mmns = self.c_mmns
 
         # Initialize result arrays
@@ -663,6 +664,7 @@ class LienardWiechertIntegrator:
 
                 # For zero charge particles, skip electromagnetic interactions
                 if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
+                    print(f"DEBUG RETARDED: Zero charge skip - qi={charge_i:.8f}, qj={charge_j:.8f}")
                     continue  # Skip this interaction entirely
 
                 if use_complex:
@@ -703,9 +705,7 @@ class LienardWiechertIntegrator:
                             * gamma_j**2
                         )
                         + v_betas_scalar * c_mmns * nhat["nx"][j]
-                    )
-
-                    # ACCUMULATE Y-conjugate momentum update (COMPLEX legacy formula)
+                    )                    # ACCUMULATE Y-conjugate momentum update (COMPLEX legacy formula)
                     result["Py"][particle_idx] += charge_factor * (
                         -v_betas_scalar
                         * trajectory_ext[i_new[j]]["by"][j]
@@ -754,6 +754,16 @@ class LienardWiechertIntegrator:
                         )
                         + v_betas_scalar * c_mmns * nhat["nz"][j]
                     )
+
+                    # DEBUG: Track momentum changes
+                    if j == 0 and particle_idx == 0:  # First particle interaction
+                        result["Pz"][particle_idx] += charge_factor * (
+                            -v_betas_scalar * trajectory_ext[i_new[j]]["bz"][j] * k_factor * c_mmns * gamma_j**2
+                            + v_beta_dot_mixed_scalar * k_factor * gamma_j * nhat["nz"][j] * nhat["R"][j]
+                            + gamma_j**2 * nhat["nz"][j] ** 2 * nhat["R"][j] * v_betas_scalar * (
+                                trajectory_ext[i_new[j]]["bdotz"][j] + trajectory_ext[i_new[j]]["bdotz"][j] * bdot_scalar_ext * gamma_j**2
+                            ) + v_betas_scalar * c_mmns * nhat["nz"][j]
+                        )
 
                     # ACCUMULATE Time/energy conjugate momentum component update (COMPLEX legacy formula)
                     time_charge_factor = (
@@ -1386,6 +1396,7 @@ class LienardWiechertIntegrator:
             sim_type: Simulation type
             Ez_field: Constant Ez field strength (MV/m). Default 0.0.
         """
+
         h = h_step
         c_mmns = self.c_mmns
 
@@ -1500,6 +1511,7 @@ class LienardWiechertIntegrator:
 
                 # Protection against corrupted gamma (EXACT copy from retarded)
                 if gamma_j > 1e12 or gamma_i > 1e12:
+                    print(f"DEBUG STATIC: Gamma skip - γi={gamma_i:.6f}, γj={gamma_j:.6f}")
                     continue
 
                 # V_ext^beta * V_beta (EXACT copy from retarded)
@@ -1528,6 +1540,7 @@ class LienardWiechertIntegrator:
                     trajectory_ext[i_traj]["q"][j]
                 )  # i_traj instead of i_new[j]
                 if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
+                    print(f"DEBUG STATIC: Zero charge skip - qi={charge_i:.8f}, qj={charge_j:.8f}")
                     continue
 
                 if use_complex:
@@ -1535,6 +1548,7 @@ class LienardWiechertIntegrator:
                     if (
                         abs(k_factor) < 1e-15
                     ):  # Extremely conservative: only prevent overflow
+                        print(f"DEBUG STATIC: k_factor skip - k_factor={k_factor:.12f}")
                         continue
 
                     charge_factor = (
@@ -1543,6 +1557,11 @@ class LienardWiechertIntegrator:
                         * charge_j
                         / (k_factor**3 * c_mmns**3 * nhat["R"][j] ** 2 * gamma_j**3)
                     )
+
+                    # DEBUG: Track force calculation
+                    if j == 0 and particle_idx == 0:  # First particle interaction
+                        print(f"DEBUG STATIC: qi*qj={charge_i*charge_j:.8f}, k_factor={k_factor:.6f}, R={nhat['R'][j]:.6f}")
+                        print(f"DEBUG STATIC: charge_factor={charge_factor:.12f}")
 
                     # ACCUMULATE X-momentum (EXACT copy from retarded)
                     result["Px"][particle_idx] += charge_factor * (
@@ -1621,6 +1640,8 @@ class LienardWiechertIntegrator:
                     )
                     result["Pz"][particle_idx] += momentum_change
                     momentum_accumulation_count += 1
+                    
+
 
                     # ACCUMULATE Time/energy momentum (EXACT copy from retarded)
                     time_charge_factor = (
