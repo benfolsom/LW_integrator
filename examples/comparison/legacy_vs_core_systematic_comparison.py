@@ -20,7 +20,7 @@ VALIDATION_DIR = PROJECT_ROOT / "examples" / "validation"
 if str(VALIDATION_DIR) not in sys.path:
     sys.path.insert(0, str(VALIDATION_DIR))
 
-from core_vs_legacy_two_particle_benchmark import (  # type: ignore[import]
+from core_vs_legacy_benchmark import (  # type: ignore[import]
     run_benchmark,
 )
 
