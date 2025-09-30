@@ -49,9 +49,9 @@ Usage Example
    )
    from core.performance import run_optimised_integrator, OptimisationOptions
    from core.self_consistency import SelfConsistencyConfig
-   from input_output.updated_bunch_initialization import create_updated_bunch_from_energy
+    from input_output.bunch_initialization import create_bunch_from_energy
 
-   rider_state, _ = create_updated_bunch_from_energy(
+    rider_state, _ = create_bunch_from_energy(
        kinetic_energy_mev=200.0,
        mass_amu=1.007276,
        charge_sign=+1,

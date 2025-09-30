@@ -1,4 +1,4 @@
-"""Regression tests for modern Liénard–Wiechert integrators."""
+"""Regression tests for the core Liénard–Wiechert integrator implementations."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from core.trajectory_integrator import (
     SimulationType,
     retarded_integrator,
 )
-from input_output.updated_bunch_initialization import create_updated_bunch_from_energy
+from input_output.bunch_initialization import create_bunch_from_energy
 
 from legacy.bunch_inits import init_bunch as legacy_init_bunch  # type: ignore
 from legacy.covariant_integrator_library import (  # type: ignore
@@ -117,7 +117,7 @@ def test_two_particle_demo_precision(steps: int):
         0.0,
     )
 
-    modern_traj, modern_drv = retarded_integrator(
+    core_traj, core_drv = retarded_integrator(
         steps=steps,
         h_step=2.2e-7,
         wall_z=1e5,
@@ -131,8 +131,8 @@ def test_two_particle_demo_precision(steps: int):
     )
 
     fields = ["x", "y", "z", "Px", "Py", "Pz", "Pt", "gamma"]
-    _compare_states(legacy_traj[-1], modern_traj[-1], fields, atol=1e-5, rtol=1e-5)
-    _compare_states(legacy_drv[-1], modern_drv[-1], fields, atol=1e-5, rtol=1e-5)
+    _compare_states(legacy_traj[-1], core_traj[-1], fields, atol=1e-5, rtol=1e-5)
+    _compare_states(legacy_drv[-1], core_drv[-1], fields, atol=1e-5, rtol=1e-5)
 
     if NUMBA_AVAILABLE:
         numba_traj, numba_drv = retarded_integrator_numba(
@@ -148,8 +148,8 @@ def test_two_particle_demo_precision(steps: int):
             0.0,
             SelfConsistencyConfig(enabled=False),
         )
-        _compare_states(modern_traj[-1], numba_traj[-1], fields, atol=1e-6, rtol=1e-6)
-        _compare_states(modern_drv[-1], numba_drv[-1], fields, atol=1e-6, rtol=1e-6)
+    _compare_states(core_traj[-1], numba_traj[-1], fields, atol=1e-6, rtol=1e-6)
+    _compare_states(core_drv[-1], numba_drv[-1], fields, atol=1e-6, rtol=1e-6)
 
     sc_traj, sc_drv = retarded_integrator(
         steps=steps,
@@ -164,8 +164,8 @@ def test_two_particle_demo_precision(steps: int):
         z_cutoff=0.0,
         self_consistency=SelfConsistencyConfig(enabled=True, tolerance=1e-9, max_iterations=4),
     )
-    _compare_states(modern_traj[-1], sc_traj[-1], fields, atol=1e-7, rtol=1e-7)
-    _compare_states(modern_drv[-1], sc_drv[-1], fields, atol=1e-7, rtol=1e-7)
+    _compare_states(core_traj[-1], sc_traj[-1], fields, atol=1e-7, rtol=1e-7)
+    _compare_states(core_drv[-1], sc_drv[-1], fields, atol=1e-7, rtol=1e-7)
 
 
 @pytest.mark.parametrize(
@@ -176,7 +176,7 @@ def test_two_particle_demo_precision(steps: int):
     ],
 )
 def test_integrator_modes_with_numba(particle_mass, charge_sign, energy, sim_type):
-    rider_state, _ = create_updated_bunch_from_energy(
+    rider_state, _ = create_bunch_from_energy(
         kinetic_energy_mev=energy,
         mass_amu=particle_mass,
         charge_sign=charge_sign,

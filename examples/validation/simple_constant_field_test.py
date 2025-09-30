@@ -36,7 +36,7 @@ def apply_constant_ez_field(particle_state: dict, Ez: float, dt: float) -> dict:
         dt: Time step in ns
 
     Returns:
-        Updated particle state
+        Particle state after applying the field step
     """
     c_mmns = 299.792458  # mm/ns
 
