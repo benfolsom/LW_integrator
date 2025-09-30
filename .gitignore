@@ -129,6 +129,9 @@ local/
 *.temp
 *~
 
+# AI assistant working notes (not tracked)
+.llm_diary/
+
 # OS generated files
 .DS_Store
 .DS_Store?

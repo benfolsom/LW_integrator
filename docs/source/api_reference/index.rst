@@ -1,7 +1,9 @@
 API Reference
 =============
 
-Complete API documentation for the LW Integrator. This section provides detailed information about the core electromagnetic integration classes, mathematical foundations, and stability requirements.
+Complete API documentation for the LW integrator refactor. This section
+focuses on the production modules that now ship inside ``core/`` and their
+related utilities.
 
 .. toctree::
    :maxdepth: 2
@@ -11,53 +13,30 @@ Complete API documentation for the LW Integrator. This section provides detailed
 Quick Reference
 ---------------
 
-Core Integration Classes
-~~~~~~~~~~~~~~~~~~~~~~~~
+Core Modules
+~~~~~~~~~~~~
+
+* :mod:`core.trajectory_integrator` – validated Python reference path
+* :mod:`core.performance` – Numba-accelerated kernels with graceful fallback
+* :mod:`core.self_consistency` – optional Δγ convergence helper
+* :mod:`input_output.updated_bunch_initialization` – modern bunch factory
+
+Key Entry Points
+~~~~~~~~~~~~~~~~
 
 .. autosummary::
 
-   LW_integrator.covariant_integrator_library_heavyion.LienardWiechertIntegrator
+   core.trajectory_integrator.retarded_integrator
+   core.performance.retarded_integrator_numba
+   core.performance.run_optimised_integrator
+   core.self_consistency.self_consistent_step
 
-**Key Features:**
-
-* **Conjugate Momentum Formulation**: Canonical momentum P = γmv + qA ensuring gauge invariance
-* **Explicit Integration Scheme**: Computationally efficient predictor-corrector method
-* **Liénard-Wiechert Fields**: Exact electromagnetic field calculations with retardation
-* **Energy Conservation Monitoring**: Advanced stability control and accuracy validation
-* **Adaptive Time Stepping**: Energy-dependent integration parameters for numerical stability
-
-**Critical Usage Requirements:**
-
-* **Minimal Transverse Momentum**: Initialize with px_fraction, py_fraction ≤ 1e-6
-* **Early Cutoff Mechanisms**: Terminate integration after physical events to prevent runaway behavior
-* **Energy-Dependent Time Steps**: Use smaller Δt for lower energy particles
-* **Conservation Monitoring**: Maintain |ΔE/E| < 10⁻⁶ for stable integration
-
-Mathematical Foundation
-~~~~~~~~~~~~~~~
+Supporting Types
+~~~~~~~~~~~~~~~~
 
 .. autosummary::
 
-   lw_integrator.physics.electromagnetic_fields
-   lw_integrator.physics.radiation_reaction
-   lw_integrator.physics.space_charge
-   lw_integrator.physics.constants
-
-Integration Methods
-~~~~~~~~~~~~~~~~~~
-
-.. autosummary::
-
-   lw_integrator.integrators.adaptive_integrator
-   lw_integrator.integrators.basic_integrator
-   lw_integrator.integrators.self_consistent_integrator
-
-I/O and Utilities
-~~~~~~~~~~~~~~~~~
-
-.. autosummary::
-
-   lw_integrator.io.standard_input_format
-   lw_integrator.io.output_formats
-   lw_integrator.utilities.plotting
-   lw_integrator.utilities.analysis
+   core.trajectory_integrator.IntegratorConfig
+   core.trajectory_integrator.SimulationType
+   core.performance.OptimisationOptions
+   core.self_consistency.SelfConsistencyConfig
