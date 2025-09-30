@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Direct Legacy vs Updated Integrator Comparison with Ez Field
+Direct Legacy vs Core Integrator Comparison with Ez Field
 
-This test creates a side-by-side comparison of legacy and updated integrators
+This test creates a side-by-side comparison of legacy and core integrators
 using constant Ez field acceleration to demonstrate identical physics behavior.
 """
 
@@ -27,8 +27,8 @@ from core.trajectory_integrator import LienardWiechertIntegrator
 from physics.particle_initialization import ELEMENTARY_CHARGE
 
 
-class LegacyVsUpdatedComparison:
-    """Direct comparison between legacy and updated integrators with Ez field."""
+class LegacyVsCoreComparison:
+    """Direct comparison between legacy and core integrators with Ez field."""
 
     def __init__(self):
         self.c_mmns = 299.792458  # mm/ns
@@ -75,7 +75,7 @@ class LegacyVsUpdatedComparison:
         # Calculate new energy
         E_new = gamma_new * mass * self.c_mmns**2
 
-        # Create updated particle state
+    # Create core particle state
         result = particle.copy()
 
         # Update the modified quantities
@@ -164,10 +164,9 @@ class LegacyVsUpdatedComparison:
 
         return trajectory, energies
 
-    def run_updated_simulation(self, Ez_field: float, steps: int, dt: float) -> tuple:
-        """Run simulation with updated integrator and Ez field."""
+    def run_core_simulation(self, Ez_field: float, steps: int, dt: float) -> tuple:
+        """Run simulation with core integrator and Ez field."""
 
-        # Create updated integrator
         integrator = LienardWiechertIntegrator()
 
         # Manually create particle state for 100 MeV proton in correct Gaussian units
@@ -180,14 +179,10 @@ class LegacyVsUpdatedComparison:
         # Calculate momentum: P = γmv, and P² = (γ²-1)m²c²
         P_mag = np.sqrt(gamma**2 - 1.0) * mass * self.c_mmns
 
-        # Start with motion in z direction
         Px, Py, Pz = 0.0, 0.0, P_mag
-
-        # Calculate velocity correctly: v = P/(γm)
         vz = Pz / (gamma * mass * self.c_mmns)
         beta_z = vz / self.c_mmns
 
-        # Create initial state using legacy-compatible Gaussian units
         init_rider = {
             "x": np.array([0.0]),
             "y": np.array([0.0]),
@@ -196,26 +191,24 @@ class LegacyVsUpdatedComparison:
             "Px": np.array([Px]),
             "Py": np.array([Py]),
             "Pz": np.array([Pz]),
-            "q": np.array([charge]),  # FIXED: Use Gaussian units, not 1.0
+            "q": np.array([charge]),
             "m": np.array([mass]),
             "gamma": np.array([gamma]),
             "bx": np.array([0.0]),
             "by": np.array([0.0]),
             "bz": np.array([beta_z]),
-            "E": np.array([gamma * mass * self.c_mmns**2]),  # Energy
+            "E": np.array([gamma * mass * self.c_mmns**2]),
         }
 
-        # Create dummy driver (not used in free particle mode)
         init_driver = init_rider.copy()
 
-        # Run integration with Ez field (using static steps only)
-        trajectory_new, trajectory_drv = integrator.integrate_retarded_fields(
+        trajectory_new, _ = integrator.integrate_retarded_fields(
             static_steps=steps,
-            ret_steps=0,  # Only static for fair comparison
+            ret_steps=0,
             h_step=dt,
-            wall_Z=1000.0,  # Far wall
+            wall_Z=1000.0,
             apt_R=50.0,
-            sim_type=2,  # Free particle bunches
+            sim_type=2,
             init_rider=init_rider,
             init_driver=init_driver,
             bunch_dist=100.0,
@@ -223,13 +216,11 @@ class LegacyVsUpdatedComparison:
             Ez_field=Ez_field,
         )
 
-        # Extract trajectory data
         trajectory = []
         energies = []
 
-        for i in range(len(trajectory_new)):
-            step_data = trajectory_new[i]
-            energy = step_data["E"][0]  # MeV
+        for i, step_data in enumerate(trajectory_new):
+            energy = step_data["E"][0]
             trajectory.append(
                 {
                     "step": i,
@@ -246,7 +237,7 @@ class LegacyVsUpdatedComparison:
     def run_comparison(self, Ez_fields: list, steps: int = 1000, dt: float = 1e-5):
         """Run complete comparison for multiple field strengths."""
 
-        print("=== Legacy vs Updated Integrator Comparison with Ez Field ===")
+    print("=== Legacy vs Core Integrator Comparison with Ez Field ===")
         print(f"Simulation parameters: {steps} steps, dt = {dt:.0e} ns")
         print("WARNING: Ez field values are in native Gaussian amu⋅mm⋅ns units")
         print("(Conversion to MV/m is complex due to mixed unit system)")
@@ -259,7 +250,7 @@ class LegacyVsUpdatedComparison:
 
             # Run both simulations
             legacy_traj, legacy_energies = self.run_legacy_simulation(Ez, steps, dt)
-            updated_traj, updated_energies = self.run_updated_simulation(Ez, steps, dt)
+            core_traj, core_energies = self.run_core_simulation(Ez, steps, dt)
 
             if legacy_traj is None:
                 print("  Legacy simulation failed (imports not available)")
@@ -270,13 +261,13 @@ class LegacyVsUpdatedComparison:
             legacy_final = legacy_energies[-1]
             legacy_gain = legacy_final - legacy_initial
 
-            updated_initial = updated_energies[0]
-            updated_final = updated_energies[-1]
-            updated_gain = updated_final - updated_initial
+            core_initial = core_energies[0]
+            core_final = core_energies[-1]
+            core_gain = core_final - core_initial
 
             # Calculate relative difference
             if abs(legacy_gain) > 1e-10:
-                rel_diff = abs(updated_gain - legacy_gain) / abs(legacy_gain) * 100
+                rel_diff = abs(core_gain - legacy_gain) / abs(legacy_gain) * 100
             else:
                 rel_diff = 0.0
 
@@ -286,21 +277,21 @@ class LegacyVsUpdatedComparison:
                     "final": legacy_final,
                     "gain": legacy_gain,
                 },
-                "updated": {
-                    "initial": updated_initial,
-                    "final": updated_final,
-                    "gain": updated_gain,
+                "core": {
+                    "initial": core_initial,
+                    "final": core_final,
+                    "gain": core_gain,
                 },
                 "rel_diff": rel_diff,
                 "legacy_traj": legacy_traj,
-                "updated_traj": updated_traj,
+                "core_traj": core_traj,
             }
 
             print(
                 f"  Legacy:  {legacy_initial:.6f} → {legacy_final:.6f} (gain: {legacy_gain:.6f})"
             )
             print(
-                f"  Updated: {updated_initial:.6f} → {updated_final:.6f} (gain: {updated_gain:.6f})"
+                f"  Core:    {core_initial:.6f} → {core_final:.6f} (gain: {core_gain:.6f})"
             )
             print(f"  Relative difference: {rel_diff:.3f}%")
             print()
@@ -319,8 +310,8 @@ class LegacyVsUpdatedComparison:
 
             legacy_steps = [t["step"] for t in data["legacy_traj"]]
             legacy_energies = [t["energy"] for t in data["legacy_traj"]]
-            updated_steps = [t["step"] for t in data["updated_traj"]]
-            updated_energies = [t["energy"] for t in data["updated_traj"]]
+            core_steps = [t["step"] for t in data["core_traj"]]
+            core_energies = [t["energy"] for t in data["core_traj"]]
 
             ax1.plot(
                 legacy_steps,
@@ -330,10 +321,10 @@ class LegacyVsUpdatedComparison:
                 markersize=2,
             )
             ax1.plot(
-                updated_steps,
-                updated_energies,
+                core_steps,
+                core_energies,
                 "s--",
-                label=f"Updated Ez={Ez:.0f}",
+                label=f"Core Ez={Ez:.0f}",
                 markersize=2,
             )
 
@@ -350,8 +341,8 @@ class LegacyVsUpdatedComparison:
             for Ez in Ez_values
             if results[Ez]["legacy_traj"] is not None
         ]
-        updated_gains = [
-            results[Ez]["updated"]["gain"]
+        core_gains = [
+            results[Ez]["core"]["gain"]
             for Ez in Ez_values
             if results[Ez]["legacy_traj"] is not None
         ]
@@ -360,7 +351,7 @@ class LegacyVsUpdatedComparison:
             Ez_values, legacy_gains, "o-", label="Legacy", linewidth=2, markersize=6
         )
         ax2.loglog(
-            Ez_values, updated_gains, "s--", label="Updated", linewidth=2, markersize=6
+            Ez_values, core_gains, "s--", label="Core", linewidth=2, markersize=6
         )
         ax2.set_xlabel("Ez Field (Gaussian amu⋅mm⋅ns units)")
         ax2.set_ylabel("Energy Gain (amu⋅mm²⋅ns⁻²)")
@@ -377,7 +368,7 @@ class LegacyVsUpdatedComparison:
         ax3.semilogx(Ez_values, rel_diffs, "ro-", linewidth=2, markersize=6)
         ax3.set_xlabel("Ez Field (Gaussian amu⋅mm⋅ns units)")
         ax3.set_ylabel("Relative Difference (%)")
-        ax3.set_title("Legacy vs Updated Relative Difference")
+    ax3.set_title("Legacy vs Core Relative Difference")
         ax3.grid(True, alpha=0.3)
 
         # Plot 4: Position evolution for highest field
@@ -385,10 +376,10 @@ class LegacyVsUpdatedComparison:
             highest_Ez = max(Ez_values)
             if results[highest_Ez]["legacy_traj"] is not None:
                 legacy_traj = results[highest_Ez]["legacy_traj"]
-                updated_traj = results[highest_Ez]["updated_traj"]
+                core_traj = results[highest_Ez]["core_traj"]
 
                 legacy_z = [t["z"] for t in legacy_traj]
-                updated_z = [t["z"] for t in updated_traj]
+                core_z = [t["z"] for t in core_traj]
                 steps = [t["step"] for t in legacy_traj]
 
                 ax4.plot(
@@ -400,9 +391,9 @@ class LegacyVsUpdatedComparison:
                 )
                 ax4.plot(
                     steps,
-                    updated_z,
+                    core_z,
                     "s--",
-                    label=f"Updated Ez={highest_Ez:.0f}",
+                    label=f"Core Ez={highest_Ez:.0f}",
                     markersize=2,
                 )
                 ax4.set_xlabel("Integration Step")
@@ -412,14 +403,14 @@ class LegacyVsUpdatedComparison:
                 ax4.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig("legacy_vs_updated_comparison.png", dpi=150, bbox_inches="tight")
+    plt.savefig("legacy_vs_core_comparison.png", dpi=150, bbox_inches="tight")
         plt.show()
 
 
 def main():
     """Main comparison test."""
 
-    comparison = LegacyVsUpdatedComparison()
+    comparison = LegacyVsCoreComparison()
 
     # Test with extremely large field strengths to observe dramatic acceleration
     # Pushing to very high fields to see significant energy gains
@@ -439,7 +430,7 @@ def main():
 
     # Summary
     print("=== SUMMARY ===")
-    print("This test validates that legacy and updated integrators produce")
+    print("This test validates that legacy and core integrators produce")
     print("identical physics results when subjected to constant Ez fields.")
     print("Field values are in native Gaussian amu⋅mm⋅ns units.")
     print()
@@ -454,14 +445,14 @@ def main():
 
         if max_rel_diff < 1.0:
             print(
-                "✅ VALIDATION PASSED: Legacy and updated integrators agree within 1%"
+                "✅ VALIDATION PASSED: Legacy and core integrators agree within 1%"
             )
         else:
             print("❌ VALIDATION FAILED: Significant differences detected")
     else:
         print("⚠️  Legacy comparison unavailable (import issues)")
 
-    print("Plots saved as 'legacy_vs_updated_comparison.png'")
+    print("Plots saved as 'legacy_vs_core_comparison.png'")
 
 
 if __name__ == "__main__":

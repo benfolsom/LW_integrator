@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Enhanced Constant Ez Field Test with Legacy vs Updated Comparison
+Enhanced Constant Ez Field Test with Legacy vs Core Comparison
 
-This test compares both legacy and updated integrators with constant Ez field
+This test compares both legacy and core integrators with constant Ez field
 and explores parameters that show more dramatic acceleration effects.
 """
 

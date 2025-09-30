@@ -1,4 +1,4 @@
-"""Modern bunch initialization helpers compatible with the updated integrator."""
+"""Bunch initialization helpers for the core Liénard–Wiechert integrator."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ ParticleState = Dict[str, np.ndarray]
 
 @dataclass
 class BunchRequest:
-    """Input parameters for :func:`create_updated_bunch_from_energy`."""
+    """Input parameters for :func:`create_bunch_from_energy`."""
 
     kinetic_energy_mev: float
     mass_amu: float
@@ -33,7 +33,7 @@ def _compute_gamma(kinetic_energy_mev: float, mass_amu: float) -> float:
     return kinetic_energy_mev / rest_energy + 1.0
 
 
-def create_updated_bunch_from_energy(
+def create_bunch_from_energy(
     *,
     kinetic_energy_mev: float,
     mass_amu: float,
@@ -45,7 +45,7 @@ def create_updated_bunch_from_energy(
 ) -> Tuple[ParticleState, float]:
     """Generate a particle state dictionary from kinetic energy inputs.
 
-    Returns a dictionary matching the modern integrator expectations plus the
+    Returns a dictionary matching the core integrator expectations plus the
     total rest energy in MeV (for compatibility with legacy helpers).
     """
 
