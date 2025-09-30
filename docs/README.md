@@ -44,7 +44,7 @@ sphinx-autobuild source build/html
 
 ## Benchmark integration guide
 
-- Core vs. legacy comparison lives in `examples/validation/core_vs_legacy_two_particle_benchmark.py`.
+- Core vs. legacy comparison lives in `examples/validation/core_vs_legacy_benchmark.py`.
 - Use the `.venv` workflow described in the top-level `README.md` so that both the CLI and notebooks share dependencies.
 - For notebooks, import `run_benchmark` directly; the helper tolerates extra arguments that VS Code injects when launching kernels.
 
