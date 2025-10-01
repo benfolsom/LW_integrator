@@ -391,7 +391,14 @@ def run_benchmark(
     plot: bool = True,
     return_trajectories: bool = False,
     plot_dpi: int = DEFAULT_SAVE_DPI,
+    log_messages: Optional[List[str]] = None,
 ):
+    def _log(message: str) -> None:
+        if log_messages is not None:
+            log_messages.append(message)
+        else:
+            print(message)
+
     rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
         prepare_two_particle_demo(
             seed,
@@ -435,7 +442,7 @@ def run_benchmark(
 
         if save_json is not None:
             export_metrics(metrics, save_json)
-            print(f"Metrics written to {save_json}")
+            _log(f"Metrics written to {save_json}")
 
         if plot:
             plot_results(
@@ -446,9 +453,9 @@ def run_benchmark(
                 dpi=plot_dpi,
             )
             if save_fig is not None:
-                print(f"Plot written to {save_fig}")
+                _log(f"Plot written to {save_fig}")
     elif plot:
-        print("Legacy comparison disabled; skipping overlay plot.")
+        _log("Legacy comparison disabled; skipping overlay plot.")
 
     if return_trajectories:
         payload = {

@@ -210,9 +210,7 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
         if driver_payload is not None:
             driver_state = _build_particle_state(driver_payload)
         elif args.driver_from_rider:
-            driver_state = {
-                key: np.copy(value) for key, value in rider_state.items()
-            }
+            driver_state = {key: np.copy(value) for key, value in rider_state.items()}
         else:
             raise SimulationConfigError(
                 "BUNCH_TO_BUNCH simulations require a driver bunch. Provide "
@@ -297,7 +295,11 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             "Simulation configuration missing 'simulation_type'."
         ) from exc
 
-    missing = [key for key in ("steps", "time_step", "wall_position", "aperture_radius") if key not in payload]
+    missing = [
+        key
+        for key in ("steps", "time_step", "wall_position", "aperture_radius")
+        if key not in payload
+    ]
     if missing:
         raise SimulationConfigError(
             f"Simulation configuration missing required fields: {', '.join(missing)}"
@@ -338,8 +340,7 @@ def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
     missing = [field for field in REQUIRED_PARTICLE_FIELDS if field not in payload]
     if missing:
         raise SimulationConfigError(
-            "Particle configuration is missing required fields: "
-            + ", ".join(missing)
+            "Particle configuration is missing required fields: " + ", ".join(missing)
         )
 
     try:
@@ -446,8 +447,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print_summary(summary)
         if driver is not None:
             print(
-                "Driver trajectory generated with"
-                f" {len(driver)} integration steps."
+                "Driver trajectory generated with" f" {len(driver)} integration steps."
             )
 
     return 0
