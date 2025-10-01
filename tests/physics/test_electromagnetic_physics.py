@@ -87,7 +87,10 @@ def test_generate_conducting_image_reflects_boundary_conditions() -> None:
 
 @pytest.mark.physics
 def test_retarded_equations_of_motion_preserves_finite_values() -> None:
-    trajectory = [_single_particle_state(z=-1.0), _single_particle_state(z=-0.5, t=1e-3)]
+    trajectory = [
+        _single_particle_state(z=-1.0),
+        _single_particle_state(z=-0.5, t=1e-3),
+    ]
     trajectory_ext = [copy.deepcopy(state) for state in trajectory]
     for ext in trajectory_ext:
         ext["x"] += 1e-4
@@ -138,7 +141,9 @@ def test_retarded_integrator_conservation_metrics() -> None:
         z_cutoff=config.z_cutoff,
     )
 
-    metrics = validate_physics_conservation(trajectory[0], trajectory[-1], tolerance=1e-2)
+    metrics = validate_physics_conservation(
+        trajectory[0], trajectory[-1], tolerance=1e-2
+    )
 
     assert metrics["charge_conservation"]["passed"]
     assert metrics["energy_conservation"]["relative_change"] < 1e-2

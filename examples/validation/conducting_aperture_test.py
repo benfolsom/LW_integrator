@@ -23,10 +23,13 @@ import os
 # Add paths for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 from core.trajectory_integrator import LienardWiechertIntegrator
-from physics.particle_initialization import ELEMENTARY_CHARGE, ELECTRON_MASS
-from physics.constants import C_MMNS
-from utils.plot_output_manager import create_plot_manager
+
+try:
+    from archive.utils.plot_output_manager import create_plot_manager
+except ImportError:
+    from utils.plot_output_manager import create_plot_manager  # type: ignore[import-not-found]
 
 
 def create_35mev_electron():
@@ -42,7 +45,7 @@ def create_35mev_electron():
     beta = np.sqrt(1 - 1 / gamma**2)  # ~0.9999
 
     # Mass in amu (convert from MeV)
-    mass_amu = ELECTRON_MASS  # 0.0005485799 amu
+    mass_amu = ELECTRON_MASS_AMU  # 0.0005485799 amu
 
     # Momentum in integrator units: P = γmc
     momentum_total = gamma * mass_amu * C_MMNS  # amu·mm/ns
@@ -77,6 +80,7 @@ def create_35mev_electron():
         "bdoty": np.array([0.0]),  # Initial acceleration
         "bdotz": np.array([0.0]),  # Initial acceleration
         "t": np.array([0.0]),  # Initial time
+        "char_time": np.array([mass_amu / (abs(ELEMENTARY_CHARGE) * C_MMNS)]),
     }
 
     return bunch

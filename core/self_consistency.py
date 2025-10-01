@@ -32,7 +32,13 @@ def self_consistent_step(
     sim_type: Any,
     config: Optional[SelfConsistencyConfig],
 ) -> ParticleState:
-    """Optionally refine an integration step until the Lorentz factor converges."""
+    """Optionally refine an integration step until the Lorentz factor converges.
+
+    The provided ``step_function`` is executed repeatedly using the latest
+    candidate state until the relative change in ``γ`` falls below the
+    tolerance defined in ``config`` or the maximum number of iterations is
+    reached.
+    """
 
     result = step_function(
         h_step,
