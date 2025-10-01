@@ -16,6 +16,7 @@ def _load_version() -> str:
         exec(handle.read(), namespace)
     return namespace["__version__"]
 
+
 # Add the project root to Python path
 docs_dir = Path(__file__).parent.parent
 project_root = docs_dir.parent

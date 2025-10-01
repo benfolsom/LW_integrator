@@ -144,7 +144,7 @@ def test_formulation_stability():
 
     CAI: Compare accuracy and stability across the problematic β → 1 range.
     """
-    print("🧪 TESTING RETARDATION FORMULATION STABILITY")
+    print(" TESTING RETARDATION FORMULATION STABILITY")
     print("="*70)
 
     # CAI: Test parameters covering the problematic range
@@ -196,7 +196,7 @@ def analyze_precision_loss():
 
     CAI: Quantify exactly where and how precision is lost.
     """
-    print("🔬 PRECISION LOSS ANALYSIS")
+    print(" PRECISION LOSS ANALYSIS")
     print("="*50)
 
     # CAI: Focus on the problematic γ ≈ 3197 case
@@ -266,16 +266,16 @@ def recommend_best_formulation():
 
     CAI: Provide specific implementation guidance.
     """
-    print("\n🎯 RECOMMENDED FORMULATION")
+    print("\n RECOMMENDED FORMULATION")
     print("="*50)
 
     print("Based on numerical analysis:")
     print()
     print("1. PRIMARY RECOMMENDATION: Relativistic Exact Formula")
     print("   δt = R / (c(1 - β·n̂))")
-    print("   ✅ Physically correct")
-    print("   ✅ Numerically stable for β < 1")
-    print("   ✅ Handles the problematic (1+β·n̂) vs (1-β·n̂) issue")
+    print("    Physically correct")
+    print("    Numerically stable for β < 1")
+    print("    Handles the problematic (1+β·n̂) vs (1-β·n̂) issue")
     print()
 
     print("2. SPECIAL CASE HANDLING:")
@@ -294,10 +294,10 @@ def recommend_best_formulation():
     print()
 
     print("4. PHYSICS PRESERVATION:")
-    print("   ✅ No artificial cutoffs")
-    print("   ✅ Preserves radiation reaction physics")
-    print("   ✅ Maintains Lorentz invariance")
-    print("   ✅ Respects causality")
+    print("    No artificial cutoffs")
+    print("    Preserves radiation reaction physics")
+    print("    Maintains Lorentz invariance")
+    print("    Respects causality")
 
 
 def generate_implementation_code():
@@ -306,7 +306,7 @@ def generate_implementation_code():
 
     CAI: Provide ready-to-use code for the chrono_jn fix.
     """
-    print("\n💻 IMPLEMENTATION CODE")
+    print("\n IMPLEMENTATION CODE")
     print("="*50)
 
     implementation = '''
@@ -370,7 +370,7 @@ def chrono_jn_stable(trajectory, trajectory_ext, index_traj, index_part, epsilon
 
 
 if __name__ == "__main__":
-    print("🔬 NUMERICALLY STABLE RETARDATION FORMULATIONS")
+    print(" NUMERICALLY STABLE RETARDATION FORMULATIONS")
     print("="*80)
     print("Investigating alternatives to the unstable δt = R*(1+β·n̂)/c formula")
     print()
@@ -385,7 +385,7 @@ if __name__ == "__main__":
     code = generate_implementation_code()
 
     print("\n" + "="*80)
-    print("🎯 ANALYSIS COMPLETE")
+    print(" ANALYSIS COMPLETE")
     print("="*80)
     print("Ready to implement the numerically stable chrono_jn formulation!")
     print("This should resolve the GeV instability while preserving all physics.")

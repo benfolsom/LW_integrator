@@ -117,7 +117,7 @@ def run_conducting_aperture_simulation():
         "steps": 1200,  # Add this for the summary
     }
 
-    print("🔧 Simulation Parameters:")
+    print("Simulation parameters:")
     print(f"  Steps: {sim_params['static_steps']} static")
     print(f"  Time step: {sim_params['h_step']} ns")
     print(f"  Aperture position: {sim_params['wall_Z']} mm")
@@ -131,7 +131,7 @@ def run_conducting_aperture_simulation():
     integrator = LienardWiechertIntegrator()
 
     # Run simulation
-    print("⚡ Running electromagnetic simulation...")
+    print("Running electromagnetic simulation...")
 
     # Extract core parameters for the integrator (remove extra summary fields)
     integrator_params = {
@@ -180,7 +180,7 @@ def analyze_and_plot_results(trajectory, sim_params):
     max_energy = max(energies_mev)
     max_energy_position = z_positions[energies_mev.index(max_energy)]
 
-    print("\n📊 Energy Analysis:")
+    print("\nEnergy analysis:")
     print(f"   Initial energy: {initial_energy:.6f} MeV")
     print(
         f"   Maximum energy: {max_energy:.6f} MeV (at z = {max_energy_position:.3f} mm)"
@@ -286,15 +286,15 @@ def main():
         results = analyze_and_plot_results(trajectory, sim_params)
 
         print("\n" + "=" * 60)
-        print("🎯 CONDUCTING APERTURE TEST COMPLETE")
+        print("CONDUCTING APERTURE TEST COMPLETE")
         print("=" * 60)
-        print("✅ Simulation successfully completed")
-        print("✅ Results should match legacy integrator behavior")
-        print("✅ Energy profile shows expected conducting wall physics")
+        print("Simulation successfully completed")
+        print("Results should match legacy integrator behavior")
+        print("Energy profile shows expected conducting wall physics")
         print("=" * 60)
 
     except Exception as e:
-        print(f"\n❌ Error in simulation: {e}")
+        print(f"\nError in simulation: {e}")
         import traceback
 
         traceback.print_exc()

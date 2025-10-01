@@ -33,7 +33,7 @@ class LWTestRunner:
         cmd = ["python", "-m", "pytest"] + args
 
         if self.verbose:
-            print(f"\\n🧪 Running {test_name}...")
+            print(f"\\n Running {test_name}...")
             print(f"Command: {' '.join(cmd)}")
 
         start_time = time.time()
@@ -53,9 +53,9 @@ class LWTestRunner:
 
             if self.verbose:
                 if success:
-                    print(f"✅ {test_name} passed in {duration:.2f}s")
+                    print(f" {test_name} passed in {duration:.2f}s")
                 else:
-                    print(f"❌ {test_name} failed in {duration:.2f}s")
+                    print(f" {test_name} failed in {duration:.2f}s")
                     print(f"STDOUT: {result.stdout}")
                     print(f"STDERR: {result.stderr}")
 
@@ -77,7 +77,7 @@ class LWTestRunner:
                 "returncode": -1,
             }
         except Exception as e:
-            print(f"💥 {test_name} crashed: {e}")
+            print(f" {test_name} crashed: {e}")
             return {
                 "success": False,
                 "duration": time.time() - start_time,
@@ -157,7 +157,7 @@ class LWTestRunner:
         """Generate a summary report of all test results."""
 
         print("\\n" + "=" * 60)
-        print("🧪 LW INTEGRATOR TEST SUITE REPORT")
+        print(" LW INTEGRATOR TEST SUITE REPORT")
         print("=" * 60)
 
         total_tests = len(self.results)
@@ -166,20 +166,20 @@ class LWTestRunner:
 
         total_time = sum(result["duration"] for result in self.results.values())
 
-        print("\\n📊 SUMMARY:")
+        print("\\n SUMMARY:")
         print(f"   Total test categories: {total_tests}")
         print(f"   Passed: {passed_tests}")
         print(f"   Failed: {failed_tests}")
         print(f"   Total time: {total_time:.2f}s")
         print(f"   Success rate: {100 * passed_tests / total_tests:.1f}%")
 
-        print("\\n⏱️  TIMING BREAKDOWN:")
+        print("\nTIMING BREAKDOWN:")
         for test_name, result in self.results.items():
-            status = "✅" if result["success"] else "❌"
+            status = "" if result["success"] else ""
             print(f"   {status} {test_name}: {result['duration']:.2f}s")
 
         if failed_tests > 0:
-            print("\\n❌ FAILED TESTS:")
+            print("\\n FAILED TESTS:")
             for test_name, result in self.results.items():
                 if not result["success"]:
                     print(f"   {test_name}:")
@@ -201,7 +201,7 @@ class LWTestRunner:
 def main():
     """Main test runner function."""
 
-    print("🚀 LW Integrator Test Suite Runner")
+    print(" LW Integrator Test Suite Runner")
     print("Available test categories:")
     print("  1. Unit tests")
     print("  2. Integration tests")
@@ -245,7 +245,7 @@ def main():
         runner.results["Custom Test"] = runner.run_specific_test(test_file, test_func)
     elif choice.lower() in ["all", "complete"]:
         # Run comprehensive test suite
-        print("\\n🎯 Running comprehensive test suite...")
+        print("\\n Running comprehensive test suite...")
 
         runner.results["Unit Tests"] = runner.run_unit_tests()
         runner.results["Integration Tests"] = runner.run_integration_tests()
@@ -262,7 +262,7 @@ def main():
     if summary["failed"] > 0:
         sys.exit(1)
     else:
-        print("\\n🎉 All tests passed!")
+        print("\\n All tests passed!")
         sys.exit(0)
 
 

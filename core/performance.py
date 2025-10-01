@@ -577,7 +577,7 @@ def run_optimised_integrator(
 
     use_numba = opts.use_numba and NUMBA_AVAILABLE
     if opts.use_numba and not NUMBA_AVAILABLE:
-        print("⚠️  Numba unavailable – falling back to pure Python integrator.")
+        print("Warning: Numba unavailable – falling back to pure Python integrator.")
 
     if opts.run_benchmark and NUMBA_AVAILABLE:
         import time

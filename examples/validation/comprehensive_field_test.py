@@ -63,7 +63,7 @@ class EnhancedFieldTest:
     def run_low_energy_test(self, Ez: float, n_steps: int = 1000, dt: float = 0.1):
         """Test with lower energy particles for more dramatic acceleration."""
 
-        print(f"\n🔬 Low Energy Test (Ez = {Ez} MV/m)")
+        print(f"\n Low Energy Test (Ez = {Ez} MV/m)")
         print("-" * 50)
 
         # Low energy proton parameters
@@ -134,13 +134,13 @@ class EnhancedFieldTest:
             }
 
         except Exception as e:
-            print(f"  ❌ Test failed: {e}")
+            print(f"  Test failed: {e}")
             return {"success": False, "error": str(e)}
 
     def run_electron_test(self, Ez: float, n_steps: int = 1000, dt: float = 0.1):
         """Test with electrons for different mass comparison."""
 
-        print(f"\n⚡ Electron Test (Ez = {Ez} MV/m)")
+        print(f"\nElectron Test (Ez = {Ez} MV/m)")
         print("-" * 50)
 
         # Electron parameters (much lighter)
@@ -203,7 +203,7 @@ class EnhancedFieldTest:
             }
 
         except Exception as e:
-            print(f"  ❌ Test failed: {e}")
+            print(f"  Test failed: {e}")
             return {"success": False, "error": str(e)}
 
 
@@ -399,24 +399,24 @@ def create_comprehensive_plots(results: dict):
         ]
         summary_text += f"Max Electron Gain:\n{max_electron_gain:.6f} MeV\nat {max_electron_field} MV/m\n\n"
 
-    summary_text += "✅ Ez Field Physics\nWorking Correctly!"
+    summary_text += "Ez Field Physics\nWorking Correctly!"
     axes[1, 2].text(0.1, 0.5, summary_text, fontsize=12, verticalalignment="center")
 
     plt.tight_layout()
     plt.savefig("comprehensive_ez_field_results.png", dpi=150, bbox_inches="tight")
     plt.show()
 
-    print("\n📊 Comprehensive plot saved as: comprehensive_ez_field_results.png")
+    print("\nComprehensive plot saved as: comprehensive_ez_field_results.png")
 
 
 def main():
     """Main comprehensive test function."""
 
-    print("🚀 Starting Comprehensive Ez Field Tests")
+    print("Starting Comprehensive Ez Field Tests")
     print("This will test different particle types and field strengths")
 
     if not LEGACY_AVAILABLE:
-        print("❌ Legacy code not available - cannot run tests")
+        print("Legacy code not available - cannot run tests")
         return
 
     # Run comprehensive tests
@@ -434,20 +434,20 @@ def main():
         max_proton_gain = max(r["energy_gain"] for r in results["low_energy_proton"])
         max_proton_rel = max(r["relative_gain"] for r in results["low_energy_proton"])
         print(
-            f"✅ Low Energy Proton - Max gain: {max_proton_gain:.6f} MeV ({max_proton_rel:.6f}%)"
+            f"Low Energy Proton - Max gain: {max_proton_gain:.6f} MeV ({max_proton_rel:.6f}%)"
         )
 
     if results["electron"]:
         max_electron_gain = max(r["energy_gain"] for r in results["electron"])
         max_electron_rel = max(r["relative_gain"] for r in results["electron"])
         print(
-            f"✅ Electron - Max gain: {max_electron_gain:.6f} MeV ({max_electron_rel:.6f}%)"
+            f"Electron - Max gain: {max_electron_gain:.6f} MeV ({max_electron_rel:.6f}%)"
         )
 
     print(
-        f"✅ Tested field range: {min(results['field_strengths']):.0f} - {max(results['field_strengths']):.0f} MV/m"
+        f"Tested field range: {min(results['field_strengths']):.0f} - {max(results['field_strengths']):.0f} MV/m"
     )
-    print("✅ Constant Ez field acceleration validated!")
+    print("Constant Ez field acceleration validated!")
     print("=" * 80)
 
 

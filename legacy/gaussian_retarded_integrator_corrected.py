@@ -62,7 +62,9 @@ def gaussian_enhanced_step(h_step, trajectory, trajectory_drv, i_traj, apt_R, si
 
     # If we reach here, iteration didn't converge within max_iter
     # Return the last computed value with a warning
-    print(f"⚠️  Gaussian iteration didn't converge in {max_iter} steps (max change: {max_rel_change:.2e})")
+    print(
+        f"Warning: Gaussian iteration didn't converge in {max_iter} steps (max change: {max_rel_change:.2e})"
+    )
     return traj_guess
 
 def gaussian_retarded_integrator3(init_rider, init_driver, steps_tot, h_step, wall_Z, apt_R, debug_mode=False):
@@ -71,7 +73,7 @@ def gaussian_retarded_integrator3(init_rider, init_driver, steps_tot, h_step, wa
     but enhances only the core integration step with Gaussian self-consistent method.
     """
     if debug_mode:
-        print(f"🔧 Corrected Gaussian retarded integrator starting:")
+        print("Debug: Corrected Gaussian retarded integrator starting:")
         print(f"   Total steps: {steps_tot}")
         print(f"   Step size: {h_step:.1e} ns")
 
@@ -119,7 +121,7 @@ def gaussian_retarded_integrator3(init_rider, init_driver, steps_tot, h_step, wa
             elif sim_type == 2:
                 trajectory_drv_new[i] = gaussian_enhanced_step(h_step, trajectory_drv_new, trajectory_new, i-1, apt_R, sim_type)
 
-    print(f"✅ Corrected Gaussian integration complete!")
+    print("Corrected Gaussian integration complete!")
     print(f"   Total trajectory points: rider={len(trajectory_new)}, driver={len(trajectory_drv_new)}")
 
     return trajectory_new, trajectory_drv_new

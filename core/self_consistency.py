@@ -91,7 +91,7 @@ def self_consistent_step(
     else:
         if config.debug:
             print(
-                f"⚠️  Self-consistency did not converge in {config.max_iterations} iterations (Δγ={max_rel_change:.3e})"
+                f"Warning: Self-consistency did not converge in {config.max_iterations} iterations (Δγ={max_rel_change:.3e})"
             )
 
     return candidate
