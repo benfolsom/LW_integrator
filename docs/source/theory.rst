@@ -7,6 +7,10 @@ covariant Liénard–Wiechert formalism to the concrete data structures exposed 
 ``core/trajectory_integrator.py`` and the validation studies under
 ``examples/validation``.
 
+Note that throughout the codebase Gaussian units are used. The unorthodox choice of amu-millimeter-nanosecond
+units is implemented to avoid numerical overflows.
+
+
 Retarded fields
 ---------------
 

@@ -1,8 +1,13 @@
-"""Retarded equations of motion for the Liénard–Wiechert solver."""
+"""Retarded equations of motion for the Liénard–Wiechert solver.
+
+The implementation intentionally mirrors the behaviour of the validated legacy
+code so that historical regression data remains applicable.  The heavy lifting
+is performed inside :func:`retarded_equations_of_motion`, which calculates the
+covariant updates for momentum, position, and acceleration for each particle.
+"""
 
 from __future__ import annotations
 
-from typing import Optional
 
 import numpy as np
 
@@ -19,7 +24,28 @@ def retarded_equations_of_motion(
     aperture_radius: float,
     sim_type: SimulationType,
 ) -> ParticleState:
-    """Core equations of motion mirroring the validated legacy implementation."""
+    """Core equations of motion mirroring the validated legacy implementation.
+
+    Parameters
+    ----------
+    h:
+        Time step between trajectory samples.
+    trajectory:
+        Mutable view over the rider bunch history.
+    trajectory_ext:
+        History of the external bunch (driver, image or opposing bunch).
+    index_traj:
+        Index of the current time step within ``trajectory``.
+    aperture_radius:
+        Aperture radius supplied to the image generators.
+    sim_type:
+        Simulation boundary type encoded as :class:`SimulationType`.
+
+    Returns
+    -------
+    ParticleState
+        Updated particle state for the next time step.
+    """
 
     result: ParticleState = {
         "x": np.copy(trajectory[index_traj]["x"]),
@@ -38,7 +64,9 @@ def retarded_equations_of_motion(
         "bdoty": np.copy(trajectory[index_traj]["bdoty"]),
         "bdotz": np.copy(trajectory[index_traj]["bdotz"]),
         "q": trajectory[index_traj]["q"],
-        "char_time": trajectory[index_traj].get("char_time", np.zeros_like(trajectory[index_traj]["x"])),
+        "char_time": trajectory[index_traj].get(
+            "char_time", np.zeros_like(trajectory[index_traj]["x"])
+        ),
         "m": trajectory[index_traj].get("m", np.ones_like(trajectory[index_traj]["x"])),
         "dummy": np.zeros_like(trajectory[index_traj]["bdotz"]),
     }
@@ -222,15 +250,9 @@ def retarded_equations_of_motion(
             field_contribution = (
                 h / mass_i * charge_i / C_MMNS * charge_j / (nhat["R"][j] * k_factor)
             )
-            accumulated_x_field += (
-                field_contribution * trajectory_ext[ext_idx]["bx"][j]
-            )
-            accumulated_y_field += (
-                field_contribution * trajectory_ext[ext_idx]["by"][j]
-            )
-            accumulated_z_field += (
-                field_contribution * trajectory_ext[ext_idx]["bz"][j]
-            )
+            accumulated_x_field += field_contribution * trajectory_ext[ext_idx]["bx"][j]
+            accumulated_y_field += field_contribution * trajectory_ext[ext_idx]["by"][j]
+            accumulated_z_field += field_contribution * trajectory_ext[ext_idx]["bz"][j]
 
         result["Px"][l] = accumulated_px
         result["Py"][l] = accumulated_py

@@ -1,8 +1,7 @@
 # LW Integrator Documentation (2025 refresh)
 
-This directory hosts the refreshed documentation set for the LW (Liénard–Wiechert) Integrator.  The previous “user manual / developer guide / API reference” split had drifted out of sync with the codebase, so the docs now focus on the workflows that exist in the repository today.
+This directory hosts the documentation set for the LW (Liénard–Wiechert) Integrator. 
 
-## What’s here now?
 
 ```
 docs/
@@ -17,8 +16,6 @@ docs/
 	 ├── api/             # Lightweight API reference shells
 	 └── development/     # Contribution & maintenance notes
 ```
-
-Legacy pages that are no longer linked remain in `docs/source/` for historical reference; they can be deleted once their content has been migrated or confirmed obsolete.
 
 ## Building the docs
 

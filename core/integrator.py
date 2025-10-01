@@ -1,4 +1,9 @@
-"""High-level trajectory integration orchestration."""
+"""High-level trajectory integration orchestration.
+
+This module glues together the low-level physics kernels, image-charge
+generation, and optional self-consistency loop.  The public functions provide
+the main entry points for running the modern LW integrator programmatically.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +30,40 @@ def retarded_integrator(
     z_cutoff: float,
     self_consistency: Optional[SelfConsistencyConfig] = None,
 ) -> Tuple[Trajectory, Trajectory]:
-    """Run the retarded field integrator for rider and driver trajectories."""
+    """Run the retarded-field integrator for rider and driver trajectories.
+
+    Parameters
+    ----------
+    steps:
+        Total number of integration updates to compute.
+    h_step:
+        Temporal step between states (``Δτ`` in the covariant formulation).
+    wall_z:
+        Conducting wall location for boundary-condition simulations.
+    aperture_radius:
+        Aperture radius used by the wall/image generators.
+    sim_type:
+        Boundaries and interaction type encoded as :class:`SimulationType`.
+    init_rider:
+        Initial state of the primary bunch.
+    init_driver:
+        Optional initial state of the opposing bunch (for ``BUNCH_TO_BUNCH``).
+    mean:
+        Historical bunch separation parameter retained for compatibility.
+    cav_spacing:
+        Longitudinal spacing between cavities when using switching walls.
+    z_cutoff:
+        Threshold beyond which the switching wall no longer mirrors charges.
+    self_consistency:
+        Optional :class:`SelfConsistencyConfig` to iterate each step until the
+        Lorentz factor converges.
+
+    Returns
+    -------
+    tuple[Trajectory, Trajectory]
+        Two trajectories: the rider (primary bunch) and the driver (image or
+        opposing bunch), each represented as a list of particle states.
+    """
 
     trajectory: Trajectory = [{} for _ in range(steps)]
     trajectory_drv: Trajectory = [{} for _ in range(steps)]
@@ -94,7 +132,11 @@ def run_integrator(
     init_rider: ParticleState,
     init_driver: Optional[ParticleState],
 ) -> Tuple[Trajectory, Trajectory]:
-    """Convenience wrapper using :class:`IntegratorConfig`."""
+    """Convenience wrapper using :class:`IntegratorConfig`.
+
+    All parameters are supplied via ``config`` which mirrors the keyword
+    arguments accepted by :func:`retarded_integrator`.
+    """
 
     return retarded_integrator(
         steps=config.steps,

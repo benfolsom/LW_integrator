@@ -1,9 +1,13 @@
-"""Mirror image computations used by the retarded integrator."""
+"""Mirror-image computations used by the retarded integrator.
+
+Conducting boundaries can be represented via image charges. The helpers here
+construct those synthetic bunches while preserving the exact behaviour of the
+legacy solver (including its stochastic aperture spill model).
+"""
 
 from __future__ import annotations
 
 import random
-from typing import Dict
 
 import numpy as np
 
@@ -17,7 +21,7 @@ def _random_sign() -> int:
 
 
 def zeros_like_state(vector: ParticleState) -> ParticleState:
-    """Create an empty particle state dictionary with the same array layout."""
+    """Return an empty particle state dictionary with the same layout."""
 
     result: ParticleState = {
         "x": np.zeros_like(vector["x"]),
@@ -49,7 +53,17 @@ def zeros_like_state(vector: ParticleState) -> ParticleState:
 def generate_conducting_image(
     vector: ParticleState, wall_z: float, aperture_radius: float
 ) -> ParticleState:
-    """Generate mirror charges for a conducting wall boundary."""
+    """Generate mirror charges for a conducting wall boundary.
+
+    Parameters
+    ----------
+    vector:
+        Particle bunch used to generate the mirror image.
+    wall_z:
+        Location of the conducting wall in the simulation coordinate system.
+    aperture_radius:
+        Radius of the circular aperture carved into the wall.
+    """
 
     result = zeros_like_state(vector)
 
@@ -114,7 +128,12 @@ def generate_conducting_image(
 def generate_switching_image(
     vector: ParticleState, wall_z: float, aperture_radius: float, cut_z: float
 ) -> ParticleState:
-    """Generate mirror charges for a switching wall boundary."""
+    """Generate mirror charges for a switching wall boundary.
+
+    The switching wall behaves like a conductor until particles pass the
+    longitudinal ``cut_z`` threshold, after which the mirror image is removed
+    to emulate an opening absorber.
+    """
 
     result = zeros_like_state(vector)
     result["q"] = -np.copy(vector["q"])

@@ -53,8 +53,6 @@ LW_windows/
 └── README.md             # You are here
 ```
 
-Historical artefacts remain available under ``archive/`` for provenance but are
-not exercised in the current workflows.
 
 ---
 

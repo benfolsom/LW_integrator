@@ -9,8 +9,8 @@ simulation, and confirm that the regression tooling works on your machine.
 
    .. code-block:: bash
 
-      git clone https://github.com/your-org/LW_windows.git
-      cd LW_windows
+      git clone https://github.com/benfolsom/LW_integrator/
+      cd LW_integrator
       python -m venv .venv
       source .venv/bin/activate
       pip install --upgrade pip
