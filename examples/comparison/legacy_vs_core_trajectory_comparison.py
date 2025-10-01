@@ -106,7 +106,9 @@ def _plot_position_series(states, label: str, style: str = "-") -> None:
 
 
 def _plot_gamma_series(states, reference, label: str) -> None:
-    diff = [core["gamma"][0] - legacy["gamma"][0] for legacy, core in zip(reference, states)]
+    diff = [
+        core["gamma"][0] - legacy["gamma"][0] for legacy, core in zip(reference, states)
+    ]
     plt.plot(diff, label=label)
 
 

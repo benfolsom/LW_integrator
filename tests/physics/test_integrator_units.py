@@ -31,7 +31,11 @@ except ImportError:
     )
     from archive.physics.simulation_types import SimulationConfig  # type: ignore[attr-defined]
 
-from tests.test_config import PROTON, TestConfiguration, create_bunch_uniform_distribution
+from tests.test_config import (
+    PROTON,
+    TestConfiguration,
+    create_bunch_uniform_distribution,
+)
 
 
 class TestTrajectoryIntegratorUnits:

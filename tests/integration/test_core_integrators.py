@@ -6,7 +6,7 @@ import copy
 import random
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable
 
 import numpy as np
 import pytest
@@ -73,7 +73,11 @@ def _compare_states(
         if field not in ref_norm or field not in cand_norm:
             continue
         np.testing.assert_allclose(
-            cand_norm[field], ref_norm[field], atol=atol, rtol=rtol, err_msg=f"Mismatch for field {field}"
+            cand_norm[field],
+            ref_norm[field],
+            atol=atol,
+            rtol=rtol,
+            err_msg=f"Mismatch for field {field}",
         )
 
 
@@ -162,7 +166,9 @@ def test_two_particle_demo_precision(steps: int):
         mean=1e5,
         cav_spacing=1e5,
         z_cutoff=0.0,
-        self_consistency=SelfConsistencyConfig(enabled=True, tolerance=1e-9, max_iterations=4),
+        self_consistency=SelfConsistencyConfig(
+            enabled=True, tolerance=1e-9, max_iterations=4
+        ),
     )
     _compare_states(core_traj[-1], sc_traj[-1], fields, atol=1e-7, rtol=1e-7)
     _compare_states(core_drv[-1], sc_drv[-1], fields, atol=1e-7, rtol=1e-7)

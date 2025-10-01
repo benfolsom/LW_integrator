@@ -36,7 +36,9 @@ class ScenarioResult:
 
     def max_relative_difference(self) -> float:
         rel_keys = [f"{field}_max_rel_pct" for field in FIELDS_OF_INTEREST]
-        values = [max(self.rider_metrics[key], self.driver_metrics[key]) for key in rel_keys]
+        values = [
+            max(self.rider_metrics[key], self.driver_metrics[key]) for key in rel_keys
+        ]
         return max(values)
 
 

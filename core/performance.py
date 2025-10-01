@@ -163,58 +163,62 @@ def _compute_electromagnetic_forces(
             bdot_scalar_ext = np.dot(beta_ext, bdot_ext)
             betas_scalar = np.dot(beta_ext, beta_vec)
 
-            v_betas_scalar = gamma_ext[j] * gamma[i] * C_MMNS * C_MMNS * (1.0 - betas_scalar)
-            v_beta_dot_mixed_scalar = (
-                gamma_ext[j] ** 4
-                * gamma[i]
-                * C_MMNS
-                * C_MMNS
-                * bdot_scalar_ext
-                - gamma[i]
-                * C_MMNS
-                * np.dot(
-                    beta_vec,
-                    bdot_ext * C_MMNS * gamma_ext[j] ** 2
-                    + beta_ext * bdot_scalar_ext * C_MMNS * gamma_ext[j] ** 4,
-                )
+            v_betas_scalar = (
+                gamma_ext[j] * gamma[i] * C_MMNS * C_MMNS * (1.0 - betas_scalar)
+            )
+            v_beta_dot_mixed_scalar = gamma_ext[j] ** 4 * gamma[
+                i
+            ] * C_MMNS * C_MMNS * bdot_scalar_ext - gamma[i] * C_MMNS * np.dot(
+                beta_vec,
+                bdot_ext * C_MMNS * gamma_ext[j] ** 2
+                + beta_ext * bdot_scalar_ext * C_MMNS * gamma_ext[j] ** 4,
             )
 
             charge_factor = (
                 h
                 * q[i]
                 * q_ext[j]
-                / (k_factor ** 3 * C_MMNS ** 3 * R * R * gamma_ext[j] ** 3)
+                / (k_factor**3 * C_MMNS**3 * R * R * gamma_ext[j] ** 3)
             )
 
             force_x = charge_factor * (
                 -bx_ext[j] * v_betas_scalar * k_factor * C_MMNS * gamma_ext[j] ** 2
                 + v_beta_dot_mixed_scalar * k_factor * gamma_ext[j] * nx * R
-                + gamma_ext[j] ** 2 * nx * nx * R * v_betas_scalar * (
-                    bdotx_ext[j] + bdotx_ext[j] * bdot_scalar_ext * gamma_ext[j] ** 2
-                )
+                + gamma_ext[j] ** 2
+                * nx
+                * nx
+                * R
+                * v_betas_scalar
+                * (bdotx_ext[j] + bdotx_ext[j] * bdot_scalar_ext * gamma_ext[j] ** 2)
                 + v_betas_scalar * C_MMNS * nx
             )
             force_y = charge_factor * (
                 -by_ext[j] * v_betas_scalar * k_factor * C_MMNS * gamma_ext[j] ** 2
                 + v_beta_dot_mixed_scalar * k_factor * gamma_ext[j] * ny * R
-                + gamma_ext[j] ** 2 * ny * ny * R * v_betas_scalar * (
-                    bdoty_ext[j] + bdoty_ext[j] * bdot_scalar_ext * gamma_ext[j] ** 2
-                )
+                + gamma_ext[j] ** 2
+                * ny
+                * ny
+                * R
+                * v_betas_scalar
+                * (bdoty_ext[j] + bdoty_ext[j] * bdot_scalar_ext * gamma_ext[j] ** 2)
                 + v_betas_scalar * C_MMNS * ny
             )
             force_z = charge_factor * (
                 -bz_ext[j] * v_betas_scalar * k_factor * C_MMNS * gamma_ext[j] ** 2
                 + v_beta_dot_mixed_scalar * k_factor * gamma_ext[j] * nz * R
-                + gamma_ext[j] ** 2 * nz * nz * R * v_betas_scalar * (
-                    bdotz_ext[j] + bdotz_ext[j] * bdot_scalar_ext * gamma_ext[j] ** 2
-                )
+                + gamma_ext[j] ** 2
+                * nz
+                * nz
+                * R
+                * v_betas_scalar
+                * (bdotz_ext[j] + bdotz_ext[j] * bdot_scalar_ext * gamma_ext[j] ** 2)
                 + v_betas_scalar * C_MMNS * nz
             )
             force_t = (
                 h
                 * q[i]
                 * q_ext[j]
-                / (k_factor ** 3 * C_MMNS ** 3 * R * R * gamma_ext[j] ** 3)
+                / (k_factor**3 * C_MMNS**3 * R * R * gamma_ext[j] ** 3)
             ) * (
                 v_beta_dot_mixed_scalar * k_factor * gamma_ext[j] * R
                 - v_betas_scalar * k_factor * C_MMNS * gamma_ext[j] ** 2
@@ -299,7 +303,12 @@ def _update_particle_kinematics(
         bdoty_new[i] = (by_new[i] - by[i]) / (C_MMNS * h * gamma_new[i])
         bdotz_new[i] = (bz_new[i] - bz[i]) / (C_MMNS * h * gamma_new[i])
 
-        rad_frc_z_rhs = -gamma_new[i] ** 3 * (m[i] * bdotz_new[i] ** 2 * C_MMNS * C_MMNS) * bz_new[i] * C_MMNS
+        rad_frc_z_rhs = (
+            -gamma_new[i] ** 3
+            * (m[i] * bdotz_new[i] ** 2 * C_MMNS * C_MMNS)
+            * bz_new[i]
+            * C_MMNS
+        )
         rad_frc_z_lhs = (
             (gamma_new[i] - gamma[i])
             / (h * gamma_new[i])
@@ -310,10 +319,19 @@ def _update_particle_kinematics(
             * C_MMNS
         )
 
-        if rad_frc_z_rhs > (char_time[i] / 10.0) or rad_frc_z_lhs > (char_time[i] / 10.0):
-            bdotz_new[i] += char_time[i] * (rad_frc_z_lhs + rad_frc_z_rhs) / (m[i] * C_MMNS)
+        if rad_frc_z_rhs > (char_time[i] / 10.0) or rad_frc_z_lhs > (
+            char_time[i] / 10.0
+        ):
+            bdotz_new[i] += (
+                char_time[i] * (rad_frc_z_lhs + rad_frc_z_rhs) / (m[i] * C_MMNS)
+            )
 
-            rad_frc_x_rhs = -gamma_new[i] ** 3 * (m[i] * bdotx_new[i] ** 2 * C_MMNS * C_MMNS) * bx_new[i] * C_MMNS
+            rad_frc_x_rhs = (
+                -gamma_new[i] ** 3
+                * (m[i] * bdotx_new[i] ** 2 * C_MMNS * C_MMNS)
+                * bx_new[i]
+                * C_MMNS
+            )
             rad_frc_x_lhs = (
                 (gamma_new[i] - gamma[i])
                 / (h * gamma_new[i])
@@ -323,7 +341,12 @@ def _update_particle_kinematics(
                 * C_MMNS
                 * C_MMNS
             )
-            rad_frc_y_rhs = -gamma_new[i] ** 3 * (m[i] * bdoty_new[i] ** 2 * C_MMNS * C_MMNS) * by_new[i] * C_MMNS
+            rad_frc_y_rhs = (
+                -gamma_new[i] ** 3
+                * (m[i] * bdoty_new[i] ** 2 * C_MMNS * C_MMNS)
+                * by_new[i]
+                * C_MMNS
+            )
             rad_frc_y_lhs = (
                 (gamma_new[i] - gamma[i])
                 / (h * gamma_new[i])
@@ -334,8 +357,12 @@ def _update_particle_kinematics(
                 * C_MMNS
             )
 
-            bdotx_new[i] += char_time[i] * (rad_frc_x_lhs + rad_frc_x_rhs) / (m[i] * C_MMNS)
-            bdoty_new[i] += char_time[i] * (rad_frc_y_lhs + rad_frc_y_rhs) / (m[i] * C_MMNS)
+            bdotx_new[i] += (
+                char_time[i] * (rad_frc_x_lhs + rad_frc_x_rhs) / (m[i] * C_MMNS)
+            )
+            bdoty_new[i] += (
+                char_time[i] * (rad_frc_y_lhs + rad_frc_y_rhs) / (m[i] * C_MMNS)
+            )
 
     return (
         x_new,
@@ -368,38 +395,40 @@ def eqsofmotion_retarded_numba(
     current_arrays, n_particles = dict_to_arrays(trajectory[index_traj])
     ext_arrays, n_ext_particles = dict_to_arrays(trajectory_ext[index_traj])
 
-    px_new, py_new, pz_new, pt_new, x_field, y_field, z_field = _compute_electromagnetic_forces(
-        current_arrays["x"],
-        current_arrays["y"],
-        current_arrays["z"],
-        current_arrays["Px"],
-        current_arrays["Py"],
-        current_arrays["Pz"],
-        current_arrays["Pt"],
-        current_arrays["gamma"],
-        current_arrays["bx"],
-        current_arrays["by"],
-        current_arrays["bz"],
-        current_arrays["q"],
-        current_arrays["m"],
-        ext_arrays["x"],
-        ext_arrays["y"],
-        ext_arrays["z"],
-        ext_arrays["Px"],
-        ext_arrays["Py"],
-        ext_arrays["Pz"],
-        ext_arrays["Pt"],
-        ext_arrays["gamma"],
-        ext_arrays["bx"],
-        ext_arrays["by"],
-        ext_arrays["bz"],
-        ext_arrays["bdotx"],
-        ext_arrays["bdoty"],
-        ext_arrays["bdotz"],
-        ext_arrays["q"],
-        h,
-        n_particles,
-        n_ext_particles,
+    px_new, py_new, pz_new, pt_new, x_field, y_field, z_field = (
+        _compute_electromagnetic_forces(
+            current_arrays["x"],
+            current_arrays["y"],
+            current_arrays["z"],
+            current_arrays["Px"],
+            current_arrays["Py"],
+            current_arrays["Pz"],
+            current_arrays["Pt"],
+            current_arrays["gamma"],
+            current_arrays["bx"],
+            current_arrays["by"],
+            current_arrays["bz"],
+            current_arrays["q"],
+            current_arrays["m"],
+            ext_arrays["x"],
+            ext_arrays["y"],
+            ext_arrays["z"],
+            ext_arrays["Px"],
+            ext_arrays["Py"],
+            ext_arrays["Pz"],
+            ext_arrays["Pt"],
+            ext_arrays["gamma"],
+            ext_arrays["bx"],
+            ext_arrays["by"],
+            ext_arrays["bz"],
+            ext_arrays["bdotx"],
+            ext_arrays["bdoty"],
+            ext_arrays["bdotz"],
+            ext_arrays["q"],
+            h,
+            n_particles,
+            n_ext_particles,
+        )
     )
 
     (

@@ -31,6 +31,17 @@ TrajectoryPair = Tuple[List[ParticleState], List[ParticleState]]
 
 FIELDS_TO_TRACK: Tuple[str, ...] = ("x", "y", "z", "Px", "Py", "Pz", "Pt", "gamma")
 
+CB_PALETTE = {
+    "rider_primary": "#0072B2",
+    "driver_primary": "#D55E00",
+    "legacy_rider": "#56B4E9",
+    "legacy_driver": "#E69F00",
+}
+
+DEFAULT_SAVE_DPI = 300
+MAX_RECOMMENDED_DPI = 600
+MIN_RECOMMENDED_DPI = 150
+
 PARTICLE_PARAM_FIELDS: Tuple[str, ...] = (
     "starting_distance",
     "transv_mom",
@@ -128,24 +139,31 @@ def run_legacy_integrator(
     steps: int,
     *,
     time_step: float,
-    wall_z: float,
-    aperture_radius: float,
+    wall_z: float | None,
+    aperture_radius: float | None,
     legacy_iters: int = 2,
-    mean: float = 1e5,
-    cav_spacing: float = 1e5,
-    z_cutoff: float = 0.0,
+    mean: float | None = None,
+    cav_spacing: float | None = None,
+    z_cutoff: float | None = None,
 ) -> TrajectoryPair:
+    if aperture_radius is None:
+        raise ValueError("aperture_radius is required for the legacy integrator")
+
+    resolved_wall_z = 0.0 if wall_z is None else wall_z
+    resolved_cav_spacing = 0.0 if cav_spacing is None else cav_spacing
+    resolved_z_cutoff = 0.0 if z_cutoff is None else z_cutoff
+
     legacy_traj, legacy_drv = legacy_retarded_integrator(
         steps,
         time_step,
-        wall_z,
+        resolved_wall_z,
         aperture_radius,
         legacy_iters,
         rider_state,
         driver_state,
-        mean,
-        cav_spacing,
-        z_cutoff,
+        0.0 if mean is None else mean,
+        resolved_cav_spacing,
+        resolved_z_cutoff,
     )
     return (
         [_normalize_state(state) for state in legacy_traj],
@@ -159,24 +177,32 @@ def run_core_integrator(
     steps: int,
     *,
     time_step: float,
-    wall_z: float,
-    aperture_radius: float,
+    wall_z: float | None,
+    aperture_radius: float | None,
     simulation_type: SimulationType,
-    mean: float,
-    cav_spacing: float,
-    z_cutoff: float,
+    mean: float | None,
+    cav_spacing: float | None,
+    z_cutoff: float | None,
 ) -> TrajectoryPair:
+    if aperture_radius is None:
+        raise ValueError("aperture_radius is required for the core integrator")
+
+    resolved_wall_z = 0.0 if wall_z is None else wall_z
+    resolved_mean = 0.0 if mean is None else mean
+    resolved_cav_spacing = 0.0 if cav_spacing is None else cav_spacing
+    resolved_z_cutoff = 0.0 if z_cutoff is None else z_cutoff
+
     core_traj, core_drv = retarded_integrator(
         steps=steps,
         h_step=time_step,
-        wall_z=wall_z,
+        wall_z=resolved_wall_z,
         aperture_radius=aperture_radius,
         sim_type=simulation_type,
         init_rider=_convert_legacy_state(copy.deepcopy(rider_state)),
         init_driver=_convert_legacy_state(copy.deepcopy(driver_state)),
-        mean=mean,
-        cav_spacing=cav_spacing,
-        z_cutoff=z_cutoff,
+        mean=resolved_mean,
+        cav_spacing=resolved_cav_spacing,
+        z_cutoff=resolved_z_cutoff,
     )
     return (
         [_normalize_state(state) for state in core_traj],
@@ -184,7 +210,9 @@ def run_core_integrator(
     )
 
 
-def compute_metrics(legacy: TrajectoryPair, core: TrajectoryPair) -> Dict[str, Dict[str, float]]:
+def compute_metrics(
+    legacy: TrajectoryPair, core: TrajectoryPair
+) -> Dict[str, Dict[str, float]]:
     metrics: Dict[str, Dict[str, float]] = {}
     for label, legacy_states, core_states in (
         ("rider", legacy[0], core[0]),
@@ -236,38 +264,95 @@ def plot_results(
     *,
     save_path: Path | None = None,
     show: bool = False,
+    dpi: int = DEFAULT_SAVE_DPI,
 ) -> None:
+    if dpi < MIN_RECOMMENDED_DPI or dpi > MAX_RECOMMENDED_DPI:
+        raise ValueError(
+            f"dpi must be between {MIN_RECOMMENDED_DPI} and {MAX_RECOMMENDED_DPI}, received {dpi}"
+        )
+
     steps_axis = np.arange(len(legacy[0]))
     legacy_rider_z = _extract_series(legacy[0], "z")
     core_rider_z = _extract_series(core[0], "z")
     legacy_driver_z = _extract_series(legacy[1], "z")
     core_driver_z = _extract_series(core[1], "z")
 
-    rider_gamma_diff = _extract_series(core[0], "gamma") - _extract_series(legacy[0], "gamma")
-    driver_gamma_diff = _extract_series(core[1], "gamma") - _extract_series(legacy[1], "gamma")
+    rider_gamma_diff = _extract_series(core[0], "gamma") - _extract_series(
+        legacy[0], "gamma"
+    )
+    driver_gamma_diff = _extract_series(core[1], "gamma") - _extract_series(
+        legacy[1], "gamma"
+    )
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(10, 8),
+        constrained_layout=True,
+        dpi=dpi,
+    )
 
-    axes[0].plot(steps_axis, legacy_rider_z, "--", label="Legacy rider")
-    axes[0].plot(steps_axis, core_rider_z, label="Core rider")
-    axes[0].plot(steps_axis, legacy_driver_z, "--", label="Legacy driver")
-    axes[0].plot(steps_axis, core_driver_z, label="Core driver")
-    axes[0].set_title("Trajectory overlap (z position)")
-    axes[0].set_xlabel("Step")
-    axes[0].set_ylabel("z (mm)")
+    scatter_kwargs = {"s": 90, "alpha": 0.8, "linewidth": 0}
+
+    axes[0].scatter(
+        steps_axis,
+        legacy_rider_z,
+        label="Legacy rider",
+        color=CB_PALETTE["legacy_rider"],
+        **scatter_kwargs,
+    )
+    axes[0].scatter(
+        steps_axis,
+        core_rider_z,
+        label="Core rider",
+        color=CB_PALETTE["rider_primary"],
+        **scatter_kwargs,
+    )
+    axes[0].scatter(
+        steps_axis,
+        legacy_driver_z,
+        label="Legacy driver",
+        color=CB_PALETTE["legacy_driver"],
+        **scatter_kwargs,
+    )
+    axes[0].scatter(
+        steps_axis,
+        core_driver_z,
+        label="Core driver",
+        color=CB_PALETTE["driver_primary"],
+        **scatter_kwargs,
+    )
+    axes[0].set_title("Trajectory overlap (z position)", fontsize=18)
+    axes[0].set_xlabel("Step", fontsize=16)
+    axes[0].set_ylabel("z (mm)", fontsize=16)
     axes[0].grid(True, alpha=0.3)
-    axes[0].legend()
+    axes[0].legend(fontsize=12)
 
-    axes[1].plot(steps_axis, rider_gamma_diff, label="Δγ rider")
-    axes[1].plot(steps_axis, driver_gamma_diff, label="Δγ driver")
-    axes[1].set_title("Gamma difference (core − legacy)")
-    axes[1].set_xlabel("Step")
-    axes[1].set_ylabel("Δγ")
+    axes[1].scatter(
+        steps_axis,
+        rider_gamma_diff,
+        label="Δγ rider",
+        color=CB_PALETTE["rider_primary"],
+        **scatter_kwargs,
+    )
+    axes[1].scatter(
+        steps_axis,
+        driver_gamma_diff,
+        label="Δγ driver",
+        color=CB_PALETTE["driver_primary"],
+        **scatter_kwargs,
+    )
+    axes[1].set_title("Gamma difference (core − legacy)", fontsize=18)
+    axes[1].set_xlabel("Step", fontsize=16)
+    axes[1].set_ylabel("Δγ", fontsize=16)
     axes[1].grid(True, alpha=0.3)
-    axes[1].legend()
+    axes[1].legend(fontsize=12)
+
+    for axis in axes:
+        axis.tick_params(axis="both", which="major", labelsize=13)
 
     if save_path is not None:
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
     if show:
         plt.show()
     plt.close(fig)
@@ -295,21 +380,24 @@ def run_benchmark(
     legacy_enabled: bool = True,
     simulation_type: SimulationType = SimulationType.BUNCH_TO_BUNCH,
     time_step: float = 2.2e-7,
-    wall_z: float = 1e5,
-    aperture_radius: float = 1e5,
-    mean: float = 1e5,
-    cav_spacing: float = 1e5,
-    z_cutoff: float = 0.0,
+    wall_z: float | None = 1e5,
+    aperture_radius: float | None = 1e5,
+    mean: float | None = 1e5,
+    cav_spacing: float | None = 1e5,
+    z_cutoff: float | None = 0.0,
     save_json: Path | None = None,
     save_fig: Path | None = None,
     show: bool = False,
     plot: bool = True,
     return_trajectories: bool = False,
+    plot_dpi: int = DEFAULT_SAVE_DPI,
 ):
-    rider_state, driver_state, rider_rest_mev, driver_rest_mev = prepare_two_particle_demo(
-        seed,
-        rider_params=rider_params,
-        driver_params=driver_params,
+    rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
+        prepare_two_particle_demo(
+            seed,
+            rider_params=rider_params,
+            driver_params=driver_params,
+        )
     )
     rider_initial = _normalize_state(copy.deepcopy(rider_state))
     driver_initial = _normalize_state(copy.deepcopy(driver_state))
@@ -355,6 +443,7 @@ def run_benchmark(
                 core_results,
                 save_path=save_fig,
                 show=show,
+                dpi=plot_dpi,
             )
             if save_fig is not None:
                 print(f"Plot written to {save_fig}")
@@ -394,7 +483,10 @@ def _add_particle_arguments(
     group = parser.add_argument_group(f"{prefix.capitalize()} particle initialisation")
     for field, default in defaults.items():
         arg = f"--{prefix}-{field.replace('_', '-')}"
-        arg_kwargs = {"default": default, "help": f"{field.replace('_', ' ')} (default: {default})"}
+        arg_kwargs = {
+            "default": default,
+            "help": f"{field.replace('_', ' ')} (default: {default})",
+        }
         if isinstance(default, int):
             group.add_argument(arg, type=int, **arg_kwargs)
         else:
@@ -409,14 +501,34 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     }
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--steps", type=int, default=40, help="Number of integration steps to run")
-    parser.add_argument("--seed", type=int, default=12345, help="Random seed for bunch initialisation")
-    parser.add_argument("--time-step", type=float, default=2.2e-7, help="Integrator time step (ns)")
+    parser.add_argument(
+        "--steps", type=int, default=40, help="Number of integration steps to run"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=12345, help="Random seed for bunch initialisation"
+    )
+    parser.add_argument(
+        "--time-step", type=float, default=2.2e-7, help="Integrator time step (ns)"
+    )
     parser.add_argument("--wall-z", type=float, default=1e5, help="Wall position (mm)")
-    parser.add_argument("--aperture-radius", type=float, default=1e5, help="Aperture radius (mm)")
-    parser.add_argument("--mean", type=float, default=1e5, help="Mean bunch separation for core integrator")
-    parser.add_argument("--cav-spacing", type=float, default=1e5, help="Cavity spacing for core integrator")
-    parser.add_argument("--z-cutoff", type=float, default=0.0, help="z-cutoff for both integrators")
+    parser.add_argument(
+        "--aperture-radius", type=float, default=1e5, help="Aperture radius (mm)"
+    )
+    parser.add_argument(
+        "--mean",
+        type=float,
+        default=1e5,
+        help="Mean bunch separation for core integrator",
+    )
+    parser.add_argument(
+        "--cav-spacing",
+        type=float,
+        default=1e5,
+        help="Cavity spacing for core integrator",
+    )
+    parser.add_argument(
+        "--z-cutoff", type=float, default=0.0, help="z-cutoff for both integrators"
+    )
     parser.add_argument(
         "--simulation-type",
         choices=sorted(sim_choices.keys()),
@@ -428,10 +540,30 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip the legacy integrator (faster but no comparison metrics)",
     )
-    parser.add_argument("--save-json", type=Path, help="Write metrics to this JSON file")
-    parser.add_argument("--save-fig", type=Path, help="Write comparison plot to this path")
-    parser.add_argument("--show", action="store_true", help="Display plots interactively")
-    parser.add_argument("--no-plot", action="store_true", help="Skip plot generation entirely")
+    parser.add_argument(
+        "--save-json", type=Path, help="Write metrics to this JSON file"
+    )
+    parser.add_argument(
+        "--save-fig", type=Path, help="Write comparison plot to this path"
+    )
+    parser.add_argument(
+        "--show", action="store_true", help="Display plots interactively"
+    )
+    parser.add_argument(
+        "--no-plot", action="store_true", help="Skip plot generation entirely"
+    )
+    parser.add_argument(
+        "--plot-dpi",
+        type=int,
+        default=DEFAULT_SAVE_DPI,
+        help=(
+            "DPI for saved plots ("
+            f"{MIN_RECOMMENDED_DPI}"
+            "–"
+            f"{MAX_RECOMMENDED_DPI}"
+            ")"
+        ),
+    )
 
     _add_particle_arguments(parser, "rider", DEFAULT_RIDER_PARAMS)
     _add_particle_arguments(parser, "driver", DEFAULT_DRIVER_PARAMS)
@@ -444,7 +576,9 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def _collect_particle_args(args: argparse.Namespace, prefix: str) -> Dict[str, float | int]:
+def _collect_particle_args(
+    args: argparse.Namespace, prefix: str
+) -> Dict[str, float | int]:
     params: Dict[str, float | int] = {}
     for field in PARTICLE_PARAM_FIELDS:
         attr = f"{prefix}_{field}"
@@ -476,6 +610,7 @@ def main(argv: List[str] | None = None) -> int:
         save_fig=args.save_fig,
         show=args.show,
         plot=not args.no_plot,
+        plot_dpi=args.plot_dpi,
     )
 
     print(summarise_metrics(metrics))

@@ -1,70 +1,57 @@
-# LW Integrator Documentation
+# LW Integrator Documentation (2025 refresh)
 
-This directory contains the comprehensive documentation for the LW (Liénard-Wiechert) Integrator, a covariant electromagnetic particle tracking code for accelerator physics applications.
+This directory hosts the refreshed documentation set for the LW (Liénard–Wiechert) Integrator.  The previous “user manual / developer guide / API reference” split had drifted out of sync with the codebase, so the docs now focus on the workflows that exist in the repository today.
 
-## Documentation Structure
+## What’s here now?
 
 ```
 docs/
-├── source/           # Sphinx source files
-├── build/           # Generated documentation (HTML, PDF)
-├── user_manual/     # User manual chapters
-├── developer_guide/ # Developer documentation
-├── api_reference/   # API documentation
-├── examples/        # Example notebooks and scripts
-└── figures/         # Documentation figures and diagrams
+├── README.md            # This guide
+├── build_docs.sh        # Convenience wrapper around sphinx-build
+└── source/              # Authoritative documentation sources
+	 ├── index.rst        # Root table of contents
+	 ├── overview.rst     # High-level tour of the project
+	 ├── quickstart.rst   # Environment setup + first run
+	 ├── validation.rst   # Regression and comparison workflows
+	 ├── notebooks.rst    # How to use the interactive assets
+	 ├── api/             # Lightweight API reference shells
+	 └── development/     # Contribution & maintenance notes
 ```
 
-## Building Documentation
+Legacy pages that are no longer linked remain in `docs/source/` for historical reference; they can be deleted once their content has been migrated or confirmed obsolete.
 
-### Prerequisites
+## Building the docs
 
-Install the required packages:
-```bash
-pip install sphinx sphinx-rtd-theme numpydoc matplotlib jupyter nbsphinx
-```
+1. Ensure the documentation dependencies are available.  Using the project’s virtual environment, run:
+	```bash
+	pip install sphinx sphinx-rtd-theme nbsphinx
+	```
+	The `pyproject.toml` already declares the runtime libraries (NumPy, SciPy, etc.) that Sphinx loads while importing modules.
 
-### Build Commands
+2. From `docs/`, generate HTML output:
+	```bash
+	./build_docs.sh --clean --type html
+	```
+	The rendered site lives in `docs/build/html/index.html`.
 
-Generate HTML documentation:
-```bash
-sphinx-build -b html source build/html
-```
+3. For iterative writing, enable live reload:
+	```bash
+	./build_docs.sh --watch
+	```
 
-Generate PDF documentation:
-```bash
-sphinx-build -b latex source build/latex
-cd build/latex && make
-```
+4. Other builders (`--type latex`, `--type epub`, …) are also wired through `build_docs.sh`.  The script wraps `sphinx-build -W --keep-going` so warnings break the build by default.
 
-Auto-build with live reload during development:
-```bash
-sphinx-autobuild source build/html
-```
+## Content principles
 
-## Benchmark integration guide
+- **Reality first** – every page documents code that currently ships in `core/`, `input_output/`, or `examples/`.  
+- **Link to source** – favour short narratives that send readers to modules, scripts, or notebooks in the repository.  The API pages use `automodule` blocks to pull docstrings straight from the code so they stay current.
+- **Workflow oriented** – the main sections map to real tasks: setting up an environment, reproducing validation plots, or extending the integrator.  Keep tutorials in sync with the scripts and notebooks that they reference.
 
-- Core vs. legacy comparison lives in `examples/validation/core_vs_legacy_benchmark.py`.
-- Use the `.venv` workflow described in the top-level `README.md` so that both the CLI and notebooks share dependencies.
-- For notebooks, import `run_benchmark` directly; the helper tolerates extra arguments that VS Code injects when launching kernels.
+## Updating the docs alongside code changes
 
-Keeping validation scripts runnable from both the terminal and notebooks simplifies reproducing figures for the Sphinx docs.
+- Extend the relevant `.rst` page (or create a new one) when you add a publicly visible feature.
+- Prefer `.. literalinclude::` or `:mod:` cross references to manual code snippets so refactors are harder to break.
+- Review `docs/source/conf.py` if you introduce new optional dependencies or relocate packages.
+- Run `./build_docs.sh --clean` before sending a PR; CI treats warnings as errors.
 
-## Documentation Standards
-
-- Use reStructuredText (.rst) format for main documentation
-- Include Jupyter notebooks (.ipynb) for examples and tutorials
-- Follow NumPy docstring conventions for API documentation
-- Include mathematical equations using LaTeX/MathJax
-- Provide cross-references and links between sections
-- Include code examples and verification scripts
-
-## Contributing
-
-When adding new features or modules:
-1. Update relevant user manual sections
-2. Add API documentation with docstrings
-3. Include example usage in tutorials
-4. Update this README if structure changes
-
-For detailed contribution guidelines, see `developer_guide/contributing.rst`.
+Questions or gaps?  Open an issue or drop a note in the repository’s documentation channel so we can keep the refreshed structure healthy.

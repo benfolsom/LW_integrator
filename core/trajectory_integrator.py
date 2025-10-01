@@ -120,16 +120,18 @@ def generate_conducting_image(
             if theta < np.pi / 4:
                 shift = 2 * R_dist * np.tan(theta)
                 result["x"][i] = (
-                    vector["x"][i]
-                    + (aperture_radius + shift / np.sqrt(2)) * sign_x
+                    vector["x"][i] + (aperture_radius + shift / np.sqrt(2)) * sign_x
                 )
                 result["y"][i] = (
-                    vector["y"][i]
-                    + (aperture_radius + shift / np.sqrt(2)) * sign_y
+                    vector["y"][i] + (aperture_radius + shift / np.sqrt(2)) * sign_y
                 )
                 result["q"] = result["q"] * (
                     1
-                    - 2 * (aperture_radius**2) / (R_dist**2) * 1 / (1 - np.cos(np.pi / 2))
+                    - 2
+                    * (aperture_radius**2)
+                    / (R_dist**2)
+                    * 1
+                    / (1 - np.cos(np.pi / 2))
                 )
             else:
                 shift = 0
@@ -280,7 +282,7 @@ def chrono_match_indices(
             delta_t = (
                 nhat["R"][l]
                 * (1 + b_nhat)
-                * trajectory_ext[index_traj]["gamma"][l]**2
+                * trajectory_ext[index_traj]["gamma"][l] ** 2
                 / trajectory[index_traj]["gamma"][index_part]
                 / C_MMNS
             )
@@ -413,10 +415,7 @@ def retarded_equations_of_motion(
 
             v_betas_scalar = gamma_j * gamma_i * C_MMNS**2 * (1.0 - betas_scalar)
             v_beta_dot_mixed_scalar = (
-                gamma_j**4
-                * gamma_i
-                * C_MMNS**2
-                * bdot_scalar_ext
+                gamma_j**4 * gamma_i * C_MMNS**2 * bdot_scalar_ext
                 - gamma_i
                 * C_MMNS
                 * np.dot(
@@ -456,9 +455,7 @@ def retarded_equations_of_motion(
                 * v_betas_scalar
                 * (
                     trajectory_ext[ext_idx]["bdotx"][j]
-                    + trajectory_ext[ext_idx]["bdotx"][j]
-                    * bdot_scalar_ext
-                    * gamma_j**2
+                    + trajectory_ext[ext_idx]["bdotx"][j] * bdot_scalar_ext * gamma_j**2
                 )
                 + v_betas_scalar * C_MMNS * nhat["nx"][j]
             )
@@ -480,9 +477,7 @@ def retarded_equations_of_motion(
                 * v_betas_scalar
                 * (
                     trajectory_ext[ext_idx]["bdoty"][j]
-                    + trajectory_ext[ext_idx]["bdoty"][j]
-                    * bdot_scalar_ext
-                    * gamma_j**2
+                    + trajectory_ext[ext_idx]["bdoty"][j] * bdot_scalar_ext * gamma_j**2
                 )
                 + v_betas_scalar * C_MMNS * nhat["ny"][j]
             )
@@ -504,9 +499,7 @@ def retarded_equations_of_motion(
                 * v_betas_scalar
                 * (
                     trajectory_ext[ext_idx]["bdotz"][j]
-                    + trajectory_ext[ext_idx]["bdotz"][j]
-                    * bdot_scalar_ext
-                    * gamma_j**2
+                    + trajectory_ext[ext_idx]["bdotz"][j] * bdot_scalar_ext * gamma_j**2
                 )
                 + v_betas_scalar * C_MMNS * nhat["nz"][j]
             )
@@ -524,22 +517,11 @@ def retarded_equations_of_motion(
             )
 
             field_contribution = (
-                h
-                / mass_i
-                * charge_i
-                / C_MMNS
-                * charge_j
-                / (nhat["R"][j] * k_factor)
+                h / mass_i * charge_i / C_MMNS * charge_j / (nhat["R"][j] * k_factor)
             )
-            accumulated_x_field += (
-                field_contribution * trajectory_ext[ext_idx]["bx"][j]
-            )
-            accumulated_y_field += (
-                field_contribution * trajectory_ext[ext_idx]["by"][j]
-            )
-            accumulated_z_field += (
-                field_contribution * trajectory_ext[ext_idx]["bz"][j]
-            )
+            accumulated_x_field += field_contribution * trajectory_ext[ext_idx]["bx"][j]
+            accumulated_y_field += field_contribution * trajectory_ext[ext_idx]["by"][j]
+            accumulated_z_field += field_contribution * trajectory_ext[ext_idx]["bz"][j]
 
         result["Px"][l] = accumulated_px
         result["Py"][l] = accumulated_py
@@ -549,28 +531,25 @@ def retarded_equations_of_motion(
         result["gamma"][l] = result["Pt"][l] / (mass_i * C_MMNS)
         result["t"][l] = trajectory[index_traj]["t"][l] + h * result["gamma"][l]
 
-        result["x"][l] = (
-            trajectory[index_traj]["x"][l]
-            + h / mass_i * (result["Px"][l] - accumulated_x_field * mass_i)
+        result["x"][l] = trajectory[index_traj]["x"][l] + h / mass_i * (
+            result["Px"][l] - accumulated_x_field * mass_i
         )
-        result["y"][l] = (
-            trajectory[index_traj]["y"][l]
-            + h / mass_i * (result["Py"][l] - accumulated_y_field * mass_i)
+        result["y"][l] = trajectory[index_traj]["y"][l] + h / mass_i * (
+            result["Py"][l] - accumulated_y_field * mass_i
         )
-        result["z"][l] = (
-            trajectory[index_traj]["z"][l]
-            + h / mass_i * (result["Pz"][l] - accumulated_z_field * mass_i)
+        result["z"][l] = trajectory[index_traj]["z"][l] + h / mass_i * (
+            result["Pz"][l] - accumulated_z_field * mass_i
         )
 
-        result["bx"][l] = (
-            result["x"][l] - trajectory[index_traj]["x"][l]
-        ) / (C_MMNS * h * result["gamma"][l])
-        result["by"][l] = (
-            result["y"][l] - trajectory[index_traj]["y"][l]
-        ) / (C_MMNS * h * result["gamma"][l])
-        result["bz"][l] = (
-            result["z"][l] - trajectory[index_traj]["z"][l]
-        ) / (C_MMNS * h * result["gamma"][l])
+        result["bx"][l] = (result["x"][l] - trajectory[index_traj]["x"][l]) / (
+            C_MMNS * h * result["gamma"][l]
+        )
+        result["by"][l] = (result["y"][l] - trajectory[index_traj]["y"][l]) / (
+            C_MMNS * h * result["gamma"][l]
+        )
+        result["bz"][l] = (result["z"][l] - trajectory[index_traj]["z"][l]) / (
+            C_MMNS * h * result["gamma"][l]
+        )
 
         btots = np.sqrt(
             result["bx"][l] ** 2 + result["by"][l] ** 2 + result["bz"][l] ** 2
@@ -585,15 +564,15 @@ def retarded_equations_of_motion(
 
         result["gamma"][l] = 1.0 / np.sqrt(1 - btots**2)
 
-        result["bdotx"][l] = (
-            result["bx"][l] - trajectory[index_traj]["bx"][l]
-        ) / (C_MMNS * h * result["gamma"][l])
-        result["bdoty"][l] = (
-            result["by"][l] - trajectory[index_traj]["by"][l]
-        ) / (C_MMNS * h * result["gamma"][l])
-        result["bdotz"][l] = (
-            result["bz"][l] - trajectory[index_traj]["bz"][l]
-        ) / (C_MMNS * h * result["gamma"][l])
+        result["bdotx"][l] = (result["bx"][l] - trajectory[index_traj]["bx"][l]) / (
+            C_MMNS * h * result["gamma"][l]
+        )
+        result["bdoty"][l] = (result["by"][l] - trajectory[index_traj]["by"][l]) / (
+            C_MMNS * h * result["gamma"][l]
+        )
+        result["bdotz"][l] = (result["bz"][l] - trajectory[index_traj]["bz"][l]) / (
+            C_MMNS * h * result["gamma"][l]
+        )
 
         rad_frc_z_rhs = (
             -result["gamma"][l] ** 3
@@ -617,9 +596,9 @@ def retarded_equations_of_motion(
         )
 
         if rad_frc_z_rhs > (char_time_i / 1e1) or rad_frc_z_lhs > (char_time_i / 1e1):
-            result["bdotz"][l] += char_time_i * (
-                rad_frc_z_lhs + rad_frc_z_rhs
-            ) / (mass_i * C_MMNS)
+            result["bdotz"][l] += (
+                char_time_i * (rad_frc_z_lhs + rad_frc_z_rhs) / (mass_i * C_MMNS)
+            )
 
             rad_frc_x_rhs = (
                 -result["gamma"][l] ** 3
@@ -650,12 +629,12 @@ def retarded_equations_of_motion(
                 * C_MMNS**2
             )
 
-            result["bdotx"][l] += char_time_i * (
-                rad_frc_x_lhs + rad_frc_x_rhs
-            ) / (mass_i * C_MMNS)
-            result["bdoty"][l] += char_time_i * (
-                rad_frc_y_lhs + rad_frc_y_rhs
-            ) / (mass_i * C_MMNS)
+            result["bdotx"][l] += (
+                char_time_i * (rad_frc_x_lhs + rad_frc_x_rhs) / (mass_i * C_MMNS)
+            )
+            result["bdoty"][l] += (
+                char_time_i * (rad_frc_y_lhs + rad_frc_y_rhs) / (mass_i * C_MMNS)
+            )
 
     return result
 

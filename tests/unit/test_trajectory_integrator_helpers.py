@@ -122,7 +122,9 @@ def test_chrono_match_indices_returns_bounded_results():
         trajectory.append(state)
         trajectory_ext.append(ext_state)
 
-    indices = chrono_match_indices(trajectory, trajectory_ext, index_traj=2, index_part=0)
+    indices = chrono_match_indices(
+        trajectory, trajectory_ext, index_traj=2, index_part=0
+    )
 
     assert indices.shape == (1,)
     assert indices.dtype.kind == "i"
@@ -131,7 +133,10 @@ def test_chrono_match_indices_returns_bounded_results():
 
 
 def test_retarded_equations_of_motion_keeps_zero_charge_state_stable():
-    trajectory = [_make_single_particle_state(t=0.0), _make_single_particle_state(t=1e-3)]
+    trajectory = [
+        _make_single_particle_state(t=0.0),
+        _make_single_particle_state(t=1e-3),
+    ]
     trajectory_ext = [copy.deepcopy(state) for state in trajectory]
     for ext_state in trajectory_ext:
         ext_state["x"] += 1e-4
@@ -176,7 +181,9 @@ def test_run_integrator_matches_direct_invocation_for_simple_case():
         mean=config.bunch_mean,
         cav_spacing=config.cavity_spacing,
         z_cutoff=config.z_cutoff,
-        self_consistency=SelfConsistencyConfig(enabled=True, tolerance=1e-9, max_iterations=2),
+        self_consistency=SelfConsistencyConfig(
+            enabled=True, tolerance=1e-9, max_iterations=2
+        ),
     )
 
     wrapped_traj, wrapped_drv = run_integrator(config, copy.deepcopy(rider), None)

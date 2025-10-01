@@ -32,7 +32,11 @@ except ImportError:  # pragma: no cover - fall back to archived modules
         ELEMENTARY_CHARGE,
     )
 
-from tests.test_config import PROTON, TestConfiguration, create_bunch_uniform_distribution
+from tests.test_config import (
+    PROTON,
+    TestConfiguration,
+    create_bunch_uniform_distribution,
+)
 
 
 class TestElectromagneticPhysics:
@@ -84,9 +88,7 @@ class TestElectromagneticPhysics:
         expected_magnitude = abs(q1 * q2) / (distance**2)
         calculated_magnitude = np.linalg.norm(force)
         assert force[0] < 0
-        assert np.isclose(
-            calculated_magnitude, expected_magnitude, rtol=self.tolerance
-        )
+        assert np.isclose(calculated_magnitude, expected_magnitude, rtol=self.tolerance)
 
     @pytest.mark.physics
     def test_distance_protection(self) -> None:
@@ -144,9 +146,7 @@ class TestElectromagneticPhysics:
             "t": np.array([0.0]),
         }
 
-        assert np.isclose(
-            electron_bunch["Pt"][0], expected_pt, rtol=1e-3
-        )
+        assert np.isclose(electron_bunch["Pt"][0], expected_pt, rtol=1e-3)
 
     @pytest.mark.physics
     def test_relativistic_energy_momentum_relation(self) -> None:
@@ -160,9 +160,7 @@ class TestElectromagneticPhysics:
         beta = np.sqrt(1 - 1 / gamma**2)
         calculated_momentum_mev = gamma * mass * beta
 
-        assert np.isclose(
-            calculated_momentum_mev, momentum_mev, rtol=self.tolerance
-        )
+        assert np.isclose(calculated_momentum_mev, momentum_mev, rtol=self.tolerance)
 
     @pytest.mark.physics
     def test_complex_physics_selection(self) -> None:

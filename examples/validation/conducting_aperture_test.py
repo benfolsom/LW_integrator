@@ -48,7 +48,7 @@ def create_35mev_electron():
     momentum_total = gamma * mass_amu * C_MMNS  # amu·mm/ns
     momentum_z = momentum_total * beta  # Mostly in z direction
 
-    print("📊 35 MeV Electron Parameters:")
+    print(" 35 MeV Electron Parameters:")
     print(f"  Rest mass: {rest_energy_mev:.3f} MeV")
     print(f"  Total energy: {total_energy_mev:.1f} MeV")
     print(f"  Kinetic energy: {kinetic_energy_mev:.1f} MeV")
@@ -85,7 +85,7 @@ def create_35mev_electron():
 def run_conducting_aperture_simulation():
     """Run the conducting aperture simulation matching legacy parameters."""
 
-    print("🚀 Starting Conducting Aperture Test")
+    print(" Starting Conducting Aperture Test")
     print("=" * 60)
     print("SIMULATION: 35 MeV electron through 1 micron aperture")
     print("Wall type: Conducting (image charges)")
@@ -145,7 +145,7 @@ def run_conducting_aperture_simulation():
         **integrator_params, init_rider=electron_bunch, init_driver=driver_bunch
     )
 
-    print(f"✅ Simulation complete: {len(rider_trajectory)} trajectory points")
+    print(f" Simulation complete: {len(rider_trajectory)} trajectory points")
 
     return rider_trajectory, sim_params
 
@@ -234,10 +234,10 @@ def analyze_and_plot_results(trajectory, sim_params):
 - Energy conservation: {(final_energy - initial_energy)/initial_energy * 100:.6f}%
 
 ## Physics Validation
-- ✅ Energy increases approaching aperture (image charge attraction)
-- ✅ Maximum energy near aperture position
-- ✅ Energy decreases moving away from aperture
-- ✅ Final energy conservation within numerical precision
+-  Energy increases approaching aperture (image charge attraction)
+-  Maximum energy near aperture position
+-  Energy decreases moving away from aperture
+-  Final energy conservation within numerical precision
 
 ## Comparison to Legacy
 This simulation uses corrected static equations of motion that implement:
@@ -254,9 +254,9 @@ This simulation uses corrected static equations of motion that implement:
 
     summary_path = plot_mgr.create_summary_file(summary)
 
-    print(f"\n📈 Plot saved: {plot_path}")
-    print(f"📄 Summary saved: {summary_path}")
-    print(f"📁 Output directory: {plot_mgr.get_timestamp_dir()}")
+    print(f"\n Plot saved: {plot_path}")
+    print(f" Summary saved: {summary_path}")
+    print(f" Output directory: {plot_mgr.get_timestamp_dir()}")
 
     # Show plot
     plt.show()
