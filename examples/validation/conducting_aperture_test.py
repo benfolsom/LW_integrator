@@ -283,7 +283,13 @@ def main():
         trajectory, sim_params = run_conducting_aperture_simulation()
 
         # Analyze and plot results
-        results = analyze_and_plot_results(trajectory, sim_params)
+        analysis = analyze_and_plot_results(trajectory, sim_params)
+
+        max_energy_mev = analysis["max_energy"]
+        max_energy_position = analysis["max_energy_position"]
+        print(
+            f"Peak energy {max_energy_mev:.3f} MeV at z = {max_energy_position:.3f} mm"
+        )
 
         print("\n" + "=" * 60)
         print("CONDUCTING APERTURE TEST COMPLETE")

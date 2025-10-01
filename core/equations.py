@@ -71,37 +71,43 @@ def retarded_equations_of_motion(
         "dummy": np.zeros_like(trajectory[index_traj]["bdotz"]),
     }
 
-    for l in range(len(trajectory[index_traj]["x"])):
-        indices_new = chrono_match_indices(trajectory, trajectory_ext, index_traj, l)
+    for particle_index in range(len(trajectory[index_traj]["x"])):
+        indices_new = chrono_match_indices(
+            trajectory, trajectory_ext, index_traj, particle_index
+        )
         max_ext_idx = len(trajectory_ext) - 1
         indices_new_bounded = np.minimum(np.maximum(indices_new, 0), max_ext_idx)
 
         nhat = compute_retarded_distance(
-            trajectory, trajectory_ext, index_traj, l, indices_new_bounded
+            trajectory,
+            trajectory_ext,
+            index_traj,
+            particle_index,
+            indices_new_bounded,
         )
 
-        result["x"][l] = trajectory[index_traj]["x"][l]
-        result["y"][l] = trajectory[index_traj]["y"][l]
-        result["z"][l] = trajectory[index_traj]["z"][l]
-        result["t"][l] = trajectory[index_traj]["t"][l]
+        result["x"][particle_index] = trajectory[index_traj]["x"][particle_index]
+        result["y"][particle_index] = trajectory[index_traj]["y"][particle_index]
+        result["z"][particle_index] = trajectory[index_traj]["z"][particle_index]
+        result["t"][particle_index] = trajectory[index_traj]["t"][particle_index]
 
-        accumulated_px = trajectory[index_traj]["Px"][l]
-        accumulated_py = trajectory[index_traj]["Py"][l]
-        accumulated_pz = trajectory[index_traj]["Pz"][l]
-        accumulated_pt = trajectory[index_traj]["Pt"][l]
+        accumulated_px = trajectory[index_traj]["Px"][particle_index]
+        accumulated_py = trajectory[index_traj]["Py"][particle_index]
+        accumulated_pz = trajectory[index_traj]["Pz"][particle_index]
+        accumulated_pt = trajectory[index_traj]["Pt"][particle_index]
 
         accumulated_x_field = 0.0
         accumulated_y_field = 0.0
         accumulated_z_field = 0.0
 
         charge_i = (
-            trajectory[index_traj]["q"][l]
+            trajectory[index_traj]["q"][particle_index]
             if hasattr(trajectory[index_traj]["q"], "__getitem__")
             else trajectory[index_traj]["q"]
         )
 
         mass_i = (
-            trajectory[index_traj]["m"][l]
+            trajectory[index_traj]["m"][particle_index]
             if hasattr(trajectory[index_traj]["m"], "__getitem__")
             else trajectory[index_traj]["m"]
         )
@@ -117,9 +123,9 @@ def retarded_equations_of_motion(
                 charge_j = trajectory_ext[ext_idx]["q"]
 
             beta_vec = (
-                trajectory[index_traj]["bx"][l],
-                trajectory[index_traj]["by"][l],
-                trajectory[index_traj]["bz"][l],
+                trajectory[index_traj]["bx"][particle_index],
+                trajectory[index_traj]["by"][particle_index],
+                trajectory[index_traj]["bz"][particle_index],
             )
             beta_ext = (
                 trajectory_ext[ext_idx]["bx"][j],
@@ -141,7 +147,7 @@ def retarded_equations_of_motion(
             bdot_scalar_ext = np.dot(beta_ext, bdot_ext)
             betas_scalar = np.dot(beta_ext, beta_vec)
 
-            gamma_i = trajectory[index_traj]["gamma"][l]
+            gamma_i = trajectory[index_traj]["gamma"][particle_index]
             gamma_j = trajectory_ext[ext_idx]["gamma"][j]
 
             if gamma_j > 1e6 or gamma_i > 1e6:
@@ -254,116 +260,133 @@ def retarded_equations_of_motion(
             accumulated_y_field += field_contribution * trajectory_ext[ext_idx]["by"][j]
             accumulated_z_field += field_contribution * trajectory_ext[ext_idx]["bz"][j]
 
-        result["Px"][l] = accumulated_px
-        result["Py"][l] = accumulated_py
-        result["Pz"][l] = accumulated_pz
-        result["Pt"][l] = accumulated_pt
+        result["Px"][particle_index] = accumulated_px
+        result["Py"][particle_index] = accumulated_py
+        result["Pz"][particle_index] = accumulated_pz
+        result["Pt"][particle_index] = accumulated_pt
 
-        result["gamma"][l] = result["Pt"][l] / (mass_i * C_MMNS)
-        result["t"][l] = trajectory[index_traj]["t"][l] + h * result["gamma"][l]
-
-        result["x"][l] = trajectory[index_traj]["x"][l] + h / mass_i * (
-            result["Px"][l] - accumulated_x_field * mass_i
+        result["gamma"][particle_index] = result["Pt"][particle_index] / (
+            mass_i * C_MMNS
         )
-        result["y"][l] = trajectory[index_traj]["y"][l] + h / mass_i * (
-            result["Py"][l] - accumulated_y_field * mass_i
-        )
-        result["z"][l] = trajectory[index_traj]["z"][l] + h / mass_i * (
-            result["Pz"][l] - accumulated_z_field * mass_i
+        result["t"][particle_index] = (
+            trajectory[index_traj]["t"][particle_index]
+            + h * result["gamma"][particle_index]
         )
 
-        result["bx"][l] = (result["x"][l] - trajectory[index_traj]["x"][l]) / (
-            C_MMNS * h * result["gamma"][l]
-        )
-        result["by"][l] = (result["y"][l] - trajectory[index_traj]["y"][l]) / (
-            C_MMNS * h * result["gamma"][l]
-        )
-        result["bz"][l] = (result["z"][l] - trajectory[index_traj]["z"][l]) / (
-            C_MMNS * h * result["gamma"][l]
-        )
+        result["x"][particle_index] = trajectory[index_traj]["x"][
+            particle_index
+        ] + h / mass_i * (result["Px"][particle_index] - accumulated_x_field * mass_i)
+        result["y"][particle_index] = trajectory[index_traj]["y"][
+            particle_index
+        ] + h / mass_i * (result["Py"][particle_index] - accumulated_y_field * mass_i)
+        result["z"][particle_index] = trajectory[index_traj]["z"][
+            particle_index
+        ] + h / mass_i * (result["Pz"][particle_index] - accumulated_z_field * mass_i)
+
+        result["bx"][particle_index] = (
+            result["x"][particle_index] - trajectory[index_traj]["x"][particle_index]
+        ) / (C_MMNS * h * result["gamma"][particle_index])
+        result["by"][particle_index] = (
+            result["y"][particle_index] - trajectory[index_traj]["y"][particle_index]
+        ) / (C_MMNS * h * result["gamma"][particle_index])
+        result["bz"][particle_index] = (
+            result["z"][particle_index] - trajectory[index_traj]["z"][particle_index]
+        ) / (C_MMNS * h * result["gamma"][particle_index])
 
         btots = np.sqrt(
-            result["bx"][l] ** 2 + result["by"][l] ** 2 + result["bz"][l] ** 2
+            result["bx"][particle_index] ** 2
+            + result["by"][particle_index] ** 2
+            + result["bz"][particle_index] ** 2
         )
         if btots >= 1.0:
             btots_limited = 0.9999999999999
             scale = btots_limited / btots
-            result["bx"][l] *= scale
-            result["by"][l] *= scale
-            result["bz"][l] *= scale
+            result["bx"][particle_index] *= scale
+            result["by"][particle_index] *= scale
+            result["bz"][particle_index] *= scale
             btots = btots_limited
 
-        result["gamma"][l] = 1.0 / np.sqrt(1 - btots**2)
+        result["gamma"][particle_index] = 1.0 / np.sqrt(1 - btots**2)
 
-        result["bdotx"][l] = (result["bx"][l] - trajectory[index_traj]["bx"][l]) / (
-            C_MMNS * h * result["gamma"][l]
-        )
-        result["bdoty"][l] = (result["by"][l] - trajectory[index_traj]["by"][l]) / (
-            C_MMNS * h * result["gamma"][l]
-        )
-        result["bdotz"][l] = (result["bz"][l] - trajectory[index_traj]["bz"][l]) / (
-            C_MMNS * h * result["gamma"][l]
-        )
+        result["bdotx"][particle_index] = (
+            result["bx"][particle_index] - trajectory[index_traj]["bx"][particle_index]
+        ) / (C_MMNS * h * result["gamma"][particle_index])
+        result["bdoty"][particle_index] = (
+            result["by"][particle_index] - trajectory[index_traj]["by"][particle_index]
+        ) / (C_MMNS * h * result["gamma"][particle_index])
+        result["bdotz"][particle_index] = (
+            result["bz"][particle_index] - trajectory[index_traj]["bz"][particle_index]
+        ) / (C_MMNS * h * result["gamma"][particle_index])
 
         rad_frc_z_rhs = (
-            -result["gamma"][l] ** 3
-            * (mass_i * result["bdotz"][l] ** 2 * C_MMNS**2)
-            * result["bz"][l]
+            -result["gamma"][particle_index] ** 3
+            * (mass_i * result["bdotz"][particle_index] ** 2 * C_MMNS**2)
+            * result["bz"][particle_index]
             * C_MMNS
         )
         rad_frc_z_lhs = (
-            (result["gamma"][l] - trajectory[index_traj]["gamma"][l])
-            / (h * result["gamma"][l])
+            (
+                result["gamma"][particle_index]
+                - trajectory[index_traj]["gamma"][particle_index]
+            )
+            / (h * result["gamma"][particle_index])
             * mass_i
-            * result["bdotz"][l]
-            * result["bz"][l]
+            * result["bdotz"][particle_index]
+            * result["bz"][particle_index]
             * C_MMNS**2
         )
 
         char_time_i = (
-            trajectory[index_traj]["char_time"][l]
+            trajectory[index_traj]["char_time"][particle_index]
             if hasattr(trajectory[index_traj]["char_time"], "__getitem__")
             else trajectory[index_traj]["char_time"]
         )
 
         if rad_frc_z_rhs > (char_time_i / 1e1) or rad_frc_z_lhs > (char_time_i / 1e1):
-            result["bdotz"][l] += (
+            result["bdotz"][particle_index] += (
                 char_time_i * (rad_frc_z_lhs + rad_frc_z_rhs) / (mass_i * C_MMNS)
             )
 
             rad_frc_x_rhs = (
-                -result["gamma"][l] ** 3
-                * (mass_i * result["bdotx"][l] ** 2 * C_MMNS**2)
-                * result["bx"][l]
+                -result["gamma"][particle_index] ** 3
+                * (mass_i * result["bdotx"][particle_index] ** 2 * C_MMNS**2)
+                * result["bx"][particle_index]
                 * C_MMNS
             )
             rad_frc_x_lhs = (
-                (result["gamma"][l] - trajectory[index_traj]["gamma"][l])
-                / (h * result["gamma"][l])
+                (
+                    result["gamma"][particle_index]
+                    - trajectory[index_traj]["gamma"][particle_index]
+                )
+                / (h * result["gamma"][particle_index])
                 * mass_i
-                * result["bdotx"][l]
-                * result["bx"][l]
-                * C_MMNS**2
-            )
-            rad_frc_y_rhs = (
-                -result["gamma"][l] ** 3
-                * (mass_i * result["bdoty"][l] ** 2 * C_MMNS**2)
-                * result["by"][l]
-                * C_MMNS
-            )
-            rad_frc_y_lhs = (
-                (result["gamma"][l] - trajectory[index_traj]["gamma"][l])
-                / (h * result["gamma"][l])
-                * mass_i
-                * result["bdoty"][l]
-                * result["by"][l]
+                * result["bdotx"][particle_index]
+                * result["bx"][particle_index]
                 * C_MMNS**2
             )
 
-            result["bdotx"][l] += (
+            rad_frc_y_rhs = (
+                -result["gamma"][particle_index] ** 3
+                * (mass_i * result["bdoty"][particle_index] ** 2 * C_MMNS**2)
+                * result["by"][particle_index]
+                * C_MMNS
+            )
+            rad_frc_y_lhs = (
+                (
+                    result["gamma"][particle_index]
+                    - trajectory[index_traj]["gamma"][particle_index]
+                )
+                / (h * result["gamma"][particle_index])
+                * mass_i
+                * result["bdoty"][particle_index]
+                * result["by"][particle_index]
+                * C_MMNS**2
+            )
+
+            result["bdotx"][particle_index] += (
                 char_time_i * (rad_frc_x_lhs + rad_frc_x_rhs) / (mass_i * C_MMNS)
             )
-            result["bdoty"][l] += (
+            result["bdoty"][particle_index] += (
                 char_time_i * (rad_frc_y_lhs + rad_frc_y_rhs) / (mass_i * C_MMNS)
             )
 

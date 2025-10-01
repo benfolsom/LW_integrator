@@ -121,11 +121,11 @@ def chrono_match_indices(
     )
     index_traj_new = np.empty(len(trajectory_ext[index_traj]["x"]), dtype=int)
 
-    for l in range(len(trajectory_ext[index_traj]["x"])):
+    for sample_index in range(len(trajectory_ext[index_traj]["x"])):
         b_nhat = (
-            trajectory_ext[index_traj]["bx"][l] * nhat["nx"][l]
-            + trajectory_ext[index_traj]["by"][l] * nhat["ny"][l]
-            + trajectory_ext[index_traj]["bz"][l] * nhat["nz"][l]
+            trajectory_ext[index_traj]["bx"][sample_index] * nhat["nx"][sample_index]
+            + trajectory_ext[index_traj]["by"][sample_index] * nhat["ny"][sample_index]
+            + trajectory_ext[index_traj]["bz"][sample_index] * nhat["nz"][sample_index]
         )
 
         denominator = 1.0 - b_nhat
@@ -134,9 +134,11 @@ def chrono_match_indices(
         if abs(denominator) < epsilon:
             if (
                 "char_time" in trajectory_ext[index_traj]
-                and len(trajectory_ext[index_traj]["char_time"]) > l
+                and len(trajectory_ext[index_traj]["char_time"]) > sample_index
             ):
-                max_retardation = 10.0 * trajectory_ext[index_traj]["char_time"][l]
+                max_retardation = (
+                    10.0 * trajectory_ext[index_traj]["char_time"][sample_index]
+                )
             else:
                 if len(trajectory_ext[index_traj]["t"]) > 1:
                     max_retardation = 10.0 * trajectory_ext[index_traj]["t"][1]
@@ -145,22 +147,22 @@ def chrono_match_indices(
             delta_t = max_retardation
         else:
             delta_t = (
-                nhat["R"][l]
+                nhat["R"][sample_index]
                 * (1 + b_nhat)
-                * trajectory_ext[index_traj]["gamma"][l] ** 2
+                * trajectory_ext[index_traj]["gamma"][sample_index] ** 2
                 / trajectory[index_traj]["gamma"][index_part]
                 / C_MMNS
             )
 
-        t_ext_new = trajectory_ext[index_traj]["t"][l] - delta_t
+        t_ext_new = trajectory_ext[index_traj]["t"][sample_index] - delta_t
 
-        index_traj_new[l] = index_traj
+        index_traj_new[sample_index] = index_traj
         if t_ext_new < 0:
             continue
 
         for k in range(index_traj, -1, -1):
-            if trajectory_ext[index_traj - k]["t"][l] > t_ext_new:
-                index_traj_new[l] = index_traj - k
+            if trajectory_ext[index_traj - k]["t"][sample_index] > t_ext_new:
+                index_traj_new[sample_index] = index_traj - k
                 break
 
     return index_traj_new

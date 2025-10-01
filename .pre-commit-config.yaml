@@ -44,6 +44,7 @@ repos:
     rev: v1.11.2
     hooks:
       - id: mypy
+        files: ^(core/|lw_integrator/)
         exclude: ^(LW_local_refs/|archive/|analysis/|tests/verification_comparison\.ipynb|analysis/aperture_verification\.py|tests/archive/|tests/physics_tests/|docs/|legacy/|docs/build/|test_outputs/|\.llm_diary/)
         additional_dependencies: [types-PyYAML]
         args: [--ignore-missing-imports]

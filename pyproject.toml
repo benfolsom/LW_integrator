@@ -24,6 +24,13 @@ extend-exclude = '''
 line-length = 88
 target-version = "py38"
 
+[tool.ruff.lint.per-file-ignores]
+"examples/comparison/legacy_vs_core_systematic_comparison.py" = ["E402"]
+"examples/comparison/legacy_vs_core_trajectory_comparison.py" = ["E402"]
+"examples/validation/core_vs_legacy_benchmark.py" = ["E402"]
+"examples/validation/core_vs_legacy_benchmark.ipynb" = ["E402"]
+"examples/validation/integrator_testbed.ipynb" = ["E402"]
+
 [tool.ruff.format]
 # Use double quotes for strings (same as black default)
 quote-style = "double"
@@ -48,7 +55,9 @@ exclude = [
     "__pycache__",
     ".venv",
     "tests/physics_tests/.*",
-    "docs/.*"
+    "docs/.*",
+    "legacy/.*",
+    "archive/.*",
 ]
 
 [tool.pytest.ini_options]

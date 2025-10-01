@@ -68,7 +68,8 @@ def generate_conducting_image(
     result = zeros_like_state(vector)
 
     for i in range(len(vector["x"])):
-        r = np.sqrt(vector["x"][i] ** 2 + vector["y"][i] ** 2)
+		# TODO: Verify that this is properly deprecated
+		# r = np.sqrt(vector["x"][i] ** 2 + vector["y"][i] ** 2)
 
         if vector["z"][i] >= wall_z:
             result["q"].fill(0.0)

@@ -9,7 +9,7 @@ API used by historical notebooks and regression tests.
 
 from __future__ import annotations
 
-from typing import Any, MutableMapping, Optional
+from typing import Any, MutableMapping, Optional, overload
 
 import numpy as np
 
@@ -38,6 +38,14 @@ class LienardWiechertIntegrator:
     def __init__(self, config: Optional[IntegratorConfig] = None) -> None:
         self.c_mmns = C_MMNS
         self.config = config
+
+    @staticmethod
+    @overload
+    def _clone_state(state: ParticleState) -> ParticleState: ...
+
+    @staticmethod
+    @overload
+    def _clone_state(state: None) -> None: ...
 
     @staticmethod
     def _clone_state(state: ParticleState | None) -> ParticleState | None:

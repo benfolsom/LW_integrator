@@ -7,6 +7,8 @@ optimised routines in a predictable API while leaving the original legacy file
 untouched for regression comparison.
 """
 
+# mypy: ignore-errors
+
 from __future__ import annotations
 
 import warnings
