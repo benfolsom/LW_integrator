@@ -1,21 +1,38 @@
-from setuptools import setup, find_packages
+from pathlib import Path
+from typing import Any, Dict
 
-with open("README.md", "r", encoding="utf-8") as fh:
+from setuptools import find_packages, setup
+
+PROJECT_ROOT = Path(__file__).parent
+
+
+def load_version() -> str:
+    version_file = Path(__file__).parent / "core" / "_version.py"
+    namespace: Dict[str, Any] = {}
+    with version_file.open("r", encoding="utf-8") as handle:
+        exec(handle.read(), namespace)
+    return namespace["__version__"]
+def read_long_description() -> str:
+    primary = PROJECT_ROOT / "README_PRODUCTION.md"
+    fallback = PROJECT_ROOT / "README.md"
+
+    if primary.is_file():
+        return primary.read_text(encoding="utf-8")
+    if fallback.is_file():
+        return fallback.read_text(encoding="utf-8")
+    return "LW Integrator"
     long_description = fh.read()
-
-with open("requirements.txt", "r") as fh:
-    requirements = [
-        line.strip() for line in fh if line.strip() and not line.startswith("#")
-    ]
-
 
 # Read README for long description
 with open("README_PRODUCTION.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
+package_version = load_version()
+long_description = read_long_description()
+
 setup(
     name="lw-integrator",
-    version="1.0.0",
+    version=package_version,
     author="Ben Folsom",
     author_email="",
     description="Production-ready Lienard-Wiechert electromagnetic field simulator",
@@ -53,6 +70,13 @@ setup(
         "examples": [
             "jupyter>=1.0.0",
             "ipywidgets>=7.6.0",
+        ],
+        "docs": [
+            "sphinx>=7.2",
+            "sphinx-rtd-theme>=1.3",
+            "nbsphinx>=0.9",
+            "ipykernel>=6.0",
+            "sphinx-autobuild>=2021.3",
         ],
     },
     entry_points={

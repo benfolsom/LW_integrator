@@ -6,6 +6,15 @@
 
 import sys
 from pathlib import Path
+from typing import Any, Dict
+
+
+def _load_version() -> str:
+    version_file = project_root / "core" / "_version.py"
+    namespace: Dict[str, Any] = {}
+    with version_file.open("r", encoding="utf-8") as handle:
+        exec(handle.read(), namespace)
+    return namespace["__version__"]
 
 # Add the project root to Python path
 docs_dir = Path(__file__).parent.parent
@@ -17,8 +26,8 @@ sys.path.insert(0, str(project_root))
 project = "LW Integrator"
 copyright = "2025, LW Integrator Development Team"
 author = "LW Integrator Development Team"
-version = "1.0"
-release = "1.0.0"
+release = _load_version()
+version = ".".join(release.split(".")[:2])
 
 # -- General configuration ---------------------------------------------------
 
