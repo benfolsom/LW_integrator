@@ -14,14 +14,7 @@ import numpy as np
 from typing import Dict, List, Any
 from dataclasses import dataclass
 
-# Import core physics constants
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from physics.constants import C_MMNS
-from physics.particle_initialization import ELEMENTARY_CHARGE
+from core.constants import C_MMNS, ELEMENTARY_CHARGE
 
 
 @dataclass

@@ -1,11 +1,34 @@
-"""
-Core module for the Lienard-Wiechert integrator system.
+"""Top-level exports for the Liénard–Wiechert integrator core."""
 
-This module contains the core integration algorithms and utilities.
-"""
+from __future__ import annotations
 
-# Expose the validated trajectory integrator and version metadata
 from . import trajectory_integrator
-from ._version import __version__, VERSION
+from ._version import VERSION, __version__
+from .constants import (
+	C_MMNS,
+	CONVERGENCE_TOLERANCE,
+	ELECTRON_MASS_AMU,
+	ELEMENTARY_CHARGE,
+	NUMERICAL_EPSILON,
+	PROTON_MASS_AMU,
+)
+from .integrator import retarded_integrator, run_integrator
+from .types import IntegratorConfig, ParticleState, SimulationType, Trajectory
 
-__all__ = ["trajectory_integrator", "__version__", "VERSION"]
+__all__ = [
+	"trajectory_integrator",
+	"retarded_integrator",
+	"run_integrator",
+	"IntegratorConfig",
+	"SimulationType",
+	"ParticleState",
+	"Trajectory",
+	"C_MMNS",
+	"ELEMENTARY_CHARGE",
+	"ELECTRON_MASS_AMU",
+	"PROTON_MASS_AMU",
+	"NUMERICAL_EPSILON",
+	"CONVERGENCE_TOLERANCE",
+	"__version__",
+	"VERSION",
+]
