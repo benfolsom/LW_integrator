@@ -5,8 +5,12 @@ This module provides harmonized particle state initialization between legacy and
 integrator systems, ensuring consistent physics across both implementations.
 """
 
+from typing import Any, Dict, Mapping, Tuple, Union
+
 import numpy as np
-from typing import Dict, Tuple, Any
+
+Scalar = Union[float, int]
+ParticleParams = Mapping[str, Scalar]
 
 
 def create_particle_state(
@@ -48,9 +52,6 @@ def create_particle_state(
     """
 
     # Physical constants (matching legacy values exactly)
-    c_mmns = 2.99792458e8  # Speed of light in mm/ns
-    proton_mass_amu = 1.007319468
-    electron_mass_mev = 0.510999  # Electron rest mass in MeV
     amu_to_mev = 931.494  # Conversion factor
 
     # Calculate rest energy
@@ -117,8 +118,16 @@ def create_particle_state(
     return particle_state, rest_energy_mev
 
 
+def _as_float(value: Scalar) -> float:
+    return float(value)
+
+
+def _as_int(value: Scalar) -> int:
+    return int(value)
+
+
 def initialize_particle_bunches(
-    rider_params: Dict[str, float], driver_params: Dict[str, float]
+    rider_params: ParticleParams, driver_params: ParticleParams
 ) -> Tuple[Dict[str, Any], Dict[str, Any], float, float]:
     """
     Initialize both rider and driver particle bunches.
@@ -137,25 +146,25 @@ def initialize_particle_bunches(
     """
 
     rider_state, rider_energy = create_particle_state(
-        rider_params["starting_distance"],
-        rider_params["transv_momentum"],
-        rider_params["starting_pz"],
-        rider_params["stripped_ions"],
-        rider_params["particle_mass_amu"],
-        rider_params["transv_distance"],
-        rider_params["particle_count"],
-        rider_params["charge_sign"],
+        _as_float(rider_params["starting_distance"]),
+        _as_float(rider_params["transv_momentum"]),
+        _as_float(rider_params["starting_pz"]),
+        _as_float(rider_params["stripped_ions"]),
+        _as_float(rider_params["particle_mass_amu"]),
+        _as_float(rider_params["transv_distance"]),
+        _as_int(rider_params["particle_count"]),
+        _as_float(rider_params["charge_sign"]),
     )
 
     driver_state, driver_energy = create_particle_state(
-        driver_params["starting_distance"],
-        driver_params["transv_momentum"],
-        driver_params["starting_pz"],
-        driver_params["stripped_ions"],
-        driver_params["particle_mass_amu"],
-        -rider_params["transv_distance"],  # Opposite transverse position
-        driver_params["particle_count"],
-        driver_params["charge_sign"],
+        _as_float(driver_params["starting_distance"]),
+        _as_float(driver_params["transv_momentum"]),
+        _as_float(driver_params["starting_pz"]),
+        _as_float(driver_params["stripped_ions"]),
+        _as_float(driver_params["particle_mass_amu"]),
+        -_as_float(rider_params["transv_distance"]),  # Opposite transverse position
+        _as_int(driver_params["particle_count"]),
+        _as_float(driver_params["charge_sign"]),
     )
 
     return rider_state, driver_state, rider_energy, driver_energy

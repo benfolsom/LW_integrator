@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Any, Callable, Optional
 
 import numpy as np
 
-ParticleState = Dict[str, np.ndarray]
-Trajectory = Sequence[ParticleState]
+from .types import ParticleState, Trajectory
+
 StepFunction = Callable[[float, Trajectory, Trajectory, int, float, Any], ParticleState]
 
 
