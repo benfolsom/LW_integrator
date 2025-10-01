@@ -250,7 +250,7 @@ def static_integrator_fixed(steps, h_step, wall_Z, apt_R, sim_type,
     return trajectory, trajectory_drv
 
 
-print("✅ Legacy integrator fixed - proper dual-gamma self-consistency implemented")
+print(" Legacy integrator fixed - proper dual-gamma self-consistency implemented")
 print("Key fixes:")
 print("  - Energy-based gamma validation: γ ≥ 1.0")
 print("  - Velocity scaling when β ≥ c")  

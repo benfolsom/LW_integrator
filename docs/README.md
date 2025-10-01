@@ -1,6 +1,6 @@
 # LW Integrator Documentation (2025 refresh)
 
-This directory hosts the documentation set for the LW (Liénard–Wiechert) Integrator. 
+This directory hosts the documentation set for the LW (Liénard–Wiechert) Integrator.
 
 
 ```
@@ -40,7 +40,7 @@ docs/
 
 ## Content principles
 
-- **Reality first** – every page documents code that currently ships in `core/`, `input_output/`, or `examples/`.  
+- **Reality first** – every page documents code that currently ships in `core/`, `input_output/`, or `examples/`.
 - **Link to source** – favour short narratives that send readers to modules, scripts, or notebooks in the repository.  The API pages use `automodule` blocks to pull docstrings straight from the code so they stay current.
 - **Workflow oriented** – the main sections map to real tasks: setting up an environment, reproducing validation plots, or extending the integrator.  Keep tutorials in sync with the scripts and notebooks that they reference.
 

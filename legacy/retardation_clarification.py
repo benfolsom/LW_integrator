@@ -27,7 +27,7 @@ Author: Ben Folsom (human oversight)
 Date: 2025-09-12
 """
 
-print("📚 RETARDATION DELAY CLARIFICATION")
+print(" RETARDATION DELAY CLARIFICATION")
 print("="*50)
 print()
 print("TERMINOLOGY CLARIFICATION:")

@@ -66,7 +66,7 @@ class SelfConsistentCovariantIntegrator:
         dict : Integration diagnostics
         """
         if self.debug:
-            print(f"🔄 Starting self-consistent integration step (dt={dt:.2e})")
+            print(f" Starting self-consistent integration step (dt={dt:.2e})")
 
         # Store initial state
         initial_state = self._copy_particle_state(particles)
@@ -101,7 +101,7 @@ class SelfConsistentCovariantIntegrator:
 
             if gamma_change < self.tolerance:
                 if self.debug:
-                    print(f"  ✅ Converged after {iteration+1} iterations")
+                    print(f"   Converged after {iteration+1} iterations")
 
                 diagnostics = {
                     'converged': True,
@@ -353,7 +353,7 @@ def test_self_consistent_integrator():
     """
     Test the self-consistent covariant integrator with a simple two-particle case.
     """
-    print("🧪 TESTING SELF-CONSISTENT COVARIANT INTEGRATOR")
+    print(" TESTING SELF-CONSISTENT COVARIANT INTEGRATOR")
     print("="*60)
 
     # Create test particles (head-on collision scenario)
@@ -386,7 +386,7 @@ def test_self_consistent_integrator():
     try:
         new_state, diagnostics = integrator.integrate_step(particles, dt)
 
-        print(f"\n✅ Integration successful!")
+        print(f"\n Integration successful!")
         print(f"Converged: {diagnostics['converged']}")
         print(f"Iterations: {diagnostics['iterations']}")
         print(f"Final Δγ: {diagnostics['final_gamma_change']:.2e}")
@@ -397,7 +397,7 @@ def test_self_consistent_integrator():
         return True
 
     except Exception as e:
-        print(f"❌ Integration failed: {e}")
+        print(f" Integration failed: {e}")
         return False
 
 
