@@ -15,15 +15,10 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
+from .images import generate_conducting_image, generate_switching_image
+from .integrator import retarded_integrator
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
-from .trajectory_integrator import (
-    IntegratorConfig,
-    ParticleState,
-    SimulationType,
-    generate_conducting_image,
-    generate_switching_image,
-    retarded_integrator,
-)
+from .types import IntegratorConfig, ParticleState, SimulationType
 
 C_MMNS = 299.792458  # mm/ns (identical to legacy constant)
 
