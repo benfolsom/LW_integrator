@@ -78,6 +78,14 @@ python -c "import sphinx; import sphinx_rtd_theme; import nbsphinx" 2>/dev/null 
     exit 1
 }
 
+if [ "$WATCH" = true ]; then
+    python -c "import sphinx_autobuild" 2>/dev/null || {
+        echo -e "${RED}Error: sphinx-autobuild is required for --watch${NC}"
+        echo "Install it with: pip install -e \".[docs]\""
+        exit 1
+    }
+fi
+
 # Build documentation
 echo -e "${YELLOW}Building $BUILD_TYPE documentation...${NC}"
 

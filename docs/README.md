@@ -22,11 +22,11 @@ Legacy pages that are no longer linked remain in `docs/source/` for historical r
 
 ## Building the docs
 
-1. Ensure the documentation dependencies are available.  Using the project’s virtual environment, run:
+1. Ensure the documentation dependencies are available.  From the repository root and inside the project’s virtual environment, run:
 	```bash
-	pip install sphinx sphinx-rtd-theme nbsphinx
+	pip install -e ".[docs]"
 	```
-	The `pyproject.toml` already declares the runtime libraries (NumPy, SciPy, etc.) that Sphinx loads while importing modules.
+	This installs Sphinx, `sphinx-autobuild`, and the supporting extensions declared in `setup.py`.  The `pyproject.toml` already provides the runtime libraries (NumPy, SciPy, etc.) that Sphinx imports while building modules.
 
 2. From `docs/`, generate HTML output:
 	```bash
