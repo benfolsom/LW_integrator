@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from setuptools import find_packages, setup
 
@@ -7,11 +7,13 @@ PROJECT_ROOT = Path(__file__).parent
 
 
 def load_version() -> str:
-    version_file = Path(__file__).parent / "core" / "_version.py"
+    version_file = PROJECT_ROOT / "core" / "_version.py"
     namespace: Dict[str, Any] = {}
     with version_file.open("r", encoding="utf-8") as handle:
         exec(handle.read(), namespace)
-    return namespace["__version__"]
+    return cast(str, namespace["__version__"])
+
+
 def read_long_description() -> str:
     primary = PROJECT_ROOT / "README_PRODUCTION.md"
     fallback = PROJECT_ROOT / "README.md"
@@ -21,11 +23,7 @@ def read_long_description() -> str:
     if fallback.is_file():
         return fallback.read_text(encoding="utf-8")
     return "LW Integrator"
-    long_description = fh.read()
 
-# Read README for long description
-with open("README_PRODUCTION.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
 
 package_version = load_version()
 long_description = read_long_description()

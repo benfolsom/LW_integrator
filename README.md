@@ -1,245 +1,178 @@
-# LW Integrator: Covariant Electromagnetic Particle Tracking
+# LW Integrator
 
-A high-precision electromagnetic particle tracking code implementing Liénard-Wiechert field calculations with conjugate momentum formulation and explicit integration methods.
+The LW Integrator is a covariant charged-particle tracking code that evaluates
+retarded Liénard–Wiechert potentials to obtain first-principles beam dynamics.
+The repository contains a modernised ``core`` implementation that mirrors the
+validated legacy solver, an updated Sphinx documentation set, and a collection
+of validation scripts and notebooks.
 
-## Key Features
+---
 
-- **Covariant Formulation**: Relativistically correct electromagnetic field calculations using Liénard-Wiechert potentials
-- **Conjugate Momentum**: Canonical momentum formulation (P = γmv + qA) ensuring gauge invariance and Hamiltonian consistency  
-- **Explicit Integration**: Computationally efficient predictor-corrector scheme with adaptive time stepping
-- **Energy Conservation**: Advanced monitoring and stability control for long-term integration accuracy
-- **Interactive Debugging**: Comprehensive Jupyter notebook environment for parameter testing and visualization
+## Contents
 
-## Quick Start
+1. [Project overview](#project-overview)
+2. [Repository layout](#repository-layout)
+3. [Environment setup](#environment-setup)
+4. [Running validation workloads](#running-validation-workloads)
+5. [Documentation workflow](#documentation-workflow)
+6. [Versioning and release notes](#versioning-and-release-notes)
+7. [Development guidelines](#development-guidelines)
+8. [Support](#support)
 
-### Set up a project-local virtual environment (VS Code friendly)
+---
 
-1. Create a dedicated environment in the project root:
-    ```bash
-    python -m venv .venv
-    ```
-2. Activate it before installing dependencies:
-    ```bash
-    source .venv/bin/activate
-    ```
-3. Install the package in editable mode with extras for notebooks and development tools:
-    ```bash
-    pip install -e .[dev,examples]
-    ```
-4. (Optional but recommended) register the environment as a Jupyter kernel so VS Code notebooks can pick it up automatically:
-    ```bash
-    python -m ipykernel install --user --name lw-integrator --display-name "LW Integrator (.venv)"
-    ```
+## Project overview
 
-Inside VS Code, use the Python interpreter selector (bottom-right status bar or the Command Palette via `Ctrl+Shift+P → Python: Select Interpreter`) and choose `.venv`. Notebook kernels can then be switched to **LW Integrator (.venv)** so that interactive runs share the same dependencies as the CLI.
+* **Physics focus.**  The code integrates particle trajectories using
+  retarded-vector potentials and conjugate-momentum dynamics.  The ``core``
+  package is a faithful transcription of the proven legacy solver and is kept in
+  numerical lockstep by an integration test suite.
+* **Documentation.**  The refreshed Sphinx site under ``docs/`` explains the
+  theoretical background, quick-start workflows, validation procedures, and
+  contributor guidance.  A new ``theory`` page summarises the covariant
+  derivations drawn from the in-repo technical note.
+* **Validation assets.**  The ``examples/validation`` tree provides both Python
+  scripts and notebooks for reproducing benchmark comparisons between the
+  modern and legacy implementations.
 
-### Run the core-vs-legacy benchmark from the CLI or a notebook
+---
 
-The validation benchmark lives at `examples/validation/core_vs_legacy_benchmark.py`.
-
-- **Command line:**
-  ```bash
-    python examples/validation/core_vs_legacy_benchmark.py --seeds 0 1 2 --steps 5000
-  ```
-  Additional flags like `--output <path>` and `--plot` are available; run with `--help` for the full set. Unknown flags coming from VS Code notebooks are ignored gracefully.
-
-- **Notebook usage:**
-  ```python
-    from examples.validation.core_vs_legacy_benchmark import run_benchmark
-
-  results = run_benchmark(
-        seeds=[0, 1, 2],
-        steps=5_000,
-        output_path="./test_outputs/core_vs_legacy.json",
-        plot=True,
-  )
-  ```
-  The helper returns a dictionary with summary statistics and optionally writes artifacts; perfect for parameter sweeps inside notebooks.
-
-### Interactive Debugging Environment
-
-The primary tool for electromagnetic simulation debugging and parameter testing:
-
-```bash
-cd debug_files/
-jupyter notebook electromagnetic_debugging_notebook.ipynb
-```
-
-**Key capabilities:**
-- Configurable simulation parameters with stability controls
-- Multiple test scenarios (proton-antiproton collisions, conducting apertures)
-- Real-time energy conservation monitoring  
-- 3D trajectory visualization
-- Systematic parameter studies
-
-### Basic Usage Example
-
-```python
-from LW_integrator.covariant_integrator_library_heavyion import LienardWiechertIntegrator
-
-# Initialize integrator
-integrator = LienardWiechertIntegrator()
-
-# Critical: Use minimal transverse momentum for stability
-params = SimulationParams(
-    scenario="proton_antiproton",
-    kinetic_energy_mev=500.0,
-    px_initial_fraction=1e-6,  # Essential for energy conservation
-    py_initial_fraction=1e-6,  # Essential for energy conservation
-    cutoff_z_mm=25.0          # Early cutoff prevents runaway behavior
-)
-
-# Run simulation
-results = run_current_implementation(params)
-analyze_trajectory_endpoints(results['rider_trajectory'])
-```
-
-## Mathematical Foundation
-
-### Conjugate Momentum Formulation
-
-The integrator uses canonical (conjugate) momentum throughout:
-
-```
-𝐏_conjugate = γm𝐯 + q𝐀
-```
-
-**Benefits:**
-- Automatic gauge invariance
-- Hamiltonian mechanics compatibility  
-- Natural energy conservation framework
-- Proper relativistic four-vector formulation
-
-### Explicit Integration Scheme
-
-**Integration Algorithm:**
-1. **Field Evaluation**: Calculate E and B fields at current positions
-2. **Force Calculation**: Compute F = q(E + v×B) including retardation
-3. **Momentum Update**: P^(n+1) = P^n + Δt·F (explicit step)
-4. **Position Update**: x^(n+1) = x^n + Δt·v^(n+1)
-5. **Energy Monitoring**: Verify conservation and stability
-
-## Current Development Status
-
-### ✅ Implemented and Validated
-- Ultra-high energy simulations (50+ GeV) with excellent energy conservation (<0.001%)
-- Comprehensive trajectory analysis with initial/final state comparison
-- Interactive debugging environment with parameter controls
-- Systematic stability testing framework
-
-### 🔬 Active Research Areas
-- **Energy Conservation Issues**: Massive violations at medium energies (500 MeV showing +34 million% increase)
-- **Numerical Stability**: Optimizing minimal momentum initialization and early cutoff mechanisms
-- **Parameter Optimization**: Identifying stable integration parameters across energy ranges
-
-### 🎯 Critical Stability Requirements
-- **Minimal Transverse Momentum**: Initialize with px_fraction, py_fraction ≤ 1e-6
-- **Early Cutoff**: Terminate integration after particle crossing events  
-- **Energy-Dependent Stepping**: Smaller time steps for lower energy particles
-- **Conservation Monitoring**: Maintain |ΔE/E| < 10^-6 for stable integration
-
-## Documentation
-
-### Comprehensive Sphinx Documentation
-
-```bash
-cd docs/
-./build_docs.sh
-```
-
-**Documentation Structure:**
-- **User Manual**: Getting started, physics models, examples
-- **API Reference**: Detailed class documentation with mathematical foundations
-- **Developer Guide**: Architecture, conjugate momentum implementation, archive system
-
-### Key Documentation Highlights
-
-**Physics Models**: Detailed mathematical foundations including:
-- Conjugate momentum formulation and gauge invariance
-- Explicit integration scheme with stability analysis  
-- Liénard-Wiechert field calculations with retardation effects
-- Energy conservation monitoring and validation
-
-**Examples and Tutorials**: Practical usage including:
-- High-energy proton-antiproton collision studies
-- Conducting aperture interaction analysis
-- Ultra-high energy validation (50+ GeV)
-- Systematic parameter optimization studies
-
-## Project Structure
+## Repository layout
 
 ```
 LW_windows/
-├── LW_integrator/           # Core integration algorithms
-├── debug_files/             # Active debugging tools
-│   ├── electromagnetic_debugging_notebook.ipynb  # Primary debugging environment
-│   ├── fast_high_energy_test.py                 # High-energy testing framework
-│   └── PERSISTENT_NOTE_TRAJECTORY_ANALYSIS.py   # User requirements
-├── archive/                 # Historical development files  
-│   └── debug_files_legacy/  # Archived test and debug files
-├── docs/                    # Sphinx documentation
-├── core/                    # Fundamental data structures
-├── physics/                 # Physical models and constants
-└── tests/                   # Validation test suite
-    └── …
+├── core/                 # Maintained integrator implementation and helpers
+├── docs/                 # Sphinx configuration, sources, and build script
+├── examples/
+│   └── validation/       # CLI and notebook-based comparison studies
+├── input_output/         # Particle bunch initialisation utilities
+├── legacy/               # Archived original solver and notebooks
+├── tests/                # Pytest suite covering physics and helper modules
+├── .github/workflows/    # Continuous-integration pipelines (docs publishing)
+├── core/_version.py      # Single source of truth for the project version
+└── README.md             # You are here
 ```
 
-### Archive structure refresher
+Historical artefacts remain available under ``archive/`` for provenance but are
+not exercised in the current workflows.
 
-Outdated examples, including legacy aperture-transmission diagnostics, now live under `archive/examples/`. Anything still referenced in docs or tutorials remains in the active `examples/` tree.
+---
+
+## Environment setup
+
+1. **Create and activate a virtual environment** (Python 3.8–3.13 are supported).
+
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+2. **Install the package in editable mode** with commonly used extras.
+
+   ```bash
+   pip install -e ".[dev,examples,docs]"
+   ```
+
+   * ``dev`` adds the lint/test toolchain.
+   * ``examples`` installs notebook dependencies.
+   * ``docs`` brings in Sphinx, ``sphinx-autobuild``, and related extensions.
+
+3. **(Optional) register the kernel for Jupyter usage.**
+
+   ```bash
+   python -m ipykernel install --user --name lw-integrator --display-name "LW Integrator (.venv)"
+   ```
+
+---
+
+## Running validation workloads
+
+The canonical comparison between the core and legacy solvers lives in
+``examples/validation/core_vs_legacy_benchmark.py``.  Execute it directly:
+
+```bash
+python examples/validation/core_vs_legacy_benchmark.py --seeds 0 1 2 --steps 5000 --plot
 ```
 
-## Development Workflow
+The script accepts additional options for output paths, DPI control, and plot
+styling.  Consult ``--help`` for the full list.  Companion notebooks in the same
+directory expose an interactive widget-driven interface for exploratory work.
 
-### Archive System
-Outdated debugging and test files have been systematically archived to maintain a clean, focused codebase:
+The ``tests/`` directory contains deterministic Pytest suites that ensure
+physics parity across configurations:
 
-- **Archive Location**: `archive/debug_files_legacy/`
-- **Archived Files**: 25+ legacy debugging and test files  
-- **Current Active Tools**: Interactive debugging notebook, high-energy testing framework, trajectory analysis
-- **Archive Documentation**: Complete mapping of archived → current implementations
+```bash
+pytest tests
+```
 
-### Contributing Guidelines
+---
 
-**Before Contributing:**
-1. Review current issues in the debugging notebook
-2. Understand conjugate momentum formulation (essential for electromagnetic consistency)
-3. Test energy conservation (all features must maintain conservation)
-4. Follow stability requirements (minimal momentum, early cutoffs)
+## Documentation workflow
 
-**Code Standards:**
-- Use conjugate momentum P = γmv + qA throughout
-- Implement explicit integration for computational efficiency
-- Include energy conservation monitoring in all electromagnetic simulations
-- Document mathematical foundations and stability requirements
+All documentation sources are under ``docs/source/``.  The helper script
+``docs/build_docs.sh`` wraps ``sphinx-build`` and ``sphinx-autobuild``.
 
-## Known Issues and Active Development
+* **One-off build** (HTML):
 
-### Critical Energy Conservation Investigation
+  ```bash
+  cd docs
+  ./build_docs.sh --clean --type html
+  ```
 
-**Current Status:**
-- **50 GeV**: Excellent conservation (-0.00015% change) ✅
-- **500 MeV**: Massive violation (+34,390,659% increase) ❌  
-- **Root Cause**: Numerical instabilities at lower energies with larger time steps
+* **Live preview with automatic reload** (requires ``sphinx-autobuild``):
 
-**Active Solutions:**
-- Minimal transverse momentum initialization protocols
-- Energy-dependent adaptive time stepping
-- Early cutoff mechanisms after particle crossing
-- Systematic parameter optimization studies
+  ```bash
+  cd docs
+  ./build_docs.sh --clean --watch
+  ```
 
-### Interactive Debugging Environment
+  The preview runs at ``http://localhost:8000`` as long as the process remains
+  active.
 
-The `electromagnetic_debugging_notebook.ipynb` provides comprehensive tools for:
-- Parameter testing with configurable stability controls
-- Energy conservation systematic studies
-- 3D trajectory visualization
-- Legacy comparison framework (ready for implementation)
+GitHub Actions publishes the rendered site to GitHub Pages whenever the ``main``
+branch is updated.  Every build also uploads the HTML artefact so intermediate
+branches can download the output for review.
 
-## License and Citation
+---
 
-[License and citation information to be added]
+## Versioning and release notes
 
-## Contact and Support
+The project version is defined exactly once in ``core/_version.py``.  Both
+``setup.py`` and ``docs/source/conf.py`` import that value, ensuring the wheel
+metadata and Sphinx footer remain consistent.  To cut a new release:
 
-For technical questions about electromagnetic physics implementation, conjugate momentum formulation, or numerical stability issues, please refer to the comprehensive documentation and interactive debugging tools provided.
+1. Update ``__version__`` in ``core/_version.py``.
+2. Commit the change alongside relevant release notes or change logs.
+3. Tag and publish as needed; the packaging metadata is already aligned.
+
+---
+
+## Development guidelines
+
+* Maintain parity between the ``core`` and ``legacy`` solvers when modifying
+  physics-critical code.  New behaviours should be backed by updated validation
+  plots and regression tests.
+* Prefer the helper utilities in ``input_output/`` when constructing particle
+  bunches.  They guarantee the integrator receives correctly shaped state
+  dictionaries.
+* Run the Pytest suite and build the documentation before submitting changes.
+  The repository treats Sphinx warnings as errors to keep the rendered site
+  trustworthy.
+* The console entry point ``lw-simulate`` currently points to
+  ``lw_integrator.cli:main``.  Implement ``lw_integrator/cli.py`` before relying
+  on this executable in production scripts.
+
+---
+
+## Support
+
+Discussion of new physics scenarios, validation additions, or documentation
+improvements is welcome via GitHub issues.  When reporting a problem, please
+include:
+
+* the observed behaviour and expected outcome,
+* the relevant configuration (energy range, simulation type, etc.), and
+* reproduction steps or sample notebooks.
+
+For background reading on the theoretical model, consult ``docs/source/theory``
+and the accompanying technical note under ``LW_local_refs/main.tex``.
