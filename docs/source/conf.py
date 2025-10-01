@@ -11,7 +11,6 @@ from pathlib import Path
 docs_dir = Path(__file__).parent.parent
 project_root = docs_dir.parent
 sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "LW_integrator"))
 
 # -- Project information -----------------------------------------------------
 
@@ -76,7 +75,6 @@ html_theme_options = {
     "canonical_url": "",
     "analytics_id": "",
     "logo_only": False,
-    "display_version": True,
     "prev_next_buttons_location": "bottom",
     "style_external_links": False,
     "vcs_pageview_mode": "",
@@ -94,8 +92,8 @@ html_theme_options = {
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
 
-html_logo = "_static/lw_integrator_logo.png"  # Add logo if available
-html_favicon = "_static/favicon.ico"  # Add favicon if available
+html_logo = None
+html_favicon = None
 
 # Custom CSS
 html_css_files = ["custom.css"]
@@ -153,7 +151,6 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "matplotlib": ("https://matplotlib.org/stable/", None),
-    "pandas": ("https://pandas.pydata.org/docs/", None),
 }
 
 # nbsphinx configuration
@@ -183,10 +180,7 @@ mathjax3_config = {
 todo_include_todos = True
 
 # Source file suffixes
-source_suffix = {
-    ".rst": None,
-    ".md": "myst_parser",  # If using MyST parser for Markdown
-}
+source_suffix = ".rst"
 
 # Master document
 master_doc = "index"

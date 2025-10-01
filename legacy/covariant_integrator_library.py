@@ -441,7 +441,33 @@ def _eqsofmotion_retarded(h, trajectory, trajectory_ext, i_traj, apt_R, sim_type
     
     return result
 
-def retarded_integrator(steps,h_step,wall_Z,apt_R,sim_type,init_rider,init_driver,mean,cav_spacing,z_cutoff):
+def retarded_integrator(
+    steps,
+    h_step,
+    wall_Z=None,
+    apt_R=None,
+    sim_type=0,
+    init_rider=None,
+    init_driver=None,
+    mean=None,
+    cav_spacing=None,
+    z_cutoff=None,
+):
+    if sim_type != 2 and apt_R is None:
+        raise ValueError("apt_R (aperture radius) must be provided")
+
+    if sim_type == 2 and init_driver is None:
+        raise ValueError("sim_type==2 requires init_driver")
+
+    if wall_Z is None:
+        wall_Z = 0.0
+
+    if cav_spacing is None:
+        cav_spacing = 0.0
+
+    if z_cutoff is None:
+        z_cutoff = 0.0
+
     trajectory      = [{}]*steps
     trajectory_drv  = [{}]*steps
     counter = 0 #actually should be passed in from static integrator, but not implemented yet

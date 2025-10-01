@@ -175,3 +175,7 @@ simulations/
 # Text files (but keep README.txt)
 *.txt
 !README.txt
+
+# Notebook generated artefacts
+test_outputs/notebook_runs/
+test_outputs/testbed_runs/
