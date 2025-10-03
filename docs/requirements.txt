@@ -1,0 +1,4 @@
+# Documentation build dependencies
+# This installs the project with the "docs" extra, which includes Sphinx,
+# nbsphinx, the Read the Docs theme, and other extensions needed during builds.
+.[docs]
