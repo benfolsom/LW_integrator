@@ -41,6 +41,10 @@ residual-wake acceleration with a covariant retarded-potential integrator*
 * **Validation assets.**  The ``examples/validation`` tree provides both Python
   scripts and notebooks for reproducing benchmark comparisons between the
   modern and legacy implementations.
+* **CLI entry point.**  The ``lw-simulate`` console command (see the
+  [Command-line entry point](#command-line-entry-point) section below) runs the
+  core integrator with JSON-configurable inputs.  A minimal demonstration lives
+  in ``examples/entrypoint_demo.py``.
 
 ---
 
@@ -112,6 +116,27 @@ physics parity across configurations:
 ```bash
 pytest tests
 ```
+
+### Command-line entry point
+
+Installing the project (``pip install -e .`` or via a wheel) exposes the
+``lw-simulate`` executable.  Run it with default settings:
+
+```bash
+lw-simulate --quiet
+```
+
+The CLI accepts additional overrides—for example, to shorten the integration
+and capture a JSON summary:
+
+```bash
+lw-simulate --steps 250 --time-step 5e-4 --output run.json
+```
+
+Programmatic usage mirrors the console invocation: call
+``lw_integrator.cli.main`` with a list of CLI-style arguments.  See
+``examples/entrypoint_demo.py`` for a ready-to-run demonstration that exercises
+both patterns.
 
 ---
 

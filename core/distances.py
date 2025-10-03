@@ -113,7 +113,7 @@ def chrono_match_indices(
     The solver needs to know which historical states of ``trajectory_ext``
     influence each particle of ``trajectory``.  Retardation is approximated by
     walking backwards in time until the causal signal arrives, matching the
-    behaviour of the benchmarked legacy routine.
+    behaviour of the benchmarked legacy routine. Legacy equivalent is called "chrono_jn".
     """
 
     nhat = compute_instantaneous_distance(

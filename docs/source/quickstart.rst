@@ -45,7 +45,26 @@ simulation, and confirm that the regression tooling works on your machine.
    widgets.  The notebook runs the same ``run_benchmark`` helper that the CLI
    uses and can save overlay plots and ΔE scatter figures directly.
 
-5. Generate the HTML documentation locally:
+5. Exercise the command-line entry point:
+
+   .. code-block:: bash
+
+      lw-simulate --quiet
+
+   The ``lw-simulate`` executable (also accessible via ``python -m
+   lw_integrator.cli``) runs the core integrator with the default configuration.
+   Override parameters as needed, for example to shorten the run and capture a
+   JSON summary:
+
+   .. code-block:: bash
+
+      lw-simulate --steps 250 --time-step 5e-4 --output run.json
+
+   You can replicate the same behaviour programmatically by calling
+   ``lw_integrator.cli.main`` with a list of CLI-style arguments; see
+   ``examples/entrypoint_demo.py`` for a minimal example.
+
+6. Generate the HTML documentation locally:
 
    .. code-block:: bash
 
