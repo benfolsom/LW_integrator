@@ -1,0 +1,11 @@
+# ## CLAI - Flake8 configuration to allow AI comment markers
+[flake8]
+max-line-length = 88
+ignore = E266,E262,F401
+exclude =
+    .git,
+    __pycache__,
+    venv,
+    build,
+    dist,
+    *.egg-info
