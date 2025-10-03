@@ -66,7 +66,11 @@ autodoc_default_options = {
     "member-order": "bysource",
     "special-members": "__init__",
     "undoc-members": True,
-    "exclude-members": "__weakref__",
+    "exclude-members": (
+        "__weakref__"
+        ",steps,time_step,wall_position,aperture_radius,"
+        "simulation_type,bunch_mean,cavity_spacing,z_cutoff"
+    ),
 }
 
 autosummary_generate = True
