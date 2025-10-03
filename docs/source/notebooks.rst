@@ -33,6 +33,11 @@ Core notebooks
     Archived exploratory notebook; useful when cross-checking the 35 MeV
     conducting aperture scenario documented in :mod:`examples.validation.conducting_aperture_test`.
 
+The historical "static" integrator surfaces only inside the legacy notebooks.
+It remains functional for archival comparisons, but the actively maintained
+notebook UIs focus on the retarded-field solvers described elsewhere in this
+guide.
+
 Best practices
 --------------
 

@@ -4,7 +4,11 @@ The LW Integrator is a covariant charged-particle tracking code that evaluates
 retarded Liénard–Wiechert potentials to obtain first-principles beam dynamics.
 The repository contains a modernised ``core`` implementation that mirrors the
 validated legacy solver, an updated Sphinx documentation set, and a collection
-of validation scripts and notebooks.
+of validation scripts and notebooks.  The methodology is documented in the
+peer-reviewed article *Relativistic beam loading, recoil-reduction, and
+residual-wake acceleration with a covariant retarded-potential integrator*
+([Nucl. Instrum. Methods Phys. Res. A 1069 (2024) 169988](https://doi.org/10.1016/j.nima.2024.169988),
+[arXiv:2310.03850](https://arxiv.org/abs/2310.03850)).
 
 ---
 
@@ -27,6 +31,9 @@ of validation scripts and notebooks.
   retarded-vector potentials and conjugate-momentum dynamics.  The ``core``
   package is a faithful transcription of the proven legacy solver and is kept in
   numerical lockstep by an integration test suite.
+* **Reference publication.**  For the scientific context, derivations, and
+  benchmark scenarios, see the project paper referenced above; the codebase
+  tracks the configurations described there.
 * **Documentation.**  The refreshed Sphinx site under ``docs/`` explains the
   theoretical background, quick-start workflows, validation procedures, and
   contributor guidance.  A new ``theory`` page summarises the covariant
@@ -47,6 +54,9 @@ LW_windows/
 │   └── validation/       # CLI and notebook-based comparison studies
 ├── input_output/         # Particle bunch initialisation utilities
 ├── legacy/               # Archived original solver and notebooks
+│                         # The historical "static" integrator remains here for
+│                         # completeness; it is deprecated and not used by the
+│                         # modern docs or validation workflows.
 ├── tests/                # Pytest suite covering physics and helper modules
 ├── .github/workflows/    # Continuous-integration pipelines (docs publishing)
 ├── core/_version.py      # Single source of truth for the project version
