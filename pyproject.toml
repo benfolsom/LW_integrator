@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+
+[tool.ruff.lint.per-file-ignores]
+"examples/comparison/legacy_vs_core_systematic_comparison.py" = ["E402"]
+"examples/comparison/legacy_vs_core_trajectory_comparison.py" = ["E402"]
+"examples/validation/core_vs_legacy_benchmark.py" = ["E402"]
+"examples/validation/core_vs_legacy_benchmark.ipynb" = ["E402"]
+"examples/validation/integrator_testbed.ipynb" = ["E402"]
+
+[tool.ruff.format]
+# Use double quotes for strings (same as black default)
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"
+# Prefer trailing commas (same as black)
+skip-magic-trailing-comma = false
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+exclude = [
+    "filing_system/.*",
+    "__pycache__",
+    ".venv",
+    "tests/physics_tests/.*",
+    "docs/.*",
+    "legacy/.*",
+    "archive/.*",
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["lw_integrator/tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests as requiring GPU",
+    "benchmark: marks tests as benchmarks",
+]
