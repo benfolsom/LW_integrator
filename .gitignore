@@ -153,6 +153,7 @@ Thumbs.db
 /Manifest.toml
 /docs/build/
 /docs/site/
+/docs/_build/
 
 # Backup files
 *.backup

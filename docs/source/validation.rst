@@ -5,6 +5,12 @@ The LW Integrator repository keeps parity with the archived physics by running a
 suite of scripted comparisons.  This page explains the assets you can use to
 confirm changes and to reproduce the plots that appear in publications.
 
+.. note::
+
+  The historical "static" integrator is preserved under ``legacy/`` for archival
+  purposes but is no longer part of the supported workflows.  The tools
+  described here exercise the retarded-field solvers exclusively.
+
 Command-line benchmarks
 -----------------------
 
