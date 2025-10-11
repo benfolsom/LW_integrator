@@ -22,7 +22,7 @@ from .distances import (
 )
 from .equations import retarded_equations_of_motion
 from .images import generate_conducting_image, generate_switching_image
-from .integrator import retarded_integrator, run_integrator
+from .integration_runner import retarded_integrator, run_integrator
 from .types import IntegratorConfig, ParticleState, SimulationType, Trajectory
 
 
@@ -59,14 +59,13 @@ class LienardWiechertIntegrator:
 
         return {key: np.copy(value) for key, value in state.items()}
 
-    def equations_of_motion_static_internal(
+    def drift_step(
         self, h_step: float, state: ParticleState, _index: int
     ) -> ParticleState:
         """Propagate particles forward assuming a field-free drift.
 
-        This mirrors the legacy helper used for static warm-up steps: particles
-        drift according to their current velocity while conjugate momentum and
-        Lorentz factor remain constant.
+        Particles advance according to their current velocity while conjugate
+        momentum and Lorentz factor remain constant.
         """
 
         result = self._clone_state(state)
@@ -108,8 +107,8 @@ class LienardWiechertIntegrator:
     ) -> tuple[Trajectory, Trajectory]:
         """Execute retarded-field integration using the modern core runner.
 
-        Parameters mirror the legacy signature but are forwarded to
-        :func:`core.integrator.retarded_integrator`. ``static_steps`` is
+    Parameters mirror the legacy signature but are forwarded to
+    :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
         preserved for backwards compatibility and contributes to the total step
         count.
         """

@@ -149,8 +149,6 @@ def chrono_match_indices(
             delta_t = (
                 nhat["R"][sample_index]
                 * (1 + b_nhat)
-                * trajectory_ext[index_traj]["gamma"][sample_index] ** 2
-                #/ trajectory[index_traj]["gamma"][index_part] #there's no proper time in this module!!!
                 / C_MMNS
             )
 

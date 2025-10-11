@@ -1,9 +1,8 @@
-"""High-level trajectory integration orchestration.
+"""High-level orchestration for retarded-field trajectory integration.
 
-This module glues together the low-level physics kernels, image-charge
-generation, and optional self-consistency loop.  The public functions provide
-the main entry points for running the modern LW integrator programmatically.
-"""
+This module coordinates the low-level physics kernels, image-charge
+construction, and optional self-consistency loops.  It provides the primary
+programmatic entry points for running the modern Liénard–Wiechert integrator."""
 
 from __future__ import annotations
 

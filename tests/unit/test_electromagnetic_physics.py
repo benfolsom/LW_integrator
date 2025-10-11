@@ -51,7 +51,7 @@ def test_static_step_does_not_mutate_original_state() -> None:
     integrator = LienardWiechertIntegrator()
     state = _minimal_state()
 
-    updated = integrator.equations_of_motion_static_internal(1e-3, state, 0)
+    updated = integrator.drift_step(1e-3, state, 0)
 
     # Original state remains unchanged
     assert np.array_equal(state["z"], np.array([0.0]))

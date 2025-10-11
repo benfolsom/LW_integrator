@@ -11,7 +11,7 @@ from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.distances import compute_instantaneous_distance
 from core.equations import retarded_equations_of_motion
 from core.images import generate_conducting_image
-from core.integrator import retarded_integrator
+from core.integration_runner import retarded_integrator
 from core.types import IntegratorConfig, SimulationType
 from tests.test_config import (
     BASIC_TWO_PARTICLE,
