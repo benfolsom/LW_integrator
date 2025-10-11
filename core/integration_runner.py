@@ -18,8 +18,33 @@ from .types import (
     IntegratorConfig,
     ParticleState,
     SimulationType,
+    StartupMode,
     Trajectory,
 )
+
+
+def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
+    if state is None:
+        return
+
+    required_length = len(state.get("x", []))
+    if required_length == 0:
+        return
+
+    def _ensure(name: str, source_key: str | None = None, *, fill_value: float = 0.0) -> None:
+        if name not in state or state[name].shape != state["x"].shape:
+            if source_key is not None:
+                state[name] = np.copy(state[source_key])
+            else:
+                state[name] = np.full_like(state["x"], fill_value, dtype=float)
+
+    _ensure("origin_x", "x")
+    _ensure("origin_y", "y")
+    _ensure("origin_z", "z")
+    _ensure("beta_avg_x", "bx")
+    _ensure("beta_avg_y", "by")
+    _ensure("beta_avg_z", "bz")
+    _ensure("beta_samples", None, fill_value=1.0)
 
 
 def retarded_integrator(
@@ -35,6 +60,7 @@ def retarded_integrator(
     z_cutoff: float,
     self_consistency: Optional[SelfConsistencyConfig] = None,
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
+    startup_mode: StartupMode = StartupMode.COLD_START,
 ) -> Tuple[Trajectory, Trajectory]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -66,6 +92,9 @@ def retarded_integrator(
     chrono_mode:
         Retardation sampling strategy; ``FAST`` reproduces the historical
         solver, ``AVERAGED`` blends ``R / c`` and ``2R / c`` emission times.
+    startup_mode:
+        Strategy for handling the lack of retarded history at the beginning of
+        a simulation.
 
     Returns
     -------
@@ -80,6 +109,7 @@ def retarded_integrator(
     for i in range(steps):
         if i == 0:
             trajectory[i] = init_rider
+            _ensure_startup_metadata(trajectory[i])
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
                     init_rider, wall_z, aperture_radius
@@ -94,6 +124,7 @@ def retarded_integrator(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
                 trajectory_drv[i] = init_driver
+            _ensure_startup_metadata(trajectory_drv[i])
         else:
             trajectory[i] = self_consistent_step(
                 retarded_equations_of_motion,
@@ -105,7 +136,9 @@ def retarded_integrator(
                 sim_type,
                 self_consistency,
                 chrono_mode,
+                startup_mode,
             )
+            _ensure_startup_metadata(trajectory[i])
 
             if sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -133,7 +166,9 @@ def retarded_integrator(
                     sim_type,
                     self_consistency,
                     chrono_mode,
+                    startup_mode,
                 )
+            _ensure_startup_metadata(trajectory_drv[i])
 
     return trajectory, trajectory_drv
 
@@ -161,6 +196,7 @@ def run_integrator(
         cav_spacing=config.cavity_spacing,
         z_cutoff=config.z_cutoff,
         chrono_mode=config.chrono_mode,
+        startup_mode=config.startup_mode,
     )
 
 

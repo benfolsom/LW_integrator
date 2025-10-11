@@ -28,7 +28,7 @@ from core.trajectory_integrator import (
     retarded_integrator,
     run_integrator,
 )
-from core.types import ChronoMatchingMode
+from core.types import ChronoMatchingMode, StartupMode
 
 
 def _make_single_particle_state(
@@ -142,6 +142,47 @@ def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
     assert averaged_delta > fast_delta
 
 
+def test_cold_start_defers_external_forces_until_travelled_distance():
+    trajectory = [_make_single_particle_state(t=0.0, z=0.0, charge=1.0)]
+    trajectory_ext = [
+        _make_single_particle_state(t=0.0, z=1.0, x=0.5, charge=1.0)
+    ]
+
+    cold_result = retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.COLD_START,
+    )
+
+    np.testing.assert_allclose(cold_result["Px"], trajectory[0]["Px"])
+
+
+def test_approximate_back_history_recovers_initial_force_estimate():
+    trajectory = [_make_single_particle_state(t=0.0, z=0.0, charge=1.0)]
+    trajectory_ext = [
+        _make_single_particle_state(t=0.0, z=1.0, x=0.5, bx=0.2, charge=-1.0)
+    ]
+
+    approx_result = retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+    )
+
+    assert not np.allclose(approx_result["Px"], trajectory[0]["Px"])
+    assert np.all(np.isfinite(approx_result["Px"]))
+
+
 def test_generate_conducting_image_reflects_momentum_and_direction():
     random.seed(1234)
     source = _make_single_particle_state(z=-2.0, pz=1.5, bz=0.25, charge=-1.0)
@@ -227,6 +268,7 @@ def test_retarded_equations_of_motion_keeps_zero_charge_state_stable():
         aperture_radius=1.0,
         sim_type=SimulationType.CONDUCTING_WALL,
         chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.COLD_START,
     )
 
     assert np.all(np.isfinite(result["x"]))
