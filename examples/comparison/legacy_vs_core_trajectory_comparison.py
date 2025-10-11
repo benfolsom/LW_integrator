@@ -19,6 +19,7 @@ if LEGACY_ROOT not in sys.path:
     sys.path.insert(0, LEGACY_ROOT)
 
 from core.trajectory_integrator import SimulationType, retarded_integrator
+from core.types import ChronoMatchingMode
 from legacy.bunch_inits import init_bunch  # type: ignore
 from legacy.covariant_integrator_library import (  # type: ignore
     retarded_integrator as legacy_retarded_integrator,
@@ -95,6 +96,7 @@ def run_two_particle_demo() -> Tuple[
         mean=1e5,
         cav_spacing=1e5,
         z_cutoff=0.0,
+        chrono_mode=ChronoMatchingMode.FAST,
     )
 
     return legacy_traj, legacy_drv, core_traj, core_drv

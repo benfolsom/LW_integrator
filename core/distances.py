@@ -13,10 +13,80 @@ from typing import Dict, Iterable
 import numpy as np
 
 from .constants import C_MMNS, NUMERICAL_EPSILON
-from .types import ParticleState, Trajectory
+from .types import ChronoMatchingMode, ParticleState, Trajectory
 
 
 DistanceResult = Dict[str, np.ndarray]
+
+
+def _compute_delta_t(
+    *,
+    mode: ChronoMatchingMode,
+    distance: float,
+    b_nhat: float,
+    sample_index: int,
+    index_traj: int,
+    index_part: int,
+    trajectory: Trajectory,
+    trajectory_ext: Trajectory,
+) -> float:
+    """Resolve the retardation interval for a single particle sample.
+
+    ``FAST`` mode mirrors the legacy code path by evaluating the causal delay
+    once using the instantaneous line-of-sight projection ``β·n̂``.  ``AVERAGED``
+    samples two physical extremes for the emission time: ``R / c`` (a
+    stationary source particle) and ``2R / c`` (a source moving at the speed of
+    light along ``n̂``).  The averaged projection from those two samples is used
+    to compute ``Δt`` which damps aggressive kicks for ultra-relativistic
+    particles.
+    """
+
+    if mode is ChronoMatchingMode.FAST:
+        return distance * (1.0 + b_nhat) / C_MMNS
+
+    time_offsets = np.array([distance / C_MMNS, 2.0 * distance / C_MMNS], dtype=float)
+    sampled_b = 0.0
+
+    for offset in time_offsets:
+        target_time = trajectory_ext[index_traj]["t"][sample_index] - offset
+        matched_index = _locate_retarded_index(
+            trajectory_ext, index_traj, sample_index, target_time
+        )
+        nhat_offset = compute_instantaneous_distance(
+            trajectory[index_traj], trajectory_ext[matched_index], index_part
+        )
+        sampled_b += _dot_beta_nhat(
+            trajectory_ext[matched_index], nhat_offset, sample_index
+        )
+
+    averaged_b = sampled_b / time_offsets.size
+    return distance * (1.0 + averaged_b) / C_MMNS
+
+
+def _dot_beta_nhat(
+    state: ParticleState, nhat: DistanceResult, sample_index: int
+) -> float:
+    return (
+        state["bx"][sample_index] * nhat["nx"][sample_index]
+        + state["by"][sample_index] * nhat["ny"][sample_index]
+        + state["bz"][sample_index] * nhat["nz"][sample_index]
+    )
+
+
+def _locate_retarded_index(
+    trajectory_ext: Trajectory,
+    index_traj: int,
+    sample_index: int,
+    target_time: float,
+) -> int:
+    if target_time <= 0.0:
+        return index_traj
+
+    for k in range(index_traj, -1, -1):
+        candidate_index = index_traj - k
+        if trajectory_ext[candidate_index]["t"][sample_index] >= target_time:
+            return candidate_index
+    return 0
 
 
 def compute_instantaneous_distance(
@@ -107,13 +177,33 @@ def chrono_match_indices(
     trajectory_ext: Trajectory,
     index_traj: int,
     index_part: int,
+    *,
+    mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
 ) -> np.ndarray:
     """Find retarded indices for a particle using chrono-matching.
 
-    The solver needs to know which historical states of ``trajectory_ext``
-    influence each particle of ``trajectory``.  Retardation is approximated by
-    walking backwards in time until the causal signal arrives, matching the
-    behaviour of the benchmarked legacy routine. Legacy equivalent is called "chrono_jn".
+    Parameters
+    ----------
+    trajectory, trajectory_ext:
+        Historical rider and external bunch states.
+    index_traj:
+        Step within ``trajectory`` currently being updated.
+    index_part:
+        Particle within ``trajectory[index_traj]`` to match against the entire
+        external bunch.
+    mode:
+        ``ChronoMatchingMode.FAST`` reproduces the historical single-sample
+        delay ``Δt = R (1 + β·n̂) / c``. ``ChronoMatchingMode.AVERAGED`` blends
+        two samples corresponding to emission after ``R / c`` (stationary
+        source) and ``2R / c`` (ultrarelativistic source), which can provide a
+        smoother retardation sequence for high-``γ`` bunches.
+
+    Returns
+    -------
+    numpy.ndarray
+        Indices into ``trajectory_ext`` describing which historical slice
+        influences each particle in the external bunch. Legacy equivalent is
+        called ``chrono_jn``.
     """
 
     nhat = compute_instantaneous_distance(
@@ -146,10 +236,15 @@ def chrono_match_indices(
                     max_retardation = 1e-3
             delta_t = max_retardation
         else:
-            delta_t = (
-                nhat["R"][sample_index]
-                * (1 + b_nhat)
-                / C_MMNS
+            delta_t = _compute_delta_t(
+                mode=mode,
+                distance=nhat["R"][sample_index],
+                b_nhat=b_nhat,
+                sample_index=sample_index,
+                index_traj=index_traj,
+                index_part=index_part,
+                trajectory=trajectory,
+                trajectory_ext=trajectory_ext,
             )
 
         t_ext_new = trajectory_ext[index_traj]["t"][sample_index] - delta_t
@@ -171,4 +266,5 @@ __all__ = [
     "compute_instantaneous_distance",
     "compute_retarded_distance",
     "chrono_match_indices",
+    "ChronoMatchingMode",
 ]

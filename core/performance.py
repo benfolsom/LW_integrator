@@ -20,7 +20,7 @@ import numpy as np
 from .images import generate_conducting_image, generate_switching_image
 from .integration_runner import retarded_integrator
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
-from .types import IntegratorConfig, ParticleState, SimulationType
+from .types import ChronoMatchingMode, IntegratorConfig, ParticleState, SimulationType
 
 C_MMNS = 299.792458  # mm/ns (identical to legacy constant)
 
@@ -388,7 +388,10 @@ def eqsofmotion_retarded_numba(
     index_traj: int,
     aperture_radius: float,
     sim_type: SimulationType,
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
 ) -> ParticleState:
+    _ = chrono_mode  # Retained for API parity with pure-Python solver.
+
     current_arrays, n_particles = dict_to_arrays(trajectory[index_traj])
     ext_arrays, n_ext_particles = dict_to_arrays(trajectory_ext[index_traj])
 
@@ -502,6 +505,7 @@ def retarded_integrator_numba(
     cav_spacing: float,
     z_cutoff: float,
     self_consistency: Optional[SelfConsistencyConfig] = None,
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
 ) -> Tuple[Tuple[ParticleState, ...], Tuple[ParticleState, ...]]:
     warnings.filterwarnings("ignore")
 
@@ -539,6 +543,7 @@ def retarded_integrator_numba(
             aperture_radius,
             sim_type,
             self_consistency,
+            chrono_mode,
         )
 
         if sim_type == SimulationType.SWITCHING_WALL:
@@ -564,6 +569,7 @@ def retarded_integrator_numba(
                 aperture_radius,
                 sim_type,
                 self_consistency,
+                chrono_mode,
             )
 
     return tuple(trajectory), tuple(trajectory_drv)
@@ -597,6 +603,7 @@ def run_optimised_integrator(
             config.cavity_spacing,
             config.z_cutoff,
             opts.self_consistency,
+            config.chrono_mode,
         )
         base_elapsed = time.time() - start
 
@@ -613,6 +620,7 @@ def run_optimised_integrator(
             config.cavity_spacing,
             config.z_cutoff,
             opts.self_consistency,
+            config.chrono_mode,
         )
         numba_elapsed = time.time() - start
 
@@ -636,6 +644,7 @@ def run_optimised_integrator(
             config.cavity_spacing,
             config.z_cutoff,
             opts.self_consistency,
+            config.chrono_mode,
         )
 
     return retarded_integrator(
@@ -650,6 +659,7 @@ def run_optimised_integrator(
         config.cavity_spacing,
         config.z_cutoff,
         opts.self_consistency,
+        config.chrono_mode,
     )
 
 
