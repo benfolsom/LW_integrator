@@ -254,7 +254,7 @@ def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
             print(f"Warning: Near-collinear ultra-relativistic motion detected (1-β·n̂ = {denominator:.2e})")
         else:            
             #converted from  δt = R/(c(1-β·n̂)) to PROPER TIME (assuming gamma source and target are equiv)
-            delta_t = nhat['R'][l]*(1+b_nhat) * trajectory_ext[index_traj]['gamma'][l]**2 / trajectory[index_traj]['gamma'][l] / c_mmns
+            delta_t = nhat['R'][l]*(1+b_nhat) / c_mmns
 
         t_ext_new = trajectory_ext[index_traj]['t'][l]-delta_t
         #t_ext_new = (trajectory_ext[index_traj]['t'][l]-delta_t)/trajectory_ext[index_traj]['gamma'][l]

@@ -36,7 +36,7 @@ class SimulationType(IntEnum):
 
 @dataclass
 class IntegratorConfig:
-    """Structured configuration for :func:`core.integrator.run_integrator`.
+    """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
     Attributes
     ----------

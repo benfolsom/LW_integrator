@@ -18,7 +18,7 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 
 from .images import generate_conducting_image, generate_switching_image
-from .integrator import retarded_integrator
+from .integration_runner import retarded_integrator
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import IntegratorConfig, ParticleState, SimulationType
 

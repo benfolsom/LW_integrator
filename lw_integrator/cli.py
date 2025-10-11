@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 import numpy as np
 
 from core.constants import ELECTRON_MASS_AMU
-from core.integrator import retarded_integrator
+from core.integration_runner import retarded_integrator
 from core.types import IntegratorConfig, ParticleState, SimulationType, Trajectory
 from input_output.bunch_initialization import create_bunch_from_energy
 
