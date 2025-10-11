@@ -19,7 +19,13 @@ import numpy as np
 
 from core.constants import ELECTRON_MASS_AMU
 from core.integration_runner import retarded_integrator
-from core.types import IntegratorConfig, ParticleState, SimulationType, Trajectory
+from core.types import (
+    ChronoMatchingMode,
+    IntegratorConfig,
+    ParticleState,
+    SimulationType,
+    Trajectory,
+)
 from input_output.bunch_initialization import create_bunch_from_energy
 
 # ---------------------------------------------------------------------------
@@ -35,6 +41,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "bunch_mean": 1000.0,
     "cavity_spacing": 0.0,
     "z_cutoff": 0.0,
+    "chrono_mode": "averaged",
 }
 
 DEFAULT_RIDER: Dict[str, Any] = {
@@ -144,6 +151,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         type=float,
         dest="z_cutoff",
         help="Longitudinal cutoff for switching-wall simulations.",
+    )
+    parser.add_argument(
+        "--chrono-mode",
+        choices=("averaged", "fast"),
+        help=(
+            "Retardation sampling strategy: 'averaged' blends R/c and 2R/c, "
+            "'fast' reproduces legacy single-sample behaviour."
+        ),
     )
     parser.add_argument(
         "--driver-from-rider",
@@ -264,6 +279,7 @@ def _merge_simulation_payload(
         "bunch_mean",
         "cavity_spacing",
         "z_cutoff",
+        "chrono_mode",
     )
 
     for key in override_keys:
@@ -305,12 +321,31 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             f"Simulation configuration missing required fields: {', '.join(missing)}"
         )
 
+    chrono_mode_raw = payload.get("chrono_mode", ChronoMatchingMode.AVERAGED)
+    if isinstance(chrono_mode_raw, str):
+        key = chrono_mode_raw.strip().lower()
+        if key in {"fast", "legacy"}:
+            chrono_mode = ChronoMatchingMode.FAST
+        elif key in {"averaged", "average", "blended"}:
+            chrono_mode = ChronoMatchingMode.AVERAGED
+        else:  # pragma: no cover - defensive parsing
+            raise SimulationConfigError(
+                f"Unknown chrono_mode value: {chrono_mode_raw!r}. Expected 'fast' or 'averaged'."
+            )
+    elif isinstance(chrono_mode_raw, ChronoMatchingMode):
+        chrono_mode = chrono_mode_raw
+    else:  # pragma: no cover - defensive parsing
+        raise SimulationConfigError(
+            "chrono_mode must be a string or ChronoMatchingMode instance"
+        )
+
     return IntegratorConfig(
         steps=int(payload["steps"]),
         time_step=float(payload["time_step"]),
         wall_position=float(payload["wall_position"]),
         aperture_radius=float(payload["aperture_radius"]),
         simulation_type=simulation_type,
+        chrono_mode=chrono_mode,
         bunch_mean=float(payload.get("bunch_mean", DEFAULT_SIMULATION["bunch_mean"])),
         cavity_spacing=float(
             payload.get("cavity_spacing", DEFAULT_SIMULATION["cavity_spacing"])
@@ -370,6 +405,7 @@ def run_simulation(request: SimulationRequest) -> Tuple[Trajectory, Trajectory]:
         mean=request.config.bunch_mean,
         cav_spacing=request.config.cavity_spacing,
         z_cutoff=request.config.z_cutoff,
+        chrono_mode=request.config.chrono_mode,
     )
 
 

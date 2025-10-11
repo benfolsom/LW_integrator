@@ -152,5 +152,4 @@ The mathematical relationships above surface in the codebase as follows:
    historical investigations, but it is deprecated and not part of the modern
    retarded-field workflows.
 
-For deeper derivations and experimental context, see the technical note in
-``LW_local_refs/main.tex``.
+For deeper derivations and experimental context, see `<https://doi.org/10.1016/j.nima.2024.169988>`_.

@@ -13,7 +13,7 @@ import numpy as np
 
 from .constants import C_MMNS
 from .distances import compute_retarded_distance, chrono_match_indices
-from .types import ParticleState, SimulationType, Trajectory
+from .types import ChronoMatchingMode, ParticleState, SimulationType, Trajectory
 
 
 def retarded_equations_of_motion(
@@ -23,6 +23,7 @@ def retarded_equations_of_motion(
     index_traj: int,
     aperture_radius: float,
     sim_type: SimulationType,
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
 ) -> ParticleState:
     """Core equations of motion mirroring the validated legacy implementation.
 
@@ -40,6 +41,10 @@ def retarded_equations_of_motion(
         Aperture radius supplied to the image generators.
     sim_type:
         Simulation boundary type encoded as :class:`SimulationType`.
+    chrono_mode:
+        Retardation sampling strategy; ``FAST`` retains the legacy single
+        sample, whereas ``AVERAGED`` blends ``R / c`` and ``2R / c`` emission
+        times for the external bunch.
 
     Returns
     -------
@@ -73,7 +78,11 @@ def retarded_equations_of_motion(
 
     for particle_index in range(len(trajectory[index_traj]["x"])):
         indices_new = chrono_match_indices(
-            trajectory, trajectory_ext, index_traj, particle_index
+            trajectory,
+            trajectory_ext,
+            index_traj,
+            particle_index,
+            mode=chrono_mode,
         )
         max_ext_idx = len(trajectory_ext) - 1
         indices_new_bounded = np.minimum(np.maximum(indices_new, 0), max_ext_idx)

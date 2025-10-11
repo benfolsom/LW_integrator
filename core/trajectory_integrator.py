@@ -23,7 +23,13 @@ from .distances import (
 from .equations import retarded_equations_of_motion
 from .images import generate_conducting_image, generate_switching_image
 from .integration_runner import retarded_integrator, run_integrator
-from .types import IntegratorConfig, ParticleState, SimulationType, Trajectory
+from .types import (
+    ChronoMatchingMode,
+    IntegratorConfig,
+    ParticleState,
+    SimulationType,
+    Trajectory,
+)
 
 
 class LienardWiechertIntegrator:
@@ -141,6 +147,7 @@ class LienardWiechertIntegrator:
             mean=float(bunch_dist),
             cav_spacing=0.0,
             z_cutoff=float(z_cutoff),
+            chrono_mode=self.config.chrono_mode if self.config else ChronoMatchingMode.AVERAGED,
         )
 
         return trajectory, driver

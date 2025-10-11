@@ -13,7 +13,13 @@ import numpy as np
 from .equations import retarded_equations_of_motion
 from .images import generate_conducting_image, generate_switching_image
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
-from .types import IntegratorConfig, ParticleState, SimulationType, Trajectory
+from .types import (
+    ChronoMatchingMode,
+    IntegratorConfig,
+    ParticleState,
+    SimulationType,
+    Trajectory,
+)
 
 
 def retarded_integrator(
@@ -28,6 +34,7 @@ def retarded_integrator(
     cav_spacing: float,
     z_cutoff: float,
     self_consistency: Optional[SelfConsistencyConfig] = None,
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
 ) -> Tuple[Trajectory, Trajectory]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -56,6 +63,9 @@ def retarded_integrator(
     self_consistency:
         Optional :class:`SelfConsistencyConfig` to iterate each step until the
         Lorentz factor converges.
+    chrono_mode:
+        Retardation sampling strategy; ``FAST`` reproduces the historical
+        solver, ``AVERAGED`` blends ``R / c`` and ``2R / c`` emission times.
 
     Returns
     -------
@@ -94,6 +104,7 @@ def retarded_integrator(
                 aperture_radius,
                 sim_type,
                 self_consistency,
+                chrono_mode,
             )
 
             if sim_type == SimulationType.SWITCHING_WALL:
@@ -121,6 +132,7 @@ def retarded_integrator(
                     aperture_radius,
                     sim_type,
                     self_consistency,
+                    chrono_mode,
                 )
 
     return trajectory, trajectory_drv
@@ -148,6 +160,7 @@ def run_integrator(
         mean=config.bunch_mean,
         cav_spacing=config.cavity_spacing,
         z_cutoff=config.z_cutoff,
+        chrono_mode=config.chrono_mode,
     )
 
 

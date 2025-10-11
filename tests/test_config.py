@@ -49,6 +49,10 @@ class TestConfiguration:
     z_cutoff: float  # mm
 
 
+# Prevent pytest from mistaking the configuration helper for a test suite.
+TestConfiguration.__test__ = False  # type: ignore[attr-defined]
+
+
 # Standard test configurations
 BASIC_TWO_PARTICLE = TestConfiguration(
     particle_count=2,

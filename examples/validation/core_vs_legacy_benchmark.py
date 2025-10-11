@@ -21,6 +21,7 @@ if str(LEGACY_ROOT) not in sys.path:
     sys.path.insert(0, str(LEGACY_ROOT))
 
 from core.trajectory_integrator import SimulationType, retarded_integrator
+from core.types import ChronoMatchingMode
 from legacy.bunch_inits import init_bunch  # type: ignore
 from legacy.covariant_integrator_library import (  # type: ignore
     retarded_integrator as legacy_retarded_integrator,
@@ -203,6 +204,7 @@ def run_core_integrator(
         mean=resolved_mean,
         cav_spacing=resolved_cav_spacing,
         z_cutoff=resolved_z_cutoff,
+        chrono_mode=ChronoMatchingMode.FAST,
     )
     return (
         [_normalize_state(state) for state in core_traj],
