@@ -12,7 +12,7 @@ from core.distances import compute_instantaneous_distance
 from core.equations import retarded_equations_of_motion
 from core.images import generate_conducting_image
 from core.integration_runner import retarded_integrator
-from core.types import ChronoMatchingMode, IntegratorConfig, SimulationType
+from core.types import ChronoMatchingMode, IntegratorConfig, SimulationType, StartupMode
 from tests.test_config import (
     BASIC_TWO_PARTICLE,
     PROTON,
@@ -104,6 +104,7 @@ def test_retarded_equations_of_motion_preserves_finite_values() -> None:
         aperture_radius=1.0,
         sim_type=SimulationType.CONDUCTING_WALL,
         chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.COLD_START,
     )
 
     for key, value in updated.items():
@@ -141,6 +142,7 @@ def test_retarded_integrator_conservation_metrics() -> None:
         cav_spacing=config.cavity_spacing,
         z_cutoff=config.z_cutoff,
         chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.COLD_START,
     )
 
     metrics = validate_physics_conservation(

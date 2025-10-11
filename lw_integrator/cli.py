@@ -24,6 +24,7 @@ from core.types import (
     IntegratorConfig,
     ParticleState,
     SimulationType,
+    StartupMode,
     Trajectory,
 )
 from input_output.bunch_initialization import create_bunch_from_energy
@@ -42,6 +43,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "cavity_spacing": 0.0,
     "z_cutoff": 0.0,
     "chrono_mode": "averaged",
+    "startup_mode": "cold-start",
 }
 
 DEFAULT_RIDER: Dict[str, Any] = {
@@ -64,6 +66,15 @@ SIMULATION_TYPE_ALIASES: Mapping[str, SimulationType] = {
     "bunch-to-bunch": SimulationType.BUNCH_TO_BUNCH,
     "bunch_to_bunch": SimulationType.BUNCH_TO_BUNCH,
     "bunch": SimulationType.BUNCH_TO_BUNCH,
+}
+
+STARTUP_MODE_ALIASES: Mapping[str, StartupMode] = {
+    "cold-start": StartupMode.COLD_START,
+    "cold_start": StartupMode.COLD_START,
+    "cold": StartupMode.COLD_START,
+    "approximate-back-history": StartupMode.APPROXIMATE_BACK_HISTORY,
+    "approximate_back_history": StartupMode.APPROXIMATE_BACK_HISTORY,
+    "approximate": StartupMode.APPROXIMATE_BACK_HISTORY,
 }
 
 REQUIRED_PARTICLE_FIELDS: Iterable[str] = (
@@ -158,6 +169,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help=(
             "Retardation sampling strategy: 'averaged' blends R/c and 2R/c, "
             "'fast' reproduces legacy single-sample behaviour."
+        ),
+    )
+    parser.add_argument(
+        "--startup-mode",
+        choices=("cold-start", "approximate-back-history"),
+        dest="startup_mode",
+        help=(
+            "Early-step strategy: 'cold-start' suppresses forces until the "
+            "observer has travelled sufficiently, while "
+            "'approximate-back-history' assumes constant source velocity."
         ),
     )
     parser.add_argument(
@@ -280,6 +301,7 @@ def _merge_simulation_payload(
         "cavity_spacing",
         "z_cutoff",
         "chrono_mode",
+        "startup_mode",
     )
 
     for key in override_keys:
@@ -339,6 +361,22 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             "chrono_mode must be a string or ChronoMatchingMode instance"
         )
 
+    startup_mode_raw = payload.get("startup_mode", StartupMode.COLD_START)
+    if isinstance(startup_mode_raw, str):
+        key = startup_mode_raw.strip().lower()
+        if key in STARTUP_MODE_ALIASES:
+            startup_mode = STARTUP_MODE_ALIASES[key]
+        else:  # pragma: no cover - defensive parsing
+            raise SimulationConfigError(
+                f"Unknown startup_mode value: {startup_mode_raw!r}. Expected 'cold-start' or 'approximate-back-history'."
+            )
+    elif isinstance(startup_mode_raw, StartupMode):
+        startup_mode = startup_mode_raw
+    else:  # pragma: no cover - defensive parsing
+        raise SimulationConfigError(
+            "startup_mode must be a string or StartupMode instance"
+        )
+
     return IntegratorConfig(
         steps=int(payload["steps"]),
         time_step=float(payload["time_step"]),
@@ -346,6 +384,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         aperture_radius=float(payload["aperture_radius"]),
         simulation_type=simulation_type,
         chrono_mode=chrono_mode,
+        startup_mode=startup_mode,
         bunch_mean=float(payload.get("bunch_mean", DEFAULT_SIMULATION["bunch_mean"])),
         cavity_spacing=float(
             payload.get("cavity_spacing", DEFAULT_SIMULATION["cavity_spacing"])

@@ -51,6 +51,20 @@ class ChronoMatchingMode(Enum):
     FAST = auto()
 
 
+class StartupMode(Enum):
+    """Strategies for handling the lack of retarded history at early steps.
+
+    ``COLD_START`` suppresses external forces until the observer has travelled
+    far enough for the light-cone constraint to be satisfied using a running
+    average of the observer velocity. ``APPROXIMATE_BACK_HISTORY`` assumes the
+    source velocity remains constant between steps, enabling an analytic
+    back-fill of the retarded separation.
+    """
+
+    COLD_START = auto()
+    APPROXIMATE_BACK_HISTORY = auto()
+
+
 @dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.
@@ -70,6 +84,9 @@ class IntegratorConfig:
         :class:`SimulationType`.
     chrono_mode:
         Retardation-matching strategy expressed as :class:`ChronoMatchingMode`.
+    startup_mode:
+        Strategy for handling the initial lack of retarded history expressed as
+        :class:`StartupMode`.
     bunch_mean:
         Optional mean bunch separation used by legacy notebooks. Not every
         integration path consumes it, but the value is retained for API
@@ -87,6 +104,7 @@ class IntegratorConfig:
     aperture_radius: float
     simulation_type: SimulationType
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED
+    startup_mode: StartupMode = StartupMode.COLD_START
     bunch_mean: float = 0.0
     cavity_spacing: float = 0.0
     z_cutoff: float = 0.0
@@ -98,6 +116,7 @@ __all__ = [
     "TrajectoryView",
     "SimulationType",
     "ChronoMatchingMode",
+    "StartupMode",
     "IntegratorConfig",
     "C_MMNS",
 ]
