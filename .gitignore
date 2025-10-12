@@ -180,3 +180,5 @@ simulations/
 # Notebook generated artefacts
 test_outputs/notebook_runs/
 test_outputs/testbed_runs/
+# Notebook configuration exports
+configs/testbed_runs/
