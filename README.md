@@ -31,6 +31,12 @@ residual-wake acceleration with a covariant retarded-potential integrator*
   retarded-vector potentials and conjugate-momentum dynamics.  The ``core``
   package is a faithful transcription of the proven legacy solver and is kept in
   numerical lockstep by an integration test suite.
+* **Startup strategies.**  The integrator now exposes
+  :class:`core.types.StartupMode`, allowing cold-start runs that suppress
+  retarded forces during the short-history transient (default) or an
+  ``APPROXIMATE_BACK_HISTORY`` mode that reconstructs a constant-velocity past
+  for better legacy alignment.  All entry points—CLI, scripts, and notebooks—take
+  the new enum so you can toggle behaviour without patching call sites.
 * **Reference publication.**  For the scientific context, derivations, and
   benchmark scenarios, see the project paper referenced above; the codebase
   tracks the configurations described there.
@@ -40,7 +46,10 @@ residual-wake acceleration with a covariant retarded-potential integrator*
   derivations drawn from the in-repo technical note.
 * **Validation assets.**  The ``examples/validation`` tree provides both Python
   scripts and notebooks for reproducing benchmark comparisons between the
-  modern and legacy implementations.
+  modern and legacy implementations.  The refreshed ``integrator_testbed``
+  notebook surfaces legacy overlays, difference plots, and live initial-state
+  summaries so physics regressions are immediately visible while you tweak
+  parameters.
 * **CLI entry point.**  The ``lw-simulate`` console command (see the
   [Command-line entry point](#command-line-entry-point) section below) runs the
   core integrator with JSON-configurable inputs.  A minimal demonstration lives
