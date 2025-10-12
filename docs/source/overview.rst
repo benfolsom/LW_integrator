@@ -65,6 +65,11 @@ Key ideas to keep in mind
 * **Simulation modes are enumerated.**  ``SimulationType`` enumerates the three
   supported wall configurations.  The solver mirrors the legacy integer flags so
   comparison runs remain straightforward.
+* **Startup modes are configurable.**  ``StartupMode`` switches between
+  ``COLD_START`` (the default, suppressing early retarded forces) and
+  ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
+  mirrors the legacy solver's behaviour).  CLI commands, scripts, and notebooks
+  surface the enum so you can pick the right transient treatment per study.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to
