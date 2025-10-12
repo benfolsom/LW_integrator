@@ -36,20 +36,24 @@ def _conducting_flat(vector,wall_Z,apt_R):
     result['bdotx'] = np.zeros_like(vector['bdotx'])
     result['bdoty'] =np.zeros_like(vector['bdoty'])
     result['bdotz'] = np.zeros_like(vector['bdotz'])
-    result['q'] = np.copy(vector['q']) #deep numpy copy
+    source_q = vector['q']
+    if hasattr(source_q, '__getitem__'):
+        result['q'] = np.array(source_q, copy=True)
+    else:
+        result['q'] = np.full_like(vector['x'], fill_value=float(source_q), dtype=float)
 
     for i in range(len(vector['x'])):
         r = np.sqrt(vector['x'][i]**2+vector['y'][i]**2)
 #         #turning off images for particles passing the wall
         if vector['z'][i]>=wall_Z:
-            result['q'] = 0
+            result['q'][i] = 0.0
             #result['x'][i]=vector['x'][i]
             #result['y'][i]=vector['y'][i]
             #result['z'][i]=10
             #break
         #vector['z'][i]<wall_Z and r<=apt_R:
         else:
-            result['q']=-vector['q']
+            result['q'][i] = -result['q'][i]
             result['z'][i]=wall_Z + np.abs(wall_Z-vector['z'][i])
         #result['z'][i]=wall_Z + 2*(wall_Z-vector['z'][i])
         R_dist = np.abs(result['z'][i]-vector['z'][i])
@@ -70,14 +74,14 @@ def _conducting_flat(vector,wall_Z,apt_R):
                 shift = 2*R_dist*np.tan(theta)
                 result['x'][i]=vector['x'][i]+(apt_R + shift/np.sqrt(2))*signchoicex #moving image charge to nearest point on aperture wall
                 result['y'][i]=vector['y'][i]+(apt_R + shift/np.sqrt(2))*signchoicey
-                result['q']=result['q']*( 1-2*(apt_R**2)/(R_dist**2)*1/(1-np.cos(np.pi/2)) )  #adjusting image charge magnitude to avaiable solid angle fraction of reflected charge
+                result['q'][i] = result['q'][i]*( 1-2*(apt_R**2)/(R_dist**2)*1/(1-np.cos(np.pi/2)) )  #adjusting image charge magnitude to avaiable solid angle fraction of reflected charge
             else:
                 shift=0
-                result['q']=0
+                result['q'][i]=0.0
                 result['x'][i]=vector['x'][i]
                 result['y'][i]=vector['y'][i]
         else:
-            result['q']=0
+            result['q'][i]=0.0
             result['x'][i]=vector['x'][i]
             result['y'][i]=vector['y'][i]
 
@@ -123,20 +127,26 @@ def _switching_flat(vector,wall_Z,apt_R,cut_Z):
     result['bdotx'] = np.zeros_like(vector['bdotx'])
     result['bdoty'] =np.zeros_like(vector['bdoty'])
     result['bdotz'] = np.zeros_like(vector['bdotz'])
-    result['q'] = -vector['q']
+    if hasattr(vector['q'], '__getitem__'):
+        result['q'] = -np.copy(vector['q'])
+    else:
+        result['q'] = np.full_like(vector['x'], -vector['q'], dtype=float)
 
     for i in range(len(vector['x'])):
         r = np.sqrt(vector['x'][i]**2+vector['y'][i]**2)
 #         #turning off images for particles passing the wall
         if vector['z'][i]>=cut_Z: # or vector['t'][i] >= z_cutoffime:
-            result['q'] = 0
+            result['q'][i] = 0.0
             #result['x'][i]=vector['x'][i]
             #result['y'][i]=vector['y'][i]
             #result['z'][i]=10
             #break
         #vector['z'][i]<wall_Z and r<=apt_R:
         else:
-            result['q']=-vector['q'] #numpy deep copy
+            if hasattr(vector['q'], '__getitem__'):
+                result['q'][i] = -vector['q'][i]
+            else:
+                result['q'][i] = -vector['q']
             result['z'][i]=wall_Z + np.abs(wall_Z-vector['z'][i])
             result['x'][i]=vector['x'][i]
             result['y'][i]=vector['y'][i]
