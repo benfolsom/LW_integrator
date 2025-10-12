@@ -49,7 +49,10 @@ residual-wake acceleration with a covariant retarded-potential integrator*
   modern and legacy implementations.  The refreshed ``integrator_testbed``
   notebook surfaces legacy overlays, difference plots, and live initial-state
   summaries so physics regressions are immediately visible while you tweak
-  parameters.
+  parameters.  Its widget scaffolding now lives in
+  ``examples/validation/testbed_ui.py`` so you can import
+  ``IntegratorTestbedApp`` into other notebooks or scripts without duplicating
+  the layout logic.
 * **CLI entry point.**  The ``lw-simulate`` console command (see the
   [Command-line entry point](#command-line-entry-point) section below) runs the
   core integrator with JSON-configurable inputs.  A minimal demonstration lives
@@ -118,6 +121,9 @@ python examples/validation/core_vs_legacy_benchmark.py --seeds 0 1 2 --steps 500
 The script accepts additional options for output paths, DPI control, and plot
 styling.  Consult ``--help`` for the full list.  Companion notebooks in the same
 directory expose an interactive widget-driven interface for exploratory work.
+The notebook delegates all widget construction to
+``examples/validation/testbed_ui.py``; instantiate ``IntegratorTestbedApp`` to
+embed the UI in your own notebook or lab book without copying code cells.
 
 The ``tests/`` directory contains deterministic Pytest suites that ensure
 physics parity across configurations:
