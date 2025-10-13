@@ -8,6 +8,7 @@ legacy solver (including its stochastic aperture spill model).
 from __future__ import annotations
 
 import random
+from unittest import result
 
 import numpy as np
 
@@ -86,30 +87,23 @@ def generate_conducting_image(
 
             if theta < np.pi / 4:
                 shift = 2 * R_dist * np.tan(theta)
-                result["x"][i] = (
-                    vector["x"][i] + (aperture_radius + shift / np.sqrt(2)) * sign_x
-                )
-                result["y"][i] = (
-                    vector["y"][i] + (aperture_radius + shift / np.sqrt(2)) * sign_y
-                )
+                hypo = np.sqrt(R_dist**2 + shift**2)
                 result["q"] = result["q"] * (
                     1
                     - 2
                     * (aperture_radius**2)
-                    / (R_dist**2)
+                    / (hypo**2)
                     * 1
                     / (1 - np.cos(np.pi / 2))
                 )
             else:
                 shift = 0
                 result["q"].fill(0.0)
-                result["x"][i] = vector["x"][i]
-                result["y"][i] = vector["y"][i]
         else:
             result["q"].fill(0.0)
-            result["x"][i] = vector["x"][i]
-            result["y"][i] = vector["y"][i]
 
+        result["x"][i] = vector["x"][i]
+        result["y"][i] = vector["y"][i]
         result["Px"][i] = vector["Px"][i]
         result["Py"][i] = vector["Py"][i]
         result["Pz"][i] = -vector["Pz"][i]
