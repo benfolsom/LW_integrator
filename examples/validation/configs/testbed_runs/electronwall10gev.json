@@ -11,10 +11,10 @@
   "difference_save": false,
   "driver_params": null,
   "energy_save": false,
-  "legacy_enabled": true,
+  "legacy_enabled": false,
   "metrics_save": false,
   "output_dir": "test_outputs/testbed_runs",
-  "overlay_display": true,
+  "overlay_display": false,
   "overlay_save": false,
   "plot_dpi": 300,
   "rider_params": {
