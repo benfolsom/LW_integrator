@@ -8,7 +8,6 @@ legacy solver (including its stochastic aperture spill model).
 from __future__ import annotations
 
 import random
-
 import numpy as np
 
 from .types import ParticleState
@@ -132,7 +131,10 @@ def generate_switching_image(
         else:
             result["x"][i] = vector["x"][i]
             result["y"][i] = vector["y"][i]
-            result["z"][i] = wall_z + abs(wall_z - vector["z"][i])
+            if vector["z"][i] <= wall_z:
+                result["z"][i] = wall_z + abs(wall_z - vector["z"][i])
+            else:
+                result["z"][i] = wall_z - abs(wall_z - vector["z"][i])
 
         result["Px"][i] = vector["Px"][i]
         result["Py"][i] = vector["Py"][i]
