@@ -1,0 +1,33 @@
+{
+  "core_params": {
+    "aperture_radius": 10.0,
+    "cav_spacing": 100000.0,
+    "mean": 100000.0,
+    "time_step": 5e-08,
+    "wall_z": 1000.0,
+    "z_cutoff": 0.0
+  },
+  "difference_display": false,
+  "difference_save": false,
+  "driver_params": null,
+  "energy_save": false,
+  "legacy_enabled": false,
+  "metrics_save": false,
+  "output_dir": "test_outputs/testbed_runs",
+  "overlay_display": false,
+  "overlay_save": false,
+  "plot_dpi": 300,
+  "rider_params": {
+    "charge_sign": -1.0,
+    "m_particle": 0.00054857990907,
+    "pcount": 5,
+    "starting_Pz": 5866000.0,
+    "starting_distance": 1e-06,
+    "stripped_ions": 1.0,
+    "transv_dist": 0.0002,
+    "transv_mom": 0.0001
+  },
+  "seed": 12345,
+  "simulation_type": "CONDUCTING_WALL",
+  "steps": 4230
+}
