@@ -66,7 +66,7 @@ def _compute_delta_t(
 def _dot_beta_nhat(
     state: ParticleState, nhat: DistanceResult, sample_index: int
 ) -> float:
-    return (
+    return float(
         state["bx"][sample_index] * nhat["nx"][sample_index]
         + state["by"][sample_index] * nhat["ny"][sample_index]
         + state["bz"][sample_index] * nhat["nz"][sample_index]
