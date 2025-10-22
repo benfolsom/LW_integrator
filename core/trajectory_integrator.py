@@ -114,10 +114,10 @@ class LienardWiechertIntegrator:
     ) -> tuple[Trajectory, Trajectory]:
         """Execute retarded-field integration using the modern core runner.
 
-    Parameters mirror the legacy signature but are forwarded to
-    :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
-        preserved for backwards compatibility and contributes to the total step
-        count.
+        Parameters mirror the legacy signature but are forwarded to
+        :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
+            preserved for backwards compatibility and contributes to the total step
+            count.
         """
 
         sim_type_enum = (
@@ -148,8 +148,12 @@ class LienardWiechertIntegrator:
             mean=float(bunch_dist),
             cav_spacing=0.0,
             z_cutoff=float(z_cutoff),
-            chrono_mode=self.config.chrono_mode if self.config else ChronoMatchingMode.AVERAGED,
-            startup_mode=self.config.startup_mode if self.config else StartupMode.COLD_START,
+            chrono_mode=(
+                self.config.chrono_mode if self.config else ChronoMatchingMode.AVERAGED
+            ),
+            startup_mode=(
+                self.config.startup_mode if self.config else StartupMode.COLD_START
+            ),
         )
 
         return trajectory, driver

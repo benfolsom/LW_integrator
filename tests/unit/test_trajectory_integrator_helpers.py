@@ -135,7 +135,9 @@ def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
     )
 
     expected_fast = distance * (1.0 + b_nhat_current) / C_MMNS
-    expected_avg = distance * (1.0 + (b_nhat_current + ultrarelativistic_beta) / 2.0) / C_MMNS
+    expected_avg = (
+        distance * (1.0 + (b_nhat_current + ultrarelativistic_beta) / 2.0) / C_MMNS
+    )
 
     assert fast_delta == pytest.approx(expected_fast)
     assert averaged_delta == pytest.approx(expected_avg)
@@ -144,9 +146,7 @@ def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
 
 def test_cold_start_defers_external_forces_until_travelled_distance():
     trajectory = [_make_single_particle_state(t=0.0, z=0.0, charge=1.0)]
-    trajectory_ext = [
-        _make_single_particle_state(t=0.0, z=1.0, x=0.5, charge=1.0)
-    ]
+    trajectory_ext = [_make_single_particle_state(t=0.0, z=1.0, x=0.5, charge=1.0)]
 
     cold_result = retarded_equations_of_motion(
         h=1e-3,

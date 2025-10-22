@@ -31,7 +31,9 @@ def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     if required_length == 0:
         return
 
-    def _ensure(name: str, source_key: str | None = None, *, fill_value: float = 0.0) -> None:
+    def _ensure(
+        name: str, source_key: str | None = None, *, fill_value: float = 0.0
+    ) -> None:
         if name not in state or state[name].shape != state["x"].shape:
             if source_key is not None:
                 state[name] = np.copy(state[source_key])
