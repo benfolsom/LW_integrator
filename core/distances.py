@@ -145,11 +145,12 @@ def compute_retarded_distance(
     simply evaluates the geometric terms for each matched particle.
     """
 
+    prototype = trajectory_ext[index_traj]["x"]
     result: DistanceResult = {
-        "R": np.zeros_like(trajectory[index_traj]["x"]),
-        "nx": np.zeros_like(trajectory[index_traj]["x"]),
-        "ny": np.zeros_like(trajectory[index_traj]["x"]),
-        "nz": np.zeros_like(trajectory[index_traj]["x"]),
+        "R": np.zeros_like(prototype),
+        "nx": np.zeros_like(prototype),
+        "ny": np.zeros_like(prototype),
+        "nz": np.zeros_like(prototype),
     }
 
     for j, idx in enumerate(indices_ret):
