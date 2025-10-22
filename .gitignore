@@ -12,6 +12,10 @@ tests/development/
 # C extensions
 *.so
 
+# example outputs and configs
+validation/configs/
+validation/test_outputs/
+
 # Distribution / packaging
 .Python
 build/
@@ -153,6 +157,7 @@ Thumbs.db
 /Manifest.toml
 /docs/build/
 /docs/site/
+/docs/_build/
 
 # Backup files
 *.backup
@@ -179,3 +184,5 @@ simulations/
 # Notebook generated artefacts
 test_outputs/notebook_runs/
 test_outputs/testbed_runs/
+# Notebook configuration exports
+configs/testbed_runs/

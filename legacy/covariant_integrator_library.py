@@ -36,20 +36,24 @@ def _conducting_flat(vector,wall_Z,apt_R):
     result['bdotx'] = np.zeros_like(vector['bdotx'])
     result['bdoty'] =np.zeros_like(vector['bdoty'])
     result['bdotz'] = np.zeros_like(vector['bdotz'])
-    result['q'] = np.copy(vector['q']) #deep numpy copy
+    source_q = vector['q']
+    if hasattr(source_q, '__getitem__'):
+        result['q'] = np.array(source_q, copy=True)
+    else:
+        result['q'] = np.full_like(vector['x'], fill_value=float(source_q), dtype=float)
 
     for i in range(len(vector['x'])):
         r = np.sqrt(vector['x'][i]**2+vector['y'][i]**2)
 #         #turning off images for particles passing the wall
         if vector['z'][i]>=wall_Z:
-            result['q'] = 0
+            result['q'][i] = 0.0
             #result['x'][i]=vector['x'][i]
             #result['y'][i]=vector['y'][i]
             #result['z'][i]=10
             #break
         #vector['z'][i]<wall_Z and r<=apt_R:
         else:
-            result['q']=-vector['q']
+            result['q'][i] = -result['q'][i]
             result['z'][i]=wall_Z + np.abs(wall_Z-vector['z'][i])
         #result['z'][i]=wall_Z + 2*(wall_Z-vector['z'][i])
         R_dist = np.abs(result['z'][i]-vector['z'][i])
@@ -70,14 +74,14 @@ def _conducting_flat(vector,wall_Z,apt_R):
                 shift = 2*R_dist*np.tan(theta)
                 result['x'][i]=vector['x'][i]+(apt_R + shift/np.sqrt(2))*signchoicex #moving image charge to nearest point on aperture wall
                 result['y'][i]=vector['y'][i]+(apt_R + shift/np.sqrt(2))*signchoicey
-                result['q']=result['q']*( 1-2*(apt_R**2)/(R_dist**2)*1/(1-np.cos(np.pi/2)) )  #adjusting image charge magnitude to avaiable solid angle fraction of reflected charge
+                result['q'][i] = result['q'][i]*( 1-2*(apt_R**2)/(R_dist**2)*1/(1-np.cos(np.pi/2)) )  #adjusting image charge magnitude to avaiable solid angle fraction of reflected charge
             else:
                 shift=0
-                result['q']=0
+                result['q'][i]=0.0
                 result['x'][i]=vector['x'][i]
                 result['y'][i]=vector['y'][i]
         else:
-            result['q']=0
+            result['q'][i]=0.0
             result['x'][i]=vector['x'][i]
             result['y'][i]=vector['y'][i]
 
@@ -123,20 +127,26 @@ def _switching_flat(vector,wall_Z,apt_R,cut_Z):
     result['bdotx'] = np.zeros_like(vector['bdotx'])
     result['bdoty'] =np.zeros_like(vector['bdoty'])
     result['bdotz'] = np.zeros_like(vector['bdotz'])
-    result['q'] = -vector['q']
+    if hasattr(vector['q'], '__getitem__'):
+        result['q'] = -np.copy(vector['q'])
+    else:
+        result['q'] = np.full_like(vector['x'], -vector['q'], dtype=float)
 
     for i in range(len(vector['x'])):
         r = np.sqrt(vector['x'][i]**2+vector['y'][i]**2)
 #         #turning off images for particles passing the wall
         if vector['z'][i]>=cut_Z: # or vector['t'][i] >= z_cutoffime:
-            result['q'] = 0
+            result['q'][i] = 0.0
             #result['x'][i]=vector['x'][i]
             #result['y'][i]=vector['y'][i]
             #result['z'][i]=10
             #break
         #vector['z'][i]<wall_Z and r<=apt_R:
         else:
-            result['q']=-vector['q'] #numpy deep copy
+            if hasattr(vector['q'], '__getitem__'):
+                result['q'][i] = -vector['q'][i]
+            else:
+                result['q'][i] = -vector['q']
             result['z'][i]=wall_Z + np.abs(wall_Z-vector['z'][i])
             result['x'][i]=vector['x'][i]
             result['y'][i]=vector['y'][i]
@@ -164,18 +174,32 @@ def _dist_euclid(vector,vector_ext,index):
     simple Euclidean distance generator
 
     """
+    ext_len = len(vector_ext['x']) if 'x' in vector_ext else 0
+    base_len = len(vector['x']) if 'x' in vector else 0
+
     result = {}
-    result['R'] = np.zeros_like(vector['x'])
-    result['nx'] = np.zeros_like(vector['x'])
-    result['ny'] = np.zeros_like(vector['x'])
-    result['nz'] = np.zeros_like(vector['x'])
-    for j in range(len(vector_ext['x'])):
-        result['R'][j] = np.sqrt( (vector['x'][index]-vector_ext['x'][j])**2+
-                          (vector['y'][index]-vector_ext['y'][j])**2+
-                          (vector['z'][index]-vector_ext['z'][j])**2 )
-        result['nx'][j] = (vector['x'][index]-vector_ext['x'][j])/result['R'][j]
-        result['ny'][j] = (vector['y'][index]-vector_ext['y'][j])/result['R'][j]
-        result['nz'][j] = (vector['z'][index]-vector_ext['z'][j])/result['R'][j]
+    result['R'] = np.zeros(ext_len, dtype=float)
+    result['nx'] = np.zeros(ext_len, dtype=float)
+    result['ny'] = np.zeros(ext_len, dtype=float)
+    result['nz'] = np.zeros(ext_len, dtype=float)
+
+    if ext_len == 0 or base_len == 0:
+        return(result)
+
+    index_clamped = int(np.clip(index, 0, base_len-1))
+
+    for j in range(ext_len):
+        if j >= len(vector_ext['x']):
+            break
+        dx = vector['x'][index_clamped]-vector_ext['x'][j]
+        dy = vector['y'][index_clamped]-vector_ext['y'][j]
+        dz = vector['z'][index_clamped]-vector_ext['z'][j]
+        result['R'][j] = np.sqrt(dx**2+dy**2+dz**2)
+        if result['R'][j] == 0:
+            continue
+        result['nx'][j] = dx/result['R'][j]
+        result['ny'][j] = dy/result['R'][j]
+        result['nz'][j] = dz/result['R'][j]
     return(result)
 
 def _dist_euclid_ret(trajectory,trajectory_ext,index_traj,index_part,indices_ret):
@@ -183,18 +207,36 @@ def _dist_euclid_ret(trajectory,trajectory_ext,index_traj,index_part,indices_ret
     simple Euclidean distance generator
 
     """
+    ext_len = len(indices_ret)
+    base_len = len(trajectory[index_traj]['x']) if 'x' in trajectory[index_traj] else 0
+
     result = {}
-    result['R'] = np.zeros_like(trajectory[index_traj]['x'])
-    result['nx'] = np.zeros_like(trajectory[index_traj]['x'])
-    result['ny'] = np.zeros_like(trajectory[index_traj]['x'])
-    result['nz'] = np.zeros_like(trajectory[index_traj]['x'])
-    for j in range(len(trajectory[index_traj]['x'])):
-        result['R'][j] = np.sqrt( (trajectory[index_traj]['x'][index_part]-trajectory_ext[indices_ret[j]]['x'][j])**2+
-                          (trajectory[index_traj]['y'][index_part]-trajectory_ext[indices_ret[j]]['y'][j])**2+
-                          (trajectory[index_traj]['z'][index_part]-trajectory_ext[indices_ret[j]]['z'][j])**2 )
-        result['nx'][j] = (trajectory[index_traj]['x'][index_part]-trajectory_ext[indices_ret[j]]['x'][j])/result['R'][j]
-        result['ny'][j] = (trajectory[index_traj]['y'][index_part]-trajectory_ext[indices_ret[j]]['y'][j])/result['R'][j]
-        result['nz'][j] = (trajectory[index_traj]['z'][index_part]-trajectory_ext[indices_ret[j]]['z'][j])/result['R'][j]
+    result['R'] = np.zeros(ext_len, dtype=float)
+    result['nx'] = np.zeros(ext_len, dtype=float)
+    result['ny'] = np.zeros(ext_len, dtype=float)
+    result['nz'] = np.zeros(ext_len, dtype=float)
+
+    if ext_len == 0 or base_len == 0 or len(trajectory_ext) == 0:
+        return(result)
+
+    index_clamped = int(np.clip(index_part, 0, base_len-1))
+    max_traj_index = len(trajectory_ext) - 1
+
+    for j in range(ext_len):
+        ext_idx = int(np.clip(indices_ret[j], 0, max_traj_index))
+        if 'x' not in trajectory_ext[ext_idx] or len(trajectory_ext[ext_idx]['x']) == 0:
+            continue
+        if j >= len(trajectory_ext[ext_idx]['x']):
+            continue
+        dx = trajectory[index_traj]['x'][index_clamped]-trajectory_ext[ext_idx]['x'][j]
+        dy = trajectory[index_traj]['y'][index_clamped]-trajectory_ext[ext_idx]['y'][j]
+        dz = trajectory[index_traj]['z'][index_clamped]-trajectory_ext[ext_idx]['z'][j]
+        result['R'][j] = np.sqrt(dx**2+dy**2+dz**2)
+        if result['R'][j] == 0:
+            continue
+        result['nx'][j] = dx/result['R'][j]
+        result['ny'][j] = dy/result['R'][j]
+        result['nz'][j] = dz/result['R'][j]
     return(result)
 
 def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
@@ -222,7 +264,7 @@ def chrono_jn(trajectory,trajectory_ext,index_traj,index_part):
             print(f"Warning: Near-collinear ultra-relativistic motion detected (1-β·n̂ = {denominator:.2e})")
         else:            
             #converted from  δt = R/(c(1-β·n̂)) to PROPER TIME (assuming gamma source and target are equiv)
-            delta_t = nhat['R'][l]*(1+b_nhat) * trajectory_ext[index_traj]['gamma'][l]**2 / trajectory[index_traj]['gamma'][l] / c_mmns
+            delta_t = nhat['R'][l]*(1+b_nhat) / c_mmns
 
         t_ext_new = trajectory_ext[index_traj]['t'][l]-delta_t
         #t_ext_new = (trajectory_ext[index_traj]['t'][l]-delta_t)/trajectory_ext[index_traj]['gamma'][l]

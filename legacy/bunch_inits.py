@@ -1,7 +1,17 @@
 import numpy as np
 
-def init_bunch(starting_distance,transv_mom,starting_Pz,stripped_ions,
-                     m_particle,transv_dist,pcount,charge_sign):
+def init_bunch(
+    starting_distance,
+    transv_mom,
+    starting_Pz,
+    stripped_ions,
+    m_particle,
+    transv_dist,
+    pcount,
+    charge_sign,
+    *,
+    verbose: bool = False,
+):
 
     c_mmns = 299.792458 # mm/ns
     macro_pop=1
@@ -47,9 +57,11 @@ def init_bunch(starting_distance,transv_mom,starting_Pz,stripped_ions,
     Pz_kgms  = vz_ms*mass_kg*gamma[0]
     E_J     = Pz_kgms*c_ms
     E_MeV = E_J*6.242E12
-    print("E_MeV = ", E_MeV)
-    print("Gamma = ", gamma[0])
+    if verbose:
+        print("E_MeV = ", E_MeV)
+        print("Gamma = ", gamma[0])
     E_J_rest = m_particle*amu_kg*c_ms**2
     E_MeV_rest = E_J_rest*6.242E12
-    print("E_rest = ", E_MeV_rest)
+    if verbose:
+        print("E_rest = ", E_MeV_rest)
     return init_bunch_dict,E_MeV_rest

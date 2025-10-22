@@ -12,8 +12,35 @@ from __future__ import annotations
 import numpy as np
 
 from .constants import C_MMNS
-from .distances import compute_retarded_distance, chrono_match_indices
-from .types import ParticleState, SimulationType, Trajectory
+from .distances import (
+    chrono_match_indices,
+    compute_instantaneous_distance,
+    compute_retarded_distance,
+)
+from .types import (
+    ChronoMatchingMode,
+    ParticleState,
+    SimulationType,
+    StartupMode,
+    Trajectory,
+)
+
+
+def _ensure_startup_metadata(state: ParticleState) -> None:
+    if "origin_x" not in state:
+        state["origin_x"] = np.copy(state.get("x", np.array([])))
+    if "origin_y" not in state:
+        state["origin_y"] = np.copy(state.get("y", np.array([])))
+    if "origin_z" not in state:
+        state["origin_z"] = np.copy(state.get("z", np.array([])))
+    if "beta_avg_x" not in state:
+        state["beta_avg_x"] = np.copy(state.get("bx", np.array([])))
+    if "beta_avg_y" not in state:
+        state["beta_avg_y"] = np.copy(state.get("by", np.array([])))
+    if "beta_avg_z" not in state:
+        state["beta_avg_z"] = np.copy(state.get("bz", np.array([])))
+    if "beta_samples" not in state:
+        state["beta_samples"] = np.ones_like(state.get("x", np.array([])), dtype=float)
 
 
 def retarded_equations_of_motion(
@@ -23,6 +50,8 @@ def retarded_equations_of_motion(
     index_traj: int,
     aperture_radius: float,
     sim_type: SimulationType,
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
+    startup_mode: StartupMode = StartupMode.COLD_START,
 ) -> ParticleState:
     """Core equations of motion mirroring the validated legacy implementation.
 
@@ -40,12 +69,23 @@ def retarded_equations_of_motion(
         Aperture radius supplied to the image generators.
     sim_type:
         Simulation boundary type encoded as :class:`SimulationType`.
+    chrono_mode:
+        Retardation sampling strategy; ``FAST`` retains the legacy single
+        sample, whereas ``AVERAGED`` blends ``R / c`` and ``2R / c`` emission
+        times for the external bunch.
+    startup_mode:
+        Early-step handling strategy; ``COLD_START`` suppresses external forces
+        until sufficient observer travel has occurred, while
+        ``APPROXIMATE_BACK_HISTORY`` assumes constant source velocity to
+        reconstruct an analytic history.
 
     Returns
     -------
     ParticleState
         Updated particle state for the next time step.
     """
+
+    _ensure_startup_metadata(trajectory[index_traj])
 
     result: ParticleState = {
         "x": np.copy(trajectory[index_traj]["x"]),
@@ -69,22 +109,46 @@ def retarded_equations_of_motion(
         ),
         "m": trajectory[index_traj].get("m", np.ones_like(trajectory[index_traj]["x"])),
         "dummy": np.zeros_like(trajectory[index_traj]["bdotz"]),
+        "origin_x": np.copy(trajectory[index_traj]["origin_x"]),
+        "origin_y": np.copy(trajectory[index_traj]["origin_y"]),
+        "origin_z": np.copy(trajectory[index_traj]["origin_z"]),
+        "beta_avg_x": np.copy(trajectory[index_traj]["beta_avg_x"]),
+        "beta_avg_y": np.copy(trajectory[index_traj]["beta_avg_y"]),
+        "beta_avg_z": np.copy(trajectory[index_traj]["beta_avg_z"]),
+        "beta_samples": np.copy(trajectory[index_traj]["beta_samples"]),
     }
 
     for particle_index in range(len(trajectory[index_traj]["x"])):
-        indices_new = chrono_match_indices(
-            trajectory, trajectory_ext, index_traj, particle_index
-        )
-        max_ext_idx = len(trajectory_ext) - 1
-        indices_new_bounded = np.minimum(np.maximum(indices_new, 0), max_ext_idx)
+        if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
+            sample_count = len(trajectory_ext[index_traj]["x"])
+            indices_new_bounded = np.full(sample_count, index_traj, dtype=int)
+            nhat = compute_instantaneous_distance(
+                trajectory[index_traj], trajectory_ext[index_traj], particle_index
+            )
+            beta_ext_dot_nhat = (
+                trajectory_ext[index_traj]["bx"] * nhat["nx"]
+                + trajectory_ext[index_traj]["by"] * nhat["ny"]
+                + trajectory_ext[index_traj]["bz"] * nhat["nz"]
+            )
+            nhat["R"] = nhat["R"] * (1.0 + beta_ext_dot_nhat)
+        else:
+            indices_new = chrono_match_indices(
+                trajectory,
+                trajectory_ext,
+                index_traj,
+                particle_index,
+                mode=chrono_mode,
+            )
+            max_ext_idx = len(trajectory_ext) - 1
+            indices_new_bounded = np.minimum(np.maximum(indices_new, 0), max_ext_idx)
 
-        nhat = compute_retarded_distance(
-            trajectory,
-            trajectory_ext,
-            index_traj,
-            particle_index,
-            indices_new_bounded,
-        )
+            nhat = compute_retarded_distance(
+                trajectory,
+                trajectory_ext,
+                index_traj,
+                particle_index,
+                indices_new_bounded,
+            )
 
         result["x"][particle_index] = trajectory[index_traj]["x"][particle_index]
         result["y"][particle_index] = trajectory[index_traj]["y"][particle_index]
@@ -112,9 +176,45 @@ def retarded_equations_of_motion(
             else trajectory[index_traj]["m"]
         )
 
+        apply_external = True
+        if startup_mode is StartupMode.COLD_START and nhat["R"].size > 0:
+            origin = (
+                trajectory[index_traj]["origin_x"][particle_index],
+                trajectory[index_traj]["origin_y"][particle_index],
+                trajectory[index_traj]["origin_z"][particle_index],
+            )
+            current = (
+                trajectory[index_traj]["x"][particle_index],
+                trajectory[index_traj]["y"][particle_index],
+                trajectory[index_traj]["z"][particle_index],
+            )
+            travel_distance = float(
+                np.sqrt(
+                    (current[0] - origin[0]) ** 2
+                    + (current[1] - origin[1]) ** 2
+                    + (current[2] - origin[2]) ** 2
+                )
+            )
+
+            beta_avg_x = trajectory[index_traj]["beta_avg_x"][particle_index]
+            beta_avg_y = trajectory[index_traj]["beta_avg_y"][particle_index]
+            beta_avg_z = trajectory[index_traj]["beta_avg_z"][particle_index]
+            beta_avg_dot_nhat = (
+                beta_avg_x * nhat["nx"]
+                + beta_avg_y * nhat["ny"]
+                + beta_avg_z * nhat["nz"]
+            )
+            thresholds = nhat["R"] * (1.0 - beta_avg_dot_nhat)
+            if thresholds.size > 0:
+                gating_threshold = float(np.max(np.maximum(thresholds, 0.0)))
+                apply_external = travel_distance >= gating_threshold
+
         for j in range(len(trajectory_ext[0]["x"])):
             ext_idx = indices_new_bounded[j]
             if ext_idx >= len(trajectory_ext) or j >= len(trajectory_ext[ext_idx]["x"]):
+                continue
+
+            if not apply_external:
                 continue
 
             if hasattr(trajectory_ext[ext_idx]["q"], "__getitem__"):
@@ -389,6 +489,23 @@ def retarded_equations_of_motion(
             result["bdoty"][particle_index] += (
                 char_time_i * (rad_frc_y_lhs + rad_frc_y_rhs) / (mass_i * C_MMNS)
             )
+
+        prev_samples = float(trajectory[index_traj]["beta_samples"][particle_index])
+        current_samples = prev_samples + 1.0
+        prev_avg_x = trajectory[index_traj]["beta_avg_x"][particle_index]
+        prev_avg_y = trajectory[index_traj]["beta_avg_y"][particle_index]
+        prev_avg_z = trajectory[index_traj]["beta_avg_z"][particle_index]
+
+        result["beta_samples"][particle_index] = current_samples
+        result["beta_avg_x"][particle_index] = (
+            prev_avg_x * prev_samples + result["bx"][particle_index]
+        ) / current_samples
+        result["beta_avg_y"][particle_index] = (
+            prev_avg_y * prev_samples + result["by"][particle_index]
+        ) / current_samples
+        result["beta_avg_z"][particle_index] = (
+            prev_avg_z * prev_samples + result["bz"][particle_index]
+        ) / current_samples
 
     return result
 

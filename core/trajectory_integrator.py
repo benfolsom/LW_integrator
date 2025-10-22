@@ -22,8 +22,15 @@ from .distances import (
 )
 from .equations import retarded_equations_of_motion
 from .images import generate_conducting_image, generate_switching_image
-from .integrator import retarded_integrator, run_integrator
-from .types import IntegratorConfig, ParticleState, SimulationType, Trajectory
+from .integration_runner import retarded_integrator, run_integrator
+from .types import (
+    ChronoMatchingMode,
+    IntegratorConfig,
+    ParticleState,
+    SimulationType,
+    StartupMode,
+    Trajectory,
+)
 
 
 class LienardWiechertIntegrator:
@@ -59,14 +66,13 @@ class LienardWiechertIntegrator:
 
         return {key: np.copy(value) for key, value in state.items()}
 
-    def equations_of_motion_static_internal(
+    def drift_step(
         self, h_step: float, state: ParticleState, _index: int
     ) -> ParticleState:
         """Propagate particles forward assuming a field-free drift.
 
-        This mirrors the legacy helper used for static warm-up steps: particles
-        drift according to their current velocity while conjugate momentum and
-        Lorentz factor remain constant.
+        Particles advance according to their current velocity while conjugate
+        momentum and Lorentz factor remain constant.
         """
 
         result = self._clone_state(state)
@@ -109,9 +115,9 @@ class LienardWiechertIntegrator:
         """Execute retarded-field integration using the modern core runner.
 
         Parameters mirror the legacy signature but are forwarded to
-        :func:`core.integrator.retarded_integrator`. ``static_steps`` is
-        preserved for backwards compatibility and contributes to the total step
-        count.
+        :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
+            preserved for backwards compatibility and contributes to the total step
+            count.
         """
 
         sim_type_enum = (
@@ -142,6 +148,12 @@ class LienardWiechertIntegrator:
             mean=float(bunch_dist),
             cav_spacing=0.0,
             z_cutoff=float(z_cutoff),
+            chrono_mode=(
+                self.config.chrono_mode if self.config else ChronoMatchingMode.AVERAGED
+            ),
+            startup_mode=(
+                self.config.startup_mode if self.config else StartupMode.COLD_START
+            ),
         )
 
         return trajectory, driver
