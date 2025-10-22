@@ -60,7 +60,7 @@ def _compute_delta_t(
         )
 
     averaged_b = sampled_b / time_offsets.size
-    return distance * (1.0 + averaged_b) / C_MMNS
+    return float(distance * (1.0 + averaged_b) / C_MMNS)
 
 
 def _dot_beta_nhat(

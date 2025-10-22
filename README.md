@@ -125,6 +125,10 @@ The notebook delegates all widget construction to
 ``examples/validation/testbed_ui.py``; instantiate ``IntegratorTestbedApp`` to
 embed the UI in your own notebook or lab book without copying code cells.
 
+> **Note:** The interactive notebooks are tested and supported in JupyterLab
+> and the classic Jupyter Notebook or Jupyter Lab interface.  The VS Code notebook editor is
+> known to trigger duplicate plot rendering.
+
 The ``tests/`` directory contains deterministic Pytest suites that ensure
 physics parity across configurations:
 

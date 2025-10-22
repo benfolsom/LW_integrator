@@ -17,7 +17,13 @@ from .distances import (
     compute_instantaneous_distance,
     compute_retarded_distance,
 )
-from .types import ChronoMatchingMode, ParticleState, SimulationType, StartupMode, Trajectory
+from .types import (
+    ChronoMatchingMode,
+    ParticleState,
+    SimulationType,
+    StartupMode,
+    Trajectory,
+)
 
 
 def _ensure_startup_metadata(state: ParticleState) -> None:

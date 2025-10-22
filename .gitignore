@@ -12,6 +12,10 @@ tests/development/
 # C extensions
 *.so
 
+# example outputs and configs
+validation/configs/
+validation/test_outputs/
+
 # Distribution / packaging
 .Python
 build/

@@ -63,8 +63,8 @@ def self_consistent_step(
         index_traj,
         aperture_radius,
         sim_type,
-    chrono_mode,
-    startup_mode,
+        chrono_mode,
+        startup_mode,
     )
 
     if config is None or not config.enabled:
