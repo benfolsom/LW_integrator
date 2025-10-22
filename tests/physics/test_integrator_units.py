@@ -78,7 +78,7 @@ class TestTrajectoryIntegratorUnits:
         initial_state = self.test_particle.copy()
         h_step = 1e-5
 
-        final_state = self.integrator.equations_of_motion_static_internal(  # type: ignore[attr-defined]
+        final_state = self.integrator.drift_step(  # type: ignore[attr-defined]
             h_step, initial_state, 0
         )
 

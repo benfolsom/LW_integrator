@@ -14,6 +14,7 @@ from typing import Dict
 import numpy as np
 import pytest
 
+from core.distances import _compute_delta_t
 from core.self_consistency import SelfConsistencyConfig
 from core.trajectory_integrator import (
     C_MMNS,
@@ -27,6 +28,7 @@ from core.trajectory_integrator import (
     retarded_integrator,
     run_integrator,
 )
+from core.types import ChronoMatchingMode, StartupMode
 
 
 def _make_single_particle_state(
@@ -70,6 +72,115 @@ def _make_single_particle_state(
         "char_time": arr([char_time], dtype=float),
     }
     return state
+
+
+def test_compute_delta_t_fast_matches_legacy_formula():
+    trajectory = [_make_single_particle_state(t=1e-3, x=0.0, bx=0.2)]
+    trajectory_ext = [_make_single_particle_state(t=1e-3, x=0.0, bx=0.2)]
+
+    distance = 0.75
+    b_nhat = 0.35
+
+    delta_t = _compute_delta_t(
+        mode=ChronoMatchingMode.FAST,
+        distance=distance,
+        b_nhat=b_nhat,
+        sample_index=0,
+        index_traj=0,
+        index_part=0,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+    )
+
+    expected = distance * (1.0 + b_nhat) / C_MMNS
+    assert delta_t == pytest.approx(expected)
+
+
+def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
+    trajectory = [
+        _make_single_particle_state(t=0.0, x=0.0),
+        _make_single_particle_state(t=4e-3, x=0.5),
+        _make_single_particle_state(t=8e-3, x=1.0),
+    ]
+    ultrarelativistic_beta = 0.9
+    trajectory_ext = [
+        _make_single_particle_state(t=0.0, x=0.0, bx=ultrarelativistic_beta),
+        _make_single_particle_state(t=4e-3, x=0.0, bx=ultrarelativistic_beta),
+        _make_single_particle_state(t=8e-3, x=0.0, bx=0.0),
+    ]
+
+    distance = 1.0
+    b_nhat_current = trajectory_ext[2]["bx"][0]
+
+    fast_delta = _compute_delta_t(
+        mode=ChronoMatchingMode.FAST,
+        distance=distance,
+        b_nhat=b_nhat_current,
+        sample_index=0,
+        index_traj=2,
+        index_part=0,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+    )
+
+    averaged_delta = _compute_delta_t(
+        mode=ChronoMatchingMode.AVERAGED,
+        distance=distance,
+        b_nhat=b_nhat_current,
+        sample_index=0,
+        index_traj=2,
+        index_part=0,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+    )
+
+    expected_fast = distance * (1.0 + b_nhat_current) / C_MMNS
+    expected_avg = (
+        distance * (1.0 + (b_nhat_current + ultrarelativistic_beta) / 2.0) / C_MMNS
+    )
+
+    assert fast_delta == pytest.approx(expected_fast)
+    assert averaged_delta == pytest.approx(expected_avg)
+    assert averaged_delta > fast_delta
+
+
+def test_cold_start_defers_external_forces_until_travelled_distance():
+    trajectory = [_make_single_particle_state(t=0.0, z=0.0, charge=1.0)]
+    trajectory_ext = [_make_single_particle_state(t=0.0, z=1.0, x=0.5, charge=1.0)]
+
+    cold_result = retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.COLD_START,
+    )
+
+    np.testing.assert_allclose(cold_result["Px"], trajectory[0]["Px"])
+
+
+def test_approximate_back_history_recovers_initial_force_estimate():
+    trajectory = [_make_single_particle_state(t=0.0, z=0.0, charge=1.0)]
+    trajectory_ext = [
+        _make_single_particle_state(t=0.0, z=1.0, x=0.5, bx=0.2, charge=-1.0)
+    ]
+
+    approx_result = retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+    )
+
+    assert not np.allclose(approx_result["Px"], trajectory[0]["Px"])
+    assert np.all(np.isfinite(approx_result["Px"]))
 
 
 def test_generate_conducting_image_reflects_momentum_and_direction():
@@ -122,14 +233,21 @@ def test_chrono_match_indices_returns_bounded_results():
         trajectory.append(state)
         trajectory_ext.append(ext_state)
 
-    indices = chrono_match_indices(
+    indices_averaged = chrono_match_indices(
         trajectory, trajectory_ext, index_traj=2, index_part=0
     )
+    indices_fast = chrono_match_indices(
+        trajectory,
+        trajectory_ext,
+        index_traj=2,
+        index_part=0,
+        mode=ChronoMatchingMode.FAST,
+    )
 
-    assert indices.shape == (1,)
-    assert indices.dtype.kind == "i"
-    assert int(indices[0]) <= 2
-    assert int(indices[0]) >= 0
+    for indices in (indices_averaged, indices_fast):
+        assert indices.shape == (1,)
+        assert indices.dtype.kind == "i"
+        assert 0 <= int(indices[0]) <= 2
 
 
 def test_retarded_equations_of_motion_keeps_zero_charge_state_stable():
@@ -149,6 +267,8 @@ def test_retarded_equations_of_motion_keeps_zero_charge_state_stable():
         index_traj=0,
         aperture_radius=1.0,
         sim_type=SimulationType.CONDUCTING_WALL,
+        chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.COLD_START,
     )
 
     assert np.all(np.isfinite(result["x"]))

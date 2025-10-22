@@ -4,7 +4,11 @@ The LW Integrator is a covariant charged-particle tracking code that evaluates
 retarded Liénard–Wiechert potentials to obtain first-principles beam dynamics.
 The repository contains a modernised ``core`` implementation that mirrors the
 validated legacy solver, an updated Sphinx documentation set, and a collection
-of validation scripts and notebooks.
+of validation scripts and notebooks.  The methodology is documented in the
+peer-reviewed article *Relativistic beam loading, recoil-reduction, and
+residual-wake acceleration with a covariant retarded-potential integrator*
+([Nucl. Instrum. Methods Phys. Res. A 1069 (2024) 169988](https://doi.org/10.1016/j.nima.2024.169988),
+[arXiv:2310.03850](https://arxiv.org/abs/2310.03850)).
 
 ---
 
@@ -27,13 +31,32 @@ of validation scripts and notebooks.
   retarded-vector potentials and conjugate-momentum dynamics.  The ``core``
   package is a faithful transcription of the proven legacy solver and is kept in
   numerical lockstep by an integration test suite.
+* **Startup strategies.**  The integrator now exposes
+  :class:`core.types.StartupMode`, allowing cold-start runs that suppress
+  retarded forces during the short-history transient (default) or an
+  ``APPROXIMATE_BACK_HISTORY`` mode that reconstructs a constant-velocity past
+  for better legacy alignment.  All entry points—CLI, scripts, and notebooks—take
+  the new enum so you can toggle behaviour without patching call sites.
+* **Reference publication.**  For the scientific context, derivations, and
+  benchmark scenarios, see the project paper referenced above; the codebase
+  tracks the configurations described there.
 * **Documentation.**  The refreshed Sphinx site under ``docs/`` explains the
   theoretical background, quick-start workflows, validation procedures, and
   contributor guidance.  A new ``theory`` page summarises the covariant
   derivations drawn from the in-repo technical note.
 * **Validation assets.**  The ``examples/validation`` tree provides both Python
   scripts and notebooks for reproducing benchmark comparisons between the
-  modern and legacy implementations.
+  modern and legacy implementations.  The refreshed ``integrator_testbed``
+  notebook surfaces legacy overlays, difference plots, and live initial-state
+  summaries so physics regressions are immediately visible while you tweak
+  parameters.  Its widget scaffolding now lives in
+  ``examples/validation/testbed_ui.py`` so you can import
+  ``IntegratorTestbedApp`` into other notebooks or scripts without duplicating
+  the layout logic.
+* **CLI entry point.**  The ``lw-simulate`` console command (see the
+  [Command-line entry point](#command-line-entry-point) section below) runs the
+  core integrator with JSON-configurable inputs.  A minimal demonstration lives
+  in ``examples/entrypoint_demo.py``.
 
 ---
 
@@ -47,6 +70,9 @@ LW_windows/
 │   └── validation/       # CLI and notebook-based comparison studies
 ├── input_output/         # Particle bunch initialisation utilities
 ├── legacy/               # Archived original solver and notebooks
+│                         # The historical "static" integrator remains here for
+│                         # completeness; it is deprecated and not used by the
+│                         # modern docs or validation workflows.
 ├── tests/                # Pytest suite covering physics and helper modules
 ├── .github/workflows/    # Continuous-integration pipelines (docs publishing)
 ├── core/_version.py      # Single source of truth for the project version
@@ -95,6 +121,13 @@ python examples/validation/core_vs_legacy_benchmark.py --seeds 0 1 2 --steps 500
 The script accepts additional options for output paths, DPI control, and plot
 styling.  Consult ``--help`` for the full list.  Companion notebooks in the same
 directory expose an interactive widget-driven interface for exploratory work.
+The notebook delegates all widget construction to
+``examples/validation/testbed_ui.py``; instantiate ``IntegratorTestbedApp`` to
+embed the UI in your own notebook or lab book without copying code cells.
+
+> **Note:** The interactive notebooks are tested and supported in JupyterLab
+> and the classic Jupyter Notebook or Jupyter Lab interface.  The VS Code notebook editor is
+> known to trigger duplicate plot rendering.
 
 The ``tests/`` directory contains deterministic Pytest suites that ensure
 physics parity across configurations:
@@ -102,6 +135,27 @@ physics parity across configurations:
 ```bash
 pytest tests
 ```
+
+### Command-line entry point
+
+Installing the project (``pip install -e .`` or via a wheel) exposes the
+``lw-simulate`` executable.  Run it with default settings:
+
+```bash
+lw-simulate --quiet
+```
+
+The CLI accepts additional overrides—for example, to shorten the integration
+and capture a JSON summary:
+
+```bash
+lw-simulate --steps 250 --time-step 5e-4 --output run.json
+```
+
+Programmatic usage mirrors the console invocation: call
+``lw_integrator.cli.main`` with a list of CLI-style arguments.  See
+``examples/entrypoint_demo.py`` for a ready-to-run demonstration that exercises
+both patterns.
 
 ---
 

@@ -9,7 +9,7 @@ and example notebooks.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum, auto
 from typing import Dict, List, Sequence
 
 import numpy as np
@@ -34,9 +34,40 @@ class SimulationType(IntEnum):
     BUNCH_TO_BUNCH = 2
 
 
+class ChronoMatchingMode(Enum):
+    """Retardation sampling strategies used by chrono-matching.
+
+    ``FAST`` reproduces the historical implementation by evaluating the causal
+    delay once using the instantaneous dot product of particle velocity and the
+    line-of-sight unit vector (``Δt = R (1 + β·n̂) / c``).  ``AVERAGED`` augments
+    this by sampling two limiting cases—first assuming the source particle is
+    stationary (``R / c``) and then assuming it moves at the speed of light in
+    the line-of-sight direction (``2R / c``).  The averaged dot product from
+    those two samples is used to compute the retardation interval, providing a
+    more conservative estimate when highly relativistic motion is present.
+    """
+
+    AVERAGED = auto()
+    FAST = auto()
+
+
+class StartupMode(Enum):
+    """Strategies for handling the lack of retarded history at early steps.
+
+    ``COLD_START`` suppresses external forces until the observer has travelled
+    far enough for the light-cone constraint to be satisfied using a running
+    average of the observer velocity. ``APPROXIMATE_BACK_HISTORY`` assumes the
+    source velocity remains constant between steps, enabling an analytic
+    back-fill of the retarded separation.
+    """
+
+    COLD_START = auto()
+    APPROXIMATE_BACK_HISTORY = auto()
+
+
 @dataclass
 class IntegratorConfig:
-    """Structured configuration for :func:`core.integrator.run_integrator`.
+    """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
     Attributes
     ----------
@@ -51,6 +82,11 @@ class IntegratorConfig:
     simulation_type:
         Boundary condition / interaction model, expressed as
         :class:`SimulationType`.
+    chrono_mode:
+        Retardation-matching strategy expressed as :class:`ChronoMatchingMode`.
+    startup_mode:
+        Strategy for handling the initial lack of retarded history expressed as
+        :class:`StartupMode`.
     bunch_mean:
         Optional mean bunch separation used by legacy notebooks. Not every
         integration path consumes it, but the value is retained for API
@@ -67,6 +103,8 @@ class IntegratorConfig:
     wall_position: float
     aperture_radius: float
     simulation_type: SimulationType
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED
+    startup_mode: StartupMode = StartupMode.COLD_START
     bunch_mean: float = 0.0
     cavity_spacing: float = 0.0
     z_cutoff: float = 0.0
@@ -77,6 +115,8 @@ __all__ = [
     "Trajectory",
     "TrajectoryView",
     "SimulationType",
+    "ChronoMatchingMode",
+    "StartupMode",
     "IntegratorConfig",
     "C_MMNS",
 ]

@@ -7,9 +7,21 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
-from .types import ParticleState, Trajectory
+from .types import ChronoMatchingMode, ParticleState, StartupMode, Trajectory
 
-StepFunction = Callable[[float, Trajectory, Trajectory, int, float, Any], ParticleState]
+StepFunction = Callable[
+    [
+        float,
+        Trajectory,
+        Trajectory,
+        int,
+        float,
+        Any,
+        ChronoMatchingMode,
+        StartupMode,
+    ],
+    ParticleState,
+]
 
 
 @dataclass
@@ -31,13 +43,17 @@ def self_consistent_step(
     aperture_radius: float,
     sim_type: Any,
     config: Optional[SelfConsistencyConfig],
+    chrono_mode: ChronoMatchingMode,
+    startup_mode: StartupMode,
 ) -> ParticleState:
     """Optionally refine an integration step until the Lorentz factor converges.
 
     The provided ``step_function`` is executed repeatedly using the latest
     candidate state until the relative change in ``γ`` falls below the
     tolerance defined in ``config`` or the maximum number of iterations is
-    reached.
+    reached. ``chrono_mode`` and ``startup_mode`` are forwarded to the supplied
+    ``step_function`` so that chrono-matching and early-step behaviour follow
+    the requested strategies.
     """
 
     result = step_function(
@@ -47,6 +63,8 @@ def self_consistent_step(
         index_traj,
         aperture_radius,
         sim_type,
+        chrono_mode,
+        startup_mode,
     )
 
     if config is None or not config.enabled:
@@ -69,6 +87,8 @@ def self_consistent_step(
             index_traj,
             aperture_radius,
             sim_type,
+            chrono_mode,
+            startup_mode,
         )
 
         gamma_prev = np.asarray(candidate.get("gamma", np.array([])))

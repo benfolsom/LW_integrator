@@ -8,9 +8,9 @@ legacy solver (including its stochastic aperture spill model).
 from __future__ import annotations
 
 import random
-
 import numpy as np
 
+from .constants import NUMERICAL_EPSILON
 from .types import ParticleState
 
 
@@ -68,48 +68,32 @@ def generate_conducting_image(
     result = zeros_like_state(vector)
 
     for i in range(len(vector["x"])):
-		# TODO: Verify that this is properly deprecated
-		# r = np.sqrt(vector["x"][i] ** 2 + vector["y"][i] ** 2)
+        # TODO: Verify that this is properly deprecated
+        # r = np.sqrt(vector["x"][i] ** 2 + vector["y"][i] ** 2)
 
-        if vector["z"][i] >= wall_z:
-            result["q"].fill(0.0)
-        else:
-            result["q"] = -vector["q"]
+        if vector["z"][i] <= wall_z:
             result["z"][i] = wall_z + abs(wall_z - vector["z"][i])
+        else:
+            result["z"][i] = wall_z - abs(wall_z - vector["z"][i])
 
         R_dist = abs(result["z"][i] - vector["z"][i])
+        denom = max(R_dist**2, NUMERICAL_EPSILON)
+        cos_argument = 1.0 - 2.0 * (aperture_radius**2) / denom
+        cos_argument = float(np.clip(cos_argument, -1.0, 1.0))
+        theta = np.arccos(cos_argument)
 
-        if R_dist / 2 > aperture_radius:
-            theta = np.arccos(-2 * (aperture_radius**2) / (R_dist**2) + 1)
-            sign_x = _random_sign()
-            sign_y = _random_sign()
-
-            if theta < np.pi / 4:
-                shift = 2 * R_dist * np.tan(theta)
-                result["x"][i] = (
-                    vector["x"][i] + (aperture_radius + shift / np.sqrt(2)) * sign_x
-                )
-                result["y"][i] = (
-                    vector["y"][i] + (aperture_radius + shift / np.sqrt(2)) * sign_y
-                )
-                result["q"] = result["q"] * (
-                    1
-                    - 2
-                    * (aperture_radius**2)
-                    / (R_dist**2)
-                    * 1
-                    / (1 - np.cos(np.pi / 2))
-                )
-            else:
-                shift = 0
-                result["q"].fill(0.0)
-                result["x"][i] = vector["x"][i]
-                result["y"][i] = vector["y"][i]
+        if theta < np.pi / 4:
+            shift = 2 * R_dist * np.tan(theta)
+            hypo = np.sqrt(R_dist**2 + shift**2)
+            result["q"] = result["q"] * (
+                1 - 2 * (aperture_radius**2) / (hypo**2) * 1 / (1 - np.cos(np.pi / 2))
+            )
         else:
+            shift = 0
             result["q"].fill(0.0)
-            result["x"][i] = vector["x"][i]
-            result["y"][i] = vector["y"][i]
 
+        result["x"][i] = vector["x"][i]
+        result["y"][i] = vector["y"][i]
         result["Px"][i] = vector["Px"][i]
         result["Py"][i] = vector["Py"][i]
         result["Pz"][i] = -vector["Pz"][i]
@@ -145,7 +129,10 @@ def generate_switching_image(
         else:
             result["x"][i] = vector["x"][i]
             result["y"][i] = vector["y"][i]
-            result["z"][i] = wall_z + abs(wall_z - vector["z"][i])
+            if vector["z"][i] <= wall_z:
+                result["z"][i] = wall_z + abs(wall_z - vector["z"][i])
+            else:
+                result["z"][i] = wall_z - abs(wall_z - vector["z"][i])
 
         result["Px"][i] = vector["Px"][i]
         result["Py"][i] = vector["Py"][i]

@@ -5,6 +5,12 @@ The LW Integrator repository keeps parity with the archived physics by running a
 suite of scripted comparisons.  This page explains the assets you can use to
 confirm changes and to reproduce the plots that appear in publications.
 
+.. note::
+
+  The historical "static" integrator is preserved under ``legacy/`` for archival
+  purposes but is no longer part of the supported workflows.  The tools
+  described here exercise the retarded-field solvers exclusively.
+
 Command-line benchmarks
 -----------------------
 
@@ -28,6 +34,11 @@ core solver with its legacy counterpart.
 
     * ``--simulation-type {conducting,switching,bunch_to_bunch}`` chooses the
       wall configuration via :class:`~core.trajectory_integrator.SimulationType`.
+    * ``--startup-mode {cold_start,approximate_back_history}`` selects the
+      transient treatment exposed in :class:`~core.types.StartupMode`; the
+      default cold start suppresses retarded forces until enough history is
+      accumulated, while the approximation reconstructs a constant-velocity past
+      (mirroring the legacy solver).
     * ``--steps`` / ``--time-step`` / ``--seed`` control integration length and
       reproducibility.
     * ``--save-json`` writes metrics to disk; ``--save-fig`` exports the overlay
@@ -47,7 +58,10 @@ Notebook workflows
 ``examples/validation/integrator_testbed.ipynb``
     Exploratory environment for all supported simulation types.  It disables
     irrelevant configuration controls dynamically and mirrors the plot styling
-    used by the scripted tools so that figures remain consistent across entries.
+  used by the scripted tools so that figures remain consistent across entries.
+  Interactive toggles expose legacy-vs-core ΔE overlays and difference plots,
+  while a live initial-state panel displays rider/driver γ factors and
+  energies after every parameter tweak.
 
 Practical tips
 --------------

@@ -21,6 +21,7 @@ if str(LEGACY_ROOT) not in sys.path:
     sys.path.insert(0, str(LEGACY_ROOT))
 
 from core.trajectory_integrator import SimulationType, retarded_integrator
+from core.types import ChronoMatchingMode
 from legacy.bunch_inits import init_bunch  # type: ignore
 from legacy.covariant_integrator_library import (  # type: ignore
     retarded_integrator as legacy_retarded_integrator,
@@ -141,7 +142,7 @@ def run_legacy_integrator(
     time_step: float,
     wall_z: float | None,
     aperture_radius: float | None,
-    legacy_iters: int = 2,
+    simulation_type: SimulationType,
     mean: float | None = None,
     cav_spacing: float | None = None,
     z_cutoff: float | None = None,
@@ -158,7 +159,7 @@ def run_legacy_integrator(
         time_step,
         resolved_wall_z,
         aperture_radius,
-        legacy_iters,
+        int(simulation_type),
         rider_state,
         driver_state,
         0.0 if mean is None else mean,
@@ -203,6 +204,7 @@ def run_core_integrator(
         mean=resolved_mean,
         cav_spacing=resolved_cav_spacing,
         z_cutoff=resolved_z_cutoff,
+        chrono_mode=ChronoMatchingMode.FAST,
     )
     return (
         [_normalize_state(state) for state in core_traj],
@@ -418,6 +420,7 @@ def run_benchmark(
             time_step=time_step,
             wall_z=wall_z,
             aperture_radius=aperture_radius,
+            simulation_type=simulation_type,
             mean=mean,
             cav_spacing=cav_spacing,
             z_cutoff=z_cutoff,

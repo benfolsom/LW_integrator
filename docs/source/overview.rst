@@ -4,8 +4,12 @@ Overview
 The LW Integrator is a covariant electromagnetic particle tracking code tuned for
 accelerator physics studies.  The validated implementation still lives in the
 ``legacy/`` tree, but the modern ``core/`` package mirrors the same physics with
-clearer structure, type hints, and unit-tested helper utilities.  This page
-summarises the pieces you will encounter when navigating the repository.
+clearer structure, type hints, and unit-tested helper utilities.  The method is
+described in *Relativistic beam loading, recoil-reduction, and residual-wake
+acceleration with a covariant retarded-potential integrator*
+(``https://doi.org/10.1016/j.nima.2024.169988`` / ``https://arxiv.org/abs/2310.03850``).
+This page summarises the pieces you will encounter when navigating the
+repository.
 
 High-level anatomy
 ------------------
@@ -20,9 +24,11 @@ High-level anatomy
     iteration used for radiation-reaction corrections.
 
 ``legacy/``
-    Archived notebooks and scripts from the original codebase.  They are kept
-    for regression comparisons and historical reference.  Production workflows
-    should use ``core/`` unless you are debugging a discrepancy.
+  Archived notebooks and scripts from the original codebase.  They are kept
+  for regression comparisons and historical reference.  Production workflows
+  should use ``core/`` unless you are debugging a discrepancy.  The historical
+  "static" integrator lives here for completeness; it is considered deprecated
+  and is not exercised by the modern documentation or tooling.
 
 ``examples/``
     Ready-to-run validation material.  The ``validation/`` folder contains both
@@ -59,6 +65,11 @@ Key ideas to keep in mind
 * **Simulation modes are enumerated.**  ``SimulationType`` enumerates the three
   supported wall configurations.  The solver mirrors the legacy integer flags so
   comparison runs remain straightforward.
+* **Startup modes are configurable.**  ``StartupMode`` switches between
+  ``COLD_START`` (the default, suppressing early retarded forces) and
+  ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
+  mirrors the legacy solver's behaviour).  CLI commands, scripts, and notebooks
+  surface the enum so you can pick the right transient treatment per study.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to

@@ -12,7 +12,7 @@ from .constants import (
     NUMERICAL_EPSILON,
     PROTON_MASS_AMU,
 )
-from .integrator import retarded_integrator, run_integrator
+from .integration_runner import retarded_integrator, run_integrator
 from .types import IntegratorConfig, ParticleState, SimulationType, Trajectory
 
 __all__ = [

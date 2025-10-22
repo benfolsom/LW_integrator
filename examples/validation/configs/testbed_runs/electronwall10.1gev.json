@@ -1,0 +1,40 @@
+{
+	"steps": 9200,
+	"seed": 54321,
+	"simulation_type": "CONDUCTING_WALL",
+	"legacy_enabled": false,
+	"overlay_display": false,
+	"overlay_save": false,
+	"difference_display": false,
+	"difference_save": false,
+	"metrics_save": false,
+	"energy_display": true,
+	"energy_save": true,
+	"transverse_display": false,
+	"transverse_save": false,
+	"trajectory_save": false,
+	"trajectory_interval": 10,
+	"plot_dpi": 300,
+	"output_dir": "test_outputs/testbed_runs",
+	"config_dir": "configs/testbed_runs",
+	"config_name": "electronwall10.1gev.json",
+	"rider_params": {
+		"starting_distance": 1e-06,
+		"transv_mom": 0.00012,
+		"starting_Pz": 6123000.0,
+		"stripped_ions": 1.0,
+		"m_particle": 0.00054857990907,
+		"transv_dist": 0.0002,
+		"pcount": 5,
+		"charge_sign": -1.0
+	},
+	"driver_params": null,
+	"core_params": {
+		"time_step": 5e-08,
+		"wall_z": 2200.0,
+		"aperture_radius": 1.0,
+		"mean": 100000.0,
+		"cav_spacing": 100000.0,
+		"z_cutoff": 0.0
+	}
+}
