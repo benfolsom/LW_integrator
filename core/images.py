@@ -84,12 +84,10 @@ def generate_conducting_image(
 
         if theta < np.pi / 4:
             shift = 2 * R_dist * np.tan(theta)
-            hypo = np.sqrt(R_dist**2 + shift**2)
             result["q"] = result["q"] * (
-                1 - 2 * (aperture_radius**2) / (hypo**2) * 1 / (1 - np.cos(np.pi / 2))
+                1 - 2 * (aperture_radius**2) / R_dist**2 * 1 / (1 - np.cos(np.pi / 2))
             )
         else:
-            shift = 0
             result["q"].fill(0.0)
 
         result["x"][i] = vector["x"][i]
