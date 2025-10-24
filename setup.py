@@ -70,7 +70,7 @@ setup(
             "ipywidgets>=7.6.0",
         ],
         "docs": [
-            "sphinx>=7.2",
+            "sphinx>=6.2,<7.0",
             "sphinx-rtd-theme>=1.3",
             "nbsphinx>=0.9",
             "ipykernel>=6.0",
