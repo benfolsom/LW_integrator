@@ -131,11 +131,26 @@ class LienardWiechertIntegrator:
         rider_state = self._clone_state(init_rider)
         driver_state = self._clone_state(init_driver)
 
+        image_subcharge_override = None
         if extra_config:
             wall_Z = float(extra_config.get("wall_Z", wall_Z))
             apt_R = float(extra_config.get("apt_R", apt_R))
             bunch_dist = float(extra_config.get("bunch_dist", bunch_dist))
             z_cutoff = float(extra_config.get("z_cutoff", z_cutoff))
+            if "image_subcharge_count" in extra_config:
+                image_subcharge_override = extra_config.get("image_subcharge_count")
+
+        if image_subcharge_override is not None:
+            try:
+                image_subcharge_count = int(image_subcharge_override)
+            except (TypeError, ValueError):
+                image_subcharge_count = (
+                    self.config.image_subcharge_count if self.config else 12
+                )
+        else:
+            image_subcharge_count = (
+                self.config.image_subcharge_count if self.config else 12
+            )
 
         trajectory, driver = retarded_integrator(
             steps=total_steps,
@@ -154,6 +169,7 @@ class LienardWiechertIntegrator:
             startup_mode=(
                 self.config.startup_mode if self.config else StartupMode.COLD_START
             ),
+            image_subcharge_count=image_subcharge_count,
         )
 
         return trajectory, driver

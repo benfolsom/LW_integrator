@@ -44,6 +44,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "z_cutoff": 0.0,
     "chrono_mode": "averaged",
     "startup_mode": "cold-start",
+    "image_subcharge_count": 12,
 }
 
 DEFAULT_RIDER: Dict[str, Any] = {
@@ -182,6 +183,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--image-subcharge-count",
+        type=int,
+        dest="image_subcharge_count",
+        help="Number of subcharges used when mirroring a conducting wall (4-128).",
+    )
+    parser.add_argument(
         "--driver-from-rider",
         action="store_true",
         help=(
@@ -302,6 +309,7 @@ def _merge_simulation_payload(
         "z_cutoff",
         "chrono_mode",
         "startup_mode",
+        "image_subcharge_count",
     )
 
     for key in override_keys:
@@ -377,6 +385,22 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             "startup_mode must be a string or StartupMode instance"
         )
 
+    try:
+        image_subcharge_count = int(
+            payload.get(
+                "image_subcharge_count", DEFAULT_SIMULATION["image_subcharge_count"]
+            )
+        )
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+        raise SimulationConfigError(
+            "image_subcharge_count must be an integer"
+        ) from exc
+
+    if not 4 <= image_subcharge_count <= 128:
+        raise SimulationConfigError(
+            "image_subcharge_count must be between 4 and 128 inclusive"
+        )
+
     return IntegratorConfig(
         steps=int(payload["steps"]),
         time_step=float(payload["time_step"]),
@@ -390,6 +414,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             payload.get("cavity_spacing", DEFAULT_SIMULATION["cavity_spacing"])
         ),
         z_cutoff=float(payload.get("z_cutoff", DEFAULT_SIMULATION["z_cutoff"])),
+        image_subcharge_count=image_subcharge_count,
     )
 
 
@@ -445,6 +470,8 @@ def run_simulation(request: SimulationRequest) -> Tuple[Trajectory, Trajectory]:
         cav_spacing=request.config.cavity_spacing,
         z_cutoff=request.config.z_cutoff,
         chrono_mode=request.config.chrono_mode,
+        startup_mode=request.config.startup_mode,
+        image_subcharge_count=request.config.image_subcharge_count,
     )
 
 
