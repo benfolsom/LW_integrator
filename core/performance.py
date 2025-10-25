@@ -514,6 +514,7 @@ def retarded_integrator_numba(
     self_consistency: Optional[SelfConsistencyConfig] = None,
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
     startup_mode: StartupMode = StartupMode.COLD_START,
+    image_subcharge_count: int = 12,
 ) -> Tuple[Tuple[ParticleState, ...], Tuple[ParticleState, ...]]:
     warnings.filterwarnings("ignore")
 
@@ -528,7 +529,10 @@ def retarded_integrator_numba(
             trajectory[i] = init_rider
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
-                    init_rider, wall_position, aperture_radius
+                    init_rider,
+                    wall_position,
+                    aperture_radius,
+                    subcharge_count=image_subcharge_count,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -564,7 +568,10 @@ def retarded_integrator_numba(
                 wall_position += cav_spacing
         elif sim_type == SimulationType.CONDUCTING_WALL:
             trajectory_drv[i] = generate_conducting_image(
-                trajectory[i], wall_position, aperture_radius
+                trajectory[i],
+                wall_position,
+                aperture_radius,
+                subcharge_count=image_subcharge_count,
             )
         elif sim_type == SimulationType.BUNCH_TO_BUNCH:
             if init_driver is None:
@@ -615,6 +622,7 @@ def run_optimised_integrator(
             opts.self_consistency,
             config.chrono_mode,
             config.startup_mode,
+            config.image_subcharge_count,
         )
         base_elapsed = time.time() - start
 
@@ -633,6 +641,7 @@ def run_optimised_integrator(
             opts.self_consistency,
             config.chrono_mode,
             config.startup_mode,
+            config.image_subcharge_count,
         )
         numba_elapsed = time.time() - start
 
@@ -658,6 +667,7 @@ def run_optimised_integrator(
             opts.self_consistency,
             config.chrono_mode,
             config.startup_mode,
+            config.image_subcharge_count,
         )
 
     return retarded_integrator(
@@ -674,6 +684,7 @@ def run_optimised_integrator(
         opts.self_consistency,
         config.chrono_mode,
         config.startup_mode,
+        config.image_subcharge_count,
     )
 
 
