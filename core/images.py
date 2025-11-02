@@ -50,14 +50,23 @@ def zeros_like_state(vector: ParticleState) -> ParticleState:
     return result
 
 
-def _radial_weight(x: np.ndarray, y: np.ndarray, aperture_radius: float) -> np.ndarray:
-    """Compute attenuation factors based on radial distance from the aperture axis."""
+def _radial_weight(
+    x: np.ndarray, y: np.ndarray, aperture_radius: float, shift: float
+) -> np.ndarray:
+    """Compute attenuation factors based on radial distance from the aperture axis.
 
-    if aperture_radius <= 0.0:
+    The weighting ramps linearly with the cylindrical radius and saturates when the
+    image subcharge sits at ``aperture_radius + shift``.  The ``shift`` term reflects
+    the circle traced out by the subcharges and ensures the attenuation does not
+    clamp too aggressively when the primary bunch is offset from the axis.
+    """
+
+    effective_radius = aperture_radius + max(shift, 0.0)
+    if effective_radius <= 0.0:
         return np.ones_like(x, dtype=float)
 
     radial = np.hypot(x, y)
-    weights = radial / aperture_radius
+    weights = radial / effective_radius
     return np.clip(weights, 0.0, 1.0)
 
 
@@ -66,6 +75,8 @@ def generate_conducting_image(
     wall_z: float,
     aperture_radius: float,
     subcharge_count: int = 12,
+    *,
+    use_weighting: bool = True,
 ) -> ParticleState:
     """Generate mirror charges for a conducting wall boundary.
 
@@ -77,6 +88,9 @@ def generate_conducting_image(
         Location of the conducting wall in the simulation coordinate system.
     aperture_radius:
         Radius of the circular aperture carved into the wall.
+    use_weighting:
+        When ``True`` (default) apply radial attenuation to the subcharges based on
+        their cylindrical distance from the aperture axis.
     """
 
     count = int(subcharge_count)
@@ -133,7 +147,7 @@ def generate_conducting_image(
         theta = float(np.arccos(cos_argument))
 
         shift = 0.0
-        use_weighting = False
+        weighting_enabled = use_weighting
         base_charge_per_sub = 0.0
         charge_values = np.zeros(count, dtype=result["q"].dtype)
 
@@ -145,7 +159,6 @@ def generate_conducting_image(
             shift = float(2 * R_dist * np.tan(theta))
             base_charge_per_sub = float(effective_charge) / count
             charge_values.fill(base_charge_per_sub)
-            use_weighting = True
         else:
             charges_suppressed = True
 
@@ -160,10 +173,15 @@ def generate_conducting_image(
             x_positions = center_x + shift * np.cos(angles)
             y_positions = center_y + shift * np.sin(angles)
 
-        if use_weighting:
+        if weighting_enabled and base_charge_per_sub != 0.0:
             displacement = float(np.hypot(center_x, center_y))
-            if displacement > NUMERICAL_EPSILON:
-                weights = _radial_weight(x_positions, y_positions, aperture_radius)
+            if displacement > NUMERICAL_EPSILON or shift > NUMERICAL_EPSILON:
+                weights = _radial_weight(
+                    x_positions,
+                    y_positions,
+                    aperture_radius,
+                    shift,
+                )
             else:
                 weights = np.ones(count, dtype=float)
             charge_values = (base_charge_per_sub * weights).astype(

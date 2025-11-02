@@ -185,6 +185,7 @@ def run_core_integrator(
     cav_spacing: float | None,
     z_cutoff: float | None,
     image_subcharge_count: int = 12,
+    use_image_weighting: bool = True,
 ) -> TrajectoryPair:
     if aperture_radius is None:
         raise ValueError("aperture_radius is required for the core integrator")
@@ -207,6 +208,7 @@ def run_core_integrator(
         z_cutoff=resolved_z_cutoff,
         chrono_mode=ChronoMatchingMode.FAST,
         image_subcharge_count=image_subcharge_count,
+            use_conducting_image_weighting=use_image_weighting,
     )
     return (
         [_normalize_state(state) for state in core_traj],
@@ -397,6 +399,7 @@ def run_benchmark(
     plot_dpi: int = DEFAULT_SAVE_DPI,
     log_messages: Optional[List[str]] = None,
     image_subcharge_count: int = 12,
+    use_image_weighting: bool = True,
 ):
     def _log(message: str) -> None:
         if log_messages is not None:
@@ -441,6 +444,7 @@ def run_benchmark(
         cav_spacing=cav_spacing,
         z_cutoff=z_cutoff,
         image_subcharge_count=image_subcharge_count,
+        use_image_weighting=use_image_weighting,
     )
 
     metrics: Optional[Dict[str, Dict[str, float]]] = None
@@ -584,6 +588,16 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         default=12,
         help="Number of subcharges to use for conducting-wall images (default: 12)",
     )
+    parser.add_argument(
+        "--no-image-weighting",
+        dest="use_image_weighting",
+        action="store_false",
+        help=(
+            "Disable radial weighting when distributing conducting-wall image"
+            " subcharges"
+        ),
+    )
+    parser.set_defaults(use_image_weighting=True)
 
     _add_particle_arguments(parser, "rider", DEFAULT_RIDER_PARAMS)
     _add_particle_arguments(parser, "driver", DEFAULT_DRIVER_PARAMS)
@@ -635,6 +649,7 @@ def main(argv: List[str] | None = None) -> int:
         plot=not args.no_plot,
         plot_dpi=args.plot_dpi,
         image_subcharge_count=args.image_subcharge_count,
+        use_image_weighting=args.use_image_weighting,
     )
 
     print(summarise_metrics(metrics))

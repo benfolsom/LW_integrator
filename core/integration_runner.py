@@ -64,6 +64,7 @@ def retarded_integrator(
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
     startup_mode: StartupMode = StartupMode.COLD_START,
     image_subcharge_count: int = 12,
+    use_conducting_image_weighting: bool = True,
 ) -> Tuple[Trajectory, Trajectory]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -123,6 +124,7 @@ def retarded_integrator(
                     wall_z,
                     aperture_radius,
                     subcharge_count=image_subcharge_count,
+                    use_weighting=use_conducting_image_weighting,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -163,6 +165,7 @@ def retarded_integrator(
                     wall_z,
                     aperture_radius,
                     subcharge_count=image_subcharge_count,
+                    use_weighting=use_conducting_image_weighting,
                 )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
                 if init_driver is None:
@@ -211,6 +214,7 @@ def run_integrator(
         chrono_mode=config.chrono_mode,
         startup_mode=config.startup_mode,
         image_subcharge_count=config.image_subcharge_count,
+        use_conducting_image_weighting=config.use_image_weighting,
     )
 
 
