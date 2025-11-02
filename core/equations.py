@@ -24,6 +24,10 @@ from .types import (
     StartupMode,
     Trajectory,
 )
+from .vectorized_interactions import (
+    compute_vectorized_contributions,
+    gather_external_samples,
+)
 
 
 def _ensure_startup_metadata(state: ParticleState) -> None:
@@ -209,156 +213,47 @@ def retarded_equations_of_motion(
                 gating_threshold = float(np.max(np.maximum(thresholds, 0.0)))
                 apply_external = travel_distance >= gating_threshold
 
-        for j in range(len(trajectory_ext[0]["x"])):
-            ext_idx = indices_new_bounded[j]
-            if ext_idx >= len(trajectory_ext) or j >= len(trajectory_ext[ext_idx]["x"]):
-                continue
+        beta_vec = (
+            trajectory[index_traj]["bx"][particle_index],
+            trajectory[index_traj]["by"][particle_index],
+            trajectory[index_traj]["bz"][particle_index],
+        )
+        gamma_i = trajectory[index_traj]["gamma"][particle_index]
 
-            if not apply_external:
-                continue
-
-            if hasattr(trajectory_ext[ext_idx]["q"], "__getitem__"):
-                charge_j = trajectory_ext[ext_idx]["q"][j]
-            else:
-                charge_j = trajectory_ext[ext_idx]["q"]
-
-            beta_vec = (
-                trajectory[index_traj]["bx"][particle_index],
-                trajectory[index_traj]["by"][particle_index],
-                trajectory[index_traj]["bz"][particle_index],
+        if apply_external and nhat["R"].size > 0:
+            samples = gather_external_samples(
+                trajectory_ext,
+                indices_new_bounded,
             )
-            beta_ext = (
-                trajectory_ext[ext_idx]["bx"][j],
-                trajectory_ext[ext_idx]["by"][j],
-                trajectory_ext[ext_idx]["bz"][j],
-            )
-            k_factor = 1 - np.dot(
-                beta_ext, (nhat["nx"][j], nhat["ny"][j], nhat["nz"][j])
-            )
-
-            if abs(k_factor) < 1e-15:
-                continue
-
-            bdot_ext = (
-                trajectory_ext[ext_idx]["bdotx"][j],
-                trajectory_ext[ext_idx]["bdoty"][j],
-                trajectory_ext[ext_idx]["bdotz"][j],
-            )
-            bdot_scalar_ext = np.dot(beta_ext, bdot_ext)
-            betas_scalar = np.dot(beta_ext, beta_vec)
-
-            gamma_i = trajectory[index_traj]["gamma"][particle_index]
-            gamma_j = trajectory_ext[ext_idx]["gamma"][j]
-
-            if gamma_j > 1e6 or gamma_i > 1e6:
-                continue
-
-            v_betas_scalar = gamma_j * gamma_i * C_MMNS**2 * (1.0 - betas_scalar)
-            v_beta_dot_mixed_scalar = (
-                gamma_j**4 * gamma_i * C_MMNS**2 * bdot_scalar_ext
-                - gamma_i
-                * C_MMNS
-                * np.dot(
-                    beta_vec,
-                    np.multiply(bdot_ext, C_MMNS * gamma_j**2)
-                    + np.multiply(beta_ext, bdot_scalar_ext) * C_MMNS * gamma_j**4,
-                )
+            (
+                delta_px,
+                delta_py,
+                delta_pz,
+                delta_pt,
+                delta_field_x,
+                delta_field_y,
+                delta_field_z,
+            ) = compute_vectorized_contributions(
+                h=h,
+                charge_i=charge_i,
+                mass_i=mass_i,
+                gamma_i=gamma_i,
+                beta_vec=beta_vec,
+                nhat_nx=np.asarray(nhat["nx"], dtype=float),
+                nhat_ny=np.asarray(nhat["ny"], dtype=float),
+                nhat_nz=np.asarray(nhat["nz"], dtype=float),
+                nhat_R=np.asarray(nhat["R"], dtype=float),
+                samples=samples,
+                apply_external=apply_external,
             )
 
-            if abs(charge_i) < 1e-20 or abs(charge_j) < 1e-20:
-                continue
-
-            charge_factor = (
-                h
-                * charge_i
-                * charge_j
-                / (k_factor**3 * C_MMNS**3 * nhat["R"][j] ** 2 * gamma_j**3)
-            )
-
-            accumulated_px += charge_factor * (
-                -v_betas_scalar
-                * trajectory_ext[ext_idx]["bx"][j]
-                * k_factor
-                * C_MMNS
-                * gamma_j**2
-                + v_beta_dot_mixed_scalar
-                * k_factor
-                * gamma_j
-                * nhat["nx"][j]
-                * nhat["R"][j]
-                + gamma_j**2
-                * nhat["nx"][j] ** 2
-                * nhat["R"][j]
-                * v_betas_scalar
-                * (
-                    trajectory_ext[ext_idx]["bdotx"][j]
-                    + trajectory_ext[ext_idx]["bdotx"][j] * bdot_scalar_ext * gamma_j**2
-                )
-                + v_betas_scalar * C_MMNS * nhat["nx"][j]
-            )
-
-            accumulated_py += charge_factor * (
-                -v_betas_scalar
-                * trajectory_ext[ext_idx]["by"][j]
-                * k_factor
-                * C_MMNS
-                * gamma_j**2
-                + v_beta_dot_mixed_scalar
-                * k_factor
-                * gamma_j
-                * nhat["ny"][j]
-                * nhat["R"][j]
-                + gamma_j**2
-                * nhat["ny"][j] ** 2
-                * nhat["R"][j]
-                * v_betas_scalar
-                * (
-                    trajectory_ext[ext_idx]["bdoty"][j]
-                    + trajectory_ext[ext_idx]["bdoty"][j] * bdot_scalar_ext * gamma_j**2
-                )
-                + v_betas_scalar * C_MMNS * nhat["ny"][j]
-            )
-
-            accumulated_pz += charge_factor * (
-                -v_betas_scalar
-                * trajectory_ext[ext_idx]["bz"][j]
-                * k_factor
-                * C_MMNS
-                * gamma_j**2
-                + v_beta_dot_mixed_scalar
-                * k_factor
-                * gamma_j
-                * nhat["nz"][j]
-                * nhat["R"][j]
-                + gamma_j**2
-                * nhat["nz"][j] ** 2
-                * nhat["R"][j]
-                * v_betas_scalar
-                * (
-                    trajectory_ext[ext_idx]["bdotz"][j]
-                    + trajectory_ext[ext_idx]["bdotz"][j] * bdot_scalar_ext * gamma_j**2
-                )
-                + v_betas_scalar * C_MMNS * nhat["nz"][j]
-            )
-
-            accumulated_pt += (
-                h
-                * charge_i
-                * charge_j
-                / (k_factor**3 * C_MMNS**3 * nhat["R"][j] ** 2 * gamma_j**3)
-            ) * (
-                v_beta_dot_mixed_scalar * k_factor * gamma_j * nhat["R"][j]
-                - v_betas_scalar * k_factor * C_MMNS * gamma_j**2
-                - bdot_scalar_ext * v_betas_scalar * gamma_j**4 * nhat["R"][j]
-                + v_betas_scalar * C_MMNS
-            )
-
-            field_contribution = (
-                h / mass_i * charge_i / C_MMNS * charge_j / (nhat["R"][j] * k_factor)
-            )
-            accumulated_x_field += field_contribution * trajectory_ext[ext_idx]["bx"][j]
-            accumulated_y_field += field_contribution * trajectory_ext[ext_idx]["by"][j]
-            accumulated_z_field += field_contribution * trajectory_ext[ext_idx]["bz"][j]
+            accumulated_px += delta_px
+            accumulated_py += delta_py
+            accumulated_pz += delta_pz
+            accumulated_pt += delta_pt
+            accumulated_x_field += delta_field_x
+            accumulated_y_field += delta_field_y
+            accumulated_z_field += delta_field_z
 
         result["Px"][particle_index] = accumulated_px
         result["Py"][particle_index] = accumulated_py
