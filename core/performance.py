@@ -515,6 +515,7 @@ def retarded_integrator_numba(
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
     startup_mode: StartupMode = StartupMode.COLD_START,
     image_subcharge_count: int = 12,
+    use_image_weighting: bool = True,
 ) -> Tuple[Tuple[ParticleState, ...], Tuple[ParticleState, ...]]:
     warnings.filterwarnings("ignore")
 
@@ -533,6 +534,7 @@ def retarded_integrator_numba(
                     wall_position,
                     aperture_radius,
                     subcharge_count=image_subcharge_count,
+                    use_weighting=use_image_weighting,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -572,6 +574,7 @@ def retarded_integrator_numba(
                 wall_position,
                 aperture_radius,
                 subcharge_count=image_subcharge_count,
+                use_weighting=use_image_weighting,
             )
         elif sim_type == SimulationType.BUNCH_TO_BUNCH:
             if init_driver is None:
@@ -623,6 +626,7 @@ def run_optimised_integrator(
             config.chrono_mode,
             config.startup_mode,
             config.image_subcharge_count,
+            config.use_image_weighting,
         )
         base_elapsed = time.time() - start
 
@@ -642,6 +646,7 @@ def run_optimised_integrator(
             config.chrono_mode,
             config.startup_mode,
             config.image_subcharge_count,
+            config.use_image_weighting,
         )
         numba_elapsed = time.time() - start
 
@@ -668,6 +673,7 @@ def run_optimised_integrator(
             config.chrono_mode,
             config.startup_mode,
             config.image_subcharge_count,
+            config.use_image_weighting,
         )
 
     return retarded_integrator(
@@ -685,6 +691,7 @@ def run_optimised_integrator(
         config.chrono_mode,
         config.startup_mode,
         config.image_subcharge_count,
+        config.use_image_weighting,
     )
 
 

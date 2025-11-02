@@ -45,6 +45,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "chrono_mode": "averaged",
     "startup_mode": "cold-start",
     "image_subcharge_count": 12,
+    "use_image_weighting": True,
 }
 
 DEFAULT_RIDER: Dict[str, Any] = {
@@ -189,6 +190,19 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Number of subcharges used when mirroring a conducting wall (4-128).",
     )
     parser.add_argument(
+        "--image-weighting",
+        dest="use_image_weighting",
+        action="store_true",
+        help="Enable radial weighting for conducting-wall image subcharges.",
+    )
+    parser.add_argument(
+        "--no-image-weighting",
+        dest="use_image_weighting",
+        action="store_false",
+        help="Disable radial weighting for conducting-wall image subcharges.",
+    )
+    parser.set_defaults(use_image_weighting=None)
+    parser.add_argument(
         "--driver-from-rider",
         action="store_true",
         help=(
@@ -310,6 +324,7 @@ def _merge_simulation_payload(
         "chrono_mode",
         "startup_mode",
         "image_subcharge_count",
+        "use_image_weighting",
     )
 
     for key in override_keys:
@@ -399,6 +414,24 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             "image_subcharge_count must be between 4 and 128 inclusive"
         )
 
+    raw_weighting = payload.get(
+        "use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"]
+    )
+    if raw_weighting is None:
+        use_image_weighting = DEFAULT_SIMULATION["use_image_weighting"]
+    elif isinstance(raw_weighting, str):
+        key = raw_weighting.strip().lower()
+        if key in {"1", "true", "yes", "on"}:
+            use_image_weighting = True
+        elif key in {"0", "false", "no", "off"}:
+            use_image_weighting = False
+        else:  # pragma: no cover - defensive parsing
+            raise SimulationConfigError(
+                "use_image_weighting must be a boolean or truthy/falsey string"
+            )
+    else:
+        use_image_weighting = bool(raw_weighting)
+
     return IntegratorConfig(
         steps=int(payload["steps"]),
         time_step=float(payload["time_step"]),
@@ -413,6 +446,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         ),
         z_cutoff=float(payload.get("z_cutoff", DEFAULT_SIMULATION["z_cutoff"])),
         image_subcharge_count=image_subcharge_count,
+        use_image_weighting=use_image_weighting,
     )
 
 
@@ -470,6 +504,7 @@ def run_simulation(request: SimulationRequest) -> Tuple[Trajectory, Trajectory]:
         chrono_mode=request.config.chrono_mode,
         startup_mode=request.config.startup_mode,
         image_subcharge_count=request.config.image_subcharge_count,
+        use_conducting_image_weighting=request.config.use_image_weighting,
     )
 
 
