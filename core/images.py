@@ -50,6 +50,17 @@ def zeros_like_state(vector: ParticleState) -> ParticleState:
     return result
 
 
+def _radial_weight(x: np.ndarray, y: np.ndarray, aperture_radius: float) -> np.ndarray:
+    """Compute attenuation factors based on radial distance from the aperture axis."""
+
+    if aperture_radius <= 0.0:
+        return np.ones_like(x, dtype=float)
+
+    radial = np.hypot(x, y)
+    weights = radial / aperture_radius
+    return np.clip(weights, 0.0, 1.0)
+
+
 def generate_conducting_image(
     vector: ParticleState,
     wall_z: float,
@@ -122,21 +133,20 @@ def generate_conducting_image(
         theta = float(np.arccos(cos_argument))
 
         shift = 0.0
-        charge_values: np.ndarray
+        use_weighting = False
+        base_charge_per_sub = 0.0
+        charge_values = np.zeros(count, dtype=result["q"].dtype)
 
         if theta < np.pi / 4:
             reduction = 1 - 2 * (aperture_radius**2) / denom * 1 / (
                 1 - np.cos(np.pi / 2)
             )
             effective_charge = vector["q"][i] * reduction
-            charge_values = np.full(
-                count,
-                effective_charge / count,
-                dtype=result["q"].dtype,
-            )
             shift = float(2 * R_dist * np.tan(theta))
+            base_charge_per_sub = float(effective_charge) / count
+            charge_values.fill(base_charge_per_sub)
+            use_weighting = True
         else:
-            charge_values = np.zeros(count, dtype=result["q"].dtype)
             charges_suppressed = True
 
         angles = np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
@@ -149,6 +159,16 @@ def generate_conducting_image(
         else:
             x_positions = center_x + shift * np.cos(angles)
             y_positions = center_y + shift * np.sin(angles)
+
+        if use_weighting:
+            displacement = float(np.hypot(center_x, center_y))
+            if displacement > NUMERICAL_EPSILON:
+                weights = _radial_weight(x_positions, y_positions, aperture_radius)
+            else:
+                weights = np.ones(count, dtype=float)
+            charge_values = (base_charge_per_sub * weights).astype(
+                result["q"].dtype, copy=False
+            )
 
         result["x"][start:end] = x_positions
         result["y"][start:end] = y_positions

@@ -224,6 +224,37 @@ def test_generate_conducting_image_respects_custom_subcharge_count():
     )
 
 
+def test_generate_conducting_image_keeps_uniform_subcharges_when_centered():
+    source = _make_single_particle_state(z=-2.0, charge=1.25)
+
+    image = generate_conducting_image(
+        source, wall_z=0.0, aperture_radius=0.5, subcharge_count=16
+    )
+
+    assert np.all(image["q"] > 0.0)
+    np.testing.assert_allclose(image["q"], image["q"][0])
+
+
+def test_generate_conducting_image_weights_subcharges_for_displaced_particle():
+    source = _make_single_particle_state(x=2.0, z=-2.0, charge=1.0)
+    subcharge_count = 64
+
+    image = generate_conducting_image(
+        source, wall_z=0.0, aperture_radius=0.5, subcharge_count=subcharge_count
+    )
+
+    mirrored_z = 0.0 + abs(0.0 - source["z"][0])
+    R_dist = abs(mirrored_z - source["z"][0])
+    reduction = 1 - 2 * (0.5**2) / (R_dist**2) * 1 / (1 - np.cos(np.pi / 2))
+    expected_total_charge = source["q"][0] * reduction
+    base_charge_per_sub = expected_total_charge / subcharge_count
+
+    total_charge = float(image["q"].sum())
+    assert total_charge <= expected_total_charge + 1e-12
+    assert image["q"].max() == pytest.approx(base_charge_per_sub)
+    assert image["q"].min() < base_charge_per_sub * 0.2
+
+
 def test_generate_conducting_image_rejects_out_of_range_subcharge_count():
     source = _make_single_particle_state()
 
