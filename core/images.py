@@ -125,9 +125,8 @@ def generate_conducting_image(
         charge_values: np.ndarray
 
         if theta < np.pi / 4:
-            reduction = (
-                1
-                - 2 * (aperture_radius**2) / denom * 1 / (1 - np.cos(np.pi / 2))
+            reduction = 1 - 2 * (aperture_radius**2) / denom * 1 / (
+                1 - np.cos(np.pi / 2)
             )
             effective_charge = vector["q"][i] * reduction
             charge_values = np.full(

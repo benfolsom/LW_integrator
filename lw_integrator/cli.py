@@ -392,9 +392,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             )
         )
     except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
-        raise SimulationConfigError(
-            "image_subcharge_count must be an integer"
-        ) from exc
+        raise SimulationConfigError("image_subcharge_count must be an integer") from exc
 
     if not 4 <= image_subcharge_count <= 128:
         raise SimulationConfigError(

@@ -228,9 +228,13 @@ def test_generate_conducting_image_rejects_out_of_range_subcharge_count():
     source = _make_single_particle_state()
 
     with pytest.raises(ValueError):
-        generate_conducting_image(source, wall_z=0.0, aperture_radius=0.5, subcharge_count=2)
+        generate_conducting_image(
+            source, wall_z=0.0, aperture_radius=0.5, subcharge_count=2
+        )
     with pytest.raises(ValueError):
-        generate_conducting_image(source, wall_z=0.0, aperture_radius=0.5, subcharge_count=256)
+        generate_conducting_image(
+            source, wall_z=0.0, aperture_radius=0.5, subcharge_count=256
+        )
 
 
 def test_generate_switching_image_respects_cutoff_and_reflection():

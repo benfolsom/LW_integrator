@@ -119,7 +119,10 @@ def retarded_integrator(
             _ensure_startup_metadata(trajectory[i])
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
-                    init_rider, wall_z, aperture_radius, subcharge_count=image_subcharge_count
+                    init_rider,
+                    wall_z,
+                    aperture_radius,
+                    subcharge_count=image_subcharge_count,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -156,7 +159,10 @@ def retarded_integrator(
                     wall_z += cav_spacing
             elif sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
-                    trajectory[i], wall_z, aperture_radius, subcharge_count=image_subcharge_count
+                    trajectory[i],
+                    wall_z,
+                    aperture_radius,
+                    subcharge_count=image_subcharge_count,
                 )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
                 if init_driver is None:
