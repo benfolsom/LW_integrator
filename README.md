@@ -152,6 +152,10 @@ and capture a JSON summary:
 lw-simulate --steps 250 --time-step 5e-4 --output run.json
 ```
 
+Conducting-wall runs apply radial weighting to image subcharges by default for
+better agreement with the aperture geometry.  Pass `--no-image-weighting` to
+recover the legacy uniform distribution when benchmarking or debugging.
+
 Programmatic usage mirrors the console invocation: call
 ``lw_integrator.cli.main`` with a list of CLI-style arguments.  See
 ``examples/entrypoint_demo.py`` for a ready-to-run demonstration that exercises

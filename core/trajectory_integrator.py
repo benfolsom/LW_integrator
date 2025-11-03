@@ -131,11 +131,36 @@ class LienardWiechertIntegrator:
         rider_state = self._clone_state(init_rider)
         driver_state = self._clone_state(init_driver)
 
+        image_subcharge_override = None
+        image_weighting_override = None
         if extra_config:
             wall_Z = float(extra_config.get("wall_Z", wall_Z))
             apt_R = float(extra_config.get("apt_R", apt_R))
             bunch_dist = float(extra_config.get("bunch_dist", bunch_dist))
             z_cutoff = float(extra_config.get("z_cutoff", z_cutoff))
+            if "image_subcharge_count" in extra_config:
+                image_subcharge_override = extra_config.get("image_subcharge_count")
+            if "use_image_weighting" in extra_config:
+                image_weighting_override = extra_config.get("use_image_weighting")
+
+        if image_subcharge_override is not None:
+            try:
+                image_subcharge_count = int(image_subcharge_override)
+            except (TypeError, ValueError):
+                image_subcharge_count = (
+                    self.config.image_subcharge_count if self.config else 12
+                )
+        else:
+            image_subcharge_count = (
+                self.config.image_subcharge_count if self.config else 12
+            )
+
+        if image_weighting_override is not None:
+            use_image_weighting = bool(image_weighting_override)
+        else:
+            use_image_weighting = (
+                self.config.use_image_weighting if self.config else True
+            )
 
         trajectory, driver = retarded_integrator(
             steps=total_steps,
@@ -154,6 +179,8 @@ class LienardWiechertIntegrator:
             startup_mode=(
                 self.config.startup_mode if self.config else StartupMode.COLD_START
             ),
+            image_subcharge_count=image_subcharge_count,
+            use_conducting_image_weighting=use_image_weighting,
         )
 
         return trajectory, driver

@@ -50,8 +50,33 @@ def zeros_like_state(vector: ParticleState) -> ParticleState:
     return result
 
 
+def _radial_weight(
+    x: np.ndarray, y: np.ndarray, aperture_radius: float, shift: float
+) -> np.ndarray:
+    """Compute attenuation factors based on radial distance from the aperture axis.
+
+    The weighting ramps linearly with the cylindrical radius and saturates when the
+    image subcharge sits at ``aperture_radius + shift``.  The ``shift`` term reflects
+    the circle traced out by the subcharges and ensures the attenuation does not
+    clamp too aggressively when the primary bunch is offset from the axis.
+    """
+
+    effective_radius = aperture_radius + max(shift, 0.0)
+    if effective_radius <= 0.0:
+        return np.ones_like(x, dtype=float)
+
+    radial = np.hypot(x, y)
+    weights = radial / effective_radius
+    return np.clip(weights, 0.0, 1.0)
+
+
 def generate_conducting_image(
-    vector: ParticleState, wall_z: float, aperture_radius: float
+    vector: ParticleState,
+    wall_z: float,
+    aperture_radius: float,
+    subcharge_count: int = 12,
+    *,
+    use_weighting: bool = True,
 ) -> ParticleState:
     """Generate mirror charges for a conducting wall boundary.
 
@@ -63,49 +88,134 @@ def generate_conducting_image(
         Location of the conducting wall in the simulation coordinate system.
     aperture_radius:
         Radius of the circular aperture carved into the wall.
+    use_weighting:
+        When ``True`` (default) apply radial attenuation to the subcharges based on
+        their cylindrical distance from the aperture axis.
     """
 
-    result = zeros_like_state(vector)
+    count = int(subcharge_count)
+    if count < 4 or count > 128:
+        raise ValueError("subcharge_count must be between 4 and 128 inclusive")
 
-    for i in range(len(vector["x"])):
-        # TODO: Verify that this is properly deprecated
-        # r = np.sqrt(vector["x"][i] ** 2 + vector["y"][i] ** 2)
+    base_len = len(vector["x"])
+    total_len = base_len * count
 
-        if vector["z"][i] <= wall_z:
-            result["z"][i] = wall_z + abs(wall_z - vector["z"][i])
-        else:
-            result["z"][i] = wall_z - abs(wall_z - vector["z"][i])
+    def _alloc_like(key: str, *, fill: float = 0.0) -> np.ndarray:
+        template = np.asarray(vector[key])
+        return np.full(total_len, fill, dtype=template.dtype)
 
-        R_dist = abs(result["z"][i] - vector["z"][i])
+    result: ParticleState = {
+        "x": _alloc_like("x"),
+        "y": _alloc_like("y"),
+        "z": _alloc_like("z"),
+        "t": _alloc_like("t"),
+        "Px": _alloc_like("Px"),
+        "Py": _alloc_like("Py"),
+        "Pz": _alloc_like("Pz"),
+        "Pt": _alloc_like("Pt"),
+        "gamma": _alloc_like("gamma"),
+        "bx": _alloc_like("bx"),
+        "by": _alloc_like("by"),
+        "bz": _alloc_like("bz"),
+        "bdotx": _alloc_like("bdotx"),
+        "bdoty": _alloc_like("bdoty"),
+        "bdotz": _alloc_like("bdotz"),
+        "q": _alloc_like("q"),
+    }
+
+    if "m" in vector:
+        result["m"] = np.repeat(np.asarray(vector["m"]), count)
+    if "char_time" in vector:
+        result["char_time"] = np.repeat(np.asarray(vector["char_time"]), count)
+
+    charges_suppressed = False
+
+    for i in range(base_len):
+        start = i * count
+        end = start + count
+
+        mirrored_z = (
+            wall_z + abs(wall_z - vector["z"][i])
+            if vector["z"][i] <= wall_z
+            else wall_z - abs(wall_z - vector["z"][i])
+        )
+
+        R_dist = abs(mirrored_z - vector["z"][i])
         denom = max(R_dist**2, NUMERICAL_EPSILON)
         cos_argument = 1.0 - 2.0 * (aperture_radius**2) / denom
         cos_argument = float(np.clip(cos_argument, -1.0, 1.0))
-        theta = np.arccos(cos_argument)
+        theta = float(np.arccos(cos_argument))
+
+        shift = 0.0
+        weighting_enabled = use_weighting
+        base_charge_per_sub = 0.0
+        charge_values = np.zeros(count, dtype=result["q"].dtype)
 
         if theta < np.pi / 4:
-            shift = 2 * R_dist * np.tan(theta)
-            hypo = np.sqrt(R_dist**2 + shift**2)
-            result["q"] = result["q"] * (
-                1 - 2 * (aperture_radius**2) / (hypo**2) * 1 / (1 - np.cos(np.pi / 2))
+            reduction = 1 - 2 * (aperture_radius**2) / denom * 1 / (
+                1 - np.cos(np.pi / 2)
             )
+            effective_charge = vector["q"][i] * reduction
+            shift = float(2 * R_dist * np.tan(theta))
+            base_charge_per_sub = float(effective_charge) / count
+            charge_values.fill(base_charge_per_sub)
         else:
-            shift = 0
-            result["q"].fill(0.0)
+            charges_suppressed = True
 
-        result["x"][i] = vector["x"][i]
-        result["y"][i] = vector["y"][i]
-        result["Px"][i] = vector["Px"][i]
-        result["Py"][i] = vector["Py"][i]
-        result["Pz"][i] = -vector["Pz"][i]
-        result["Pt"][i] = vector["Pt"][i]
-        result["gamma"][i] = vector["gamma"][i]
-        result["bx"][i] = vector["bx"][i]
-        result["by"][i] = vector["by"][i]
-        result["bz"][i] = -vector["bz"][i]
-        result["bdotx"][i] = vector["bdotx"][i]
-        result["bdoty"][i] = vector["bdoty"][i]
-        result["bdotz"][i] = -vector["bdotz"][i]
-        result["t"][i] = vector["t"][i]
+        angles = np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
+        center_x = vector["x"][i]
+        center_y = vector["y"][i]
+
+        if shift <= NUMERICAL_EPSILON:
+            x_positions = np.full(count, center_x, dtype=result["x"].dtype)
+            y_positions = np.full(count, center_y, dtype=result["y"].dtype)
+        else:
+            x_positions = center_x + shift * np.cos(angles)
+            y_positions = center_y + shift * np.sin(angles)
+
+        if weighting_enabled and base_charge_per_sub != 0.0:
+            displacement = float(np.hypot(center_x, center_y))
+            if displacement > NUMERICAL_EPSILON or shift > NUMERICAL_EPSILON:
+                weights = _radial_weight(
+                    x_positions,
+                    y_positions,
+                    aperture_radius,
+                    shift,
+                )
+            else:
+                weights = np.ones(count, dtype=float)
+            charge_values = (base_charge_per_sub * weights).astype(
+                result["q"].dtype, copy=False
+            )
+
+        result["x"][start:end] = x_positions
+        result["y"][start:end] = y_positions
+        result["z"][start:end] = mirrored_z
+        result["t"][start:end] = vector["t"][i]
+
+        result["Px"][start:end] = vector["Px"][i]
+        result["Py"][start:end] = vector["Py"][i]
+        result["Pz"][start:end] = -vector["Pz"][i]
+        result["Pt"][start:end] = vector["Pt"][i]
+        result["gamma"][start:end] = vector["gamma"][i]
+
+        result["bx"][start:end] = vector["bx"][i]
+        result["by"][start:end] = vector["by"][i]
+        result["bz"][start:end] = -vector["bz"][i]
+
+        result["bdotx"][start:end] = vector["bdotx"][i]
+        result["bdoty"][start:end] = vector["bdoty"][i]
+        result["bdotz"][start:end] = -vector["bdotz"][i]
+
+        result["q"][start:end] = charge_values
+
+        if "m" in result:
+            result["m"][start:end] = vector["m"][i]
+        if "char_time" in result:
+            result["char_time"][start:end] = vector["char_time"][i]
+
+    if charges_suppressed:
+        result["q"].fill(0.0)
 
     return result
 

@@ -189,10 +189,110 @@ def test_generate_conducting_image_reflects_momentum_and_direction():
 
     image = generate_conducting_image(source, wall_z=0.0, aperture_radius=0.5)
 
+    assert len(image["z"]) == 12
     assert image["z"][0] == pytest.approx(2.0)
     assert image["Pz"][0] == pytest.approx(-source["Pz"][0])
     assert image["bz"][0] == pytest.approx(-source["bz"][0])
     assert image["t"][0] == pytest.approx(source["t"][0])
+
+    R_dist = abs(2.0 - source["z"][0])
+    reduction = 1 - 2 * (0.5**2) / (R_dist**2) * 1 / (1 - np.cos(np.pi / 2))
+    expected_total_charge = source["q"][0] * reduction
+    total_charge = float(image["q"].sum())
+    assert np.sign(total_charge) == np.sign(expected_total_charge)
+    assert abs(total_charge) <= abs(expected_total_charge) + 1e-12
+
+
+def test_generate_conducting_image_respects_custom_subcharge_count():
+    source = _make_single_particle_state(z=-1.5, charge=2.0)
+
+    image = generate_conducting_image(
+        source, wall_z=0.0, aperture_radius=0.5, subcharge_count=8
+    )
+
+    assert len(image["x"]) == 8
+    np.testing.assert_allclose(image["z"], 1.5)
+
+    mirrored_z = 0.0 + abs(0.0 - source["z"][0])
+    R_dist = abs(mirrored_z - source["z"][0])
+    cos_argument = 1.0 - 2.0 * (0.5**2) / (R_dist**2)
+    theta = np.arccos(np.clip(cos_argument, -1.0, 1.0))
+    shift = 2 * R_dist * np.tan(theta)
+    reduction = 1 - 2 * (0.5**2) / (R_dist**2) * 1 / (1 - np.cos(np.pi / 2))
+    total_charge = float(image["q"].sum())
+    assert total_charge >= 0.0
+    assert total_charge <= source["q"][0] * reduction + 1e-12
+    np.testing.assert_allclose(
+        np.hypot(image["x"] - source["x"][0], image["y"] - source["y"][0]),
+        shift,
+    )
+
+
+def test_generate_conducting_image_keeps_uniform_subcharges_when_centered():
+    source = _make_single_particle_state(z=-2.0, charge=1.25)
+
+    image = generate_conducting_image(
+        source, wall_z=0.0, aperture_radius=0.5, subcharge_count=16
+    )
+
+    assert np.all(image["q"] > 0.0)
+    np.testing.assert_allclose(image["q"], image["q"][0])
+
+
+def test_generate_conducting_image_weights_subcharges_for_displaced_particle():
+    source = _make_single_particle_state(x=2.0, z=-2.0, charge=1.0)
+    subcharge_count = 64
+
+    weighted = generate_conducting_image(
+        source,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        subcharge_count=subcharge_count,
+        use_weighting=True,
+    )
+    uniform = generate_conducting_image(
+        source,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        subcharge_count=subcharge_count,
+        use_weighting=False,
+    )
+
+    assert np.all(uniform["q"] == pytest.approx(uniform["q"][0]))
+
+    weighted_total = float(weighted["q"].sum())
+    uniform_total = float(uniform["q"].sum())
+    assert weighted_total <= uniform_total + 1e-12
+    assert np.ptp(weighted["q"]) > 0.0
+    assert weighted["q"].min() < uniform["q"][0]
+    assert weighted["q"].max() <= uniform["q"][0] + 1e-12
+
+
+def test_generate_conducting_image_disabling_weighting_restores_uniform_charges():
+    source = _make_single_particle_state(x=1.0, y=-0.5, z=-1.5, charge=0.8)
+
+    weighted = generate_conducting_image(
+        source, wall_z=0.0, aperture_radius=0.4, use_weighting=True
+    )
+    unweighted = generate_conducting_image(
+        source, wall_z=0.0, aperture_radius=0.4, use_weighting=False
+    )
+
+    assert np.ptp(weighted["q"]) > 0.0
+    assert np.allclose(unweighted["q"], unweighted["q"][0])
+
+
+def test_generate_conducting_image_rejects_out_of_range_subcharge_count():
+    source = _make_single_particle_state()
+
+    with pytest.raises(ValueError):
+        generate_conducting_image(
+            source, wall_z=0.0, aperture_radius=0.5, subcharge_count=2
+        )
+    with pytest.raises(ValueError):
+        generate_conducting_image(
+            source, wall_z=0.0, aperture_radius=0.5, subcharge_count=256
+        )
 
 
 def test_generate_switching_image_respects_cutoff_and_reflection():

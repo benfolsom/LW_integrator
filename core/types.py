@@ -96,6 +96,12 @@ class IntegratorConfig:
     z_cutoff:
         Longitudinal position at which the switching-wall stops mirroring
         charges. Defaults to ``0`` which effectively disables the cutoff.
+    image_subcharge_count:
+        Number of virtual subcharges used when constructing conducting-wall
+        image charges. Must lie between 4 and 128. Defaults to ``12``.
+    use_image_weighting:
+        Enables radial weighting when distributing conducting-wall subcharges.
+        Defaults to ``True`` for improved agreement with the aperture geometry.
     """
 
     steps: int
@@ -108,6 +114,8 @@ class IntegratorConfig:
     bunch_mean: float = 0.0
     cavity_spacing: float = 0.0
     z_cutoff: float = 0.0
+    image_subcharge_count: int = 12
+    use_image_weighting: bool = True
 
 
 __all__ = [

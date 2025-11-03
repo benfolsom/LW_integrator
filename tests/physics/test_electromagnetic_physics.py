@@ -79,10 +79,17 @@ def test_generate_conducting_image_reflects_boundary_conditions() -> None:
 
     image = generate_conducting_image(source, wall_z=0.0, aperture_radius=0.5)
 
+    assert len(image["x"]) == 12
     assert image["z"][0] == pytest.approx(2.0)
     assert image["Pz"][0] == pytest.approx(-source["Pz"][0])
     assert image["bz"][0] == pytest.approx(-source["bz"][0])
     assert np.max(np.abs(image["q"])) <= np.abs(source["q"][0]) + 1e-12
+
+    R_dist = abs(2.0 - source["z"][0])
+    reduction = 1 - 2 * (0.5**2) / (R_dist**2) * 1 / (1 - np.cos(np.pi / 2))
+    total_charge = float(image["q"].sum())
+    assert np.sign(total_charge) == np.sign(source["q"][0])
+    assert abs(total_charge) <= abs(source["q"][0] * reduction) + 1e-12
 
 
 @pytest.mark.physics

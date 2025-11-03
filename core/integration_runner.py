@@ -63,6 +63,8 @@ def retarded_integrator(
     self_consistency: Optional[SelfConsistencyConfig] = None,
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
     startup_mode: StartupMode = StartupMode.COLD_START,
+    image_subcharge_count: int = 12,
+    use_conducting_image_weighting: bool = True,
 ) -> Tuple[Trajectory, Trajectory]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -97,6 +99,10 @@ def retarded_integrator(
     startup_mode:
         Strategy for handling the lack of retarded history at the beginning of
         a simulation.
+    image_subcharge_count:
+        Number of subcharges used when constructing conducting-wall image
+        charges. Must remain within the bounds accepted by
+        :func:`generate_conducting_image`.
 
     Returns
     -------
@@ -114,7 +120,11 @@ def retarded_integrator(
             _ensure_startup_metadata(trajectory[i])
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
-                    init_rider, wall_z, aperture_radius
+                    init_rider,
+                    wall_z,
+                    aperture_radius,
+                    subcharge_count=image_subcharge_count,
+                    use_weighting=use_conducting_image_weighting,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -151,7 +161,11 @@ def retarded_integrator(
                     wall_z += cav_spacing
             elif sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
-                    trajectory[i], wall_z, aperture_radius
+                    trajectory[i],
+                    wall_z,
+                    aperture_radius,
+                    subcharge_count=image_subcharge_count,
+                    use_weighting=use_conducting_image_weighting,
                 )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
                 if init_driver is None:
@@ -199,6 +213,8 @@ def run_integrator(
         z_cutoff=config.z_cutoff,
         chrono_mode=config.chrono_mode,
         startup_mode=config.startup_mode,
+        image_subcharge_count=config.image_subcharge_count,
+        use_conducting_image_weighting=config.use_image_weighting,
     )
 
 
