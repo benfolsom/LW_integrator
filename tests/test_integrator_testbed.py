@@ -17,8 +17,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "examples" / "validation"))
 
-from core.types import ParticleState
-from examples.validation.core_vs_legacy_benchmark import compute_delta_energy_series
+from core.types import ParticleState  # noqa: E402
+from examples.validation.core_vs_legacy_benchmark import (  # noqa: E402
+    compute_delta_energy_series,
+)
 
 
 def create_mock_particle_state(
@@ -62,7 +64,6 @@ class TestComputeDeltaEnergySeries:
 
     def test_linear_energy_gain(self):
         """Test linear energy gain."""
-        initial_gamma = 1000.0
         states = [
             create_mock_particle_state(0.0, 0.0, 0.0, 0.0, 1000.0),
             create_mock_particle_state(1.0, 0.0, 0.0, 100.0, 1010.0),

@@ -19,10 +19,7 @@ from typing import Dict, List, Optional, Tuple
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-DISPLAY_MAX_WIDTH = 1600  # pixels
-DISPLAY_MAX_HEIGHT = 900  # pixels
-
-from examples.validation.core_vs_legacy_benchmark import (
+from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     SimulationType,
@@ -47,6 +44,9 @@ from .testbed_runner import (
     save_config,
     supports_driver,
 )
+
+DISPLAY_MAX_WIDTH = 1600  # pixels
+DISPLAY_MAX_HEIGHT = 900  # pixels
 
 
 @dataclass

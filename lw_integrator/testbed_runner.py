@@ -27,7 +27,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-from examples.validation.core_vs_legacy_benchmark import (
+from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     PARTICLE_PARAM_FIELDS,
@@ -340,10 +340,10 @@ def apply_species_preset(params: Dict[str, float | int], preset_key: str) -> Non
     preset = SPECIES_PRESETS.get(preset_key)
     if not preset:
         return
-    for field, value in preset.items():
-        if field in params:
-            current = params[field]
-            params[field] = type(current)(value)
+    for param_name, value in preset.items():
+        if param_name in params:
+            current = params[param_name]
+            params[param_name] = type(current)(value)
 
 
 def list_config_files(directory: Path) -> List[str]:

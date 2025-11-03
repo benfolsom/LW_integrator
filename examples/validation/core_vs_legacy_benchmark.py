@@ -208,7 +208,7 @@ def run_core_integrator(
         z_cutoff=resolved_z_cutoff,
         chrono_mode=ChronoMatchingMode.FAST,
         image_subcharge_count=image_subcharge_count,
-            use_conducting_image_weighting=use_image_weighting,
+        use_conducting_image_weighting=use_image_weighting,
     )
     return (
         [_normalize_state(state) for state in core_traj],
