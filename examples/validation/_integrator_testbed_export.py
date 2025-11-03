@@ -4,7 +4,9 @@ from __future__ import annotations
 import io
 import json
 import sys
+import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -28,7 +30,7 @@ VALIDATION_ROOT = PROJECT_ROOT / "examples" / "validation"
 if str(VALIDATION_ROOT) not in sys.path:
     sys.path.insert(0, str(VALIDATION_ROOT))
 
-from core_vs_legacy_benchmark import (
+from core_vs_legacy_benchmark import (  # noqa: E402
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     PARTICLE_PARAM_FIELDS,
@@ -37,7 +39,6 @@ from core_vs_legacy_benchmark import (
     prepare_two_particle_demo,
     run_benchmark,
 )
-from datetime import datetime
 
 COLOR_RIDER = "#0072B2"
 COLOR_DRIVER = "#D55E00"
@@ -834,10 +835,7 @@ def _extract_vector_series(states, keys, default=0.0):
     components = [_extract_scalar_series(states, key, default) for key in keys]
     return np.stack(components, axis=-1)
 
-
 # Use a lock so repeated button clicks cannot overlap runs
-import threading
-
 _MIN_RUN_INTERVAL_SECONDS = 0.5
 _run_lock = threading.Lock()
 _last_run_time = 0.0
