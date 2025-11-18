@@ -8,6 +8,7 @@ legacy solver (including its stochastic aperture spill model).
 from __future__ import annotations
 
 import random
+
 import numpy as np
 
 from .constants import NUMERICAL_EPSILON
@@ -51,23 +52,57 @@ def zeros_like_state(vector: ParticleState) -> ParticleState:
 
 
 def _radial_weight(
-    x: np.ndarray, y: np.ndarray, aperture_radius: float, shift: float
+    x: np.ndarray,
+    y: np.ndarray,
+    aperture_radius: float,
+    shift: float,
+    plateau: float,
 ) -> np.ndarray:
-    """Compute attenuation factors based on radial distance from the aperture axis.
+    """Return attenuation factors driven by the ``rho - shift`` displacement.
 
-    The weighting ramps linearly with the cylindrical radius and saturates when the
-    image subcharge sits at ``aperture_radius + shift``.  The ``shift`` term reflects
-    the circle traced out by the subcharges and ensures the attenuation does not
-    clamp too aggressively when the primary bunch is offset from the axis.
+    Behaviour by construction:
+    - If ``rho - shift == 0``                -> weight = 0 (center of aperture)
+    - If ``|rho - shift| == aperture_radius`` -> weight = plateau (∈ [0.5, 1.0])
+    - If ``|rho - shift| >= 2*aperture_radius`` -> weight → 1.0
     """
 
-    effective_radius = aperture_radius + max(shift, 0.0)
-    if effective_radius <= 0.0:
-        return np.ones_like(x, dtype=float)
+    rho = np.hypot(x, y)
+    delta = rho - shift
+    weights = np.zeros_like(delta, dtype=float)
 
-    radial = np.hypot(x, y)
-    weights = radial / effective_radius
-    return np.clip(weights, 0.0, 1.0)
+    # If no meaningful aperture scale: give plateau everywhere except the exact center.
+    if aperture_radius <= NUMERICAL_EPSILON:
+        plateau_clamped = float(np.clip(plateau, 0.5, 1.0))
+        weights[np.abs(delta) > 0.0] = plateau_clamped
+        return weights
+
+    a_r = float(aperture_radius)
+    plateau_clamped = float(np.clip(plateau, 0.5, 1.0))
+
+    # Symmetric ramp around the center of the aperture
+    nonzero = np.abs(delta) > 0.0
+    if not np.any(nonzero):
+        return weights
+
+    # Use |delta| to ramp symmetrically; clamp to [0, 2]
+    dn = np.clip(np.abs(delta[nonzero]) / a_r, 0.0, 2.0)
+    w = np.zeros_like(dn)
+
+    # 0 < dn < 1: ramp up to plateau
+    mask_ramp = dn < 1.0
+    if np.any(mask_ramp):
+        w[mask_ramp] = dn[mask_ramp] * plateau_clamped
+
+    # 1 <= dn < 2: ramp from plateau to 1
+    mask_mid = (dn >= 1.0) & (dn < 2.0)
+    if np.any(mask_mid):
+        w[mask_mid] = plateau_clamped + (dn[mask_mid] - 1.0) * (1.0 - plateau_clamped)
+
+    # dn >= 2: saturate at 1
+    w[dn >= 2.0] = 1.0
+
+    weights[nonzero] = np.clip(w, 0.0, 1.0)
+    return weights
 
 
 def generate_conducting_image(
@@ -174,6 +209,12 @@ def generate_conducting_image(
             y_positions = center_y + shift * np.sin(angles)
 
         if weighting_enabled and base_charge_per_sub != 0.0:
+            # Geometry-dependent plateau: plateau = (G / 2) with G in [1, 2),
+            # increasing with R_dist / aperture_radius
+            ratio = float(R_dist / max(aperture_radius, NUMERICAL_EPSILON))
+            geometry_factor = 1.0 + ratio / (1.0 + ratio)
+            plateau = float(np.clip(0.5 * geometry_factor, 0.5, 1.0))
+
             displacement = float(np.hypot(center_x, center_y))
             if displacement > NUMERICAL_EPSILON or shift > NUMERICAL_EPSILON:
                 weights = _radial_weight(
@@ -181,9 +222,14 @@ def generate_conducting_image(
                     y_positions,
                     aperture_radius,
                     shift,
+                    plateau,
                 )
             else:
-                weights = np.ones(count, dtype=float)
+                # Perfectly on-axis: enforce zero weight
+                weights = np.zeros(count, dtype=float)
+
+            # Combine legacy solid-angle reduction (in base_charge_per_sub)
+            # with rho-shift weighting that emphasizes off-axis behaviour.
             charge_values = (base_charge_per_sub * weights).astype(
                 result["q"].dtype, copy=False
             )
