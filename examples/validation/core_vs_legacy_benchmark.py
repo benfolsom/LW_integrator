@@ -8,7 +8,7 @@ import copy
 import json
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, MutableMapping, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,6 +20,7 @@ LEGACY_ROOT = PROJECT_ROOT / "legacy"
 if str(LEGACY_ROOT) not in sys.path:
     sys.path.insert(0, str(LEGACY_ROOT))
 
+from core.integration_runner import IntegrationCancelled
 from core.trajectory_integrator import SimulationType, retarded_integrator
 from core.types import ChronoMatchingMode
 from legacy.bunch_inits import init_bunch  # type: ignore
@@ -186,6 +187,8 @@ def run_core_integrator(
     z_cutoff: float | None,
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> TrajectoryPair:
     if aperture_radius is None:
         raise ValueError("aperture_radius is required for the core integrator")
@@ -206,9 +209,10 @@ def run_core_integrator(
         mean=resolved_mean,
         cav_spacing=resolved_cav_spacing,
         z_cutoff=resolved_z_cutoff,
-        chrono_mode=ChronoMatchingMode.FAST,
         image_subcharge_count=image_subcharge_count,
         use_conducting_image_weighting=use_image_weighting,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
     )
     return (
         [_normalize_state(state) for state in core_traj],
@@ -400,6 +404,8 @@ def run_benchmark(
     log_messages: Optional[List[str]] = None,
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
 ):
     def _log(message: str) -> None:
         if log_messages is not None:
@@ -433,8 +439,8 @@ def run_benchmark(
         )
 
     core_results = run_core_integrator(
-        copy.deepcopy(rider_state),
-        copy.deepcopy(driver_state),
+        copy.deepcopy(rider_initial),
+        copy.deepcopy(driver_initial),
         steps,
         time_step=time_step,
         wall_z=wall_z,
@@ -445,6 +451,8 @@ def run_benchmark(
         z_cutoff=z_cutoff,
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
     )
 
     metrics: Optional[Dict[str, Dict[str, float]]] = None
@@ -574,13 +582,7 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         "--plot-dpi",
         type=int,
         default=DEFAULT_SAVE_DPI,
-        help=(
-            "DPI for saved plots ("
-            f"{MIN_RECOMMENDED_DPI}"
-            "–"
-            f"{MAX_RECOMMENDED_DPI}"
-            ")"
-        ),
+        help=(f"DPI for saved plots ({MIN_RECOMMENDED_DPI}–{MAX_RECOMMENDED_DPI})"),
     )
     parser.add_argument(
         "--image-subcharge-count",

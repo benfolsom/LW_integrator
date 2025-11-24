@@ -6,7 +6,7 @@ programmatic entry points for running the modern Liénard–Wiechert integrator.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
@@ -21,6 +21,9 @@ from .types import (
     StartupMode,
     Trajectory,
 )
+
+class IntegrationCancelled(RuntimeError):
+    """Raised when an integration is cancelled by an external caller."""
 
 
 def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
@@ -65,6 +68,8 @@ def retarded_integrator(
     startup_mode: StartupMode = StartupMode.COLD_START,
     image_subcharge_count: int = 12,
     use_conducting_image_weighting: bool = True,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Trajectory, Trajectory]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -103,6 +108,13 @@ def retarded_integrator(
         Number of subcharges used when constructing conducting-wall image
         charges. Must remain within the bounds accepted by
         :func:`generate_conducting_image`.
+    progress_callback:
+        Optional callable invoked as ``progress_callback(current, steps)`` after
+        each integration step completes. ``current`` counts completed steps.
+    cancel_callback:
+        Optional predicate evaluated before each step. If it returns ``True``
+        the integration stops early by raising :class:`IntegrationCancelled`.
+
 
     Returns
     -------
@@ -114,7 +126,12 @@ def retarded_integrator(
     trajectory: Trajectory = [{} for _ in range(steps)]
     trajectory_drv: Trajectory = [{} for _ in range(steps)]
 
+    if progress_callback is not None:
+        progress_callback(0, steps)
+
     for i in range(steps):
+        if cancel_callback is not None and cancel_callback():
+            raise IntegrationCancelled("Integration cancelled by caller.")
         if i == 0:
             trajectory[i] = init_rider
             _ensure_startup_metadata(trajectory[i])
@@ -186,6 +203,9 @@ def retarded_integrator(
                 )
             _ensure_startup_metadata(trajectory_drv[i])
 
+        if progress_callback is not None:
+            progress_callback(i + 1, steps)
+
     return trajectory, trajectory_drv
 
 
@@ -219,6 +239,7 @@ def run_integrator(
 
 
 __all__ = [
+    "IntegrationCancelled",
     "retarded_integrator",
     "run_integrator",
 ]
