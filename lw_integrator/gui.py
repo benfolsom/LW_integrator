@@ -31,10 +31,10 @@ from .testbed_runner import (
     CORE_PARAM_LABELS,
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
+    SPECIES_OPTIONS,
     InitialSummary,
     RunResult,
     SimulationOptions,
-    SPECIES_OPTIONS,
     apply_species_preset,
     compute_initial_summary,
     ensure_directory,
@@ -66,6 +66,7 @@ class IntegratorGUI:
         self._figure_windows: List[_FigureHandle] = []
         self._worker: Optional[threading.Thread] = None
         self._running = False
+        self._cancel_requested = False
 
         self._init_variables()
         self._build_layout()
@@ -141,6 +142,7 @@ class IntegratorGUI:
 
         self.status_var = tk.StringVar(value="Idle")
         self.summary_var = tk.StringVar(value="")
+        self.progress_var = tk.DoubleVar(value=0.0)
 
         self.sim_type_var.trace_add("write", lambda *_: self._on_sim_type_change())
         self.legacy_var.trace_add("write", lambda *_: self._update_legacy_state())
@@ -247,6 +249,20 @@ class IntegratorGUI:
             driver_entry.grid(row=row, column=3, sticky="ew", pady=2)
             self._driver_entries.append(driver_entry)
 
+        # Image subcharge controls
+        next_row = len(PARTICLE_PARAM_FIELDS) + 1
+        ttk.Label(particle_frame, text="Image subcharge count:").grid(
+            row=next_row, column=0, sticky="w", pady=(12, 2)
+        )
+        ttk.Entry(particle_frame, textvariable=self.image_subcharge_var, width=12).grid(
+            row=next_row, column=1, sticky="ew", pady=(12, 2)
+        )
+        ttk.Checkbutton(
+            particle_frame,
+            text="Enable image weighting",
+            variable=self.image_weighting_var,
+        ).grid(row=next_row + 1, column=0, columnspan=2, sticky="w", pady=2)
+
         # Core tab ------------------------------------------------------
         core_frame = ttk.Frame(notebook, padding=12)
         notebook.add(core_frame, text="Core params")
@@ -265,70 +281,69 @@ class IntegratorGUI:
         notebook.add(output_frame, text="Outputs")
         output_frame.columnconfigure(1, weight=1)
 
+        # Trajectory comparison outputs (grouped and dependent on legacy)
+        comparison_frame = ttk.LabelFrame(
+            output_frame, text="Trajectory Comparison (requires legacy)", padding=8
+        )
+        comparison_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        comparison_frame.columnconfigure(1, weight=1)
+
         self._add_output_toggle(
-            output_frame,
+            comparison_frame,
             "Overlay plot",
             self.overlay_display_var,
             self.overlay_save_var,
             row=0,
         )
         self._add_output_toggle(
-            output_frame,
+            comparison_frame,
             "Difference plot",
             self.difference_display_var,
             self.difference_save_var,
             row=1,
         )
+        ttk.Checkbutton(
+            comparison_frame, text="Save metrics JSON", variable=self.metrics_save_var
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        self._comparison_frame = comparison_frame
+
+        # Other outputs
         self._add_output_toggle(
             output_frame,
             "Energy plot",
             self.energy_display_var,
             self.energy_save_var,
-            row=2,
+            row=1,
         )
         self._add_output_toggle(
             output_frame,
             "Transverse plot",
             self.transverse_display_var,
             self.transverse_save_var,
-            row=3,
+            row=2,
         )
-        ttk.Checkbutton(
-            output_frame, text="Save metrics JSON", variable=self.metrics_save_var
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         ttk.Checkbutton(
             output_frame, text="Save trajectory", variable=self.trajectory_save_var
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Label(output_frame, text="Trajectory stride:").grid(
-            row=6, column=0, sticky="w"
+            row=4, column=0, sticky="w"
         )
         ttk.Entry(
             output_frame, textvariable=self.trajectory_interval_var, width=8
-        ).grid(row=6, column=1, sticky="w")
+        ).grid(row=4, column=1, sticky="w")
 
         ttk.Label(output_frame, text="Plot DPI:").grid(
-            row=7, column=0, sticky="w", pady=(6, 0)
+            row=5, column=0, sticky="w", pady=(12, 0)
         )
         ttk.Combobox(
             output_frame,
             textvariable=self.dpi_var,
-            values=AVAILABLE_DPI_CHOICES,
+            values=[str(dpi) for dpi in AVAILABLE_DPI_CHOICES],
             width=8,
             state="readonly",
-        ).grid(row=7, column=1, sticky="w", pady=(6, 0))
-
-        ttk.Label(output_frame, text="Image subcharge count:").grid(
-            row=8, column=0, sticky="w", pady=(6, 0)
-        )
-        ttk.Entry(output_frame, textvariable=self.image_subcharge_var, width=8).grid(
-            row=8, column=1, sticky="w", pady=(6, 0)
-        )
-        ttk.Checkbutton(
-            output_frame,
-            text="Enable image weighting",
-            variable=self.image_weighting_var,
-        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=5, column=1, sticky="w", pady=(12, 0))
 
         # Config tab ----------------------------------------------------
         config_frame = ttk.Frame(notebook, padding=12)
@@ -391,16 +406,29 @@ class IntegratorGUI:
         # Footer --------------------------------------------------------
         footer = ttk.Frame(self.root, padding=8)
         footer.grid(row=2, column=0, sticky="ew")
-        footer.columnconfigure(1, weight=1)
+        footer.columnconfigure(2, weight=1)
 
-        ttk.Button(footer, text="Run", command=self._trigger_run).grid(
-            row=0, column=0, sticky="w"
+        self._run_button = ttk.Button(footer, text="Run", command=self._trigger_run)
+        self._run_button.grid(row=0, column=0, sticky="w")
+
+        self._cancel_button = ttk.Button(
+            footer, text="Cancel", command=self._trigger_cancel, state="disabled"
         )
+        self._cancel_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
         ttk.Label(footer, textvariable=self.status_var).grid(
-            row=0, column=1, sticky="w", padx=(12, 0)
+            row=0, column=2, sticky="w", padx=(12, 0)
         )
+
+        self._progress_bar = ttk.Progressbar(
+            footer,
+            variable=self.progress_var,
+            maximum=100,
+            mode="determinate",
+            length=200,
+        )
+        self._progress_bar.grid(row=0, column=3, sticky="w", padx=(12, 0))
         ttk.Button(footer, text="Close", command=self.root.destroy).grid(
-            row=0, column=2, sticky="e"
+            row=0, column=4, sticky="e", padx=(12, 0)
         )
 
         # Summary + logs ------------------------------------------------
@@ -701,9 +729,20 @@ class IntegratorGUI:
 
     def _update_legacy_state(self) -> None:
         enabled = self.legacy_var.get()
+        state = "normal" if enabled else "disabled"
+
+        # Update the comparison frame state
+        if hasattr(self, "_comparison_frame"):
+            for child in self._comparison_frame.winfo_children():
+                if isinstance(child, (ttk.Checkbutton, ttk.Button)):
+                    child.configure(state=state)
+
         if not enabled:
+            self.overlay_display_var.set(False)
+            self.overlay_save_var.set(False)
             self.difference_display_var.set(False)
             self.difference_save_var.set(False)
+            self.metrics_save_var.set(False)
 
     # ------------------------------------------------------------------
     # Simulation execution
@@ -724,17 +763,46 @@ class IntegratorGUI:
         for handle in list(self._figure_windows):
             self._close_figure(handle)
 
+        self._cancel_requested = False
         self._set_status("Running...")
         self._append_log("Launching simulation...")
         self._running = True
+        self.progress_var.set(0.0)
+        self._run_button.configure(state="disabled")
+        self._cancel_button.configure(state="normal")
+
         self._worker = threading.Thread(
             target=self._run_background, args=(options,), daemon=True
         )
         self._worker.start()
 
+    def _trigger_cancel(self) -> None:
+        if self._running:
+            self._cancel_requested = True
+            self._cancel_button.configure(state="disabled")
+            self._append_log("Cancellation requested...")
+            self._set_status("Cancelling...")
+
     def _run_background(self, options: SimulationOptions) -> None:
+        from core.integration_runner import IntegrationCancelled
+
+        def progress_callback(current: int, total: int) -> None:
+            progress_pct = (current / total * 100.0) if total > 0 else 0.0
+            self.root.after(0, lambda: self.progress_var.set(progress_pct))
+
+        def cancel_callback() -> bool:
+            return self._cancel_requested
+
         try:
-            result = run_testbed(options, log=self._queue_log)
+            result = run_testbed(
+                options,
+                log=self._queue_log,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
+            )
+        except IntegrationCancelled:
+            self.root.after(0, self._on_cancelled)
+            return
         except Exception as exc:  # pragma: no cover - UI safeguard
             self.root.after(0, partial(self._on_failure, str(exc)))
             return
@@ -743,19 +811,38 @@ class IntegratorGUI:
     def _queue_log(self, text: str) -> None:
         self.root.after(0, partial(self._append_log, text))
 
+    def _on_cancelled(self) -> None:
+        self._running = False
+        self._worker = None
+        self._cancel_requested = False
+        self._set_status("Cancelled")
+        self._append_log("Simulation cancelled by user.")
+        self._run_button.configure(state="normal")
+        self._cancel_button.configure(state="disabled")
+        self.progress_var.set(0.0)
+
     def _on_failure(self, message: str) -> None:
         self._running = False
         self._worker = None
+        self._cancel_requested = False
         self._set_status("Failed")
         self._append_log(message)
+        self._run_button.configure(state="normal")
+        self._cancel_button.configure(state="disabled")
+        self.progress_var.set(0.0)
         messagebox.showerror("LW Integrator", message)
 
     def _on_success(self, result: RunResult) -> None:
         self._running = False
         self._worker = None
+        self._cancel_requested = False
         self._set_status("Completed")
         self._append_log("Simulation finished successfully.")
         self._append_log(f"Duration: {result.duration_s:.2f} s")
+        self._run_button.configure(state="normal")
+        self._cancel_button.configure(state="disabled")
+        self.progress_var.set(100.0)
+
         for name, figure in result.figures.items():
             title = (
                 name.replace("_", " ").title() if isinstance(name, str) else str(name)

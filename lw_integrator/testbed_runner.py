@@ -436,8 +436,22 @@ def run_testbed(
     options: SimulationOptions,
     *,
     log: Optional[Callable[[str], None]] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> RunResult:
-    """Execute the integrator benchmark with plotting/export side effects."""
+    """Execute the integrator benchmark with plotting/export side effects.
+
+    Parameters
+    ----------
+    options:
+        Simulation configuration options.
+    log:
+        Optional callback for logging messages.
+    progress_callback:
+        Optional callback invoked as progress_callback(current, total) to report progress.
+    cancel_callback:
+        Optional predicate that returns True if cancellation is requested.
+    """
 
     start = time.perf_counter()
     logs: List[str] = []
@@ -539,6 +553,8 @@ def run_testbed(
         return_trajectories=return_traj_flag,
         image_subcharge_count=int(options.image_subcharge_count),
         use_image_weighting=bool(options.use_image_weighting),
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
         **filtered_core_params,
     )
 
