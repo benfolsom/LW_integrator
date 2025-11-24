@@ -835,6 +835,7 @@ def _extract_vector_series(states, keys, default=0.0):
     components = [_extract_scalar_series(states, key, default) for key in keys]
     return np.stack(components, axis=-1)
 
+
 # Use a lock so repeated button clicks cannot overlap runs
 _MIN_RUN_INTERVAL_SECONDS = 0.5
 _run_lock = threading.Lock()

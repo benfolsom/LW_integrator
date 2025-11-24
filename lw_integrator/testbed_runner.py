@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import time
+import traceback
 
 import matplotlib
 
@@ -248,7 +249,7 @@ class SimulationOptions:
         def _int(name: str, default: int) -> int:
             value = payload.get(name, default)
             try:
-                return int(value)  # type: ignore[arg-type]
+                return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
             except (TypeError, ValueError):
                 return default
 
@@ -631,6 +632,9 @@ def run_testbed(
             rider_z_rel = rider_z - rider_z[0]
         except Exception as exc:  # pragma: no cover - defensive guard
             _log(f"Failed to compute rider energy series: {exc}")
+            _log(
+                f"Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
+            )
             rider_delta_e = None
             rider_z_rel = None
 
@@ -646,6 +650,9 @@ def run_testbed(
                 driver_z_rel = driver_z - driver_z[0]
             except Exception as exc:  # pragma: no cover - defensive guard
                 _log(f"Failed to compute driver energy series: {exc}")
+                _log(
+                    f"Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
+                )
                 driver_delta_e = None
                 driver_z_rel = None
         else:
@@ -661,7 +668,11 @@ def run_testbed(
                     rest_energies.get("rider"),
                 )
                 legacy_rider_z_rel = legacy_rider_z - legacy_rider_z[0]
-            except Exception:  # pragma: no cover - defensive guard
+            except Exception as exc:  # pragma: no cover - defensive guard
+                _log(f"Failed to compute legacy rider energy series: {exc}")
+                _log(
+                    f"Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
+                )
                 legacy_rider_delta_e = None
                 legacy_rider_z_rel = None
 
@@ -675,7 +686,11 @@ def run_testbed(
                         )
                     )
                     legacy_driver_z_rel = legacy_driver_z - legacy_driver_z[0]
-                except Exception:
+                except Exception as exc:
+                    _log(f"Failed to compute legacy driver energy series: {exc}")  # type: ignore[assignment]
+                    _log(
+                        f"Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
+                    )
                     legacy_driver_delta_e = None
                     legacy_driver_z_rel = None
             else:

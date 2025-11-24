@@ -20,9 +20,7 @@ LEGACY_ROOT = PROJECT_ROOT / "legacy"
 if str(LEGACY_ROOT) not in sys.path:
     sys.path.insert(0, str(LEGACY_ROOT))
 
-from core.integration_runner import IntegrationCancelled
 from core.trajectory_integrator import SimulationType, retarded_integrator
-from core.types import ChronoMatchingMode
 from legacy.bunch_inits import init_bunch  # type: ignore
 from legacy.covariant_integrator_library import (  # type: ignore
     retarded_integrator as legacy_retarded_integrator,

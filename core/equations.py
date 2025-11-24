@@ -8,7 +8,6 @@ covariant updates for momentum, position, and acceleration for each particle.
 
 from __future__ import annotations
 
-
 import numpy as np
 
 from .constants import C_MMNS
@@ -122,7 +121,9 @@ def retarded_equations_of_motion(
         "beta_samples": np.copy(trajectory[index_traj]["beta_samples"]),
     }
 
-    for particle_index in range(len(trajectory[index_traj]["x"])):
+    num_particles_traj = len(trajectory[index_traj]["x"])
+
+    for particle_index in range(num_particles_traj):
         if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
             sample_count = len(trajectory_ext[index_traj]["x"])
             indices_new_bounded = np.full(sample_count, index_traj, dtype=int)
@@ -314,7 +315,7 @@ def retarded_equations_of_motion(
         ) / (C_MMNS * h * result["gamma"][particle_index])
 
         rad_frc_z_rhs = (
-            -result["gamma"][particle_index] ** 3
+            -(result["gamma"][particle_index] ** 3)
             * (mass_i * result["bdotz"][particle_index] ** 2 * C_MMNS**2)
             * result["bz"][particle_index]
             * C_MMNS
@@ -343,7 +344,7 @@ def retarded_equations_of_motion(
             )
 
             rad_frc_x_rhs = (
-                -result["gamma"][particle_index] ** 3
+                -(result["gamma"][particle_index] ** 3)
                 * (mass_i * result["bdotx"][particle_index] ** 2 * C_MMNS**2)
                 * result["bx"][particle_index]
                 * C_MMNS
@@ -361,7 +362,7 @@ def retarded_equations_of_motion(
             )
 
             rad_frc_y_rhs = (
-                -result["gamma"][particle_index] ** 3
+                -(result["gamma"][particle_index] ** 3)
                 * (mass_i * result["bdoty"][particle_index] ** 2 * C_MMNS**2)
                 * result["by"][particle_index]
                 * C_MMNS

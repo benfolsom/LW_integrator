@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+import traceback
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -81,6 +82,8 @@ class IntegratorGUI:
     # ------------------------------------------------------------------
 
     def _init_variables(self) -> None:
+        # Add verbose logging toggle
+        self.verbose_logging = tk.BooleanVar(value=False)
         self.sim_type_var = tk.StringVar(value=self.options.simulation_type.name)
         self.steps_var = tk.IntVar(value=self.options.steps)
         self.seed_var = tk.IntVar(value=self.options.seed)
@@ -193,6 +196,7 @@ class IntegratorGUI:
     # ------------------------------------------------------------------
 
     def _build_layout(self) -> None:
+        """Build the complete GUI layout with all controls."""
         self.root.rowconfigure(1, weight=1)
         self.root.columnconfigure(0, weight=1)
 
@@ -526,7 +530,7 @@ class IntegratorGUI:
         # Footer --------------------------------------------------------
         footer = ttk.Frame(self.root, padding=8)
         footer.grid(row=2, column=0, sticky="ew")
-        footer.columnconfigure(2, weight=1)
+        footer.columnconfigure(3, weight=1)
 
         self._run_button = ttk.Button(footer, text="Run", command=self._trigger_run)
         self._run_button.grid(row=0, column=0, sticky="w")
@@ -535,8 +539,13 @@ class IntegratorGUI:
             footer, text="Cancel", command=self._trigger_cancel, state="disabled"
         )
         self._cancel_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+
+        ttk.Checkbutton(
+            footer, text="Verbose logging", variable=self.verbose_logging
+        ).grid(row=0, column=2, sticky="w", padx=(12, 0))
+
         ttk.Label(footer, textvariable=self.status_var).grid(
-            row=0, column=2, sticky="w", padx=(12, 0)
+            row=0, column=3, sticky="w", padx=(12, 0)
         )
 
         self._progress_bar = ttk.Progressbar(
@@ -546,9 +555,9 @@ class IntegratorGUI:
             mode="determinate",
             length=200,
         )
-        self._progress_bar.grid(row=0, column=3, sticky="w", padx=(12, 0))
+        self._progress_bar.grid(row=0, column=4, sticky="w", padx=(12, 0))
         ttk.Button(footer, text="Close", command=self.root.destroy).grid(
-            row=0, column=4, sticky="e", padx=(12, 0)
+            row=0, column=5, sticky="e", padx=(12, 0)
         )
 
         # Summary + logs ------------------------------------------------
@@ -952,7 +961,13 @@ class IntegratorGUI:
             self.root.after(0, self._on_cancelled)
             return
         except Exception as exc:  # pragma: no cover - UI safeguard
-            self.root.after(0, partial(self._on_failure, str(exc)))
+            if self.verbose_logging.get():
+                error_msg = "".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                )
+            else:
+                error_msg = str(exc)
+            self.root.after(0, partial(self._on_failure, error_msg))
             return
         self.root.after(0, partial(self._on_success, result))
 
