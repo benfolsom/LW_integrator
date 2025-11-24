@@ -6,10 +6,12 @@ programmatic entry points for running the modern Liénard–Wiechert integrator.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable, Optional, Tuple
 
 import numpy as np
 
+from .constants import C_MMNS
 from .equations import retarded_equations_of_motion
 from .images import generate_conducting_image, generate_switching_image
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
@@ -22,8 +24,26 @@ from .types import (
     Trajectory,
 )
 
+
 class IntegrationCancelled(RuntimeError):
     """Raised when an integration is cancelled by an external caller."""
+
+
+class EnergyJumpDetected(RuntimeError):
+    """Raised when an energy jump exceeds the configured threshold."""
+
+
+@dataclass
+class EnergyMonitorConfig:
+    """Configuration for optional energy jump detection during integration."""
+
+    enabled: bool = False
+    relative_threshold: float = (
+        10.0  # Relative energy change threshold (e.g., 10.0 = 1000%)
+    )
+    check_interval: int = 1  # Check every N steps
+    halt_on_jump: bool = False  # If True, raise exception; if False, just warn
+    debug: bool = False  # Print energy changes
 
 
 def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
@@ -68,6 +88,7 @@ def retarded_integrator(
     startup_mode: StartupMode = StartupMode.COLD_START,
     image_subcharge_count: int = 12,
     use_conducting_image_weighting: bool = True,
+    energy_monitor: Optional[EnergyMonitorConfig] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Trajectory, Trajectory]:
@@ -108,6 +129,9 @@ def retarded_integrator(
         Number of subcharges used when constructing conducting-wall image
         charges. Must remain within the bounds accepted by
         :func:`generate_conducting_image`.
+    energy_monitor:
+        Optional :class:`EnergyMonitorConfig` to detect sudden energy jumps
+        during integration. Can warn or halt on excessive energy changes.
     progress_callback:
         Optional callable invoked as ``progress_callback(current, steps)`` after
         each integration step completes. ``current`` counts completed steps.
@@ -125,6 +149,9 @@ def retarded_integrator(
 
     trajectory: Trajectory = [{} for _ in range(steps)]
     trajectory_drv: Trajectory = [{} for _ in range(steps)]
+
+    # Initialize energy monitoring
+    previous_energy: Optional[float] = None
 
     if progress_callback is not None:
         progress_callback(0, steps)
@@ -203,6 +230,37 @@ def retarded_integrator(
                 )
             _ensure_startup_metadata(trajectory_drv[i])
 
+        # Energy jump detection
+        if (
+            energy_monitor is not None
+            and energy_monitor.enabled
+            and i > 0
+            and i % energy_monitor.check_interval == 0
+        ):
+            # Calculate energy from gamma and mass: E = γmc²
+            gamma = np.asarray(trajectory[i]["gamma"])
+            mass = np.asarray(trajectory[i]["m"])
+            current_energy = float(np.sum(gamma * mass * C_MMNS * C_MMNS))
+            if previous_energy is not None and previous_energy > 0:
+                relative_change = (
+                    abs(current_energy - previous_energy) / previous_energy
+                )
+                if relative_change > energy_monitor.relative_threshold:
+                    msg = (
+                        f"Energy jump detected at step {i}/{steps}: "
+                        f"ΔE/E = {relative_change:.2e} "
+                        f"(threshold = {energy_monitor.relative_threshold:.2e})"
+                    )
+                    if energy_monitor.halt_on_jump:
+                        raise EnergyJumpDetected(msg)
+                    else:
+                        print(f"WARNING: {msg}")
+                elif energy_monitor.debug:
+                    print(
+                        f"Step {i}: Energy = {current_energy:.6e} MeV, ΔE/E = {relative_change:.6e}"
+                    )
+            previous_energy = current_energy
+
         if progress_callback is not None:
             progress_callback(i + 1, steps)
 
@@ -240,6 +298,8 @@ def run_integrator(
 
 __all__ = [
     "IntegrationCancelled",
+    "EnergyJumpDetected",
+    "EnergyMonitorConfig",
     "retarded_integrator",
     "run_integrator",
 ]

@@ -189,6 +189,19 @@ class SimulationOptions:
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
 
+    # Self-consistency options
+    self_consistency_enabled: bool = True
+    self_consistency_tolerance: float = 1e-6
+    self_consistency_max_iterations: int = 5
+    self_consistency_debug: bool = False
+
+    # Energy monitoring options
+    energy_monitor_enabled: bool = True
+    energy_monitor_threshold: float = 2.0
+    energy_monitor_check_interval: int = 10
+    energy_monitor_halt_on_jump: bool = False
+    energy_monitor_debug: bool = False
+
     def to_dict(self) -> Dict[str, object]:
         payload: Dict[str, object] = {
             "steps": self.steps,
@@ -215,6 +228,15 @@ class SimulationOptions:
             "core_params": dict(self.core_params),
             "image_subcharge_count": self.image_subcharge_count,
             "use_image_weighting": self.use_image_weighting,
+            "self_consistency_enabled": self.self_consistency_enabled,
+            "self_consistency_tolerance": self.self_consistency_tolerance,
+            "self_consistency_max_iterations": self.self_consistency_max_iterations,
+            "self_consistency_debug": self.self_consistency_debug,
+            "energy_monitor_enabled": self.energy_monitor_enabled,
+            "energy_monitor_threshold": self.energy_monitor_threshold,
+            "energy_monitor_check_interval": self.energy_monitor_check_interval,
+            "energy_monitor_halt_on_jump": self.energy_monitor_halt_on_jump,
+            "energy_monitor_debug": self.energy_monitor_debug,
         }
         return payload
 
@@ -529,6 +551,12 @@ def run_testbed(
     _log(f"  Legacy enabled: {legacy_enabled}")
     _log(f"  Image subcharges: {options.image_subcharge_count}")
     _log(f"  Image weighting: {options.use_image_weighting}")
+    _log(
+        f"  Self-consistency: {options.self_consistency_enabled} (tol={options.self_consistency_tolerance:.1e}, max_iter={options.self_consistency_max_iterations})"
+    )
+    _log(
+        f"  Energy monitoring: {options.energy_monitor_enabled} (threshold={options.energy_monitor_threshold * 100:.0f}%, halt={options.energy_monitor_halt_on_jump})"
+    )
     _log("")
 
     return_traj_flag = any(
@@ -553,6 +581,15 @@ def run_testbed(
         return_trajectories=return_traj_flag,
         image_subcharge_count=int(options.image_subcharge_count),
         use_image_weighting=bool(options.use_image_weighting),
+        self_consistency_enabled=options.self_consistency_enabled,
+        self_consistency_tolerance=options.self_consistency_tolerance,
+        self_consistency_max_iterations=options.self_consistency_max_iterations,
+        self_consistency_debug=options.self_consistency_debug,
+        energy_monitor_enabled=options.energy_monitor_enabled,
+        energy_monitor_threshold=options.energy_monitor_threshold,
+        energy_monitor_check_interval=options.energy_monitor_check_interval,
+        energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
+        energy_monitor_debug=options.energy_monitor_debug,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
         **filtered_core_params,

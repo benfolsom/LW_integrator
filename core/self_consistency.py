@@ -1,4 +1,15 @@
-"""Optional self-consistency checks for Liénard–Wiechert integration."""
+"""Optional self-consistency checks for Liénard–Wiechert integration.
+
+Self-consistency iterations refine each integration step by repeatedly evaluating
+the equations of motion until the Lorentz factor (gamma) converges. This helps
+prevent numerical instabilities and energy jumps in relativistic simulations,
+especially near conducting boundaries or during close particle approaches.
+
+Enable self-consistency checks when:
+- Simulating high-energy particles (gamma > 10)
+- Using small time steps or narrow apertures
+- Observing unexpected energy jumps or divergences
+"""
 
 from __future__ import annotations
 
@@ -26,12 +37,75 @@ StepFunction = Callable[
 
 @dataclass
 class SelfConsistencyConfig:
-    """Configuration for self-consistency iterations."""
+    """Configuration for self-consistency iterations.
 
-    enabled: bool = False
+    Self-consistency is now ENABLED BY DEFAULT to prevent energy jumps and
+    numerical instabilities in relativistic simulations.
+
+    Attributes
+    ----------
+    enabled : bool
+        Whether to perform self-consistency iterations. Default is True.
+    tolerance : float
+        Relative convergence tolerance for gamma. Iterations stop when
+        max|Δγ/γ| < tolerance. Default is 1e-6.
+    max_iterations : int
+        Maximum number of refinement iterations per step. Default is 5.
+    debug : bool
+        If True, print convergence information for each step. Default is False.
+
+    Examples
+    --------
+    Standard configuration (default)::
+
+        config = SelfConsistencyConfig()
+        # enabled=True, tolerance=1e-6, max_iterations=5
+
+    Disable for testing/comparison::
+
+        config = SelfConsistencyConfig(enabled=False)
+
+    Aggressive convergence for stability::
+
+        config = SelfConsistencyConfig(
+            tolerance=1e-8,
+            max_iterations=10,
+            debug=True
+        )
+    """
+
+    enabled: bool = True
     tolerance: float = 1e-6
-    max_iterations: int = 3
+    max_iterations: int = 5
     debug: bool = False
+
+    @classmethod
+    def standard(cls) -> "SelfConsistencyConfig":
+        """Return standard configuration for typical relativistic simulations.
+
+        This is the default configuration: enabled with moderate convergence
+        criteria suitable for most high-energy particle tracking applications.
+        """
+        return cls(enabled=True, tolerance=1e-6, max_iterations=5)
+
+    @classmethod
+    def disabled(cls) -> "SelfConsistencyConfig":
+        """Return configuration with self-consistency disabled.
+
+        Use only for testing, benchmarking, or comparison with legacy code.
+        Not recommended for production simulations.
+        """
+        return cls(enabled=False)
+
+    @classmethod
+    def aggressive(cls) -> "SelfConsistencyConfig":
+        """Return aggressive configuration for maximum numerical stability.
+
+        Uses tight convergence tolerance and more iterations to prevent
+        energy jumps in challenging scenarios (ultra-relativistic particles,
+        narrow apertures, or close approaches to conducting boundaries).
+        """
+        return cls(enabled=True, tolerance=1e-8, max_iterations=10, debug=False)
 
 
 def self_consistent_step(

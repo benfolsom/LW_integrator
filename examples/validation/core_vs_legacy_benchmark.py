@@ -187,6 +187,15 @@ def run_core_integrator(
     z_cutoff: float | None,
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
+    self_consistency_enabled: bool = True,
+    self_consistency_tolerance: float = 1e-6,
+    self_consistency_max_iterations: int = 5,
+    self_consistency_debug: bool = False,
+    energy_monitor_enabled: bool = True,
+    energy_monitor_threshold: float = 2.0,
+    energy_monitor_check_interval: int = 10,
+    energy_monitor_halt_on_jump: bool = False,
+    energy_monitor_debug: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> TrajectoryPair:
@@ -197,6 +206,31 @@ def run_core_integrator(
     resolved_mean = 0.0 if mean is None else mean
     resolved_cav_spacing = 0.0 if cav_spacing is None else cav_spacing
     resolved_z_cutoff = 0.0 if z_cutoff is None else z_cutoff
+
+    # Import here to avoid circular dependencies
+    from core.integration_runner import EnergyMonitorConfig
+    from core.self_consistency import SelfConsistencyConfig
+
+    # Configure self-consistency
+    self_consistency = None
+    if self_consistency_enabled:
+        self_consistency = SelfConsistencyConfig(
+            enabled=True,
+            tolerance=self_consistency_tolerance,
+            max_iterations=self_consistency_max_iterations,
+            debug=self_consistency_debug,
+        )
+
+    # Configure energy monitoring
+    energy_monitor = None
+    if energy_monitor_enabled:
+        energy_monitor = EnergyMonitorConfig(
+            enabled=True,
+            relative_threshold=energy_monitor_threshold,
+            check_interval=energy_monitor_check_interval,
+            halt_on_jump=energy_monitor_halt_on_jump,
+            debug=energy_monitor_debug,
+        )
 
     core_traj, core_drv = retarded_integrator(
         steps=steps,
@@ -209,6 +243,8 @@ def run_core_integrator(
         mean=resolved_mean,
         cav_spacing=resolved_cav_spacing,
         z_cutoff=resolved_z_cutoff,
+        self_consistency=self_consistency,
+        energy_monitor=energy_monitor,
         image_subcharge_count=image_subcharge_count,
         use_conducting_image_weighting=use_image_weighting,
         progress_callback=progress_callback,
@@ -404,6 +440,15 @@ def run_benchmark(
     log_messages: Optional[List[str]] = None,
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
+    self_consistency_enabled: bool = True,
+    self_consistency_tolerance: float = 1e-6,
+    self_consistency_max_iterations: int = 5,
+    self_consistency_debug: bool = False,
+    energy_monitor_enabled: bool = True,
+    energy_monitor_threshold: float = 2.0,
+    energy_monitor_check_interval: int = 10,
+    energy_monitor_halt_on_jump: bool = False,
+    energy_monitor_debug: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ):
@@ -451,6 +496,15 @@ def run_benchmark(
         z_cutoff=z_cutoff,
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
+        self_consistency_enabled=self_consistency_enabled,
+        self_consistency_tolerance=self_consistency_tolerance,
+        self_consistency_max_iterations=self_consistency_max_iterations,
+        self_consistency_debug=self_consistency_debug,
+        energy_monitor_enabled=energy_monitor_enabled,
+        energy_monitor_threshold=energy_monitor_threshold,
+        energy_monitor_check_interval=energy_monitor_check_interval,
+        energy_monitor_halt_on_jump=energy_monitor_halt_on_jump,
+        energy_monitor_debug=energy_monitor_debug,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
     )

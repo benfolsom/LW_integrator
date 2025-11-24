@@ -135,6 +135,37 @@ class IntegratorGUI:
         self.image_subcharge_var = tk.IntVar(value=self.options.image_subcharge_count)
         self.image_weighting_var = tk.BooleanVar(value=self.options.use_image_weighting)
 
+        # Self-consistency options
+        self.self_consistency_enabled_var = tk.BooleanVar(
+            value=self.options.self_consistency_enabled
+        )
+        self.self_consistency_tolerance_var = tk.DoubleVar(
+            value=self.options.self_consistency_tolerance
+        )
+        self.self_consistency_max_iterations_var = tk.IntVar(
+            value=self.options.self_consistency_max_iterations
+        )
+        self.self_consistency_debug_var = tk.BooleanVar(
+            value=self.options.self_consistency_debug
+        )
+
+        # Energy monitoring options
+        self.energy_monitor_enabled_var = tk.BooleanVar(
+            value=self.options.energy_monitor_enabled
+        )
+        self.energy_monitor_threshold_var = tk.DoubleVar(
+            value=self.options.energy_monitor_threshold
+        )
+        self.energy_monitor_check_interval_var = tk.IntVar(
+            value=self.options.energy_monitor_check_interval
+        )
+        self.energy_monitor_halt_on_jump_var = tk.BooleanVar(
+            value=self.options.energy_monitor_halt_on_jump
+        )
+        self.energy_monitor_debug_var = tk.BooleanVar(
+            value=self.options.energy_monitor_debug
+        )
+
         self.output_dir_var = tk.StringVar(value=str(self.options.output_dir))
         self.config_dir_var = tk.StringVar(value=str(self.options.config_dir))
         self.config_name_var = tk.StringVar(value=self.options.config_name)
@@ -275,6 +306,95 @@ class IntegratorGUI:
             ttk.Entry(
                 core_frame, textvariable=self.core_param_vars[name], width=16
             ).grid(row=row, column=1, sticky="ew", pady=2)
+
+        # Stability Settings tab ----------------------------------------
+        stability_frame = ttk.Frame(notebook, padding=12)
+        notebook.add(stability_frame, text="Stability")
+        stability_frame.columnconfigure(1, weight=1)
+
+        # Self-consistency section
+        sc_frame = ttk.LabelFrame(
+            stability_frame, text="Self-Consistency Checks", padding=8
+        )
+        sc_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        sc_frame.columnconfigure(1, weight=1)
+
+        ttk.Checkbutton(
+            sc_frame,
+            text="Enable self-consistency iterations (recommended)",
+            variable=self.self_consistency_enabled_var,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+
+        ttk.Label(sc_frame, text="Convergence tolerance:").grid(
+            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            sc_frame, textvariable=self.self_consistency_tolerance_var, width=16
+        ).grid(row=1, column=1, sticky="ew", pady=2)
+
+        ttk.Label(sc_frame, text="Max iterations:").grid(
+            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            sc_frame, textvariable=self.self_consistency_max_iterations_var, width=16
+        ).grid(row=2, column=1, sticky="ew", pady=2)
+
+        ttk.Checkbutton(
+            sc_frame,
+            text="Debug output",
+            variable=self.self_consistency_debug_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
+
+        # Energy monitoring section
+        em_frame = ttk.LabelFrame(
+            stability_frame, text="Energy Jump Detection", padding=8
+        )
+        em_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        em_frame.columnconfigure(1, weight=1)
+
+        ttk.Checkbutton(
+            em_frame,
+            text="Enable runtime energy monitoring",
+            variable=self.energy_monitor_enabled_var,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+
+        ttk.Label(em_frame, text="Jump threshold (rel. change):").grid(
+            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            em_frame, textvariable=self.energy_monitor_threshold_var, width=16
+        ).grid(row=1, column=1, sticky="ew", pady=2)
+
+        ttk.Label(em_frame, text="Check interval (steps):").grid(
+            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            em_frame, textvariable=self.energy_monitor_check_interval_var, width=16
+        ).grid(row=2, column=1, sticky="ew", pady=2)
+
+        ttk.Checkbutton(
+            em_frame,
+            text="Halt simulation on energy jump",
+            variable=self.energy_monitor_halt_on_jump_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
+
+        ttk.Checkbutton(
+            em_frame,
+            text="Debug output",
+            variable=self.energy_monitor_debug_var,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
+
+        # Help text
+        help_text = ttk.Label(
+            stability_frame,
+            text="These settings help prevent energy jumps and numerical instabilities.\n"
+            "Self-consistency is recommended for all simulations and is enabled by default.\n"
+            "Energy monitoring detects problems during runtime (threshold: 2.0 = 200% change).",
+            wraplength=450,
+            justify="left",
+            foreground="gray",
+        )
+        help_text.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Outputs tab ---------------------------------------------------
         output_frame = ttk.Frame(notebook, padding=12)
@@ -572,6 +692,19 @@ class IntegratorGUI:
         self.dpi_var.set(options.plot_dpi)
         self.image_subcharge_var.set(options.image_subcharge_count)
         self.image_weighting_var.set(options.use_image_weighting)
+        self.self_consistency_enabled_var.set(options.self_consistency_enabled)
+        self.self_consistency_tolerance_var.set(options.self_consistency_tolerance)
+        self.self_consistency_max_iterations_var.set(
+            options.self_consistency_max_iterations
+        )
+        self.self_consistency_debug_var.set(options.self_consistency_debug)
+        self.energy_monitor_enabled_var.set(options.energy_monitor_enabled)
+        self.energy_monitor_threshold_var.set(options.energy_monitor_threshold)
+        self.energy_monitor_check_interval_var.set(
+            options.energy_monitor_check_interval
+        )
+        self.energy_monitor_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
+        self.energy_monitor_debug_var.set(options.energy_monitor_debug)
         self.output_dir_var.set(str(options.output_dir))
         self.config_dir_var.set(str(options.config_dir))
         self.config_name_var.set(options.config_name)
@@ -633,11 +766,26 @@ class IntegratorGUI:
             trajectory_save=bool(self.trajectory_save_var.get()),
             trajectory_interval=int(self.trajectory_interval_var.get()),
             plot_dpi=int(self.dpi_var.get()),
-            image_subcharge_count=int(self.image_subcharge_var.get()),
-            use_image_weighting=bool(self.image_weighting_var.get()),
             output_dir=Path(self.output_dir_var.get()),
             config_dir=Path(self.config_dir_var.get()),
             config_name=config_name,
+            image_subcharge_count=int(self.image_subcharge_var.get()),
+            use_image_weighting=bool(self.image_weighting_var.get()),
+            self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
+            self_consistency_tolerance=float(self.self_consistency_tolerance_var.get()),
+            self_consistency_max_iterations=int(
+                self.self_consistency_max_iterations_var.get()
+            ),
+            self_consistency_debug=bool(self.self_consistency_debug_var.get()),
+            energy_monitor_enabled=bool(self.energy_monitor_enabled_var.get()),
+            energy_monitor_threshold=float(self.energy_monitor_threshold_var.get()),
+            energy_monitor_check_interval=int(
+                self.energy_monitor_check_interval_var.get()
+            ),
+            energy_monitor_halt_on_jump=bool(
+                self.energy_monitor_halt_on_jump_var.get()
+            ),
+            energy_monitor_debug=bool(self.energy_monitor_debug_var.get()),
         )
         return options
 

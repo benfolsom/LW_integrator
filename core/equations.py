@@ -337,7 +337,7 @@ def retarded_equations_of_motion(
             else trajectory[index_traj]["char_time"]
         )
 
-        if rad_frc_z_rhs > (char_time_i / 1e1) or rad_frc_z_lhs > (char_time_i / 1e1):
+        if rad_frc_z_rhs > (char_time_i / 1e2) or rad_frc_z_lhs > (char_time_i / 1e2):
             result["bdotz"][particle_index] += (
                 char_time_i * (rad_frc_z_lhs + rad_frc_z_rhs) / (mass_i * C_MMNS)
             )
