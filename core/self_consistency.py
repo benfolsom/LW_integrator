@@ -1,9 +1,13 @@
 """Optional self-consistency checks for Liénard–Wiechert integration.
 
-Self-consistency iterations refine each integration step by repeatedly evaluating
-the equations of motion until the Lorentz factor (gamma) converges. This helps
-prevent numerical instabilities and energy jumps in relativistic simulations,
-especially near conducting boundaries or during close particle approaches.
+Self-consistency iterations refine each integration step by iterating within
+the force calculation for each particle until the Lorentz factor (gamma)
+converges. This solves the circular dependency where gamma depends on forces,
+which in turn depend on gamma.
+
+This implementation matches the original Gaussian self-consistent integrator
+approach, where iteration occurs within the particle update loop rather than
+at the trajectory level.
 
 Enable self-consistency checks when:
 - Simulating high-energy particles (gamma > 10)
@@ -15,8 +19,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
-
-import numpy as np
 
 from .types import ChronoMatchingMode, ParticleState, StartupMode, Trajectory
 
@@ -30,6 +32,7 @@ StepFunction = Callable[
         Any,
         ChronoMatchingMode,
         StartupMode,
+        Optional["SelfConsistencyConfig"],
     ],
     ParticleState,
 ]
@@ -42,17 +45,22 @@ class SelfConsistencyConfig:
     Self-consistency is now ENABLED BY DEFAULT to prevent energy jumps and
     numerical instabilities in relativistic simulations.
 
+    The iterations occur WITHIN the force calculation loop for each particle,
+    solving the circular dependency between gamma and the forces that depend
+    on gamma. This is the correct implementation matching the original
+    Gaussian self-consistent integrator.
+
     Attributes
     ----------
     enabled : bool
         Whether to perform self-consistency iterations. Default is True.
     tolerance : float
         Relative convergence tolerance for gamma. Iterations stop when
-        max|Δγ/γ| < tolerance. Default is 1e-6.
+        |Δγ/γ| < tolerance for each particle. Default is 1e-6.
     max_iterations : int
-        Maximum number of refinement iterations per step. Default is 5.
+        Maximum number of refinement iterations per particle per step. Default is 5.
     debug : bool
-        If True, print convergence information for each step. Default is False.
+        If True, print convergence information for each particle. Default is False.
 
     Examples
     --------
@@ -120,16 +128,51 @@ def self_consistent_step(
     chrono_mode: ChronoMatchingMode,
     startup_mode: StartupMode,
 ) -> ParticleState:
-    """Optionally refine an integration step until the Lorentz factor converges.
+    """Execute a single integration step, optionally with self-consistency.
 
-    The provided ``step_function`` is executed repeatedly using the latest
-    candidate state until the relative change in ``γ`` falls below the
-    tolerance defined in ``config`` or the maximum number of iterations is
-    reached. ``chrono_mode`` and ``startup_mode`` are forwarded to the supplied
-    ``step_function`` so that chrono-matching and early-step behaviour follow
-    the requested strategies.
+    This function now serves as a thin wrapper that passes the self-consistency
+    configuration down to the equations of motion. The actual iterative
+    refinement occurs WITHIN the force calculation loop for each particle,
+    not at the trajectory level.
+
+    This matches the original Gaussian self-consistent integrator design,
+    where each particle's update iterates until gamma converges, solving
+    the circular dependency between gamma and the forces.
+
+    Parameters
+    ----------
+    step_function : StepFunction
+        The equations of motion function to call. Must accept a
+        self_consistency parameter as its final argument.
+    h_step : float
+        Time step for integration.
+    trajectory : Trajectory
+        Current trajectory history.
+    trajectory_ext : Trajectory
+        External/driver trajectory history.
+    index_traj : int
+        Current index in trajectory.
+    aperture_radius : float
+        Aperture radius for boundary conditions.
+    sim_type : SimulationType
+        Type of simulation (conducting wall, etc.).
+    config : Optional[SelfConsistencyConfig]
+        Self-consistency configuration. If None or disabled, no iteration occurs.
+    chrono_mode : ChronoMatchingMode
+        Retarded time matching mode.
+    startup_mode : StartupMode
+        Early-step handling mode.
+
+    Returns
+    -------
+    ParticleState
+        Updated particle state for the next time step. If self-consistency is
+        enabled, each particle in this state has been iteratively refined until
+        gamma converged.
     """
 
+    # Simply call the step function and pass the config through
+    # The iteration logic is now INSIDE retarded_equations_of_motion
     result = step_function(
         h_step,
         trajectory,
@@ -139,56 +182,10 @@ def self_consistent_step(
         sim_type,
         chrono_mode,
         startup_mode,
+        config,  # Pass config to equations - iteration happens there
     )
 
-    if config is None or not config.enabled:
-        return result
-
-    candidate = result
-    max_rel_change = 0.0
-    for iteration in range(config.max_iterations):
-        mutable_traj = list(trajectory)
-        next_index = index_traj + 1
-        if next_index < len(mutable_traj):
-            mutable_traj[next_index] = candidate
-        else:
-            mutable_traj.append(candidate)
-
-        refined = step_function(
-            h_step,
-            mutable_traj,
-            trajectory_ext,
-            index_traj,
-            aperture_radius,
-            sim_type,
-            chrono_mode,
-            startup_mode,
-        )
-
-        gamma_prev = np.asarray(candidate.get("gamma", np.array([])))
-        gamma_new = np.asarray(refined.get("gamma", np.array([])))
-        if gamma_prev.size == 0 or gamma_new.size == 0:
-            candidate = refined
-            break
-
-        denom = np.where(np.abs(gamma_prev) < 1e-12, 1e-12, np.abs(gamma_prev))
-        max_rel_change = float(np.max(np.abs((gamma_new - gamma_prev) / denom)))
-        if max_rel_change < config.tolerance:
-            if config.debug:
-                print(
-                    f"Self-consistency converged in {iteration + 1} iterations (Δγ={max_rel_change:.3e})"
-                )
-            candidate = refined
-            break
-
-        candidate = refined
-    else:
-        if config.debug:
-            print(
-                f"Warning: Self-consistency did not converge in {config.max_iterations} iterations (Δγ={max_rel_change:.3e})"
-            )
-
-    return candidate
+    return result
 
 
 __all__ = ["SelfConsistencyConfig", "self_consistent_step"]

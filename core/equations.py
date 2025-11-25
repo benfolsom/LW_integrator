@@ -8,6 +8,8 @@ covariant updates for momentum, position, and acceleration for each particle.
 
 from __future__ import annotations
 
+from typing import Optional
+
 import numpy as np
 
 from .constants import C_MMNS
@@ -16,6 +18,7 @@ from .distances import (
     compute_instantaneous_distance,
     compute_retarded_distance,
 )
+from .self_consistency import SelfConsistencyConfig
 from .types import (
     ChronoMatchingMode,
     ParticleState,
@@ -55,6 +58,7 @@ def retarded_equations_of_motion(
     sim_type: SimulationType,
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
     startup_mode: StartupMode = StartupMode.COLD_START,
+    self_consistency: Optional[SelfConsistencyConfig] = None,
 ) -> ParticleState:
     """Core equations of motion mirroring the validated legacy implementation.
 
@@ -81,6 +85,10 @@ def retarded_equations_of_motion(
         until sufficient observer travel has occurred, while
         ``APPROXIMATE_BACK_HISTORY`` assumes constant source velocity to
         reconstruct an analytic history.
+    self_consistency:
+        Optional configuration for self-consistency iterations. If provided and
+        enabled, each particle's update will iterate until gamma converges,
+        solving the circular dependency between forces and gamma.
 
     Returns
     -------
@@ -123,285 +131,373 @@ def retarded_equations_of_motion(
 
     num_particles_traj = len(trajectory[index_traj]["x"])
 
+    # Determine if self-consistency is enabled
+    sc_enabled = self_consistency is not None and self_consistency.enabled
+    sc_tolerance = (
+        self_consistency.tolerance if (self_consistency is not None) else 1e-6
+    )
+    sc_max_iter = (
+        self_consistency.max_iterations if (self_consistency is not None) else 1
+    )
+    sc_debug = self_consistency.debug if (self_consistency is not None) else False
+
     for particle_index in range(num_particles_traj):
-        if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
-            sample_count = len(trajectory_ext[index_traj]["x"])
-            indices_new_bounded = np.full(sample_count, index_traj, dtype=int)
-            nhat = compute_instantaneous_distance(
-                trajectory[index_traj], trajectory_ext[index_traj], particle_index
-            )
-            beta_ext_dot_nhat = (
-                trajectory_ext[index_traj]["bx"] * nhat["nx"]
-                + trajectory_ext[index_traj]["by"] * nhat["ny"]
-                + trajectory_ext[index_traj]["bz"] * nhat["nz"]
-            )
-            nhat["R"] = nhat["R"] * (1.0 + beta_ext_dot_nhat)
-        else:
-            indices_new = chrono_match_indices(
-                trajectory,
-                trajectory_ext,
-                index_traj,
-                particle_index,
-                mode=chrono_mode,
-            )
-            max_ext_idx = len(trajectory_ext) - 1
-            indices_new_bounded = np.minimum(np.maximum(indices_new, 0), max_ext_idx)
+        # Self-consistency loop for this particle
+        # Iterates until gamma converges, solving circular dependency
+        gamma_prev: float = 0.0
 
-            nhat = compute_retarded_distance(
-                trajectory,
-                trajectory_ext,
-                index_traj,
-                particle_index,
-                indices_new_bounded,
-            )
+        for sc_iteration in range(sc_max_iter):
+            # Store gamma from previous iteration for convergence check
+            if sc_iteration > 0:
+                gamma_prev = float(result["gamma"][particle_index])
+                if sc_debug:
+                    print(
+                        f"    Particle {particle_index} iteration {sc_iteration}: Starting with γ={gamma_prev:.15e}"
+                    )
 
-        result["x"][particle_index] = trajectory[index_traj]["x"][particle_index]
-        result["y"][particle_index] = trajectory[index_traj]["y"][particle_index]
-        result["z"][particle_index] = trajectory[index_traj]["z"][particle_index]
-        result["t"][particle_index] = trajectory[index_traj]["t"][particle_index]
-
-        accumulated_px = trajectory[index_traj]["Px"][particle_index]
-        accumulated_py = trajectory[index_traj]["Py"][particle_index]
-        accumulated_pz = trajectory[index_traj]["Pz"][particle_index]
-        accumulated_pt = trajectory[index_traj]["Pt"][particle_index]
-
-        accumulated_x_field = 0.0
-        accumulated_y_field = 0.0
-        accumulated_z_field = 0.0
-
-        charge_i = (
-            trajectory[index_traj]["q"][particle_index]
-            if hasattr(trajectory[index_traj]["q"], "__getitem__")
-            else trajectory[index_traj]["q"]
-        )
-
-        mass_i = (
-            trajectory[index_traj]["m"][particle_index]
-            if hasattr(trajectory[index_traj]["m"], "__getitem__")
-            else trajectory[index_traj]["m"]
-        )
-
-        apply_external = True
-        if startup_mode is StartupMode.COLD_START and nhat["R"].size > 0:
-            origin = (
-                trajectory[index_traj]["origin_x"][particle_index],
-                trajectory[index_traj]["origin_y"][particle_index],
-                trajectory[index_traj]["origin_z"][particle_index],
-            )
-            current = (
-                trajectory[index_traj]["x"][particle_index],
-                trajectory[index_traj]["y"][particle_index],
-                trajectory[index_traj]["z"][particle_index],
-            )
-            travel_distance = float(
-                np.sqrt(
-                    (current[0] - origin[0]) ** 2
-                    + (current[1] - origin[1]) ** 2
-                    + (current[2] - origin[2]) ** 2
+            if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
+                sample_count = len(trajectory_ext[index_traj]["x"])
+                indices_new_bounded = np.full(sample_count, index_traj, dtype=int)
+                nhat = compute_instantaneous_distance(
+                    trajectory[index_traj], trajectory_ext[index_traj], particle_index
                 )
+                beta_ext_dot_nhat = (
+                    trajectory_ext[index_traj]["bx"] * nhat["nx"]
+                    + trajectory_ext[index_traj]["by"] * nhat["ny"]
+                    + trajectory_ext[index_traj]["bz"] * nhat["nz"]
+                )
+                nhat["R"] = nhat["R"] * (1.0 + beta_ext_dot_nhat)
+            else:
+                indices_new = chrono_match_indices(
+                    trajectory,
+                    trajectory_ext,
+                    index_traj,
+                    particle_index,
+                    mode=chrono_mode,
+                )
+                max_ext_idx = len(trajectory_ext) - 1
+                indices_new_bounded = np.minimum(
+                    np.maximum(indices_new, 0), max_ext_idx
+                )
+
+                nhat = compute_retarded_distance(
+                    trajectory,
+                    trajectory_ext,
+                    index_traj,
+                    particle_index,
+                    indices_new_bounded,
+                )
+
+            result["x"][particle_index] = trajectory[index_traj]["x"][particle_index]
+            result["y"][particle_index] = trajectory[index_traj]["y"][particle_index]
+            result["z"][particle_index] = trajectory[index_traj]["z"][particle_index]
+            result["t"][particle_index] = trajectory[index_traj]["t"][particle_index]
+
+            # Start from initial state for each iteration
+            accumulated_px = trajectory[index_traj]["Px"][particle_index]
+            accumulated_py = trajectory[index_traj]["Py"][particle_index]
+            accumulated_pz = trajectory[index_traj]["Pz"][particle_index]
+            accumulated_pt = trajectory[index_traj]["Pt"][particle_index]
+
+            accumulated_x_field = 0.0
+            accumulated_y_field = 0.0
+            accumulated_z_field = 0.0
+
+            charge_i = (
+                trajectory[index_traj]["q"][particle_index]
+                if hasattr(trajectory[index_traj]["q"], "__getitem__")
+                else trajectory[index_traj]["q"]
             )
 
-            beta_avg_x = trajectory[index_traj]["beta_avg_x"][particle_index]
-            beta_avg_y = trajectory[index_traj]["beta_avg_y"][particle_index]
-            beta_avg_z = trajectory[index_traj]["beta_avg_z"][particle_index]
-            beta_avg_dot_nhat = (
-                beta_avg_x * nhat["nx"]
-                + beta_avg_y * nhat["ny"]
-                + beta_avg_z * nhat["nz"]
-            )
-            thresholds = nhat["R"] * (1.0 - beta_avg_dot_nhat)
-            if thresholds.size > 0:
-                gating_threshold = float(np.max(np.maximum(thresholds, 0.0)))
-                apply_external = travel_distance >= gating_threshold
-
-        beta_vec = (
-            trajectory[index_traj]["bx"][particle_index],
-            trajectory[index_traj]["by"][particle_index],
-            trajectory[index_traj]["bz"][particle_index],
-        )
-        gamma_i = trajectory[index_traj]["gamma"][particle_index]
-
-        if apply_external and nhat["R"].size > 0:
-            samples = gather_external_samples(
-                trajectory_ext,
-                indices_new_bounded,
-            )
-            (
-                delta_px,
-                delta_py,
-                delta_pz,
-                delta_pt,
-                delta_field_x,
-                delta_field_y,
-                delta_field_z,
-            ) = compute_vectorized_contributions(
-                h=h,
-                charge_i=charge_i,
-                mass_i=mass_i,
-                gamma_i=gamma_i,
-                beta_vec=beta_vec,
-                nhat_nx=np.asarray(nhat["nx"], dtype=float),
-                nhat_ny=np.asarray(nhat["ny"], dtype=float),
-                nhat_nz=np.asarray(nhat["nz"], dtype=float),
-                nhat_R=np.asarray(nhat["R"], dtype=float),
-                samples=samples,
-                apply_external=apply_external,
+            mass_i = (
+                trajectory[index_traj]["m"][particle_index]
+                if hasattr(trajectory[index_traj]["m"], "__getitem__")
+                else trajectory[index_traj]["m"]
             )
 
-            accumulated_px += delta_px
-            accumulated_py += delta_py
-            accumulated_pz += delta_pz
-            accumulated_pt += delta_pt
-            accumulated_x_field += delta_field_x
-            accumulated_y_field += delta_field_y
-            accumulated_z_field += delta_field_z
+            apply_external = True
+            if startup_mode is StartupMode.COLD_START and nhat["R"].size > 0:
+                origin = (
+                    trajectory[index_traj]["origin_x"][particle_index],
+                    trajectory[index_traj]["origin_y"][particle_index],
+                    trajectory[index_traj]["origin_z"][particle_index],
+                )
+                current = (
+                    trajectory[index_traj]["x"][particle_index],
+                    trajectory[index_traj]["y"][particle_index],
+                    trajectory[index_traj]["z"][particle_index],
+                )
+                travel_distance = float(
+                    np.sqrt(
+                        (current[0] - origin[0]) ** 2
+                        + (current[1] - origin[1]) ** 2
+                        + (current[2] - origin[2]) ** 2
+                    )
+                )
 
-        result["Px"][particle_index] = accumulated_px
-        result["Py"][particle_index] = accumulated_py
-        result["Pz"][particle_index] = accumulated_pz
-        result["Pt"][particle_index] = accumulated_pt
+                beta_avg_x = trajectory[index_traj]["beta_avg_x"][particle_index]
+                beta_avg_y = trajectory[index_traj]["beta_avg_y"][particle_index]
+                beta_avg_z = trajectory[index_traj]["beta_avg_z"][particle_index]
+                beta_avg_dot_nhat = (
+                    beta_avg_x * nhat["nx"]
+                    + beta_avg_y * nhat["ny"]
+                    + beta_avg_z * nhat["nz"]
+                )
+                thresholds = nhat["R"] * (1.0 - beta_avg_dot_nhat)
+                if thresholds.size > 0:
+                    gating_threshold = float(np.max(np.maximum(thresholds, 0.0)))
+                    apply_external = travel_distance >= gating_threshold
 
-        result["gamma"][particle_index] = result["Pt"][particle_index] / (
-            mass_i * C_MMNS
-        )
-        result["t"][particle_index] = (
-            trajectory[index_traj]["t"][particle_index]
-            + h * result["gamma"][particle_index]
-        )
+            # For self-consistency, use the current iteration's gamma and beta
+            if sc_enabled and sc_iteration > 0:
+                gamma_i = result["gamma"][particle_index]
+                beta_vec = (
+                    result["bx"][particle_index],
+                    result["by"][particle_index],
+                    result["bz"][particle_index],
+                )
+            else:
+                gamma_i = trajectory[index_traj]["gamma"][particle_index]
+                beta_vec = (
+                    trajectory[index_traj]["bx"][particle_index],
+                    trajectory[index_traj]["by"][particle_index],
+                    trajectory[index_traj]["bz"][particle_index],
+                )
 
-        result["x"][particle_index] = trajectory[index_traj]["x"][
-            particle_index
-        ] + h / mass_i * (result["Px"][particle_index] - accumulated_x_field * mass_i)
-        result["y"][particle_index] = trajectory[index_traj]["y"][
-            particle_index
-        ] + h / mass_i * (result["Py"][particle_index] - accumulated_y_field * mass_i)
-        result["z"][particle_index] = trajectory[index_traj]["z"][
-            particle_index
-        ] + h / mass_i * (result["Pz"][particle_index] - accumulated_z_field * mass_i)
+            if apply_external and nhat["R"].size > 0:
+                samples = gather_external_samples(
+                    trajectory_ext,
+                    indices_new_bounded,
+                )
+                (
+                    delta_px,
+                    delta_py,
+                    delta_pz,
+                    delta_pt,
+                    delta_field_x,
+                    delta_field_y,
+                    delta_field_z,
+                ) = compute_vectorized_contributions(
+                    h=h,
+                    charge_i=float(charge_i),
+                    mass_i=float(mass_i),
+                    gamma_i=gamma_i,
+                    beta_vec=beta_vec,
+                    nhat_nx=np.asarray(nhat["nx"], dtype=float),
+                    nhat_ny=np.asarray(nhat["ny"], dtype=float),
+                    nhat_nz=np.asarray(nhat["nz"], dtype=float),
+                    nhat_R=np.asarray(nhat["R"], dtype=float),
+                    samples=samples,
+                    apply_external=apply_external,
+                )
 
-        result["bx"][particle_index] = (
-            result["x"][particle_index] - trajectory[index_traj]["x"][particle_index]
-        ) / (C_MMNS * h * result["gamma"][particle_index])
-        result["by"][particle_index] = (
-            result["y"][particle_index] - trajectory[index_traj]["y"][particle_index]
-        ) / (C_MMNS * h * result["gamma"][particle_index])
-        result["bz"][particle_index] = (
-            result["z"][particle_index] - trajectory[index_traj]["z"][particle_index]
-        ) / (C_MMNS * h * result["gamma"][particle_index])
+                accumulated_px += delta_px
+                accumulated_py += delta_py
+                accumulated_pz += delta_pz
+                accumulated_pt += delta_pt
+                accumulated_x_field += delta_field_x
+                accumulated_y_field += delta_field_y
+                accumulated_z_field += delta_field_z
 
-        btots = np.sqrt(
-            result["bx"][particle_index] ** 2
-            + result["by"][particle_index] ** 2
-            + result["bz"][particle_index] ** 2
-        )
-        if btots >= 1.0:
-            btots_limited = 0.9999999999999
-            scale = btots_limited / btots
-            result["bx"][particle_index] *= scale
-            result["by"][particle_index] *= scale
-            result["bz"][particle_index] *= scale
-            btots = btots_limited
+                if sc_debug and sc_enabled and sc_iteration > 0:
+                    print(
+                        f"      After forces: ΔPt={delta_pt:.15e}, accumulated_pt={accumulated_pt:.15e}"
+                    )
 
-        result["gamma"][particle_index] = 1.0 / np.sqrt(1 - btots**2)
+            result["Px"][particle_index] = accumulated_px
+            result["Py"][particle_index] = accumulated_py
+            result["Pz"][particle_index] = accumulated_pz
+            result["Pt"][particle_index] = accumulated_pt
 
-        result["bdotx"][particle_index] = (
-            result["bx"][particle_index] - trajectory[index_traj]["bx"][particle_index]
-        ) / (C_MMNS * h * result["gamma"][particle_index])
-        result["bdoty"][particle_index] = (
-            result["by"][particle_index] - trajectory[index_traj]["by"][particle_index]
-        ) / (C_MMNS * h * result["gamma"][particle_index])
-        result["bdotz"][particle_index] = (
-            result["bz"][particle_index] - trajectory[index_traj]["bz"][particle_index]
-        ) / (C_MMNS * h * result["gamma"][particle_index])
+            gamma_from_pt = result["Pt"][particle_index] / (mass_i * C_MMNS)
+            result["gamma"][particle_index] = gamma_from_pt
 
-        rad_frc_z_rhs = (
-            -(result["gamma"][particle_index] ** 3)
-            * (mass_i * result["bdotz"][particle_index] ** 2 * C_MMNS**2)
-            * result["bz"][particle_index]
-            * C_MMNS
-        )
-        rad_frc_z_lhs = (
-            (
-                result["gamma"][particle_index]
-                - trajectory[index_traj]["gamma"][particle_index]
+            if sc_debug and sc_enabled and sc_iteration > 0:
+                print(f"      Gamma from Pt: γ={gamma_from_pt:.15e}")
+            result["t"][particle_index] = (
+                trajectory[index_traj]["t"][particle_index]
+                + h * result["gamma"][particle_index]
             )
-            / (h * result["gamma"][particle_index])
-            * mass_i
-            * result["bdotz"][particle_index]
-            * result["bz"][particle_index]
-            * C_MMNS**2
-        )
 
-        char_time_i = (
-            trajectory[index_traj]["char_time"][particle_index]
-            if hasattr(trajectory[index_traj]["char_time"], "__getitem__")
-            else trajectory[index_traj]["char_time"]
-        )
-
-        if rad_frc_z_rhs > (char_time_i / 1e2) or rad_frc_z_lhs > (char_time_i / 1e2):
-            result["bdotz"][particle_index] += (
-                char_time_i * (rad_frc_z_lhs + rad_frc_z_rhs) / (mass_i * C_MMNS)
+            result["x"][particle_index] = trajectory[index_traj]["x"][
+                particle_index
+            ] + h / mass_i * (
+                result["Px"][particle_index] - accumulated_x_field * mass_i
+            )
+            result["y"][particle_index] = trajectory[index_traj]["y"][
+                particle_index
+            ] + h / mass_i * (
+                result["Py"][particle_index] - accumulated_y_field * mass_i
+            )
+            result["z"][particle_index] = trajectory[index_traj]["z"][
+                particle_index
+            ] + h / mass_i * (
+                result["Pz"][particle_index] - accumulated_z_field * mass_i
             )
 
-            rad_frc_x_rhs = (
+            result["bx"][particle_index] = (
+                result["x"][particle_index]
+                - trajectory[index_traj]["x"][particle_index]
+            ) / (C_MMNS * h * result["gamma"][particle_index])
+            result["by"][particle_index] = (
+                result["y"][particle_index]
+                - trajectory[index_traj]["y"][particle_index]
+            ) / (C_MMNS * h * result["gamma"][particle_index])
+            result["bz"][particle_index] = (
+                result["z"][particle_index]
+                - trajectory[index_traj]["z"][particle_index]
+            ) / (C_MMNS * h * result["gamma"][particle_index])
+
+            btots = np.sqrt(
+                result["bx"][particle_index] ** 2
+                + result["by"][particle_index] ** 2
+                + result["bz"][particle_index] ** 2
+            )
+            if btots >= 1.0:
+                btots_limited = 0.9999999999999
+                scale = btots_limited / btots
+                result["bx"][particle_index] *= scale
+                result["by"][particle_index] *= scale
+                result["bz"][particle_index] *= scale
+                btots = btots_limited
+
+            gamma_from_beta = 1.0 / np.sqrt(1 - btots**2)
+            result["gamma"][particle_index] = gamma_from_beta
+
+            if sc_debug and sc_enabled and sc_iteration > 0:
+                print(
+                    f"      Gamma from β: γ={gamma_from_beta:.15e}, βtot={btots:.15e}"
+                )
+
+            result["bdotx"][particle_index] = (
+                result["bx"][particle_index]
+                - trajectory[index_traj]["bx"][particle_index]
+            ) / (C_MMNS * h * result["gamma"][particle_index])
+            result["bdoty"][particle_index] = (
+                result["by"][particle_index]
+                - trajectory[index_traj]["by"][particle_index]
+            ) / (C_MMNS * h * result["gamma"][particle_index])
+            result["bdotz"][particle_index] = (
+                result["bz"][particle_index]
+                - trajectory[index_traj]["bz"][particle_index]
+            ) / (C_MMNS * h * result["gamma"][particle_index])
+
+            rad_frc_z_rhs = (
                 -(result["gamma"][particle_index] ** 3)
-                * (mass_i * result["bdotx"][particle_index] ** 2 * C_MMNS**2)
-                * result["bx"][particle_index]
+                * (mass_i * result["bdotz"][particle_index] ** 2 * C_MMNS**2)
+                * result["bz"][particle_index]
                 * C_MMNS
             )
-            rad_frc_x_lhs = (
+            rad_frc_z_lhs = (
                 (
                     result["gamma"][particle_index]
                     - trajectory[index_traj]["gamma"][particle_index]
                 )
                 / (h * result["gamma"][particle_index])
                 * mass_i
-                * result["bdotx"][particle_index]
-                * result["bx"][particle_index]
+                * result["bdotz"][particle_index]
+                * result["bz"][particle_index]
                 * C_MMNS**2
             )
 
-            rad_frc_y_rhs = (
-                -(result["gamma"][particle_index] ** 3)
-                * (mass_i * result["bdoty"][particle_index] ** 2 * C_MMNS**2)
-                * result["by"][particle_index]
-                * C_MMNS
+            char_time_i = (
+                trajectory[index_traj]["char_time"][particle_index]
+                if hasattr(trajectory[index_traj]["char_time"], "__getitem__")
+                else trajectory[index_traj]["char_time"]
             )
-            rad_frc_y_lhs = (
-                (
-                    result["gamma"][particle_index]
-                    - trajectory[index_traj]["gamma"][particle_index]
+
+            if rad_frc_z_rhs > (char_time_i / 1e2) or rad_frc_z_lhs > (
+                char_time_i / 1e2
+            ):
+                result["bdotz"][particle_index] += (
+                    char_time_i * (rad_frc_z_lhs + rad_frc_z_rhs) / (mass_i * C_MMNS)
                 )
-                / (h * result["gamma"][particle_index])
-                * mass_i
-                * result["bdoty"][particle_index]
-                * result["by"][particle_index]
-                * C_MMNS**2
-            )
 
-            result["bdotx"][particle_index] += (
-                char_time_i * (rad_frc_x_lhs + rad_frc_x_rhs) / (mass_i * C_MMNS)
-            )
-            result["bdoty"][particle_index] += (
-                char_time_i * (rad_frc_y_lhs + rad_frc_y_rhs) / (mass_i * C_MMNS)
-            )
+                rad_frc_x_rhs = (
+                    -(result["gamma"][particle_index] ** 3)
+                    * (mass_i * result["bdotx"][particle_index] ** 2 * C_MMNS**2)
+                    * result["bx"][particle_index]
+                    * C_MMNS
+                )
+                rad_frc_x_lhs = (
+                    (
+                        result["gamma"][particle_index]
+                        - trajectory[index_traj]["gamma"][particle_index]
+                    )
+                    / (h * result["gamma"][particle_index])
+                    * mass_i
+                    * result["bdotx"][particle_index]
+                    * result["bx"][particle_index]
+                    * C_MMNS**2
+                )
 
-        prev_samples = float(trajectory[index_traj]["beta_samples"][particle_index])
-        current_samples = prev_samples + 1.0
-        prev_avg_x = trajectory[index_traj]["beta_avg_x"][particle_index]
-        prev_avg_y = trajectory[index_traj]["beta_avg_y"][particle_index]
-        prev_avg_z = trajectory[index_traj]["beta_avg_z"][particle_index]
+                rad_frc_y_rhs = (
+                    -(result["gamma"][particle_index] ** 3)
+                    * (mass_i * result["bdoty"][particle_index] ** 2 * C_MMNS**2)
+                    * result["by"][particle_index]
+                    * C_MMNS
+                )
+                rad_frc_y_lhs = (
+                    (
+                        result["gamma"][particle_index]
+                        - trajectory[index_traj]["gamma"][particle_index]
+                    )
+                    / (h * result["gamma"][particle_index])
+                    * mass_i
+                    * result["bdoty"][particle_index]
+                    * result["by"][particle_index]
+                    * C_MMNS**2
+                )
 
-        result["beta_samples"][particle_index] = current_samples
-        result["beta_avg_x"][particle_index] = (
-            prev_avg_x * prev_samples + result["bx"][particle_index]
-        ) / current_samples
-        result["beta_avg_y"][particle_index] = (
-            prev_avg_y * prev_samples + result["by"][particle_index]
-        ) / current_samples
-        result["beta_avg_z"][particle_index] = (
-            prev_avg_z * prev_samples + result["bz"][particle_index]
-        ) / current_samples
+                result["bdotx"][particle_index] += (
+                    char_time_i * (rad_frc_x_lhs + rad_frc_x_rhs) / (mass_i * C_MMNS)
+                )
+                result["bdoty"][particle_index] += (
+                    char_time_i * (rad_frc_y_lhs + rad_frc_y_rhs) / (mass_i * C_MMNS)
+                )
+
+            prev_samples = float(trajectory[index_traj]["beta_samples"][particle_index])
+            current_samples = prev_samples + 1.0
+            prev_avg_x = trajectory[index_traj]["beta_avg_x"][particle_index]
+            prev_avg_y = trajectory[index_traj]["beta_avg_y"][particle_index]
+            prev_avg_z = trajectory[index_traj]["beta_avg_z"][particle_index]
+
+            result["beta_samples"][particle_index] = current_samples
+            result["beta_avg_x"][particle_index] = (
+                prev_avg_x * prev_samples + result["bx"][particle_index]
+            ) / current_samples
+            result["beta_avg_y"][particle_index] = (
+                prev_avg_y * prev_samples + result["by"][particle_index]
+            ) / current_samples
+            result["beta_avg_z"][particle_index] = (
+                prev_avg_z * prev_samples + result["bz"][particle_index]
+            ) / current_samples
+
+            # Check convergence for self-consistency
+            if sc_enabled and sc_iteration > 0:
+                gamma_new = float(result["gamma"][particle_index])
+                gamma_change = abs(gamma_new - gamma_prev)
+                gamma_rel_change = gamma_change / max(abs(gamma_prev), 1e-12)
+
+                if gamma_rel_change < sc_tolerance:
+                    if sc_debug:
+                        print(
+                            f"    Particle {particle_index}: Converged in {sc_iteration + 1} iterations"
+                        )
+                        print(f"      Δγ/γ = {gamma_rel_change:.15e}")
+                        print(f"      γ_prev = {gamma_prev:.15e}")
+                        print(f"      γ_new  = {gamma_new:.15e}")
+                        print(f"      Δγ_abs = {gamma_change:.15e}")
+                    break
+                elif sc_iteration == sc_max_iter - 1:
+                    if sc_debug:
+                        print(
+                            f"    Particle {particle_index}: Max iterations ({sc_max_iter}) reached"
+                        )
+                        print(f"      Δγ/γ = {gamma_rel_change:.15e}")
+                        print(f"      γ_prev = {gamma_prev:.15e}")
+                        print(f"      γ_new  = {gamma_new:.15e}")
+                        print(f"      Δγ_abs = {gamma_change:.15e}")
 
     return result
 
