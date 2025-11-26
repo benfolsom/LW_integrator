@@ -226,90 +226,130 @@ def retarded_integrator(
                 trajectory_drv[i] = init_driver
             _ensure_startup_metadata(trajectory_drv[i])
         else:
-            # Adaptive timestep refinement: try the step, check for energy jump
+            # Adaptive timestep refinement with sub-stepping:
+            # If timestep is reduced, take multiple sub-steps to cover the same physical time
             step_accepted = False
             refinement_attempt = 0
             current_h_step = h_step  # Reset to base timestep for each new step
-            trial_state: ParticleState = (
-                {}
-            )  # Initialize for linter (always set in loop)
 
             while not step_accepted:
-                # Compute trial step with current timestep
-                trial_state = self_consistent_step(
-                    retarded_equations_of_motion,
-                    current_h_step,
-                    trajectory,
-                    trajectory_drv,
-                    i - 1,
-                    aperture_radius,
-                    sim_type,
-                    self_consistency,
-                    chrono_mode,
-                    startup_mode,
-                )
+                # Determine number of sub-steps needed to cover base timestep interval
+                num_substeps = int(np.round(h_step / current_h_step))
+                if num_substeps < 1:
+                    num_substeps = 1
 
-                # Check for energy jump if adaptive timestep is enabled
-                if adaptive_timestep is not None and adaptive_timestep.enabled:
-                    current_energy = _compute_total_energy(trial_state)
+                # Build temporary trajectory for sub-stepping
+                # Start with the previous full step as our base
+                temp_trajectory: Trajectory = [trajectory[i - 1]]
+                temp_driver: Trajectory = [trajectory_drv[i - 1]]
+                energy_jump_detected = False
 
-                    if previous_energy is not None and previous_energy > 0:
-                        relative_change = (
-                            abs(current_energy - previous_energy) / previous_energy
+                for substep_idx in range(num_substeps):
+                    # Compute one sub-step
+                    trial_state = self_consistent_step(
+                        retarded_equations_of_motion,
+                        current_h_step,
+                        temp_trajectory,
+                        temp_driver,
+                        substep_idx,  # Use correct index in temp trajectory
+                        aperture_radius,
+                        sim_type,
+                        self_consistency,
+                        chrono_mode,
+                        startup_mode,
+                    )
+
+                    # Update driver state for this substep
+                    if sim_type == SimulationType.SWITCHING_WALL:
+                        trial_driver = generate_switching_image(
+                            trial_state, wall_z, aperture_radius, z_cutoff
                         )
+                    elif sim_type == SimulationType.CONDUCTING_WALL:
+                        trial_driver = generate_conducting_image(
+                            trial_state,
+                            wall_z,
+                            aperture_radius,
+                            subcharge_count=image_subcharge_count,
+                            use_weighting=use_conducting_image_weighting,
+                        )
+                    else:  # BUNCH_TO_BUNCH - driver doesn't change during substeps
+                        trial_driver = temp_driver[-1]
 
-                        # If energy jump exceeds threshold, refine timestep
-                        if relative_change > adaptive_timestep.energy_jump_threshold:
-                            refinement_attempt += 1
+                    # Check for energy jump if adaptive timestep is enabled
+                    if adaptive_timestep is not None and adaptive_timestep.enabled:
+                        current_energy = _compute_total_energy(trial_state)
 
+                        if previous_energy is not None and previous_energy > 0:
+                            relative_change = (
+                                abs(current_energy - previous_energy) / previous_energy
+                            )
+
+                            # If energy jump exceeds threshold, abort and refine
                             if (
-                                refinement_attempt
-                                > adaptive_timestep.max_refinement_attempts
+                                relative_change
+                                > adaptive_timestep.energy_jump_threshold
                             ):
-                                if adaptive_timestep.debug:
-                                    print(
-                                        f"Step {i}: Max refinement attempts reached. "
-                                        f"Accepting step with ΔE/E = {relative_change:.6e}"
-                                    )
-                                step_accepted = True
-                            else:
-                                # Check minimum timestep limit
-                                min_h = h_step * adaptive_timestep.min_timestep_factor
-                                new_h_step = (
-                                    current_h_step
-                                    / adaptive_timestep.timestep_reduction_factor
-                                )
+                                energy_jump_detected = True
+                                refinement_attempt += 1
 
-                                if new_h_step < min_h:
+                                if (
+                                    refinement_attempt
+                                    > adaptive_timestep.max_refinement_attempts
+                                ):
                                     if adaptive_timestep.debug:
                                         print(
-                                            f"Step {i}: Minimum timestep reached. "
+                                            f"Step {i}: Max refinement attempts reached. "
                                             f"Accepting step with ΔE/E = {relative_change:.6e}"
                                         )
-                                    step_accepted = True
+                                    energy_jump_detected = False  # Accept anyway
                                 else:
-                                    current_h_step = new_h_step
-                                    if adaptive_timestep.debug:
-                                        print(
-                                            f"Step {i}: Energy jump detected (ΔE/E = {relative_change:.6e}). "
-                                            f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
-                                            f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
-                                        )
-                        else:
-                            step_accepted = True
-                            if adaptive_timestep.debug and refinement_attempt > 0:
-                                print(
-                                    f"Step {i}: Step accepted with refined timestep "
-                                    f"{current_h_step:.6e} ns (ΔE/E = {relative_change:.6e})"
-                                )
-                    else:
-                        step_accepted = True
-                else:
-                    # No adaptive timestep, accept immediately
-                    step_accepted = True
+                                    # Check minimum timestep limit
+                                    min_h = (
+                                        h_step * adaptive_timestep.min_timestep_factor
+                                    )
+                                    new_h_step = (
+                                        current_h_step
+                                        / adaptive_timestep.timestep_reduction_factor
+                                    )
 
-            # Accept the trial step
-            trajectory[i] = trial_state
+                                    if new_h_step < min_h:
+                                        if adaptive_timestep.debug:
+                                            print(
+                                                f"Step {i}: Minimum timestep reached. "
+                                                f"Accepting step with ΔE/E = {relative_change:.6e}"
+                                            )
+                                        energy_jump_detected = False  # Accept anyway
+                                    else:
+                                        current_h_step = new_h_step
+                                        if adaptive_timestep.debug:
+                                            print(
+                                                f"Step {i}.{substep_idx}: Energy jump detected (ΔE/E = {relative_change:.6e}). "
+                                                f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
+                                                f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
+                                            )
+                                        break  # Exit sub-step loop to retry with smaller timestep
+
+                        # Update previous energy for next substep
+                        previous_energy = current_energy
+
+                    # Append this substep to the temporary trajectory
+                    temp_trajectory.append(trial_state)
+                    temp_driver.append(trial_driver)
+
+                # If no energy jump or we're accepting anyway, we're done
+                if not energy_jump_detected:
+                    step_accepted = True
+                    if (
+                        adaptive_timestep is not None
+                        and adaptive_timestep.debug
+                        and refinement_attempt > 0
+                    ):
+                        print(
+                            f"Step {i}: Completed {num_substeps} sub-step(s) with timestep {current_h_step:.6e} ns"
+                        )
+
+            # Accept the final sub-step state as the step result
+            trajectory[i] = temp_trajectory[-1]
             _ensure_startup_metadata(trajectory[i])
 
             if sim_type == SimulationType.SWITCHING_WALL:
