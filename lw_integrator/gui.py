@@ -169,6 +169,26 @@ class IntegratorGUI:
             value=self.options.energy_monitor_debug
         )
 
+        # Adaptive timestep options
+        self.adaptive_timestep_enabled_var = tk.BooleanVar(
+            value=self.options.adaptive_timestep_enabled
+        )
+        self.adaptive_timestep_threshold_var = tk.DoubleVar(
+            value=self.options.adaptive_timestep_threshold
+        )
+        self.adaptive_timestep_reduction_factor_var = tk.IntVar(
+            value=self.options.adaptive_timestep_reduction_factor
+        )
+        self.adaptive_timestep_max_attempts_var = tk.IntVar(
+            value=self.options.adaptive_timestep_max_attempts
+        )
+        self.adaptive_timestep_min_factor_var = tk.DoubleVar(
+            value=self.options.adaptive_timestep_min_factor
+        )
+        self.adaptive_timestep_debug_var = tk.BooleanVar(
+            value=self.options.adaptive_timestep_debug
+        )
+
         self.output_dir_var = tk.StringVar(value=str(self.options.output_dir))
         self.config_dir_var = tk.StringVar(value=str(self.options.config_dir))
         self.config_name_var = tk.StringVar(value=self.options.config_name)
@@ -388,17 +408,65 @@ class IntegratorGUI:
             variable=self.energy_monitor_debug_var,
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
 
+        # Adaptive timestep section
+        at_frame = ttk.LabelFrame(
+            stability_frame, text="Adaptive Timestep Refinement", padding=8
+        )
+        at_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        at_frame.columnconfigure(1, weight=1)
+
+        ttk.Checkbutton(
+            at_frame,
+            text="Enable adaptive timestep (auto-refine on energy jumps)",
+            variable=self.adaptive_timestep_enabled_var,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+
+        ttk.Label(at_frame, text="Energy jump threshold:").grid(
+            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_threshold_var, width=16
+        ).grid(row=1, column=1, sticky="ew", pady=2)
+
+        ttk.Label(at_frame, text="Timestep reduction factor:").grid(
+            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_reduction_factor_var, width=16
+        ).grid(row=2, column=1, sticky="ew", pady=2)
+
+        ttk.Label(at_frame, text="Max refinement attempts:").grid(
+            row=3, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_max_attempts_var, width=16
+        ).grid(row=3, column=1, sticky="ew", pady=2)
+
+        ttk.Label(at_frame, text="Min timestep factor:").grid(
+            row=4, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_min_factor_var, width=16
+        ).grid(row=4, column=1, sticky="ew", pady=2)
+
+        ttk.Checkbutton(
+            at_frame,
+            text="Debug output (show refinement actions)",
+            variable=self.adaptive_timestep_debug_var,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
+
         # Help text
         help_text = ttk.Label(
             stability_frame,
             text="These settings help prevent energy jumps and numerical instabilities.\n"
             "Self-consistency is recommended for all simulations and is enabled by default.\n"
-            "Energy monitoring detects problems during runtime (threshold: 2.0 = 200% change).",
+            "Energy monitoring detects problems during runtime (threshold: 2.0 = 200% change).\n"
+            "Adaptive timestep automatically reduces timestep when energy jumps are detected (enabled by default).",
             wraplength=450,
             justify="left",
             foreground="gray",
         )
-        help_text.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Outputs tab ---------------------------------------------------
         output_frame = ttk.Frame(notebook, padding=12)
@@ -714,6 +782,16 @@ class IntegratorGUI:
         )
         self.energy_monitor_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
         self.energy_monitor_debug_var.set(options.energy_monitor_debug)
+        self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
+        self.adaptive_timestep_threshold_var.set(options.adaptive_timestep_threshold)
+        self.adaptive_timestep_reduction_factor_var.set(
+            options.adaptive_timestep_reduction_factor
+        )
+        self.adaptive_timestep_max_attempts_var.set(
+            options.adaptive_timestep_max_attempts
+        )
+        self.adaptive_timestep_min_factor_var.set(options.adaptive_timestep_min_factor)
+        self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
         self.output_dir_var.set(str(options.output_dir))
         self.config_dir_var.set(str(options.config_dir))
         self.config_name_var.set(options.config_name)
@@ -795,6 +873,20 @@ class IntegratorGUI:
                 self.energy_monitor_halt_on_jump_var.get()
             ),
             energy_monitor_debug=bool(self.energy_monitor_debug_var.get()),
+            adaptive_timestep_enabled=bool(self.adaptive_timestep_enabled_var.get()),
+            adaptive_timestep_threshold=float(
+                self.adaptive_timestep_threshold_var.get()
+            ),
+            adaptive_timestep_reduction_factor=int(
+                self.adaptive_timestep_reduction_factor_var.get()
+            ),
+            adaptive_timestep_max_attempts=int(
+                self.adaptive_timestep_max_attempts_var.get()
+            ),
+            adaptive_timestep_min_factor=float(
+                self.adaptive_timestep_min_factor_var.get()
+            ),
+            adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
         )
         return options
 

@@ -46,6 +46,42 @@ class EnergyMonitorConfig:
     debug: bool = False  # Print energy changes
 
 
+@dataclass
+class AdaptiveTimestepConfig:
+    """Configuration for adaptive timestep refinement on energy jumps."""
+
+    enabled: bool = False
+    energy_jump_threshold: float = (
+        0.1  # Relative energy change to trigger refinement (e.g., 0.1 = 10%)
+    )
+    timestep_reduction_factor: int = (
+        10  # Reduce timestep by this factor when jump detected
+    )
+    max_refinement_attempts: int = 5  # Maximum number of timestep refinements per step
+    min_timestep_factor: float = 1e-4  # Minimum timestep as fraction of original
+    debug: bool = False  # Print adaptive timestep actions
+
+
+def _compute_total_energy(state: ParticleState) -> float:
+    """Compute total energy of particles in a state.
+
+    Energy is calculated as E = γmc² summed over all particles.
+
+    Parameters
+    ----------
+    state:
+        Particle state containing gamma and mass arrays.
+
+    Returns
+    -------
+    float
+        Total energy in MeV.
+    """
+    gamma = np.asarray(state["gamma"])
+    mass = np.asarray(state["m"])
+    return float(np.sum(gamma * mass * C_MMNS * C_MMNS))
+
+
 def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     if state is None:
         return
@@ -89,6 +125,7 @@ def retarded_integrator(
     image_subcharge_count: int = 12,
     use_conducting_image_weighting: bool = True,
     energy_monitor: Optional[EnergyMonitorConfig] = None,
+    adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Trajectory, Trajectory]:
@@ -132,6 +169,10 @@ def retarded_integrator(
     energy_monitor:
         Optional :class:`EnergyMonitorConfig` to detect sudden energy jumps
         during integration. Can warn or halt on excessive energy changes.
+    adaptive_timestep:
+        Optional :class:`AdaptiveTimestepConfig` to enable adaptive timestep
+        refinement. When an energy jump is detected, the step is discarded
+        and retried with a smaller timestep.
     progress_callback:
         Optional callable invoked as ``progress_callback(current, steps)`` after
         each integration step completes. ``current`` counts completed steps.
@@ -152,6 +193,9 @@ def retarded_integrator(
 
     # Initialize energy monitoring
     previous_energy: Optional[float] = None
+
+    # Track actual timestep (may be modified by adaptive refinement)
+    current_h_step = h_step
 
     if progress_callback is not None:
         progress_callback(0, steps)
@@ -182,18 +226,90 @@ def retarded_integrator(
                 trajectory_drv[i] = init_driver
             _ensure_startup_metadata(trajectory_drv[i])
         else:
-            trajectory[i] = self_consistent_step(
-                retarded_equations_of_motion,
-                h_step,
-                trajectory,
-                trajectory_drv,
-                i - 1,
-                aperture_radius,
-                sim_type,
-                self_consistency,
-                chrono_mode,
-                startup_mode,
-            )
+            # Adaptive timestep refinement: try the step, check for energy jump
+            step_accepted = False
+            refinement_attempt = 0
+            current_h_step = h_step  # Reset to base timestep for each new step
+            trial_state: ParticleState = (
+                {}
+            )  # Initialize for linter (always set in loop)
+
+            while not step_accepted:
+                # Compute trial step with current timestep
+                trial_state = self_consistent_step(
+                    retarded_equations_of_motion,
+                    current_h_step,
+                    trajectory,
+                    trajectory_drv,
+                    i - 1,
+                    aperture_radius,
+                    sim_type,
+                    self_consistency,
+                    chrono_mode,
+                    startup_mode,
+                )
+
+                # Check for energy jump if adaptive timestep is enabled
+                if adaptive_timestep is not None and adaptive_timestep.enabled:
+                    current_energy = _compute_total_energy(trial_state)
+
+                    if previous_energy is not None and previous_energy > 0:
+                        relative_change = (
+                            abs(current_energy - previous_energy) / previous_energy
+                        )
+
+                        # If energy jump exceeds threshold, refine timestep
+                        if relative_change > adaptive_timestep.energy_jump_threshold:
+                            refinement_attempt += 1
+
+                            if (
+                                refinement_attempt
+                                > adaptive_timestep.max_refinement_attempts
+                            ):
+                                if adaptive_timestep.debug:
+                                    print(
+                                        f"Step {i}: Max refinement attempts reached. "
+                                        f"Accepting step with ΔE/E = {relative_change:.6e}"
+                                    )
+                                step_accepted = True
+                            else:
+                                # Check minimum timestep limit
+                                min_h = h_step * adaptive_timestep.min_timestep_factor
+                                new_h_step = (
+                                    current_h_step
+                                    / adaptive_timestep.timestep_reduction_factor
+                                )
+
+                                if new_h_step < min_h:
+                                    if adaptive_timestep.debug:
+                                        print(
+                                            f"Step {i}: Minimum timestep reached. "
+                                            f"Accepting step with ΔE/E = {relative_change:.6e}"
+                                        )
+                                    step_accepted = True
+                                else:
+                                    current_h_step = new_h_step
+                                    if adaptive_timestep.debug:
+                                        print(
+                                            f"Step {i}: Energy jump detected (ΔE/E = {relative_change:.6e}). "
+                                            f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
+                                            f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
+                                        )
+                        else:
+                            step_accepted = True
+                            if adaptive_timestep.debug and refinement_attempt > 0:
+                                print(
+                                    f"Step {i}: Step accepted with refined timestep "
+                                    f"{current_h_step:.6e} ns (ΔE/E = {relative_change:.6e})"
+                                )
+                    else:
+                        step_accepted = True
+                else:
+                    # No adaptive timestep, accept immediately
+                    step_accepted = True
+
+            # Accept the trial step
+            trajectory[i] = trial_state
             _ensure_startup_metadata(trajectory[i])
 
             if sim_type == SimulationType.SWITCHING_WALL:
@@ -230,17 +346,14 @@ def retarded_integrator(
                 )
             _ensure_startup_metadata(trajectory_drv[i])
 
-        # Energy jump detection
+        # Energy monitoring (for warning/halting, separate from adaptive timestep)
         if (
             energy_monitor is not None
             and energy_monitor.enabled
             and i > 0
             and i % energy_monitor.check_interval == 0
         ):
-            # Calculate energy from gamma and mass: E = γmc²
-            gamma = np.asarray(trajectory[i]["gamma"])
-            mass = np.asarray(trajectory[i]["m"])
-            current_energy = float(np.sum(gamma * mass * C_MMNS * C_MMNS))
+            current_energy = _compute_total_energy(trajectory[i])
             if previous_energy is not None and previous_energy > 0:
                 relative_change = (
                     abs(current_energy - previous_energy) / previous_energy
@@ -260,6 +373,10 @@ def retarded_integrator(
                         f"Step {i}: Energy = {current_energy:.6e} MeV, ΔE/E = {relative_change:.6e}"
                     )
             previous_energy = current_energy
+
+        # Update previous energy for adaptive timestep (even if energy_monitor is disabled)
+        if adaptive_timestep is not None and adaptive_timestep.enabled and i > 0:
+            previous_energy = _compute_total_energy(trajectory[i])
 
         if progress_callback is not None:
             progress_callback(i + 1, steps)
@@ -300,6 +417,7 @@ __all__ = [
     "IntegrationCancelled",
     "EnergyJumpDetected",
     "EnergyMonitorConfig",
+    "AdaptiveTimestepConfig",
     "retarded_integrator",
     "run_integrator",
 ]

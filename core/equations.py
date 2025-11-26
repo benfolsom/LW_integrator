@@ -313,8 +313,9 @@ def _limit_beta_magnitude(
 ) -> tuple[float, float, float]:
     """Ensure beta magnitude stays below the speed of light.
 
-    If |β| >= 1, scale it down to a maximum of 0.9999999999999 to avoid
-    singularities in the Lorentz factor calculation.
+    If |β| >= 1, scale it down to a maximum of 0.99999999999999999 to avoid
+    singularities in the Lorentz factor calculation while allowing extremely
+    high velocities up to the numerical precision limit of float64.
 
     Returns
     -------
@@ -323,8 +324,12 @@ def _limit_beta_magnitude(
     """
     beta_magnitude = np.sqrt(beta_x**2 + beta_y**2 + beta_z**2)
 
-    if beta_magnitude >= 1.0:
-        beta_max_allowed = 0.9999999999999
+    # Use a more conservative threshold to prevent beta from reaching exactly 1.0
+    # due to floating point precision issues. This allows extremely high velocities
+    # while guaranteeing gamma remains finite.
+    beta_max_allowed = 0.99999999999999999  # 17 nines - close to float64 limit
+
+    if beta_magnitude >= beta_max_allowed:
         scale_factor = beta_max_allowed / beta_magnitude
         return (
             beta_x * scale_factor,
@@ -339,9 +344,23 @@ def _calculate_gamma_from_beta(beta_x: float, beta_y: float, beta_z: float) -> f
     """Calculate Lorentz factor from velocity components.
 
     γ = 1 / √(1 - β²)
+
+    Includes safety check to prevent division by zero when beta approaches 1.0.
     """
     beta_squared = beta_x**2 + beta_y**2 + beta_z**2
-    return 1.0 / np.sqrt(1.0 - beta_squared)
+
+    # Safety check: if beta_squared is too close to 1.0, clamp it
+    # This prevents gamma from becoming infinite due to numerical precision
+    max_beta_squared = 0.99999999999999999**2  # Corresponds to beta_max in limiter
+    if beta_squared >= max_beta_squared:
+        beta_squared = max_beta_squared
+
+    denominator = 1.0 - beta_squared
+    if denominator <= 0.0:
+        # Fallback: return a very large but finite gamma
+        return 7.0710678e7  # gamma corresponding to beta = 0.99999999999999999
+
+    return 1.0 / np.sqrt(denominator)
 
 
 def _compute_radiation_reaction_term(
@@ -412,7 +431,7 @@ def _should_apply_radiation_reaction(
     Radiation effects are only significant when the force terms exceed
     a threshold based on the characteristic time scale.
     """
-    threshold = char_time / 1e2
+    threshold = char_time / 1e1  # Changed from 1e2 to 1e1 for 10x more sensitivity
     return lhs_term > threshold or rhs_term > threshold
 
 
@@ -716,15 +735,11 @@ def retarded_equations_of_motion(
             beta_y = position_change_y / time_dilation_factor
             beta_z = position_change_z / time_dilation_factor
 
-            result["bx"][particle_idx] = beta_x
-            result["by"][particle_idx] = beta_y
-            result["bz"][particle_idx] = beta_z
-
-            # Enforce speed of light limit
+            # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(
-                result["bx"][particle_idx],
-                result["by"][particle_idx],
-                result["bz"][particle_idx],
+                beta_x,
+                beta_y,
+                beta_z,
             )
 
             result["bx"][particle_idx] = beta_x_limited

@@ -194,6 +194,12 @@ def run_core_integrator(
     energy_monitor_check_interval: int = 10,
     energy_monitor_halt_on_jump: bool = False,
     energy_monitor_debug: bool = False,
+    adaptive_timestep_enabled: bool = True,
+    adaptive_timestep_threshold: float = 0.10,
+    adaptive_timestep_reduction_factor: int = 10,
+    adaptive_timestep_max_attempts: int = 5,
+    adaptive_timestep_min_factor: float = 1e-4,
+    adaptive_timestep_debug: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> TrajectoryPair:
@@ -206,7 +212,10 @@ def run_core_integrator(
     resolved_z_cutoff = 0.0 if z_cutoff is None else z_cutoff
 
     # Import here to avoid circular dependencies
-    from core.integration_runner import EnergyMonitorConfig
+    from core.integration_runner import (
+        AdaptiveTimestepConfig,
+        EnergyMonitorConfig,
+    )
     from core.self_consistency import SelfConsistencyConfig
 
     # Configure self-consistency
@@ -230,6 +239,18 @@ def run_core_integrator(
             debug=energy_monitor_debug,
         )
 
+    # Configure adaptive timestep
+    adaptive_timestep = None
+    if adaptive_timestep_enabled:
+        adaptive_timestep = AdaptiveTimestepConfig(
+            enabled=True,
+            energy_jump_threshold=adaptive_timestep_threshold,
+            timestep_reduction_factor=adaptive_timestep_reduction_factor,
+            max_refinement_attempts=adaptive_timestep_max_attempts,
+            min_timestep_factor=adaptive_timestep_min_factor,
+            debug=adaptive_timestep_debug,
+        )
+
     core_traj, core_drv = retarded_integrator(
         steps=steps,
         h_step=time_step,
@@ -243,6 +264,7 @@ def run_core_integrator(
         z_cutoff=resolved_z_cutoff,
         self_consistency=self_consistency,
         energy_monitor=energy_monitor,
+        adaptive_timestep=adaptive_timestep,
         image_subcharge_count=image_subcharge_count,
         use_conducting_image_weighting=use_image_weighting,
         progress_callback=progress_callback,
@@ -447,6 +469,12 @@ def run_benchmark(
     energy_monitor_check_interval: int = 10,
     energy_monitor_halt_on_jump: bool = False,
     energy_monitor_debug: bool = False,
+    adaptive_timestep_enabled: bool = True,
+    adaptive_timestep_threshold: float = 0.10,
+    adaptive_timestep_reduction_factor: int = 10,
+    adaptive_timestep_max_attempts: int = 5,
+    adaptive_timestep_min_factor: float = 1e-4,
+    adaptive_timestep_debug: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ):
@@ -503,6 +531,12 @@ def run_benchmark(
         energy_monitor_check_interval=energy_monitor_check_interval,
         energy_monitor_halt_on_jump=energy_monitor_halt_on_jump,
         energy_monitor_debug=energy_monitor_debug,
+        adaptive_timestep_enabled=adaptive_timestep_enabled,
+        adaptive_timestep_threshold=adaptive_timestep_threshold,
+        adaptive_timestep_reduction_factor=adaptive_timestep_reduction_factor,
+        adaptive_timestep_max_attempts=adaptive_timestep_max_attempts,
+        adaptive_timestep_min_factor=adaptive_timestep_min_factor,
+        adaptive_timestep_debug=adaptive_timestep_debug,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
     )

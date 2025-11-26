@@ -22,7 +22,12 @@ from .distances import (
 )
 from .equations import retarded_equations_of_motion
 from .images import generate_conducting_image, generate_switching_image
-from .integration_runner import retarded_integrator, run_integrator
+from .integration_runner import (
+    AdaptiveTimestepConfig,
+    EnergyMonitorConfig,
+    retarded_integrator,
+    run_integrator,
+)
 from .types import (
     ChronoMatchingMode,
     IntegratorConfig,
@@ -187,8 +192,10 @@ class LienardWiechertIntegrator:
 
 
 __all__ = [
+    "AdaptiveTimestepConfig",
     "C_MMNS",
     "DistanceResult",
+    "EnergyMonitorConfig",
     "IntegratorConfig",
     "ParticleState",
     "SimulationType",

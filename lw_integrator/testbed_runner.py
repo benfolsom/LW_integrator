@@ -203,6 +203,14 @@ class SimulationOptions:
     energy_monitor_halt_on_jump: bool = False
     energy_monitor_debug: bool = False
 
+    # Adaptive timestep options
+    adaptive_timestep_enabled: bool = True
+    adaptive_timestep_threshold: float = 0.10
+    adaptive_timestep_reduction_factor: int = 10
+    adaptive_timestep_max_attempts: int = 5
+    adaptive_timestep_min_factor: float = 1e-4
+    adaptive_timestep_debug: bool = False
+
     def to_dict(self) -> Dict[str, object]:
         payload: Dict[str, object] = {
             "steps": self.steps,
@@ -238,6 +246,12 @@ class SimulationOptions:
             "energy_monitor_check_interval": self.energy_monitor_check_interval,
             "energy_monitor_halt_on_jump": self.energy_monitor_halt_on_jump,
             "energy_monitor_debug": self.energy_monitor_debug,
+            "adaptive_timestep_enabled": self.adaptive_timestep_enabled,
+            "adaptive_timestep_threshold": self.adaptive_timestep_threshold,
+            "adaptive_timestep_reduction_factor": self.adaptive_timestep_reduction_factor,
+            "adaptive_timestep_max_attempts": self.adaptive_timestep_max_attempts,
+            "adaptive_timestep_min_factor": self.adaptive_timestep_min_factor,
+            "adaptive_timestep_debug": self.adaptive_timestep_debug,
         }
         return payload
 
@@ -318,6 +332,23 @@ class SimulationOptions:
             core_params=core_params,
             image_subcharge_count=_int("image_subcharge_count", 12),
             use_image_weighting=_bool("use_image_weighting", True),
+            self_consistency_enabled=_bool("self_consistency_enabled", True),
+            self_consistency_tolerance=_float("self_consistency_tolerance", 1e-6),
+            self_consistency_max_iterations=_int("self_consistency_max_iterations", 5),
+            self_consistency_debug=_bool("self_consistency_debug", False),
+            energy_monitor_enabled=_bool("energy_monitor_enabled", True),
+            energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
+            energy_monitor_check_interval=_int("energy_monitor_check_interval", 10),
+            energy_monitor_halt_on_jump=_bool("energy_monitor_halt_on_jump", False),
+            energy_monitor_debug=_bool("energy_monitor_debug", False),
+            adaptive_timestep_enabled=_bool("adaptive_timestep_enabled", True),
+            adaptive_timestep_threshold=_float("adaptive_timestep_threshold", 0.10),
+            adaptive_timestep_reduction_factor=_int(
+                "adaptive_timestep_reduction_factor", 10
+            ),
+            adaptive_timestep_max_attempts=_int("adaptive_timestep_max_attempts", 5),
+            adaptive_timestep_min_factor=_float("adaptive_timestep_min_factor", 1e-4),
+            adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
         )
         return options
 
@@ -558,6 +589,9 @@ def run_testbed(
     _log(
         f"  Energy monitoring: {options.energy_monitor_enabled} (threshold={options.energy_monitor_threshold * 100:.0f}%, halt={options.energy_monitor_halt_on_jump})"
     )
+    _log(
+        f"  Adaptive timestep: {options.adaptive_timestep_enabled} (threshold={options.adaptive_timestep_threshold * 100:.0f}%, reduction={options.adaptive_timestep_reduction_factor}x)"
+    )
     _log("")
 
     return_traj_flag = any(
@@ -591,6 +625,12 @@ def run_testbed(
         energy_monitor_check_interval=options.energy_monitor_check_interval,
         energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
         energy_monitor_debug=options.energy_monitor_debug,
+        adaptive_timestep_enabled=options.adaptive_timestep_enabled,
+        adaptive_timestep_threshold=options.adaptive_timestep_threshold,
+        adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
+        adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
+        adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
+        adaptive_timestep_debug=options.adaptive_timestep_debug,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
         **filtered_core_params,

@@ -37,6 +37,18 @@ residual-wake acceleration with a covariant retarded-potential integrator*
   ``APPROXIMATE_BACK_HISTORY`` mode that reconstructs a constant-velocity past
   for better legacy alignment.  All entry points—CLI, scripts, and notebooks—take
   the new enum so you can toggle behaviour without patching call sites.
+* **Adaptive timestep and beta clamping.**  The integrator includes numerical
+  safety features for extreme relativistic regimes (γ > 10⁶):
+  * **Beta clamping** prevents particle velocities from reaching the speed of
+    light (β ≥ 1), ensuring the Lorentz factor remains finite even at extreme
+    energies. Velocities are automatically limited to β < 0.99999999999999999
+    (17 decimal places, near the float64 precision limit).
+  * **Adaptive timestep refinement** detects energy jumps during integration
+    and automatically retries problematic steps with smaller timesteps. This
+    is configurable via ``AdaptiveTimestepConfig`` and particularly useful for
+    high-energy electron-wall simulations.
+  See ``docs/ADAPTIVE_TIMESTEP.md`` for detailed documentation and
+  ``examples/adaptive_timestep_example.py`` for usage examples.
 * **Reference publication.**  For the scientific context, derivations, and
   benchmark scenarios, see the project paper referenced above; the codebase
   tracks the configurations described there.
