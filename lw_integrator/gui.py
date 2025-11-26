@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     DEFAULT_DRIVER_PARAMS,
@@ -53,7 +53,7 @@ DISPLAY_MAX_HEIGHT = 900  # pixels
 @dataclass
 class _FigureHandle:
     name: str
-    figure: object
+    figure: Any
     window: tk.Toplevel
     canvas: FigureCanvasTkAgg
 
@@ -760,7 +760,8 @@ class IntegratorGUI:
         selection = self.config_list.curselection()
         if not selection:
             return None
-        return self.config_list.get(selection[0])
+        result = self.config_list.get(selection[0])
+        return str(result) if result else None
 
     def _on_config_selected(self) -> None:
         filename = self._selected_config_filename()
@@ -1163,15 +1164,119 @@ class IntegratorGUI:
             )
             self._show_figure(title, figure)
 
-    def _show_figure(self, title: str, figure) -> None:
+    def _show_figure(self, title: str, figure: Any) -> None:
         width_px, height_px = self._prepare_figure_for_display(figure)
         window = tk.Toplevel(self.root)
         window.title(title)
-        canvas = FigureCanvasTkAgg(figure, master=window)
+
+        # Create main container frame
+        main_frame = ttk.Frame(window)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create canvas for the figure
+        canvas = FigureCanvasTkAgg(figure, master=main_frame)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # Add matplotlib navigation toolbar
+        toolbar_frame = ttk.Frame(main_frame)
+        toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
+        toolbar.update()
+
+        # Create custom controls frame
+        controls_frame = ttk.Frame(main_frame, padding=5)
+        controls_frame.pack(side=tk.TOP, fill=tk.X)
+
+        # Log scale controls
+        ttk.Label(controls_frame, text="Log scale:").pack(side=tk.LEFT, padx=(0, 5))
+
+        x_log_var = tk.BooleanVar(value=False)
+        y_log_var = tk.BooleanVar(value=False)
+
+        def toggle_log_scale() -> None:
+            try:
+                for ax in figure.get_axes():
+                    if x_log_var.get():
+                        try:
+                            ax.set_xscale("log")
+                        except (ValueError, RuntimeWarning):
+                            x_log_var.set(False)
+                            messagebox.showwarning(
+                                "Log Scale Warning",
+                                "X-axis cannot be log-scaled (data may contain non-positive values)",
+                            )
+                    else:
+                        ax.set_xscale("linear")
+                    if y_log_var.get():
+                        try:
+                            ax.set_yscale("log")
+                        except (ValueError, RuntimeWarning):
+                            y_log_var.set(False)
+                            messagebox.showwarning(
+                                "Log Scale Warning",
+                                "Y-axis cannot be log-scaled (data may contain non-positive values)",
+                            )
+                    else:
+                        ax.set_yscale("linear")
+                canvas.draw()
+            except Exception as e:
+                self._append_log(f"Error toggling log scale: {e}")
+
+        ttk.Checkbutton(
+            controls_frame, text="X-axis", variable=x_log_var, command=toggle_log_scale
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Checkbutton(
+            controls_frame, text="Y-axis", variable=y_log_var, command=toggle_log_scale
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Separator
+        ttk.Separator(controls_frame, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=10
+        )
+
+        # Save/Save As buttons
+        def save_figure() -> None:
+            try:
+                # Use the current filename if it exists
+                default_name = f"{title.replace(' ', '_').replace('/', '_')}.png"
+                figure.savefig(default_name, dpi=150, bbox_inches="tight")
+                self._append_log(f"Figure saved to: {default_name}")
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Failed to save figure: {e}")
+
+        def save_figure_as() -> None:
+            try:
+                default_name = f"{title.replace(' ', '_').replace('/', '_')}.png"
+                filename = filedialog.asksaveasfilename(
+                    defaultextension=".png",
+                    initialfile=default_name,
+                    filetypes=[
+                        ("PNG files", "*.png"),
+                        ("PDF files", "*.pdf"),
+                        ("SVG files", "*.svg"),
+                        ("All files", "*.*"),
+                    ],
+                )
+                if filename:
+                    figure.savefig(filename, dpi=150, bbox_inches="tight")
+                    self._append_log(f"Figure saved to: {filename}")
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Failed to save figure: {e}")
+
+        ttk.Button(controls_frame, text="Save", command=save_figure).pack(
+            side=tk.LEFT, padx=5
+        )
+
+        ttk.Button(controls_frame, text="Save As...", command=save_figure_as).pack(
+            side=tk.LEFT, padx=5
+        )
+
         if width_px and height_px:
-            window.geometry(f"{width_px}x{height_px}")
+            # Add extra height for toolbar and controls (~100px)
+            window.geometry(f"{width_px}x{height_px + 100}")
+
         handle = _FigureHandle(name=title, figure=figure, window=window, canvas=canvas)
         self._figure_windows.append(handle)
         window.protocol("WM_DELETE_WINDOW", partial(self._close_figure, handle))
@@ -1182,7 +1287,7 @@ class IntegratorGUI:
         handle.canvas.get_tk_widget().destroy()
         handle.window.destroy()
 
-    def _prepare_figure_for_display(self, figure) -> Tuple[int, int]:
+    def _prepare_figure_for_display(self, figure: Any) -> Tuple[int, int]:
         try:
             current_dpi = float(figure.get_dpi())
             width_in, height_in = [float(v) for v in figure.get_size_inches()]
@@ -1208,7 +1313,7 @@ class IntegratorGUI:
 
         return int(width_px), int(height_px)
 
-    def _scale_figure_visuals(self, figure, scale: float) -> None:
+    def _scale_figure_visuals(self, figure: Any, scale: float) -> None:
         if scale >= 0.999:
             return
         try:

@@ -476,9 +476,9 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
     rider_total_gev = rider_gamma * rider_rest_gev
 
     if driver_allowed and driver_state is not None:
-        driver_gamma = float(driver_state["gamma"][0])
-        driver_rest_gev = driver_rest_mev * 1e-3
-        driver_total_gev = driver_gamma * driver_rest_gev
+        driver_gamma: Optional[float] = float(driver_state["gamma"][0])
+        driver_rest_gev: Optional[float] = driver_rest_mev * 1e-3
+        driver_total_gev: Optional[float] = driver_gamma * driver_rest_gev
     else:
         driver_gamma = None
         driver_rest_mev = None
