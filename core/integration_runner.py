@@ -48,7 +48,12 @@ class EnergyMonitorConfig:
 
 @dataclass
 class AdaptiveTimestepConfig:
-    """Configuration for adaptive timestep refinement on energy jumps."""
+    """Configuration for adaptive timestep refinement on energy jumps.
+
+    When an energy jump is detected, the timestep is reduced. The hysteresis
+    parameters control how long we stay at the reduced timestep before attempting
+    to return to the normal timestep.
+    """
 
     enabled: bool = False
     energy_jump_threshold: float = (
@@ -59,6 +64,12 @@ class AdaptiveTimestepConfig:
     )
     max_refinement_attempts: int = 5  # Maximum number of timestep refinements per step
     min_timestep_factor: float = 1e-4  # Minimum timestep as fraction of original
+
+    # Hysteresis parameters: stay on reduced timestep for stability
+    cooldown_steps: int = 10  # Minimum steps at reduced timestep before probing return
+    probe_threshold: float = 0.01  # Energy stability threshold for safe return (1%)
+    max_probe_steps: int = 3  # Number of consecutive stable steps needed to return
+
     debug: bool = False  # Print adaptive timestep actions
 
 
@@ -197,6 +208,13 @@ def retarded_integrator(
     # Track actual timestep (may be modified by adaptive refinement)
     current_h_step = h_step
 
+    # Hysteresis tracking for adaptive timestep
+    # When timestep is reduced, we stay reduced for cooldown_steps before probing
+    reduced_timestep_mode = False
+    reduced_h_step = h_step
+    cooldown_counter = 0
+    stable_steps_counter = 0  # Count consecutive stable steps during probing
+
     if progress_callback is not None:
         progress_callback(0, steps)
 
@@ -226,11 +244,37 @@ def retarded_integrator(
                 trajectory_drv[i] = init_driver
             _ensure_startup_metadata(trajectory_drv[i])
         else:
-            # Adaptive timestep refinement with sub-stepping:
-            # If timestep is reduced, take multiple sub-steps to cover the same physical time
+            # Adaptive timestep refinement with sub-stepping and hysteresis:
+            # If timestep is reduced, we stay reduced for several steps before probing return
             step_accepted = False
             refinement_attempt = 0
-            current_h_step = h_step  # Reset to base timestep for each new step
+
+            # Initialize to satisfy type checker (will be assigned in loop)
+            temp_trajectory: Trajectory = []
+            temp_driver: Trajectory = []
+
+            # Hysteresis logic: decide starting timestep for this step
+            if reduced_timestep_mode and adaptive_timestep is not None:
+                if cooldown_counter < adaptive_timestep.cooldown_steps:
+                    # Still in cooldown - use reduced timestep
+                    current_h_step = reduced_h_step
+                    cooldown_counter += 1
+                    if adaptive_timestep.debug:
+                        print(
+                            f"Step {i}: Cooldown mode ({cooldown_counter}/{adaptive_timestep.cooldown_steps}), "
+                            f"using reduced timestep {current_h_step:.6e} ns"
+                        )
+                else:
+                    # Cooldown complete - probe whether we can return to normal
+                    current_h_step = reduced_h_step  # Still use reduced for now
+                    if adaptive_timestep.debug:
+                        print(
+                            f"Step {i}: Probing stability with reduced timestep "
+                            f"({stable_steps_counter}/{adaptive_timestep.max_probe_steps} stable)"
+                        )
+            else:
+                # Normal mode or adaptive disabled
+                current_h_step = h_step
 
             while not step_accepted:
                 # Determine number of sub-steps needed to cover base timestep interval
@@ -240,8 +284,8 @@ def retarded_integrator(
 
                 # Build temporary trajectory for sub-stepping
                 # Start with the previous full step as our base
-                temp_trajectory: Trajectory = [trajectory[i - 1]]
-                temp_driver: Trajectory = [trajectory_drv[i - 1]]
+                temp_trajectory = [trajectory[i - 1]]
+                temp_driver = [trajectory_drv[i - 1]]
                 energy_jump_detected = False
 
                 for substep_idx in range(num_substeps):
@@ -327,6 +371,13 @@ def retarded_integrator(
                                                 f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
                                                 f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
                                             )
+
+                                        # Enter or stay in reduced timestep mode
+                                        reduced_timestep_mode = True
+                                        reduced_h_step = current_h_step
+                                        cooldown_counter = 0
+                                        stable_steps_counter = 0
+
                                         break  # Exit sub-step loop to retry with smaller timestep
 
                         # Update previous energy for next substep
@@ -347,6 +398,52 @@ def retarded_integrator(
                         print(
                             f"Step {i}: Completed {num_substeps} sub-step(s) with timestep {current_h_step:.6e} ns"
                         )
+
+                    # Hysteresis: check if we're in probing phase and can return to normal
+                    if (
+                        adaptive_timestep is not None
+                        and adaptive_timestep.enabled
+                        and reduced_timestep_mode
+                        and cooldown_counter >= adaptive_timestep.cooldown_steps
+                    ):
+                        # We're in probing phase - check energy stability
+                        if previous_energy is not None:
+                            current_energy = _compute_total_energy(trajectory[i])
+                            relative_change = (
+                                abs(current_energy - previous_energy) / previous_energy
+                            )
+
+                            if relative_change < adaptive_timestep.probe_threshold:
+                                # This step was stable
+                                stable_steps_counter += 1
+                                if adaptive_timestep.debug:
+                                    print(
+                                        f"Step {i}: Stable (ΔE/E = {relative_change:.6e} < {adaptive_timestep.probe_threshold:.6e}), "
+                                        f"count = {stable_steps_counter}/{adaptive_timestep.max_probe_steps}"
+                                    )
+
+                                if (
+                                    stable_steps_counter
+                                    >= adaptive_timestep.max_probe_steps
+                                ):
+                                    # Safe to return to normal timestep
+                                    reduced_timestep_mode = False
+                                    stable_steps_counter = 0
+                                    cooldown_counter = 0
+                                    if adaptive_timestep.debug:
+                                        print(
+                                            f"Step {i}: Returning to normal timestep {h_step:.6e} ns "
+                                            f"after {adaptive_timestep.max_probe_steps} stable steps"
+                                        )
+                            else:
+                                # Energy jump during probing - reset and stay reduced
+                                stable_steps_counter = 0
+                                cooldown_counter = 0  # Restart cooldown
+                                if adaptive_timestep.debug:
+                                    print(
+                                        f"Step {i}: Unstable during probing (ΔE/E = {relative_change:.6e}), "
+                                        f"restarting cooldown"
+                                    )
 
             # Accept the final sub-step state as the step result
             trajectory[i] = temp_trajectory[-1]

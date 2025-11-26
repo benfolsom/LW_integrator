@@ -194,7 +194,7 @@ class SimulationOptions:
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = 1e-6
     self_consistency_max_iterations: int = 5
-    self_consistency_debug: bool = False
+    self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
 
     # Energy monitoring options
     energy_monitor_enabled: bool = True
@@ -209,6 +209,12 @@ class SimulationOptions:
     adaptive_timestep_reduction_factor: int = 10
     adaptive_timestep_max_attempts: int = 5
     adaptive_timestep_min_factor: float = 1e-4
+
+    # Adaptive timestep hysteresis (stay on reduced timestep for stability)
+    adaptive_timestep_cooldown_steps: int = 10
+    adaptive_timestep_probe_threshold: float = 0.01
+    adaptive_timestep_max_probe_steps: int = 3
+
     adaptive_timestep_debug: bool = False
 
     def to_dict(self) -> Dict[str, object]:
@@ -240,7 +246,7 @@ class SimulationOptions:
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_max_iterations": self.self_consistency_max_iterations,
-            "self_consistency_debug": self.self_consistency_debug,
+            "self_consistency_verbosity": self.self_consistency_verbosity,
             "energy_monitor_enabled": self.energy_monitor_enabled,
             "energy_monitor_threshold": self.energy_monitor_threshold,
             "energy_monitor_check_interval": self.energy_monitor_check_interval,
@@ -251,6 +257,9 @@ class SimulationOptions:
             "adaptive_timestep_reduction_factor": self.adaptive_timestep_reduction_factor,
             "adaptive_timestep_max_attempts": self.adaptive_timestep_max_attempts,
             "adaptive_timestep_min_factor": self.adaptive_timestep_min_factor,
+            "adaptive_timestep_cooldown_steps": self.adaptive_timestep_cooldown_steps,
+            "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
+            "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
         }
         return payload
@@ -335,7 +344,7 @@ class SimulationOptions:
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-6),
             self_consistency_max_iterations=_int("self_consistency_max_iterations", 5),
-            self_consistency_debug=_bool("self_consistency_debug", False),
+            self_consistency_verbosity=_int("self_consistency_verbosity", 0),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
             energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
             energy_monitor_check_interval=_int("energy_monitor_check_interval", 10),
@@ -348,6 +357,15 @@ class SimulationOptions:
             ),
             adaptive_timestep_max_attempts=_int("adaptive_timestep_max_attempts", 5),
             adaptive_timestep_min_factor=_float("adaptive_timestep_min_factor", 1e-4),
+            adaptive_timestep_cooldown_steps=_int(
+                "adaptive_timestep_cooldown_steps", 10
+            ),
+            adaptive_timestep_probe_threshold=_float(
+                "adaptive_timestep_probe_threshold", 0.01
+            ),
+            adaptive_timestep_max_probe_steps=_int(
+                "adaptive_timestep_max_probe_steps", 3
+            ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
         )
         return options
@@ -619,7 +637,7 @@ def run_testbed(
         self_consistency_enabled=options.self_consistency_enabled,
         self_consistency_tolerance=options.self_consistency_tolerance,
         self_consistency_max_iterations=options.self_consistency_max_iterations,
-        self_consistency_debug=options.self_consistency_debug,
+        self_consistency_verbosity=options.self_consistency_verbosity,
         energy_monitor_enabled=options.energy_monitor_enabled,
         energy_monitor_threshold=options.energy_monitor_threshold,
         energy_monitor_check_interval=options.energy_monitor_check_interval,
@@ -630,6 +648,9 @@ def run_testbed(
         adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
         adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
         adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
+        adaptive_timestep_cooldown_steps=options.adaptive_timestep_cooldown_steps,
+        adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
+        adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
         adaptive_timestep_debug=options.adaptive_timestep_debug,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,

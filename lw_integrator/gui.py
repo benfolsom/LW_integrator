@@ -148,8 +148,8 @@ class IntegratorGUI:
         self.self_consistency_max_iterations_var = tk.IntVar(
             value=self.options.self_consistency_max_iterations
         )
-        self.self_consistency_debug_var = tk.BooleanVar(
-            value=self.options.self_consistency_debug
+        self.self_consistency_verbosity_var = tk.IntVar(
+            value=self.options.self_consistency_verbosity
         )
 
         # Energy monitoring options
@@ -184,6 +184,15 @@ class IntegratorGUI:
         )
         self.adaptive_timestep_min_factor_var = tk.DoubleVar(
             value=self.options.adaptive_timestep_min_factor
+        )
+        self.adaptive_timestep_cooldown_steps_var = tk.IntVar(
+            value=self.options.adaptive_timestep_cooldown_steps
+        )
+        self.adaptive_timestep_probe_threshold_var = tk.DoubleVar(
+            value=self.options.adaptive_timestep_probe_threshold
+        )
+        self.adaptive_timestep_max_probe_steps_var = tk.IntVar(
+            value=self.options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_debug
@@ -363,11 +372,21 @@ class IntegratorGUI:
             sc_frame, textvariable=self.self_consistency_max_iterations_var, width=16
         ).grid(row=2, column=1, sticky="ew", pady=2)
 
-        ttk.Checkbutton(
-            sc_frame,
-            text="Debug output",
-            variable=self.self_consistency_debug_var,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
+        ttk.Label(sc_frame, text="Verbosity:").grid(row=3, column=0, sticky="w", pady=2)
+        verbosity_frame = ttk.Frame(sc_frame)
+        verbosity_frame.grid(row=3, column=1, sticky="w", pady=2)
+        ttk.Spinbox(
+            verbosity_frame,
+            from_=0,
+            to=2,
+            textvariable=self.self_consistency_verbosity_var,
+            width=5,
+        ).pack(side="left")
+        ttk.Label(
+            verbosity_frame,
+            text=" (0=silent, 1=basic, 2=detailed)",
+            foreground="gray",
+        ).pack(side="left")
 
         # Energy monitoring section
         em_frame = ttk.LabelFrame(
@@ -449,11 +468,33 @@ class IntegratorGUI:
             at_frame, textvariable=self.adaptive_timestep_min_factor_var, width=16
         ).grid(row=4, column=1, sticky="ew", pady=2)
 
+        # Hysteresis parameters
+        ttk.Label(at_frame, text="Cooldown steps:").grid(
+            row=5, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_cooldown_steps_var, width=16
+        ).grid(row=5, column=1, sticky="ew", pady=2)
+
+        ttk.Label(at_frame, text="Probe threshold:").grid(
+            row=6, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_probe_threshold_var, width=16
+        ).grid(row=6, column=1, sticky="ew", pady=2)
+
+        ttk.Label(at_frame, text="Max probe steps:").grid(
+            row=7, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_max_probe_steps_var, width=16
+        ).grid(row=7, column=1, sticky="ew", pady=2)
+
         ttk.Checkbutton(
             at_frame,
             text="Debug output (show refinement actions)",
             variable=self.adaptive_timestep_debug_var,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
 
         # Help text
         help_text = ttk.Label(
@@ -774,7 +815,7 @@ class IntegratorGUI:
         self.self_consistency_max_iterations_var.set(
             options.self_consistency_max_iterations
         )
-        self.self_consistency_debug_var.set(options.self_consistency_debug)
+        self.self_consistency_verbosity_var.set(options.self_consistency_verbosity)
         self.energy_monitor_enabled_var.set(options.energy_monitor_enabled)
         self.energy_monitor_threshold_var.set(options.energy_monitor_threshold)
         self.energy_monitor_check_interval_var.set(
@@ -791,6 +832,15 @@ class IntegratorGUI:
             options.adaptive_timestep_max_attempts
         )
         self.adaptive_timestep_min_factor_var.set(options.adaptive_timestep_min_factor)
+        self.adaptive_timestep_cooldown_steps_var.set(
+            options.adaptive_timestep_cooldown_steps
+        )
+        self.adaptive_timestep_probe_threshold_var.set(
+            options.adaptive_timestep_probe_threshold
+        )
+        self.adaptive_timestep_max_probe_steps_var.set(
+            options.adaptive_timestep_max_probe_steps
+        )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
         self.output_dir_var.set(str(options.output_dir))
         self.config_dir_var.set(str(options.config_dir))
@@ -863,7 +913,7 @@ class IntegratorGUI:
             self_consistency_max_iterations=int(
                 self.self_consistency_max_iterations_var.get()
             ),
-            self_consistency_debug=bool(self.self_consistency_debug_var.get()),
+            self_consistency_verbosity=int(self.self_consistency_verbosity_var.get()),
             energy_monitor_enabled=bool(self.energy_monitor_enabled_var.get()),
             energy_monitor_threshold=float(self.energy_monitor_threshold_var.get()),
             energy_monitor_check_interval=int(
@@ -885,6 +935,15 @@ class IntegratorGUI:
             ),
             adaptive_timestep_min_factor=float(
                 self.adaptive_timestep_min_factor_var.get()
+            ),
+            adaptive_timestep_cooldown_steps=int(
+                self.adaptive_timestep_cooldown_steps_var.get()
+            ),
+            adaptive_timestep_probe_threshold=float(
+                self.adaptive_timestep_probe_threshold_var.get()
+            ),
+            adaptive_timestep_max_probe_steps=int(
+                self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
         )

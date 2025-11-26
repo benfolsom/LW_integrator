@@ -59,8 +59,11 @@ class SelfConsistencyConfig:
         |Δγ/γ| < tolerance for each particle. Default is 1e-6.
     max_iterations : int
         Maximum number of refinement iterations per particle per step. Default is 5.
-    debug : bool
-        If True, print convergence information for each particle. Default is False.
+    verbosity : int
+        Verbosity level for convergence information. Default is 0.
+        0 = silent (no output)
+        1 = basic (one line per particle showing convergence status)
+        2 = detailed (full convergence details including all gamma values)
 
     Examples
     --------
@@ -85,7 +88,7 @@ class SelfConsistencyConfig:
     enabled: bool = True
     tolerance: float = 1e-6
     max_iterations: int = 5
-    debug: bool = False
+    verbosity: int = 0
 
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":
@@ -113,7 +116,7 @@ class SelfConsistencyConfig:
         energy jumps in challenging scenarios (ultra-relativistic particles,
         narrow apertures, or close approaches to conducting boundaries).
         """
-        return cls(enabled=True, tolerance=1e-8, max_iterations=10, debug=False)
+        return cls(enabled=True, tolerance=1e-8, max_iterations=10, verbosity=0)
 
 
 def self_consistent_step(

@@ -52,22 +52,22 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
 
 def _extract_self_consistency_params(
     self_consistency: Optional[SelfConsistencyConfig],
-) -> tuple[bool, float, int, bool]:
+) -> tuple[bool, float, int, int]:
     """Extract self-consistency configuration parameters.
 
     Returns
     -------
-    tuple[bool, float, int, bool]
-        A tuple containing (enabled, tolerance, max_iterations, debug).
+    tuple[bool, float, int, int]
+        A tuple containing (enabled, tolerance, max_iterations, verbosity).
     """
     is_enabled = self_consistency is not None and self_consistency.enabled
     tolerance = self_consistency.tolerance if self_consistency is not None else 1e-6
     max_iterations = (
         self_consistency.max_iterations if self_consistency is not None else 1
     )
-    debug = self_consistency.debug if self_consistency is not None else False
+    verbosity = self_consistency.verbosity if self_consistency is not None else 0
 
-    return is_enabled, tolerance, max_iterations, debug
+    return is_enabled, tolerance, max_iterations, verbosity
 
 
 def _initialize_result_state(current_state: ParticleState) -> ParticleState:
@@ -484,17 +484,38 @@ def _print_convergence_info(
     gamma_rel_change: float,
     converged: bool,
     max_iterations: int,
+    verbosity: int = 1,
 ) -> None:
-    """Print debug information about self-consistency convergence."""
-    if converged:
-        print(f"    Particle {particle_idx}: Converged in {iteration + 1} iterations")
-    else:
-        print(f"    Particle {particle_idx}: Max iterations ({max_iterations}) reached")
+    """Print debug information about self-consistency convergence.
 
-    print(f"      Δγ/γ = {gamma_rel_change:.15e}")
-    print(f"      γ_prev = {gamma_prev:.15e}")
-    print(f"      γ_new  = {gamma_new:.15e}")
-    print(f"      Δγ_abs = {gamma_abs_change:.15e}")
+    Parameters
+    ----------
+    verbosity : int
+        0 = silent (no output)
+        1 = basic (one line per particle)
+        2 = detailed (full convergence details)
+    """
+    if verbosity == 0:
+        return
+
+    # Basic output (verbosity >= 1)
+    if converged:
+        status = f"converged in {iteration + 1} iter"
+    else:
+        status = f"max iter ({max_iterations}) reached"
+
+    if verbosity == 1:
+        # Truncated: one line per particle
+        print(
+            f"    P{particle_idx}: {status}, Δγ/γ={gamma_rel_change:.6e}, γ={gamma_new:.6e}"
+        )
+    else:  # verbosity >= 2
+        # Detailed: multi-line output with full precision
+        print(f"    Particle {particle_idx}: {status}")
+        print(f"      Δγ/γ = {gamma_rel_change:.15e}")
+        print(f"      γ_prev = {gamma_prev:.15e}")
+        print(f"      γ_new  = {gamma_new:.15e}")
+        print(f"      Δγ_abs = {gamma_abs_change:.15e}")
 
 
 def retarded_equations_of_motion(
@@ -557,7 +578,7 @@ def retarded_equations_of_motion(
         sc_enabled,
         sc_tolerance,
         sc_max_iterations,
-        sc_debug,
+        sc_verbosity,
     ) = _extract_self_consistency_params(self_consistency)
 
     # Process each particle independently
@@ -569,7 +590,7 @@ def retarded_equations_of_motion(
             # Track gamma for convergence checking
             if sc_iteration > 0:
                 gamma_from_previous_iteration = float(result["gamma"][particle_idx])
-                if sc_debug:
+                if sc_verbosity >= 2:
                     print(
                         f"    Particle {particle_idx} iteration {sc_iteration}: "
                         f"Starting with γ={gamma_from_previous_iteration:.15e}"
@@ -671,7 +692,7 @@ def retarded_equations_of_motion(
                 accumulated_field_y += delta_field_y
                 accumulated_field_z += delta_field_z
 
-                if sc_debug and sc_enabled and sc_iteration > 0:
+                if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                     print(
                         f"      After forces: ΔPt={delta_momentum_t:.15e}, "
                         f"accumulated_pt={accumulated_momentum_t:.15e}"
@@ -689,7 +710,7 @@ def retarded_equations_of_motion(
             gamma_from_energy = result["Pt"][particle_idx] / (particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy
 
-            if sc_debug and sc_enabled and sc_iteration > 0:
+            if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                 print(f"      Gamma from Pt: γ={gamma_from_energy:.15e}")
 
             # Update proper time
@@ -752,7 +773,7 @@ def retarded_equations_of_motion(
             )
             result["gamma"][particle_idx] = gamma_from_velocity
 
-            if sc_debug and sc_enabled and sc_iteration > 0:
+            if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                 beta_total = np.sqrt(
                     beta_x_limited**2 + beta_y_limited**2 + beta_z_limited**2
                 )
@@ -884,7 +905,7 @@ def retarded_equations_of_motion(
                 )
 
                 if has_converged:
-                    if sc_debug:
+                    if sc_verbosity > 0:
                         _print_convergence_info(
                             particle_idx,
                             sc_iteration,
@@ -894,10 +915,11 @@ def retarded_equations_of_motion(
                             gamma_rel_change,
                             converged=True,
                             max_iterations=sc_max_iterations,
+                            verbosity=sc_verbosity,
                         )
                     break
                 elif sc_iteration == sc_max_iterations - 1:
-                    if sc_debug:
+                    if sc_verbosity > 0:
                         _print_convergence_info(
                             particle_idx,
                             sc_iteration,
@@ -907,6 +929,7 @@ def retarded_equations_of_motion(
                             gamma_rel_change,
                             converged=False,
                             max_iterations=sc_max_iterations,
+                            verbosity=sc_verbosity,
                         )
 
     return result
