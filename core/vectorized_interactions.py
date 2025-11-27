@@ -101,11 +101,16 @@ def compute_vectorized_contributions(
     samples: ExternalSampleBatch,
     *,
     apply_external: bool,
-) -> Tuple[float, float, float, float, float, float, float]:
+) -> Tuple[float, float, float, float, float, float, float, float]:
     """Return accumulated momentum and field contributions using vector ops.
 
     Args:
         R_separation: Distance between external charge sources and test particle.
+
+    Returns:
+        (delta_px, delta_py, delta_pz, delta_pt,
+         delta_field_x, delta_field_y, delta_field_z,
+         scalar_potential_sum)
     """
 
     c = C_MMNS
@@ -113,13 +118,13 @@ def compute_vectorized_contributions(
     c_cu = c_sq * c
 
     if not apply_external:
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     if abs(charge_i) < 1e-20 or gamma_i > 1e6:
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     if samples.charge.size == 0 or R_separation.size == 0 or not samples.any_valid:
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     mask = samples.valid_mask.copy()
     mask &= R_separation > 0.0
@@ -127,7 +132,7 @@ def compute_vectorized_contributions(
     mask &= np.abs(samples.charge) >= 1e-20
 
     if not mask.any():
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     nx = nhat_nx[mask]
     ny = nhat_ny[mask]
@@ -148,7 +153,7 @@ def compute_vectorized_contributions(
 
     valid_k = np.abs(k_factor) >= 1e-15
     if not np.any(valid_k):
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     nx = nx[valid_k]
     ny = ny[valid_k]
@@ -238,6 +243,10 @@ def compute_vectorized_contributions(
     delta_field_y = float(np.sum(field_factor * by_ext))
     delta_field_z = float(np.sum(field_factor * bz_ext))
 
+    # Compute scalar potential sum: Σ(q_j / (R_sep_j * k_factor_j))
+    # This is used for correct gamma calculation: γ = (Pt - q²·Φ) / (mc)
+    scalar_potential_sum = float(np.sum(charge_ext / (R_sep * k_factor)))
+
     return (
         delta_px,
         delta_py,
@@ -246,6 +255,7 @@ def compute_vectorized_contributions(
         delta_field_x,
         delta_field_y,
         delta_field_z,
+        scalar_potential_sum,
     )
 
 

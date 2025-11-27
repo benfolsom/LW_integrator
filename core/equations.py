@@ -632,6 +632,9 @@ def retarded_equations_of_motion(
             accumulated_field_y = 0.0
             accumulated_field_z = 0.0
 
+            # Accumulated scalar potential (used in gamma calculation)
+            accumulated_scalar_potential = 0.0
+
             # Extract particle properties
             particle_charge = _get_particle_charge(current_state, particle_idx)
             particle_mass = _get_particle_mass(current_state, particle_idx)
@@ -667,6 +670,7 @@ def retarded_equations_of_motion(
                     delta_field_x,
                     delta_field_y,
                     delta_field_z,
+                    delta_scalar_potential,
                 ) = compute_vectorized_contributions(
                     h=h,
                     charge_i=float(particle_charge),
@@ -676,7 +680,7 @@ def retarded_equations_of_motion(
                     nhat_nx=np.asarray(nhat["nx"], dtype=float),
                     nhat_ny=np.asarray(nhat["ny"], dtype=float),
                     nhat_nz=np.asarray(nhat["nz"], dtype=float),
-                    nhat_R=np.asarray(nhat["R"], dtype=float),
+                    R_separation=np.asarray(nhat["R"], dtype=float),
                     samples=external_samples,
                     apply_external=apply_forces,
                 )
@@ -692,6 +696,9 @@ def retarded_equations_of_motion(
                 accumulated_field_y += delta_field_y
                 accumulated_field_z += delta_field_z
 
+                # Accumulate scalar potential
+                accumulated_scalar_potential += delta_scalar_potential
+
                 if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                     print(
                         f"      After forces: ΔPt={delta_momentum_t:.15e}, "
@@ -706,12 +713,25 @@ def retarded_equations_of_motion(
             result["Pz"][particle_idx] = accumulated_momentum_z
             result["Pt"][particle_idx] = accumulated_momentum_t
 
-            # Gamma from relativistic energy: γ = Pt / (mc)
-            gamma_from_energy = result["Pt"][particle_idx] / (particle_mass * C_MMNS)
+            # Gamma from relativistic energy with scalar potential correction:
+            # γ = (Pt - q²·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
+            # This gives the correct kinetic energy, accounting for electromagnetic potential
+            scalar_potential_contribution = (
+                particle_charge * particle_charge * accumulated_scalar_potential
+            )
+            kinetic_energy = result["Pt"][particle_idx] - scalar_potential_contribution
+            gamma_from_energy = kinetic_energy / (particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy
 
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
-                print(f"      Gamma from Pt: γ={gamma_from_energy:.15e}")
+                gamma_from_conjugate = result["Pt"][particle_idx] / (
+                    particle_mass * C_MMNS
+                )
+                print(f"      Gamma from kinetic energy: γ={gamma_from_energy:.15e}")
+                print(f"      Gamma from conjugate Pt: γ={gamma_from_conjugate:.15e}")
+                print(
+                    f"      Scalar potential correction: {scalar_potential_contribution:.15e}"
+                )
 
             # Update proper time
             result["t"][particle_idx] = (
@@ -767,11 +787,14 @@ def retarded_equations_of_motion(
             result["by"][particle_idx] = beta_y_limited
             result["bz"][particle_idx] = beta_z_limited
 
-            # Recompute gamma from the (possibly limited) beta
+            # Compute gamma from the (possibly limited) beta for diagnostic purposes only
+            # DO NOT overwrite result["gamma"] - gamma must come from energy (Pt), not velocity!
+            # The velocity-derived gamma is only used for debugging/validation.
             gamma_from_velocity = _calculate_gamma_from_beta(
                 beta_x_limited, beta_y_limited, beta_z_limited
             )
-            result["gamma"][particle_idx] = gamma_from_velocity
+            # REMOVED: result["gamma"][particle_idx] = gamma_from_velocity
+            # Gamma is already correctly set from Pt at line 711 and should not be overwritten
 
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                 beta_total = np.sqrt(
