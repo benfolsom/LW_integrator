@@ -1162,10 +1162,21 @@ class IntegratorGUI:
             title = (
                 name.replace("_", " ").title() if isinstance(name, str) else str(name)
             )
-            self._show_figure(title, figure)
+            try:
+                self._show_figure(title, figure)
+            except Exception as e:
+                error_msg = f"Error displaying {title} plot: {e}"
+                self._append_log(error_msg)
+                messagebox.showwarning("Plot Display Error", error_msg)
 
     def _show_figure(self, title: str, figure: Any) -> None:
-        width_px, height_px = self._prepare_figure_for_display(figure)
+        try:
+            width_px, height_px = self._prepare_figure_for_display(figure)
+        except Exception as e:
+            self._append_log(f"Warning: Could not prepare figure for display: {e}")
+            # Use default size if preparation fails
+            width_px, height_px = 800, 600
+
         window = tk.Toplevel(self.root)
         window.title(title)
 

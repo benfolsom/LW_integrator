@@ -97,12 +97,16 @@ def compute_vectorized_contributions(
     nhat_nx: np.ndarray,
     nhat_ny: np.ndarray,
     nhat_nz: np.ndarray,
-    nhat_R: np.ndarray,
+    R_separation: np.ndarray,
     samples: ExternalSampleBatch,
     *,
     apply_external: bool,
 ) -> Tuple[float, float, float, float, float, float, float]:
-    """Return accumulated momentum and field contributions using vector ops."""
+    """Return accumulated momentum and field contributions using vector ops.
+
+    Args:
+        R_separation: Distance between external charge sources and test particle.
+    """
 
     c = C_MMNS
     c_sq = c * c
@@ -114,11 +118,11 @@ def compute_vectorized_contributions(
     if abs(charge_i) < 1e-20 or gamma_i > 1e6:
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
-    if samples.charge.size == 0 or nhat_R.size == 0 or not samples.any_valid:
+    if samples.charge.size == 0 or R_separation.size == 0 or not samples.any_valid:
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     mask = samples.valid_mask.copy()
-    mask &= nhat_R > 0.0
+    mask &= R_separation > 0.0
     mask &= samples.gamma <= 1e6
     mask &= np.abs(samples.charge) >= 1e-20
 
@@ -128,7 +132,7 @@ def compute_vectorized_contributions(
     nx = nhat_nx[mask]
     ny = nhat_ny[mask]
     nz = nhat_nz[mask]
-    radius = nhat_R[mask]
+    R_sep = R_separation[mask]
 
     bx_ext = samples.bx[mask]
     by_ext = samples.by[mask]
@@ -149,7 +153,7 @@ def compute_vectorized_contributions(
     nx = nx[valid_k]
     ny = ny[valid_k]
     nz = nz[valid_k]
-    radius = radius[valid_k]
+    R_sep = R_sep[valid_k]
     bx_ext = bx_ext[valid_k]
     by_ext = by_ext[valid_k]
     bz_ext = bz_ext[valid_k]
@@ -180,15 +184,15 @@ def compute_vectorized_contributions(
     )
 
     charge_factor = (
-        h * charge_i * charge_ext / (k_factor**3 * c_cu * radius**2 * gamma_ext**3)
+        h * charge_i * charge_ext / (k_factor**3 * c_cu * R_sep**2 * gamma_ext**3)
     )
 
     term_px = (
         -v_betas_scalar * bx_ext * k_factor * c * gamma_ext**2
-        + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nx * radius
+        + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nx * R_sep
         + gamma_ext**2
         * nx**2
-        * radius
+        * R_sep
         * v_betas_scalar
         * (bdotx_ext + bdotx_ext * bdot_scalar_ext * gamma_ext**2)
         + v_betas_scalar * c * nx
@@ -196,10 +200,10 @@ def compute_vectorized_contributions(
 
     term_py = (
         -v_betas_scalar * by_ext * k_factor * c * gamma_ext**2
-        + v_beta_dot_mixed_scalar * k_factor * gamma_ext * ny * radius
+        + v_beta_dot_mixed_scalar * k_factor * gamma_ext * ny * R_sep
         + gamma_ext**2
         * ny**2
-        * radius
+        * R_sep
         * v_betas_scalar
         * (bdoty_ext + bdoty_ext * bdot_scalar_ext * gamma_ext**2)
         + v_betas_scalar * c * ny
@@ -207,10 +211,10 @@ def compute_vectorized_contributions(
 
     term_pz = (
         -v_betas_scalar * bz_ext * k_factor * c * gamma_ext**2
-        + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nz * radius
+        + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nz * R_sep
         + gamma_ext**2
         * nz**2
-        * radius
+        * R_sep
         * v_betas_scalar
         * (bdotz_ext + bdotz_ext * bdot_scalar_ext * gamma_ext**2)
         + v_betas_scalar * c * nz
@@ -221,15 +225,15 @@ def compute_vectorized_contributions(
     delta_pz = float(np.sum(charge_factor * term_pz))
 
     term_pt = (
-        v_beta_dot_mixed_scalar * k_factor * gamma_ext * radius
+        v_beta_dot_mixed_scalar * k_factor * gamma_ext * R_sep
         - v_betas_scalar * k_factor * c * gamma_ext**2
-        - bdot_scalar_ext * v_betas_scalar * gamma_ext**4 * radius
+        - bdot_scalar_ext * v_betas_scalar * gamma_ext**4 * R_sep
         + v_betas_scalar * c
     )
 
     delta_pt = float(np.sum(charge_factor * term_pt))
 
-    field_factor = h / mass_i * charge_i / c * charge_ext / (radius * k_factor)
+    field_factor = h / mass_i * charge_i / c * charge_ext / (R_sep * k_factor)
     delta_field_x = float(np.sum(field_factor * bx_ext))
     delta_field_y = float(np.sum(field_factor * by_ext))
     delta_field_z = float(np.sum(field_factor * bz_ext))

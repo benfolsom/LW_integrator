@@ -475,13 +475,20 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
     rider_rest_gev = rider_rest_mev * 1e-3
     rider_total_gev = rider_gamma * rider_rest_gev
 
-    if driver_allowed and driver_state is not None:
-        driver_gamma: Optional[float] = float(driver_state["gamma"][0])
-        driver_rest_gev: Optional[float] = driver_rest_mev * 1e-3
-        driver_total_gev: Optional[float] = driver_gamma * driver_rest_gev
+    # Declare driver variables with explicit types
+    driver_gamma: Optional[float]
+    driver_rest_mev_opt: Optional[float]
+    driver_rest_gev: Optional[float]
+    driver_total_gev: Optional[float]
+
+    if driver_allowed and driver_state is not None and driver_rest_mev is not None:
+        driver_gamma = float(driver_state["gamma"][0])
+        driver_rest_mev_opt = driver_rest_mev
+        driver_rest_gev = driver_rest_mev * 1e-3
+        driver_total_gev = driver_gamma * driver_rest_gev
     else:
         driver_gamma = None
-        driver_rest_mev = None
+        driver_rest_mev_opt = None
         driver_rest_gev = None
         driver_total_gev = None
 
@@ -492,7 +499,7 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
         rider_rest_gev=rider_rest_gev,
         rider_total_gev=rider_total_gev,
         driver_gamma=driver_gamma,
-        driver_rest_mev=driver_rest_mev,
+        driver_rest_mev=driver_rest_mev_opt,
         driver_rest_gev=driver_rest_gev,
         driver_total_gev=driver_total_gev,
         supports_driver=driver_allowed,
@@ -768,81 +775,112 @@ def run_testbed(
             and rider_delta_e is not None
             and rider_z_rel is not None
         ):
-            fig_energy, axes_energy = plt.subplots(
-                1,
-                2 if driver_allowed and driver_delta_e is not None else 1,
-                figsize=(16 if driver_delta_e is not None else 8, 6),
-                dpi=options.plot_dpi,
-            )
-            if not isinstance(axes_energy, np.ndarray):
-                axes = [axes_energy]
+            # Validate data before plotting to prevent matplotlib errors
+            rider_delta_e_valid = np.isfinite(rider_delta_e)
+            rider_z_rel_valid = np.isfinite(rider_z_rel)
+            valid_mask = rider_delta_e_valid & rider_z_rel_valid
+
+            if not np.any(valid_mask):
+                _log(
+                    "Warning: Energy plot skipped - all data points are invalid (NaN or Inf)"
+                )
+                fig_energy = None
             else:
-                axes = list(axes_energy)
-
-            show_legend = legacy_enabled
-
-            axes[0].scatter(
-                rider_z_rel,
-                rider_delta_e,
-                color=COLOR_RIDER,
-                label="Core" if show_legend else None,
-                **SCATTER_STYLE,
-            )
-            if legacy_rider_delta_e is not None and legacy_rider_z_rel is not None:
-                axes[0].scatter(
-                    legacy_rider_z_rel,
-                    legacy_rider_delta_e,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Legacy",
-                    **SCATTER_STYLE,
-                )
-            axes[0].set_xlabel("Delta z (mm)")
-            axes[0].set_ylabel("Delta E (GeV)")
-            axes[0].set_title("Rider Delta E vs Delta z")
-            axes[0].grid(True, alpha=0.3)
-            if show_legend:
-                axes[0].legend()
-
-            if (
-                driver_delta_e is not None
-                and driver_z_rel is not None
-                and len(axes) > 1
-            ):
-                axes[1].scatter(
-                    driver_z_rel,
-                    driver_delta_e,
-                    color=COLOR_DRIVER,
-                    label="Core" if legacy_enabled else None,
-                    **SCATTER_STYLE,
-                )
-                if (
-                    legacy_driver_delta_e is not None
-                    and legacy_driver_z_rel is not None
-                ):
-                    axes[1].scatter(
-                        legacy_driver_z_rel,
-                        legacy_driver_delta_e,
-                        color=COLOR_LEGACY_DRIVER,
-                        label="Legacy",
-                        **SCATTER_STYLE,
+                if not np.all(valid_mask):
+                    invalid_count = np.sum(~valid_mask)
+                    _log(
+                        f"Warning: {invalid_count} invalid data points removed from energy plot"
                     )
-                axes[1].set_xlabel("Delta z (mm)")
-                axes[1].set_ylabel("Delta E (GeV)")
-                axes[1].set_title("Driver Delta E vs Delta z")
-                axes[1].grid(True, alpha=0.3)
-                if legacy_enabled:
-                    axes[1].legend()
 
-            fig_energy.tight_layout()
-            if energy_save and should_save:
-                energy_path = output_dir / f"{filename_base}_energy.png"
-                fig_energy.savefig(energy_path)
-                saved_paths["energy"] = energy_path
-                _log(f"Saved energy plot to: {energy_path}")
-            if energy_display:
-                figures["energy"] = fig_energy
-            else:
-                plt.close(fig_energy)
+                fig_energy, axes_energy = plt.subplots(
+                    1,
+                    2 if driver_allowed and driver_delta_e is not None else 1,
+                    figsize=(16 if driver_delta_e is not None else 8, 6),
+                    dpi=options.plot_dpi,
+                )
+                if not isinstance(axes_energy, np.ndarray):
+                    axes = [axes_energy]
+                else:
+                    axes = list(axes_energy)
+
+                show_legend = legacy_enabled
+
+                axes[0].scatter(
+                    rider_z_rel[valid_mask],
+                    rider_delta_e[valid_mask],
+                    color=COLOR_RIDER,
+                    label="Core" if show_legend else None,
+                    **SCATTER_STYLE,
+                )
+                if legacy_rider_delta_e is not None and legacy_rider_z_rel is not None:
+                    legacy_valid = np.isfinite(legacy_rider_delta_e) & np.isfinite(
+                        legacy_rider_z_rel
+                    )
+                    if np.any(legacy_valid):
+                        axes[0].scatter(
+                            legacy_rider_z_rel[legacy_valid],
+                            legacy_rider_delta_e[legacy_valid],
+                            color=COLOR_LEGACY_RIDER,
+                            label="Legacy",
+                            **SCATTER_STYLE,
+                        )
+                axes[0].set_xlabel("Delta z (mm)")
+                axes[0].set_ylabel("Delta E (GeV)")
+                axes[0].set_title("Rider Delta E vs Delta z")
+                axes[0].grid(True, alpha=0.3)
+                if show_legend:
+                    axes[0].legend()
+
+                if (
+                    driver_delta_e is not None
+                    and driver_z_rel is not None
+                    and len(axes) > 1
+                ):
+                    driver_valid = np.isfinite(driver_delta_e) & np.isfinite(
+                        driver_z_rel
+                    )
+                    if np.any(driver_valid):
+                        axes[1].scatter(
+                            driver_z_rel[driver_valid],
+                            driver_delta_e[driver_valid],
+                            color=COLOR_DRIVER,
+                            label="Core" if legacy_enabled else None,
+                            **SCATTER_STYLE,
+                        )
+                    else:
+                        _log("Warning: All driver energy data points are invalid")
+                    if (
+                        legacy_driver_delta_e is not None
+                        and legacy_driver_z_rel is not None
+                    ):
+                        legacy_driver_valid = np.isfinite(
+                            legacy_driver_delta_e
+                        ) & np.isfinite(legacy_driver_z_rel)
+                        if np.any(legacy_driver_valid):
+                            axes[1].scatter(
+                                legacy_driver_z_rel[legacy_driver_valid],
+                                legacy_driver_delta_e[legacy_driver_valid],
+                                color=COLOR_LEGACY_DRIVER,
+                                label="Legacy",
+                                **SCATTER_STYLE,
+                            )
+                    axes[1].set_xlabel("Delta z (mm)")
+                    axes[1].set_ylabel("Delta E (GeV)")
+                    axes[1].set_title("Driver Delta E vs Delta z")
+                    axes[1].grid(True, alpha=0.3)
+                    if legacy_enabled:
+                        axes[1].legend()
+
+                fig_energy.tight_layout()
+                if energy_save and should_save:
+                    energy_path = output_dir / f"{filename_base}_energy.png"
+                    fig_energy.savefig(energy_path)
+                    saved_paths["energy"] = energy_path
+                    _log(f"Saved energy plot to: {energy_path}")
+                if energy_display:
+                    figures["energy"] = fig_energy
+                else:
+                    plt.close(fig_energy)
 
         if (
             legacy_enabled

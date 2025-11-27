@@ -408,7 +408,9 @@ def retarded_integrator(
                     ):
                         # We're in probing phase - check energy stability
                         if previous_energy is not None:
-                            current_energy = _compute_total_energy(trajectory[i])
+                            # Use temp_trajectory[-1] which contains the current step result
+                            # (trajectory[i] hasn't been assigned yet at this point)
+                            current_energy = _compute_total_energy(temp_trajectory[-1])
                             relative_change = (
                                 abs(current_energy - previous_energy) / previous_energy
                             )
