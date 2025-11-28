@@ -716,7 +716,9 @@ def retarded_equations_of_motion(
             # Gamma from relativistic energy with scalar potential correction:
             # γ = (Pt - q²·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
             # This gives the correct kinetic energy, accounting for electromagnetic potential
-            scalar_potential_contribution = accumulated_scalar_potential
+            scalar_potential_contribution = (
+                particle_charge * accumulated_scalar_potential
+            )
             kinetic_energy = result["Pt"][particle_idx] - scalar_potential_contribution
             gamma_from_energy = kinetic_energy / (particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy

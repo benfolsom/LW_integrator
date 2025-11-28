@@ -244,8 +244,8 @@ def compute_vectorized_contributions(
     delta_field_z = float(np.sum(field_factor * bz_ext))
 
     # Compute scalar potential sum: Σ(q_j / (R_sep_j * k_factor_j))
-    # This is used for correct gamma calculation: γ = (Pt - q²·Φ) / (mc)
-    scalar_potential_sum = float(np.sum(charge_ext**2 / (R_sep * k_factor)))
+    # This is used for correct gamma calculation: γ = (Pt - q_i·Φ) / (mc)
+    scalar_potential_sum = float(np.sum(charge_ext / (R_sep * k_factor)))
 
     return (
         delta_px,
