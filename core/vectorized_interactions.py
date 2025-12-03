@@ -148,10 +148,18 @@ def compute_vectorized_contributions(
     charge_ext = samples.charge[mask]
     gamma_ext = samples.gamma[mask]
 
-    beta_dot_nhat = bx_ext * nx + by_ext * ny + bz_ext * nz
-    k_factor = 1.0 - beta_dot_nhat
+    # Use float64 precision for k_factor to handle extremely relativistic particles
+    # Keep result as numpy array for indexing
+    beta_dot_nhat = (
+        bx_ext.astype(np.float64) * nx.astype(np.float64)
+        + by_ext.astype(np.float64) * ny.astype(np.float64)
+        + bz_ext.astype(np.float64) * nz.astype(np.float64)
+    )
+    k_factor = np.float64(1.0) - beta_dot_nhat
 
-    valid_k = np.abs(k_factor) >= 1e-15
+    # Allow k_factor down to 1e-20 for ultra-relativistic particles
+    # (beta very close to 1.0 moving nearly parallel to observation direction)
+    valid_k = np.abs(k_factor) >= np.float64(1e-20)
     if not np.any(valid_k):
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 

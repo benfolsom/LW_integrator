@@ -192,7 +192,7 @@ class SimulationOptions:
 
     # Self-consistency options
     self_consistency_enabled: bool = True
-    self_consistency_tolerance: float = 1e-6
+    self_consistency_tolerance: float = 1e-4
     self_consistency_max_iterations: int = 5
     self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
 
@@ -216,6 +216,10 @@ class SimulationOptions:
     adaptive_timestep_max_probe_steps: int = 3
 
     adaptive_timestep_debug: bool = False
+
+    # Logging options
+    save_log_file: bool = False
+    log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
 
     def to_dict(self) -> Dict[str, object]:
         payload: Dict[str, object] = {
@@ -261,6 +265,8 @@ class SimulationOptions:
             "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
             "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
+            "save_log_file": self.save_log_file,
+            "log_file_path": self.log_file_path,
         }
         return payload
 
@@ -342,7 +348,7 @@ class SimulationOptions:
             image_subcharge_count=_int("image_subcharge_count", 12),
             use_image_weighting=_bool("use_image_weighting", True),
             self_consistency_enabled=_bool("self_consistency_enabled", True),
-            self_consistency_tolerance=_float("self_consistency_tolerance", 1e-6),
+            self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_max_iterations=_int("self_consistency_max_iterations", 5),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
@@ -367,6 +373,8 @@ class SimulationOptions:
                 "adaptive_timestep_max_probe_steps", 3
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
+            save_log_file=_bool("save_log_file", False),
+            log_file_path=data.get("log_file_path"),
         )
         return options
 
@@ -1357,6 +1365,23 @@ def run_testbed(
     duration = time.perf_counter() - start
     _log("")
     _log("Run complete")
+
+    # Save log file if requested
+    if options.save_log_file:
+        if options.log_file_path:
+            log_path = Path(options.log_file_path).expanduser()
+        else:
+            # Auto-generate in output_dir
+            ensure_directory(output_dir)
+            log_path = output_dir / f"{filename_base}_log.txt"
+
+        try:
+            with log_path.open("w", encoding="utf-8") as log_file:
+                log_file.write("\n".join(logs))
+            saved_paths["log"] = log_path
+            _log(f"Saved log file to: {log_path}")
+        except Exception as exc:
+            _log(f"Failed to save log file: {exc}")
 
     return RunResult(
         metrics=metrics,

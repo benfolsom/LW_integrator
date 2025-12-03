@@ -203,6 +203,9 @@ class IntegratorGUI:
         self.config_name_var = tk.StringVar(value=self.options.config_name)
         self.config_file_var = tk.StringVar(value="")
 
+        # Log file options
+        self.save_log_file_var = tk.BooleanVar(value=self.options.save_log_file)
+
         self.status_var = tk.StringVar(value="Idle")
         self.summary_var = tk.StringVar(value="")
         self.progress_var = tk.DoubleVar(value=0.0)
@@ -578,6 +581,13 @@ class IntegratorGUI:
             state="readonly",
         ).grid(row=5, column=1, sticky="w", pady=(12, 0))
 
+        # Log file saving
+        ttk.Checkbutton(
+            output_frame,
+            text="Save log file to test_outputs directory",
+            variable=self.save_log_file_var,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
         # Config tab ----------------------------------------------------
         config_frame = ttk.Frame(notebook, padding=12)
         notebook.add(config_frame, text="Configs")
@@ -843,6 +853,7 @@ class IntegratorGUI:
             options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
+        self.save_log_file_var.set(options.save_log_file)
         self.output_dir_var.set(str(options.output_dir))
         self.config_dir_var.set(str(options.config_dir))
         self.config_name_var.set(options.config_name)
@@ -947,6 +958,7 @@ class IntegratorGUI:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
+            save_log_file=bool(self.save_log_file_var.get()),
         )
         return options
 

@@ -158,8 +158,12 @@ def _compute_electromagnetic_forces(
             beta_ext = np.array([bx_ext[j], by_ext[j], bz_ext[j]])
             nhat_vec = np.array([nx, ny, nz])
 
-            k_factor = 1.0 - np.dot(beta_ext, nhat_vec)
-            if abs(k_factor) < 1e-15:
+            # Use float64 precision for k_factor calculation
+            k_factor = np.float64(1.0) - np.dot(
+                np.float64(beta_ext), np.float64(nhat_vec)
+            )
+            # Allow k_factor down to 1e-20 for ultra-relativistic particles
+            if abs(k_factor) < 1e-20:
                 continue
 
             bdot_ext = np.array([bdotx_ext[j], bdoty_ext[j], bdotz_ext[j]])
@@ -307,7 +311,7 @@ def _update_particle_kinematics(
         bdotz_new[i] = (bz_new[i] - bz[i]) / (C_MMNS * h * gamma_new[i])
 
         rad_frc_z_rhs = (
-            -gamma_new[i] ** 3
+            -(gamma_new[i] ** 3)
             * (m[i] * bdotz_new[i] ** 2 * C_MMNS * C_MMNS)
             * bz_new[i]
             * C_MMNS
@@ -330,7 +334,7 @@ def _update_particle_kinematics(
             )
 
             rad_frc_x_rhs = (
-                -gamma_new[i] ** 3
+                -(gamma_new[i] ** 3)
                 * (m[i] * bdotx_new[i] ** 2 * C_MMNS * C_MMNS)
                 * bx_new[i]
                 * C_MMNS
@@ -345,7 +349,7 @@ def _update_particle_kinematics(
                 * C_MMNS
             )
             rad_frc_y_rhs = (
-                -gamma_new[i] ** 3
+                -(gamma_new[i] ** 3)
                 * (m[i] * bdoty_new[i] ** 2 * C_MMNS * C_MMNS)
                 * by_new[i]
                 * C_MMNS

@@ -21,7 +21,9 @@ High-level anatomy
     utilities, and the ``IntegratorConfig`` data class).  ``performance.py``
     bundles optional Numba kernels that accelerate large runs without changing
     the underlying physics.  ``self_consistency.py`` holds the fixed-point
-    iteration used for radiation-reaction corrections.
+    iteration used for radiation-reaction corrections and ensuring gamma
+    consistency between energy and velocity calculations (enabled by default
+    as of December 2025).
 
 ``legacy/``
   Archived notebooks and scripts from the original codebase.  They are kept
@@ -56,8 +58,12 @@ Key ideas to keep in mind
 -------------------------
 
 * **Physics parity matters.**  The core code is intentionally a transcription of
-  the legacy solver.  Any behavioural change should come with matching updates
-  to the validation scripts and the integration tests.
+  the legacy solver, with critical corrections applied in December 2025 to fix
+  gamma calculation and scalar potential handling. Recent changes include proper
+  separation of conjugate and kinetic energy, corrected self-consistency
+  convergence tests, and improved numerical precision for extreme relativistic
+  scenarios. Any behavioural change should come with matching updates to the
+  validation scripts and the integration tests.
 * **Particle states are dictionaries of NumPy arrays.**  Whenever you initialize
   particles manually, fill every expected key (``x``, ``Pz``, ``gamma``, ``q``,
   ``char_time`` …) or use ``input_output.create_bunch_from_energy`` to obtain a
@@ -70,6 +76,12 @@ Key ideas to keep in mind
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
   mirrors the legacy solver's behaviour).  CLI commands, scripts, and notebooks
   surface the enum so you can pick the right transient treatment per study.
+* **Self-consistency is enabled by default.**  As of December 2025, self-
+  consistency iterations are enabled by default to ensure energy conservation in
+  high-energy simulations. These iterations verify that gamma derived from
+  energy matches gamma derived from velocity (γ = 1/√(1 - β²)), which is
+  critical for physical correctness. See ``SelfConsistencyConfig`` in the API
+  documentation.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to

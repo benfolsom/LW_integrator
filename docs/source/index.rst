@@ -17,6 +17,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    :caption: Physics background
 
    theory
+   recent_changes
 
 .. toctree::
    :maxdepth: 1

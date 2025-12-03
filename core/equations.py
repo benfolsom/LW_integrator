@@ -313,28 +313,31 @@ def _limit_beta_magnitude(
 ) -> tuple[float, float, float]:
     """Ensure beta magnitude stays below the speed of light.
 
-    If |β| >= 1, scale it down to a maximum of 0.99999999999999999 to avoid
-    singularities in the Lorentz factor calculation while allowing extremely
-    high velocities up to the numerical precision limit of float64.
+    Uses float64 precision to allow beta extremely close to c (1 - 1e-16).
+    This allows gamma up to ~1e8 while maintaining numerical stability.
 
     Returns
     -------
     tuple[float, float, float]
         The (possibly scaled) beta components (βx, βy, βz).
     """
-    beta_magnitude = np.sqrt(beta_x**2 + beta_y**2 + beta_z**2)
+    # Use float64 for high precision in beta calculations
+    bx64 = np.float64(beta_x)
+    by64 = np.float64(beta_y)
+    bz64 = np.float64(beta_z)
 
-    # Use a more conservative threshold to prevent beta from reaching exactly 1.0
-    # due to floating point precision issues. This allows extremely high velocities
-    # while guaranteeing gamma remains finite.
-    beta_max_allowed = 0.99999999999999999  # 17 nines - close to float64 limit
+    beta_magnitude = np.sqrt(bx64**2 + by64**2 + bz64**2)
+
+    # Allow beta extremely close to 1.0, limited only by float64 precision
+    # 1 - 1e-16 corresponds to gamma ~ 1e8
+    beta_max_allowed = np.float64(1.0) - np.float64(1e-16)
 
     if beta_magnitude >= beta_max_allowed:
         scale_factor = beta_max_allowed / beta_magnitude
         return (
-            beta_x * scale_factor,
-            beta_y * scale_factor,
-            beta_z * scale_factor,
+            float(bx64 * scale_factor),
+            float(by64 * scale_factor),
+            float(bz64 * scale_factor),
         )
 
     return beta_x, beta_y, beta_z
@@ -345,22 +348,30 @@ def _calculate_gamma_from_beta(beta_x: float, beta_y: float, beta_z: float) -> f
 
     γ = 1 / √(1 - β²)
 
-    Includes safety check to prevent division by zero when beta approaches 1.0.
+    Uses float64 precision to handle extremely relativistic particles accurately.
     """
-    beta_squared = beta_x**2 + beta_y**2 + beta_z**2
+    # Use float64 for high precision
+    bx64 = np.float64(beta_x)
+    by64 = np.float64(beta_y)
+    bz64 = np.float64(beta_z)
 
-    # Safety check: if beta_squared is too close to 1.0, clamp it
-    # This prevents gamma from becoming infinite due to numerical precision
-    max_beta_squared = 0.99999999999999999**2  # Corresponds to beta_max in limiter
+    beta_squared = bx64**2 + by64**2 + bz64**2
+
+    # Clamp beta_squared just below 1.0 to prevent infinity
+    # This corresponds to the same limit used in _limit_beta_magnitude
+    max_beta_squared = (np.float64(1.0) - np.float64(1e-16)) ** 2
     if beta_squared >= max_beta_squared:
         beta_squared = max_beta_squared
 
-    denominator = 1.0 - beta_squared
-    if denominator <= 0.0:
-        # Fallback: return a very large but finite gamma
-        return 7.0710678e7  # gamma corresponding to beta = 0.99999999999999999
+    denominator = np.float64(1.0) - beta_squared
 
-    return 1.0 / np.sqrt(denominator)
+    # With float64 precision, denominator should never be exactly zero
+    # if beta was properly limited, but check anyway
+    if denominator <= np.float64(0.0):
+        # Use the maximum gamma corresponding to our beta limit
+        return float(1.0 / np.sqrt(np.float64(1.0) - max_beta_squared))
+
+    return float(1.0 / np.sqrt(denominator))
 
 
 def _compute_radiation_reaction_term(
@@ -478,8 +489,8 @@ def _check_self_consistency_convergence(
 def _print_convergence_info(
     particle_idx: int,
     iteration: int,
-    gamma_prev: float,
-    gamma_new: float,
+    gamma_from_velocity: float,
+    gamma_from_energy: float,
     gamma_abs_change: float,
     gamma_rel_change: float,
     converged: bool,
@@ -488,8 +499,15 @@ def _print_convergence_info(
 ) -> None:
     """Print debug information about self-consistency convergence.
 
+    Compares gamma computed from velocity (kinematics) vs gamma computed
+    from energy (conjugate momentum). Self-consistency requires these to match.
+
     Parameters
     ----------
+    gamma_from_velocity : float
+        Gamma computed from velocity: γ = 1/√(1-β²)
+    gamma_from_energy : float
+        Gamma computed from kinetic energy: γ = (Pt - q·Φ)/(mc)
     verbosity : int
         0 = silent (no output)
         1 = basic (one line per particle)
@@ -507,14 +525,15 @@ def _print_convergence_info(
     if verbosity == 1:
         # Truncated: one line per particle
         print(
-            f"    P{particle_idx}: {status}, Δγ/γ={gamma_rel_change:.6e}, γ={gamma_new:.6e}"
+            f"    P{particle_idx}: {status}, Δγ/γ={gamma_rel_change:.6e}, "
+            f"γ_energy={gamma_from_energy:.6e}"
         )
     else:  # verbosity >= 2
         # Detailed: multi-line output with full precision
         print(f"    Particle {particle_idx}: {status}")
         print(f"      Δγ/γ = {gamma_rel_change:.15e}")
-        print(f"      γ_prev = {gamma_prev:.15e}")
-        print(f"      γ_new  = {gamma_new:.15e}")
+        print(f"      γ_velocity = {gamma_from_velocity:.15e}")
+        print(f"      γ_energy   = {gamma_from_energy:.15e}")
         print(f"      Δγ_abs = {gamma_abs_change:.15e}")
 
 
@@ -584,17 +603,12 @@ def retarded_equations_of_motion(
     # Process each particle independently
     for particle_idx in range(num_particles):
         # Self-consistency loop: iterate until gamma converges
-        gamma_from_previous_iteration: float = 0.0
-
         for sc_iteration in range(sc_max_iterations):
-            # Track gamma for convergence checking
-            if sc_iteration > 0:
-                gamma_from_previous_iteration = float(result["gamma"][particle_idx])
-                if sc_verbosity >= 2:
-                    print(
-                        f"    Particle {particle_idx} iteration {sc_iteration}: "
-                        f"Starting with γ={gamma_from_previous_iteration:.15e}"
-                    )
+            if sc_verbosity >= 2 and sc_iteration > 0:
+                print(
+                    f"    Particle {particle_idx} iteration {sc_iteration}: "
+                    f"Starting self-consistency iteration"
+                )
 
             # ================================================================
             # STEP 1: Compute retarded distances to external sources
@@ -787,14 +801,11 @@ def retarded_equations_of_motion(
             result["by"][particle_idx] = beta_y_limited
             result["bz"][particle_idx] = beta_z_limited
 
-            # Compute gamma from the (possibly limited) beta for diagnostic purposes only
-            # DO NOT overwrite result["gamma"] - gamma must come from energy (Pt), not velocity!
-            # The velocity-derived gamma is only used for debugging/validation.
+            # Compute gamma from the (possibly limited) beta
+            # This is compared against gamma_from_energy for self-consistency
             gamma_from_velocity = _calculate_gamma_from_beta(
                 beta_x_limited, beta_y_limited, beta_z_limited
             )
-            # REMOVED: result["gamma"][particle_idx] = gamma_from_velocity
-            # Gamma is already correctly set from Pt at line 711 and should not be overwritten
 
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                 beta_total = np.sqrt(
@@ -915,15 +926,16 @@ def retarded_equations_of_motion(
             # STEP 10: Check self-consistency convergence
             # ================================================================
             if sc_enabled and sc_iteration > 0:
-                gamma_new = float(result["gamma"][particle_idx])
+                # Self-consistency requires gamma from energy to match gamma from velocity
+                gamma_from_energy = float(result["gamma"][particle_idx])
 
                 (
                     has_converged,
                     gamma_abs_change,
                     gamma_rel_change,
                 ) = _check_self_consistency_convergence(
-                    gamma_new,
-                    gamma_from_previous_iteration,
+                    gamma_from_energy,
+                    gamma_from_velocity,
                     sc_tolerance,
                 )
 
@@ -932,8 +944,8 @@ def retarded_equations_of_motion(
                         _print_convergence_info(
                             particle_idx,
                             sc_iteration,
-                            gamma_from_previous_iteration,
-                            gamma_new,
+                            gamma_from_velocity,
+                            gamma_from_energy,
                             gamma_abs_change,
                             gamma_rel_change,
                             converged=True,
@@ -946,8 +958,8 @@ def retarded_equations_of_motion(
                         _print_convergence_info(
                             particle_idx,
                             sc_iteration,
-                            gamma_from_previous_iteration,
-                            gamma_new,
+                            gamma_from_velocity,
+                            gamma_from_energy,
                             gamma_abs_change,
                             gamma_rel_change,
                             converged=False,
