@@ -4,6 +4,70 @@ The implementation intentionally mirrors the behaviour of the validated legacy
 code so that historical regression data remains applicable.  The heavy lifting
 is performed inside :func:`retarded_equations_of_motion`, which calculates the
 covariant updates for momentum, position, and acceleration for each particle.
+
+Physical Foundation
+-------------------
+
+The integrator evolves particles in coordinate time with step h = Δt, updating
+conjugate momentum from retarded electromagnetic forces, then deriving positions
+and velocities.
+
+Conjugate vs. Kinetic Momentum
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The conjugate (canonical) momentum includes electromagnetic potentials::
+
+    P^μ = γ·m·V^μ + (e/c)·A^μ
+
+For spatial components: P_i = γ·m·v_i + (e/c)·A_i
+
+The kinetic (mechanical) momentum is::
+
+    P_kinetic = P - (e/c)·A = γ·m·v
+
+Position Updates
+~~~~~~~~~~~~~~~~
+
+Spatial positions are updated in coordinate time using the kinetic momentum::
+
+    Δx = v·h = (P_kinetic / (γ·m))·h
+
+The 1/γ factor is **essential**: it ensures that velocity v = P_kinetic/(γ·m)
+remains subluminal even as momentum grows with γ.
+
+Velocity Calculation
+~~~~~~~~~~~~~~~~~~~~
+
+Velocity (beta) is computed from the coordinate-time displacement::
+
+    β = v/c = Δx/(c·h)
+
+Note: This does **not** include a γ factor in the denominator. The time dilation
+is already accounted for in the position update formula.
+
+Self-Consistency Iterations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For ultra-relativistic particles (γ ≫ 1), forces depend strongly on γ through
+the retarded field geometry (k-factor, field Lorentz contraction). The integrator
+resolves the circular dependency γ → forces → P → γ through iterations:
+
+1. Use γ_n-1 to compute retarded forces
+2. Update conjugate momentum P_n from those forces
+3. Update positions using the **same** γ_n-1: Δx = (h/(γ_n-1·m))·P_kinetic
+4. Compute velocity: β = Δx/(c·h)
+5. Derive two independent γ estimates:
+
+   - From energy: γ_E = (Pt - e·Φ)/(mc)
+   - From velocity: γ_V = 1/√(1-β²)
+
+6. Check convergence: |γ_E - γ_V|/γ_E < ε (typically ε = 10⁻⁶)
+
+If not converged, the next iteration uses γ_n = γ_E and repeats. Using a
+**consistent** γ throughout each iteration for both forces and positions ensures
+the velocity extracted from Δx corresponds physically to the computed momentum.
+
+See :class:`core.self_consistency.SelfConsistencyConfig` for configuration.
 """
 
 from __future__ import annotations
@@ -607,7 +671,7 @@ def retarded_equations_of_motion(
             if sc_verbosity >= 2 and sc_iteration > 0:
                 print(
                     f"    Particle {particle_idx} iteration {sc_iteration}: "
-                    f"Starting self-consistency iteration"
+                    f"Starting refinement"
                 )
 
             # ================================================================
@@ -660,10 +724,25 @@ def retarded_equations_of_motion(
                 startup_mode, nhat, current_state, particle_idx
             )
 
-            # Get gamma and beta for this iteration (may use updated values)
-            particle_gamma, particle_beta = _get_current_particle_gamma_and_beta(
+            # Get gamma for this iteration (may use updated values)
+            # This gamma will be used consistently for forces AND positions
+            particle_gamma, _ = _get_current_particle_gamma_and_beta(
                 current_state, result, particle_idx, sc_iteration, sc_enabled
             )
+
+            # Get beta separately for force calculations
+            if sc_enabled and sc_iteration > 0:
+                particle_beta = (
+                    result["bx"][particle_idx],
+                    result["by"][particle_idx],
+                    result["bz"][particle_idx],
+                )
+            else:
+                particle_beta = (
+                    current_state["bx"][particle_idx],
+                    current_state["by"][particle_idx],
+                    current_state["bz"][particle_idx],
+                )
 
             # ================================================================
             # STEP 3: Compute and accumulate external force contributions
@@ -755,21 +834,17 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 5: Update spatial positions
             # ================================================================
-            result["x"][particle_idx] = current_state["x"][
-                particle_idx
-            ] + h / particle_mass * (
-                result["Px"][particle_idx] - accumulated_field_x * particle_mass
-            )
-            result["y"][particle_idx] = current_state["y"][
-                particle_idx
-            ] + h / particle_mass * (
-                result["Py"][particle_idx] - accumulated_field_y * particle_mass
-            )
-            result["z"][particle_idx] = current_state["z"][
-                particle_idx
-            ] + h / particle_mass * (
-                result["Pz"][particle_idx] - accumulated_field_z * particle_mass
-            )
+            # Use particle_gamma from the START of this iteration for consistency
+            # Correct relativistic position update: Δx = v·h = (P_kinetic/(γ·m))·h
+            result["x"][particle_idx] = current_state["x"][particle_idx] + h / (
+                particle_mass * particle_gamma
+            ) * (result["Px"][particle_idx] - accumulated_field_x * particle_mass)
+            result["y"][particle_idx] = current_state["y"][particle_idx] + h / (
+                particle_mass * particle_gamma
+            ) * (result["Py"][particle_idx] - accumulated_field_y * particle_mass)
+            result["z"][particle_idx] = current_state["z"][particle_idx] + h / (
+                particle_mass * particle_gamma
+            ) * (result["Pz"][particle_idx] - accumulated_field_z * particle_mass)
 
             # ================================================================
             # STEP 6: Compute velocity (beta) from position changes
@@ -784,11 +859,11 @@ def retarded_equations_of_motion(
                 result["z"][particle_idx] - current_state["z"][particle_idx]
             )
 
-            time_dilation_factor = C_MMNS * h * result["gamma"][particle_idx]
-
-            beta_x = position_change_x / time_dilation_factor
-            beta_y = position_change_y / time_dilation_factor
-            beta_z = position_change_z / time_dilation_factor
+            # β = Δx/(c·h) for coordinate time stepping
+            # No gamma factor needed here since positions were updated with 1/γ
+            beta_x = position_change_x / (C_MMNS * h)
+            beta_y = position_change_y / (C_MMNS * h)
+            beta_z = position_change_z / (C_MMNS * h)
 
             # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(
@@ -829,9 +904,12 @@ def retarded_equations_of_motion(
                 result["bz"][particle_idx] - current_state["bz"][particle_idx]
             )
 
-            result["bdotx"][particle_idx] = beta_change_x / time_dilation_factor
-            result["bdoty"][particle_idx] = beta_change_y / time_dilation_factor
-            result["bdotz"][particle_idx] = beta_change_z / time_dilation_factor
+            # β-dot = dβ/dt where dt is coordinate time
+            # Use the gamma from this iteration for time dilation
+            time_factor = C_MMNS * h * result["gamma"][particle_idx]
+            result["bdotx"][particle_idx] = beta_change_x / time_factor
+            result["bdoty"][particle_idx] = beta_change_y / time_factor
+            result["bdotz"][particle_idx] = beta_change_z / time_factor
 
             # ================================================================
             # STEP 8: Apply radiation reaction corrections

@@ -1,4 +1,47 @@
-"""Helpers providing vectorized kernels for the Liénard–Wiechert integrator."""
+"""Vectorized kernels for retarded electromagnetic force calculations.
+
+This module implements the core retarded field computations using NumPy
+vectorization for efficient batch processing of external source particles.
+
+Physical Context
+----------------
+
+The Liénard-Wiechert retarded fields from a moving source charge depend on
+the source's state at the retarded time t_ret = t_obs - R/c, where R is the
+source-observer separation. The key geometric factor is::
+
+    k = 1 - β·n̂
+
+where β = v/c is the source velocity and n̂ points from source to observer.
+This k-factor appears in denominators, leading to field enhancement when
+particles move nearly head-on (β·n̂ → 1).
+
+Computed Quantities
+-------------------
+
+compute_vectorized_contributions
+    Returns 8 values per call:
+
+    1-4. Momentum changes (ΔPx, ΔPy, ΔPz, ΔPt) from retarded E and B fields
+    5-7. Field contributions for position updates (gauge field components)
+    8. Scalar potential sum Φ = Σ(q_j / (R_j · k_j)) for energy corrections
+
+The scalar potential (item 8) is used to compute the correct kinetic energy::
+
+    E_kinetic = Pt - q·Φ
+    γ = E_kinetic / (mc)
+
+This separates the particle's kinetic energy from the electromagnetic potential
+energy, which is critical for self-consistency iterations.
+
+k-factor Threshold
+------------------
+
+The implementation filters out contributions where |k| < 1e-20 to prevent
+numerical overflow. This threshold is extremely permissive—it only excludes
+interactions where particles are moving at β > 1 - 1e-20 (γ > 2.2e9) nearly
+directly toward each other, a regime far beyond any realistic simulation.
+"""
 
 from __future__ import annotations
 
