@@ -50,6 +50,80 @@ DISPLAY_MAX_WIDTH = 1600  # pixels
 DISPLAY_MAX_HEIGHT = 900  # pixels
 
 
+def _show_error_dialog(parent: tk.Tk | tk.Toplevel, title: str, message: str) -> None:
+    """Show an error dialog with selectable text."""
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent)
+    dialog.grab_set()
+
+    # Icon and message frame
+    frame = ttk.Frame(dialog, padding=10)
+    frame.pack(fill="both", expand=True)
+
+    # Message text (read-only but selectable)
+    text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
+    text.insert("1.0", message)
+    text.configure(state="disabled", bg=frame.cget("background"))
+    text.pack(side="top", fill="both", expand=True, pady=(0, 10))
+
+    # OK button
+    button_frame = ttk.Frame(frame)
+    button_frame.pack(side="bottom")
+    ok_button = ttk.Button(button_frame, text="OK", command=dialog.destroy, width=10)
+    ok_button.pack()
+    ok_button.focus_set()
+
+    # Center dialog
+    dialog.update_idletasks()
+    width = dialog.winfo_width()
+    height = dialog.winfo_height()
+    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+    y = (dialog.winfo_screenheight() // 2) - (height // 2)
+    dialog.geometry(f"+{x}+{y}")
+
+    # Bind Enter and Escape to close
+    dialog.bind("<Return>", lambda e: dialog.destroy())
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+
+def _show_warning_dialog(parent: tk.Tk | tk.Toplevel, title: str, message: str) -> None:
+    """Show a warning dialog with selectable text."""
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent)
+    dialog.grab_set()
+
+    # Icon and message frame
+    frame = ttk.Frame(dialog, padding=10)
+    frame.pack(fill="both", expand=True)
+
+    # Message text (read-only but selectable)
+    text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
+    text.insert("1.0", message)
+    text.configure(state="disabled", bg=frame.cget("background"))
+    text.pack(side="top", fill="both", expand=True, pady=(0, 10))
+
+    # OK button
+    button_frame = ttk.Frame(frame)
+    button_frame.pack(side="bottom")
+    ok_button = ttk.Button(button_frame, text="OK", command=dialog.destroy, width=10)
+    ok_button.pack()
+    ok_button.focus_set()
+
+    # Center dialog
+    dialog.update_idletasks()
+    width = dialog.winfo_width()
+    height = dialog.winfo_height()
+    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+    y = (dialog.winfo_screenheight() // 2) - (height // 2)
+    dialog.geometry(f"+{x}+{y}")
+
+    # Bind Enter and Escape to close
+    dialog.bind("<Return>", lambda e: dialog.destroy())
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+
 @dataclass
 class _FigureHandle:
     name: str
@@ -790,7 +864,9 @@ class IntegratorGUI:
         try:
             options = load_config(path)
         except Exception as exc:
-            messagebox.showerror("Load config", f"Failed to load {filename}: {exc}")
+            _show_error_dialog(
+                self.root, "Load config", f"Failed to load {filename}: {exc}"
+            )
             return
 
         self._apply_options_to_ui(options)
@@ -1013,7 +1089,7 @@ class IntegratorGUI:
         try:
             options = self._build_options_from_ui()
         except ValueError as exc:
-            messagebox.showerror("Invalid configuration", str(exc))
+            _show_error_dialog(self.root, "Invalid configuration", str(exc))
             return
 
         ensure_directory(options.config_dir)
@@ -1021,7 +1097,9 @@ class IntegratorGUI:
         try:
             save_config(options, config_path)
         except Exception as exc:
-            messagebox.showerror("Save config", f"Failed to save configuration: {exc}")
+            _show_error_dialog(
+                self.root, "Save config", f"Failed to save configuration: {exc}"
+            )
             return
 
         self.config_name_var.set(options.config_name)
@@ -1076,7 +1154,7 @@ class IntegratorGUI:
         try:
             options = self._build_options_from_ui()
         except ValueError as exc:
-            messagebox.showerror("Invalid configuration", str(exc))
+            _show_error_dialog(self.root, "Invalid configuration", str(exc))
             return
 
         self.options = options
@@ -1157,7 +1235,7 @@ class IntegratorGUI:
         self._run_button.configure(state="normal")
         self._cancel_button.configure(state="disabled")
         self.progress_var.set(0.0)
-        messagebox.showerror("LW Integrator", message)
+        _show_error_dialog(self.root, "LW Integrator", message)
 
     def _on_success(self, result: RunResult) -> None:
         self._running = False
@@ -1179,7 +1257,7 @@ class IntegratorGUI:
             except Exception as e:
                 error_msg = f"Error displaying {title} plot: {e}"
                 self._append_log(error_msg)
-                messagebox.showwarning("Plot Display Error", error_msg)
+                _show_warning_dialog(self.root, "Plot Display Error", error_msg)
 
     def _show_figure(self, title: str, figure: Any) -> None:
         try:
@@ -1225,7 +1303,8 @@ class IntegratorGUI:
                             ax.set_xscale("log")
                         except (ValueError, RuntimeWarning):
                             x_log_var.set(False)
-                            messagebox.showwarning(
+                            _show_warning_dialog(
+                                window,
                                 "Log Scale Warning",
                                 "X-axis cannot be log-scaled (data may contain non-positive values)",
                             )
@@ -1236,7 +1315,8 @@ class IntegratorGUI:
                             ax.set_yscale("log")
                         except (ValueError, RuntimeWarning):
                             y_log_var.set(False)
-                            messagebox.showwarning(
+                            _show_warning_dialog(
+                                window,
                                 "Log Scale Warning",
                                 "Y-axis cannot be log-scaled (data may contain non-positive values)",
                             )
@@ -1267,7 +1347,7 @@ class IntegratorGUI:
                 figure.savefig(default_name, dpi=150, bbox_inches="tight")
                 self._append_log(f"Figure saved to: {default_name}")
             except Exception as e:
-                messagebox.showerror("Save Error", f"Failed to save figure: {e}")
+                _show_error_dialog(window, "Save Error", f"Failed to save figure: {e}")
 
         def save_figure_as() -> None:
             try:
@@ -1286,7 +1366,7 @@ class IntegratorGUI:
                     figure.savefig(filename, dpi=150, bbox_inches="tight")
                     self._append_log(f"Figure saved to: {filename}")
             except Exception as e:
-                messagebox.showerror("Save Error", f"Failed to save figure: {e}")
+                _show_error_dialog(window, "Save Error", f"Failed to save figure: {e}")
 
         ttk.Button(controls_frame, text="Save", command=save_figure).pack(
             side=tk.LEFT, padx=5

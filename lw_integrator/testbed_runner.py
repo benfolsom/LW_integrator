@@ -374,7 +374,9 @@ class SimulationOptions:
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
             save_log_file=_bool("save_log_file", False),
-            log_file_path=data.get("log_file_path"),
+            log_file_path=str(payload.get("log_file_path"))
+            if payload.get("log_file_path") is not None
+            else None,
         )
         return options
 
