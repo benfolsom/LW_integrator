@@ -860,9 +860,9 @@ def retarded_equations_of_motion(
 
             # β = Δx/(c·h) for coordinate time stepping
             # No gamma factor needed here since positions were updated with 1/γ
-            beta_x = position_change_x / (C_MMNS * h / particle_gamma)
-            beta_y = position_change_y / (C_MMNS * h / particle_gamma)
-            beta_z = position_change_z / (C_MMNS * h / particle_gamma)
+            beta_x = position_change_x / (C_MMNS * h * particle_gamma)
+            beta_y = position_change_y / (C_MMNS * h * particle_gamma)
+            beta_z = position_change_z / (C_MMNS * h * particle_gamma)
 
             # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(
@@ -905,7 +905,7 @@ def retarded_equations_of_motion(
 
             # β-dot = dβ/dt where dt is coordinate time
             # Use the gamma from this iteration for time dilation
-            time_factor = C_MMNS * h * result["gamma"][particle_idx]
+            time_factor = C_MMNS * h * result["gamma"][particle_idx] * particle_gamma
             result["bdotx"][particle_idx] = beta_change_x / time_factor
             result["bdoty"][particle_idx] = beta_change_y / time_factor
             result["bdotz"][particle_idx] = beta_change_z / time_factor
