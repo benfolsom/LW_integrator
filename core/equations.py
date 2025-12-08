@@ -834,16 +834,15 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 5: Update spatial positions
             # ================================================================
-            # Use particle_gamma from the START of this iteration for consistency
             # Correct relativistic position update: Δx = v·h = (P_kinetic/(γ·m))·h
             result["x"][particle_idx] = current_state["x"][particle_idx] + h / (
-                particle_mass * particle_gamma
+                particle_mass
             ) * (result["Px"][particle_idx] - accumulated_field_x * particle_mass)
             result["y"][particle_idx] = current_state["y"][particle_idx] + h / (
-                particle_mass * particle_gamma
+                particle_mass
             ) * (result["Py"][particle_idx] - accumulated_field_y * particle_mass)
             result["z"][particle_idx] = current_state["z"][particle_idx] + h / (
-                particle_mass * particle_gamma
+                particle_mass
             ) * (result["Pz"][particle_idx] - accumulated_field_z * particle_mass)
 
             # ================================================================
@@ -861,9 +860,9 @@ def retarded_equations_of_motion(
 
             # β = Δx/(c·h) for coordinate time stepping
             # No gamma factor needed here since positions were updated with 1/γ
-            beta_x = position_change_x / (C_MMNS * h)
-            beta_y = position_change_y / (C_MMNS * h)
-            beta_z = position_change_z / (C_MMNS * h)
+            beta_x = position_change_x / (C_MMNS * h / particle_gamma)
+            beta_y = position_change_y / (C_MMNS * h / particle_gamma)
+            beta_z = position_change_z / (C_MMNS * h / particle_gamma)
 
             # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(

@@ -132,6 +132,68 @@ class _FigureHandle:
     canvas: FigureCanvasTkAgg
 
 
+class _ScrollableNotebookPage:
+    def __init__(self, notebook: ttk.Notebook, title: str, padding: int = 12) -> None:
+        self.container = ttk.Frame(notebook)
+        notebook.add(self.container, text=title)
+        self.container.columnconfigure(0, weight=1)
+        self.container.rowconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self.container, highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar = ttk.Scrollbar(
+            self.container, orient="vertical", command=self.canvas.yview
+        )
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.frame = ttk.Frame(self.canvas, padding=padding)
+        self._window_id = self.canvas.create_window(
+            (0, 0), window=self.frame, anchor="nw"
+        )
+
+        self.frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        self._mousewheel_bound = False
+        self._bind_mousewheel(self.frame)
+
+    def _on_frame_configure(self, _event: Any) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event: Any) -> None:
+        self.canvas.itemconfigure(self._window_id, width=event.width)
+
+    def _bind_mousewheel(self, widget: tk.Widget) -> None:
+        widget.bind("<Enter>", lambda _event: self._activate_mousewheel())
+        widget.bind("<Leave>", lambda _event: self._deactivate_mousewheel())
+
+    def _activate_mousewheel(self) -> None:
+        if self._mousewheel_bound:
+            return
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel)
+        self._mousewheel_bound = True
+
+    def _deactivate_mousewheel(self) -> None:
+        if not self._mousewheel_bound:
+            return
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
+        self._mousewheel_bound = False
+
+    def _on_mousewheel(self, event: Any) -> None:
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            delta = -1 if getattr(event, "delta", 0) > 0 else 1
+        self.canvas.yview_scroll(delta, "units")
+
+
 class IntegratorGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -142,6 +204,7 @@ class IntegratorGUI:
         self._worker: Optional[threading.Thread] = None
         self._running = False
         self._cancel_requested = False
+        self._scroll_pages: List[_ScrollableNotebookPage] = []
 
         self._init_variables()
         self._build_layout()
@@ -297,6 +360,13 @@ class IntegratorGUI:
                 "write", lambda *_: self._refresh_initial_summary()
             )
 
+    def _create_scrollable_tab(
+        self, notebook: ttk.Notebook, title: str, *, padding: int = 12
+    ) -> ttk.Frame:
+        page = _ScrollableNotebookPage(notebook, title, padding=padding)
+        self._scroll_pages.append(page)
+        return page.frame
+
     # ------------------------------------------------------------------
     # Layout
     # ------------------------------------------------------------------
@@ -304,6 +374,7 @@ class IntegratorGUI:
     def _build_layout(self) -> None:
         """Build the complete GUI layout with all controls."""
         self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(4, weight=1)
         self.root.columnconfigure(0, weight=1)
 
         header = ttk.Frame(self.root, padding=8)
@@ -340,8 +411,7 @@ class IntegratorGUI:
         notebook.grid(row=1, column=0, sticky="nsew")
 
         # Particles tab --------------------------------------------------
-        particle_frame = ttk.Frame(notebook, padding=12)
-        notebook.add(particle_frame, text="Particles")
+        particle_frame = self._create_scrollable_tab(notebook, "Particles", padding=12)
         particle_frame.columnconfigure(1, weight=1)
         particle_frame.columnconfigure(3, weight=1)
 
@@ -405,8 +475,7 @@ class IntegratorGUI:
         ).grid(row=next_row + 1, column=0, columnspan=2, sticky="w", pady=2)
 
         # Core tab ------------------------------------------------------
-        core_frame = ttk.Frame(notebook, padding=12)
-        notebook.add(core_frame, text="Core params")
+        core_frame = self._create_scrollable_tab(notebook, "Core params", padding=12)
         core_frame.columnconfigure(1, weight=1)
 
         for row, name in enumerate(CORE_PARAM_LABELS, start=0):
@@ -418,8 +487,7 @@ class IntegratorGUI:
             ).grid(row=row, column=1, sticky="ew", pady=2)
 
         # Stability Settings tab ----------------------------------------
-        stability_frame = ttk.Frame(notebook, padding=12)
-        notebook.add(stability_frame, text="Stability")
+        stability_frame = self._create_scrollable_tab(notebook, "Stability", padding=12)
         stability_frame.columnconfigure(1, weight=1)
 
         # Self-consistency section
@@ -587,8 +655,7 @@ class IntegratorGUI:
         help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Outputs tab ---------------------------------------------------
-        output_frame = ttk.Frame(notebook, padding=12)
-        notebook.add(output_frame, text="Outputs")
+        output_frame = self._create_scrollable_tab(notebook, "Outputs", padding=12)
         output_frame.columnconfigure(1, weight=1)
 
         # Trajectory comparison outputs (grouped and dependent on legacy)
@@ -663,8 +730,7 @@ class IntegratorGUI:
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Config tab ----------------------------------------------------
-        config_frame = ttk.Frame(notebook, padding=12)
-        notebook.add(config_frame, text="Configs")
+        config_frame = self._create_scrollable_tab(notebook, "Configs", padding=12)
         config_frame.columnconfigure(1, weight=1)
 
         ttk.Label(config_frame, text="Config directory:").grid(
