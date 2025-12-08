@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
@@ -138,6 +138,7 @@ class _ScrollableNotebookPage:
         notebook.add(self.container, text=title)
         self.container.columnconfigure(0, weight=1)
         self.container.rowconfigure(0, weight=1)
+        self._bound_widgets: Set[int] = set()
 
         self.canvas = tk.Canvas(self.container, highlightthickness=0)
         self.canvas.grid(row=0, column=0, sticky="nsew")
@@ -156,6 +157,8 @@ class _ScrollableNotebookPage:
         self.canvas.bind("<Configure>", self._on_canvas_configure)
 
         self._mousewheel_bound = False
+        self._bind_mousewheel(self.container)
+        self._bind_mousewheel(self.canvas)
         self._bind_mousewheel(self.frame)
 
     def _on_frame_configure(self, _event: Any) -> None:
@@ -165,8 +168,22 @@ class _ScrollableNotebookPage:
         self.canvas.itemconfigure(self._window_id, width=event.width)
 
     def _bind_mousewheel(self, widget: tk.Widget) -> None:
-        widget.bind("<Enter>", lambda _event: self._activate_mousewheel())
-        widget.bind("<Leave>", lambda _event: self._deactivate_mousewheel())
+        widget_id = widget.winfo_id()
+        if widget_id in self._bound_widgets:
+            return
+        self._bound_widgets.add(widget_id)
+        widget.bind("<Enter>", lambda _event: self._activate_mousewheel(), add=True)
+        widget.bind(
+            "<Leave>", lambda _event: self._maybe_deactivate_mousewheel(), add=True
+        )
+
+    def refresh_mousewheel_bindings(self) -> None:
+        self._register_descendants(self.frame)
+
+    def _register_descendants(self, widget: tk.Widget) -> None:
+        self._bind_mousewheel(widget)
+        for child in widget.winfo_children():
+            self._register_descendants(child)
 
     def _activate_mousewheel(self) -> None:
         if self._mousewheel_bound:
@@ -176,6 +193,15 @@ class _ScrollableNotebookPage:
         self.canvas.bind_all("<Button-5>", self._on_mousewheel)
         self._mousewheel_bound = True
 
+    def _maybe_deactivate_mousewheel(self) -> None:
+        if not self._mousewheel_bound:
+            return
+        widget = self.container.winfo_containing(
+            self.container.winfo_pointerx(), self.container.winfo_pointery()
+        )
+        if not self._is_descendant(widget):
+            self._deactivate_mousewheel()
+
     def _deactivate_mousewheel(self) -> None:
         if not self._mousewheel_bound:
             return
@@ -183,6 +209,13 @@ class _ScrollableNotebookPage:
         self.canvas.unbind_all("<Button-4>")
         self.canvas.unbind_all("<Button-5>")
         self._mousewheel_bound = False
+
+    def _is_descendant(self, widget: Optional[tk.Widget]) -> bool:
+        while widget is not None:
+            if widget == self.container:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
 
     def _on_mousewheel(self, event: Any) -> None:
         if getattr(event, "num", None) == 4:
@@ -198,6 +231,7 @@ class IntegratorGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("LW Integrator Testbed")
+        self.root.geometry("1200x900")
 
         self.options = SimulationOptions()
         self._figure_windows: List[_FigureHandle] = []
@@ -373,8 +407,7 @@ class IntegratorGUI:
 
     def _build_layout(self) -> None:
         """Build the complete GUI layout with all controls."""
-        self.root.rowconfigure(1, weight=3)
-        self.root.rowconfigure(4, weight=1)
+        self.root.rowconfigure(1, weight=1)
         self.root.columnconfigure(0, weight=1)
 
         header = ttk.Frame(self.root, padding=8)
@@ -407,8 +440,15 @@ class IntegratorGUI:
             header, text="Enable legacy comparison", variable=self.legacy_var
         ).grid(row=0, column=6, sticky="w", padx=(12, 0))
 
-        notebook = ttk.Notebook(self.root)
-        notebook.grid(row=1, column=0, sticky="nsew")
+        main_paned = ttk.Panedwindow(self.root, orient="vertical")
+        main_paned.grid(row=1, column=0, sticky="nsew")
+        notebook = ttk.Notebook(main_paned)
+        main_paned.add(notebook, weight=3)
+
+        bottom_container = ttk.Frame(main_paned)
+        bottom_container.columnconfigure(0, weight=1)
+        bottom_container.rowconfigure(1, weight=1)
+        main_paned.add(bottom_container, weight=2)
 
         # Particles tab --------------------------------------------------
         particle_frame = self._create_scrollable_tab(notebook, "Particles", padding=12)
@@ -787,16 +827,20 @@ class IntegratorGUI:
         ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
         # Footer --------------------------------------------------------
-        footer = ttk.Frame(self.root, padding=8)
-        footer.grid(row=2, column=0, sticky="ew")
+
+        footer = ttk.Frame(bottom_container, padding=8)
+        footer.grid(row=0, column=0, sticky="ew")
+
         footer.columnconfigure(3, weight=1)
 
         self._run_button = ttk.Button(footer, text="Run", command=self._trigger_run)
+
         self._run_button.grid(row=0, column=0, sticky="w")
 
         self._cancel_button = ttk.Button(
             footer, text="Cancel", command=self._trigger_cancel, state="disabled"
         )
+
         self._cancel_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
 
         ttk.Checkbutton(
@@ -814,27 +858,45 @@ class IntegratorGUI:
             mode="determinate",
             length=200,
         )
+
         self._progress_bar.grid(row=0, column=4, sticky="w", padx=(12, 0))
+
         ttk.Button(footer, text="Close", command=self.root.destroy).grid(
             row=0, column=5, sticky="e", padx=(12, 0)
         )
 
         # Summary + logs ------------------------------------------------
-        summary_frame = ttk.LabelFrame(self.root, text="Initial summary", padding=8)
-        summary_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+
+        lower_paned = ttk.Panedwindow(bottom_container, orient="vertical")
+
+        lower_paned.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        summary_frame = ttk.LabelFrame(lower_paned, text="Initial summary", padding=8)
+
         summary_frame.columnconfigure(0, weight=1)
+
         ttk.Label(summary_frame, textvariable=self.summary_var, justify="left").grid(
             row=0, column=0, sticky="w"
         )
 
-        log_frame = ttk.LabelFrame(self.root, text="Logs", padding=8)
-        log_frame.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        lower_paned.add(summary_frame, weight=1)
+
+        log_frame = ttk.LabelFrame(lower_paned, text="Logs", padding=8)
+
         log_frame.columnconfigure(0, weight=1)
+
         log_frame.rowconfigure(0, weight=1)
+
         self.log_output = scrolledtext.ScrolledText(
             log_frame, height=6, state="disabled"
         )
+
         self.log_output.grid(row=0, column=0, sticky="nsew")
+
+        lower_paned.add(log_frame, weight=2)
+
+        for page in self._scroll_pages:
+            page.refresh_mousewheel_bindings()
 
     # ------------------------------------------------------------------
     # UI Helpers
