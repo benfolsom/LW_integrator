@@ -1334,6 +1334,31 @@ class IntegratorGUI:
             f"{summary.rider_rest_mev:.4f} MeV ({summary.rider_rest_gev:.4f} GeV)"
         )
         lines.append(f"Rider total energy: {summary.rider_total_gev:.4f} GeV")
+        
+        # Add rider beam optics if available
+        if summary.rider_emittance_x_mm_mrad is not None:
+            # Convert to picometer-radians for alternative display
+            emit_x_pm = summary.rider_emittance_x_mm_mrad * 1e9  # pm·rad
+            emit_y_pm = summary.rider_emittance_y_mm_mrad * 1e9  # pm·rad
+            norm_emit_x_pm = summary.rider_norm_emittance_x_mm_mrad * 1e9  # pm·rad
+            norm_emit_y_pm = summary.rider_norm_emittance_y_mm_mrad * 1e9  # pm·rad
+            
+            lines.append(
+                f"Rider ε: "
+                f"{summary.rider_emittance_x_mm_mrad:.2e} mm·mrad ({emit_x_pm:.2e} pm·rad), "
+                f"{summary.rider_emittance_y_mm_mrad:.2e} mm·mrad ({emit_y_pm:.2e} pm·rad)"
+            )
+            lines.append(
+                f"Rider εn: "
+                f"{summary.rider_norm_emittance_x_mm_mrad:.2e} mm·mrad ({norm_emit_x_pm:.2e} pm·rad), "
+                f"{summary.rider_norm_emittance_y_mm_mrad:.2e} mm·mrad ({norm_emit_y_pm:.2e} pm·rad)"
+            )
+            lines.append(
+                f"Rider β: "
+                f"{summary.rider_beta_x_m:.3f} m, "
+                f"{summary.rider_beta_y_m:.3f} m"
+            )
+        
         if summary.has_driver:
             lines.append("Driver present")
             lines.append(f"Driver gamma: {summary.driver_gamma:.4f}")
@@ -1347,6 +1372,29 @@ class IntegratorGUI:
                 )
             if summary.driver_total_gev is not None:
                 lines.append(f"Driver total energy: {summary.driver_total_gev:.4f} GeV")
+            
+            # Add driver beam optics if available
+            if summary.driver_emittance_x_mm_mrad is not None:
+                driver_emit_x_pm = summary.driver_emittance_x_mm_mrad * 1e9
+                driver_emit_y_pm = summary.driver_emittance_y_mm_mrad * 1e9
+                driver_norm_emit_x_pm = summary.driver_norm_emittance_x_mm_mrad * 1e9
+                driver_norm_emit_y_pm = summary.driver_norm_emittance_y_mm_mrad * 1e9
+                
+                lines.append(
+                    f"Driver ε: "
+                    f"{summary.driver_emittance_x_mm_mrad:.2e} mm·mrad ({driver_emit_x_pm:.2e} pm·rad), "
+                    f"{summary.driver_emittance_y_mm_mrad:.2e} mm·mrad ({driver_emit_y_pm:.2e} pm·rad)"
+                )
+                lines.append(
+                    f"Driver εn: "
+                    f"{summary.driver_norm_emittance_x_mm_mrad:.2e} mm·mrad ({driver_norm_emit_x_pm:.2e} pm·rad), "
+                    f"{summary.driver_norm_emittance_y_mm_mrad:.2e} mm·mrad ({driver_norm_emit_y_pm:.2e} pm·rad)"
+                )
+                lines.append(
+                    f"Driver β: "
+                    f"{summary.driver_beta_x_m:.3f} m, "
+                    f"{summary.driver_beta_y_m:.3f} m"
+                )
         else:
             lines.append("Driver disabled for this mode")
         return "\n".join(lines)

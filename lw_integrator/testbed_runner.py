@@ -421,10 +421,112 @@ class InitialSummary:
     driver_rest_gev: Optional[float]
     driver_total_gev: Optional[float]
     supports_driver: bool
+    # Beam optics parameters
+    rider_emittance_x_mm_mrad: Optional[float] = None
+    rider_emittance_y_mm_mrad: Optional[float] = None
+    rider_norm_emittance_x_mm_mrad: Optional[float] = None
+    rider_norm_emittance_y_mm_mrad: Optional[float] = None
+    rider_beta_x_m: Optional[float] = None
+    rider_beta_y_m: Optional[float] = None
+    driver_emittance_x_mm_mrad: Optional[float] = None
+    driver_emittance_y_mm_mrad: Optional[float] = None
+    driver_norm_emittance_x_mm_mrad: Optional[float] = None
+    driver_norm_emittance_y_mm_mrad: Optional[float] = None
+    driver_beta_x_m: Optional[float] = None
+    driver_beta_y_m: Optional[float] = None
 
     @property
     def has_driver(self) -> bool:
         return self.supports_driver and self.driver_gamma is not None
+
+
+def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str, float]:
+    """Calculate emittance and Twiss beta from particle state.
+    
+    Parameters
+    ----------
+    state : dict
+        Particle state with keys 'x', 'y', 'Px', 'Py', 'Pz', 'm', etc.
+    gamma : float
+        Lorentz factor
+    
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+        - emittance_x_mm_mrad: geometric emittance in x (mm·mrad)
+        - emittance_y_mm_mrad: geometric emittance in y (mm·mrad)
+        - norm_emittance_x_mm_mrad: normalized emittance in x (mm·mrad)
+        - norm_emittance_y_mm_mrad: normalized emittance in y (mm·mrad)
+        - beta_x_m: Twiss beta in x (meters)
+        - beta_y_m: Twiss beta in y (meters)
+    
+    Notes
+    -----
+    Units: amu·mm/ns system
+    - Position: mm
+    - Momentum: amu·mm/ns
+    - Angle x' = Px/Pz (dimensionless for paraxial beams)
+    - Geometric emittance: sqrt(<x²><x'²> - <xx'>²) in mm·rad
+    - Normalized emittance: β·γ·ε_geo in mm·rad
+    - Twiss beta: <x²>/ε_geo in mm/rad → convert to m/rad
+    """
+    x = state["x"]
+    y = state["y"]
+    Px = state["Px"]
+    Py = state["Py"]
+    Pz = state["Pz"]
+    mass = state["m"]
+    
+    # For small-angle approximation: x' ≈ tan(θ) ≈ Px/Pz
+    # This is exact for the divergence angle in the paraxial limit
+    xp = Px / Pz  # dimensionless (mm/ns / mm/ns)
+    yp = Py / Pz  # dimensionless
+    
+    # Calculate RMS quantities
+    x_rms = np.sqrt(np.mean(x**2))  # mm
+    y_rms = np.sqrt(np.mean(y**2))  # mm
+    xp_rms = np.sqrt(np.mean(xp**2))  # rad
+    yp_rms = np.sqrt(np.mean(yp**2))  # rad
+    
+    xxp_mean = np.mean(x * xp)  # mm·rad
+    yyp_mean = np.mean(y * yp)  # mm·rad
+    
+    # Geometric emittance: ε = sqrt(<x²><x'²> - <xx'>²)
+    # Units: mm·rad
+    emittance_x = np.sqrt(np.mean(x**2) * np.mean(xp**2) - xxp_mean**2)  # mm·rad
+    emittance_y = np.sqrt(np.mean(y**2) * np.mean(yp**2) - yyp_mean**2)  # mm·rad
+    
+    # Convert to mm·mrad (more common units)
+    emittance_x_mm_mrad = emittance_x * 1000.0  # mm·mrad
+    emittance_y_mm_mrad = emittance_y * 1000.0  # mm·mrad
+    
+    # Normalized emittance: ε_n = β·γ·ε_geo
+    # For relativistic beams, β ≈ 1, so ε_n ≈ γ·ε_geo
+    beta = np.sqrt(1.0 - 1.0 / gamma**2)
+    norm_emittance_x = beta * gamma * emittance_x  # mm·rad
+    norm_emittance_y = beta * gamma * emittance_y  # mm·rad
+    
+    norm_emittance_x_mm_mrad = norm_emittance_x * 1000.0  # mm·mrad
+    norm_emittance_y_mm_mrad = norm_emittance_y * 1000.0  # mm·mrad
+    
+    # Twiss beta function: β_twiss = <x²>/ε at a waist (where <xx'> ≈ 0)
+    # Units: mm² / (mm·rad) = mm/rad
+    # Convert to m/rad for standard accelerator units
+    beta_x_mm_per_rad = x_rms**2 / emittance_x if emittance_x > 0 else 0.0
+    beta_y_mm_per_rad = y_rms**2 / emittance_y if emittance_y > 0 else 0.0
+    
+    beta_x_m = beta_x_mm_per_rad * 1e-3  # m/rad
+    beta_y_m = beta_y_mm_per_rad * 1e-3  # m/rad
+    
+    return {
+        "emittance_x_mm_mrad": float(emittance_x_mm_mrad),
+        "emittance_y_mm_mrad": float(emittance_y_mm_mrad),
+        "norm_emittance_x_mm_mrad": float(norm_emittance_x_mm_mrad),
+        "norm_emittance_y_mm_mrad": float(norm_emittance_y_mm_mrad),
+        "beta_x_m": float(beta_x_m),
+        "beta_y_m": float(beta_y_m),
+    }
 
 
 @dataclass
@@ -514,6 +616,20 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
     rider_rest_gev = rider_rest_mev * 1e-3
     rider_total_gev = rider_gamma * rider_rest_gev
 
+    # Calculate rider beam optics (only if pcount > 1)
+    rider_pcount = int(rider_params.get("pcount", 1))
+    if rider_pcount > 1:
+        rider_optics = compute_beam_optics(rider_state, rider_gamma)
+    else:
+        rider_optics = {
+            "emittance_x_mm_mrad": None,
+            "emittance_y_mm_mrad": None,
+            "norm_emittance_x_mm_mrad": None,
+            "norm_emittance_y_mm_mrad": None,
+            "beta_x_m": None,
+            "beta_y_m": None,
+        }
+
     # Declare driver variables with explicit types
     driver_gamma: Optional[float]
     driver_rest_mev_opt: Optional[float]
@@ -525,11 +641,35 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
         driver_rest_mev_opt = driver_rest_mev
         driver_rest_gev = driver_rest_mev * 1e-3
         driver_total_gev = driver_gamma * driver_rest_gev
+        
+        # Calculate driver beam optics (only if pcount > 1)
+        driver_pcount = int(driver_params.get("pcount", 1)) if driver_params else 1
+        if driver_pcount > 1:
+            driver_optics_result = compute_beam_optics(driver_state, driver_gamma)
+            driver_emit_x = driver_optics_result["emittance_x_mm_mrad"]
+            driver_emit_y = driver_optics_result["emittance_y_mm_mrad"]
+            driver_norm_emit_x = driver_optics_result["norm_emittance_x_mm_mrad"]
+            driver_norm_emit_y = driver_optics_result["norm_emittance_y_mm_mrad"]
+            driver_beta_x = driver_optics_result["beta_x_m"]
+            driver_beta_y = driver_optics_result["beta_y_m"]
+        else:
+            driver_emit_x = None
+            driver_emit_y = None
+            driver_norm_emit_x = None
+            driver_norm_emit_y = None
+            driver_beta_x = None
+            driver_beta_y = None
     else:
         driver_gamma = None
         driver_rest_mev_opt = None
         driver_rest_gev = None
         driver_total_gev = None
+        driver_emit_x = None
+        driver_emit_y = None
+        driver_norm_emit_x = None
+        driver_norm_emit_y = None
+        driver_beta_x = None
+        driver_beta_y = None
 
     return InitialSummary(
         seed=options.seed,
@@ -542,6 +682,18 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
         driver_rest_gev=driver_rest_gev,
         driver_total_gev=driver_total_gev,
         supports_driver=driver_allowed,
+        rider_emittance_x_mm_mrad=rider_optics["emittance_x_mm_mrad"],
+        rider_emittance_y_mm_mrad=rider_optics["emittance_y_mm_mrad"],
+        rider_norm_emittance_x_mm_mrad=rider_optics["norm_emittance_x_mm_mrad"],
+        rider_norm_emittance_y_mm_mrad=rider_optics["norm_emittance_y_mm_mrad"],
+        rider_beta_x_m=rider_optics["beta_x_m"],
+        rider_beta_y_m=rider_optics["beta_y_m"],
+        driver_emittance_x_mm_mrad=driver_emit_x,
+        driver_emittance_y_mm_mrad=driver_emit_y,
+        driver_norm_emittance_x_mm_mrad=driver_norm_emit_x,
+        driver_norm_emittance_y_mm_mrad=driver_norm_emit_y,
+        driver_beta_x_m=driver_beta_x,
+        driver_beta_y_m=driver_beta_y,
     )
 
 
