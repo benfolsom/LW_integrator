@@ -667,12 +667,25 @@ def retarded_equations_of_motion(
 
     # Process each particle independently
     for particle_idx in range(num_particles):
+        # Working state for SC iterations - tracks evolving beta/gamma
+        # On iteration 0, use current_state values
+        # On iteration k > 0, use values from previous iteration
+        working_beta_x = current_state["bx"][particle_idx]
+        working_beta_y = current_state["by"][particle_idx]
+        working_beta_z = current_state["bz"][particle_idx]
+        working_gamma = current_state["gamma"][particle_idx]
+
         # Self-consistency loop: iterate until gamma converges
         for sc_iteration in range(sc_max_iterations):
             if sc_verbosity >= 2 and sc_iteration > 0:
                 print(
                     f"    Particle {particle_idx} iteration {sc_iteration}: "
                     f"Starting refinement"
+                )
+                print(
+                    f"      Working state: βx={working_beta_x:.15e}, "
+                    f"βy={working_beta_y:.15e}, βz={working_beta_z:.15e}, "
+                    f"γ={working_gamma:.15e}"
                 )
 
             # ================================================================
@@ -694,13 +707,15 @@ def retarded_equations_of_motion(
                     chrono_mode,
                 )
 
-            # Copy position and time (unchanged by forces)
+            # Initialize position and time from current_state
+            # These will be updated after force calculation
             result["x"][particle_idx] = current_state["x"][particle_idx]
             result["y"][particle_idx] = current_state["y"][particle_idx]
             result["z"][particle_idx] = current_state["z"][particle_idx]
             result["t"][particle_idx] = current_state["t"][particle_idx]
 
             # Start accumulation from initial momentum
+            # Always start from current_state - forces will be recomputed using updated beta
             accumulated_momentum_x = current_state["Px"][particle_idx]
             accumulated_momentum_y = current_state["Py"][particle_idx]
             accumulated_momentum_z = current_state["Pz"][particle_idx]
@@ -725,25 +740,10 @@ def retarded_equations_of_motion(
                 startup_mode, nhat, current_state, particle_idx
             )
 
-            # Get gamma for this iteration (may use updated values)
-            # This gamma will be used consistently for forces AND positions
-            particle_gamma, _ = _get_current_particle_gamma_and_beta(
-                current_state, result, particle_idx, sc_iteration, sc_enabled
-            )
-
-            # Get beta separately for force calculations
-            if sc_enabled and sc_iteration > 0:
-                particle_beta = (
-                    result["bx"][particle_idx],
-                    result["by"][particle_idx],
-                    result["bz"][particle_idx],
-                )
-            else:
-                particle_beta = (
-                    current_state["bx"][particle_idx],
-                    current_state["by"][particle_idx],
-                    current_state["bz"][particle_idx],
-                )
+            # Use working state values for force calculations
+            # These evolve across SC iterations
+            particle_gamma = working_gamma
+            particle_beta = (working_beta_x, working_beta_y, working_beta_z)
 
             # ================================================================
             # STEP 3: Compute and accumulate external force contributions
@@ -818,21 +818,23 @@ def retarded_equations_of_motion(
             Py_64 = np.float64(result["Py"][particle_idx])
             Pz_64 = np.float64(result["Pz"][particle_idx])
             Pt_64 = np.float64(result["Pt"][particle_idx])
-            
+
             P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
             mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
-            
+
             # Compute what Pt should be to satisfy the constraint
             Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
-            
+
             # Check if correction is needed (tolerance of 1e-6 relative error)
             Pt_current = Pt_64
-            mass_shell_error = np.abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
-            
+            mass_shell_error = (
+                np.abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
+            )
+
             if mass_shell_error > 1e-6:
                 # Project Pt onto the mass-shell
                 result["Pt"][particle_idx] = float(Pt_from_mass_shell)
-                
+
                 if sc_verbosity >= 2 and sc_enabled:
                     print(
                         f"      Mass-shell projection: Pt {Pt_current:.6e} → "
@@ -846,7 +848,9 @@ def retarded_equations_of_motion(
             scalar_potential_contribution = np.float64(
                 particle_charge * accumulated_scalar_potential
             )
-            kinetic_energy = np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
+            kinetic_energy = (
+                np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
+            )
             gamma_from_energy = kinetic_energy / np.float64(particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy
 
@@ -1039,8 +1043,14 @@ def retarded_equations_of_motion(
             result["beta_avg_z"][particle_idx] = updated_beta_avg[2]
 
             # ================================================================
-            # STEP 10: Check self-consistency convergence
+            # STEP 10: Update working state and check convergence
             # ================================================================
+            # Update working state with newly computed values for next iteration
+            new_working_beta_x = result["bx"][particle_idx]
+            new_working_beta_y = result["by"][particle_idx]
+            new_working_beta_z = result["bz"][particle_idx]
+            new_working_gamma = result["gamma"][particle_idx]
+
             if sc_enabled and sc_iteration > 0:
                 # Self-consistency requires gamma from energy to match gamma from velocity
                 gamma_from_energy = float(result["gamma"][particle_idx])
@@ -1082,6 +1092,12 @@ def retarded_equations_of_motion(
                             max_iterations=sc_max_iterations,
                             verbosity=sc_verbosity,
                         )
+
+            # Update working state for next iteration
+            working_beta_x = new_working_beta_x
+            working_beta_y = new_working_beta_y
+            working_beta_z = new_working_beta_z
+            working_gamma = new_working_gamma
 
     return result
 
