@@ -14,7 +14,6 @@ terminals that do not default to UTF-8.
 from __future__ import annotations
 
 import json
-import sys
 import time
 import traceback
 from contextlib import redirect_stdout, redirect_stderr
@@ -152,6 +151,32 @@ plt.rcParams.update(
         "legend.fontsize": 12,
     }
 )
+
+# ---------------------------------------------------------------------------
+# Helper classes
+# ---------------------------------------------------------------------------
+
+class TeeStringIO(StringIO):
+    """StringIO that also writes to another stream (like sys.stdout).
+    
+    This allows capturing output while also displaying it in real-time.
+    """
+    def __init__(self, tee_stream=None):
+        super().__init__()
+        self.tee_stream = tee_stream
+    
+    def write(self, s):
+        """Write to both StringIO buffer and tee stream."""
+        result = super().write(s)
+        if self.tee_stream is not None:
+            try:
+                self.tee_stream.write(s)
+                self.tee_stream.flush()
+            except Exception:
+                # Ignore errors writing to tee stream
+                pass
+        return result
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses for strongly typed options/results
@@ -646,8 +671,10 @@ def run_testbed(
     )
 
     # Capture stdout/stderr to get verbose SC and adaptive timestep logs
-    stdout_capture = StringIO()
-    stderr_capture = StringIO()
+    # Use TeeStringIO to also print to console in real-time
+    import sys
+    stdout_capture = TeeStringIO(sys.stdout)
+    stderr_capture = TeeStringIO(sys.stderr)
     
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
         result = run_benchmark(
@@ -683,19 +710,18 @@ def run_testbed(
         **filtered_core_params,
     )
 
-    # Store captured stdout/stderr separately - don't forward to log during run
-    # This prevents GUI slowdown from dumping thousands of lines
+    # Store captured stdout/stderr separately for verbose logs button
     captured_stdout = stdout_capture.getvalue()
     captured_stderr = stderr_capture.getvalue()
     
-    # Just log a summary
+    # Log a summary
     stdout_lines = len([l for l in captured_stdout.splitlines() if l.strip()])
     stderr_lines = len([l for l in captured_stderr.splitlines() if l.strip()])
     
     if stdout_lines > 0:
-        _log(f"Captured {stdout_lines:,} lines of verbose output (available after run)")
+        _log(f"Verbose output: {stdout_lines:,} lines (displayed in console and available via 'Load Verbose Logs')")
     if stderr_lines > 0:
-        _log(f"Captured {stderr_lines} stderr lines")
+        _log(f"Stderr: {stderr_lines} lines")
     
     if isinstance(result, tuple) and len(result) == 2:
         metrics, payload = result

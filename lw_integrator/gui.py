@@ -254,8 +254,6 @@ class IntegratorGUI:
     # ------------------------------------------------------------------
 
     def _init_variables(self) -> None:
-        # Add verbose logging toggle
-        self.verbose_logging = tk.BooleanVar(value=False)
         self.sim_type_var = tk.StringVar(value=self.options.simulation_type.name)
         self.steps_var = tk.IntVar(value=self.options.steps)
         self.seed_var = tk.IntVar(value=self.options.seed)
@@ -844,9 +842,7 @@ class IntegratorGUI:
 
         self._cancel_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
 
-        ttk.Checkbutton(
-            footer, text="Verbose logging", variable=self.verbose_logging
-        ).grid(row=0, column=2, sticky="w", padx=(12, 0))
+
 
         ttk.Label(footer, textvariable=self.status_var).grid(
             row=0, column=3, sticky="w", padx=(12, 0)
@@ -898,12 +894,7 @@ class IntegratorGUI:
         ttk.Radiobutton(log_controls, text="Detailed", variable=self.log_format_var, 
                        value="detailed", command=self._update_log_format).pack(side="left", padx=5)
         
-        self.load_verbose_button = ttk.Button(log_controls, text="Load Verbose Logs", 
-                                              command=self._load_verbose_logs, 
-                                              state="disabled", width=15)
-        self.load_verbose_button.pack(side="left", padx=10)
-        
-        ttk.Button(log_controls, text="Clear", command=self._clear_log, 
+        ttk.Button(log_controls, text="Clear", command=self._clear_log,
                   width=8).pack(side="right", padx=5)
 
         self.log_output = scrolledtext.ScrolledText(
@@ -915,8 +906,6 @@ class IntegratorGUI:
         # Store raw and parsed logs
         self._raw_log_lines = []
         self._log_summary = []
-        self._verbose_logs = None  # Stored separately, loaded on demand
-        self._verbose_logs_loaded = False
 
         lower_paned.add(log_frame, weight=2)
 
@@ -958,8 +947,14 @@ class IntegratorGUI:
             self.log_output.see(tk.END)
             self.log_output.configure(state="disabled")
     
-    def _parse_log_line(self, text: str) -> None:
-        """Parse log line and extract key events for summary."""
+    def _parse_log_line(self, text: str, auto_refresh: bool = True) -> None:
+        """Parse log line and extract key events for summary.
+        
+        Args:
+            text: Log line to parse
+            auto_refresh: If True, refresh summary display after parsing. 
+                         Set to False during bulk loading to avoid slowdown.
+        """
         # SC convergence
         if "converged in" in text:
             match = re.search(r"Particle (\d+): converged in (\d+) iter", text)
@@ -1011,8 +1006,8 @@ class IntegratorGUI:
                 error = float(match.group(3))
                 self._log_summary.append(f"[MASS-SHELL] Pt corrected (error={error:.2e})")
         
-        # Update summary display if in summary mode
-        if self.log_format_var.get() == "summary" and self._log_summary:
+        # Update summary display if in summary mode (but only if auto_refresh enabled)
+        if auto_refresh and self.log_format_var.get() == "summary" and self._log_summary:
             self._refresh_summary_display()
     
     def _refresh_summary_display(self) -> None:
@@ -1049,30 +1044,34 @@ class IntegratorGUI:
         """Clear all logs."""
         self._raw_log_lines = []
         self._log_summary = []
-        self._verbose_logs = None
-        self._verbose_logs_loaded = False
-        self.load_verbose_button.configure(state="disabled")
         self.log_output.configure(state="normal")
         self.log_output.delete("1.0", tk.END)
         self.log_output.configure(state="disabled")
     
-    def _load_verbose_logs(self) -> None:
-        """Load verbose logs into the detailed view."""
-        if self._verbose_logs and not self._verbose_logs_loaded:
-            # Parse verbose logs into raw lines
-            for line in self._verbose_logs.splitlines():
-                if line.strip():
-                    self._raw_log_lines.append(line)
-                    self._parse_log_line(line)
-            
-            self._verbose_logs_loaded = True
-            self.load_verbose_button.configure(state="disabled", text="Logs Loaded")
-            
-            # Switch to detailed view to show them
-            self.log_format_var.set("detailed")
-            self._update_log_format()
-            
-            self._append_log("--- Verbose logs loaded ---")
+    def _load_verbose_logs(self, verbose_logs: str) -> None:
+        """Load verbose logs into the detailed view automatically after run.
+        
+        Args:
+            verbose_logs: String containing all verbose log output from the run
+        """
+        if verbose_logs:
+            try:
+                # Parse verbose logs into raw lines (disable auto-refresh during bulk load)
+                line_count = 0
+                for line in verbose_logs.splitlines():
+                    if line.strip():
+                        self._raw_log_lines.append(line)
+                        self._parse_log_line(line, auto_refresh=False)
+                        line_count += 1
+                
+                # Refresh the current view to show loaded logs
+                self._update_log_format()
+                
+                self._append_log(f"--- Loaded {line_count:,} verbose log lines ---")
+            except Exception as e:
+                self._append_log(f"Error loading verbose logs: {e}")
+                import traceback
+                traceback.print_exc()
 
     def _set_status(self, text: str) -> None:
         self.status_var.set(text)
@@ -1481,13 +1480,18 @@ class IntegratorGUI:
             self.root.after(0, self._on_cancelled)
             return
         except Exception as exc:  # pragma: no cover - UI safeguard
-            if self.verbose_logging.get():
-                error_msg = "".join(
-                    traceback.format_exception(type(exc), exc, exc.__traceback__)
-                )
-            else:
-                error_msg = str(exc)
-            self.root.after(0, partial(self._on_failure, error_msg))
+            # Log brief error to summary
+            brief_error = str(exc)
+            # Log full traceback to detailed logs
+            full_traceback = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
+            # Store full details in raw log lines for detailed view
+            for line in full_traceback.splitlines():
+                if line.strip():
+                    self._raw_log_lines.append(line)
+            # Pass brief error to failure handler
+            self.root.after(0, partial(self._on_failure, brief_error))
             return
         self.root.after(0, partial(self._on_success, result))
 
@@ -1509,7 +1513,11 @@ class IntegratorGUI:
         self._worker = None
         self._cancel_requested = False
         self._set_status("Failed")
-        self._append_log(message)
+        # Add error to summary
+        self._log_summary.append(f"[ERROR] {message}")
+        # Log brief error message
+        self._append_log(f"Error: {message}")
+        self._append_log("(Full traceback available in Detailed view)")
         self._run_button.configure(state="normal")
         self._cancel_button.configure(state="disabled")
         self.progress_var.set(0.0)
@@ -1526,12 +1534,11 @@ class IntegratorGUI:
         self._cancel_button.configure(state="disabled")
         self.progress_var.set(100.0)
         
-        # Store verbose logs and enable load button if available
+        # Auto-load verbose logs into GUI for post-run analysis
         if hasattr(result, 'verbose_logs') and result.verbose_logs:
-            self._verbose_logs = result.verbose_logs
             verbose_line_count = len([l for l in result.verbose_logs.splitlines() if l.strip()])
-            self._append_log(f"Verbose logs available: {verbose_line_count:,} lines (click 'Load Verbose Logs' to view)")
-            self.load_verbose_button.configure(state="normal")
+            self._append_log(f"Loading {verbose_line_count:,} verbose log lines into GUI...")
+            self._load_verbose_logs(result.verbose_logs)
 
         for name, figure in result.figures.items():
             title = (
