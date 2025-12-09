@@ -687,6 +687,11 @@ def retarded_equations_of_motion(
                     f"βy={working_beta_y:.15e}, βz={working_beta_z:.15e}, "
                     f"γ={working_gamma:.15e}"
                 )
+                # Also print what result[bx/bz] contains to verify it's from previous iteration
+                print(
+                    f"      result[bx]={result['bx'][particle_idx]:.15e}, "
+                    f"result[bz]={result['bz'][particle_idx]:.15e}"
+                )
 
             # ================================================================
             # STEP 1: Compute retarded distances to external sources
@@ -778,6 +783,19 @@ def retarded_equations_of_motion(
                     samples=external_samples,
                     apply_external=apply_forces,
                 )
+
+                # Debug: Log what forces were computed
+                if sc_verbosity >= 2 and sc_enabled:
+                    print(
+                        f"      Force contributions: ΔPx={delta_momentum_x:.15e}, "
+                        f"ΔPy={delta_momentum_y:.15e}, ΔPz={delta_momentum_z:.15e}, "
+                        f"ΔPt={delta_momentum_t:.15e}"
+                    )
+                    print(
+                        f"      Using particle_beta=({particle_beta[0]:.15e}, "
+                        f"{particle_beta[1]:.15e}, {particle_beta[2]:.15e}), "
+                        f"gamma={particle_gamma:.15e}"
+                    )
 
                 # Accumulate momentum changes
                 accumulated_momentum_x += delta_momentum_x
@@ -923,6 +941,13 @@ def retarded_equations_of_motion(
             gamma_from_velocity = _calculate_gamma_from_beta(
                 beta_x_limited, beta_y_limited, beta_z_limited
             )
+
+            # Debug: Print newly computed beta on all iterations when verbosity >= 2
+            if sc_verbosity >= 2:
+                print(
+                    f"      Newly computed β: βx={beta_x_limited:.15e}, "
+                    f"βy={beta_y_limited:.15e}, βz={beta_z_limited:.15e}"
+                )
 
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                 beta_total = np.sqrt(
