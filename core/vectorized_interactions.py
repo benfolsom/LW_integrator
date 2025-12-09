@@ -38,9 +38,13 @@ k-factor Threshold
 ------------------
 
 The implementation filters out contributions where |k| < 1e-20 to prevent
-numerical overflow. This threshold is extremely permissive—it only excludes
-interactions where particles are moving at β > 1 - 1e-20 (γ > 2.2e9) nearly
-directly toward each other, a regime far beyond any realistic simulation.
+numerical overflow. This threshold approaches float64 machine limits while
+remaining safe: with k_min = 1e-20, the maximum force scaling 1/k³ = 1e60
+is well within float64 range (max ≈ 1.8e308). This extremely permissive
+threshold only excludes interactions where particles are moving at 
+β > 1 - 1e-20 (γ > 7e9) nearly directly toward each other. The mass-shell
+projection provides primary protection against β > 1 violations; k-threshold
+is secondary filtering for numerical stability.
 """
 
 from __future__ import annotations
@@ -204,10 +208,13 @@ def compute_vectorized_contributions(
     # For ultra-relativistic particles (β → 1) near image charges, k = 1 - β·n̂ → 0,
     # causing forces to scale as 1/k³ → ∞. 
     # 
-    # Using k_min = 1e-9 allows tight apertures (0.1 micron) while giving 1/k³_max ≈ 1e27.
-    # This is large but manageable since mass-shell projection is the primary protection
-    # against β > 1 violations. The k-threshold is secondary filtering for extreme cases.
-    valid_k = np.abs(k_factor) >= np.float64(1e-9)
+    # Using k_min = 1e-20 approaches float64 machine limits while remaining safe:
+    # - 1/k³_max = 1e60 is well within float64 range (max ≈ 1.8e308)
+    # - Allows γ up to ~7e9 for head-on collisions
+    # - Consistent with beta limiting at 1 - 1e-16
+    # Mass-shell projection provides primary protection against β > 1 violations;
+    # k-threshold is secondary filtering for numerical stability.
+    valid_k = np.abs(k_factor) >= np.float64(1e-20)
     if not np.any(valid_k):
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
@@ -225,60 +232,78 @@ def compute_vectorized_contributions(
     gamma_ext = gamma_ext[valid_k]
     k_factor = k_factor[valid_k]
 
-    beta_x, beta_y, beta_z = beta_vec
+    # Use float64 for beta components to ensure precision in force calculations
+    beta_x = np.float64(beta_vec[0])
+    beta_y = np.float64(beta_vec[1])
+    beta_z = np.float64(beta_vec[2])
+
+    # Ensure all arrays are float64 for high-precision force calculations
+    bx_ext = bx_ext.astype(np.float64)
+    by_ext = by_ext.astype(np.float64)
+    bz_ext = bz_ext.astype(np.float64)
+    bdotx_ext = bdotx_ext.astype(np.float64)
+    bdoty_ext = bdoty_ext.astype(np.float64)
+    bdotz_ext = bdotz_ext.astype(np.float64)
+    gamma_ext = gamma_ext.astype(np.float64)
+    charge_ext = charge_ext.astype(np.float64)
+    nx = nx.astype(np.float64)
+    ny = ny.astype(np.float64)
+    nz = nz.astype(np.float64)
+    R_sep = R_sep.astype(np.float64)
 
     bdot_scalar_ext = bx_ext * bdotx_ext + by_ext * bdoty_ext + bz_ext * bdotz_ext
     betas_scalar = bx_ext * beta_x + by_ext * beta_y + bz_ext * beta_z
 
-    v_betas_scalar = gamma_ext * gamma_i * c_sq * (1.0 - betas_scalar)
+    v_betas_scalar = gamma_ext * np.float64(gamma_i) * np.float64(c_sq) * (np.float64(1.0) - betas_scalar)
 
     mixed_term = (
         beta_x
-        * (bdotx_ext * c * gamma_ext**2 + bx_ext * bdot_scalar_ext * c * gamma_ext**4)
+        * (bdotx_ext * np.float64(c) * gamma_ext**2 + bx_ext * bdot_scalar_ext * np.float64(c) * gamma_ext**4)
         + beta_y
-        * (bdoty_ext * c * gamma_ext**2 + by_ext * bdot_scalar_ext * c * gamma_ext**4)
+        * (bdoty_ext * np.float64(c) * gamma_ext**2 + by_ext * bdot_scalar_ext * np.float64(c) * gamma_ext**4)
         + beta_z
-        * (bdotz_ext * c * gamma_ext**2 + bz_ext * bdot_scalar_ext * c * gamma_ext**4)
+        * (bdotz_ext * np.float64(c) * gamma_ext**2 + bz_ext * bdot_scalar_ext * np.float64(c) * gamma_ext**4)
     )
     v_beta_dot_mixed_scalar = (
-        gamma_ext**4 * gamma_i * c_sq * bdot_scalar_ext - gamma_i * c * mixed_term
+        gamma_ext**4 * np.float64(gamma_i) * np.float64(c_sq) * bdot_scalar_ext - np.float64(gamma_i) * np.float64(c) * mixed_term
     )
 
+    # Critical: k_factor³ can be extremely small (e.g., 1e-60), use float64
     charge_factor = (
-        h * charge_i * charge_ext / (k_factor**3 * c_cu * R_sep**2 * gamma_ext**3)
+        np.float64(h) * np.float64(charge_i) * charge_ext / (k_factor**3 * np.float64(c_cu) * R_sep**2 * gamma_ext**3)
     )
 
     term_px = (
-        -v_betas_scalar * bx_ext * k_factor * c * gamma_ext**2
+        -v_betas_scalar * bx_ext * k_factor * np.float64(c) * gamma_ext**2
         + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nx * R_sep
         + gamma_ext**2
         * nx**2
         * R_sep
         * v_betas_scalar
         * (bdotx_ext + bdotx_ext * bdot_scalar_ext * gamma_ext**2)
-        + v_betas_scalar * c * nx
+        + v_betas_scalar * np.float64(c) * nx
     )
 
     term_py = (
-        -v_betas_scalar * by_ext * k_factor * c * gamma_ext**2
+        -v_betas_scalar * by_ext * k_factor * np.float64(c) * gamma_ext**2
         + v_beta_dot_mixed_scalar * k_factor * gamma_ext * ny * R_sep
         + gamma_ext**2
         * ny**2
         * R_sep
         * v_betas_scalar
         * (bdoty_ext + bdoty_ext * bdot_scalar_ext * gamma_ext**2)
-        + v_betas_scalar * c * ny
+        + v_betas_scalar * np.float64(c) * ny
     )
 
     term_pz = (
-        -v_betas_scalar * bz_ext * k_factor * c * gamma_ext**2
+        -v_betas_scalar * bz_ext * k_factor * np.float64(c) * gamma_ext**2
         + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nz * R_sep
         + gamma_ext**2
         * nz**2
         * R_sep
         * v_betas_scalar
         * (bdotz_ext + bdotz_ext * bdot_scalar_ext * gamma_ext**2)
-        + v_betas_scalar * c * nz
+        + v_betas_scalar * np.float64(c) * nz
     )
 
     delta_px = float(np.sum(charge_factor * term_px))
@@ -287,14 +312,14 @@ def compute_vectorized_contributions(
 
     term_pt = (
         v_beta_dot_mixed_scalar * k_factor * gamma_ext * R_sep
-        - v_betas_scalar * k_factor * c * gamma_ext**2
+        - v_betas_scalar * k_factor * np.float64(c) * gamma_ext**2
         - bdot_scalar_ext * v_betas_scalar * gamma_ext**4 * R_sep
-        + v_betas_scalar * c
+        + v_betas_scalar * np.float64(c)
     )
 
     delta_pt = float(np.sum(charge_factor * term_pt))
 
-    field_factor = h / mass_i * charge_i / c * charge_ext / (R_sep * k_factor)
+    field_factor = np.float64(h) / np.float64(mass_i) * np.float64(charge_i) / np.float64(c) * charge_ext / (R_sep * k_factor)
     delta_field_x = float(np.sum(field_factor * bx_ext))
     delta_field_y = float(np.sum(field_factor * by_ext))
     delta_field_z = float(np.sum(field_factor * bz_ext))

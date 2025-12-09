@@ -813,19 +813,21 @@ def retarded_equations_of_motion(
             # Enforce the relativistic mass-shell constraint: Pt² - P² = (mc)²
             # This prevents numerical errors from violating fundamental physics,
             # especially when forces are large (e.g., k-factor → 0 near walls)
-            P_spatial_sq = (
-                result["Px"][particle_idx] ** 2
-                + result["Py"][particle_idx] ** 2
-                + result["Pz"][particle_idx] ** 2
-            )
-            mass_shell_rhs = (particle_mass * C_MMNS) ** 2
+            # Use float64 precision for all mass-shell calculations
+            Px_64 = np.float64(result["Px"][particle_idx])
+            Py_64 = np.float64(result["Py"][particle_idx])
+            Pz_64 = np.float64(result["Pz"][particle_idx])
+            Pt_64 = np.float64(result["Pt"][particle_idx])
+            
+            P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
+            mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
             
             # Compute what Pt should be to satisfy the constraint
             Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
             
             # Check if correction is needed (tolerance of 1e-6 relative error)
-            Pt_current = result["Pt"][particle_idx]
-            mass_shell_error = abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
+            Pt_current = Pt_64
+            mass_shell_error = np.abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
             
             if mass_shell_error > 1e-6:
                 # Project Pt onto the mass-shell
@@ -838,13 +840,14 @@ def retarded_equations_of_motion(
                     )
 
             # Gamma from relativistic energy with scalar potential correction:
-            # γ = (Pt - q²·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
+            # γ = (Pt - q·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
             # This gives the correct kinetic energy, accounting for electromagnetic potential
-            scalar_potential_contribution = (
+            # Use float64 precision for gamma calculation
+            scalar_potential_contribution = np.float64(
                 particle_charge * accumulated_scalar_potential
             )
-            kinetic_energy = result["Pt"][particle_idx] - scalar_potential_contribution
-            gamma_from_energy = kinetic_energy / (particle_mass * C_MMNS)
+            kinetic_energy = np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
+            gamma_from_energy = kinetic_energy / np.float64(particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy
 
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
