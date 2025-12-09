@@ -590,15 +590,16 @@ def _print_convergence_info(
         # Truncated: one line per particle
         print(
             f"    P{particle_idx}: {status}, Δγ/γ={gamma_rel_change:.6e}, "
-            f"γ_energy={gamma_from_energy:.6e}"
+            f"γ_energy(Pt - q·Φ)={gamma_from_energy:.6e}"
         )
     else:  # verbosity >= 2
         # Detailed: multi-line output with full precision
         print(f"    Particle {particle_idx}: {status}")
         print(f"      Δγ/γ = {gamma_rel_change:.15e}")
-        print(f"      γ_velocity = {gamma_from_velocity:.15e}")
-        print(f"      γ_energy   = {gamma_from_energy:.15e}")
-        print(f"      Δγ_abs = {gamma_abs_change:.15e}")
+        print("      Comparing γ_velocity (from β) to γ_energy (from Pt - q·Φ)")
+        print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
+        print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
+        print(f"      Δγ_abs applied this iter   = {gamma_abs_change:.15e}")
 
 
 def retarded_equations_of_motion(
@@ -806,6 +807,36 @@ def retarded_equations_of_motion(
             result["Pz"][particle_idx] = accumulated_momentum_z
             result["Pt"][particle_idx] = accumulated_momentum_t
 
+            # ================================================================
+            # STEP 4a: Project momentum onto mass-shell constraint
+            # ================================================================
+            # Enforce the relativistic mass-shell constraint: Pt² - P² = (mc)²
+            # This prevents numerical errors from violating fundamental physics,
+            # especially when forces are large (e.g., k-factor → 0 near walls)
+            P_spatial_sq = (
+                result["Px"][particle_idx] ** 2
+                + result["Py"][particle_idx] ** 2
+                + result["Pz"][particle_idx] ** 2
+            )
+            mass_shell_rhs = (particle_mass * C_MMNS) ** 2
+            
+            # Compute what Pt should be to satisfy the constraint
+            Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
+            
+            # Check if correction is needed (tolerance of 1e-6 relative error)
+            Pt_current = result["Pt"][particle_idx]
+            mass_shell_error = abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
+            
+            if mass_shell_error > 1e-6:
+                # Project Pt onto the mass-shell
+                result["Pt"][particle_idx] = float(Pt_from_mass_shell)
+                
+                if sc_verbosity >= 2 and sc_enabled:
+                    print(
+                        f"      Mass-shell projection: Pt {Pt_current:.6e} → "
+                        f"{Pt_from_mass_shell:.6e} (error was {mass_shell_error:.2e})"
+                    )
+
             # Gamma from relativistic energy with scalar potential correction:
             # γ = (Pt - q²·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
             # This gives the correct kinetic energy, accounting for electromagnetic potential
@@ -820,13 +851,13 @@ def retarded_equations_of_motion(
                 gamma_from_conjugate = result["Pt"][particle_idx] / (
                     particle_mass * C_MMNS
                 )
-                print(f"      Gamma from kinetic energy: γ={gamma_from_energy:.15e}")
-                print(f"      Gamma from conjugate Pt: γ={gamma_from_conjugate:.15e}")
+                print(f"      γ_energy (Pt - q·Φ)/(mc) = {gamma_from_energy:.15e}")
+                print(f"      γ_conjugate (Pt/(mc))     = {gamma_from_conjugate:.15e}")
                 print(
-                    f"      Scalar potential correction: {scalar_potential_contribution:.15e}"
+                    f"      Scalar potential term q·Φ = {scalar_potential_contribution:.15e}"
                 )
 
-            # Update proper time
+            # Update x^0 = dt = dtau * gamma
             result["t"][particle_idx] = (
                 current_state["t"][particle_idx] + h * result["gamma"][particle_idx]
             )
@@ -834,7 +865,9 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 5: Update spatial positions
             # ================================================================
-            # Correct relativistic position update: Δx = v·h = (P_kinetic/(γ·m))·h
+            # Position update in proper time formulation: dx/dτ = v·γ
+            # Since h = dτ = dt/γ, we have: dx = v·γ·dτ = (P/m)·h
+            # where v = P/(γ·m) and γ cancels in the product v·γ = P/m
             result["x"][particle_idx] = current_state["x"][particle_idx] + h / (
                 particle_mass
             ) * (result["Px"][particle_idx] - accumulated_field_x * particle_mass)
@@ -858,11 +891,14 @@ def retarded_equations_of_motion(
                 result["z"][particle_idx] - current_state["z"][particle_idx]
             )
 
-            # β = Δx/(c·h) for coordinate time stepping
-            # No gamma factor needed here since positions were updated with 1/γ
-            beta_x = position_change_x / (C_MMNS * h * particle_gamma)
-            beta_y = position_change_y / (C_MMNS * h * particle_gamma)
-            beta_z = position_change_z / (C_MMNS * h * particle_gamma)
+            # β = Δx/(c·Δt) using the actual coordinate-time step
+            # Since Δx = (P/m)·h and Δt = γ·h, we get β = P/(γ·m·c)
+            coordinate_dt = result["t"][particle_idx] - current_state["t"][particle_idx]
+            if coordinate_dt == 0.0:
+                coordinate_dt = h * result["gamma"][particle_idx]
+            beta_x = position_change_x / (C_MMNS * coordinate_dt)
+            beta_y = position_change_y / (C_MMNS * coordinate_dt)
+            beta_z = position_change_z / (C_MMNS * coordinate_dt)
 
             # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(
@@ -886,7 +922,7 @@ def retarded_equations_of_motion(
                     beta_x_limited**2 + beta_y_limited**2 + beta_z_limited**2
                 )
                 print(
-                    f"      Gamma from β: γ={gamma_from_velocity:.15e}, "
+                    f"      γ_velocity (from β over Δt={coordinate_dt:.15e}) = {gamma_from_velocity:.15e}, "
                     f"βtot={beta_total:.15e}"
                 )
 
@@ -904,8 +940,8 @@ def retarded_equations_of_motion(
             )
 
             # β-dot = dβ/dt where dt is coordinate time
-            # Use the gamma from this iteration for time dilation
-            time_factor = C_MMNS * h * result["gamma"][particle_idx] * particle_gamma
+            # Use the same coordinate-time interval employed for β
+            time_factor = C_MMNS * coordinate_dt
             result["bdotx"][particle_idx] = beta_change_x / time_factor
             result["bdoty"][particle_idx] = beta_change_y / time_factor
             result["bdotz"][particle_idx] = beta_change_z / time_factor

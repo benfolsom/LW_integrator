@@ -200,9 +200,12 @@ def compute_vectorized_contributions(
     )
     k_factor = np.float64(1.0) - beta_dot_nhat
 
-    # Allow k_factor down to 1e-20 for ultra-relativistic particles
-    # (beta very close to 1.0 moving nearly parallel to observation direction)
-    valid_k = np.abs(k_factor) >= np.float64(1e-20)
+    # Filter out interactions where k-factor is too small to prevent force divergence.
+    # For ultra-relativistic particles (β → 1) near image charges, k = 1 - β·n̂ → 0,
+    # causing forces to scale as 1/k³ → ∞. This threshold prevents numerical blowup
+    # while still allowing γ up to ~2000 in typical geometries.
+    # With k_min = 1e-7, we get 1/k³_max ≈ 1e21, which is large but manageable.
+    valid_k = np.abs(k_factor) >= np.float64(1e-7)
     if not np.any(valid_k):
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
