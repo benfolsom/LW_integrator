@@ -202,10 +202,12 @@ def compute_vectorized_contributions(
 
     # Filter out interactions where k-factor is too small to prevent force divergence.
     # For ultra-relativistic particles (β → 1) near image charges, k = 1 - β·n̂ → 0,
-    # causing forces to scale as 1/k³ → ∞. This threshold prevents numerical blowup
-    # while still allowing γ up to ~2000 in typical geometries.
-    # With k_min = 1e-7, we get 1/k³_max ≈ 1e21, which is large but manageable.
-    valid_k = np.abs(k_factor) >= np.float64(1e-7)
+    # causing forces to scale as 1/k³ → ∞. 
+    # 
+    # Using k_min = 1e-9 allows tight apertures (0.1 micron) while giving 1/k³_max ≈ 1e27.
+    # This is large but manageable since mass-shell projection is the primary protection
+    # against β > 1 violations. The k-threshold is secondary filtering for extreme cases.
+    valid_k = np.abs(k_factor) >= np.float64(1e-9)
     if not np.any(valid_k):
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 

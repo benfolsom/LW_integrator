@@ -14,8 +14,11 @@ terminals that do not default to UTF-8.
 from __future__ import annotations
 
 import json
+import sys
 import time
 import traceback
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
 
 import matplotlib
 
@@ -405,6 +408,7 @@ class RunResult:
     saved_paths: Dict[str, Path]
     figures: Dict[str, plt.Figure]
     logs: List[str]
+    verbose_logs: str  # Captured stdout/stderr from verbose integration output
     duration_s: float
     filename_base: str
 
@@ -641,13 +645,18 @@ def run_testbed(
         ]
     )
 
-    result = run_benchmark(
-        steps=options.steps,
-        simulation_type=sim_type,
-        rider_params=rider_params,
-        driver_params=driver_params,
-        seed=options.seed,
-        legacy_enabled=legacy_enabled,
+    # Capture stdout/stderr to get verbose SC and adaptive timestep logs
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
+    
+    with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+        result = run_benchmark(
+            steps=options.steps,
+            simulation_type=sim_type,
+            rider_params=rider_params,
+            driver_params=driver_params,
+            seed=options.seed,
+            legacy_enabled=legacy_enabled,
         return_trajectories=return_traj_flag,
         image_subcharge_count=int(options.image_subcharge_count),
         use_image_weighting=bool(options.use_image_weighting),
@@ -674,6 +683,20 @@ def run_testbed(
         **filtered_core_params,
     )
 
+    # Store captured stdout/stderr separately - don't forward to log during run
+    # This prevents GUI slowdown from dumping thousands of lines
+    captured_stdout = stdout_capture.getvalue()
+    captured_stderr = stderr_capture.getvalue()
+    
+    # Just log a summary
+    stdout_lines = len([l for l in captured_stdout.splitlines() if l.strip()])
+    stderr_lines = len([l for l in captured_stderr.splitlines() if l.strip()])
+    
+    if stdout_lines > 0:
+        _log(f"Captured {stdout_lines:,} lines of verbose output (available after run)")
+    if stderr_lines > 0:
+        _log(f"Captured {stderr_lines} stderr lines")
+    
     if isinstance(result, tuple) and len(result) == 2:
         metrics, payload = result
     else:
@@ -1390,6 +1413,7 @@ def run_testbed(
         saved_paths=saved_paths,
         figures=figures,
         logs=logs,
+        verbose_logs=captured_stdout,  # Include captured verbose output
         duration_s=duration,
         filename_base=filename_base,
     )

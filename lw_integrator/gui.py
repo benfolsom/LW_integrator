@@ -17,6 +17,7 @@ from functools import partial
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Any, Dict, List, Optional, Set, Tuple
+import re
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
@@ -884,14 +885,38 @@ class IntegratorGUI:
         log_frame = ttk.LabelFrame(lower_paned, text="Logs", padding=8)
 
         log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=0)
+        log_frame.rowconfigure(1, weight=1)
 
-        log_frame.rowconfigure(0, weight=1)
+        # Log controls
+        log_controls = ttk.Frame(log_frame)
+        log_controls.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        
+        self.log_format_var = tk.StringVar(value="summary")
+        ttk.Radiobutton(log_controls, text="Summary", variable=self.log_format_var, 
+                       value="summary", command=self._update_log_format).pack(side="left", padx=5)
+        ttk.Radiobutton(log_controls, text="Detailed", variable=self.log_format_var, 
+                       value="detailed", command=self._update_log_format).pack(side="left", padx=5)
+        
+        self.load_verbose_button = ttk.Button(log_controls, text="Load Verbose Logs", 
+                                              command=self._load_verbose_logs, 
+                                              state="disabled", width=15)
+        self.load_verbose_button.pack(side="left", padx=10)
+        
+        ttk.Button(log_controls, text="Clear", command=self._clear_log, 
+                  width=8).pack(side="right", padx=5)
 
         self.log_output = scrolledtext.ScrolledText(
-            log_frame, height=6, state="disabled"
+            log_frame, height=6, state="disabled", wrap="none"
         )
 
-        self.log_output.grid(row=0, column=0, sticky="nsew")
+        self.log_output.grid(row=1, column=0, sticky="nsew")
+        
+        # Store raw and parsed logs
+        self._raw_log_lines = []
+        self._log_summary = []
+        self._verbose_logs = None  # Stored separately, loaded on demand
+        self._verbose_logs_loaded = False
 
         lower_paned.add(log_frame, weight=2)
 
@@ -919,10 +944,135 @@ class IntegratorGUI:
         )
 
     def _append_log(self, text: str) -> None:
+        """Append text to log with parsing for summary view."""
+        # Store raw line
+        self._raw_log_lines.append(text)
+        
+        # Parse for summary
+        self._parse_log_line(text)
+        
+        # Display based on current format
+        if self.log_format_var.get() == "detailed":
+            self.log_output.configure(state="normal")
+            self.log_output.insert(tk.END, text + "\n")
+            self.log_output.see(tk.END)
+            self.log_output.configure(state="disabled")
+    
+    def _parse_log_line(self, text: str) -> None:
+        """Parse log line and extract key events for summary."""
+        # SC convergence
+        if "converged in" in text:
+            match = re.search(r"Particle (\d+): converged in (\d+) iter", text)
+            if match:
+                self._log_summary.append(f"[SC] P{match.group(1)} converged in {match.group(2)} iterations")
+        
+        # SC iteration details
+        elif "Δγ/γ =" in text:
+            match = re.search(r"Δγ/γ = ([\d.e+-]+)", text)
+            if match:
+                gamma_err = float(match.group(1))
+                self._log_summary.append(f"     γ error: {gamma_err:.2e}")
+        
+        # Energy jumps
+        elif "Energy jump detected" in text:
+            match = re.search(r"Step ([\d.]+).*ΔE/E = ([\d.e+-]+)", text)
+            if match:
+                step = match.group(1)
+                de = float(match.group(2))
+                self._log_summary.append(f"[ENERGY] Step {step}: ΔE/E = {de:.2%} - reducing timestep")
+        
+        # Adaptive timestep events
+        elif "Reducing timestep by" in text or "reducing timestep by" in text:
+            match = re.search(r"by (\d+)x to ([\d.e+-]+)", text)
+            if match:
+                factor = match.group(1)
+                new_h = float(match.group(2))
+                self._log_summary.append(f"     → h reduced {factor}x to {new_h:.2e} ns")
+        
+        elif "Cooldown mode" in text:
+            match = re.search(r"Step (\d+): Cooldown mode \((\d+)/(\d+)\)", text)
+            if match:
+                step, current, total = match.group(1), match.group(2), match.group(3)
+                if current == "1":  # Only log start of cooldown
+                    self._log_summary.append(f"[COOL] Step {step}: Cooldown phase ({total} steps)")
+        
+        elif "Returning to normal timestep" in text:
+            match = re.search(r"Step (\d+):.*to ([\d.e+-]+)", text)
+            if match:
+                step = match.group(1)
+                h = float(match.group(2))
+                self._log_summary.append(f"[RESUME] Step {step}: Normal timestep {h:.2e} ns restored")
+        
+        elif "Mass-shell projection" in text:
+            match = re.search(r"Pt ([\d.e+-]+) → ([\d.e+-]+).*error was ([\d.e+-]+)", text)
+            if match:
+                pt_old = float(match.group(1))
+                pt_new = float(match.group(2))
+                error = float(match.group(3))
+                self._log_summary.append(f"[MASS-SHELL] Pt corrected (error={error:.2e})")
+        
+        # Update summary display if in summary mode
+        if self.log_format_var.get() == "summary" and self._log_summary:
+            self._refresh_summary_display()
+    
+    def _refresh_summary_display(self) -> None:
+        """Refresh the summary log display."""
         self.log_output.configure(state="normal")
-        self.log_output.insert(tk.END, text + "\n")
+        self.log_output.delete("1.0", tk.END)
+        
+        # Show last 100 summary lines
+        display_lines = self._log_summary[-100:]
+        self.log_output.insert("1.0", "\n".join(display_lines))
         self.log_output.see(tk.END)
         self.log_output.configure(state="disabled")
+    
+    def _update_log_format(self) -> None:
+        """Switch between summary and detailed log views."""
+        self.log_output.configure(state="normal")
+        self.log_output.delete("1.0", tk.END)
+        
+        if self.log_format_var.get() == "summary":
+            # Show summary
+            display_lines = self._log_summary[-100:]
+            if display_lines:
+                self.log_output.insert("1.0", "\n".join(display_lines))
+        else:
+            # Show detailed (last 500 lines)
+            display_lines = self._raw_log_lines[-500:]
+            if display_lines:
+                self.log_output.insert("1.0", "\n".join(display_lines))
+        
+        self.log_output.see(tk.END)
+        self.log_output.configure(state="disabled")
+    
+    def _clear_log(self) -> None:
+        """Clear all logs."""
+        self._raw_log_lines = []
+        self._log_summary = []
+        self._verbose_logs = None
+        self._verbose_logs_loaded = False
+        self.load_verbose_button.configure(state="disabled")
+        self.log_output.configure(state="normal")
+        self.log_output.delete("1.0", tk.END)
+        self.log_output.configure(state="disabled")
+    
+    def _load_verbose_logs(self) -> None:
+        """Load verbose logs into the detailed view."""
+        if self._verbose_logs and not self._verbose_logs_loaded:
+            # Parse verbose logs into raw lines
+            for line in self._verbose_logs.splitlines():
+                if line.strip():
+                    self._raw_log_lines.append(line)
+                    self._parse_log_line(line)
+            
+            self._verbose_logs_loaded = True
+            self.load_verbose_button.configure(state="disabled", text="Logs Loaded")
+            
+            # Switch to detailed view to show them
+            self.log_format_var.set("detailed")
+            self._update_log_format()
+            
+            self._append_log("--- Verbose logs loaded ---")
 
     def _set_status(self, text: str) -> None:
         self.status_var.set(text)
@@ -1375,6 +1525,13 @@ class IntegratorGUI:
         self._run_button.configure(state="normal")
         self._cancel_button.configure(state="disabled")
         self.progress_var.set(100.0)
+        
+        # Store verbose logs and enable load button if available
+        if hasattr(result, 'verbose_logs') and result.verbose_logs:
+            self._verbose_logs = result.verbose_logs
+            verbose_line_count = len([l for l in result.verbose_logs.splitlines() if l.strip()])
+            self._append_log(f"Verbose logs available: {verbose_line_count:,} lines (click 'Load Verbose Logs' to view)")
+            self.load_verbose_button.configure(state="normal")
 
         for name, figure in result.figures.items():
             title = (
