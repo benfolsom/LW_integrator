@@ -917,7 +917,7 @@ class IntegratorGUI:
         log_controls = ttk.Frame(log_frame)
         log_controls.grid(row=0, column=0, sticky="ew", pady=(0, 4))
 
-        self.log_format_var = tk.StringVar(value="summary")
+        self.log_format_var = tk.StringVar(value="detailed")
         ttk.Radiobutton(
             log_controls,
             text="Summary",
@@ -1059,6 +1059,12 @@ class IntegratorGUI:
                 self._log_summary.append(
                     f"[MASS-SHELL] Pt corrected (error={error:.2e})"
                 )
+
+        # Optimization sweep messages
+        elif "[OPTIMIZATION]" in text:
+            # Include all optimization messages in summary
+            # They're already prefixed and formatted nicely
+            self._log_summary.append(text.strip())
 
         # Update summary display if in summary mode (but only if auto_refresh enabled)
         if (

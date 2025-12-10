@@ -177,6 +177,10 @@ results/
 output/
 simulations/
 
+# Optimization sweep outputs (keep directory structure)
+optimization_results/*/
+!optimization_results/.gitkeep
+
 # Text files (but keep README.txt)
 *.txt
 !README.txt
@@ -186,6 +190,8 @@ test_outputs/notebook_runs/
 test_outputs/testbed_runs/
 # Notebook configuration exports
 configs/testbed_runs/
+configs/optimization/*.json
+!configs/optimization/.gitkeep
 examples/validation/configs/testbed_runs
 examples/validation/test_outputs/
 LW_local_refs/

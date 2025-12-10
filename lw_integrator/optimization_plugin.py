@@ -1428,66 +1428,170 @@ class OptimizationPlugin(ttk.Frame):
             _show_error_dialog(self, "Save Error", f"Failed to save config: {e}")
 
     def _on_view_results(self):
-        """Open results viewer (placeholder for now)."""
-        # Create custom dialog with selectable text
-        dialog = tk.Toplevel(self)
-        dialog.title("View Results")
-        dialog.geometry("600x400")
+        """Open results viewer and automatically load latest results."""
+        import glob
+        import os
 
-        # Make it modal
-        dialog.transient(self)
-        dialog.grab_set()
+        # Default to optimization_results directory
+        default_results_dir = "optimization_results"
 
-        # Message
-        msg_frame = ttk.Frame(dialog, padding=20)
-        msg_frame.pack(fill="both", expand=True)
+        # Look for most recent sweep results
+        search_patterns = [
+            os.path.join(default_results_dir, "sweep_*", "sweep_results.json"),
+            os.path.join(default_results_dir, "sweep_results_*.json"),
+            os.path.join(self.config.output_dir, "sweep_results.json"),
+        ]
 
-        ttk.Label(
-            msg_frame,
-            text="Results Visualization Coming Soon!",
-            font=("TkDefaultFont", 12, "bold"),
-        ).pack(anchor="w", pady=(0, 10))
+        result_files = []
+        for pattern in search_patterns:
+            result_files.extend(glob.glob(pattern))
 
-        # Selectable text area
-        text_widget = tk.Text(msg_frame, wrap="word", height=15, width=70)
-        text_widget.pack(fill="both", expand=True, pady=10)
+        if result_files:
+            # Sort by modification time, most recent first
+            result_files.sort(key=os.path.getmtime, reverse=True)
+            latest_file = result_files[0]
 
-        info_text = """Check the output directory for:
+            # Ask user if they want to view the latest results or choose a different file
+            dialog = tk.Toplevel(self)
+            dialog.title("View Results")
+            dialog.geometry("500x300")
+            dialog.transient(self)
+            dialog.grab_set()
 
-- sweep_results_YYYYMMDD_HHMMSS.json - Complete sweep results with trajectories
-- sweep_YYYYMMDD_HHMMSS/ - Individual plots for each sweep
+            msg_frame = ttk.Frame(dialog, padding=20)
+            msg_frame.pack(fill="both", expand=True)
 
-Available visualizations:
-  ✓ Energy gain vs z position plots
-  ✓ Transverse position (x,y) vs z plots
-  ✓ Heatmaps (aperture vs energy, colored by ΔE)
+            ttk.Label(
+                msg_frame,
+                text="Results Found",
+                font=("TkDefaultFont", 12, "bold"),
+            ).pack(anchor="w", pady=(0, 10))
 
-Use 'Plot Trajectories' button to visualize results from saved JSON files.
+            info = ttk.Label(
+                msg_frame,
+                text=f"Most recent results file found:\n\n{os.path.basename(os.path.dirname(latest_file)) if 'sweep_' in latest_file else os.path.basename(latest_file)}",
+                wraplength=450,
+            )
+            info.pack(anchor="w", pady=(0, 20))
 
-Output directory: """ + str(self.config.output_dir)
+            btn_frame = ttk.Frame(msg_frame)
+            btn_frame.pack(fill="x", pady=10)
 
-        text_widget.insert("1.0", info_text)
-        text_widget.configure(state="disabled")
+            def load_latest():
+                dialog.destroy()
+                self._load_and_plot_results(latest_file)
 
-        # Close button
-        ttk.Button(
-            msg_frame,
-            text="Close",
-            command=dialog.destroy,
-        ).pack(pady=(10, 0))
+            def choose_file():
+                dialog.destroy()
+                self._on_plot_trajectories()
 
-        # Center on parent
-        dialog.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
-        dialog.geometry(f"+{x}+{y}")
+            ttk.Button(
+                btn_frame,
+                text="View Latest Results",
+                command=load_latest,
+                style="Accent.TButton",
+            ).pack(side="left", padx=5, expand=True, fill="x")
+
+            ttk.Button(
+                btn_frame,
+                text="Choose Different File...",
+                command=choose_file,
+            ).pack(side="left", padx=5, expand=True, fill="x")
+
+            ttk.Button(
+                msg_frame,
+                text="Cancel",
+                command=dialog.destroy,
+            ).pack(pady=(10, 0))
+
+            # Center on parent
+            dialog.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
+            y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
+            dialog.geometry(f"+{x}+{y}")
+
+        else:
+            # No results found, offer to browse
+            response = messagebox.askyesno(
+                "No Results Found",
+                "No recent sweep results found in the default directory.\n\n"
+                f"Default location: {default_results_dir}\n\n"
+                "Would you like to browse for a results file?",
+                parent=self,
+            )
+            if response:
+                self._on_plot_trajectories()
+
+    def _load_and_plot_results(self, file_path: str):
+        """Load results file and display trajectory viewer with plots."""
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            # Try to detect file format
+            results = None
+
+            if "results" in data:
+                # New format: sweep_results.json
+                results = data.get("results", [])
+                if not results:
+                    _show_info_dialog(self, "No Results", "No results found in file.")
+                    return
+
+                # Filter results with trajectories
+                results_with_traj = [r for r in results if "trajectory" in r]
+
+                if not results_with_traj:
+                    _show_info_dialog(
+                        self,
+                        "No Trajectories",
+                        "No trajectory data found in results.\n\n"
+                        "Make sure 'Save trajectories' was enabled during the sweep.",
+                    )
+                    return
+
+            elif "core" in data and "rider" in data["core"]:
+                # Legacy format: single trajectory file
+                results_with_traj = [self._convert_legacy_trajectory(data)]
+
+            else:
+                _show_info_dialog(
+                    self,
+                    "Unknown Format",
+                    "Cannot parse this file format.\n\n"
+                    "Expected either:\n"
+                    "- sweep_results.json with 'results' array\n"
+                    "- Legacy trajectory file with 'core'/'rider' structure",
+                )
+                return
+
+            # Create trajectory viewer dialog and automatically plot
+            self._show_trajectory_viewer(results_with_traj, file_path, auto_plot=True)
+
+        except Exception as e:
+            import traceback
+
+            _show_error_dialog(
+                self,
+                "Error Loading File",
+                f"Failed to load file:\n{e}\n\n{traceback.format_exc()}",
+            )
 
     def _on_plot_trajectories(self):
         """Open trajectory plotting dialog to visualize saved results."""
+        # Default to optimization_results directory
+        import os
+
+        default_results_dir = "optimization_results"
+        if os.path.exists(default_results_dir):
+            initial_dir = default_results_dir
+        else:
+            initial_dir = self.config.output_dir
+
         # Ask user to select results file
         file_path = filedialog.askopenfilename(
             title="Select Results JSON File",
-            initialdir=self.config.output_dir,
+            initialdir=initial_dir,
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
         )
 
@@ -1622,8 +1726,14 @@ Output directory: """ + str(self.config.output_dir)
 
         return result
 
-    def _show_trajectory_viewer(self, results, file_path):
-        """Show trajectory viewer dialog with run selection and plotting."""
+    def _show_trajectory_viewer(self, results, file_path, auto_plot=False):
+        """Show trajectory viewer dialog with run selection and plotting.
+
+        Args:
+            results: List of result dictionaries with trajectories
+            file_path: Path to the results file
+            auto_plot: If True, automatically plot all results on open
+        """
         dialog = tk.Toplevel(self)
         dialog.title(f"Trajectory Viewer - {Path(file_path).name}")
         dialog.geometry("1000x700")
@@ -1721,6 +1831,17 @@ Output directory: """ + str(self.config.output_dir)
         # Store for later use
         dialog.plot_area = right_panel
         dialog.plot_info = plot_info
+
+        # Auto-plot if requested (for View Results button)
+        if auto_plot:
+            # Select all runs (or up to 10 for performance)
+            max_auto_plot = min(10, len(results))
+            run_listbox.select_set(0, max_auto_plot - 1)
+            # Schedule plotting after dialog is shown
+            dialog.after(
+                100,
+                lambda: self._plot_selected_trajectories(run_listbox, results, dialog),
+            )
 
     def _plot_selected_trajectories(self, listbox, results, parent_dialog):
         """Plot trajectories for selected runs."""
@@ -1852,7 +1973,11 @@ Output directory: """ + str(self.config.output_dir)
             )
 
             # Plot 3: Heatmap (aperture vs energy, colored by delta_e)
-            if len(apertures) > 0:
+            # Only show heatmap if both aperture and energy were swept
+            unique_apertures = len(set(apertures))
+            unique_energies = len(set(energies))
+
+            if len(apertures) > 0 and unique_apertures > 1 and unique_energies > 1:
                 # Create scatter plot for heatmap
                 scatter = ax_heatmap.scatter(
                     energies,
@@ -1886,6 +2011,26 @@ Output directory: """ + str(self.config.output_dir)
                     else False
                 ):
                     ax_heatmap.set_yscale("log")
+            else:
+                # Hide heatmap or show message
+                ax_heatmap.text(
+                    0.5,
+                    0.5,
+                    "Heatmap requires sweep over both\naperture and energy parameters",
+                    ha="center",
+                    va="center",
+                    fontsize=11,
+                    color="gray",
+                    transform=ax_heatmap.transAxes,
+                )
+                ax_heatmap.set_xticks([])
+                ax_heatmap.set_yticks([])
+                ax_heatmap.set_title(
+                    "Parameter Space Heatmap (N/A)",
+                    fontsize=11,
+                    fontweight="bold",
+                    color="gray",
+                )
 
             plt.tight_layout()
 
@@ -2066,11 +2211,15 @@ Output directory: """ + str(self.config.output_dir)
                             else 0.999
                         )
                         distance_per_step = beta * gamma * C_MMNS * timestep
+                        expected_distance = distance_per_step * steps
 
                         self._log_result(
-                            f"  Run {run_num} auto-timestep: start_z={start_z:.1f}mm, wall_z={self.config.wall_z:.1f}mm, "
-                            f"distance={total_distance:.1f}mm, E={energy:.1f}GeV, gamma={gamma:.1f}, "
-                            f"timestep={timestep:.2e}ns, steps={steps}, dist/step={distance_per_step:.3f}mm"
+                            f"  Run {run_num} auto-timestep calc: start_z={start_z:.1f}mm, wall_z={self.config.wall_z:.1f}mm, "
+                            f"target_dist={total_distance:.1f}mm, E={energy:.1f}GeV, gamma={gamma:.1f}"
+                        )
+                        self._log_result(
+                            f"    → timestep={timestep:.2e}ns, steps={steps}, "
+                            f"dist/step={distance_per_step:.3f}mm, expected_travel={expected_distance:.1f}mm"
                         )
                 else:
                     timestep = self.config.timestep
@@ -2094,6 +2243,28 @@ Output directory: """ + str(self.config.output_dir)
                         else None,
                         run_num=run_num,
                     )
+
+                    # Extract actual trajectory distance for diagnostics
+                    actual_distance = 0.0
+                    if "trajectory" in result:
+                        traj = result["trajectory"]
+                        z_vals = traj.get("z", [])
+                        if len(z_vals) > 0:
+                            actual_distance = abs(z_vals[-1] - z_vals[0])
+
+                    # Log individual run result (every run or every 10th for large sweeps)
+                    if total_runs <= 20 or run_num % 10 == 1 or run_num == total_runs:
+                        delta_e = result.get("metrics", {}).get(
+                            "rider_delta_e_mev", 0.0
+                        )
+                        log_msg = (
+                            f"  Run {run_num}/{total_runs}: "
+                            f"a={aperture:.2e}mm, E={energy:.1f}GeV, z={start_z:.1f}mm → "
+                            f"ΔE={delta_e:.2f}MeV"
+                        )
+                        if actual_distance > 0:
+                            log_msg += f", traveled={actual_distance:.1f}mm"
+                        self._log_result(log_msg)
 
                     # Store result with all parameters
                     run_data = {
