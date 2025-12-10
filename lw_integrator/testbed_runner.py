@@ -25,10 +25,11 @@ matplotlib.use("Agg")
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.figure import Figure
 
 from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     DEFAULT_DRIVER_PARAMS,
@@ -537,11 +538,16 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
 class RunResult:
     metrics: Optional[Dict[str, Dict[str, float]]]
     saved_paths: Dict[str, Path]
-    figures: Dict[str, plt.Figure]
+    figures: Dict[str, Figure]
     logs: List[str]
     verbose_logs: str  # Captured stdout/stderr from verbose integration output
     duration_s: float
     filename_base: str
+    # Additional computed values for optimization
+    rider_delta_e: Optional[float] = None  # Final energy change in MeV
+    rider_gamma_initial: Optional[float] = None
+    rider_gamma_final: Optional[float] = None
+    rider_trajectory: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -903,6 +909,12 @@ def run_testbed(
     initial_states = payload.get("initial_states", {})
     rest_energies = payload.get("rest_energy_mev", {})
 
+    # Initialize values for RunResult
+    rider_delta_e_final = None
+    rider_gamma_initial = None
+    rider_gamma_final = None
+    rider_trajectory_data = None
+
     if core_traj:
         rider_states = core_traj.get("rider", [])
         driver_states = core_traj.get("driver") if driver_allowed else None
@@ -929,6 +941,38 @@ def run_testbed(
                 )
                 rider_delta_e_z = None
             rider_z_rel = rider_z - rider_z[0]
+
+            # Extract values for RunResult
+            if rider_delta_e is not None and len(rider_delta_e) > 0:
+                rider_delta_e_final = float(rider_delta_e[-1])
+
+            # Compute gamma values if we have rider states
+            if rider_states and len(rider_states) > 0:
+                # gamma = sqrt(1 + p^2/m^2) where p is momentum and m is rest mass
+                # Use first state from trajectory for initial values
+                initial_state = rider_states[0]
+                pz_init = initial_state.get("pz", 0)
+                pr_init = initial_state.get("pr", 0)
+                p_init = np.sqrt(pz_init**2 + pr_init**2)
+                # momentum is in units of m*c, so gamma = sqrt(1 + p^2)
+                rider_gamma_initial = float(np.sqrt(1 + p_init**2))
+
+                # For final state
+                final_state = rider_states[-1]
+                pz_final = final_state.get("pz", 0)
+                pr_final = final_state.get("pr", 0)
+                p_final = np.sqrt(pz_final**2 + pr_final**2)
+                rider_gamma_final = float(np.sqrt(1 + p_final**2))
+
+                # Store trajectory data
+                rider_trajectory_data = {
+                    "z": np.array([s.get("z", 0) for s in rider_states]),
+                    "r": np.array([s.get("r", 0) for s in rider_states]),
+                    "pz": np.array([s.get("pz", 0) for s in rider_states]),
+                    "pr": np.array([s.get("pr", 0) for s in rider_states]),
+                    "t": np.array([s.get("t", 0) for s in rider_states]),
+                }
+
         except Exception as exc:  # pragma: no cover - defensive guard
             _log(f"Failed to compute rider energy series: {exc}")
             _log(
@@ -1662,6 +1706,10 @@ def run_testbed(
         verbose_logs=captured_stdout,  # Include captured verbose output
         duration_s=duration,
         filename_base=filename_base,
+        rider_delta_e=rider_delta_e_final,
+        rider_gamma_initial=rider_gamma_initial,
+        rider_gamma_final=rider_gamma_final,
+        rider_trajectory=rider_trajectory_data,
     )
 
 

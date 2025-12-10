@@ -40,7 +40,7 @@ def _show_error_dialog(parent: tk.Widget, title: str, message: str) -> None:
 
     # Log to results text if parent is OptimizationPlugin
     if hasattr(parent, "_log_result"):
-        parent._log_result(f"❌ {title}: {message}")
+        parent._log_result(f"[ERROR] {title}: {message}")
 
     dialog = tk.Toplevel(parent)
     dialog.title(title)
@@ -79,7 +79,7 @@ def _show_info_dialog(parent: tk.Widget, title: str, message: str) -> None:
 
     # Log to results text if parent is OptimizationPlugin
     if hasattr(parent, "_log_result"):
-        parent._log_result(f"ℹ️  {title}: {message}")
+        parent._log_result(f"[INFO] {title}: {message}")
 
     dialog = tk.Toplevel(parent)
     dialog.title(title)
@@ -91,7 +91,8 @@ def _show_info_dialog(parent: tk.Widget, title: str, message: str) -> None:
 
     text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
     text.insert("1.0", message)
-    text.configure(state="disabled", bg=frame.cget("background"))
+    # Use system default background color instead of querying frame
+    text.configure(state="disabled")
     text.pack(side="top", fill="both", expand=True, pady=(0, 10))
 
     button_frame = ttk.Frame(frame)
@@ -118,7 +119,7 @@ def _show_warning_dialog(parent: tk.Widget, title: str, message: str) -> None:
 
     # Log to results text if parent is OptimizationPlugin
     if hasattr(parent, "_log_result"):
-        parent._log_result(f"⚠️  {title}: {message}")
+        parent._log_result(f"[WARNING] {title}: {message}")
 
     dialog = tk.Toplevel(parent)
     dialog.title(title)
@@ -167,7 +168,7 @@ class OptimizationConfig:
     energy_log_scale: bool = True
 
     transverse_offset_fractions: List[float] = None  # Fraction of aperture radius
-    starting_z_positions: List[float] = None  # mm before wall
+    starting_z_positions: List[float] = None  # mm (particle starting z-coordinates)
 
     # Sweepable parameters (can be added to grid)
     transverse_momentum_range: Optional[Tuple[float, float]] = None  # amu·mm/ns
@@ -198,18 +199,20 @@ class OptimizationConfig:
     objective: str = "max_energy_gain"  # or "max_energy_efficiency", etc.
 
     # Output
-    output_dir: str = "configs/optimization"
+    output_dir: str = "optimization_results"
     save_results: bool = True
     save_plots: bool = True
     save_trajectories: bool = False  # Save trajectory data for each run
     trajectory_stride: int = 10  # Save every Nth point to reduce file size
+    display_plots: bool = False  # Display plots during sweep
+    plot_display_stride: int = 1  # Display every Nth plot (1 = all, 10 = every 10th)
 
     def __post_init__(self):
         """Set defaults for list fields."""
         if self.transverse_offset_fractions is None:
-            self.transverse_offset_fractions = [0.1, 0.3, 0.5]
+            self.transverse_offset_fractions = [0.0]
         if self.starting_z_positions is None:
-            self.starting_z_positions = [-10.0, -50.0, -100.0]
+            self.starting_z_positions = [0.0]  # Default: start at origin
 
     @classmethod
     def from_simulation_options(cls, options: Any) -> "OptimizationConfig":
@@ -230,8 +233,8 @@ class OptimizationConfig:
         core = options.core_params
 
         # Calculate timestep from options if available
-        # The main GUI stores h_step in rider_params
-        timestep = rider.get("h_step", 3e-7)
+        # The main GUI stores time_step in core_params
+        timestep = core.get("time_step", 3e-7)
 
         return cls(
             simulation_type=options.simulation_type,
@@ -245,7 +248,7 @@ class OptimizationConfig:
             stripped_ions=rider.get("stripped_ions", 1.0),
             transv_mom=rider.get("transv_mom", 1.2e-05),
             transv_dist=rider.get("transv_dist", 2e-06),
-            output_dir=str(options.output_dir.parent / "optimization"),
+            output_dir=str(options.output_dir.parent / "optimization_results"),
         )
 
 
@@ -354,7 +357,7 @@ def calculate_auto_steps(
     # Distance traveled per step = beta * c * coordinate_time_step
     # coordinate_time_step = gamma * timestep (proper time dilation)
     # distance_per_step = beta * c * gamma * h
-    # For ultra-relativistic: beta ≈ 1, so distance ≈ c * gamma * h
+    # For ultra-relativistic: β ≈ 1, so distance ≈ c * gamma * h
     distance_per_step = beta * gamma * C_MMNS * timestep
 
     # Calculate steps needed (add 10% margin for safety)
@@ -468,12 +471,25 @@ class OptimizationPlugin(ttk.Frame):
         )
         frame.pack(fill="x", padx=10, pady=5)
 
+        # Add explanatory help text
+        help_frame = ttk.Frame(frame)
+        help_frame.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        help_text = (
+            "Coordinate system: Particles start at z-coordinate and travel toward the conducting wall.\n"
+            "Example: Particle at z=0 travels to wall at z=2200 mm (distance = 2200 mm).\n"
+            "Transverse offset: Fraction of aperture radius (0.0 = on-axis, 1.0 = at aperture edge)."
+        )
+        help_label = ttk.Label(
+            help_frame, text=help_text, foreground="gray40", font=("TkDefaultFont", 8)
+        )
+        help_label.pack(anchor="w")
+
         # Aperture range
         ttk.Label(frame, text="Aperture Radius:").grid(
-            row=0, column=0, sticky="w", pady=2
+            row=1, column=0, sticky="w", pady=2
         )
         aperture_frame = ttk.Frame(frame)
-        aperture_frame.grid(row=0, column=1, columnspan=3, sticky="ew", pady=2)
+        aperture_frame.grid(row=1, column=1, columnspan=3, sticky="ew", pady=2)
 
         ttk.Label(aperture_frame, text="Min (mm):").pack(side="left", padx=(0, 2))
         self.aperture_min_var = tk.StringVar(value="1e-5")
@@ -500,10 +516,10 @@ class OptimizationPlugin(ttk.Frame):
 
         # Energy range
         ttk.Label(frame, text="Particle Energy:").grid(
-            row=1, column=0, sticky="w", pady=2
+            row=2, column=0, sticky="w", pady=2
         )
         energy_frame = ttk.Frame(frame)
-        energy_frame.grid(row=1, column=1, columnspan=3, sticky="ew", pady=2)
+        energy_frame.grid(row=2, column=1, columnspan=3, sticky="ew", pady=2)
 
         ttk.Label(energy_frame, text="Min (GeV):").pack(side="left", padx=(0, 2))
         self.energy_min_var = tk.StringVar(value="1.0")
@@ -530,44 +546,46 @@ class OptimizationPlugin(ttk.Frame):
 
         # Transverse offset fractions
         ttk.Label(frame, text="Transverse Offset:").grid(
-            row=2, column=0, sticky="w", pady=2
+            row=3, column=0, sticky="w", pady=2
         )
         ttk.Label(frame, text="Fractions of aperture (comma-separated):").grid(
-            row=2, column=1, sticky="w", pady=2
+            row=3, column=1, sticky="w", pady=2
         )
-        self.offset_fractions_var = tk.StringVar(value="0.1, 0.3, 0.5")
+        self.offset_fractions_var = tk.StringVar(value="0.0")
         ttk.Entry(frame, textvariable=self.offset_fractions_var, width=30).grid(
-            row=2, column=2, columnspan=2, sticky="ew", pady=2, padx=5
+            row=3, column=2, columnspan=2, sticky="ew", pady=2, padx=5
         )
 
         # Starting z positions
         ttk.Label(frame, text="Starting Positions:").grid(
-            row=3, column=0, sticky="w", pady=2
-        )
-        ttk.Label(frame, text="z before wall (mm, comma-separated):").grid(
-            row=3, column=1, sticky="w", pady=2
-        )
-        self.start_z_var = tk.StringVar(value="-10, -50, -100")
-        ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
-            row=3, column=2, columnspan=2, sticky="ew", pady=2, padx=5
-        )
-        ttk.Label(frame, text="Wall Position:").grid(
             row=4, column=0, sticky="w", pady=2
         )
-        ttk.Label(frame, text="z (mm):").grid(row=4, column=1, sticky="w", pady=2)
-        self.wall_z_var = tk.StringVar(value="100.0")
+        ttk.Label(frame, text="Particle z-coordinate (mm, comma-separated):").grid(
+            row=4, column=1, sticky="w", pady=2
+        )
+        self.start_z_var = tk.StringVar(value="0.0")
+        ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
+            row=4, column=2, columnspan=2, sticky="ew", pady=2, padx=5
+        )
+        ttk.Label(frame, text="Wall Position:").grid(
+            row=5, column=0, sticky="w", pady=2
+        )
+        ttk.Label(frame, text="Conducting wall z-coordinate (mm):").grid(
+            row=5, column=1, sticky="w", pady=2
+        )
+        self.wall_z_var = tk.StringVar(value="2200.0")
         ttk.Entry(frame, textvariable=self.wall_z_var, width=10).grid(
-            row=4, column=2, sticky="w", pady=2, padx=5
+            row=5, column=2, sticky="w", pady=2, padx=5
         )
 
         # Timestep
-        ttk.Label(frame, text="Timestep:").grid(row=5, column=0, sticky="w", pady=2)
+        ttk.Label(frame, text="Timestep:").grid(row=6, column=0, sticky="w", pady=2)
         ttk.Label(frame, text="h (ns, proper time):").grid(
-            row=5, column=1, sticky="w", pady=2
+            row=6, column=1, sticky="w", pady=2
         )
         self.timestep_var = tk.StringVar(value="3e-7")
         ttk.Entry(frame, textvariable=self.timestep_var, width=10).grid(
-            row=5, column=2, sticky="w", pady=2, padx=5
+            row=6, column=2, sticky="w", pady=2, padx=5
         )
 
         # Steps
@@ -684,12 +702,12 @@ class OptimizationPlugin(ttk.Frame):
         )
         row += 1
 
-        # Transverse Distance
+        # Transverse Spread (bunch radius)
         self._add_sweepable_param(
             frame,
             row,
             "rider_transv_dist",
-            "Transverse Distance (mm):",
+            "Transverse Spread (mm):",
             "2e-06",
             width=15,
         )
@@ -945,69 +963,118 @@ class OptimizationPlugin(ttk.Frame):
 
     def _build_control_section(self):
         """Build control buttons section."""
-        frame = ttk.LabelFrame(self.scrollable_frame, text="Controls", padding=10)
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Controls", padding=10)
         frame.pack(fill="x", padx=10, pady=5)
 
-        button_frame = ttk.Frame(frame)
-        button_frame.pack(fill="x")
-
-        # Button to load from main config
-        self.load_main_config_button = ttk.Button(
-            button_frame,
-            text="Load from Main Config",
-            command=self._on_load_from_main_config,
+        # Info label explaining this is for optimization sweeps
+        info_label = ttk.Label(
+            frame,
+            text="These controls run parameter sweeps for optimization (not single runs - use main GUI Run tab for single simulations)",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray40",
         )
-        self.load_main_config_button.pack(side="left", padx=5)
+        info_label.pack(anchor="w", pady=(0, 10))
+
+        # Row 1: Primary sweep controls
+        sweep_button_frame = ttk.Frame(frame)
+        sweep_button_frame.pack(fill="x", pady=2)
 
         self.run_button = ttk.Button(
-            button_frame,
-            text="▶ Run Sweep",
+            sweep_button_frame,
+            text="▶ Run Parameter Sweep",
             command=self._on_run_sweep,
             style="Accent.TButton",
         )
         self.run_button.pack(side="left", padx=5)
 
         self.stop_button = ttk.Button(
-            button_frame,
-            text="⬛ Stop",
+            sweep_button_frame,
+            text="⬛ Stop Sweep",
             command=self._on_stop,
             state="disabled",
         )
         self.stop_button.pack(side="left", padx=5)
 
+        ttk.Separator(sweep_button_frame, orient="vertical").pack(
+            side="left", fill="y", padx=10
+        )
+
+        # Button to load from main config
+        self.load_main_config_button = ttk.Button(
+            sweep_button_frame,
+            text="Load from Main GUI Config",
+            command=self._on_load_from_main_config,
+        )
+        self.load_main_config_button.pack(side="left", padx=5)
+
+        # Row 2: Configuration management
+        config_button_frame = ttk.Frame(frame)
+        config_button_frame.pack(fill="x", pady=2)
+
+        ttk.Label(config_button_frame, text="Sweep Config:").pack(
+            side="left", padx=(5, 10)
+        )
+
         ttk.Button(
-            button_frame, text="📁 Load Config", command=self._on_load_config
+            config_button_frame, text="Load Config", command=self._on_load_config
         ).pack(side="left", padx=5)
 
         ttk.Button(
-            button_frame, text="💾 Save Config", command=self._on_save_config
+            config_button_frame, text="Save Config", command=self._on_save_config
+        ).pack(side="left", padx=5)
+
+        ttk.Separator(config_button_frame, orient="vertical").pack(
+            side="left", fill="y", padx=10
+        )
+
+        ttk.Label(config_button_frame, text="Results:").pack(side="left", padx=(5, 10))
+
+        ttk.Button(
+            config_button_frame, text="View Results", command=self._on_view_results
         ).pack(side="left", padx=5)
 
         ttk.Button(
-            button_frame, text="📊 View Results", command=self._on_view_results
-        ).pack(side="left", padx=5)
-
-        ttk.Button(
-            button_frame,
-            text="📈 Plot Trajectories",
+            config_button_frame,
+            text="Plot Trajectories",
             command=self._on_plot_trajectories,
         ).pack(side="left", padx=5)
 
-        # Fine-tune controls in a second row
-        finetune_frame = ttk.Frame(frame)
-        finetune_frame.pack(fill="x", pady=(5, 0))
+        # Plot display options
+        plot_options_frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Sweep Display Options", padding=10
+        )
+        plot_options_frame.pack(fill="x", padx=10, pady=5)
 
+        self.display_plots_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            plot_options_frame,
+            text="Display plots during sweep",
+            variable=self.display_plots_var,
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Label(plot_options_frame, text="Display every Nth run:").grid(
+            row=0, column=1, sticky="w", padx=(20, 5), pady=2
+        )
+        self.plot_stride_var = tk.StringVar(value="10")
+        ttk.Entry(plot_options_frame, textvariable=self.plot_stride_var, width=5).grid(
+            row=0, column=2, sticky="w", pady=2
+        )
+        ttk.Label(plot_options_frame, text="(1=all, 10=every 10th)").grid(
+            row=0, column=3, sticky="w", padx=(5, 0), pady=2
+        )
+
+        # Fine-tune controls in a second row
         self.auto_finetune_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            finetune_frame,
+            plot_options_frame,
             text="Auto-prompt for fine-tuning after coarse sweep",
             variable=self.auto_finetune_var,
-        ).pack(side="left", padx=5)
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(5, 2))
 
     def _build_progress_section(self):
         """Build progress monitoring section."""
-        frame = ttk.LabelFrame(self.scrollable_frame, text="Progress", padding=10)
-        frame.pack(fill="both", expand=True, padx=10, pady=5)
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Progress", padding=10)
+        frame.pack(fill="x", padx=10, pady=5)
 
         # Progress bar
         self.progress_bar = ttk.Progressbar(
@@ -1019,22 +1086,14 @@ class OptimizationPlugin(ttk.Frame):
         self.progress_label = ttk.Label(frame, text="Ready")
         self.progress_label.pack(anchor="w", pady=2)
 
-        # Results summary (text area with scrollbar)
-        ttk.Label(frame, text="Results Summary:").pack(anchor="w", pady=(10, 2))
-
-        # Create a frame to hold text and scrollbar
-        text_frame = ttk.Frame(frame)
-        text_frame.pack(fill="both", expand=True, pady=2)
-
-        self.results_text = tk.Text(
-            text_frame, height=20, width=70, wrap="word", state="disabled"
+        # Info label directing users to main GUI logs
+        log_info = ttk.Label(
+            frame,
+            text="📋 Sweep progress and results are logged to the main GUI's LOGS window",
+            font=("TkDefaultFont", 9),
+            foreground="blue",
         )
-        self.results_text.pack(side="left", fill="both", expand=True)
-
-        # Scrollbar for results
-        scrollbar = ttk.Scrollbar(text_frame, command=self.results_text.yview)
-        scrollbar.pack(side="right", fill="y")
-        self.results_text.configure(yscrollcommand=scrollbar.set)
+        log_info.pack(anchor="w", pady=(10, 2))
 
     def _parse_list_field(self, value: str) -> List[float]:
         """Parse comma-separated list of floats."""
@@ -1144,6 +1203,8 @@ class OptimizationPlugin(ttk.Frame):
             transv_dist=float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
+            display_plots=self.display_plots_var.get(),
+            plot_display_stride=int(self.plot_stride_var.get()),
             m_particle=float(self.sweep_params["rider_m_particle"]["fixed_var"].get()),
             pcount=int(self.sweep_params["rider_pcount"]["fixed_var"].get()),
             charge_sign=float(
@@ -1192,7 +1253,7 @@ class OptimizationPlugin(ttk.Frame):
             )
             self.main_timestep_display_var.set(f"{opt_config.timestep:.2e}")
 
-            self._log_result("✓ Loaded parameters from main GUI configuration")
+            self._log_result("[OK] Loaded parameters from main GUI configuration")
             self._log_result(f"  Simulation type: {opt_config.simulation_type.name}")
             self._log_result(f"  Wall z: {opt_config.wall_z} mm")
             self._log_result(f"  Timestep: {opt_config.timestep:.2e} ns")
@@ -1212,7 +1273,7 @@ class OptimizationPlugin(ttk.Frame):
             )
             import traceback
 
-            self._log_result(f"❌ Error loading main config: {e}")
+            self._log_result(f"[ERROR] Error loading main config: {e}")
             self._log_result(traceback.format_exc())
 
     def _on_run_sweep(self):
@@ -1308,13 +1369,13 @@ class OptimizationPlugin(ttk.Frame):
                 )
             )
             self.start_z_var.set(
-                ", ".join(map(str, data.get("starting_z_positions", [-10, -50, -100])))
+                ", ".join(map(str, data.get("starting_z_positions", [0.0])))
             )
             self.wall_z_var.set(str(data.get("wall_z", 100.0)))
             self.steps_var.set(str(data.get("steps", 2000)))
             self.objective_var.set(data.get("objective", "max_energy_gain"))
 
-            self._log_result("✓ Configuration loaded successfully")
+            self._log_result("[OK] Configuration loaded successfully")
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
 
@@ -1362,7 +1423,7 @@ class OptimizationPlugin(ttk.Frame):
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
 
-            self._log_result(f"✓ Configuration saved to {filename}")
+            self._log_result(f"[OK] Configuration saved to {filename}")
         except Exception as e:
             _show_error_dialog(self, "Save Error", f"Failed to save config: {e}")
 
@@ -1391,19 +1452,17 @@ class OptimizationPlugin(ttk.Frame):
         text_widget = tk.Text(msg_frame, wrap="word", height=15, width=70)
         text_widget.pack(fill="both", expand=True, pady=10)
 
-        info_text = """For now, check the output directory for:
+        info_text = """Check the output directory for:
 
-• results.json - Numerical data from parameter sweep
-• heatmap.png - Parameter sweep visualization
-• summary_plots/ - Detailed analysis plots
+- sweep_results_YYYYMMDD_HHMMSS.json - Complete sweep results with trajectories
+- sweep_YYYYMMDD_HHMMSS/ - Individual plots for each sweep
 
-Note: The optimization sweep backend is still in development.
-Once connected, this viewer will show:
-  - Interactive heatmaps (aperture vs energy)
-  - Energy gain distributions
-  - Pareto fronts for multi-objective optimization
-  - Trajectory visualizations for optimal configurations
-  - Export options (CSV, HDF5, matplotlib figures)
+Available visualizations:
+  ✓ Energy gain vs z position plots
+  ✓ Transverse position (x,y) vs z plots
+  ✓ Heatmaps (aperture vs energy, colored by ΔE)
+
+Use 'Plot Trajectories' button to visualize results from saved JSON files.
 
 Output directory: """ + str(self.config.output_dir)
 
@@ -1425,9 +1484,9 @@ Output directory: """ + str(self.config.output_dir)
 
     def _on_plot_trajectories(self):
         """Open trajectory plotting dialog to visualize saved results."""
-        # Ask user to select sweep_results.json file
+        # Ask user to select results file
         file_path = filedialog.askopenfilename(
-            title="Select sweep_results.json",
+            title="Select Results JSON File",
             initialdir=self.config.output_dir,
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
         )
@@ -1439,20 +1498,42 @@ Output directory: """ + str(self.config.output_dir)
             with open(file_path, "r") as f:
                 data = json.load(f)
 
-            results = data.get("results", [])
-            if not results:
-                _show_info_dialog(self, "No Results", "No results found in file.")
-                return
+            # Try to detect file format
+            # Format 1: sweep_results.json with "results" array
+            # Format 2: Legacy trajectory file with "core" -> "rider" structure
+            results = None
 
-            # Filter results with trajectories
-            results_with_traj = [r for r in results if "trajectory" in r]
+            if "results" in data:
+                # New format: sweep_results.json
+                results = data.get("results", [])
+                if not results:
+                    _show_info_dialog(self, "No Results", "No results found in file.")
+                    return
 
-            if not results_with_traj:
+                # Filter results with trajectories
+                results_with_traj = [r for r in results if "trajectory" in r]
+
+                if not results_with_traj:
+                    _show_info_dialog(
+                        self,
+                        "No Trajectories",
+                        "No trajectory data found in results.\n\n"
+                        "Make sure 'Save trajectories' was enabled during the sweep.",
+                    )
+                    return
+
+            elif "core" in data and "rider" in data["core"]:
+                # Legacy format: single trajectory file
+                results_with_traj = [self._convert_legacy_trajectory(data)]
+
+            else:
                 _show_info_dialog(
                     self,
-                    "No Trajectories",
-                    "No trajectory data found in results.\n\n"
-                    "Make sure 'Save trajectories' was enabled during the sweep.",
+                    "Unknown Format",
+                    "Cannot parse this file format.\n\n"
+                    "Expected either:\n"
+                    "- sweep_results.json with 'results' array\n"
+                    "- Legacy trajectory file with 'core'/'rider' structure",
                 )
                 return
 
@@ -1460,7 +1541,86 @@ Output directory: """ + str(self.config.output_dir)
             self._show_trajectory_viewer(results_with_traj, file_path)
 
         except Exception as e:
-            _show_error_dialog(self, "Error Loading File", f"Failed to load file:\n{e}")
+            import traceback
+
+            _show_error_dialog(
+                self,
+                "Error Loading File",
+                f"Failed to load file:\n{e}\n\n{traceback.format_exc()}",
+            )
+
+    def _convert_legacy_trajectory(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert legacy trajectory format to sweep results format."""
+        # Extract trajectory data from legacy format
+        rider_data = data.get("core", {}).get("rider", {})
+
+        # Get positions
+        positions = rider_data.get("positions_mm", {})
+        x = positions.get("x", [])
+        y = positions.get("y", [])
+        z_pos = positions.get("z", [])
+
+        # Calculate r from x and y
+        if x and y:
+            r = [np.sqrt(xi**2 + yi**2) for xi, yi in zip(x, y)]
+        else:
+            r = []
+
+        # Get momenta
+        momenta = rider_data.get("conjugate_momenta", {})
+        pz = momenta.get("Pz", [])
+        px = momenta.get("Px", [])
+        py = momenta.get("Py", [])
+
+        # Calculate pr from px and py
+        if px and py:
+            pr = [np.sqrt(pxi**2 + pyi**2) for pxi, pyi in zip(px, py)]
+        else:
+            pr = []
+
+        # Get time
+        t = rider_data.get("time_ns", [])
+
+        # Get gamma history for energy calculation
+        gamma_hist = rider_data.get("gamma_hist", [])
+
+        # Calculate metrics
+        if gamma_hist:
+            gamma_initial = gamma_hist[0] if len(gamma_hist) > 0 else 1.0
+            gamma_final = gamma_hist[-1] if len(gamma_hist) > 0 else 1.0
+            delta_e_mev = (gamma_final - gamma_initial) * 0.511  # For electrons
+        else:
+            gamma_initial = 1.0
+            gamma_final = 1.0
+            delta_e_mev = 0.0
+
+        # Build result in sweep format
+        result = {
+            "run_number": 1,
+            "parameters": {
+                "aperture_radius": data.get("aperture_radius", 0),
+                "particle_energy_gev": (gamma_initial - 1)
+                * 0.511
+                / 1000.0,  # Convert to GeV
+                "start_z": z_pos[0] if z_pos else 0,
+                "wall_z": data.get("wall_z", 0),
+                "simulation_type": data.get("simulation_type", "UNKNOWN"),
+            },
+            "metrics": {
+                "rider_delta_e_mev": delta_e_mev,
+                "rider_gamma_initial": gamma_initial,
+                "rider_gamma_final": gamma_final,
+            },
+            "trajectory": {
+                "z": z_pos,
+                "r": r,
+                "pz": pz,
+                "pr": pr,
+                "t": t,
+            },
+        }
+
+        return result
 
     def _show_trajectory_viewer(self, results, file_path):
         """Show trajectory viewer dialog with run selection and plotting."""
@@ -1519,7 +1679,7 @@ Output directory: """ + str(self.config.output_dir)
 
         plot_button = ttk.Button(
             btn_frame,
-            text="📈 Plot Selected",
+            text="Plot Selected",
             command=lambda: self._plot_selected_trajectories(
                 run_listbox, results, dialog
             ),
@@ -1584,67 +1744,148 @@ Output directory: """ + str(self.config.output_dir)
                 NavigationToolbar2Tk,
             )
 
-            # Create figure with subplots
-            fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+            # Create figure with 3 subplots as requested
+            fig = plt.figure(figsize=(12, 10))
+            gs = fig.add_gridspec(3, 1, hspace=0.3)
+
+            ax_delta_e = fig.add_subplot(gs[0])
+            ax_transverse = fig.add_subplot(gs[1])
+            ax_heatmap = fig.add_subplot(gs[2])
+
             fig.suptitle(
-                f"Trajectories for {len(selected_results)} run(s)", fontsize=12
+                f"Sweep Results: {len(selected_results)} run(s)",
+                fontsize=12,
+                fontweight="bold",
             )
 
-            ax_z = axes[0, 0]
-            ax_r = axes[0, 1]
-            ax_pz = axes[1, 0]
-            ax_pr = axes[1, 1]
+            # Collect data for heatmap
+            apertures = []
+            energies = []
+            delta_es = []
 
             # Plot each selected trajectory
             for idx, result in enumerate(selected_results):
                 traj = result.get("trajectory", {})
                 params = result.get("parameters", {})
+                metrics = result.get("metrics", {})
                 run_num = result.get("run_number", "?")
 
                 z = np.array(traj.get("z", []))
                 r = np.array(traj.get("r", []))
                 pz = np.array(traj.get("pz", []))
-                pr = np.array(traj.get("pr", []))
                 t = np.array(traj.get("t", []))
 
                 if len(z) == 0:
                     continue
 
-                label = f"Run #{run_num}"
+                aperture = params.get("aperture_radius", 0)
+                energy = params.get("particle_energy_gev", 0)
+                delta_e_mev = metrics.get("rider_delta_e_mev", 0)
+                gamma_initial = metrics.get("rider_gamma_initial", 1)
+                gamma_final = metrics.get("rider_gamma_final", 1)
+
+                label = f"Run #{run_num} (a={aperture:.2e}mm, E={energy:.1f}GeV)"
                 color = plt.cm.tab10(idx % 10)
 
-                # z vs t
-                ax_z.plot(t, z, label=label, alpha=0.7, color=color)
+                # Calculate energy from gamma (E = (gamma - 1) * m * c^2)
+                # For electrons: m*c^2 = 0.511 MeV
+                energy_mev_initial = (gamma_initial - 1) * 0.511
+                energy_mev_final = (gamma_final - 1) * 0.511
 
-                # r vs z (scatter for transverse)
-                ax_r.scatter(z, r, label=label, alpha=0.5, s=10, color=color)
+                # Calculate energy at each point along trajectory
+                # Approximate: E(z) ≈ E_initial + ΔE * (z - z_0) / (z_final - z_0)
+                if len(z) > 1:
+                    z_range = z[-1] - z[0]
+                    if abs(z_range) > 1e-6:
+                        energy_mev = (
+                            energy_mev_initial + delta_e_mev * (z - z[0]) / z_range
+                        )
+                    else:
+                        energy_mev = np.full_like(z, energy_mev_initial)
+                else:
+                    energy_mev = np.array([energy_mev_initial])
 
-                # pz vs z
-                ax_pz.plot(z, pz, label=label, alpha=0.7, color=color)
+                # Plot 1: Delta E versus z
+                ax_delta_e.plot(
+                    z,
+                    energy_mev - energy_mev_initial,
+                    label=label,
+                    alpha=0.7,
+                    color=color,
+                    linewidth=1.5,
+                )
 
-                # pr vs r (scatter for transverse)
-                ax_pr.scatter(r, pr, label=label, alpha=0.5, s=10, color=color)
+                # Plot 2: x and y positions versus z (need to extract from r)
+                # Since we only have r (radial distance), we'll plot r and -r to show transverse extent
+                # In a real case, you'd have separate x and y coordinates
+                ax_transverse.plot(
+                    z, r, label=f"{label} (+r)", alpha=0.6, color=color, linewidth=1.5
+                )
+                ax_transverse.plot(
+                    z, -r, alpha=0.3, color=color, linewidth=1.0, linestyle="--"
+                )
 
-            # Set labels and legends
-            ax_z.set_xlabel("t (ns)")
-            ax_z.set_ylabel("z (mm)")
-            ax_z.legend(fontsize=8)
-            ax_z.grid(True, alpha=0.3)
+                # Collect data for heatmap
+                apertures.append(aperture)
+                energies.append(energy)
+                delta_es.append(delta_e_mev)
 
-            ax_r.set_xlabel("z (mm)")
-            ax_r.set_ylabel("r (mm)")
-            ax_r.legend(fontsize=8)
-            ax_r.grid(True, alpha=0.3)
+            # Set labels and styling for Plot 1
+            ax_delta_e.set_xlabel("z position (mm)", fontsize=10)
+            ax_delta_e.set_ylabel("ΔE (MeV)", fontsize=10)
+            ax_delta_e.set_title(
+                "Energy Gain vs Position", fontsize=11, fontweight="bold"
+            )
+            ax_delta_e.legend(fontsize=7, loc="best")
+            ax_delta_e.grid(True, alpha=0.3)
 
-            ax_pz.set_xlabel("z (mm)")
-            ax_pz.set_ylabel("pz (amu·mm/ns)")
-            ax_pz.legend(fontsize=8)
-            ax_pz.grid(True, alpha=0.3)
+            # Set labels and styling for Plot 2
+            ax_transverse.set_xlabel("z position (mm)", fontsize=10)
+            ax_transverse.set_ylabel("Transverse position (mm)", fontsize=10)
+            ax_transverse.set_title(
+                "Transverse Position (±r) vs z", fontsize=11, fontweight="bold"
+            )
+            ax_transverse.legend(fontsize=7, loc="best")
+            ax_transverse.grid(True, alpha=0.3)
+            ax_transverse.axhline(
+                y=0, color="k", linestyle="-", linewidth=0.5, alpha=0.3
+            )
 
-            ax_pr.set_xlabel("r (mm)")
-            ax_pr.set_ylabel("pr (amu·mm/ns)")
-            ax_pr.legend(fontsize=8)
-            ax_pr.grid(True, alpha=0.3)
+            # Plot 3: Heatmap (aperture vs energy, colored by delta_e)
+            if len(apertures) > 0:
+                # Create scatter plot for heatmap
+                scatter = ax_heatmap.scatter(
+                    energies,
+                    [a * 1e6 for a in apertures],  # Convert to microns for readability
+                    c=delta_es,
+                    cmap="viridis",
+                    s=100,
+                    alpha=0.7,
+                    edgecolors="black",
+                    linewidth=0.5,
+                )
+
+                cbar = plt.colorbar(scatter, ax=ax_heatmap)
+                cbar.set_label("ΔE (MeV)", fontsize=10)
+
+                ax_heatmap.set_xlabel("Particle Energy (GeV)", fontsize=10)
+                ax_heatmap.set_ylabel("Aperture Radius (μm)", fontsize=10)
+                ax_heatmap.set_title(
+                    "Parameter Space: ΔE(Energy, Aperture)",
+                    fontsize=11,
+                    fontweight="bold",
+                )
+                ax_heatmap.grid(True, alpha=0.3)
+
+                # Use log scale if appropriate
+                if max(energies) / min(energies) > 10 if min(energies) > 0 else False:
+                    ax_heatmap.set_xscale("log")
+                if (
+                    max(apertures) / min(apertures) > 10
+                    if min(apertures) > 0
+                    else False
+                ):
+                    ax_heatmap.set_yscale("log")
 
             plt.tight_layout()
 
@@ -1721,16 +1962,22 @@ Output directory: """ + str(self.config.output_dir)
             param_values_lists = [param_grids[name] for name in param_names]
 
             for param_combo in itertools.product(*param_values_lists):
+                # Periodic cleanup of matplotlib figures to prevent memory leak
+                if run_num > 0 and run_num % 10 == 0:
+                    import matplotlib.pyplot as plt
+
+                    plt.close("all")
+
                 # Check for cancellation
                 if not self.running:
-                    self._log_result("❌ Sweep stopped by user")
+                    self._log_result("[STOPPED] Sweep stopped by user")
                     break
 
                 if self.gui_controller and hasattr(
                     self.gui_controller, "_cancel_requested"
                 ):
                     if self.gui_controller._cancel_requested:
-                        self._log_result("❌ Sweep cancelled by user")
+                        self._log_result("[CANCELLED] Sweep cancelled by user")
                         break
 
                 run_num += 1
@@ -1784,6 +2031,12 @@ Output directory: """ + str(self.config.output_dir)
 
                 # Auto-adjust timestep if enabled
                 if self.config.auto_steps:
+                    # Calculate distance
+                    distance_to_wall = abs(self.config.wall_z - start_z)
+                    total_distance = (
+                        distance_to_wall + self.config.auto_steps_distance_past_wall
+                    )
+
                     timestep = calculate_auto_timestep(
                         start_z=start_z,
                         wall_z=self.config.wall_z,
@@ -1800,6 +2053,25 @@ Output directory: """ + str(self.config.output_dir)
                         particle_energy_gev=energy,
                         particle_mass_amu=rider_m_particle,
                     )
+
+                    # Log diagnostic info for first run or every 50th run
+                    if run_num == 1 or run_num % 50 == 0:
+                        # Calculate gamma for diagnostics
+                        AMU_TO_MEV = 931.494
+                        rest_energy_mev = rider_m_particle * AMU_TO_MEV
+                        gamma = (energy * 1e3) / rest_energy_mev
+                        beta = (
+                            np.sqrt(1.0 - 1.0 / (gamma * gamma))
+                            if gamma > 1.0
+                            else 0.999
+                        )
+                        distance_per_step = beta * gamma * C_MMNS * timestep
+
+                        self._log_result(
+                            f"  Run {run_num} auto-timestep: start_z={start_z:.1f}mm, wall_z={self.config.wall_z:.1f}mm, "
+                            f"distance={total_distance:.1f}mm, E={energy:.1f}GeV, gamma={gamma:.1f}, "
+                            f"timestep={timestep:.2e}ns, steps={steps}, dist/step={distance_per_step:.3f}mm"
+                        )
                 else:
                     timestep = self.config.timestep
                     steps = self.config.steps
@@ -1817,7 +2089,10 @@ Output directory: """ + str(self.config.output_dir)
                         rider_charge_sign=rider_charge_sign,
                         rider_pcount=int(rider_pcount),
                         rider_transv_mom=rider_transv_mom,
-                        driver_params=driver_params_dict,
+                        driver_params=driver_params_dict
+                        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
+                        else None,
+                        run_num=run_num,
                     )
 
                     # Store result with all parameters
@@ -1855,7 +2130,7 @@ Output directory: """ + str(self.config.output_dir)
                     all_results.append(run_data)
 
                 except Exception as e:
-                    self._log_result(f"⚠️  Run {run_num} failed: {e}")
+                    self._log_result(f"[WARNING] Run {run_num} failed: {e}")
                     all_results.append(
                         {
                             "run_number": run_num,
@@ -1874,7 +2149,7 @@ Output directory: """ + str(self.config.output_dir)
                 self._save_sweep_results(all_results)
 
             if self.running:
-                self._log_result("✓ Sweep completed successfully!")
+                self._log_result("[OK] Sweep completed successfully!")
                 self._log_result(f"  Results saved to: {self.config.output_dir}")
                 self._log_result(f"  Total runs: {len(all_results)}")
                 self._update_progress(100, "Complete!")
@@ -1883,12 +2158,16 @@ Output directory: """ + str(self.config.output_dir)
                 if not is_finetune and self.auto_finetune_var.get() and all_results:
                     self.after(500, lambda: self._prompt_finetune(all_results))
         except Exception as e:
-            self._log_result(f"❌ Error during sweep: {e}")
+            self._log_result(f"[ERROR] Error during sweep: {e}")
             import traceback
 
             self._log_result(traceback.format_exc())
         finally:
             self.running = False
+            # Clean up any remaining matplotlib figures
+            import matplotlib.pyplot as plt
+
+            plt.close("all")
             # Update UI back to ready state
             self.after(100, self._reset_ui_state)
 
@@ -1974,14 +2253,9 @@ Output directory: """ + str(self.config.output_dir)
             self._log_result("\n" + "=" * 60)
             self._log_result("Starting fine-tuning sweep...")
             self._log_result("=" * 60 + "\n")
-            # TODO: Implement fine-tuning logic
-            _show_info_dialog(
-                self,
-                "Fine-Tuning",
-                "Fine-tuning feature coming soon!\n\n"
-                "This will automatically refine the parameter space\n"
-                "around the best configurations found.",
-            )
+
+            # Implement fine-tuning logic
+            self._run_finetune_sweep(top_results)
 
     def _run_single_integration(
         self,
@@ -1996,6 +2270,7 @@ Output directory: """ + str(self.config.output_dir)
         rider_pcount: int = None,
         rider_transv_mom: float = None,
         driver_params: Dict[str, Any] = None,
+        run_num: int = 0,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
         # Use provided rider values or fall back to config defaults
@@ -2032,7 +2307,7 @@ Output directory: """ + str(self.config.output_dir)
         rest_energy_mev = rider_m_particle * AMU_TO_MEV
         gamma = (energy_gev * 1e3) / rest_energy_mev
         # Pz ≈ gamma * m * c for ultra-relativistic
-        # In units of amu*mm/ns: Pz = gamma * m * c_mmns
+        # In units of amu·mm/ns: Pz = gamma * m * c_mmns
         rider_params["starting_Pz"] = gamma * rider_m_particle * C_MMNS
 
         core_params = {
@@ -2054,7 +2329,8 @@ Output directory: """ + str(self.config.output_dir)
             legacy_enabled=False,
             trajectory_save=self.config.save_trajectories,
             trajectory_interval=self.config.trajectory_stride,
-            energy_display=False,
+            energy_display=self.config.display_plots
+            and (run_num % self.config.plot_display_stride == 0),
             energy_save=False,
             transverse_display=False,
             transverse_save=False,
@@ -2068,6 +2344,21 @@ Output directory: """ + str(self.config.output_dir)
 
         # Run the integration
         result = run_testbed(options)
+
+        # Display figures if requested, otherwise close them
+        import matplotlib.pyplot as plt
+
+        if self.config.display_plots and (
+            run_num % self.config.plot_display_stride == 0
+        ):
+            # Show the plots
+            for fig in result.figures.values():
+                fig.show()
+                plt.pause(0.1)  # Allow GUI to update
+
+        # Always close figures after displaying to prevent memory leak
+        for fig in result.figures.values():
+            plt.close(fig)
 
         # Extract metrics
         metrics = {}
@@ -2086,21 +2377,33 @@ Output directory: """ + str(self.config.output_dir)
             # Downsample trajectory
             stride = self.config.trajectory_stride
             output["trajectory"] = {
-                "z": traj.z[::stride].tolist(),
-                "r": traj.r[::stride].tolist(),
-                "pz": traj.pz[::stride].tolist(),
-                "pr": traj.pr[::stride].tolist(),
-                "t": traj.t[::stride].tolist(),
+                "z": traj["z"][::stride].tolist(),
+                "r": traj["r"][::stride].tolist(),
+                "pz": traj["pz"][::stride].tolist(),
+                "pr": traj["pr"][::stride].tolist(),
+                "t": traj["t"][::stride].tolist(),
             }
 
         return output
 
     def _save_sweep_results(self, results: List[Dict[str, Any]]) -> None:
-        """Save sweep results to JSON file."""
-        output_file = Path(self.config.output_dir) / "sweep_results.json"
+        """Save sweep results to JSON file with timestamp in dedicated folder."""
+        from datetime import datetime
+
+        # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Create timestamped folder for this sweep
+        sweep_dir = Path(self.config.output_dir) / f"sweep_{timestamp}"
+        sweep_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create filename: sweep_results.json (inside timestamped folder)
+        output_file = sweep_dir / "sweep_results.json"
 
         # Prepare data for JSON serialization
         output_data = {
+            "sweep_name": f"Parameter Sweep {timestamp}",
+            "timestamp": timestamp,
             "config": {
                 "aperture_range": self.config.aperture_range,
                 "aperture_points": self.config.aperture_points,
@@ -2109,6 +2412,8 @@ Output directory: """ + str(self.config.output_dir)
                 "transverse_offset_fractions": self.config.transverse_offset_fractions,
                 "starting_z_positions": self.config.starting_z_positions,
                 "simulation_type": self.config.simulation_type.name,
+                "wall_z": self.config.wall_z,
+                "auto_steps": self.config.auto_steps,
             },
             "results": results,
             "total_runs": len(results),
@@ -2118,6 +2423,264 @@ Output directory: """ + str(self.config.output_dir)
             json.dump(output_data, f, indent=2)
 
         self._log_result(f"Results saved to: {output_file}")
+
+        # Generate and save summary plots
+        if len(results) > 0:
+            self._generate_summary_plots(results, sweep_dir)
+
+    def _generate_summary_plots(
+        self, results: List[Dict[str, Any]], output_dir: Path
+    ) -> None:
+        """Generate summary plots for the sweep results."""
+        try:
+            import matplotlib.pyplot as plt
+
+            # Filter results with trajectories
+            results_with_traj = [
+                r
+                for r in results
+                if "trajectory" in r and len(r["trajectory"].get("z", [])) > 0
+            ]
+
+            if len(results_with_traj) == 0:
+                self._log_result("[INFO] No trajectories to plot")
+                return
+
+            # Collect all data
+            apertures = []
+            energies = []
+            delta_es = []
+
+            for result in results_with_traj:
+                params = result.get("parameters", {})
+                metrics = result.get("metrics", {})
+
+                apertures.append(params.get("aperture_radius", 0))
+                energies.append(params.get("particle_energy_gev", 0))
+                delta_es.append(metrics.get("rider_delta_e_mev", 0))
+
+            # Create heatmap
+            fig, ax = plt.subplots(figsize=(10, 8))
+
+            scatter = ax.scatter(
+                energies,
+                [a * 1e6 for a in apertures],  # Convert to microns
+                c=delta_es,
+                cmap="viridis",
+                s=150,
+                alpha=0.8,
+                edgecolors="black",
+                linewidth=1,
+            )
+
+            cbar = plt.colorbar(scatter, ax=ax)
+            cbar.set_label("Energy Gain ΔE (MeV)", fontsize=12)
+
+            ax.set_xlabel("Particle Energy (GeV)", fontsize=12)
+            ax.set_ylabel("Aperture Radius (μm)", fontsize=12)
+            ax.set_title(
+                "Parameter Space Exploration: Energy Gain",
+                fontsize=14,
+                fontweight="bold",
+            )
+            ax.grid(True, alpha=0.3)
+
+            # Use log scale if range is large
+            if (
+                len(energies) > 0 and max(energies) / min(energies) > 10
+                if min(energies) > 0
+                else False
+            ):
+                ax.set_xscale("log")
+            if (
+                len(apertures) > 0 and max(apertures) / min(apertures) > 10
+                if min(apertures) > 0
+                else False
+            ):
+                ax.set_yscale("log")
+
+            plt.tight_layout()
+
+            heatmap_file = output_dir / "energy_gain_heatmap.png"
+            plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+
+            self._log_result(f"[OK] Heatmap saved to: {heatmap_file}")
+
+            # Plot best trajectory
+            best_result = max(
+                results_with_traj,
+                key=lambda r: r.get("metrics", {}).get("rider_delta_e_mev", -1e9),
+            )
+            self._plot_single_trajectory(
+                best_result, output_dir / "best_trajectory.png"
+            )
+
+        except Exception as e:
+            self._log_result(f"[WARNING] Failed to generate summary plots: {e}")
+
+    def _plot_single_trajectory(
+        self, result: Dict[str, Any], output_file: Path
+    ) -> None:
+        """Plot trajectory for a single run."""
+        try:
+            import matplotlib.pyplot as plt
+
+            traj = result.get("trajectory", {})
+            params = result.get("parameters", {})
+            metrics = result.get("metrics", {})
+
+            z = np.array(traj.get("z", []))
+            r = np.array(traj.get("r", []))
+
+            if len(z) == 0:
+                return
+
+            aperture = params.get("aperture_radius", 0)
+            energy = params.get("particle_energy_gev", 0)
+            delta_e = metrics.get("rider_delta_e_mev", 0)
+            gamma_initial = metrics.get("rider_gamma_initial", 1)
+            gamma_final = metrics.get("rider_gamma_final", 1)
+
+            # Calculate energy evolution
+            energy_mev_initial = (gamma_initial - 1) * 0.511
+            energy_mev_final = (gamma_final - 1) * 0.511
+
+            if len(z) > 1 and abs(z[-1] - z[0]) > 1e-6:
+                energy_mev = energy_mev_initial + delta_e * (z - z[0]) / (z[-1] - z[0])
+            else:
+                energy_mev = np.full_like(z, energy_mev_initial)
+
+            # Create 3-panel plot
+            fig = plt.figure(figsize=(12, 10))
+            gs = fig.add_gridspec(3, 1, hspace=0.3)
+
+            ax1 = fig.add_subplot(gs[0])
+            ax2 = fig.add_subplot(gs[1])
+            ax3 = fig.add_subplot(gs[2])
+
+            fig.suptitle(
+                f"Best Trajectory: a={aperture * 1e6:.1f}μm, E={energy:.1f}GeV, ΔE={delta_e:.2f}MeV",
+                fontsize=12,
+                fontweight="bold",
+            )
+
+            # Plot 1: Energy gain vs z
+            ax1.plot(z, energy_mev - energy_mev_initial, "b-", linewidth=2)
+            ax1.set_xlabel("z position (mm)", fontsize=10)
+            ax1.set_ylabel("ΔE (MeV)", fontsize=10)
+            ax1.set_title("Energy Gain vs Position", fontsize=11, fontweight="bold")
+            ax1.grid(True, alpha=0.3)
+
+            # Plot 2: Transverse position vs z
+            ax2.plot(z, r, "r-", linewidth=2, label="+r")
+            ax2.plot(z, -r, "r--", linewidth=1.5, alpha=0.6, label="-r")
+            ax2.axhline(y=0, color="k", linestyle="-", linewidth=0.5, alpha=0.3)
+            ax2.set_xlabel("z position (mm)", fontsize=10)
+            ax2.set_ylabel("Transverse position (mm)", fontsize=10)
+            ax2.set_title(
+                "Transverse Position (±r) vs z", fontsize=11, fontweight="bold"
+            )
+            ax2.legend(fontsize=9)
+            ax2.grid(True, alpha=0.3)
+
+            # Plot 3: Phase space (r vs z)
+            ax3.plot(z, r, "g-", linewidth=2)
+            ax3.set_xlabel("z position (mm)", fontsize=10)
+            ax3.set_ylabel("r (mm)", fontsize=10)
+            ax3.set_title("Radial Position Evolution", fontsize=11, fontweight="bold")
+            ax3.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            plt.savefig(output_file, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+
+            self._log_result(f"[OK] Best trajectory plot saved to: {output_file}")
+
+        except Exception as e:
+            self._log_result(f"[WARNING] Failed to plot trajectory: {e}")
+
+    def _run_finetune_sweep(self, top_results: List[Dict[str, Any]]) -> None:
+        """Run fine-tuning sweep around the best configurations."""
+        # Calculate refined parameter ranges around each optimum
+        finetune_configs = []
+
+        for result in top_results:
+            params = result.get("parameters", {})
+            aperture = params.get("aperture_radius", self.config.aperture_range[0])
+            energy = params.get("particle_energy_gev", self.config.energy_range[0])
+
+            # Create a fine grid around this point (±20% range, 5 points each)
+            aperture_margin = aperture * 0.2
+            energy_margin = energy * 0.2
+
+            finetune_configs.append(
+                {
+                    "aperture_range": (
+                        max(1e-6, aperture - aperture_margin),
+                        aperture + aperture_margin,
+                    ),
+                    "energy_range": (
+                        max(0.1, energy - energy_margin),
+                        energy + energy_margin,
+                    ),
+                    "center_aperture": aperture,
+                    "center_energy": energy,
+                }
+            )
+
+        self._log_result(f"Fine-tuning around {len(finetune_configs)} optimal points")
+        self._log_result(f"Using 5x5 grid (25 runs per optimum)")
+        self._log_result("")
+
+        # Save current config
+        original_aperture_range = self.config.aperture_range
+        original_energy_range = self.config.energy_range
+        original_aperture_points = self.config.aperture_points
+        original_energy_points = self.config.energy_points
+        original_log_scale = self.config.aperture_log_scale
+        original_energy_log = self.config.energy_log_scale
+
+        all_finetune_results = []
+
+        # Run fine-tuning sweep for each optimum
+        for i, config in enumerate(finetune_configs, 1):
+            self._log_result(f"\nFine-tuning optimum {i}/{len(finetune_configs)}:")
+            self._log_result(
+                f"  Center: a={config['center_aperture']:.2e}mm, "
+                f"E={config['center_energy']:.1f}GeV"
+            )
+
+            # Temporarily modify config for fine-tuning
+            self.config.aperture_range = config["aperture_range"]
+            self.config.energy_range = config["energy_range"]
+            self.config.aperture_points = 5
+            self.config.energy_points = 5
+            self.config.aperture_log_scale = False  # Use linear scale for fine-tuning
+            self.config.energy_log_scale = False
+
+            # Run the sweep (pass is_finetune=True to avoid recursive fine-tuning)
+            self._run_sweep_background(is_finetune=True)
+
+            # Wait for sweep to complete
+            while self.running:
+                self.update()
+                self.after(100)
+
+            self._log_result(f"  Completed fine-tuning around optimum {i}")
+
+        # Restore original config
+        self.config.aperture_range = original_aperture_range
+        self.config.energy_range = original_energy_range
+        self.config.aperture_points = original_aperture_points
+        self.config.energy_points = original_energy_points
+        self.config.aperture_log_scale = original_log_scale
+        self.config.energy_log_scale = original_energy_log
+
+        self._log_result("\n" + "=" * 60)
+        self._log_result("[OK] Fine-tuning sweep completed!")
+        self._log_result("=" * 60)
+        self._log_result(f"Check {self.config.output_dir} for detailed results")
 
     def _update_progress(self, value: float, text: str):
         """Update progress bar and label (thread-safe)."""
@@ -2133,18 +2696,22 @@ Output directory: """ + str(self.config.output_dir)
         self.after(0, lambda: self.progress_label.config(text=text))
 
     def _log_result(self, message: str):
-        """Append message to results text area (thread-safe)."""
+        """Log message to main GUI logs window (thread-safe)."""
+        # Log to console/terminal always
+        print(f"[OPTIMIZATION] {message}", flush=True)
 
-    def _log_result(self, message: str):
-        """Append message to results text area (thread-safe)."""
-
-        def append():
-            self.results_text.config(state="normal")
-            self.results_text.insert("end", message + "\n")
-            self.results_text.see("end")
-            self.results_text.config(state="disabled")
-
-        self.after(0, append)
+        # If we have a gui_controller, log to its log window
+        if self.gui_controller is not None and hasattr(
+            self.gui_controller, "_append_log"
+        ):
+            try:
+                gui = self.gui_controller  # Type guard
+                self.after(
+                    0,
+                    lambda: gui._append_log(f"[OPTIMIZATION] {message}"),
+                )
+            except Exception:
+                pass  # Fail silently if main GUI log isn't available
 
     def _reset_ui_state(self):
         """Reset UI to ready state after run completes."""

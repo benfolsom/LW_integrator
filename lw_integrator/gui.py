@@ -444,12 +444,12 @@ class IntegratorGUI:
         main_paned = ttk.Panedwindow(self.root, orient="vertical")
         main_paned.grid(row=1, column=0, sticky="nsew")
         notebook = ttk.Notebook(main_paned)
-        main_paned.add(notebook, weight=5)
+        main_paned.add(notebook, weight=15)
 
         bottom_container = ttk.Frame(main_paned)
         bottom_container.columnconfigure(0, weight=1)
         bottom_container.rowconfigure(1, weight=1)
-        main_paned.add(bottom_container, weight=2)
+        main_paned.add(bottom_container, weight=1)
 
         # Particles tab --------------------------------------------------
         particle_frame = self._create_scrollable_tab(notebook, "Particles", padding=12)
@@ -890,7 +890,7 @@ class IntegratorGUI:
 
         self.summary_text = tk.Text(
             summary_text_frame,
-            height=8,
+            height=3,
             width=70,
             wrap="word",
             state="disabled",
@@ -938,7 +938,7 @@ class IntegratorGUI:
         )
 
         self.log_output = scrolledtext.ScrolledText(
-            log_frame, height=15, state="disabled", wrap="none"
+            log_frame, height=6, state="disabled", wrap="none"
         )
 
         self.log_output.grid(row=1, column=0, sticky="nsew")
@@ -947,7 +947,7 @@ class IntegratorGUI:
         self._raw_log_lines = []
         self._log_summary = []
 
-        lower_paned.add(log_frame, weight=2)
+        lower_paned.add(log_frame, weight=1)
 
         for page in self._scroll_pages:
             page.refresh_mousewheel_bindings()
@@ -1418,7 +1418,7 @@ class IntegratorGUI:
                 f"{summary.rider_emittance_y_mm_mrad:.2e} mm·mrad ({emit_y_pm:.2e} pm·rad)"
             )
             lines.append(
-                f"Rider εn: "
+                f"Rider εₙ: "
                 f"{summary.rider_norm_emittance_x_mm_mrad:.2e} mm·mrad ({norm_emit_x_pm:.2e} pm·rad), "
                 f"{summary.rider_norm_emittance_y_mm_mrad:.2e} mm·mrad ({norm_emit_y_pm:.2e} pm·rad)"
             )
@@ -1455,7 +1455,7 @@ class IntegratorGUI:
                     f"{summary.driver_emittance_y_mm_mrad:.2e} mm·mrad ({driver_emit_y_pm:.2e} pm·rad)"
                 )
                 lines.append(
-                    f"Driver εn: "
+                    f"Driver εₙ: "
                     f"{summary.driver_norm_emittance_x_mm_mrad:.2e} mm·mrad ({driver_norm_emit_x_pm:.2e} pm·rad), "
                     f"{summary.driver_norm_emittance_y_mm_mrad:.2e} mm·mrad ({driver_norm_emit_y_pm:.2e} pm·rad)"
                 )

@@ -1,28 +1,20 @@
 {
   "simulation_type": "CONDUCTING_WALL",
   "aperture_min": 1e-06,
-  "aperture_max": 2.0,
-  "aperture_points": 20,
+  "aperture_max": 0.1,
+  "aperture_points": 3,
   "aperture_log_scale": true,
   "energy_min": 1.0,
-  "energy_max": 30000.0,
-  "energy_points": 10,
+  "energy_max": 20.0,
+  "energy_points": 3,
   "energy_log_scale": true,
   "transverse_offset_fractions": [
-    0.001,
-    0.005,
-    0.01,
-    0.05,
-    0.1
+    0.0
   ],
   "starting_z_positions": [
-    0.0,
-    50.0,
-    100.0,
-    200.0,
-    500.0
+    0.0
   ],
-  "wall_z": 2000.0,
-  "steps": 2000,
+  "wall_z": 2200.0,
+  "steps": 1700,
   "objective": "max_energy_gain"
 }

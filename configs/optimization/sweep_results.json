@@ -1,0 +1,240 @@
+{
+  "config": {
+    "aperture_range": [
+      1e-05,
+      0.001
+    ],
+    "aperture_points": 3,
+    "energy_range": [
+      1.0,
+      1000.0
+    ],
+    "energy_points": 3,
+    "transverse_offset_fractions": [
+      0.0
+    ],
+    "starting_z_positions": [
+      0.0
+    ],
+    "simulation_type": "CONDUCTING_WALL"
+  },
+  "results": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "aperture_radius": 1e-05,
+        "particle_energy_gev": 1.0,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "aperture_radius": 1e-05,
+        "particle_energy_gev": 31.622776601683793,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "aperture_radius": 1e-05,
+        "particle_energy_gev": 1000.0,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "aperture_radius": 0.0001,
+        "particle_energy_gev": 1.0,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "aperture_radius": 0.0001,
+        "particle_energy_gev": 31.622776601683793,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 6,
+      "parameters": {
+        "aperture_radius": 0.0001,
+        "particle_energy_gev": 1000.0,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 7,
+      "parameters": {
+        "aperture_radius": 0.001,
+        "particle_energy_gev": 1.0,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 8,
+      "parameters": {
+        "aperture_radius": 0.001,
+        "particle_energy_gev": 31.622776601683793,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    },
+    {
+      "run_number": 9,
+      "parameters": {
+        "aperture_radius": 0.001,
+        "particle_energy_gev": 1000.0,
+        "start_z": 0.0,
+        "transverse_offset": 0.0,
+        "transverse_offset_fraction": 0.0,
+        "timestep": 3e-07,
+        "steps": 2000,
+        "wall_z": 2200.0,
+        "rider_m_particle": 0.00054857990907,
+        "rider_charge_sign": -1.0,
+        "rider_pcount": 1,
+        "rider_transv_mom": 1.2e-05,
+        "rider_transv_dist": 2e-06,
+        "simulation_type": "CONDUCTING_WALL"
+      },
+      "metrics": {
+        "rider_delta_e_mev": 0.0,
+        "rider_gamma_initial": 1.0,
+        "rider_gamma_final": 1.0
+      }
+    }
+  ],
+  "total_runs": 9
+}
