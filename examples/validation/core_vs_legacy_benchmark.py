@@ -435,12 +435,64 @@ def compute_delta_energy_series(
     initial_state: ParticleState,
     rest_energy_mev: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute total energy change series.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        (delta_energy_gev, z_series) - Total energy change and z positions
+    """
     gamma_series = _extract_series(states, "gamma")
     initial_gamma = float(initial_state["gamma"][0])
     rest_energy_gev = rest_energy_mev * 1e-3
     delta_energy_gev = (gamma_series - initial_gamma) * rest_energy_gev
     z_series = _extract_series(states, "z")
     return delta_energy_gev, z_series
+
+
+def compute_delta_energy_components(
+    states: List[ParticleState],
+    initial_state: ParticleState,
+    rest_energy_mev: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute both total and longitudinal energy change series.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray, np.ndarray]
+        (delta_energy_total_gev, delta_energy_z_gev, z_series)
+        - Total energy change (from Δγ)
+        - Longitudinal energy change (from ΔPz)
+        - z positions
+    """
+    # Total energy from gamma
+    gamma_series = _extract_series(states, "gamma")
+    initial_gamma = float(initial_state["gamma"][0])
+    rest_energy_gev = rest_energy_mev * 1e-3
+    delta_energy_total = (gamma_series - initial_gamma) * rest_energy_gev
+
+    # Longitudinal momentum component
+    # In ultra-relativistic limit: E_z ≈ P_z * c
+    # Our Pz is in units of mass * velocity (amu·mm/ns)
+    # Converting to energy: ΔE_z = ΔPz * c (in natural units where c=1)
+    # But our Pz already includes factors, so we use: ΔE_z ≈ (ΔPz/mass) * E_rest
+    pz_series = _extract_series(states, "Pz")
+    initial_pz = float(initial_state["Pz"][0])
+
+    # For ultra-relativistic particles: ΔE_z ≈ Δ(βz * γ) * mc²
+    # We can approximate using ΔPz directly since Pz = γ * m * βz * c
+    # In our units, the relationship is simpler
+    bz_series = _extract_series(states, "bz")
+    initial_bz = float(initial_state["bz"][0])
+
+    # Longitudinal energy: E_z = γ * βz * mc²
+    delta_energy_z = (
+        gamma_series * bz_series - initial_gamma * initial_bz
+    ) * rest_energy_gev
+
+    z_series = _extract_series(states, "z")
+
+    return delta_energy_total, delta_energy_z, z_series
 
 
 def run_benchmark(

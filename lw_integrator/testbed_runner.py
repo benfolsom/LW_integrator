@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import time
 import traceback
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 
 import matplotlib
@@ -156,15 +156,17 @@ plt.rcParams.update(
 # Helper classes
 # ---------------------------------------------------------------------------
 
+
 class TeeStringIO(StringIO):
     """StringIO that also writes to another stream (like sys.stdout).
-    
+
     This allows capturing output while also displaying it in real-time.
     """
+
     def __init__(self, tee_stream=None):
         super().__init__()
         self.tee_stream = tee_stream
-    
+
     def write(self, s):
         """Write to both StringIO buffer and tee stream."""
         result = super().write(s)
@@ -198,6 +200,7 @@ class SimulationOptions:
     metrics_save: bool = False
     energy_display: bool = True
     energy_save: bool = True
+    energy_dual_plot: bool = False  # Show both total ΔE and ΔE_z on same plot
     transverse_display: bool = False
     transverse_save: bool = False
     trajectory_save: bool = False
@@ -442,14 +445,14 @@ class InitialSummary:
 
 def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str, float]:
     """Calculate emittance and Twiss beta from particle state.
-    
+
     Parameters
     ----------
     state : dict
         Particle state with keys 'x', 'y', 'Px', 'Py', 'Pz', 'm', etc.
     gamma : float
         Lorentz factor
-    
+
     Returns
     -------
     dict
@@ -460,7 +463,7 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
         - norm_emittance_y_mm_mrad: normalized emittance in y (mm·mrad)
         - beta_x_m: Twiss beta in x (meters)
         - beta_y_m: Twiss beta in y (meters)
-    
+
     Notes
     -----
     Units: amu·mm/ns system
@@ -477,48 +480,48 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     Py = state["Py"]
     Pz = state["Pz"]
     mass = state["m"]
-    
+
     # For small-angle approximation: x' ≈ tan(θ) ≈ Px/Pz
     # This is exact for the divergence angle in the paraxial limit
     xp = Px / Pz  # dimensionless (mm/ns / mm/ns)
     yp = Py / Pz  # dimensionless
-    
+
     # Calculate RMS quantities
     x_rms = np.sqrt(np.mean(x**2))  # mm
     y_rms = np.sqrt(np.mean(y**2))  # mm
     xp_rms = np.sqrt(np.mean(xp**2))  # rad
     yp_rms = np.sqrt(np.mean(yp**2))  # rad
-    
+
     xxp_mean = np.mean(x * xp)  # mm·rad
     yyp_mean = np.mean(y * yp)  # mm·rad
-    
+
     # Geometric emittance: ε = sqrt(<x²><x'²> - <xx'>²)
     # Units: mm·rad
     emittance_x = np.sqrt(np.mean(x**2) * np.mean(xp**2) - xxp_mean**2)  # mm·rad
     emittance_y = np.sqrt(np.mean(y**2) * np.mean(yp**2) - yyp_mean**2)  # mm·rad
-    
+
     # Convert to mm·mrad (more common units)
     emittance_x_mm_mrad = emittance_x * 1000.0  # mm·mrad
     emittance_y_mm_mrad = emittance_y * 1000.0  # mm·mrad
-    
+
     # Normalized emittance: ε_n = β·γ·ε_geo
     # For relativistic beams, β ≈ 1, so ε_n ≈ γ·ε_geo
     beta = np.sqrt(1.0 - 1.0 / gamma**2)
     norm_emittance_x = beta * gamma * emittance_x  # mm·rad
     norm_emittance_y = beta * gamma * emittance_y  # mm·rad
-    
+
     norm_emittance_x_mm_mrad = norm_emittance_x * 1000.0  # mm·mrad
     norm_emittance_y_mm_mrad = norm_emittance_y * 1000.0  # mm·mrad
-    
+
     # Twiss beta function: β_twiss = <x²>/ε at a waist (where <xx'> ≈ 0)
     # Units: mm² / (mm·rad) = mm/rad
     # Convert to m/rad for standard accelerator units
     beta_x_mm_per_rad = x_rms**2 / emittance_x if emittance_x > 0 else 0.0
     beta_y_mm_per_rad = y_rms**2 / emittance_y if emittance_y > 0 else 0.0
-    
+
     beta_x_m = beta_x_mm_per_rad * 1e-3  # m/rad
     beta_y_m = beta_y_mm_per_rad * 1e-3  # m/rad
-    
+
     return {
         "emittance_x_mm_mrad": float(emittance_x_mm_mrad),
         "emittance_y_mm_mrad": float(emittance_y_mm_mrad),
@@ -641,7 +644,7 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
         driver_rest_mev_opt = driver_rest_mev
         driver_rest_gev = driver_rest_mev * 1e-3
         driver_total_gev = driver_gamma * driver_rest_gev
-        
+
         # Calculate driver beam optics (only if pcount > 1)
         driver_pcount = int(driver_params.get("pcount", 1)) if driver_params else 1
         if driver_pcount > 1:
@@ -825,9 +828,10 @@ def run_testbed(
     # Capture stdout/stderr to get verbose SC and adaptive timestep logs
     # Use TeeStringIO to also print to console in real-time
     import sys
+
     stdout_capture = TeeStringIO(sys.stdout)
     stderr_capture = TeeStringIO(sys.stderr)
-    
+
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
         result = run_benchmark(
             steps=options.steps,
@@ -836,45 +840,47 @@ def run_testbed(
             driver_params=driver_params,
             seed=options.seed,
             legacy_enabled=legacy_enabled,
-        return_trajectories=return_traj_flag,
-        image_subcharge_count=int(options.image_subcharge_count),
-        use_image_weighting=bool(options.use_image_weighting),
-        self_consistency_enabled=options.self_consistency_enabled,
-        self_consistency_tolerance=options.self_consistency_tolerance,
-        self_consistency_max_iterations=options.self_consistency_max_iterations,
-        self_consistency_verbosity=options.self_consistency_verbosity,
-        energy_monitor_enabled=options.energy_monitor_enabled,
-        energy_monitor_threshold=options.energy_monitor_threshold,
-        energy_monitor_check_interval=options.energy_monitor_check_interval,
-        energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
-        energy_monitor_debug=options.energy_monitor_debug,
-        adaptive_timestep_enabled=options.adaptive_timestep_enabled,
-        adaptive_timestep_threshold=options.adaptive_timestep_threshold,
-        adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
-        adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
-        adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
-        adaptive_timestep_cooldown_steps=options.adaptive_timestep_cooldown_steps,
-        adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
-        adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
-        adaptive_timestep_debug=options.adaptive_timestep_debug,
-        progress_callback=progress_callback,
-        cancel_callback=cancel_callback,
-        **filtered_core_params,
-    )
+            return_trajectories=return_traj_flag,
+            image_subcharge_count=int(options.image_subcharge_count),
+            use_image_weighting=bool(options.use_image_weighting),
+            self_consistency_enabled=options.self_consistency_enabled,
+            self_consistency_tolerance=options.self_consistency_tolerance,
+            self_consistency_max_iterations=options.self_consistency_max_iterations,
+            self_consistency_verbosity=options.self_consistency_verbosity,
+            energy_monitor_enabled=options.energy_monitor_enabled,
+            energy_monitor_threshold=options.energy_monitor_threshold,
+            energy_monitor_check_interval=options.energy_monitor_check_interval,
+            energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
+            energy_monitor_debug=options.energy_monitor_debug,
+            adaptive_timestep_enabled=options.adaptive_timestep_enabled,
+            adaptive_timestep_threshold=options.adaptive_timestep_threshold,
+            adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
+            adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
+            adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
+            adaptive_timestep_cooldown_steps=options.adaptive_timestep_cooldown_steps,
+            adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
+            adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
+            adaptive_timestep_debug=options.adaptive_timestep_debug,
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+            **filtered_core_params,
+        )
 
     # Store captured stdout/stderr separately for verbose logs button
     captured_stdout = stdout_capture.getvalue()
     captured_stderr = stderr_capture.getvalue()
-    
+
     # Log a summary
     stdout_lines = len([l for l in captured_stdout.splitlines() if l.strip()])
     stderr_lines = len([l for l in captured_stderr.splitlines() if l.strip()])
-    
+
     if stdout_lines > 0:
-        _log(f"Verbose output: {stdout_lines:,} lines (displayed in console and available via 'Load Verbose Logs')")
+        _log(
+            f"Verbose output: {stdout_lines:,} lines (displayed in console and available via 'Load Verbose Logs')"
+        )
     if stderr_lines > 0:
         _log(f"Stderr: {stderr_lines} lines")
-    
+
     if isinstance(result, tuple) and len(result) == 2:
         metrics, payload = result
     else:
