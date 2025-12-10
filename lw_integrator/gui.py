@@ -233,7 +233,7 @@ class IntegratorGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("LW Integrator Testbed")
-        self.root.geometry("1200x900")
+        self.root.geometry("1400x1000")
 
         self.options = SimulationOptions()
         self._figure_windows: List[_FigureHandle] = []
@@ -444,7 +444,7 @@ class IntegratorGUI:
         main_paned = ttk.Panedwindow(self.root, orient="vertical")
         main_paned.grid(row=1, column=0, sticky="nsew")
         notebook = ttk.Notebook(main_paned)
-        main_paned.add(notebook, weight=3)
+        main_paned.add(notebook, weight=5)
 
         bottom_container = ttk.Frame(main_paned)
         bottom_container.columnconfigure(0, weight=1)
@@ -880,10 +880,30 @@ class IntegratorGUI:
         summary_frame = ttk.LabelFrame(lower_paned, text="Initial summary", padding=8)
 
         summary_frame.columnconfigure(0, weight=1)
+        summary_frame.rowconfigure(0, weight=1)
 
-        ttk.Label(summary_frame, textvariable=self.summary_var, justify="left").grid(
-            row=0, column=0, sticky="w"
+        # Make summary scrollable with Text widget instead of Label
+        summary_text_frame = ttk.Frame(summary_frame)
+        summary_text_frame.grid(row=0, column=0, sticky="nsew")
+        summary_text_frame.columnconfigure(0, weight=1)
+        summary_text_frame.rowconfigure(0, weight=1)
+
+        self.summary_text = tk.Text(
+            summary_text_frame,
+            height=8,
+            width=70,
+            wrap="word",
+            state="disabled",
+            relief="flat",
+            borderwidth=0,
         )
+        self.summary_text.grid(row=0, column=0, sticky="nsew")
+
+        summary_scrollbar = ttk.Scrollbar(
+            summary_text_frame, command=self.summary_text.yview
+        )
+        summary_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.summary_text.configure(yscrollcommand=summary_scrollbar.set)
 
         lower_paned.add(summary_frame, weight=1)
 
@@ -918,7 +938,7 @@ class IntegratorGUI:
         )
 
         self.log_output = scrolledtext.ScrolledText(
-            log_frame, height=6, state="disabled", wrap="none"
+            log_frame, height=15, state="disabled", wrap="none"
         )
 
         self.log_output.grid(row=1, column=0, sticky="nsew")
@@ -1365,7 +1385,15 @@ class IntegratorGUI:
             self.summary_var.set(f"Summary unavailable: {exc}")
             return
         summary = compute_initial_summary(options)
-        self.summary_var.set(self._format_summary(summary))
+        formatted_summary = self._format_summary(summary)
+        self.summary_var.set(formatted_summary)
+
+        # Update the summary text widget
+        if hasattr(self, "summary_text"):
+            self.summary_text.config(state="normal")
+            self.summary_text.delete("1.0", "end")
+            self.summary_text.insert("1.0", formatted_summary)
+            self.summary_text.config(state="disabled")
 
     def _format_summary(self, summary: InitialSummary) -> str:
         lines = [f"Seed: {summary.seed}"]
