@@ -833,7 +833,7 @@ class IntegratorGUI:
         ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
         # Optimization tab -----------------------------------------------
-        self.optimization_tab = OptimizationPlugin(notebook)
+        self.optimization_tab = OptimizationPlugin(notebook, gui_controller=self)
         notebook.add(self.optimization_tab, text="Optimization")
 
         # Footer --------------------------------------------------------
