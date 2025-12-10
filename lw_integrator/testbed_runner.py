@@ -35,6 +35,7 @@ from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[impor
     DEFAULT_RIDER_PARAMS,
     PARTICLE_PARAM_FIELDS,
     SimulationType,
+    compute_delta_energy_components,
     compute_delta_energy_series,
     prepare_two_particle_demo,
     run_benchmark,
@@ -909,11 +910,24 @@ def run_testbed(
         try:
             rider_initial = initial_states.get("rider")
             rider_rest_mev = rest_energies.get("rider")
-            rider_delta_e, rider_z = compute_delta_energy_series(
-                rider_states,
-                rider_initial,
-                rider_rest_mev,
-            )
+
+            # Compute energy series - use components if dual plot requested
+            if options.energy_dual_plot:
+                rider_delta_e_total, rider_delta_e_z, rider_z = (
+                    compute_delta_energy_components(
+                        rider_states,
+                        rider_initial,
+                        rider_rest_mev,
+                    )
+                )
+                rider_delta_e = rider_delta_e_total  # Use total for main plot
+            else:
+                rider_delta_e, rider_z = compute_delta_energy_series(
+                    rider_states,
+                    rider_initial,
+                    rider_rest_mev,
+                )
+                rider_delta_e_z = None
             rider_z_rel = rider_z - rider_z[0]
         except Exception as exc:  # pragma: no cover - defensive guard
             _log(f"Failed to compute rider energy series: {exc}")
@@ -927,11 +941,24 @@ def run_testbed(
             try:
                 driver_initial = initial_states.get("driver")
                 driver_rest_mev = rest_energies.get("driver")
-                driver_delta_e, driver_z = compute_delta_energy_series(
-                    driver_states,
-                    driver_initial,
-                    driver_rest_mev,
-                )
+
+                # Compute energy series - use components if dual plot requested
+                if options.energy_dual_plot:
+                    driver_delta_e_total, driver_delta_e_z, driver_z = (
+                        compute_delta_energy_components(
+                            driver_states,
+                            driver_initial,
+                            driver_rest_mev,
+                        )
+                    )
+                    driver_delta_e = driver_delta_e_total
+                else:
+                    driver_delta_e, driver_z = compute_delta_energy_series(
+                        driver_states,
+                        driver_initial,
+                        driver_rest_mev,
+                    )
+                    driver_delta_e_z = None
                 driver_z_rel = driver_z - driver_z[0]
             except Exception as exc:  # pragma: no cover - defensive guard
                 _log(f"Failed to compute driver energy series: {exc}")
@@ -1022,13 +1049,28 @@ def run_testbed(
 
                 show_legend = legacy_enabled
 
+                # Plot total ΔE
                 axes[0].scatter(
                     rider_z_rel[valid_mask],
                     rider_delta_e[valid_mask],
                     color=COLOR_RIDER,
-                    label="Core" if show_legend else None,
+                    label="Core (ΔE total)"
+                    if show_legend and options.energy_dual_plot
+                    else ("Core" if show_legend else None),
                     **SCATTER_STYLE,
                 )
+
+                # Plot ΔE_z if dual plot enabled
+                if options.energy_dual_plot and rider_delta_e_z is not None:
+                    axes[0].scatter(
+                        rider_z_rel[valid_mask],
+                        rider_delta_e_z[valid_mask],
+                        color=COLOR_RIDER,
+                        marker="x",
+                        alpha=0.7,
+                        label="Core (ΔE_z)" if show_legend else None,
+                        s=30,
+                    )
                 if legacy_rider_delta_e is not None and legacy_rider_z_rel is not None:
                     legacy_valid = np.isfinite(legacy_rider_delta_e) & np.isfinite(
                         legacy_rider_z_rel
@@ -1043,9 +1085,12 @@ def run_testbed(
                         )
                 axes[0].set_xlabel("Delta z (mm)")
                 axes[0].set_ylabel("Delta E (GeV)")
-                axes[0].set_title("Rider Delta E vs Delta z")
+                title_suffix = (
+                    " (Total & Longitudinal)" if options.energy_dual_plot else ""
+                )
+                axes[0].set_title(f"Rider Delta E vs Delta z{title_suffix}")
                 axes[0].grid(True, alpha=0.3)
-                if show_legend:
+                if show_legend or options.energy_dual_plot:
                     axes[0].legend()
 
                 if (
@@ -1061,9 +1106,23 @@ def run_testbed(
                             driver_z_rel[driver_valid],
                             driver_delta_e[driver_valid],
                             color=COLOR_DRIVER,
-                            label="Core" if legacy_enabled else None,
+                            label="Core (ΔE total)"
+                            if legacy_enabled and options.energy_dual_plot
+                            else ("Core" if legacy_enabled else None),
                             **SCATTER_STYLE,
                         )
+
+                        # Plot ΔE_z if dual plot enabled
+                        if options.energy_dual_plot and driver_delta_e_z is not None:
+                            axes[1].scatter(
+                                driver_z_rel[driver_valid],
+                                driver_delta_e_z[driver_valid],
+                                color=COLOR_DRIVER,
+                                marker="x",
+                                alpha=0.7,
+                                label="Core (ΔE_z)" if legacy_enabled else None,
+                                s=30,
+                            )
                     else:
                         _log("Warning: All driver energy data points are invalid")
                     if (
@@ -1083,9 +1142,12 @@ def run_testbed(
                             )
                     axes[1].set_xlabel("Delta z (mm)")
                     axes[1].set_ylabel("Delta E (GeV)")
-                    axes[1].set_title("Driver Delta E vs Delta z")
+                    title_suffix = (
+                        " (Total & Longitudinal)" if options.energy_dual_plot else ""
+                    )
+                    axes[1].set_title(f"Driver Delta E vs Delta z{title_suffix}")
                     axes[1].grid(True, alpha=0.3)
-                    if legacy_enabled:
+                    if legacy_enabled or options.energy_dual_plot:
                         axes[1].legend()
 
                 fig_energy.tight_layout()

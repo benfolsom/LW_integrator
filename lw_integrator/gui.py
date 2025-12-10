@@ -9,6 +9,7 @@ in dedicated top-level windows using Matplotlib's TkAgg backend.
 
 from __future__ import annotations
 
+import re
 import threading
 import tkinter as tk
 import traceback
@@ -17,7 +18,6 @@ from functools import partial
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Any, Dict, List, Optional, Set, Tuple
-import re
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
@@ -27,6 +27,7 @@ from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[impor
     SimulationType,
 )
 
+from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
     CORE_PARAM_DEFAULTS,
@@ -298,6 +299,7 @@ class IntegratorGUI:
         self.metrics_save_var = tk.BooleanVar(value=self.options.metrics_save)
         self.energy_display_var = tk.BooleanVar(value=self.options.energy_display)
         self.energy_save_var = tk.BooleanVar(value=self.options.energy_save)
+        self.energy_dual_plot_var = tk.BooleanVar(value=self.options.energy_dual_plot)
         self.transverse_display_var = tk.BooleanVar(
             value=self.options.transverse_display
         )
@@ -732,26 +734,31 @@ class IntegratorGUI:
             self.energy_save_var,
             row=1,
         )
+        ttk.Checkbutton(
+            output_frame,
+            text="  ↳ Show ΔE_z (longitudinal) on energy plots",
+            variable=self.energy_dual_plot_var,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=(20, 0))
         self._add_output_toggle(
             output_frame,
             "Transverse plot",
             self.transverse_display_var,
             self.transverse_save_var,
-            row=2,
+            row=3,
         )
 
         ttk.Checkbutton(
             output_frame, text="Save trajectory", variable=self.trajectory_save_var
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Label(output_frame, text="Trajectory stride:").grid(
-            row=4, column=0, sticky="w"
+            row=5, column=0, sticky="w"
         )
         ttk.Entry(
             output_frame, textvariable=self.trajectory_interval_var, width=8
-        ).grid(row=4, column=1, sticky="w")
+        ).grid(row=5, column=1, sticky="w")
 
         ttk.Label(output_frame, text="Plot DPI:").grid(
-            row=5, column=0, sticky="w", pady=(12, 0)
+            row=6, column=0, sticky="w", pady=(12, 0)
         )
         ttk.Combobox(
             output_frame,
@@ -759,14 +766,14 @@ class IntegratorGUI:
             values=[str(dpi) for dpi in AVAILABLE_DPI_CHOICES],
             width=8,
             state="readonly",
-        ).grid(row=5, column=1, sticky="w", pady=(12, 0))
+        ).grid(row=6, column=1, sticky="w", pady=(12, 0))
 
         # Log file saving
         ttk.Checkbutton(
             output_frame,
             text="Save log file to test_outputs directory",
             variable=self.save_log_file_var,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Config tab ----------------------------------------------------
         config_frame = self._create_scrollable_tab(notebook, "Configs", padding=12)
@@ -825,6 +832,10 @@ class IntegratorGUI:
             button_frame, text="Refresh", command=self._refresh_config_list
         ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
+        # Optimization tab -----------------------------------------------
+        self.optimization_tab = OptimizationPlugin(notebook)
+        notebook.add(self.optimization_tab, text="Optimization")
+
         # Footer --------------------------------------------------------
 
         footer = ttk.Frame(bottom_container, padding=8)
@@ -841,8 +852,6 @@ class IntegratorGUI:
         )
 
         self._cancel_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
-
-
 
         ttk.Label(footer, textvariable=self.status_var).grid(
             row=0, column=3, sticky="w", padx=(12, 0)
@@ -887,22 +896,33 @@ class IntegratorGUI:
         # Log controls
         log_controls = ttk.Frame(log_frame)
         log_controls.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        
+
         self.log_format_var = tk.StringVar(value="summary")
-        ttk.Radiobutton(log_controls, text="Summary", variable=self.log_format_var, 
-                       value="summary", command=self._update_log_format).pack(side="left", padx=5)
-        ttk.Radiobutton(log_controls, text="Detailed", variable=self.log_format_var, 
-                       value="detailed", command=self._update_log_format).pack(side="left", padx=5)
-        
-        ttk.Button(log_controls, text="Clear", command=self._clear_log,
-                  width=8).pack(side="right", padx=5)
+        ttk.Radiobutton(
+            log_controls,
+            text="Summary",
+            variable=self.log_format_var,
+            value="summary",
+            command=self._update_log_format,
+        ).pack(side="left", padx=5)
+        ttk.Radiobutton(
+            log_controls,
+            text="Detailed",
+            variable=self.log_format_var,
+            value="detailed",
+            command=self._update_log_format,
+        ).pack(side="left", padx=5)
+
+        ttk.Button(log_controls, text="Clear", command=self._clear_log, width=8).pack(
+            side="right", padx=5
+        )
 
         self.log_output = scrolledtext.ScrolledText(
             log_frame, height=6, state="disabled", wrap="none"
         )
 
         self.log_output.grid(row=1, column=0, sticky="nsew")
-        
+
         # Store raw and parsed logs
         self._raw_log_lines = []
         self._log_summary = []
@@ -936,96 +956,114 @@ class IntegratorGUI:
         """Append text to log with parsing for summary view."""
         # Store raw line
         self._raw_log_lines.append(text)
-        
+
         # Parse for summary
         self._parse_log_line(text)
-        
+
         # Display based on current format
         if self.log_format_var.get() == "detailed":
             self.log_output.configure(state="normal")
             self.log_output.insert(tk.END, text + "\n")
             self.log_output.see(tk.END)
             self.log_output.configure(state="disabled")
-    
+
     def _parse_log_line(self, text: str, auto_refresh: bool = True) -> None:
         """Parse log line and extract key events for summary.
-        
+
         Args:
             text: Log line to parse
-            auto_refresh: If True, refresh summary display after parsing. 
+            auto_refresh: If True, refresh summary display after parsing.
                          Set to False during bulk loading to avoid slowdown.
         """
         # SC convergence
         if "converged in" in text:
             match = re.search(r"Particle (\d+): converged in (\d+) iter", text)
             if match:
-                self._log_summary.append(f"[SC] P{match.group(1)} converged in {match.group(2)} iterations")
-        
+                self._log_summary.append(
+                    f"[SC] P{match.group(1)} converged in {match.group(2)} iterations"
+                )
+
         # SC iteration details
         elif "Δγ/γ =" in text:
             match = re.search(r"Δγ/γ = ([\d.e+-]+)", text)
             if match:
                 gamma_err = float(match.group(1))
                 self._log_summary.append(f"     γ error: {gamma_err:.2e}")
-        
+
         # Energy jumps
         elif "Energy jump detected" in text:
             match = re.search(r"Step ([\d.]+).*ΔE/E = ([\d.e+-]+)", text)
             if match:
                 step = match.group(1)
                 de = float(match.group(2))
-                self._log_summary.append(f"[ENERGY] Step {step}: ΔE/E = {de:.2%} - reducing timestep")
-        
+                self._log_summary.append(
+                    f"[ENERGY] Step {step}: ΔE/E = {de:.2%} - reducing timestep"
+                )
+
         # Adaptive timestep events
         elif "Reducing timestep by" in text or "reducing timestep by" in text:
             match = re.search(r"by (\d+)x to ([\d.e+-]+)", text)
             if match:
                 factor = match.group(1)
                 new_h = float(match.group(2))
-                self._log_summary.append(f"     → h reduced {factor}x to {new_h:.2e} ns")
-        
+                self._log_summary.append(
+                    f"     → h reduced {factor}x to {new_h:.2e} ns"
+                )
+
         elif "Cooldown mode" in text:
             match = re.search(r"Step (\d+): Cooldown mode \((\d+)/(\d+)\)", text)
             if match:
                 step, current, total = match.group(1), match.group(2), match.group(3)
                 if current == "1":  # Only log start of cooldown
-                    self._log_summary.append(f"[COOL] Step {step}: Cooldown phase ({total} steps)")
-        
+                    self._log_summary.append(
+                        f"[COOL] Step {step}: Cooldown phase ({total} steps)"
+                    )
+
         elif "Returning to normal timestep" in text:
             match = re.search(r"Step (\d+):.*to ([\d.e+-]+)", text)
             if match:
                 step = match.group(1)
                 h = float(match.group(2))
-                self._log_summary.append(f"[RESUME] Step {step}: Normal timestep {h:.2e} ns restored")
-        
+                self._log_summary.append(
+                    f"[RESUME] Step {step}: Normal timestep {h:.2e} ns restored"
+                )
+
         elif "Mass-shell projection" in text:
-            match = re.search(r"Pt ([\d.e+-]+) → ([\d.e+-]+).*error was ([\d.e+-]+)", text)
+            match = re.search(
+                r"Pt ([\d.e+-]+) → ([\d.e+-]+).*error was ([\d.e+-]+)", text
+            )
             if match:
                 pt_old = float(match.group(1))
                 pt_new = float(match.group(2))
                 error = float(match.group(3))
-                self._log_summary.append(f"[MASS-SHELL] Pt corrected (error={error:.2e})")
-        
+                self._log_summary.append(
+                    f"[MASS-SHELL] Pt corrected (error={error:.2e})"
+                )
+
         # Update summary display if in summary mode (but only if auto_refresh enabled)
-        if auto_refresh and self.log_format_var.get() == "summary" and self._log_summary:
+        if (
+            auto_refresh
+            and self.log_format_var.get() == "summary"
+            and self._log_summary
+        ):
             self._refresh_summary_display()
-    
+
     def _refresh_summary_display(self) -> None:
         """Refresh the summary log display."""
         self.log_output.configure(state="normal")
         self.log_output.delete("1.0", tk.END)
-        
+
         # Show last 100 summary lines
         display_lines = self._log_summary[-100:]
         self.log_output.insert("1.0", "\n".join(display_lines))
         self.log_output.see(tk.END)
         self.log_output.configure(state="disabled")
-    
+
     def _update_log_format(self) -> None:
         """Switch between summary and detailed log views."""
         self.log_output.configure(state="normal")
         self.log_output.delete("1.0", tk.END)
-        
+
         if self.log_format_var.get() == "summary":
             # Show summary
             display_lines = self._log_summary[-100:]
@@ -1036,10 +1074,10 @@ class IntegratorGUI:
             display_lines = self._raw_log_lines[-500:]
             if display_lines:
                 self.log_output.insert("1.0", "\n".join(display_lines))
-        
+
         self.log_output.see(tk.END)
         self.log_output.configure(state="disabled")
-    
+
     def _clear_log(self) -> None:
         """Clear all logs."""
         self._raw_log_lines = []
@@ -1047,10 +1085,10 @@ class IntegratorGUI:
         self.log_output.configure(state="normal")
         self.log_output.delete("1.0", tk.END)
         self.log_output.configure(state="disabled")
-    
+
     def _load_verbose_logs(self, verbose_logs: str) -> None:
         """Load verbose logs into the detailed view automatically after run.
-        
+
         Args:
             verbose_logs: String containing all verbose log output from the run
         """
@@ -1063,14 +1101,15 @@ class IntegratorGUI:
                         self._raw_log_lines.append(line)
                         self._parse_log_line(line, auto_refresh=False)
                         line_count += 1
-                
+
                 # Refresh the current view to show loaded logs
                 self._update_log_format()
-                
+
                 self._append_log(f"--- Loaded {line_count:,} verbose log lines ---")
             except Exception as e:
                 self._append_log(f"Error loading verbose logs: {e}")
                 import traceback
+
                 traceback.print_exc()
 
     def _set_status(self, text: str) -> None:
@@ -1167,6 +1206,7 @@ class IntegratorGUI:
         self.metrics_save_var.set(options.metrics_save)
         self.energy_display_var.set(options.energy_display)
         self.energy_save_var.set(options.energy_save)
+        self.energy_dual_plot_var.set(options.energy_dual_plot)
         self.transverse_display_var.set(options.transverse_display)
         self.transverse_save_var.set(options.transverse_save)
         self.trajectory_save_var.set(options.trajectory_save)
@@ -1263,6 +1303,7 @@ class IntegratorGUI:
             metrics_save=bool(self.metrics_save_var.get()),
             energy_display=bool(self.energy_display_var.get()),
             energy_save=bool(self.energy_save_var.get()),
+            energy_dual_plot=bool(self.energy_dual_plot_var.get()),
             transverse_display=bool(self.transverse_display_var.get()),
             transverse_save=bool(self.transverse_save_var.get()),
             trajectory_save=bool(self.trajectory_save_var.get()),
@@ -1334,7 +1375,7 @@ class IntegratorGUI:
             f"{summary.rider_rest_mev:.4f} MeV ({summary.rider_rest_gev:.4f} GeV)"
         )
         lines.append(f"Rider total energy: {summary.rider_total_gev:.4f} GeV")
-        
+
         # Add rider beam optics if available
         if summary.rider_emittance_x_mm_mrad is not None:
             # Convert to picometer-radians for alternative display
@@ -1342,7 +1383,7 @@ class IntegratorGUI:
             emit_y_pm = summary.rider_emittance_y_mm_mrad * 1e9  # pm·rad
             norm_emit_x_pm = summary.rider_norm_emittance_x_mm_mrad * 1e9  # pm·rad
             norm_emit_y_pm = summary.rider_norm_emittance_y_mm_mrad * 1e9  # pm·rad
-            
+
             lines.append(
                 f"Rider ε: "
                 f"{summary.rider_emittance_x_mm_mrad:.2e} mm·mrad ({emit_x_pm:.2e} pm·rad), "
@@ -1358,7 +1399,7 @@ class IntegratorGUI:
                 f"{summary.rider_beta_x_m:.3f} m, "
                 f"{summary.rider_beta_y_m:.3f} m"
             )
-        
+
         if summary.has_driver:
             lines.append("Driver present")
             lines.append(f"Driver gamma: {summary.driver_gamma:.4f}")
@@ -1372,14 +1413,14 @@ class IntegratorGUI:
                 )
             if summary.driver_total_gev is not None:
                 lines.append(f"Driver total energy: {summary.driver_total_gev:.4f} GeV")
-            
+
             # Add driver beam optics if available
             if summary.driver_emittance_x_mm_mrad is not None:
                 driver_emit_x_pm = summary.driver_emittance_x_mm_mrad * 1e9
                 driver_emit_y_pm = summary.driver_emittance_y_mm_mrad * 1e9
                 driver_norm_emit_x_pm = summary.driver_norm_emittance_x_mm_mrad * 1e9
                 driver_norm_emit_y_pm = summary.driver_norm_emittance_y_mm_mrad * 1e9
-                
+
                 lines.append(
                     f"Driver ε: "
                     f"{summary.driver_emittance_x_mm_mrad:.2e} mm·mrad ({driver_emit_x_pm:.2e} pm·rad), "
@@ -1581,11 +1622,15 @@ class IntegratorGUI:
         self._run_button.configure(state="normal")
         self._cancel_button.configure(state="disabled")
         self.progress_var.set(100.0)
-        
+
         # Auto-load verbose logs into GUI for post-run analysis
-        if hasattr(result, 'verbose_logs') and result.verbose_logs:
-            verbose_line_count = len([l for l in result.verbose_logs.splitlines() if l.strip()])
-            self._append_log(f"Loading {verbose_line_count:,} verbose log lines into GUI...")
+        if hasattr(result, "verbose_logs") and result.verbose_logs:
+            verbose_line_count = len(
+                [l for l in result.verbose_logs.splitlines() if l.strip()]
+            )
+            self._append_log(
+                f"Loading {verbose_line_count:,} verbose log lines into GUI..."
+            )
             self._load_verbose_logs(result.verbose_logs)
 
         for name, figure in result.figures.items():

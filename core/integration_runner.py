@@ -53,6 +53,9 @@ class AdaptiveTimestepConfig:
     When an energy jump is detected, the timestep is reduced. The hysteresis
     parameters control how long we stay at the reduced timestep before attempting
     to return to the normal timestep.
+
+    Proximity-based refinement: Automatically refine timesteps when approaching
+    walls/apertures where image charge interactions become significant.
     """
 
     enabled: bool = False
@@ -69,6 +72,14 @@ class AdaptiveTimestepConfig:
     cooldown_steps: int = 10  # Minimum steps at reduced timestep before probing return
     probe_threshold: float = 0.01  # Energy stability threshold for safe return (1%)
     max_probe_steps: int = 3  # Number of consecutive stable steps needed to return
+
+    # Proximity-based refinement: refine timesteps near walls/apertures
+    proximity_refinement_enabled: bool = True  # Enable proximity-based refinement
+    proximity_distance_aperture_radii: float = (
+        10.0  # Refine within this many aperture radii
+    )
+    proximity_reduction_factor: int = 5  # Timestep reduction factor in proximity region
+    proximity_transition_zone: float = 2.0  # Smooth transition zone (in aperture radii)
 
     debug: bool = False  # Print adaptive timestep actions
 
@@ -253,6 +264,54 @@ def retarded_integrator(
             temp_trajectory: Trajectory = []
             temp_driver: Trajectory = []
 
+            # Proximity-based timestep refinement: detect nearness to walls/apertures
+            proximity_reduction_active = False
+            if (
+                adaptive_timestep is not None
+                and adaptive_timestep.proximity_refinement_enabled
+                and aperture_radius is not None
+                and wall_z is not None
+            ):
+                # Get current particle position (use mean z for bunch)
+                current_z = float(np.mean(trajectory[i - 1]["z"]))
+                distance_to_wall = abs(wall_z - current_z)
+
+                # Define interaction region in terms of aperture radii
+                interaction_distance = (
+                    aperture_radius
+                    * adaptive_timestep.proximity_distance_aperture_radii
+                )
+                transition_distance = (
+                    aperture_radius * adaptive_timestep.proximity_transition_zone
+                )
+
+                # Check if we're in or approaching the interaction region
+                if distance_to_wall < interaction_distance:
+                    proximity_reduction_active = True
+
+                    # Smooth transition: full reduction close to wall, gradual outside
+                    if distance_to_wall < (interaction_distance - transition_distance):
+                        # Full reduction in strong interaction region
+                        proximity_factor = adaptive_timestep.proximity_reduction_factor
+                    else:
+                        # Linear ramp in transition zone
+                        ramp = (
+                            interaction_distance - distance_to_wall
+                        ) / transition_distance
+                        proximity_factor = (
+                            1.0
+                            + (adaptive_timestep.proximity_reduction_factor - 1.0)
+                            * ramp
+                        )
+
+                    if adaptive_timestep.debug:
+                        print(
+                            f"Step {i}: Proximity refinement active. "
+                            f"Distance to wall: {distance_to_wall:.6e} mm "
+                            f"({distance_to_wall / aperture_radius:.1f} aperture radii). "
+                            f"Reduction factor: {proximity_factor:.2f}x"
+                        )
+
             # Hysteresis logic: decide starting timestep for this step
             if reduced_timestep_mode and adaptive_timestep is not None:
                 if cooldown_counter < adaptive_timestep.cooldown_steps:
@@ -275,6 +334,15 @@ def retarded_integrator(
             else:
                 # Normal mode or adaptive disabled
                 current_h_step = h_step
+
+                # Apply proximity-based reduction if active
+                if proximity_reduction_active and adaptive_timestep is not None:
+                    current_h_step = h_step / proximity_factor
+                    if adaptive_timestep.debug:
+                        print(
+                            f"Step {i}: Applying proximity refinement: "
+                            f"{h_step:.6e} → {current_h_step:.6e} ns"
+                        )
 
             while not step_accepted:
                 # Determine number of sub-steps needed to cover base timestep interval
