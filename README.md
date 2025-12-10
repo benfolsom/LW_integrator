@@ -179,6 +179,32 @@ Programmatic usage mirrors the console invocation: call
 ``examples/entrypoint_demo.py`` for a ready-to-run demonstration that exercises
 both patterns.
 
+### Optimization GUI
+
+The project includes a Tkinter-based GUI for parameter optimization sweeps:
+
+```bash
+python -m lw_integrator.gui
+```
+
+The GUI provides an **Optimization** tab with:
+
+* **Parameter sweeps** over aperture radius, particle energy, and positions
+* **Sweepable fixed parameters** - optionally sweep mass, charge, transverse momentum, etc.
+* **Auto-timestep calculation** to maintain consistent integration resolution
+* **Trajectory saving** with configurable stride (saved to `configs/optimization/`)
+* **Trajectory plotting** - load saved results and visualize r vs z, pz vs z, etc.
+* **Auto fine-tuning** - after coarse scan, GUI prompts to refine around optima
+
+**Quick workflow:**
+1. Set coarse ranges (e.g., aperture 1e-5 to 1e-3 mm, energy 1-1000 GeV)
+2. Enable "Save trajectories" if plotting later
+3. Run sweep (progress shown in real-time)
+4. Accept fine-tuning prompt to refine around best results
+5. Use "Plot Trajectories" button to visualize saved runs
+
+Results are saved to `configs/optimization/sweep_results.json` with full parameter sets and optional downsampled trajectories. See `local/OPTIMIZATION_PLUGIN_ENHANCEMENTS.md` for details.
+
 ---
 
 ## Documentation workflow
