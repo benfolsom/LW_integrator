@@ -2246,11 +2246,21 @@ class OptimizationPlugin(ttk.Frame):
 
                     # Extract actual trajectory distance for diagnostics
                     actual_distance = 0.0
-                    if "trajectory" in result:
+                    if "trajectory" in result and result["trajectory"]:
                         traj = result["trajectory"]
                         z_vals = traj.get("z", [])
-                        if len(z_vals) > 0:
+                        if len(z_vals) > 1:
                             actual_distance = abs(z_vals[-1] - z_vals[0])
+
+                    # Debug logging for trajectory issues
+                    if self.config.save_trajectories and "trajectory" not in result:
+                        self._log_result(
+                            f"    [DEBUG] Trajectory requested but not returned for run {run_num}"
+                        )
+                    elif self.config.save_trajectories and not result.get("trajectory"):
+                        self._log_result(
+                            f"    [DEBUG] Trajectory empty for run {run_num}"
+                        )
 
                     # Log individual run result (every run or every 10th for large sweeps)
                     if total_runs <= 20 or run_num % 10 == 1 or run_num == total_runs:
@@ -2301,7 +2311,11 @@ class OptimizationPlugin(ttk.Frame):
                     all_results.append(run_data)
 
                 except Exception as e:
+                    import traceback
+
+                    error_details = traceback.format_exc()
                     self._log_result(f"[WARNING] Run {run_num} failed: {e}")
+                    self._log_result(f"    Error details: {error_details}")
                     all_results.append(
                         {
                             "run_number": run_num,
@@ -2543,17 +2557,39 @@ class OptimizationPlugin(ttk.Frame):
         output = {"metrics": metrics}
 
         # Add trajectory if requested and available
-        if self.config.save_trajectories and result.rider_trajectory is not None:
-            traj = result.rider_trajectory
-            # Downsample trajectory
-            stride = self.config.trajectory_stride
-            output["trajectory"] = {
-                "z": traj["z"][::stride].tolist(),
-                "r": traj["r"][::stride].tolist(),
-                "pz": traj["pz"][::stride].tolist(),
-                "pr": traj["pr"][::stride].tolist(),
-                "t": traj["t"][::stride].tolist(),
-            }
+        if self.config.save_trajectories:
+            if result.rider_trajectory is not None:
+                traj = result.rider_trajectory
+                # Downsample trajectory
+                stride = self.config.trajectory_stride
+                try:
+                    output["trajectory"] = {
+                        "z": traj["z"][::stride].tolist(),
+                        "r": traj["r"][::stride].tolist(),
+                        "pz": traj["pz"][::stride].tolist(),
+                        "pr": traj["pr"][::stride].tolist(),
+                        "t": traj["t"][::stride].tolist(),
+                    }
+                except Exception as e:
+                    print(
+                        f"[DEBUG] Failed to save trajectory: {e}, traj type: {type(traj)}"
+                    )
+                    if isinstance(traj, dict):
+                        print(f"[DEBUG] Trajectory keys: {traj.keys()}")
+                        for key in ["z", "r", "pz", "pr", "t"]:
+                            if key in traj:
+                                val = traj[key]
+                                print(
+                                    f"[DEBUG]   {key}: type={type(val)}, len={len(val) if hasattr(val, '__len__') else 'N/A'}"
+                                )
+            else:
+                print(
+                    f"[DEBUG] Trajectory save requested but result.rider_trajectory is None"
+                )
+                print(f"[DEBUG] Result object: {dir(result)}")
+                print(
+                    f"[DEBUG] Result has rider_trajectory attr: {hasattr(result, 'rider_trajectory')}"
+                )
 
         return output
 

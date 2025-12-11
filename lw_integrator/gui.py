@@ -872,41 +872,13 @@ class IntegratorGUI:
         )
 
         # Summary + logs ------------------------------------------------
+        # Horizontal layout: Logs on left, Summary on right
 
-        lower_paned = ttk.Panedwindow(bottom_container, orient="vertical")
+        lower_paned = ttk.Panedwindow(bottom_container, orient="horizontal")
 
         lower_paned.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
-        summary_frame = ttk.LabelFrame(lower_paned, text="Initial summary", padding=8)
-
-        summary_frame.columnconfigure(0, weight=1)
-        summary_frame.rowconfigure(0, weight=1)
-
-        # Make summary scrollable with Text widget instead of Label
-        summary_text_frame = ttk.Frame(summary_frame)
-        summary_text_frame.grid(row=0, column=0, sticky="nsew")
-        summary_text_frame.columnconfigure(0, weight=1)
-        summary_text_frame.rowconfigure(0, weight=1)
-
-        self.summary_text = tk.Text(
-            summary_text_frame,
-            height=3,
-            width=70,
-            wrap="word",
-            state="disabled",
-            relief="flat",
-            borderwidth=0,
-        )
-        self.summary_text.grid(row=0, column=0, sticky="nsew")
-
-        summary_scrollbar = ttk.Scrollbar(
-            summary_text_frame, command=self.summary_text.yview
-        )
-        summary_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.summary_text.configure(yscrollcommand=summary_scrollbar.set)
-
-        lower_paned.add(summary_frame, weight=1)
-
+        # Left pane: Logs
         log_frame = ttk.LabelFrame(lower_paned, text="Logs", padding=8)
 
         log_frame.columnconfigure(0, weight=1)
@@ -947,7 +919,38 @@ class IntegratorGUI:
         self._raw_log_lines = []
         self._log_summary = []
 
-        lower_paned.add(log_frame, weight=1)
+        lower_paned.add(log_frame, weight=3)
+
+        # Right pane: Initial Summary
+        summary_frame = ttk.LabelFrame(lower_paned, text="Initial summary", padding=8)
+
+        summary_frame.columnconfigure(0, weight=1)
+        summary_frame.rowconfigure(0, weight=1)
+
+        # Make summary scrollable with Text widget instead of Label
+        summary_text_frame = ttk.Frame(summary_frame)
+        summary_text_frame.grid(row=0, column=0, sticky="nsew")
+        summary_text_frame.columnconfigure(0, weight=1)
+        summary_text_frame.rowconfigure(0, weight=1)
+
+        self.summary_text = tk.Text(
+            summary_text_frame,
+            height=3,
+            width=40,
+            wrap="word",
+            state="disabled",
+            relief="flat",
+            borderwidth=0,
+        )
+        self.summary_text.grid(row=0, column=0, sticky="nsew")
+
+        summary_scrollbar = ttk.Scrollbar(
+            summary_text_frame, command=self.summary_text.yview
+        )
+        summary_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.summary_text.configure(yscrollcommand=summary_scrollbar.set)
+
+        lower_paned.add(summary_frame, weight=1)
 
         for page in self._scroll_pages:
             page.refresh_mousewheel_bindings()
