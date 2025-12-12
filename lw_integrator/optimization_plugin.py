@@ -199,7 +199,7 @@ class OptimizationConfig:
     objective: str = "max_energy_gain"  # or "max_energy_efficiency", etc.
 
     # Output
-    output_dir: str = "optimization_results"
+    output_dir: str = "results/sweeps"
     save_results: bool = True
     save_plots: bool = True
     save_trajectories: bool = False  # Save trajectory data for each run
@@ -1336,8 +1336,8 @@ class OptimizationPlugin(ttk.Frame):
         """Load configuration from JSON file."""
         import os
 
-        # Default to configs/optimization directory
-        default_dir = "configs/optimization"
+        # Default to configs/sweep_configs directory
+        default_dir = "configs/sweep_configs"
         os.makedirs(default_dir, exist_ok=True)
 
         filename = filedialog.askopenfilename(
@@ -1352,6 +1352,9 @@ class OptimizationPlugin(ttk.Frame):
         try:
             with open(filename, "r") as f:
                 data = json.load(f)
+
+            # Store the loaded config name for later use in results naming
+            self.last_loaded_config = filename
 
             # Populate UI fields
             self.sim_type_var.set(data.get("simulation_type", "CONDUCTING_WALL"))
@@ -1375,6 +1378,10 @@ class OptimizationPlugin(ttk.Frame):
             self.steps_var.set(str(data.get("steps", 2000)))
             self.objective_var.set(data.get("objective", "max_energy_gain"))
 
+            # Load trajectory and display options
+            self.save_trajectories_var.set(data.get("save_trajectories", False))
+            self.display_plots_var.set(data.get("display_plots", False))
+
             self._log_result("[OK] Configuration loaded successfully")
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
@@ -1388,8 +1395,8 @@ class OptimizationPlugin(ttk.Frame):
 
         import os
 
-        # Default to configs/optimization directory
-        default_dir = "configs/optimization"
+        # Default to configs/sweep_configs directory
+        default_dir = "configs/sweep_configs"
         os.makedirs(default_dir, exist_ok=True)
 
         filename = filedialog.asksaveasfilename(
@@ -1418,6 +1425,8 @@ class OptimizationPlugin(ttk.Frame):
                 "wall_z": config.wall_z,
                 "steps": config.steps,
                 "objective": config.objective,
+                "save_trajectories": config.save_trajectories,
+                "display_plots": config.display_plots,
             }
 
             with open(filename, "w") as f:
@@ -1432,13 +1441,15 @@ class OptimizationPlugin(ttk.Frame):
         import glob
         import os
 
-        # Default to optimization_results directory
-        default_results_dir = "optimization_results"
+        # Default to results/sweeps directory
+        default_results_dir = "results/sweeps"
 
         # Look for most recent sweep results
         search_patterns = [
-            os.path.join(default_results_dir, "sweep_*", "sweep_results.json"),
-            os.path.join(default_results_dir, "sweep_results_*.json"),
+            os.path.join(default_results_dir, "*", "sweep_results.json"),
+            os.path.join(
+                "optimization_results", "sweep_*", "sweep_results.json"
+            ),  # Legacy location
             os.path.join(self.config.output_dir, "sweep_results.json"),
         ]
 
@@ -1538,16 +1549,19 @@ class OptimizationPlugin(ttk.Frame):
                     _show_info_dialog(self, "No Results", "No results found in file.")
                     return
 
-                # Filter results with trajectories
+                # Check if we have trajectory data for plotting
                 results_with_traj = [r for r in results if "trajectory" in r]
 
                 if not results_with_traj:
+                    # Show results summary even without trajectories
                     _show_info_dialog(
                         self,
-                        "No Trajectories",
-                        "No trajectory data found in results.\n\n"
-                        "Make sure 'Save trajectories' was enabled during the sweep.",
+                        "No Trajectory Data",
+                        "No trajectory arrays found in results.\n\n"
+                        "Trajectory plotting requires 'Save trajectories' to be enabled.\n"
+                        "However, you can still view metrics and parameter sweep summaries.",
                     )
+                    # TODO: Show metrics table/summary view instead
                     return
 
             elif "core" in data and "rider" in data["core"]:
@@ -1582,9 +1596,14 @@ class OptimizationPlugin(ttk.Frame):
         # Default to optimization_results directory
         import os
 
-        default_results_dir = "optimization_results"
-        if os.path.exists(default_results_dir):
+        # Check new location first, then fall back to legacy
+        default_results_dir = "results/sweeps"
+        legacy_results_dir = "optimization_results"
+
+        if os.path.exists(default_results_dir) and os.listdir(default_results_dir):
             initial_dir = default_results_dir
+        elif os.path.exists(legacy_results_dir):
+            initial_dir = legacy_results_dir
         else:
             initial_dir = self.config.output_dir
 
@@ -2072,6 +2091,9 @@ class OptimizationPlugin(ttk.Frame):
                 total_runs *= len(values)
 
             self._log_result(f"Starting parameter sweep: {total_runs} total runs")
+            self._log_result(
+                f"Trajectory saving: {'ENABLED' if self.config.save_trajectories else 'DISABLED'}"
+            )
 
             # Log parameter grid info
             for param_name, values in param_grids.items():
@@ -2246,21 +2268,18 @@ class OptimizationPlugin(ttk.Frame):
 
                     # Extract actual trajectory distance for diagnostics
                     actual_distance = 0.0
-                    if "trajectory" in result and result["trajectory"]:
+                    if "_distance_info" in result:
+                        dist_info = result["_distance_info"]
+                        actual_distance = abs(dist_info["z_end"] - dist_info["z_start"])
+                    elif "trajectory" in result and result["trajectory"]:
+                        # Fallback: try to extract from full trajectory if present
                         traj = result["trajectory"]
                         z_vals = traj.get("z", [])
                         if len(z_vals) > 1:
-                            actual_distance = abs(z_vals[-1] - z_vals[0])
-
-                    # Debug logging for trajectory issues
-                    if self.config.save_trajectories and "trajectory" not in result:
-                        self._log_result(
-                            f"    [DEBUG] Trajectory requested but not returned for run {run_num}"
-                        )
-                    elif self.config.save_trajectories and not result.get("trajectory"):
-                        self._log_result(
-                            f"    [DEBUG] Trajectory empty for run {run_num}"
-                        )
+                            # Safely handle both lists and numpy arrays
+                            z_start = float(np.asarray(z_vals[0]).flat[0])
+                            z_end = float(np.asarray(z_vals[-1]).flat[0])
+                            actual_distance = abs(z_end - z_start)
 
                     # Log individual run result (every run or every 10th for large sweeps)
                     if total_runs <= 20 or run_num % 10 == 1 or run_num == total_runs:
@@ -2491,9 +2510,11 @@ class OptimizationPlugin(ttk.Frame):
         AMU_TO_MEV = 931.494
         rest_energy_mev = rider_m_particle * AMU_TO_MEV
         gamma = (energy_gev * 1e3) / rest_energy_mev
-        # Pz ≈ gamma * m * c for ultra-relativistic
-        # In units of amu·mm/ns: Pz = gamma * m * c_mmns
-        rider_params["starting_Pz"] = gamma * rider_m_particle * C_MMNS
+        # For relativistic particles: p = gamma * beta * m * c
+        # beta = sqrt(1 - 1/gamma^2)
+        beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
+        # In units of amu·mm/ns: Pz = gamma * beta * m * c_mmns
+        rider_params["starting_Pz"] = gamma * beta * rider_m_particle * C_MMNS
 
         core_params = {
             "time_step": timestep,
@@ -2504,6 +2525,15 @@ class OptimizationPlugin(ttk.Frame):
             "z_cutoff": 0.0,
         }
 
+        # Create a temporary subdirectory for this run's outputs (will be cleaned up)
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
+        run_output_dir = (
+            Path(self.config.output_dir) / f"_temp_run_{run_num}_{timestamp}"
+        )
+        run_output_dir.mkdir(parents=True, exist_ok=True)
+
         options = SimulationOptions(
             steps=steps,
             seed=self.config.seed,
@@ -2512,19 +2542,19 @@ class OptimizationPlugin(ttk.Frame):
             driver_params=driver_params,  # Use provided driver params (None for CONDUCTING_WALL)
             core_params=core_params,
             legacy_enabled=False,
-            trajectory_save=self.config.save_trajectories,
+            trajectory_save=False,  # Don't save individual trajectory files to disk
             trajectory_interval=self.config.trajectory_stride,
             energy_display=self.config.display_plots
             and (run_num % self.config.plot_display_stride == 0),
             energy_save=False,
             transverse_display=False,
-            transverse_save=False,
+            transverse_save=True,  # Always return trajectory data for metrics calculation
             overlay_display=False,
             overlay_save=False,
             difference_display=False,
             difference_save=False,
             metrics_save=False,
-            output_dir=Path(self.config.output_dir),
+            output_dir=run_output_dir,
         )
 
         # Run the integration
@@ -2545,6 +2575,15 @@ class OptimizationPlugin(ttk.Frame):
         for fig in result.figures.values():
             plt.close(fig)
 
+        # Clean up temporary run directory
+        import shutil
+
+        try:
+            if run_output_dir.exists():
+                shutil.rmtree(run_output_dir)
+        except Exception:
+            pass  # Ignore cleanup errors
+
         # Extract metrics
         metrics = {}
         if result.rider_delta_e is not None:
@@ -2556,40 +2595,40 @@ class OptimizationPlugin(ttk.Frame):
 
         output = {"metrics": metrics}
 
-        # Add trajectory if requested and available
-        if self.config.save_trajectories:
-            if result.rider_trajectory is not None:
-                traj = result.rider_trajectory
+        # Add trajectory data for distance calculation even if not saving full arrays
+        # (needed for diagnostics and basic metrics)
+        if result.rider_trajectory is not None:
+            traj = result.rider_trajectory
+
+            # Always include minimal trajectory info for distance calculation
+            try:
+                z_array = np.asarray(traj["z"])
+                if len(z_array) > 0:
+                    output["_distance_info"] = {
+                        "z_start": float(z_array[0]),
+                        "z_end": float(z_array[-1]),
+                        "num_steps": len(z_array),
+                    }
+            except Exception as e:
+                print(f"[DEBUG] Failed to extract distance info: {e}")
+
+            # Only save full trajectory arrays if explicitly requested
+            if self.config.save_trajectories:
                 # Downsample trajectory
                 stride = self.config.trajectory_stride
                 try:
+                    # Ensure we convert numpy arrays to flat lists
                     output["trajectory"] = {
-                        "z": traj["z"][::stride].tolist(),
-                        "r": traj["r"][::stride].tolist(),
-                        "pz": traj["pz"][::stride].tolist(),
-                        "pr": traj["pr"][::stride].tolist(),
-                        "t": traj["t"][::stride].tolist(),
+                        "z": np.asarray(traj["z"])[::stride].tolist(),
+                        "r": np.asarray(traj["r"])[::stride].tolist(),
+                        "pz": np.asarray(traj["pz"])[::stride].tolist(),
+                        "pr": np.asarray(traj["pr"])[::stride].tolist(),
+                        "t": np.asarray(traj["t"])[::stride].tolist(),
                     }
                 except Exception as e:
-                    print(
-                        f"[DEBUG] Failed to save trajectory: {e}, traj type: {type(traj)}"
+                    self._log_result(
+                        f"    [WARNING] Failed to save trajectory arrays: {e}"
                     )
-                    if isinstance(traj, dict):
-                        print(f"[DEBUG] Trajectory keys: {traj.keys()}")
-                        for key in ["z", "r", "pz", "pr", "t"]:
-                            if key in traj:
-                                val = traj[key]
-                                print(
-                                    f"[DEBUG]   {key}: type={type(val)}, len={len(val) if hasattr(val, '__len__') else 'N/A'}"
-                                )
-            else:
-                print(
-                    f"[DEBUG] Trajectory save requested but result.rider_trajectory is None"
-                )
-                print(f"[DEBUG] Result object: {dir(result)}")
-                print(
-                    f"[DEBUG] Result has rider_trajectory attr: {hasattr(result, 'rider_trajectory')}"
-                )
 
         return output
 
@@ -2600,8 +2639,13 @@ class OptimizationPlugin(ttk.Frame):
         # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # Create timestamped folder for this sweep
-        sweep_dir = Path(self.config.output_dir) / f"sweep_{timestamp}"
+        # Get config name if available (strip extension and path)
+        config_name = "sweep"
+        if hasattr(self, "last_loaded_config") and self.last_loaded_config:
+            config_name = Path(self.last_loaded_config).stem
+
+        # Create timestamped folder: YYYYMMDD_HHMMSS_configname
+        sweep_dir = Path("results/sweeps") / f"{timestamp}_{config_name}"
         sweep_dir.mkdir(parents=True, exist_ok=True)
 
         # Create filename: sweep_results.json (inside timestamped folder)
@@ -2642,29 +2686,25 @@ class OptimizationPlugin(ttk.Frame):
         try:
             import matplotlib.pyplot as plt
 
-            # Filter results with trajectories
-            results_with_traj = [
-                r
-                for r in results
-                if "trajectory" in r and len(r["trajectory"].get("z", [])) > 0
-            ]
-
-            if len(results_with_traj) == 0:
-                self._log_result("[INFO] No trajectories to plot")
-                return
-
-            # Collect all data
+            # Heatmap only needs metrics, not full trajectories
+            # Collect all data from results with metrics
             apertures = []
             energies = []
             delta_es = []
 
-            for result in results_with_traj:
+            for result in results:
                 params = result.get("parameters", {})
                 metrics = result.get("metrics", {})
 
-                apertures.append(params.get("aperture_radius", 0))
-                energies.append(params.get("particle_energy_gev", 0))
-                delta_es.append(metrics.get("rider_delta_e_mev", 0))
+                # Only include if we have the necessary metrics
+                if metrics:
+                    apertures.append(params.get("aperture_radius", 0))
+                    energies.append(params.get("particle_energy_gev", 0))
+                    delta_es.append(metrics.get("rider_delta_e_mev", 0))
+
+            if len(delta_es) == 0:
+                self._log_result("[INFO] No results with metrics to plot")
+                return
 
             # Create heatmap
             fig, ax = plt.subplots(figsize=(10, 8))
@@ -2714,14 +2754,25 @@ class OptimizationPlugin(ttk.Frame):
 
             self._log_result(f"[OK] Heatmap saved to: {heatmap_file}")
 
-            # Plot best trajectory
-            best_result = max(
-                results_with_traj,
-                key=lambda r: r.get("metrics", {}).get("rider_delta_e_mev", -1e9),
-            )
-            self._plot_single_trajectory(
-                best_result, output_dir / "best_trajectory.png"
-            )
+            # Plot best trajectory (only if trajectories were saved)
+            results_with_traj = [
+                r
+                for r in results
+                if "trajectory" in r and len(r.get("trajectory", {}).get("z", [])) > 0
+            ]
+
+            if results_with_traj:
+                best_result = max(
+                    results_with_traj,
+                    key=lambda r: r.get("metrics", {}).get("rider_delta_e_mev", -1e9),
+                )
+                self._plot_single_trajectory(
+                    best_result, output_dir / "best_trajectory.png"
+                )
+            else:
+                self._log_result(
+                    "[INFO] No trajectories available for trajectory plot (enable 'Save trajectories' to generate)"
+                )
 
         except Exception as e:
             self._log_result(f"[WARNING] Failed to generate summary plots: {e}")
