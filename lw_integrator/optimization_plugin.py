@@ -284,8 +284,8 @@ def calculate_auto_timestep(
 
     Notes
     -----
-    The integrator uses proper time steps h (in ns), but coordinate
-    time advance is Δt = γ·h. Distance per step is β·c·Δt = β·c·γ·h.
+    The integrator uses proper time steps h = dτ (in ns).
+    Coordinate time advance is Δt = γ·h. Distance per step is Δx = β·c·Δt = β·c·γ·h.
     We solve for h given the desired number of steps and total distance.
     """
     # Calculate total distance to travel
@@ -300,7 +300,7 @@ def calculate_auto_timestep(
     beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
 
     # We want: total_distance = target_steps * distance_per_step
-    # distance_per_step = beta * gamma * C_MMNS * timestep
+    # distance_per_step = beta * gamma * C_MMNS * timestep (proper time h)
     # So: timestep = total_distance / (target_steps * beta * gamma * C_MMNS)
     timestep = total_distance / (target_steps * beta * gamma * C_MMNS)
 
@@ -1856,14 +1856,18 @@ class OptimizationPlugin(ttk.Frame):
             # Select all runs (or up to 10 for performance)
             max_auto_plot = min(10, len(results))
             run_listbox.select_set(0, max_auto_plot - 1)
-            # Schedule plotting after dialog is shown
+            # Force widget update to ensure selection propagates
+            run_listbox.update_idletasks()
+            # Schedule plotting after dialog is shown with longer delay
             dialog.after(
-                100,
+                500,
                 lambda: self._plot_selected_trajectories(run_listbox, results, dialog),
             )
 
     def _plot_selected_trajectories(self, listbox, results, parent_dialog):
         """Plot trajectories for selected runs."""
+        # Force update to ensure selection is current
+        listbox.update_idletasks()
         selection = listbox.curselection()
         if not selection:
             _show_info_dialog(
@@ -2108,7 +2112,7 @@ class OptimizationPlugin(ttk.Frame):
             )
             if self.config.auto_steps:
                 self._log_result(
-                    f"    Target ~{self.config.auto_steps_target} steps to wall + {self.config.auto_steps_distance_past_wall} mm"
+                    f"    Target: wall_z + {self.config.auto_steps_distance_past_wall:.1f} mm"
                 )
 
             self._log_result("")
@@ -2510,11 +2514,11 @@ class OptimizationPlugin(ttk.Frame):
         AMU_TO_MEV = 931.494
         rest_energy_mev = rider_m_particle * AMU_TO_MEV
         gamma = (energy_gev * 1e3) / rest_energy_mev
-        # For relativistic particles: p = gamma * beta * m * c
-        # beta = sqrt(1 - 1/gamma^2)
-        beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
-        # In units of amu·mm/ns: Pz = gamma * beta * m * c_mmns
-        rider_params["starting_Pz"] = gamma * beta * rider_m_particle * C_MMNS
+        # Legacy init_bunch expects starting_Pz as specific momentum (momentum/mass)
+        # It calculates: Pz = starting_Pz * mass, then γ = sqrt((Pz/(mc))² + 1)
+        # Working backwards: γ² = (Pz/(mc))² + 1 = (starting_Pz/c)² + 1
+        # Therefore: starting_Pz = c·sqrt(γ² - 1)
+        rider_params["starting_Pz"] = C_MMNS * np.sqrt(gamma * gamma - 1.0)
 
         core_params = {
             "time_step": timestep,

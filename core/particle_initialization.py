@@ -9,6 +9,8 @@ from typing import Any, Dict, Mapping, Tuple, Union
 
 import numpy as np
 
+from .constants import C_MMNS
+
 Scalar = Union[float, int]
 ParticleParams = Mapping[str, Scalar]
 
@@ -73,20 +75,25 @@ def create_particle_state(
     times = np.zeros(particle_count)
     char_times = np.full(particle_count, 1e-15)  # Characteristic time scale
 
-    # Initialize velocities and accelerations
-    bx = np.zeros(particle_count)
-    by = np.zeros(particle_count)
-    bz = np.zeros(particle_count)
-    bdotx = np.zeros(particle_count)
-    bdoty = np.zeros(particle_count)
-    bdotz = np.zeros(particle_count)
-
-    # Calculate initial gamma and momenta
-    gammas = np.ones(particle_count)  # Initialize to rest
+    # Calculate initial gamma and momenta from input momentum
+    # Following legacy initialization: Pt = sqrt(Px^2 + Py^2 + Pz^2 + (mc)^2)
     Px = momenta_x.copy()
     Py = momenta_y.copy()
     Pz = momenta_z.copy()
-    Pt = np.sqrt(Px**2 + Py**2 + Pz**2)
+    Pt = np.sqrt(Px**2 + Py**2 + Pz**2 + (particle_mass_amu * C_MMNS) ** 2)
+
+    # Calculate gamma from relativistic energy-momentum relation
+    gammas = Pt / (particle_mass_amu * C_MMNS)
+
+    # Calculate beta (velocity) from momentum and gamma
+    bx = Px / (gammas * particle_mass_amu * C_MMNS)
+    by = Py / (gammas * particle_mass_amu * C_MMNS)
+    bz = Pz / (gammas * particle_mass_amu * C_MMNS)
+
+    # Initialize accelerations
+    bdotx = np.zeros(particle_count)
+    bdoty = np.zeros(particle_count)
+    bdotz = np.zeros(particle_count)
 
     # Create particle state dictionary (compatible with both integrators)
     particle_state = {
