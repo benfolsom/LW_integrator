@@ -31,6 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 
+from core.constants import C_MMNS
 from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
@@ -548,6 +549,13 @@ class RunResult:
     rider_gamma_initial: Optional[float] = None
     rider_gamma_final: Optional[float] = None
     rider_trajectory: Optional[Dict[str, Any]] = None
+    # Beam optics parameters (initial)
+    rider_emittance_x_mm_mrad: Optional[float] = None
+    rider_emittance_y_mm_mrad: Optional[float] = None
+    rider_norm_emittance_x_mm_mrad: Optional[float] = None
+    rider_norm_emittance_y_mm_mrad: Optional[float] = None
+    rider_beta_x_m: Optional[float] = None
+    rider_beta_y_m: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -914,6 +922,51 @@ def run_testbed(
     rider_gamma_initial = None
     rider_gamma_final = None
     rider_trajectory_data = None
+    rider_emittance_x = None
+    rider_emittance_y = None
+    rider_norm_emittance_x = None
+    rider_norm_emittance_y = None
+    rider_beta_x = None
+    rider_beta_y = None
+
+    # Compute gamma and beam optics from initial parameters even if trajectories aren't saved
+    # This ensures metrics are available for optimization sweeps
+    rider_initial = initial_states.get("rider")
+    if rider_initial:
+        # initial_state values are numpy arrays (normalized), extract scalars
+        # Note: keys are capital P (Pz, Px, Py) not lowercase
+        Pz_init = float(np.asarray(rider_initial.get("Pz", 0)).flat[0])
+        Px_init = float(np.asarray(rider_initial.get("Px", 0)).flat[0])
+        Py_init = float(np.asarray(rider_initial.get("Py", 0)).flat[0])
+        P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
+        mass = float(np.asarray(rider_initial.get("m", 1)).flat[0])
+        # P is in units of amu*mm/ns, divide by (m*c) to get dimensionless momentum p
+        # Then gamma = sqrt(1 + p^2)
+        p_init = P_init / (mass * C_MMNS)
+        rider_gamma_initial = float(np.sqrt(1 + p_init**2))
+        _log(f"[DEBUG] Initial state gamma calculation:")
+        _log(
+            f"  Pz={Pz_init:.3f}, Px={Px_init:.3f}, Py={Py_init:.3f}, P_total={P_init:.3f}, mass={mass:.6f}, p={p_init:.3f}, gamma={rider_gamma_initial:.1f}"
+        )
+
+        # Compute beam optics if multi-particle bunch (pcount > 1)
+        rider_pcount = options.rider_params.get("pcount", 1)
+        if rider_pcount > 1:
+            try:
+                beam_optics = compute_beam_optics(rider_initial, rider_gamma_initial)
+                rider_emittance_x = beam_optics.get("emittance_x_mm_mrad")
+                rider_emittance_y = beam_optics.get("emittance_y_mm_mrad")
+                rider_norm_emittance_x = beam_optics.get("norm_emittance_x_mm_mrad")
+                rider_norm_emittance_y = beam_optics.get("norm_emittance_y_mm_mrad")
+                rider_beta_x = beam_optics.get("beta_x_m")
+                rider_beta_y = beam_optics.get("beta_y_m")
+                _log(f"[DEBUG] Initial beam optics:")
+                _log(
+                    f"  εx={rider_emittance_x:.3e} mm·mrad, εy={rider_emittance_y:.3e} mm·mrad"
+                )
+                _log(f"  βx={rider_beta_x:.3e} m, βy={rider_beta_y:.3e} m")
+            except Exception as exc:
+                _log(f"[WARNING] Failed to compute beam optics: {exc}")
 
     if core_traj:
         rider_states = core_traj.get("rider", [])
@@ -946,31 +999,65 @@ def run_testbed(
             if rider_delta_e is not None and len(rider_delta_e) > 0:
                 rider_delta_e_final = float(rider_delta_e[-1])
 
-            # Compute gamma values if we have rider states
+            # Compute gamma values from trajectory states (for final state)
             if rider_states and len(rider_states) > 0:
-                # gamma = sqrt(1 + p^2/m^2) where p is momentum and m is rest mass
-                # Use first state from trajectory for initial values
+                # Override initial gamma with trajectory data if available (more accurate)
                 initial_state = rider_states[0]
-                pz_init = initial_state.get("pz", 0)
-                pr_init = initial_state.get("pr", 0)
-                p_init = np.sqrt(pz_init**2 + pr_init**2)
-                # momentum is in units of m*c, so gamma = sqrt(1 + p^2)
+                Pz_init = float(np.asarray(initial_state.get("Pz", 0)).flat[0])
+                Px_init = float(np.asarray(initial_state.get("Px", 0)).flat[0])
+                Py_init = float(np.asarray(initial_state.get("Py", 0)).flat[0])
+                P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
+                mass_init = float(np.asarray(initial_state.get("m", 1)).flat[0])
+                p_init = P_init / (mass_init * C_MMNS)
                 rider_gamma_initial = float(np.sqrt(1 + p_init**2))
 
-                # For final state
+                # Compute final gamma from trajectory
                 final_state = rider_states[-1]
-                pz_final = final_state.get("pz", 0)
-                pr_final = final_state.get("pr", 0)
-                p_final = np.sqrt(pz_final**2 + pr_final**2)
+                Pz_final = float(np.asarray(final_state.get("Pz", 0)).flat[0])
+                Px_final = float(np.asarray(final_state.get("Px", 0)).flat[0])
+                Py_final = float(np.asarray(final_state.get("Py", 0)).flat[0])
+                P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
+                mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
+                p_final = P_final / (mass_final * C_MMNS)
                 rider_gamma_final = float(np.sqrt(1 + p_final**2))
 
-                # Store trajectory data
+                # Store trajectory data (extract scalars from normalized arrays)
+                # Compute r from x,y; compute normalized momentum components
+                z_arr = np.array(
+                    [float(np.asarray(s.get("z", 0)).flat[0]) for s in rider_states]
+                )
+                x_arr = np.array(
+                    [float(np.asarray(s.get("x", 0)).flat[0]) for s in rider_states]
+                )
+                y_arr = np.array(
+                    [float(np.asarray(s.get("y", 0)).flat[0]) for s in rider_states]
+                )
+                r_arr = np.sqrt(x_arr**2 + y_arr**2)
+
+                # Extract momentum components (capital P) and normalize by m*c
+                Pz_arr = np.array(
+                    [float(np.asarray(s.get("Pz", 0)).flat[0]) for s in rider_states]
+                )
+                Px_arr = np.array(
+                    [float(np.asarray(s.get("Px", 0)).flat[0]) for s in rider_states]
+                )
+                Py_arr = np.array(
+                    [float(np.asarray(s.get("Py", 0)).flat[0]) for s in rider_states]
+                )
+                m_arr = np.array(
+                    [float(np.asarray(s.get("m", 1)).flat[0]) for s in rider_states]
+                )
+                # Compute transverse momentum magnitude
+                Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
+
                 rider_trajectory_data = {
-                    "z": np.array([s.get("z", 0) for s in rider_states]),
-                    "r": np.array([s.get("r", 0) for s in rider_states]),
-                    "pz": np.array([s.get("pz", 0) for s in rider_states]),
-                    "pr": np.array([s.get("pr", 0) for s in rider_states]),
-                    "t": np.array([s.get("t", 0) for s in rider_states]),
+                    "z": z_arr,
+                    "r": r_arr,
+                    "pz": Pz_arr / (m_arr * C_MMNS),  # Normalized longitudinal momentum
+                    "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
+                    "t": np.array(
+                        [float(np.asarray(s.get("t", 0)).flat[0]) for s in rider_states]
+                    ),
                 }
 
         except Exception as exc:  # pragma: no cover - defensive guard
@@ -1710,6 +1797,12 @@ def run_testbed(
         rider_gamma_initial=rider_gamma_initial,
         rider_gamma_final=rider_gamma_final,
         rider_trajectory=rider_trajectory_data,
+        rider_emittance_x_mm_mrad=rider_emittance_x,
+        rider_emittance_y_mm_mrad=rider_emittance_y,
+        rider_norm_emittance_x_mm_mrad=rider_norm_emittance_x,
+        rider_norm_emittance_y_mm_mrad=rider_norm_emittance_y,
+        rider_beta_x_m=rider_beta_x,
+        rider_beta_y_m=rider_beta_y,
     )
 
 

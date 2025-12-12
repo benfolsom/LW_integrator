@@ -207,6 +207,32 @@ class OptimizationConfig:
     display_plots: bool = False  # Display plots during sweep
     plot_display_stride: int = 1  # Display every Nth plot (1 = all, 10 = every 10th)
 
+    # Stability and robustness options (from SimulationOptions)
+    self_consistency_enabled: bool = True
+    self_consistency_tolerance: float = 1e-4
+    self_consistency_max_iterations: int = 5
+    self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
+
+    energy_monitor_enabled: bool = True
+    energy_monitor_threshold: float = 2.0
+    energy_monitor_check_interval: int = 10
+    energy_monitor_halt_on_jump: bool = False
+    energy_monitor_debug: bool = False
+
+    adaptive_timestep_enabled: bool = True
+    adaptive_timestep_threshold: float = 0.10
+    adaptive_timestep_reduction_factor: int = 10
+    adaptive_timestep_max_attempts: int = 5
+    adaptive_timestep_min_factor: float = 1e-4
+    adaptive_timestep_cooldown_steps: int = 10
+    adaptive_timestep_probe_threshold: float = 0.01
+    adaptive_timestep_max_probe_steps: int = 3
+    adaptive_timestep_debug: bool = False
+
+    # Sweep robustness options
+    per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
+    skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
+
     def __post_init__(self):
         """Set defaults for list fields."""
         if self.transverse_offset_fractions is None:
@@ -249,6 +275,28 @@ class OptimizationConfig:
             transv_mom=rider.get("transv_mom", 1.2e-05),
             transv_dist=rider.get("transv_dist", 2e-06),
             output_dir=str(options.output_dir.parent / "optimization_results"),
+            # Preserve stability options from main config
+            self_consistency_enabled=options.self_consistency_enabled,
+            self_consistency_tolerance=options.self_consistency_tolerance,
+            self_consistency_max_iterations=options.self_consistency_max_iterations,
+            self_consistency_verbosity=options.self_consistency_verbosity,
+            energy_monitor_enabled=options.energy_monitor_enabled,
+            energy_monitor_threshold=options.energy_monitor_threshold,
+            energy_monitor_check_interval=options.energy_monitor_check_interval,
+            energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
+            energy_monitor_debug=options.energy_monitor_debug,
+            adaptive_timestep_enabled=options.adaptive_timestep_enabled,
+            adaptive_timestep_threshold=options.adaptive_timestep_threshold,
+            adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
+            adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
+            adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
+            adaptive_timestep_cooldown_steps=options.adaptive_timestep_cooldown_steps,
+            adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
+            adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
+            adaptive_timestep_debug=options.adaptive_timestep_debug,
+            # Default timeout and skip settings for sweeps
+            per_run_timeout=300.0,
+            skip_failed_runs=True,
         )
 
 
@@ -368,7 +416,9 @@ def calculate_auto_steps(
 
 
 class OptimizationPlugin(ttk.Frame):
-    """Optimization plugin panel for the LW integrator GUI."""
+    """Optimization plugin for LW Integrator GUI."""
+
+    import time
 
     def __init__(self, parent: tk.Widget, gui_controller=None, **kwargs):
         """Initialize the optimization plugin.
@@ -963,78 +1013,47 @@ class OptimizationPlugin(ttk.Frame):
 
     def _build_control_section(self):
         """Build control buttons section."""
-        frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Controls", padding=10)
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Tools", padding=10)
         frame.pack(fill="x", padx=10, pady=5)
 
-        # Info label explaining this is for optimization sweeps
+        # Info label
         info_label = ttk.Label(
             frame,
-            text="These controls run parameter sweeps for optimization (not single runs - use main GUI Run tab for single simulations)",
+            text="Use 'Run Mode' selector in right panel to choose Single Run or Parameter Sweep, then click Run button.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray40",
         )
         info_label.pack(anchor="w", pady=(0, 10))
 
-        # Row 1: Primary sweep controls
-        sweep_button_frame = ttk.Frame(frame)
-        sweep_button_frame.pack(fill="x", pady=2)
+        # Row 1: Load from main config helper
+        helper_frame = ttk.Frame(frame)
+        helper_frame.pack(fill="x", pady=2)
 
-        self.run_button = ttk.Button(
-            sweep_button_frame,
-            text="▶ Run Parameter Sweep",
-            command=self._on_run_sweep,
-            style="Accent.TButton",
-        )
-        self.run_button.pack(side="left", padx=5)
-
-        self.stop_button = ttk.Button(
-            sweep_button_frame,
-            text="⬛ Stop Sweep",
-            command=self._on_stop,
-            state="disabled",
-        )
-        self.stop_button.pack(side="left", padx=5)
-
-        ttk.Separator(sweep_button_frame, orient="vertical").pack(
-            side="left", fill="y", padx=10
-        )
-
-        # Button to load from main config
-        self.load_main_config_button = ttk.Button(
-            sweep_button_frame,
+        ttk.Button(
+            helper_frame,
             text="Load from Main GUI Config",
             command=self._on_load_from_main_config,
-        )
-        self.load_main_config_button.pack(side="left", padx=5)
+        ).pack(side="left", padx=5)
 
-        # Row 2: Configuration management
-        config_button_frame = ttk.Frame(frame)
-        config_button_frame.pack(fill="x", pady=2)
+        ttk.Label(
+            helper_frame,
+            text="← Copy current single-run config to sweep parameters",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).pack(side="left", padx=5)
 
-        ttk.Label(config_button_frame, text="Sweep Config:").pack(
-            side="left", padx=(5, 10)
-        )
+        # Row 2: Results viewing
+        results_frame = ttk.Frame(frame)
+        results_frame.pack(fill="x", pady=(10, 2))
+
+        ttk.Label(results_frame, text="Results:").pack(side="left", padx=(5, 10))
 
         ttk.Button(
-            config_button_frame, text="Load Config", command=self._on_load_config
+            results_frame, text="View Results", command=self._on_view_results
         ).pack(side="left", padx=5)
 
         ttk.Button(
-            config_button_frame, text="Save Config", command=self._on_save_config
-        ).pack(side="left", padx=5)
-
-        ttk.Separator(config_button_frame, orient="vertical").pack(
-            side="left", fill="y", padx=10
-        )
-
-        ttk.Label(config_button_frame, text="Results:").pack(side="left", padx=(5, 10))
-
-        ttk.Button(
-            config_button_frame, text="View Results", command=self._on_view_results
-        ).pack(side="left", padx=5)
-
-        ttk.Button(
-            config_button_frame,
+            results_frame,
             text="Plot Trajectories",
             command=self._on_plot_trajectories,
         ).pack(side="left", padx=5)
@@ -1264,6 +1283,20 @@ class OptimizationPlugin(ttk.Frame):
             )
             self._log_result(f"  Transverse distance: {opt_config.transv_dist:.2e} mm")
             self._log_result("")
+            self._log_result("[INFO] Stability options loaded from main config:")
+            self._log_result(
+                f"  Self-consistency: {opt_config.self_consistency_enabled} (tol={opt_config.self_consistency_tolerance:.1e})"
+            )
+            self._log_result(
+                f"  Energy monitoring: {opt_config.energy_monitor_enabled} (threshold={opt_config.energy_monitor_threshold * 100:.0f}%)"
+            )
+            self._log_result(
+                f"  Adaptive timestep: {opt_config.adaptive_timestep_enabled} (threshold={opt_config.adaptive_timestep_threshold * 100:.0f}%)"
+            )
+            self._log_result("")
+
+            # Update internal config with loaded stability settings
+            self.config = opt_config
 
         except Exception as e:
             _show_error_dialog(
@@ -1276,13 +1309,412 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(f"[ERROR] Error loading main config: {e}")
             self._log_result(traceback.format_exc())
 
+    def _confirm_stability_options(self) -> bool:
+        """Show stability options confirmation dialog with ability to adjust settings.
+
+        Returns
+        -------
+        bool
+            True if user confirms to proceed, False to cancel
+        """
+        dialog = tk.Toplevel(self)
+        dialog.title("Confirm Stability Options")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Result container
+        result = [False]
+
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill="both", expand=True)
+
+        # Info label
+        info_label = ttk.Label(
+            main_frame,
+            text="The following stability options will be used for all sweep runs.\n"
+            "These settings affect convergence, energy monitoring, and timestep adaptation.",
+            wraplength=500,
+            justify="left",
+        )
+        info_label.pack(pady=(0, 10))
+
+        # Checkbox for using single-run settings vs safer sweep defaults
+        use_single_run_var = tk.BooleanVar(value=True)
+        use_single_run_frame = ttk.Frame(main_frame)
+        use_single_run_frame.pack(fill="x", pady=(0, 10))
+
+        use_single_run_cb = ttk.Checkbutton(
+            use_single_run_frame,
+            text="Use single-run stability settings (uncheck for safer sweep defaults)",
+            variable=use_single_run_var,
+        )
+        use_single_run_cb.pack(anchor="w")
+
+        # Scrollable frame for options
+        canvas = tk.Canvas(main_frame, height=300, width=550)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable = ttk.Frame(canvas)
+
+        scrollable.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Store widget variables for enabling/disabling
+        all_widgets = []
+
+        # Self-consistency section
+        sc_frame = ttk.LabelFrame(scrollable, text="Self-Consistency", padding=10)
+        sc_frame.pack(fill="x", pady=5, padx=5)
+
+        sc_enabled_var = tk.BooleanVar(value=self.config.self_consistency_enabled)
+        sc_enabled_cb = ttk.Checkbutton(
+            sc_frame, text="Enabled", variable=sc_enabled_var
+        )
+        sc_enabled_cb.pack(anchor="w")
+        all_widgets.append(sc_enabled_cb)
+
+        ttk.Label(sc_frame, text="Tolerance:").pack(anchor="w", pady=(5, 0))
+        sc_tol_var = tk.StringVar(value=f"{self.config.self_consistency_tolerance:.1e}")
+        sc_tol_entry = ttk.Entry(sc_frame, textvariable=sc_tol_var, width=15)
+        sc_tol_entry.pack(anchor="w")
+        all_widgets.append(sc_tol_entry)
+
+        ttk.Label(sc_frame, text="Max iterations:").pack(anchor="w", pady=(5, 0))
+        sc_iter_var = tk.StringVar(
+            value=str(self.config.self_consistency_max_iterations)
+        )
+        sc_iter_entry = ttk.Entry(sc_frame, textvariable=sc_iter_var, width=15)
+        sc_iter_entry.pack(anchor="w")
+        all_widgets.append(sc_iter_entry)
+
+        ttk.Label(sc_frame, text="Verbosity (0=silent, 1=basic, 2=detailed):").pack(
+            anchor="w", pady=(5, 0)
+        )
+        sc_verb_var = tk.StringVar(
+            value=str(max(self.config.self_consistency_verbosity, 1))
+        )
+        sc_verb_entry = ttk.Entry(sc_frame, textvariable=sc_verb_var, width=15)
+        sc_verb_entry.pack(anchor="w")
+        all_widgets.append(sc_verb_entry)
+
+        # Energy monitor section
+        em_frame = ttk.LabelFrame(scrollable, text="Energy Monitoring", padding=10)
+        em_frame.pack(fill="x", pady=5, padx=5)
+
+        em_enabled_var = tk.BooleanVar(value=self.config.energy_monitor_enabled)
+        em_enabled_cb = ttk.Checkbutton(
+            em_frame, text="Enabled", variable=em_enabled_var
+        )
+        em_enabled_cb.pack(anchor="w")
+        all_widgets.append(em_enabled_cb)
+
+        ttk.Label(em_frame, text="Jump threshold (relative):").pack(
+            anchor="w", pady=(5, 0)
+        )
+        em_thresh_var = tk.StringVar(value=str(self.config.energy_monitor_threshold))
+        em_thresh_entry = ttk.Entry(em_frame, textvariable=em_thresh_var, width=15)
+        em_thresh_entry.pack(anchor="w")
+        all_widgets.append(em_thresh_entry)
+
+        ttk.Label(em_frame, text="Check interval (steps):").pack(
+            anchor="w", pady=(5, 0)
+        )
+        em_interval_var = tk.StringVar(
+            value=str(self.config.energy_monitor_check_interval)
+        )
+        em_interval_entry = ttk.Entry(em_frame, textvariable=em_interval_var, width=15)
+        em_interval_entry.pack(anchor="w")
+        all_widgets.append(em_interval_entry)
+
+        em_halt_var = tk.BooleanVar(value=self.config.energy_monitor_halt_on_jump)
+        em_halt_cb = ttk.Checkbutton(
+            em_frame, text="Halt on energy jump", variable=em_halt_var
+        )
+        em_halt_cb.pack(anchor="w", pady=(5, 0))
+        all_widgets.append(em_halt_cb)
+
+        em_debug_var = tk.BooleanVar(value=self.config.energy_monitor_debug or True)
+        em_debug_cb = ttk.Checkbutton(
+            em_frame,
+            text="Debug logging (recommended for sweeps)",
+            variable=em_debug_var,
+        )
+        em_debug_cb.pack(anchor="w")
+        all_widgets.append(em_debug_cb)
+
+        # Adaptive timestep section
+        at_frame = ttk.LabelFrame(scrollable, text="Adaptive Timestep", padding=10)
+        at_frame.pack(fill="x", pady=5, padx=5)
+
+        at_enabled_var = tk.BooleanVar(value=self.config.adaptive_timestep_enabled)
+        at_enabled_cb = ttk.Checkbutton(
+            at_frame, text="Enabled", variable=at_enabled_var
+        )
+        at_enabled_cb.pack(anchor="w")
+        all_widgets.append(at_enabled_cb)
+
+        ttk.Label(at_frame, text="Energy jump threshold:").pack(anchor="w", pady=(5, 0))
+        at_thresh_var = tk.StringVar(value=str(self.config.adaptive_timestep_threshold))
+        at_thresh_entry = ttk.Entry(at_frame, textvariable=at_thresh_var, width=15)
+        at_thresh_entry.pack(anchor="w")
+        all_widgets.append(at_thresh_entry)
+
+        ttk.Label(at_frame, text="Reduction factor:").pack(anchor="w", pady=(5, 0))
+        at_factor_var = tk.StringVar(
+            value=str(self.config.adaptive_timestep_reduction_factor)
+        )
+        at_factor_entry = ttk.Entry(at_frame, textvariable=at_factor_var, width=15)
+        at_factor_entry.pack(anchor="w")
+        all_widgets.append(at_factor_entry)
+
+        ttk.Label(at_frame, text="Max reduction attempts:").pack(
+            anchor="w", pady=(5, 0)
+        )
+        at_attempts_var = tk.StringVar(
+            value=str(self.config.adaptive_timestep_max_attempts)
+        )
+        at_attempts_entry = ttk.Entry(at_frame, textvariable=at_attempts_var, width=15)
+        at_attempts_entry.pack(anchor="w")
+        all_widgets.append(at_attempts_entry)
+
+        at_debug_var = tk.BooleanVar(value=self.config.adaptive_timestep_debug or True)
+        at_debug_cb = ttk.Checkbutton(
+            at_frame,
+            text="Debug logging (recommended for sweeps)",
+            variable=at_debug_var,
+        )
+        at_debug_cb.pack(anchor="w", pady=(5, 0))
+        all_widgets.append(at_debug_cb)
+
+        # Function to apply safer sweep defaults
+        def apply_sweep_defaults():
+            """Apply safer defaults for sweeps."""
+            # Self-consistency: more verbose for debugging
+            sc_verb_var.set("1")
+            # Energy monitoring: debug enabled, don't halt
+            em_debug_var.set(True)
+            em_halt_var.set(False)
+            # Adaptive timestep: debug enabled, reduced max attempts to fail faster
+            at_debug_var.set(True)
+            at_attempts_var.set("3")
+
+        # Function to toggle widgets based on checkbox
+        def on_checkbox_toggle():
+            if use_single_run_var.get():
+                # Checkbox is checked: use single-run settings, disable widgets (greyed out)
+                for widget in all_widgets:
+                    widget.configure(state="disabled")
+            else:
+                # Checkbox is unchecked: enable widgets and apply safer sweep defaults
+                for widget in all_widgets:
+                    widget.configure(state="normal")
+                apply_sweep_defaults()
+
+        # Bind checkbox to toggle function
+        use_single_run_cb.configure(command=on_checkbox_toggle)
+
+        # Initial state: checkbox is checked by default, so fields should be disabled
+        on_checkbox_toggle()
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Sweep robustness section
+        sweep_frame = ttk.LabelFrame(main_frame, text="Sweep Robustness", padding=10)
+        sweep_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(sweep_frame, text="Per-run timeout (seconds, 0=unlimited):").pack(
+            anchor="w"
+        )
+        timeout_var = tk.StringVar(value=str(self.config.per_run_timeout))
+        timeout_entry = ttk.Entry(sweep_frame, textvariable=timeout_var, width=15)
+        timeout_entry.pack(anchor="w", pady=(0, 5))
+
+        skip_failed_var = tk.BooleanVar(value=self.config.skip_failed_runs)
+        skip_failed_cb = ttk.Checkbutton(
+            sweep_frame,
+            text="Skip failed runs and continue sweep",
+            variable=skip_failed_var,
+        )
+        skip_failed_cb.pack(anchor="w")
+
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=(10, 0))
+
+        def on_confirm():
+            """Validate and save settings."""
+            try:
+                # Check if using single-run settings or sweep defaults
+                if not use_single_run_var.get():
+                    # Apply safer sweep defaults (already set in UI via apply_sweep_defaults)
+                    # Just read the values from the (disabled) widgets
+                    pass
+
+                # Update config with dialog values
+                self.config.self_consistency_enabled = sc_enabled_var.get()
+                self.config.self_consistency_tolerance = float(sc_tol_var.get())
+                self.config.self_consistency_max_iterations = int(sc_iter_var.get())
+                self.config.self_consistency_verbosity = int(sc_verb_var.get())
+
+                self.config.energy_monitor_enabled = em_enabled_var.get()
+                self.config.energy_monitor_threshold = float(em_thresh_var.get())
+                self.config.energy_monitor_check_interval = int(em_interval_var.get())
+                self.config.energy_monitor_halt_on_jump = em_halt_var.get()
+                self.config.energy_monitor_debug = em_debug_var.get()
+
+                self.config.adaptive_timestep_enabled = at_enabled_var.get()
+                self.config.adaptive_timestep_threshold = float(at_thresh_var.get())
+                self.config.adaptive_timestep_reduction_factor = int(
+                    at_factor_var.get()
+                )
+                self.config.adaptive_timestep_max_attempts = int(at_attempts_var.get())
+                self.config.adaptive_timestep_debug = at_debug_var.get()
+
+                # Sweep robustness options
+                self.config.per_run_timeout = float(timeout_var.get())
+                self.config.skip_failed_runs = skip_failed_var.get()
+
+                result[0] = True
+                dialog.destroy()
+            except ValueError as e:
+                _show_error_dialog(
+                    dialog, "Invalid Input", f"Please check your inputs: {e}"
+                )
+
+        def on_cancel():
+            """Cancel and close."""
+            result[0] = False
+            dialog.destroy()
+
+        confirm_btn = ttk.Button(
+            button_frame, text="Proceed with Sweep", command=on_confirm, width=20
+        )
+        confirm_btn.pack(side="left", padx=5)
+
+        cancel_btn = ttk.Button(
+            button_frame, text="Cancel", command=on_cancel, width=15
+        )
+        cancel_btn.pack(side="left", padx=5)
+
+        # Center dialog
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # Wait for dialog
+        dialog.wait_window()
+
+        # Log confirmed settings
+        if result[0]:
+            self._log_result("[INFO] Stability options confirmed for sweep:")
+            self._log_result(
+                f"  Self-consistency: {self.config.self_consistency_enabled} (tol={self.config.self_consistency_tolerance:.1e}, max_iter={self.config.self_consistency_max_iterations}, verbosity={self.config.self_consistency_verbosity})"
+            )
+            self._log_result(
+                f"  Energy monitoring: {self.config.energy_monitor_enabled} (threshold={self.config.energy_monitor_threshold * 100:.0f}%, halt={self.config.energy_monitor_halt_on_jump}, debug={self.config.energy_monitor_debug})"
+            )
+            self._log_result(
+                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%, reduction={self.config.adaptive_timestep_reduction_factor}x, max_attempts={self.config.adaptive_timestep_max_attempts}, debug={self.config.adaptive_timestep_debug})"
+            )
+            self._log_result(
+                f"  Per-run timeout: {self.config.per_run_timeout}s, Skip failed: {self.config.skip_failed_runs}"
+            )
+            if not use_single_run_var.get():
+                self._log_result(
+                    "  [NOTE] Using safer sweep defaults (single-run settings overridden)"
+                )
+            self._log_result("")
+
+        return result[0]
+
+    def _check_extreme_parameters(self) -> Optional[str]:
+        """Check for extreme parameter combinations that might cause issues.
+
+        Returns
+        -------
+        Optional[str]
+            Warning message if extreme parameters detected, None otherwise
+        """
+        warnings = []
+
+        # Check for very small apertures with high energies
+        aperture_min = self.config.aperture_range[0]
+        energy_max = self.config.energy_range[1]
+
+        # Electron mass in amu
+        m_electron = 0.00054857990907
+
+        # Calculate gamma for max energy
+        AMU_TO_MEV = 931.494
+        rest_energy_mev = self.config.m_particle * AMU_TO_MEV
+        gamma_max = (energy_max * 1e3) / rest_energy_mev
+
+        # Warn if aperture < 10 μm and gamma > 10,000
+        if aperture_min < 1e-5 and gamma_max > 10000:
+            warnings.append(
+                f"• Very small aperture ({aperture_min:.2e} mm) with high energy ({energy_max:.1f} GeV, γ≈{gamma_max:.0f})\n"
+                f"  This may cause extreme fields, SC convergence issues, and very slow runs."
+            )
+
+        # Warn if aperture < 1 μm
+        if aperture_min < 1e-6:
+            warnings.append(
+                f"• Aperture < 1 μm detected ({aperture_min:.2e} mm)\n"
+                f"  Sub-micron apertures often cause numerical instabilities."
+            )
+
+        # Warn if gamma > 50,000 (roughly > 25 GeV for electrons)
+        if gamma_max > 50000:
+            warnings.append(
+                f"• Very high energy detected ({energy_max:.1f} GeV, γ≈{gamma_max:.0f})\n"
+                f"  Ultra-relativistic particles may require very fine timesteps."
+            )
+
+        # Check timestep if not auto
+        if not self.config.auto_steps:
+            timestep = self.config.timestep
+            # For high gamma, check if timestep might be too large
+            # Distance per step ≈ γ * c * h (for β ≈ 1)
+            # For 300 mm/ns * γ * h, we want distance/step << aperture
+            beta_approx = 1.0 if gamma_max > 2 else 0.9
+            distance_per_step = beta_approx * gamma_max * 300.0 * timestep  # mm
+
+            if distance_per_step > aperture_min * 0.1:
+                warnings.append(
+                    f"• Fixed timestep may be too large for small apertures\n"
+                    f"  Distance/step ≈ {distance_per_step:.3f} mm vs aperture {aperture_min:.2e} mm\n"
+                    f"  Consider enabling 'Auto timestep' or reducing timestep."
+                )
+
+        if warnings:
+            warning_text = "Extreme parameter combinations detected:\n\n" + "\n\n".join(
+                warnings
+            )
+            warning_text += "\n\nRecommendations:\n"
+            warning_text += "• Enable 'Per-run timeout' to prevent hangs\n"
+            warning_text += "• Enable 'Skip failed runs' to complete the sweep\n"
+            warning_text += (
+                "• Consider more moderate parameter ranges for initial sweeps\n"
+            )
+            warning_text += "\nDo you want to proceed anyway?"
+            return warning_text
+
+        return None
+
     def _on_run_sweep(self):
-        """Handle run sweep button click."""
+        """Handle run sweep button click (called from main GUI)."""
         # Check if main GUI is already running
         if self.gui_controller and hasattr(self.gui_controller, "_running"):
             if self.gui_controller._running:
-                _show_info_dialog(
-                    self,
+                messagebox.showwarning(
                     "Optimization",
                     "Please wait for current simulation to complete",
                 )
@@ -1297,14 +1729,29 @@ class OptimizationPlugin(ttk.Frame):
         # Gather configuration
         try:
             self.config = self._gather_config()
+
+            # Check for extreme parameters and warn user
+            extreme_warning = self._check_extreme_parameters()
+            if extreme_warning:
+                response = messagebox.askyesno(
+                    "Extreme Parameters Warning", extreme_warning, icon="warning"
+                )
+                if not response:
+                    self._log_result(
+                        "[INFO] Sweep cancelled by user (extreme parameters)"
+                    )
+                    return
+
+            # Show stability options confirmation dialog
+            if not self._confirm_stability_options():
+                return
+
         except Exception as e:
             _show_error_dialog(self, "Configuration Error", str(e))
             return
 
         # Update UI state
         self.running = True
-        self.run_button.config(state="disabled")
-        self.stop_button.config(state="normal")
         self._update_progress(0, "Initializing sweep...")
 
         # Integrate with main GUI run state
@@ -1356,6 +1803,10 @@ class OptimizationPlugin(ttk.Frame):
             # Store the loaded config name for later use in results naming
             self.last_loaded_config = filename
 
+            # Update config name display
+            config_name = Path(filename).stem
+            self.config_name_label.config(text=config_name, foreground="black")
+
             # Populate UI fields
             self.sim_type_var.set(data.get("simulation_type", "CONDUCTING_WALL"))
             self.aperture_min_var.set(str(data.get("aperture_min", 1e-5)))
@@ -1382,7 +1833,76 @@ class OptimizationPlugin(ttk.Frame):
             self.save_trajectories_var.set(data.get("save_trajectories", False))
             self.display_plots_var.set(data.get("display_plots", False))
 
+            # Load stability options (with defaults from SimulationOptions)
+            loaded_config = self._gather_config()
+            loaded_config.self_consistency_enabled = data.get(
+                "self_consistency_enabled", True
+            )
+            loaded_config.self_consistency_tolerance = data.get(
+                "self_consistency_tolerance", 1e-4
+            )
+            loaded_config.self_consistency_max_iterations = data.get(
+                "self_consistency_max_iterations", 5
+            )
+            loaded_config.self_consistency_verbosity = data.get(
+                "self_consistency_verbosity", 0
+            )
+            loaded_config.energy_monitor_enabled = data.get(
+                "energy_monitor_enabled", True
+            )
+            loaded_config.energy_monitor_threshold = data.get(
+                "energy_monitor_threshold", 2.0
+            )
+            loaded_config.energy_monitor_check_interval = data.get(
+                "energy_monitor_check_interval", 10
+            )
+            loaded_config.energy_monitor_halt_on_jump = data.get(
+                "energy_monitor_halt_on_jump", False
+            )
+            loaded_config.energy_monitor_debug = data.get("energy_monitor_debug", False)
+            loaded_config.adaptive_timestep_enabled = data.get(
+                "adaptive_timestep_enabled", True
+            )
+            loaded_config.adaptive_timestep_threshold = data.get(
+                "adaptive_timestep_threshold", 0.10
+            )
+            loaded_config.adaptive_timestep_reduction_factor = data.get(
+                "adaptive_timestep_reduction_factor", 10
+            )
+            loaded_config.adaptive_timestep_max_attempts = data.get(
+                "adaptive_timestep_max_attempts", 5
+            )
+            loaded_config.adaptive_timestep_min_factor = data.get(
+                "adaptive_timestep_min_factor", 1e-4
+            )
+            loaded_config.adaptive_timestep_cooldown_steps = data.get(
+                "adaptive_timestep_cooldown_steps", 10
+            )
+            loaded_config.adaptive_timestep_probe_threshold = data.get(
+                "adaptive_timestep_probe_threshold", 0.01
+            )
+            loaded_config.adaptive_timestep_max_probe_steps = data.get(
+                "adaptive_timestep_max_probe_steps", 3
+            )
+            loaded_config.adaptive_timestep_debug = data.get(
+                "adaptive_timestep_debug", False
+            )
+            # Sweep robustness options
+            loaded_config.per_run_timeout = data.get("per_run_timeout", 300.0)
+            loaded_config.skip_failed_runs = data.get("skip_failed_runs", True)
+            self.config = loaded_config
+
             self._log_result("[OK] Configuration loaded successfully")
+            self._log_result("[INFO] Stability options:")
+            self._log_result(
+                f"  Self-consistency: {self.config.self_consistency_enabled} (tol={self.config.self_consistency_tolerance:.1e})"
+            )
+            self._log_result(
+                f"  Energy monitoring: {self.config.energy_monitor_enabled} (threshold={self.config.energy_monitor_threshold * 100:.0f}%)"
+            )
+            self._log_result(
+                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%)"
+            )
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
 
@@ -1427,10 +1947,39 @@ class OptimizationPlugin(ttk.Frame):
                 "objective": config.objective,
                 "save_trajectories": config.save_trajectories,
                 "display_plots": config.display_plots,
+                # Stability options
+                "self_consistency_enabled": config.self_consistency_enabled,
+                "self_consistency_tolerance": config.self_consistency_tolerance,
+                "self_consistency_max_iterations": config.self_consistency_max_iterations,
+                "self_consistency_verbosity": config.self_consistency_verbosity,
+                "energy_monitor_enabled": config.energy_monitor_enabled,
+                "energy_monitor_threshold": config.energy_monitor_threshold,
+                "energy_monitor_check_interval": config.energy_monitor_check_interval,
+                "energy_monitor_halt_on_jump": config.energy_monitor_halt_on_jump,
+                "energy_monitor_debug": config.energy_monitor_debug,
+                "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
+                "adaptive_timestep_threshold": config.adaptive_timestep_threshold,
+                "adaptive_timestep_reduction_factor": config.adaptive_timestep_reduction_factor,
+                "adaptive_timestep_max_attempts": config.adaptive_timestep_max_attempts,
+                "adaptive_timestep_min_factor": config.adaptive_timestep_min_factor,
+                "adaptive_timestep_cooldown_steps": config.adaptive_timestep_cooldown_steps,
+                "adaptive_timestep_probe_threshold": config.adaptive_timestep_probe_threshold,
+                "adaptive_timestep_max_probe_steps": config.adaptive_timestep_max_probe_steps,
+                "adaptive_timestep_debug": config.adaptive_timestep_debug,
+                # Sweep robustness options
+                "per_run_timeout": config.per_run_timeout,
+                "skip_failed_runs": config.skip_failed_runs,
             }
 
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
+
+            # Update last_loaded_config so sweep results use correct name
+            self.last_loaded_config = filename
+
+            # Update config name display
+            config_name = Path(filename).stem
+            self.config_name_label.config(text=config_name, foreground="black")
 
             self._log_result(f"[OK] Configuration saved to {filename}")
         except Exception as e:
@@ -1553,15 +2102,8 @@ class OptimizationPlugin(ttk.Frame):
                 results_with_traj = [r for r in results if "trajectory" in r]
 
                 if not results_with_traj:
-                    # Show results summary even without trajectories
-                    _show_info_dialog(
-                        self,
-                        "No Trajectory Data",
-                        "No trajectory arrays found in results.\n\n"
-                        "Trajectory plotting requires 'Save trajectories' to be enabled.\n"
-                        "However, you can still view metrics and parameter sweep summaries.",
-                    )
-                    # TODO: Show metrics table/summary view instead
+                    # Show metrics summary even without trajectories
+                    self._show_results_summary(results, file_path)
                     return
 
             elif "core" in data and "rider" in data["core"]:
@@ -1745,13 +2287,391 @@ class OptimizationPlugin(ttk.Frame):
 
         return result
 
+    def _show_results_summary(self, results, file_path):
+        """Show metrics-first results summary (works without trajectory data).
+
+        Args:
+            results: List of result dictionaries (may or may not have trajectories)
+            file_path: Path to the results file
+        """
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Results Summary - {Path(file_path).name}")
+        dialog.geometry("1100x700")
+        dialog.transient(self)
+
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill="both", expand=True)
+
+        # Title
+        ttk.Label(
+            main_frame,
+            text="Sweep Results Summary",
+            font=("TkDefaultFont", 14, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+
+        # Summary info
+        num_runs = len(results)
+        sweep_info = results[0].get("sweep_info", {}) if results else {}
+        config_name = sweep_info.get("config_name", "Unknown")
+
+        info_frame = ttk.Frame(main_frame)
+        info_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(
+            info_frame,
+            text=f"Configuration: {config_name}  |  Total Runs: {num_runs}",
+            font=("TkDefaultFont", 10),
+        ).pack(anchor="w")
+
+        # Notebook for different views
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill="both", expand=True, pady=(5, 0))
+
+        # Tab 1: Metrics Table
+        metrics_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(metrics_frame, text="Metrics Table")
+
+        # Create scrollable table
+        table_container = ttk.Frame(metrics_frame)
+        table_container.pack(fill="both", expand=True)
+
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(table_container)
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar = ttk.Scrollbar(table_container, orient="horizontal")
+        h_scrollbar.pack(side="bottom", fill="x")
+
+        # Text widget for table (easier than Treeview for variable columns)
+        metrics_text = tk.Text(
+            table_container,
+            wrap="none",
+            font=("Courier", 9),
+            yscrollcommand=v_scrollbar.set,
+            xscrollcommand=h_scrollbar.set,
+        )
+        metrics_text.pack(side="left", fill="both", expand=True)
+        v_scrollbar.config(command=metrics_text.yview)
+        h_scrollbar.config(command=metrics_text.xview)
+
+        # Build table content
+        if results:
+            # Check if we have beam optics data in any result
+            has_beam_optics = any(
+                r.get("metrics", {}).get("rider_emittance_x_mm_mrad") is not None
+                for r in results
+            )
+
+            # Header
+            if has_beam_optics:
+                header = f"{'Run':<5} {'Aperture (mm)':<15} {'Energy (GeV)':<15} {'Start_z (mm)':<15} {'ΔE (MeV)':<12} {'Traveled (mm)':<15} {'γ_initial':<12} {'εx (mm·mrad)':<15} {'εnx (mm·mrad)':<16} {'βx (m)':<12}\n"
+                header += "-" * 157 + "\n"
+            else:
+                header = f"{'Run':<5} {'Aperture (mm)':<15} {'Energy (GeV)':<15} {'Start_z (mm)':<15} {'ΔE (MeV)':<12} {'Traveled (mm)':<15} {'γ_initial':<12}\n"
+                header += "-" * 110 + "\n"
+            metrics_text.insert("end", header)
+
+            # Data rows
+            for r in results:
+                params = r.get("parameters", {})
+                metrics = r.get("metrics", {})
+                dist_info = r.get("_distance_info", {})
+
+                run_num = r.get("run_number", "?")
+                aperture = params.get("aperture_radius", 0)
+                energy = params.get("particle_energy_gev", 0)
+                start_z = params.get("starting_z", 0)
+                delta_e = metrics.get("rider_delta_e_mev", 0)
+
+                # Calculate traveled distance
+                z_start = dist_info.get("z_start", 0)
+                z_end = dist_info.get("z_end", 0)
+                traveled = abs(z_end - z_start)
+
+                # Get gamma from metrics
+                gamma = metrics.get("rider_gamma_initial", 0)
+
+                if has_beam_optics:
+                    # Include beam optics columns
+                    emit_x = metrics.get("rider_emittance_x_mm_mrad", 0)
+                    norm_emit_x = metrics.get("rider_norm_emittance_x_mm_mrad", 0)
+                    beta_x = metrics.get("rider_beta_x_m", 0)
+                    row = f"{run_num:<5} {aperture:<15.3e} {energy:<15.2f} {start_z:<15.1f} {delta_e:<12.3f} {traveled:<15.1f} {gamma:<12.1f} {emit_x:<15.3e} {norm_emit_x:<16.3e} {beta_x:<12.3e}\n"
+                else:
+                    row = f"{run_num:<5} {aperture:<15.3e} {energy:<15.2f} {start_z:<15.1f} {delta_e:<12.3f} {traveled:<15.1f} {gamma:<12.1f}\n"
+                metrics_text.insert("end", row)
+
+        metrics_text.config(state="disabled")
+
+        # Tab 2: Plots (if applicable)
+        plots_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(plots_frame, text="Visualization")
+
+        # Check if we can make plots
+        has_trajectories = any("trajectory" in r for r in results)
+
+        if has_trajectories:
+            ttk.Label(
+                plots_frame,
+                text="Trajectory data available. Click below to view trajectory plots.",
+                font=("TkDefaultFont", 10),
+            ).pack(pady=20)
+
+            ttk.Button(
+                plots_frame,
+                text="Open Trajectory Viewer",
+                command=lambda: self._open_trajectory_viewer_from_summary(
+                    dialog, results, file_path
+                ),
+                style="Accent.TButton",
+            ).pack(pady=10)
+        else:
+            # Try to make parameter sweep plot if we have varied parameters
+            self._create_summary_plots(plots_frame, results)
+
+        # Bottom buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Button(
+            btn_frame,
+            text="Export to CSV",
+            command=lambda: self._export_metrics_csv(results, file_path),
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            btn_frame,
+            text="Close",
+            command=dialog.destroy,
+        ).pack(side="right", padx=5)
+
+    def _create_summary_plots(self, parent_frame, results):
+        """Create parameter sweep visualization plots."""
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            from matplotlib.backends.backend_tkagg import (
+                FigureCanvasTkAgg,
+                NavigationToolbar2Tk,
+            )
+
+            # Extract data
+            apertures = []
+            energies = []
+            delta_es = []
+
+            for r in results:
+                params = r.get("parameters", {})
+                metrics = r.get("metrics", {})
+                apertures.append(params.get("aperture_radius", 0))
+                energies.append(params.get("particle_energy_gev", 0))
+                delta_es.append(metrics.get("rider_delta_e_mev", 0))
+
+            # Create figure
+            fig = plt.figure(figsize=(10, 6))
+
+            # Determine if we have 1D or 2D sweep
+            unique_apertures = len(set(apertures))
+            unique_energies = len(set(energies))
+
+            if unique_apertures > 1 and unique_energies > 1:
+                # 2D sweep - make heatmap
+                ax = fig.add_subplot(111)
+
+                # Reshape data
+                apertures_arr = np.array(apertures)
+                energies_arr = np.array(energies)
+                delta_es_arr = np.array(delta_es)
+
+                # Create grid
+                unique_a = sorted(set(apertures))
+                unique_e = sorted(set(energies))
+                grid = np.zeros((len(unique_e), len(unique_a)))
+
+                for i, r in enumerate(results):
+                    params = r.get("parameters", {})
+                    a_val = params.get("aperture_radius", 0)
+                    e_val = params.get("particle_energy_gev", 0)
+                    de_val = delta_es[i]
+
+                    a_idx = unique_a.index(a_val)
+                    e_idx = unique_e.index(e_val)
+                    grid[e_idx, a_idx] = de_val
+
+                im = ax.imshow(grid, aspect="auto", origin="lower", cmap="RdYlGn_r")
+                ax.set_xticks(range(len(unique_a)))
+                ax.set_xticklabels(
+                    [f"{a:.1e}" for a in unique_a], rotation=45, ha="right"
+                )
+                ax.set_yticks(range(len(unique_e)))
+                ax.set_yticklabels([f"{e:.1f}" for e in unique_e])
+                ax.set_xlabel("Aperture Radius (mm)")
+                ax.set_ylabel("Particle Energy (GeV)")
+                ax.set_title("ΔE Heatmap (MeV)")
+                plt.colorbar(im, ax=ax, label="ΔE (MeV)")
+
+            elif unique_apertures > 1:
+                # Vary aperture, fixed energy
+                ax = fig.add_subplot(111)
+                ax.plot(apertures, delta_es, "o-", markersize=8)
+                ax.set_xlabel("Aperture Radius (mm)")
+                ax.set_ylabel("ΔE (MeV)")
+                ax.set_title(f"Energy Change vs Aperture (E={energies[0]:.1f} GeV)")
+                ax.grid(True, alpha=0.3)
+
+            elif unique_energies > 1:
+                # Vary energy, fixed aperture
+                ax = fig.add_subplot(111)
+                ax.plot(energies, delta_es, "o-", markersize=8)
+                ax.set_xlabel("Particle Energy (GeV)")
+                ax.set_ylabel("ΔE (MeV)")
+                ax.set_title(f"Energy Change vs Energy (a={apertures[0]:.2e} mm)")
+                ax.grid(True, alpha=0.3)
+            else:
+                # Single point
+                ax = fig.add_subplot(111)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "Single-point simulation\nNo parameter sweep to visualize",
+                    ha="center",
+                    va="center",
+                    fontsize=12,
+                )
+                ax.set_xlim(0, 1)
+                ax.set_ylim(0, 1)
+                ax.axis("off")
+
+            fig.tight_layout()
+
+            # Embed in Tkinter
+            canvas = FigureCanvasTkAgg(fig, parent_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+
+            toolbar = NavigationToolbar2Tk(canvas, parent_frame)
+            toolbar.update()
+
+        except Exception as e:
+            ttk.Label(
+                parent_frame,
+                text=f"Could not create plots: {e}",
+                foreground="red",
+            ).pack(pady=20)
+
+    def _export_metrics_csv(self, results, file_path):
+        """Export metrics to CSV file."""
+        import csv
+        from tkinter import filedialog
+
+        # Suggest filename
+        default_name = Path(file_path).stem + "_metrics.csv"
+        output_file = filedialog.asksaveasfilename(
+            title="Export Metrics to CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=default_name,
+            parent=self,
+        )
+
+        if not output_file:
+            return
+
+        try:
+            with open(output_file, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+
+                # Header
+                writer.writerow(
+                    [
+                        "Run",
+                        "Aperture_mm",
+                        "Energy_GeV",
+                        "Start_z_mm",
+                        "Delta_E_MeV",
+                        "Traveled_mm",
+                        "Gamma_initial",
+                        "Gamma_final",
+                        "Emittance_x_mm_mrad",
+                        "Emittance_y_mm_mrad",
+                        "Norm_Emittance_x_mm_mrad",
+                        "Norm_Emittance_y_mm_mrad",
+                        "Beta_x_m",
+                        "Beta_y_m",
+                    ]
+                )
+
+                # Data
+                for r in results:
+                    params = r.get("parameters", {})
+                    metrics = r.get("metrics", {})
+                    dist_info = r.get("_distance_info", {})
+
+                    run_num = r.get("run_number", "")
+                    aperture = params.get("aperture_radius", 0)
+                    energy = params.get("particle_energy_gev", 0)
+                    start_z = params.get("starting_z", 0)
+                    delta_e = metrics.get("rider_delta_e_mev", 0)
+
+                    z_start = dist_info.get("z_start", 0)
+                    z_end = dist_info.get("z_end", 0)
+                    traveled = abs(z_end - z_start)
+
+                    gamma_i = metrics.get("rider_gamma_initial", 0)
+                    gamma_f = metrics.get("rider_gamma_final", 0)
+
+                    # Beam optics metrics
+                    emit_x = metrics.get("rider_emittance_x_mm_mrad", "")
+                    emit_y = metrics.get("rider_emittance_y_mm_mrad", "")
+                    norm_emit_x = metrics.get("rider_norm_emittance_x_mm_mrad", "")
+                    norm_emit_y = metrics.get("rider_norm_emittance_y_mm_mrad", "")
+                    beta_x = metrics.get("rider_beta_x_m", "")
+                    beta_y = metrics.get("rider_beta_y_m", "")
+
+                    writer.writerow(
+                        [
+                            run_num,
+                            aperture,
+                            energy,
+                            start_z,
+                            delta_e,
+                            traveled,
+                            gamma_i,
+                            gamma_f,
+                            emit_x,
+                            emit_y,
+                            norm_emit_x,
+                            norm_emit_y,
+                            beta_x,
+                            beta_y,
+                        ]
+                    )
+
+            _show_info_dialog(
+                self, "Export Successful", f"Metrics exported to:\n{output_file}"
+            )
+
+        except Exception as e:
+            _show_error_dialog(self, "Export Failed", f"Failed to export CSV:\n{e}")
+
+    def _open_trajectory_viewer_from_summary(self, summary_dialog, results, file_path):
+        """Open trajectory viewer from the summary dialog."""
+        results_with_traj = [r for r in results if "trajectory" in r]
+        if results_with_traj:
+            self._show_trajectory_viewer(results_with_traj, file_path, auto_plot=True)
+        else:
+            _show_info_dialog(
+                summary_dialog,
+                "No Trajectories",
+                "No trajectory data found in results.",
+            )
+
     def _show_trajectory_viewer(self, results, file_path, auto_plot=False):
         """Show trajectory viewer dialog with run selection and plotting.
 
         Args:
             results: List of result dictionaries with trajectories
             file_path: Path to the results file
-            auto_plot: If True, automatically plot all results on open
+            auto_plot: If True, automatically select and plot results on open
         """
         dialog = tk.Toplevel(self)
         dialog.title(f"Trajectory Viewer - {Path(file_path).name}")
@@ -1855,24 +2775,56 @@ class OptimizationPlugin(ttk.Frame):
         if auto_plot:
             # Select all runs (or up to 10 for performance)
             max_auto_plot = min(10, len(results))
-            run_listbox.select_set(0, max_auto_plot - 1)
-            # Force widget update to ensure selection propagates
-            run_listbox.update_idletasks()
-            # Schedule plotting after dialog is shown with longer delay
-            dialog.after(
-                500,
-                lambda: self._plot_selected_trajectories(run_listbox, results, dialog),
-            )
+            for i in range(max_auto_plot):
+                run_listbox.select_set(i)
 
-    def _plot_selected_trajectories(self, listbox, results, parent_dialog):
-        """Plot trajectories for selected runs."""
+            # Force widget and window updates
+            run_listbox.update_idletasks()
+            dialog.update()
+
+            # Schedule plotting with enough delay for window to fully initialize
+            # Use a longer delay and check that selection is valid before plotting
+            def safe_auto_plot():
+                if run_listbox.curselection():
+                    self._plot_selected_trajectories(
+                        run_listbox, results, dialog, is_auto_plot=True
+                    )
+                else:
+                    # Fallback: select again and plot
+                    for i in range(max_auto_plot):
+                        run_listbox.select_set(i)
+                    run_listbox.update()
+                    dialog.after(
+                        100,
+                        lambda: self._plot_selected_trajectories(
+                            run_listbox, results, dialog, is_auto_plot=True
+                        ),
+                    )
+
+            dialog.after(200, safe_auto_plot)
+
+    def _plot_selected_trajectories(
+        self, listbox, results, parent_dialog, is_auto_plot=False
+    ):
+        """Plot trajectories for selected runs.
+
+        Args:
+            listbox: The listbox containing run selections
+            results: List of result dictionaries
+            parent_dialog: Parent dialog window
+            is_auto_plot: If True, suppress error dialogs on empty selection
+        """
         # Force update to ensure selection is current
         listbox.update_idletasks()
         selection = listbox.curselection()
         if not selection:
-            _show_info_dialog(
-                self, "No Selection", "Please select at least one run to plot."
-            )
+            # Only show dialog if this is a user-initiated action (not auto-plot)
+            if not is_auto_plot and listbox.size() > 0:
+                _show_info_dialog(
+                    parent_dialog,
+                    "No Selection",
+                    "Please select at least one run to plot.",
+                )
             return
 
         selected_results = [results[i] for i in selection]
@@ -2122,8 +3074,9 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(f"Output directory: {self.config.output_dir}")
             self._log_result("")
 
-            # Store all results
+            # Store all results and failed runs
             all_results = []
+            failed_runs = []
             run_num = 0
 
             # Create parameter combinations using itertools
@@ -2251,115 +3204,246 @@ class OptimizationPlugin(ttk.Frame):
                     timestep = self.config.timestep
                     steps = self.config.steps
 
-                # Run integration
+                # Log run start with full parameters for debugging
+                self._log_result(
+                    f"  [DEBUG] Starting Run {run_num}/{total_runs}: "
+                    f"a={aperture:.2e}mm, E={energy:.1f}GeV, z={start_z:.1f}mm, "
+                    f"timestep={timestep:.2e}ns, steps={steps}"
+                )
+
+                # Run integration with timeout
+                result = None
+                run_error = None
+                run_timed_out = False
+
                 try:
-                    result = self._run_single_integration(
-                        aperture=aperture,
-                        energy_gev=energy,
-                        start_z=start_z,
-                        transv_offset=transv_offset,
-                        timestep=timestep,
-                        steps=steps,
-                        rider_m_particle=rider_m_particle,
-                        rider_charge_sign=rider_charge_sign,
-                        rider_pcount=int(rider_pcount),
-                        rider_transv_mom=rider_transv_mom,
-                        driver_params=driver_params_dict
-                        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
-                        else None,
-                        run_num=run_num,
-                    )
+                    # Check if timeout is enabled
+                    if self.config.per_run_timeout > 0:
+                        import threading
 
-                    # Extract actual trajectory distance for diagnostics
-                    actual_distance = 0.0
-                    if "_distance_info" in result:
-                        dist_info = result["_distance_info"]
-                        actual_distance = abs(dist_info["z_end"] - dist_info["z_start"])
-                    elif "trajectory" in result and result["trajectory"]:
-                        # Fallback: try to extract from full trajectory if present
-                        traj = result["trajectory"]
-                        z_vals = traj.get("z", [])
-                        if len(z_vals) > 1:
-                            # Safely handle both lists and numpy arrays
-                            z_start = float(np.asarray(z_vals[0]).flat[0])
-                            z_end = float(np.asarray(z_vals[-1]).flat[0])
-                            actual_distance = abs(z_end - z_start)
+                        # Container for result (mutable for thread access)
+                        result_container = [None]
+                        error_container = [None]
 
-                    # Log individual run result (every run or every 10th for large sweeps)
-                    if total_runs <= 20 or run_num % 10 == 1 or run_num == total_runs:
-                        delta_e = result.get("metrics", {}).get(
-                            "rider_delta_e_mev", 0.0
+                        def run_with_exception_handling():
+                            """Wrapper to run integration and catch exceptions."""
+                            try:
+                                result_container[0] = self._run_single_integration(
+                                    aperture=aperture,
+                                    energy_gev=energy,
+                                    start_z=start_z,
+                                    transv_offset=transv_offset,
+                                    timestep=timestep,
+                                    steps=steps,
+                                    rider_m_particle=rider_m_particle,
+                                    rider_charge_sign=rider_charge_sign,
+                                    rider_pcount=int(rider_pcount),
+                                    rider_transv_mom=rider_transv_mom,
+                                    driver_params=driver_params_dict
+                                    if self.config.simulation_type
+                                    == SimulationType.BUNCH_TO_BUNCH
+                                    else None,
+                                    run_num=run_num,
+                                )
+                            except Exception as e:
+                                error_container[0] = e
+
+                        # Start integration in separate thread
+                        integration_thread = threading.Thread(
+                            target=run_with_exception_handling
                         )
-                        log_msg = (
-                            f"  Run {run_num}/{total_runs}: "
-                            f"a={aperture:.2e}mm, E={energy:.1f}GeV, z={start_z:.1f}mm → "
-                            f"ΔE={delta_e:.2f}MeV"
-                        )
-                        if actual_distance > 0:
-                            log_msg += f", traveled={actual_distance:.1f}mm"
-                        self._log_result(log_msg)
+                        integration_thread.daemon = True
+                        integration_thread.start()
 
-                    # Store result with all parameters
-                    run_data = {
-                        "run_number": run_num,
-                        "parameters": {
-                            "aperture_radius": aperture,
-                            "particle_energy_gev": energy,
-                            "start_z": start_z,
-                            "transverse_offset": transv_offset,
-                            "transverse_offset_fraction": offset_frac,
-                            "timestep": timestep,
-                            "steps": steps,
-                            "wall_z": self.config.wall_z,
-                            "rider_m_particle": rider_m_particle,
-                            "rider_charge_sign": rider_charge_sign,
-                            "rider_pcount": int(rider_pcount),
-                            "rider_transv_mom": rider_transv_mom,
-                            "rider_transv_dist": rider_transv_dist,
-                            "simulation_type": self.config.simulation_type.name,
-                        },
-                        "metrics": result.get("metrics", {}),
-                    }
+                        # Wait for completion or timeout
+                        integration_thread.join(timeout=self.config.per_run_timeout)
 
-                    # Add trajectory if requested
-                    if self.config.save_trajectories and "trajectory" in result:
-                        run_data["trajectory"] = result["trajectory"]
-
-                    # Add driver params to stored results if applicable
-                    if driver_params_dict is not None:
-                        run_data["parameters"].update(
-                            {f"driver_{k}": v for k, v in driver_params_dict.items()}
+                        if integration_thread.is_alive():
+                            # Timeout occurred
+                            run_timed_out = True
+                            self._log_result(
+                                f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
+                            )
+                            # Note: Thread will continue running but we move on
+                        elif error_container[0] is not None:
+                            # Exception occurred in thread
+                            raise error_container[0]
+                        else:
+                            # Success
+                            result = result_container[0]
+                    else:
+                        # No timeout - run directly
+                        result = self._run_single_integration(
+                            aperture=aperture,
+                            energy_gev=energy,
+                            start_z=start_z,
+                            transv_offset=transv_offset,
+                            timestep=timestep,
+                            steps=steps,
+                            rider_m_particle=rider_m_particle,
+                            rider_charge_sign=rider_charge_sign,
+                            rider_pcount=int(rider_pcount),
+                            rider_transv_mom=rider_transv_mom,
+                            driver_params=driver_params_dict
+                            if self.config.simulation_type
+                            == SimulationType.BUNCH_TO_BUNCH
+                            else None,
+                            run_num=run_num,
                         )
 
-                    all_results.append(run_data)
+                    if result is not None:
+                        self._log_result(
+                            f"  [DEBUG] Run {run_num} integration completed"
+                        )
+
+                    if not run_timed_out and result is not None:
+                        # Extract actual trajectory distance for diagnostics
+                        actual_distance = 0.0
+                        if "_distance_info" in result:
+                            dist_info = result["_distance_info"]
+                            actual_distance = abs(
+                                dist_info["z_end"] - dist_info["z_start"]
+                            )
+                        elif "trajectory" in result and result["trajectory"]:
+                            # Fallback: try to extract from full trajectory if present
+                            traj = result["trajectory"]
+                            z_vals = traj.get("z", [])
+                            if len(z_vals) > 1:
+                                # Safely handle both lists and numpy arrays
+                                z_start = float(np.asarray(z_vals[0]).flat[0])
+                                z_end = float(np.asarray(z_vals[-1]).flat[0])
+                                actual_distance = abs(z_end - z_start)
+
+                        # Log individual run result (every run or every 10th for large sweeps)
+                        if (
+                            total_runs <= 20
+                            or run_num % 10 == 1
+                            or run_num == total_runs
+                        ):
+                            delta_e = result.get("metrics", {}).get(
+                                "rider_delta_e_mev", 0.0
+                            )
+                            log_msg = (
+                                f"  Run {run_num}/{total_runs}: "
+                                f"a={aperture:.2e}mm, E={energy:.1f}GeV, z={start_z:.1f}mm → "
+                                f"ΔE={delta_e:.2f}MeV"
+                            )
+                            if actual_distance > 0:
+                                log_msg += f", traveled={actual_distance:.1f}mm"
+                            self._log_result(log_msg)
+
+                            # Store result with all parameters
+                            run_data = {
+                                "run_number": run_num,
+                                "parameters": {
+                                    "aperture_radius": aperture,
+                                    "particle_energy_gev": energy,
+                                    "start_z": start_z,
+                                    "transverse_offset": transv_offset,
+                                    "transverse_offset_fraction": offset_frac,
+                                    "timestep": timestep,
+                                    "steps": steps,
+                                    "wall_z": self.config.wall_z,
+                                    "rider_m_particle": rider_m_particle,
+                                    "rider_charge_sign": rider_charge_sign,
+                                    "rider_pcount": int(rider_pcount),
+                                    "rider_transv_mom": rider_transv_mom,
+                                    "rider_transv_dist": rider_transv_dist,
+                                    "simulation_type": self.config.simulation_type.name,
+                                },
+                                "metrics": result.get("metrics", {}),
+                            }
+
+                            # Add trajectory if requested
+                            if self.config.save_trajectories and "trajectory" in result:
+                                run_data["trajectory"] = result["trajectory"]
+
+                            # Add driver params to stored results if applicable
+                            if driver_params_dict is not None:
+                                run_data["parameters"].update(
+                                    {
+                                        f"driver_{k}": v
+                                        for k, v in driver_params_dict.items()
+                                    }
+                                )
+
+                            all_results.append(run_data)
 
                 except Exception as e:
                     import traceback
 
                     error_details = traceback.format_exc()
-                    self._log_result(f"[WARNING] Run {run_num} failed: {e}")
-                    self._log_result(f"    Error details: {error_details}")
-                    all_results.append(
-                        {
-                            "run_number": run_num,
-                            "parameters": {
-                                "aperture_radius": aperture,
-                                "particle_energy_gev": energy,
-                                "start_z": start_z,
-                                "transverse_offset": transv_offset,
-                            },
-                            "error": str(e),
-                        }
-                    )
+                    run_error = str(e)
+
+                    if self.config.skip_failed_runs:
+                        self._log_result(f"[WARNING] Run {run_num} failed: {e}")
+                        self._log_result(f"    Error details: {error_details}")
+                        self._log_result(
+                            f"    Skipping and continuing with next run..."
+                        )
+
+                        # Record failed run
+                        failed_runs.append(
+                            {
+                                "run_number": run_num,
+                                "parameters": {
+                                    "aperture_radius": aperture,
+                                    "particle_energy_gev": energy,
+                                    "start_z": start_z,
+                                    "transverse_offset": transv_offset,
+                                    "timestep": timestep,
+                                    "steps": steps,
+                                },
+                                "error": run_error,
+                                "error_details": error_details,
+                            }
+                        )
+                    else:
+                        # Don't skip - re-raise and stop sweep
+                        self._log_result(f"[ERROR] Run {run_num} failed: {e}")
+                        self._log_result(f"    Error details: {error_details}")
+                        self._log_result(
+                            f"    Stopping sweep (skip_failed_runs is disabled)"
+                        )
+                        raise
+
+                # Handle timeout case
+                if run_timed_out:
+                    if self.config.skip_failed_runs:
+                        self._log_result(
+                            f"    Skipping and continuing with next run..."
+                        )
+                        failed_runs.append(
+                            {
+                                "run_number": run_num,
+                                "parameters": {
+                                    "aperture_radius": aperture,
+                                    "particle_energy_gev": energy,
+                                    "start_z": start_z,
+                                    "transverse_offset": transv_offset,
+                                    "timestep": timestep,
+                                    "steps": steps,
+                                },
+                                "error": "TIMEOUT",
+                                "timeout_seconds": self.config.per_run_timeout,
+                            }
+                        )
+                    else:
+                        self._log_result(
+                            f"    Stopping sweep (skip_failed_runs is disabled)"
+                        )
+                        break
 
             # Save results
             if all_results and self.config.save_results:
-                self._save_sweep_results(all_results)
+                self._save_sweep_results(all_results, failed_runs)
 
             if self.running:
-                self._log_result("[OK] Sweep completed successfully!")
+                self._log_result("[OK] Sweep completed!")
                 self._log_result(f"  Results saved to: {self.config.output_dir}")
-                self._log_result(f"  Total runs: {len(all_results)}")
+                self._log_result(f"  Successful runs: {len(all_results)}")
+                if failed_runs:
+                    self._log_result(f"  Failed/timed-out runs: {len(failed_runs)}")
                 self._update_progress(100, "Complete!")
 
                 # Offer fine-tuning if enabled and not already a fine-tune run
@@ -2559,10 +3643,97 @@ class OptimizationPlugin(ttk.Frame):
             difference_save=False,
             metrics_save=False,
             output_dir=run_output_dir,
+            # Use stability options from sweep config
+            self_consistency_enabled=self.config.self_consistency_enabled,
+            self_consistency_tolerance=self.config.self_consistency_tolerance,
+            self_consistency_max_iterations=self.config.self_consistency_max_iterations,
+            self_consistency_verbosity=max(
+                self.config.self_consistency_verbosity, 1
+            ),  # At least basic for debugging
+            energy_monitor_enabled=self.config.energy_monitor_enabled,
+            energy_monitor_threshold=self.config.energy_monitor_threshold,
+            energy_monitor_check_interval=self.config.energy_monitor_check_interval,
+            energy_monitor_halt_on_jump=self.config.energy_monitor_halt_on_jump,
+            energy_monitor_debug=self.config.energy_monitor_debug
+            or True,  # Enable debug for sweeps
+            adaptive_timestep_enabled=self.config.adaptive_timestep_enabled,
+            adaptive_timestep_threshold=self.config.adaptive_timestep_threshold,
+            adaptive_timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
+            adaptive_timestep_max_attempts=self.config.adaptive_timestep_max_attempts,
+            adaptive_timestep_min_factor=self.config.adaptive_timestep_min_factor,
+            adaptive_timestep_cooldown_steps=self.config.adaptive_timestep_cooldown_steps,
+            adaptive_timestep_probe_threshold=self.config.adaptive_timestep_probe_threshold,
+            adaptive_timestep_max_probe_steps=self.config.adaptive_timestep_max_probe_steps,
+            adaptive_timestep_debug=self.config.adaptive_timestep_debug
+            or True,  # Enable debug for sweeps
         )
 
-        # Run the integration
-        result = run_testbed(options)
+        # Create progress callback to track integration and detect hangs
+        import time
+
+        last_progress_time = [time.time()]  # Mutable container for closure
+        last_reported_step = [0]
+        hang_warning_shown = [False]
+
+        def progress_callback(current: int, total: int):
+            """Log progress periodically to detect hangs."""
+            current_time = time.time()
+            last_progress_time[0] = current_time
+
+            # Log every 10% or every 100 steps for short runs
+            if total <= 1000:
+                log_interval = max(1, total // 10)
+            else:
+                log_interval = max(100, total // 20)
+
+            if current % log_interval == 0 or current == total:
+                self._log_result(
+                    f"    [PROGRESS] Run {run_num}: step {current}/{total} "
+                    f"({100 * current // total}%)"
+                )
+                last_reported_step[0] = current
+
+        def check_for_hang():
+            """Check if integration appears to be hung."""
+            elapsed = time.time() - last_progress_time[0]
+            if (
+                elapsed > 30.0 and not hang_warning_shown[0]
+            ):  # 30 seconds without progress
+                hang_warning_shown[0] = True
+                self._log_result(
+                    f"  [WARNING] Run {run_num} appears hung - no progress for {elapsed:.0f}s "
+                    f"(last step: {last_reported_step[0]})"
+                )
+                self._log_result(
+                    f"           Possible causes: energy monitor halt, SC iterations, or adaptive timestep refinement"
+                )
+
+        # Run the integration with progress tracking and hang detection
+        self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
+
+        # Start a timer thread to check for hangs
+        import threading
+
+        hang_check_timer = None
+
+        def periodic_hang_check():
+            check_for_hang()
+            if self.running:
+                hang_check_timer = threading.Timer(10.0, periodic_hang_check)
+                hang_check_timer.daemon = True
+                hang_check_timer.start()
+
+        hang_check_timer = threading.Timer(10.0, periodic_hang_check)
+        hang_check_timer.daemon = True
+        hang_check_timer.start()
+
+        try:
+            result = run_testbed(options, progress_callback=progress_callback)
+            self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
+        finally:
+            # Cancel hang check timer
+            if hang_check_timer:
+                hang_check_timer.cancel()
 
         # Display figures if requested, otherwise close them
         import matplotlib.pyplot as plt
@@ -2596,6 +3767,24 @@ class OptimizationPlugin(ttk.Frame):
             metrics["rider_gamma_initial"] = result.rider_gamma_initial
         if result.rider_gamma_final is not None:
             metrics["rider_gamma_final"] = result.rider_gamma_final
+
+        # Add beam optics metrics if available
+        if result.rider_emittance_x_mm_mrad is not None:
+            metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
+        if result.rider_emittance_y_mm_mrad is not None:
+            metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
+        if result.rider_norm_emittance_x_mm_mrad is not None:
+            metrics["rider_norm_emittance_x_mm_mrad"] = (
+                result.rider_norm_emittance_x_mm_mrad
+            )
+        if result.rider_norm_emittance_y_mm_mrad is not None:
+            metrics["rider_norm_emittance_y_mm_mrad"] = (
+                result.rider_norm_emittance_y_mm_mrad
+            )
+        if result.rider_beta_x_m is not None:
+            metrics["rider_beta_x_m"] = result.rider_beta_x_m
+        if result.rider_beta_y_m is not None:
+            metrics["rider_beta_y_m"] = result.rider_beta_y_m
 
         output = {"metrics": metrics}
 
@@ -2636,8 +3825,18 @@ class OptimizationPlugin(ttk.Frame):
 
         return output
 
-    def _save_sweep_results(self, results: List[Dict[str, Any]]) -> None:
-        """Save sweep results to JSON file with timestamp in dedicated folder."""
+    def _save_sweep_results(
+        self, results: List[Dict[str, Any]], failed_runs: List[Dict[str, Any]] = None
+    ) -> None:
+        """Save sweep results to JSON file with timestamp in dedicated folder.
+
+        Parameters
+        ----------
+        results : List[Dict[str, Any]]
+            Successful run results
+        failed_runs : List[Dict[str, Any]], optional
+            Failed/skipped run information
+        """
         from datetime import datetime
 
         # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
@@ -2674,10 +3873,17 @@ class OptimizationPlugin(ttk.Frame):
             "total_runs": len(results),
         }
 
+        # Add failed runs information if present
+        if failed_runs:
+            output_data["failed_runs"] = failed_runs
+            output_data["num_failed"] = len(failed_runs)
+
         with open(output_file, "w") as f:
             json.dump(output_data, f, indent=2)
 
         self._log_result(f"Results saved to: {output_file}")
+        if failed_runs:
+            self._log_result(f"  (includes {len(failed_runs)} failed/timed-out runs)")
 
         # Generate and save summary plots
         if len(results) > 0:
@@ -2977,9 +4183,6 @@ class OptimizationPlugin(ttk.Frame):
 
     def _reset_ui_state(self):
         """Reset UI to ready state after run completes."""
-        self.run_button.config(state="normal")
-        self.stop_button.config(state="disabled")
-
         # Reset main GUI state if integrated
         if self.gui_controller and hasattr(self.gui_controller, "_running"):
             self.gui_controller._running = False

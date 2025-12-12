@@ -9,6 +9,8 @@ in dedicated top-level windows using Matplotlib's TkAgg backend.
 
 from __future__ import annotations
 
+import json
+import locale
 import re
 import threading
 import tkinter as tk
@@ -242,13 +244,20 @@ class IntegratorGUI:
         self._cancel_requested = False
         self._scroll_pages: List[_ScrollableNotebookPage] = []
 
+        # Preferences file for directory persistence
+        self._prefs_file = Path.home() / ".lw_integrator_prefs.json"
+        self._load_preferences()
+
         self._init_variables()
         self._build_layout()
-        self._apply_options_to_ui(self.options)
+        self._apply_options_to_ui(self.options, preserve_directories=True)
         self._refresh_config_list()
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+
+        # Handle window close to save preferences
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------------
     # Variable initialisation
@@ -370,8 +379,9 @@ class IntegratorGUI:
             value=self.options.adaptive_timestep_debug
         )
 
-        self.output_dir_var = tk.StringVar(value=str(self.options.output_dir))
-        self.config_dir_var = tk.StringVar(value=str(self.options.config_dir))
+        # Use preferences for directories
+        self.output_dir_var = tk.StringVar(value=self._last_output_dir)
+        self.config_dir_var = tk.StringVar(value=self._last_config_dir)
         self.config_name_var = tk.StringVar(value=self.options.config_name)
         self.config_file_var = tk.StringVar(value="")
 
@@ -406,11 +416,69 @@ class IntegratorGUI:
     # Layout
     # ------------------------------------------------------------------
 
+    def _load_preferences(self) -> None:
+        """Load saved directory preferences or use defaults."""
+        self._default_config_dir = "configs/run_configs"
+        self._default_output_dir = "results/runs"
+
+        if self._prefs_file.exists():
+            try:
+                with open(self._prefs_file, "r") as f:
+                    prefs = json.load(f)
+                self._last_config_dir = prefs.get(
+                    "last_config_dir", self._default_config_dir
+                )
+                self._last_output_dir = prefs.get(
+                    "last_output_dir", self._default_output_dir
+                )
+            except Exception:
+                # If preferences file is corrupted, use defaults
+                self._last_config_dir = self._default_config_dir
+                self._last_output_dir = self._default_output_dir
+        else:
+            # First run - use defaults
+            self._last_config_dir = self._default_config_dir
+            self._last_output_dir = self._default_output_dir
+
+    def _save_preferences(self) -> None:
+        """Save current directory preferences."""
+        try:
+            prefs = {
+                "last_config_dir": self._last_config_dir,
+                "last_output_dir": self._last_output_dir,
+            }
+            with open(self._prefs_file, "w") as f:
+                json.dump(prefs, f, indent=2)
+        except Exception:
+            pass  # Silently fail if we can't save preferences
+
+    def _reset_directories_to_defaults(self) -> None:
+        """Reset directories to default values."""
+        self.config_dir_var.set(self._default_config_dir)
+        self.output_dir_var.set(self._default_output_dir)
+        self._last_config_dir = self._default_config_dir
+        self._last_output_dir = self._default_output_dir
+        self._save_preferences()
+        self._refresh_config_list()
+        messagebox.showinfo(
+            "Reset Directories",
+            "Directories reset to defaults:\n\n"
+            f"Config: {self._default_config_dir}\n"
+            f"Output: {self._default_output_dir}",
+        )
+
+    def _on_close(self) -> None:
+        """Handle window close event."""
+        self._save_preferences()
+        self.root.destroy()
+
     def _build_layout(self) -> None:
         """Build the complete GUI layout with all controls."""
-        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(0, weight=0)  # Header row, fixed height
+        self.root.rowconfigure(1, weight=1)  # Main content area expands
         self.root.columnconfigure(0, weight=1)
 
+        # Header at top of window (above everything)
         header = ttk.Frame(self.root, padding=8)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(1, weight=1)
@@ -441,18 +509,34 @@ class IntegratorGUI:
             header, text="Enable legacy comparison", variable=self.legacy_var
         ).grid(row=0, column=6, sticky="w", padx=(12, 0))
 
-        main_paned = ttk.Panedwindow(self.root, orient="vertical")
-        main_paned.grid(row=1, column=0, sticky="nsew")
-        notebook = ttk.Notebook(main_paned)
-        main_paned.add(notebook, weight=15)
+        # Create main horizontal split: left (tabs) and right (config/control panel)
+        main_horizontal_paned = ttk.Panedwindow(self.root, orient="horizontal")
+        main_horizontal_paned.grid(row=1, column=0, sticky="nsew")
 
-        bottom_container = ttk.Frame(main_paned)
+        # Left side container for all tabs
+        left_container = ttk.Frame(main_horizontal_paned)
+        left_container.rowconfigure(0, weight=1)
+        left_container.columnconfigure(0, weight=1)
+        main_horizontal_paned.add(left_container, weight=3)
+
+        # Vertical split on left side for tabs and logs
+        left_vertical_paned = ttk.Panedwindow(left_container, orient="vertical")
+        left_vertical_paned.grid(row=0, column=0, sticky="nsew")
+
+        # Notebook for tabs
+        self.notebook = ttk.Notebook(left_vertical_paned)
+        left_vertical_paned.add(self.notebook, weight=15)
+
+        # Bottom container for logs
+        bottom_container = ttk.Frame(left_vertical_paned)
         bottom_container.columnconfigure(0, weight=1)
         bottom_container.rowconfigure(1, weight=1)
-        main_paned.add(bottom_container, weight=1)
+        left_vertical_paned.add(bottom_container, weight=1)
 
         # Particles tab --------------------------------------------------
-        particle_frame = self._create_scrollable_tab(notebook, "Particles", padding=12)
+        particle_frame = self._create_scrollable_tab(
+            self.notebook, "Particles", padding=12
+        )
         particle_frame.columnconfigure(1, weight=1)
         particle_frame.columnconfigure(3, weight=1)
 
@@ -516,7 +600,9 @@ class IntegratorGUI:
         ).grid(row=next_row + 1, column=0, columnspan=2, sticky="w", pady=2)
 
         # Core tab ------------------------------------------------------
-        core_frame = self._create_scrollable_tab(notebook, "Core params", padding=12)
+        core_frame = self._create_scrollable_tab(
+            self.notebook, "Core params", padding=12
+        )
         core_frame.columnconfigure(1, weight=1)
 
         for row, name in enumerate(CORE_PARAM_LABELS, start=0):
@@ -528,7 +614,9 @@ class IntegratorGUI:
             ).grid(row=row, column=1, sticky="ew", pady=2)
 
         # Stability Settings tab ----------------------------------------
-        stability_frame = self._create_scrollable_tab(notebook, "Stability", padding=12)
+        stability_frame = self._create_scrollable_tab(
+            self.notebook, "Stability", padding=12
+        )
         stability_frame.columnconfigure(1, weight=1)
 
         # Self-consistency section
@@ -696,7 +784,7 @@ class IntegratorGUI:
         help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Outputs tab ---------------------------------------------------
-        output_frame = self._create_scrollable_tab(notebook, "Outputs", padding=12)
+        output_frame = self._create_scrollable_tab(self.notebook, "Output", padding=12)
         output_frame.columnconfigure(1, weight=1)
 
         # Trajectory comparison outputs (grouped and dependent on legacy)
@@ -775,101 +863,17 @@ class IntegratorGUI:
             variable=self.save_log_file_var,
         ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
-        # Config tab ----------------------------------------------------
-        config_frame = self._create_scrollable_tab(notebook, "Configs", padding=12)
-        config_frame.columnconfigure(1, weight=1)
+        # Optimization/Sweep tab ----------------------------------------
+        self.optimization_tab = OptimizationPlugin(self.notebook, gui_controller=self)
+        self.notebook.add(self.optimization_tab, text="Sweep/Optim")
 
-        ttk.Label(config_frame, text="Config directory:").grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Entry(config_frame, textvariable=self.config_dir_var).grid(
-            row=0, column=1, sticky="ew"
-        )
-        ttk.Button(config_frame, text="Browse", command=self._select_config_dir).grid(
-            row=0, column=2, padx=(6, 0)
-        )
+        # Right side: Persistent Config/Control Panel -------------------
+        right_container = ttk.Frame(main_horizontal_paned)
+        right_container.columnconfigure(0, weight=1)
+        right_container.rowconfigure(0, weight=0)
+        main_horizontal_paned.add(right_container, weight=1)
 
-        ttk.Label(config_frame, text="Output directory:").grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
-        )
-        ttk.Entry(config_frame, textvariable=self.output_dir_var).grid(
-            row=1, column=1, sticky="ew", pady=(6, 0)
-        )
-        ttk.Button(config_frame, text="Browse", command=self._select_output_dir).grid(
-            row=1, column=2, padx=(6, 0), pady=(6, 0)
-        )
-
-        ttk.Label(config_frame, text="Config name:").grid(
-            row=2, column=0, sticky="w", pady=(6, 0)
-        )
-        ttk.Entry(config_frame, textvariable=self.config_name_var).grid(
-            row=2, column=1, sticky="ew", pady=(6, 0)
-        )
-        ttk.Button(config_frame, text="Save config", command=self._save_config).grid(
-            row=2, column=2, padx=(6, 0), pady=(6, 0)
-        )
-
-        ttk.Label(config_frame, text="Saved configs:").grid(
-            row=3, column=0, sticky="w", pady=(12, 0)
-        )
-        self.config_list = tk.Listbox(
-            config_frame, height=8, listvariable=tk.Variable(value=[])
-        )
-        self.config_list.grid(row=4, column=0, columnspan=2, sticky="nsew")
-        config_frame.rowconfigure(4, weight=1)
-        self.config_list.bind(
-            "<<ListboxSelect>>", lambda _event: self._on_config_selected()
-        )
-        self.config_list.bind("<Double-1>", lambda _event: self._load_config())
-
-        button_frame = ttk.Frame(config_frame)
-        button_frame.grid(row=4, column=2, sticky="nsw", padx=(6, 0))
-        button_frame.columnconfigure(0, weight=1)
-        ttk.Button(button_frame, text="Load selected", command=self._load_config).grid(
-            row=0, column=0, sticky="ew"
-        )
-        ttk.Button(
-            button_frame, text="Refresh", command=self._refresh_config_list
-        ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
-
-        # Optimization tab -----------------------------------------------
-        self.optimization_tab = OptimizationPlugin(notebook, gui_controller=self)
-        notebook.add(self.optimization_tab, text="Optimization")
-
-        # Footer --------------------------------------------------------
-
-        footer = ttk.Frame(bottom_container, padding=8)
-        footer.grid(row=0, column=0, sticky="ew")
-
-        footer.columnconfigure(3, weight=1)
-
-        self._run_button = ttk.Button(footer, text="Run", command=self._trigger_run)
-
-        self._run_button.grid(row=0, column=0, sticky="w")
-
-        self._cancel_button = ttk.Button(
-            footer, text="Cancel", command=self._trigger_cancel, state="disabled"
-        )
-
-        self._cancel_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
-
-        ttk.Label(footer, textvariable=self.status_var).grid(
-            row=0, column=3, sticky="w", padx=(12, 0)
-        )
-
-        self._progress_bar = ttk.Progressbar(
-            footer,
-            variable=self.progress_var,
-            maximum=100,
-            mode="determinate",
-            length=200,
-        )
-
-        self._progress_bar.grid(row=0, column=4, sticky="w", padx=(12, 0))
-
-        ttk.Button(footer, text="Close", command=self.root.destroy).grid(
-            row=0, column=5, sticky="e", padx=(12, 0)
-        )
+        self._build_config_panel(right_container)
 
         # Summary + logs ------------------------------------------------
         # Horizontal layout: Logs on left, Summary on right
@@ -954,6 +958,171 @@ class IntegratorGUI:
 
         for page in self._scroll_pages:
             page.refresh_mousewheel_bindings()
+
+        # Set up notebook tab change callback to update run mode
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    def _build_config_panel(self, parent):
+        """Build persistent config/control panel on right side."""
+        panel = ttk.LabelFrame(parent, text="Configuration & Control", padding=10)
+        panel.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Config management section
+        config_frame = ttk.LabelFrame(panel, text="Config Management", padding=8)
+        config_frame.pack(fill="x", pady=(0, 10))
+
+        # Directories section
+        ttk.Label(config_frame, text="Config directory:").grid(
+            row=0, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(config_frame, textvariable=self.config_dir_var, width=25).grid(
+            row=0, column=1, sticky="ew", pady=2, padx=(5, 2)
+        )
+        ttk.Button(
+            config_frame, text="...", command=self._select_config_dir, width=3
+        ).grid(row=0, column=2, sticky="w", pady=2)
+
+        ttk.Label(config_frame, text="Output directory:").grid(
+            row=1, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(config_frame, textvariable=self.output_dir_var, width=25).grid(
+            row=1, column=1, sticky="ew", pady=2, padx=(5, 2)
+        )
+        ttk.Button(
+            config_frame, text="...", command=self._select_output_dir, width=3
+        ).grid(row=1, column=2, sticky="w", pady=2)
+
+        config_frame.columnconfigure(1, weight=1)
+
+        # Config name
+        ttk.Label(config_frame, text="Config name:").grid(
+            row=2, column=0, sticky="w", pady=(10, 2)
+        )
+        ttk.Entry(config_frame, textvariable=self.config_name_var).grid(
+            row=2, column=1, columnspan=2, sticky="ew", pady=(10, 2)
+        )
+
+        # Current config display
+        ttk.Label(config_frame, text="Current:").grid(
+            row=3, column=0, sticky="w", pady=2
+        )
+        self.current_config_label = ttk.Label(
+            config_frame,
+            text="<unsaved>",
+            foreground="gray",
+            font=("TkDefaultFont", 9, "italic"),
+        )
+        self.current_config_label.grid(
+            row=3, column=1, columnspan=2, sticky="w", pady=2
+        )
+
+        # Saved configs list
+        ttk.Label(config_frame, text="Saved configs:").grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(10, 2)
+        )
+
+        list_frame = ttk.Frame(config_frame)
+        list_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=2)
+        list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
+
+        self.config_list = tk.Listbox(list_frame, height=6)
+        self.config_list.grid(row=0, column=0, sticky="nsew")
+        self.config_list.bind(
+            "<<ListboxSelect>>", lambda _event: self._on_config_selected()
+        )
+        self.config_list.bind("<Double-1>", lambda _event: self._load_config())
+
+        scrollbar = ttk.Scrollbar(
+            list_frame, orient="vertical", command=self.config_list.yview
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.config_list.configure(yscrollcommand=scrollbar.set)
+
+        config_frame.rowconfigure(5, weight=1)
+
+        # Load/Save/Refresh buttons
+        btn_frame = ttk.Frame(config_frame)
+        btn_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+
+        ttk.Button(btn_frame, text="Load Selected", command=self._load_config).pack(
+            side="left", padx=2
+        )
+        ttk.Button(btn_frame, text="Save Config", command=self._save_config).pack(
+            side="left", padx=2
+        )
+        ttk.Button(btn_frame, text="Refresh", command=self._refresh_config_list).pack(
+            side="left", padx=2
+        )
+        ttk.Button(
+            btn_frame,
+            text="Reset Defaults",
+            command=self._reset_directories_to_defaults,
+        ).pack(side="left", padx=2)
+
+        # Run mode selector
+        mode_frame = ttk.LabelFrame(panel, text="Run Mode", padding=8)
+        mode_frame.pack(fill="x", pady=(0, 10))
+
+        self.run_mode_var = tk.StringVar(value="single")
+
+        ttk.Radiobutton(
+            mode_frame,
+            text="Single Run",
+            variable=self.run_mode_var,
+            value="single",
+            command=self._on_run_mode_changed,
+        ).pack(anchor="w", pady=2)
+
+        ttk.Radiobutton(
+            mode_frame,
+            text="Parameter Sweep",
+            variable=self.run_mode_var,
+            value="sweep",
+            command=self._on_run_mode_changed,
+        ).pack(anchor="w", pady=2)
+
+        # Control buttons
+        control_frame = ttk.LabelFrame(panel, text="Controls", padding=8)
+        control_frame.pack(fill="x", pady=(0, 10))
+
+        self._run_button = ttk.Button(
+            control_frame,
+            text="▶ Run",
+            command=self._trigger_run,
+            style="Accent.TButton",
+        )
+        self._run_button.pack(fill="x", pady=2)
+
+        self._cancel_button = ttk.Button(
+            control_frame,
+            text="⬛ Cancel",
+            command=self._trigger_cancel,
+            state="disabled",
+        )
+        self._cancel_button.pack(fill="x", pady=2)
+
+        # Status display
+        status_frame = ttk.LabelFrame(panel, text="Status", padding=8)
+        status_frame.pack(fill="both", expand=True)
+
+        ttk.Label(status_frame, textvariable=self.status_var).pack(anchor="w", pady=2)
+
+        self._progress_bar = ttk.Progressbar(
+            status_frame,
+            variable=self.progress_var,
+            maximum=100,
+            mode="determinate",
+        )
+        self._progress_bar.pack(fill="x", pady=5)
+
+    def _on_run_mode_changed(self):
+        """Handle run mode selection change."""
+        mode = self.run_mode_var.get()
+        if mode == "single":
+            self._run_button.config(text="▶ Run", command=self._trigger_run)
+        else:  # sweep
+            self._run_button.config(text="▶ Run Sweep", command=self._trigger_sweep)
 
     # ------------------------------------------------------------------
     # UI Helpers
@@ -1196,8 +1365,10 @@ class IntegratorGUI:
         filename = self._selected_config_filename()
         if filename:
             self.config_file_var.set(filename)
+            self.current_config_label.config(text=filename, foreground="black")
         else:
             self.config_file_var.set("")
+            self.current_config_label.config(text="<unsaved>", foreground="gray")
 
     def _load_config(self) -> None:
         filename = self._selected_config_filename()
@@ -1221,8 +1392,11 @@ class IntegratorGUI:
         self._update_legacy_state()
         self._update_driver_visibility()
         self._set_status(f"Loaded config: {filename}")
+        self.current_config_label.config(text=filename, foreground="black")
 
-    def _apply_options_to_ui(self, options: SimulationOptions) -> None:
+    def _apply_options_to_ui(
+        self, options: SimulationOptions, preserve_directories: bool = False
+    ) -> None:
         self.options = options
         self.sim_type_var.set(options.simulation_type.name)
         self.steps_var.set(options.steps)
@@ -1276,8 +1450,12 @@ class IntegratorGUI:
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
         self.save_log_file_var.set(options.save_log_file)
-        self.output_dir_var.set(str(options.output_dir))
-        self.config_dir_var.set(str(options.config_dir))
+
+        # Only override directories if not preserving loaded preferences
+        if not preserve_directories:
+            self.output_dir_var.set(str(options.output_dir))
+            self.config_dir_var.set(str(options.config_dir))
+
         self.config_name_var.set(options.config_name)
 
         default_species_label = self._species_label_by_key.get(
@@ -1478,15 +1656,37 @@ class IntegratorGUI:
         return "\n".join(lines)
 
     def _select_config_dir(self) -> None:
-        directory = filedialog.askdirectory(title="Select config directory")
+        import os
+
+        # Use last used directory or default
+        initial_dir = self.config_dir_var.get()
+        if not os.path.exists(initial_dir):
+            initial_dir = self._default_config_dir
+
+        directory = filedialog.askdirectory(
+            title="Select config directory", initialdir=initial_dir
+        )
         if directory:
             self.config_dir_var.set(directory)
+            self._last_config_dir = directory
+            self._save_preferences()
             self._refresh_config_list()
 
     def _select_output_dir(self) -> None:
-        directory = filedialog.askdirectory(title="Select output directory")
+        import os
+
+        # Use last used directory or default
+        initial_dir = self.output_dir_var.get()
+        if not os.path.exists(initial_dir):
+            initial_dir = self._default_output_dir
+
+        directory = filedialog.askdirectory(
+            title="Select output directory", initialdir=initial_dir
+        )
         if directory:
             self.output_dir_var.set(directory)
+            self._last_output_dir = directory
+            self._save_preferences()
 
     def _save_config(self) -> None:
         try:
@@ -1508,6 +1708,7 @@ class IntegratorGUI:
         self.config_name_var.set(options.config_name)
         self.config_file_var.set(options.config_name)
         self._refresh_config_list(selected=options.config_name)
+        self.current_config_label.config(text=options.config_name, foreground="black")
         messagebox.showinfo("Save config", f"Configuration saved as {config_path.name}")
         self._set_status(f"Saved config: {config_path.name}")
 
@@ -1550,10 +1751,57 @@ class IntegratorGUI:
     # Simulation execution
     # ------------------------------------------------------------------
 
+    def _on_tab_changed(self, event=None) -> None:
+        """Handle notebook tab change to update run mode."""
+        try:
+            current_tab = self.notebook.select()
+            tab_text = self.notebook.tab(current_tab, "text")
+
+            # Auto-switch to sweep mode if on Sweep/Optim tab
+            if tab_text == "Sweep/Optim" and not self._running:
+                self.run_mode_var.set("sweep")
+                self._on_run_mode_changed()
+        except Exception:
+            pass
+
+    def _open_optimization_tab(self) -> None:
+        """Switch to the Sweep/Optim tab."""
+        for i in range(self.notebook.index("end")):
+            if self.notebook.tab(i, "text") == "Sweep/Optim":
+                self.notebook.select(i)
+                break
+
+    def _trigger_sweep(self) -> None:
+        """Handle Run Sweep button click with validation."""
+        # Check if a configuration is loaded/saved in optimization plugin
+        if (
+            not hasattr(self.optimization_tab, "last_loaded_config")
+            or not self.optimization_tab.last_loaded_config
+        ):
+            response = messagebox.askyesno(
+                "No Configuration",
+                "No sweep configuration has been loaded or saved.\n\n"
+                "It is recommended to save your sweep configuration first.\n\n"
+                "Continue anyway?",
+                icon="warning",
+            )
+            if not response:
+                return
+
+        # Delegate to optimization plugin's run sweep method
+        if hasattr(self.optimization_tab, "_on_run_sweep"):
+            self.optimization_tab._on_run_sweep()
+        else:
+            messagebox.showerror(
+                "Error",
+                "Optimization plugin not properly initialized.",
+            )
+
     def _trigger_run(self) -> None:
         if self._running:
             messagebox.showinfo("LW Integrator", "Simulation already running")
             return
+
         try:
             options = self._build_options_from_ui()
         except ValueError as exc:
@@ -1561,7 +1809,22 @@ class IntegratorGUI:
             return
 
         self.options = options
+
+        # Create timestamped output directory for single runs
+        # Format: results/runs/YYYYMMDD_HHMMSS_configname/
+        from datetime import datetime
+        from pathlib import Path
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        config_name = Path(options.config_name).stem  # Remove .json extension
+        timestamped_dir = Path("results/runs") / f"{timestamp}_{config_name}"
+
+        # Update options to use timestamped directory
+        options.output_dir = timestamped_dir
         ensure_directory(options.output_dir)
+
+        # Log where results will be saved
+        self._append_log(f"Output directory: {timestamped_dir}")
         for handle in list(self._figure_windows):
             self._close_figure(handle)
 
@@ -1656,6 +1919,19 @@ class IntegratorGUI:
         self._set_status("Completed")
         self._append_log("Simulation finished successfully.")
         self._append_log(f"Duration: {result.duration_s:.2f} s")
+
+        # Save config copy to output directory
+        try:
+            import json
+            from pathlib import Path
+
+            config_file = Path(self.options.output_dir) / "run_config.json"
+            with open(config_file, "w") as f:
+                json.dump(self.options.to_dict(), f, indent=2)
+            self._append_log(f"Config saved to: {config_file}")
+        except Exception as e:
+            self._append_log(f"Warning: Could not save config: {e}")
+
         self._run_button.configure(state="normal")
         self._cancel_button.configure(state="disabled")
         self.progress_var.set(100.0)
@@ -1773,10 +2049,18 @@ class IntegratorGUI:
 
         def save_figure_as() -> None:
             try:
+                import os
+
                 default_name = f"{title.replace(' ', '_').replace('/', '_')}.png"
+                # Default to results/figures directory
+                default_dir = "results/figures"
+                if not os.path.exists(default_dir):
+                    os.makedirs(default_dir, exist_ok=True)
+
                 filename = filedialog.asksaveasfilename(
                     defaultextension=".png",
                     initialfile=default_name,
+                    initialdir=default_dir,
                     filetypes=[
                         ("PNG files", "*.png"),
                         ("PDF files", "*.pdf"),
@@ -1862,6 +2146,16 @@ class IntegratorGUI:
 
 
 def main() -> None:
+    # Set locale to system default for proper keyboard input (Swedish, etc.)
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        # Fall back to C locale if system locale unavailable
+        try:
+            locale.setlocale(locale.LC_ALL, "C")
+        except locale.Error:
+            pass  # Continue with default locale
+
     root = tk.Tk()
     IntegratorGUI(root)
     root.mainloop()
