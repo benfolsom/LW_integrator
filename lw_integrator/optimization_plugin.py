@@ -420,7 +420,14 @@ class OptimizationPlugin(ttk.Frame):
 
     import time
 
-    def __init__(self, parent: tk.Widget, gui_controller=None, **kwargs):
+    def __init__(
+        self,
+        parent: tk.Widget,
+        gui_controller=None,
+        sweep_config_dir=None,
+        sweep_output_dir=None,
+        **kwargs,
+    ):
         """Initialize the optimization plugin.
 
         Parameters
@@ -429,6 +436,10 @@ class OptimizationPlugin(ttk.Frame):
             Parent widget (typically a notebook tab or frame)
         gui_controller : Optional
             Reference to main GUI controller for run state integration
+        sweep_config_dir : str, optional
+            Directory for sweep configuration files
+        sweep_output_dir : str, optional
+            Directory for sweep output/results files
         """
         super().__init__(parent, **kwargs)
         self.gui_controller = gui_controller
@@ -436,6 +447,10 @@ class OptimizationPlugin(ttk.Frame):
         self.running = False
         self.progress_value = 0.0
         self.progress_text = ""
+
+        # Store sweep directories
+        self.sweep_config_dir = sweep_config_dir or "configs/sweep_configs"
+        self.sweep_output_dir = sweep_output_dir or "results/sweeps"
 
         self._build_ui()
 
@@ -1779,33 +1794,25 @@ class OptimizationPlugin(ttk.Frame):
         if self.gui_controller and hasattr(self.gui_controller, "_cancel_requested"):
             self.gui_controller._cancel_requested = True
 
-    def _on_load_config(self):
-        """Load configuration from JSON file."""
-        import os
+    def _load_config_from_path(self, filepath: str) -> None:
+        """Load configuration from a specific file path.
 
-        # Default to configs/sweep_configs directory
-        default_dir = "configs/sweep_configs"
-        os.makedirs(default_dir, exist_ok=True)
-
-        filename = filedialog.askopenfilename(
-            title="Load Optimization Config",
-            initialdir=default_dir,
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-        )
-        if not filename:
-            return
-
+        Parameters
+        ----------
+        filepath : str
+            Full path to the JSON configuration file
+        """
         try:
-            with open(filename, "r") as f:
+            with open(filepath, "r") as f:
                 data = json.load(f)
 
             # Store the loaded config name for later use in results naming
-            self.last_loaded_config = filename
+            self.last_loaded_config = filepath
 
-            # Update config name display
-            config_name = Path(filename).stem
-            self.config_name_label.config(text=config_name, foreground="black")
+            # Update config name display if it exists
+            if hasattr(self, "config_name_label"):
+                config_name = Path(filepath).stem
+                self.config_name_label.config(text=config_name, foreground="black")
 
             # Populate UI fields
             self.sim_type_var.set(data.get("simulation_type", "CONDUCTING_WALL"))
@@ -1906,6 +1913,24 @@ class OptimizationPlugin(ttk.Frame):
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
 
+    def _on_load_config(self):
+        """Load configuration from JSON file via dialog."""
+        import os
+
+        # Use sweep config directory from GUI preferences
+        os.makedirs(self.sweep_config_dir, exist_ok=True)
+
+        filename = filedialog.askopenfilename(
+            title="Load Optimization Config",
+            initialdir=self.sweep_config_dir,
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not filename:
+            return
+
+        self._load_config_from_path(filename)
+
     def _on_save_config(self):
         """Save configuration to JSON file."""
         error = self._validate_inputs()
@@ -1915,13 +1940,12 @@ class OptimizationPlugin(ttk.Frame):
 
         import os
 
-        # Default to configs/sweep_configs directory
-        default_dir = "configs/sweep_configs"
-        os.makedirs(default_dir, exist_ok=True)
+        # Use sweep config directory from GUI preferences
+        os.makedirs(self.sweep_config_dir, exist_ok=True)
 
         filename = filedialog.asksaveasfilename(
             title="Save Optimization Config",
-            initialdir=default_dir,
+            initialdir=self.sweep_config_dir,
             defaultextension=".json",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
         )
@@ -1990,8 +2014,8 @@ class OptimizationPlugin(ttk.Frame):
         import glob
         import os
 
-        # Default to results/sweeps directory
-        default_results_dir = "results/sweeps"
+        # Use sweep output directory from GUI preferences
+        default_results_dir = self.sweep_output_dir
 
         # Look for most recent sweep results
         search_patterns = [
@@ -2138,12 +2162,11 @@ class OptimizationPlugin(ttk.Frame):
         # Default to optimization_results directory
         import os
 
-        # Check new location first, then fall back to legacy
-        default_results_dir = "results/sweeps"
+        # Use sweep output directory from GUI preferences, then fall back to legacy
         legacy_results_dir = "optimization_results"
 
-        if os.path.exists(default_results_dir) and os.listdir(default_results_dir):
-            initial_dir = default_results_dir
+        if os.path.exists(self.sweep_output_dir) and os.listdir(self.sweep_output_dir):
+            initial_dir = self.sweep_output_dir
         elif os.path.exists(legacy_results_dir):
             initial_dir = legacy_results_dir
         else:
@@ -3069,6 +3092,9 @@ class OptimizationPlugin(ttk.Frame):
 
             self._log_result("")
 
+            # Use sweep output directory from GUI preferences
+            self.config.output_dir = self.sweep_output_dir
+
             # Create output directory
             os.makedirs(self.config.output_dir, exist_ok=True)
             self._log_result(f"Output directory: {self.config.output_dir}")
@@ -3848,7 +3874,7 @@ class OptimizationPlugin(ttk.Frame):
             config_name = Path(self.last_loaded_config).stem
 
         # Create timestamped folder: YYYYMMDD_HHMMSS_configname
-        sweep_dir = Path("results/sweeps") / f"{timestamp}_{config_name}"
+        sweep_dir = Path(self.sweep_output_dir) / f"{timestamp}_{config_name}"
         sweep_dir.mkdir(parents=True, exist_ok=True)
 
         # Create filename: sweep_results.json (inside timestamped folder)

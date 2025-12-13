@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import locale
+import os
 import re
 import threading
 import tkinter as tk
@@ -235,7 +236,7 @@ class IntegratorGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("LW Integrator Testbed")
-        self.root.geometry("1400x1000")
+        self.root.geometry("1470x1000")
 
         self.options = SimulationOptions()
         self._figure_windows: List[_FigureHandle] = []
@@ -243,6 +244,15 @@ class IntegratorGUI:
         self._running = False
         self._cancel_requested = False
         self._scroll_pages: List[_ScrollableNotebookPage] = []
+
+        # Keyboard debugging mode (via environment variable)
+        self._keyboard_debug = os.environ.get("LW_KEYBOARD_DEBUG", "0") == "1"
+        if self._keyboard_debug:
+            print("=" * 60)
+            print("KEYBOARD DEBUG MODE ENABLED")
+            print("All keyboard events will be logged to console")
+            print("Set LW_KEYBOARD_DEBUG=0 to disable")
+            print("=" * 60)
 
         # Preferences file for directory persistence
         self._prefs_file = Path.home() / ".lw_integrator_prefs.json"
@@ -255,6 +265,9 @@ class IntegratorGUI:
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+
+        # Set up keyboard fix for non-US layouts (always enabled)
+        self._setup_keyboard_fix()
 
         # Handle window close to save preferences
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -382,6 +395,8 @@ class IntegratorGUI:
         # Use preferences for directories
         self.output_dir_var = tk.StringVar(value=self._last_output_dir)
         self.config_dir_var = tk.StringVar(value=self._last_config_dir)
+        self.sweep_config_dir_var = tk.StringVar(value=self._last_sweep_config_dir)
+        self.sweep_output_dir_var = tk.StringVar(value=self._last_sweep_output_dir)
         self.config_name_var = tk.StringVar(value=self.options.config_name)
         self.config_file_var = tk.StringVar(value="")
 
@@ -418,8 +433,13 @@ class IntegratorGUI:
 
     def _load_preferences(self) -> None:
         """Load saved directory preferences or use defaults."""
+        # Run defaults
         self._default_config_dir = "configs/run_configs"
         self._default_output_dir = "results/runs"
+
+        # Sweep defaults
+        self._default_sweep_config_dir = "configs/sweep_configs"
+        self._default_sweep_output_dir = "results/sweeps"
 
         if self._prefs_file.exists():
             try:
@@ -431,14 +451,24 @@ class IntegratorGUI:
                 self._last_output_dir = prefs.get(
                     "last_output_dir", self._default_output_dir
                 )
+                self._last_sweep_config_dir = prefs.get(
+                    "last_sweep_config_dir", self._default_sweep_config_dir
+                )
+                self._last_sweep_output_dir = prefs.get(
+                    "last_sweep_output_dir", self._default_sweep_output_dir
+                )
             except Exception:
                 # If preferences file is corrupted, use defaults
                 self._last_config_dir = self._default_config_dir
                 self._last_output_dir = self._default_output_dir
+                self._last_sweep_config_dir = self._default_sweep_config_dir
+                self._last_sweep_output_dir = self._default_sweep_output_dir
         else:
             # First run - use defaults
             self._last_config_dir = self._default_config_dir
             self._last_output_dir = self._default_output_dir
+            self._last_sweep_config_dir = self._default_sweep_config_dir
+            self._last_sweep_output_dir = self._default_sweep_output_dir
 
     def _save_preferences(self) -> None:
         """Save current directory preferences."""
@@ -446,6 +476,8 @@ class IntegratorGUI:
             prefs = {
                 "last_config_dir": self._last_config_dir,
                 "last_output_dir": self._last_output_dir,
+                "last_sweep_config_dir": self._last_sweep_config_dir,
+                "last_sweep_output_dir": self._last_sweep_output_dir,
             }
             with open(self._prefs_file, "w") as f:
                 json.dump(prefs, f, indent=2)
@@ -458,19 +490,224 @@ class IntegratorGUI:
         self.output_dir_var.set(self._default_output_dir)
         self._last_config_dir = self._default_config_dir
         self._last_output_dir = self._default_output_dir
+        self._last_sweep_config_dir = self._default_sweep_config_dir
+        self._last_sweep_output_dir = self._default_sweep_output_dir
         self._save_preferences()
         self._refresh_config_list()
+
+        # Also update optimization plugin directories if it exists
+        if hasattr(self, "optimization_tab"):
+            self.optimization_tab.sweep_config_dir = self._default_sweep_config_dir
+            self.optimization_tab.sweep_output_dir = self._default_sweep_output_dir
+
         messagebox.showinfo(
             "Reset Directories",
             "Directories reset to defaults:\n\n"
-            f"Config: {self._default_config_dir}\n"
-            f"Output: {self._default_output_dir}",
+            f"Run Config: {self._default_config_dir}\n"
+            f"Run Output: {self._default_output_dir}\n"
+            f"Sweep Config: {self._default_sweep_config_dir}\n"
+            f"Sweep Output: {self._default_sweep_output_dir}",
         )
 
     def _on_close(self) -> None:
         """Handle window close event."""
         self._save_preferences()
         self.root.destroy()
+
+    def _setup_keyboard_fix(self) -> None:
+        """Set up keyboard fix for non-US layouts (Swedish, German, etc.).
+
+        This fixes issues where Windows doesn't properly send keyboard layout
+        information to Tkinter. We use keycode remapping for Swedish ISO layout.
+
+        Enable debug: LW_KEYBOARD_DEBUG=1 python -m lw_integrator.gui
+        """
+
+        # Swedish ISO keyboard keycode mapping (Windows)
+        # Maps keycodes to (unshifted_char, shifted_char)
+        SWEDISH_KEYMAP = {
+            # Number row
+            10: ("1", "!"),
+            11: ("2", '"'),
+            12: ("3", "#"),
+            13: ("4", "¤"),  # Currency sign
+            14: ("5", "%"),
+            15: ("6", "&"),
+            16: ("7", "/"),
+            17: ("8", "("),
+            18: ("9", ")"),
+            19: ("0", "="),
+            20: ("+", "?"),
+            21: ("´", "`"),  # Acute/grave accent
+            # Top row
+            24: ("q", "Q"),
+            25: ("w", "W"),
+            26: ("e", "E"),
+            27: ("r", "R"),
+            28: ("t", "T"),
+            29: ("y", "Y"),
+            30: ("u", "U"),
+            31: ("i", "I"),
+            32: ("o", "O"),
+            33: ("p", "P"),
+            34: ("å", "Å"),
+            35: ("¨", "^"),  # Diaeresis/circumflex (dead key)
+            # Home row
+            38: ("a", "A"),
+            39: ("s", "S"),
+            40: ("d", "D"),
+            41: ("f", "F"),
+            42: ("g", "G"),
+            43: ("h", "H"),
+            44: ("j", "J"),
+            45: ("k", "K"),
+            46: ("l", "L"),
+            47: ("ö", "Ö"),
+            48: ("ä", "Ä"),
+            49: ("'", "*"),
+            # Bottom row
+            52: ("z", "Z"),
+            53: ("x", "X"),
+            54: ("c", "C"),
+            55: ("v", "V"),
+            56: ("b", "B"),
+            57: ("n", "N"),
+            58: ("m", "M"),
+            59: (",", ";"),
+            60: (".", ":"),
+            61: ("-", "_"),  # THIS IS THE HYPHEN KEY!
+            # Special keys
+            65: (" ", " "),  # Space
+        }
+
+        def fixed_key_handler(event):
+            """Handle keyboard input using keycode remapping for Swedish layout."""
+            widget = event.widget
+            char = event.char
+            keysym = event.keysym
+            keycode = event.keycode
+            state = event.state
+
+            if self._keyboard_debug:
+                widget_name = widget.winfo_name()
+                print(f"[KEY] Widget: {widget_name}")
+                print(f"      keysym:  {keysym}")
+                print(f"      keycode: {keycode}")
+                print(f"      char:    {repr(char)} (from OS)")
+                print(f"      state:   {state}")
+
+            # Check for modifier keys (except Shift)
+            # state & 0x4 = Control, state & 0x8 or 0x20000 = Alt
+            has_ctrl = bool(state & 0x4)
+            has_alt = bool(state & 0x8 or state & 0x20000)
+            has_shift = bool(state & 0x1)
+
+            if has_ctrl or has_alt:
+                # Let Tkinter handle Ctrl+X, Alt+X shortcuts
+                if self._keyboard_debug:
+                    print("      → Passing through (has Ctrl/Alt modifier)")
+                    print("-" * 60)
+                return None
+
+            # Try Swedish keycode mapping
+            correct_char = None
+            if keycode in SWEDISH_KEYMAP:
+                unshifted, shifted = SWEDISH_KEYMAP[keycode]
+                correct_char = shifted if has_shift else unshifted
+
+                if self._keyboard_debug:
+                    print(
+                        f"      ✓ Swedish keymap: keycode {keycode} → {repr(correct_char)}"
+                    )
+                    if correct_char != char:
+                        print(
+                            f"      ⚠ FIXED: OS gave {repr(char)}, using {repr(correct_char)}"
+                        )
+            else:
+                # Not in our mapping - check if it's a control character or letter
+                if not char or not char.isprintable():
+                    # Control character, navigation key, etc.
+                    if self._keyboard_debug:
+                        print("      → Passing through (control/special key)")
+                        print("-" * 60)
+                    return None
+
+                # Unmapped but printable - use what the OS gave us
+                correct_char = char
+                if self._keyboard_debug:
+                    print(f"      ℹ Not in Swedish keymap, using OS char: {repr(char)}")
+
+            if self._keyboard_debug:
+                print(f"      ✓ Inserting: {repr(correct_char)}")
+                print("-" * 60)
+
+            # Handle Entry widgets
+            if isinstance(widget, tk.Entry):
+                # Check if text is selected
+                try:
+                    if widget.selection_present():
+                        widget.delete("sel.first", "sel.last")
+                except tk.TclError:
+                    pass
+
+                # Insert correct character at cursor position
+                insert_pos = widget.index("insert")
+                widget.insert(insert_pos, correct_char)
+
+                # Return "break" to prevent Tkinter's default (wrong) handler
+                return "break"
+
+            # Handle Text widgets
+            elif isinstance(widget, tk.Text):
+                # Check if text is selected
+                try:
+                    if widget.tag_ranges("sel"):
+                        widget.delete("sel.first", "sel.last")
+                except tk.TclError:
+                    pass
+
+                # Insert correct character at cursor position
+                widget.insert("insert", correct_char)
+
+                # Return "break" to prevent Tkinter's default (wrong) handler
+                return "break"
+
+            # For other widgets, let Tkinter handle it
+            return None
+
+        # Bind fix handler to all current Entry and Text widgets
+        def bind_fix_recursive(widget):
+            """Recursively bind keyboard fix to all Entry/Text widgets."""
+            if isinstance(widget, (tk.Entry, tk.Text)):
+                # Use bindtags to ensure our handler runs BEFORE the class binding
+                # Default bindtags order: (widget_name, class_name, toplevel, 'all')
+                # We insert a custom tag before the class to intercept events first
+                current_tags = list(widget.bindtags())
+
+                # Create a unique tag for this widget
+                custom_tag = f"CustomKey{id(widget)}"
+
+                # Insert custom tag before the class name (usually second position)
+                if len(current_tags) >= 2:
+                    current_tags.insert(1, custom_tag)
+                else:
+                    current_tags.insert(0, custom_tag)
+
+                widget.bindtags(tuple(current_tags))
+
+                # Bind our handler to the custom tag
+                widget.bind_class(custom_tag, "<Key>", fixed_key_handler)
+
+            for child in widget.winfo_children():
+                bind_fix_recursive(child)
+
+        bind_fix_recursive(self.root)
+        if self._keyboard_debug:
+            print(
+                "[FIX] Swedish keyboard keycode remapping applied to all text widgets"
+            )
+        else:
+            print("[FIX] Swedish keyboard layout fix enabled")
 
     def _build_layout(self) -> None:
         """Build the complete GUI layout with all controls."""
@@ -864,7 +1101,12 @@ class IntegratorGUI:
         ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Optimization/Sweep tab ----------------------------------------
-        self.optimization_tab = OptimizationPlugin(self.notebook, gui_controller=self)
+        self.optimization_tab = OptimizationPlugin(
+            self.notebook,
+            gui_controller=self,
+            sweep_config_dir=self._last_sweep_config_dir,
+            sweep_output_dir=self._last_sweep_output_dir,
+        )
         self.notebook.add(self.optimization_tab, text="Sweep/Optim")
 
         # Right side: Persistent Config/Control Panel -------------------
@@ -967,47 +1209,66 @@ class IntegratorGUI:
         panel = ttk.LabelFrame(parent, text="Configuration & Control", padding=10)
         panel.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Config management section
-        config_frame = ttk.LabelFrame(panel, text="Config Management", padding=8)
-        config_frame.pack(fill="x", pady=(0, 10))
+        # Create scrollable container for config sections
+        canvas = tk.Canvas(panel, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(panel, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
 
-        # Directories section
-        ttk.Label(config_frame, text="Config directory:").grid(
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # === RUN CONFIG SECTION ===
+        run_config_frame = ttk.LabelFrame(
+            scrollable_frame, text="Single Run Configuration", padding=8
+        )
+        run_config_frame.pack(fill="x", pady=(0, 10))
+
+        # Run config directory
+        ttk.Label(run_config_frame, text="Config dir:").grid(
             row=0, column=0, sticky="w", pady=2
         )
-        ttk.Entry(config_frame, textvariable=self.config_dir_var, width=25).grid(
+        ttk.Entry(run_config_frame, textvariable=self.config_dir_var, width=20).grid(
             row=0, column=1, sticky="ew", pady=2, padx=(5, 2)
         )
         ttk.Button(
-            config_frame, text="...", command=self._select_config_dir, width=3
+            run_config_frame, text="...", command=self._select_config_dir, width=3
         ).grid(row=0, column=2, sticky="w", pady=2)
 
-        ttk.Label(config_frame, text="Output directory:").grid(
+        # Run output directory
+        ttk.Label(run_config_frame, text="Output dir:").grid(
             row=1, column=0, sticky="w", pady=2
         )
-        ttk.Entry(config_frame, textvariable=self.output_dir_var, width=25).grid(
+        ttk.Entry(run_config_frame, textvariable=self.output_dir_var, width=20).grid(
             row=1, column=1, sticky="ew", pady=2, padx=(5, 2)
         )
         ttk.Button(
-            config_frame, text="...", command=self._select_output_dir, width=3
+            run_config_frame, text="...", command=self._select_output_dir, width=3
         ).grid(row=1, column=2, sticky="w", pady=2)
 
-        config_frame.columnconfigure(1, weight=1)
+        run_config_frame.columnconfigure(1, weight=1)
 
-        # Config name
-        ttk.Label(config_frame, text="Config name:").grid(
+        # Run config name
+        ttk.Label(run_config_frame, text="Config name:").grid(
             row=2, column=0, sticky="w", pady=(10, 2)
         )
-        ttk.Entry(config_frame, textvariable=self.config_name_var).grid(
+        ttk.Entry(run_config_frame, textvariable=self.config_name_var).grid(
             row=2, column=1, columnspan=2, sticky="ew", pady=(10, 2)
         )
 
-        # Current config display
-        ttk.Label(config_frame, text="Current:").grid(
+        # Current run config display
+        ttk.Label(run_config_frame, text="Current:").grid(
             row=3, column=0, sticky="w", pady=2
         )
         self.current_config_label = ttk.Label(
-            config_frame,
+            run_config_frame,
             text="<unsaved>",
             foreground="gray",
             font=("TkDefaultFont", 9, "italic"),
@@ -1016,49 +1277,143 @@ class IntegratorGUI:
             row=3, column=1, columnspan=2, sticky="w", pady=2
         )
 
-        # Saved configs list
-        ttk.Label(config_frame, text="Saved configs:").grid(
+        # Saved run configs list
+        ttk.Label(run_config_frame, text="Saved configs:").grid(
             row=4, column=0, columnspan=3, sticky="w", pady=(10, 2)
         )
 
-        list_frame = ttk.Frame(config_frame)
-        list_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=2)
-        list_frame.rowconfigure(0, weight=1)
-        list_frame.columnconfigure(0, weight=1)
+        run_list_frame = ttk.Frame(run_config_frame)
+        run_list_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=2)
+        run_list_frame.rowconfigure(0, weight=1)
+        run_list_frame.columnconfigure(0, weight=1)
 
-        self.config_list = tk.Listbox(list_frame, height=6)
+        self.config_list = tk.Listbox(run_list_frame, height=4)
         self.config_list.grid(row=0, column=0, sticky="nsew")
         self.config_list.bind(
             "<<ListboxSelect>>", lambda _event: self._on_config_selected()
         )
         self.config_list.bind("<Double-1>", lambda _event: self._load_config())
 
-        scrollbar = ttk.Scrollbar(
-            list_frame, orient="vertical", command=self.config_list.yview
+        run_scrollbar = ttk.Scrollbar(
+            run_list_frame, orient="vertical", command=self.config_list.yview
         )
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.config_list.configure(yscrollcommand=scrollbar.set)
+        run_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.config_list.configure(yscrollcommand=run_scrollbar.set)
 
-        config_frame.rowconfigure(5, weight=1)
+        run_config_frame.rowconfigure(5, weight=1)
 
-        # Load/Save/Refresh buttons
-        btn_frame = ttk.Frame(config_frame)
-        btn_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        # Run config buttons
+        run_btn_frame = ttk.Frame(run_config_frame)
+        run_btn_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
-        ttk.Button(btn_frame, text="Load Selected", command=self._load_config).pack(
+        ttk.Button(run_btn_frame, text="Load", command=self._load_config, width=8).pack(
             side="left", padx=2
         )
-        ttk.Button(btn_frame, text="Save Config", command=self._save_config).pack(
-            side="left", padx=2
-        )
-        ttk.Button(btn_frame, text="Refresh", command=self._refresh_config_list).pack(
+        ttk.Button(run_btn_frame, text="Save", command=self._save_config, width=8).pack(
             side="left", padx=2
         )
         ttk.Button(
-            btn_frame,
-            text="Reset Defaults",
-            command=self._reset_directories_to_defaults,
+            run_btn_frame, text="Refresh", command=self._refresh_config_list, width=8
         ).pack(side="left", padx=2)
+
+        # === SWEEP CONFIG SECTION ===
+        sweep_config_frame = ttk.LabelFrame(
+            scrollable_frame, text="Sweep Configuration", padding=8
+        )
+        sweep_config_frame.pack(fill="x", pady=(0, 10))
+
+        # Sweep config directory
+        ttk.Label(sweep_config_frame, text="Config dir:").grid(
+            row=0, column=0, sticky="w", pady=2
+        )
+        self.sweep_config_dir_var = tk.StringVar(value=self._last_sweep_config_dir)
+        ttk.Entry(
+            sweep_config_frame, textvariable=self.sweep_config_dir_var, width=20
+        ).grid(row=0, column=1, sticky="ew", pady=2, padx=(5, 2))
+        ttk.Button(
+            sweep_config_frame,
+            text="...",
+            command=self._select_sweep_config_dir,
+            width=3,
+        ).grid(row=0, column=2, sticky="w", pady=2)
+
+        # Sweep output directory
+        ttk.Label(sweep_config_frame, text="Output dir:").grid(
+            row=1, column=0, sticky="w", pady=2
+        )
+        self.sweep_output_dir_var = tk.StringVar(value=self._last_sweep_output_dir)
+        ttk.Entry(
+            sweep_config_frame, textvariable=self.sweep_output_dir_var, width=20
+        ).grid(row=1, column=1, sticky="ew", pady=2, padx=(5, 2))
+        ttk.Button(
+            sweep_config_frame,
+            text="...",
+            command=self._select_sweep_output_dir,
+            width=3,
+        ).grid(row=1, column=2, sticky="w", pady=2)
+
+        sweep_config_frame.columnconfigure(1, weight=1)
+
+        # Current sweep config display
+        ttk.Label(sweep_config_frame, text="Current:").grid(
+            row=2, column=0, sticky="w", pady=(10, 2)
+        )
+        self.current_sweep_config_label = ttk.Label(
+            sweep_config_frame,
+            text="<none>",
+            foreground="gray",
+            font=("TkDefaultFont", 9, "italic"),
+        )
+        self.current_sweep_config_label.grid(
+            row=2, column=1, columnspan=2, sticky="w", pady=(10, 2)
+        )
+
+        # Saved sweep configs list
+        ttk.Label(sweep_config_frame, text="Saved configs:").grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(10, 2)
+        )
+
+        sweep_list_frame = ttk.Frame(sweep_config_frame)
+        sweep_list_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=2)
+        sweep_list_frame.rowconfigure(0, weight=1)
+        sweep_list_frame.columnconfigure(0, weight=1)
+
+        self.sweep_config_list = tk.Listbox(sweep_list_frame, height=4)
+        self.sweep_config_list.grid(row=0, column=0, sticky="nsew")
+        self.sweep_config_list.bind(
+            "<Double-1>", lambda _event: self._load_sweep_config()
+        )
+
+        sweep_scrollbar = ttk.Scrollbar(
+            sweep_list_frame, orient="vertical", command=self.sweep_config_list.yview
+        )
+        sweep_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.sweep_config_list.configure(yscrollcommand=sweep_scrollbar.set)
+
+        sweep_config_frame.rowconfigure(4, weight=1)
+
+        # Sweep config buttons
+        sweep_btn_frame = ttk.Frame(sweep_config_frame)
+        sweep_btn_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+
+        ttk.Button(
+            sweep_btn_frame, text="Load", command=self._load_sweep_config, width=8
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            sweep_btn_frame,
+            text="Refresh",
+            command=self._refresh_sweep_config_list,
+            width=8,
+        ).pack(side="left", padx=2)
+
+        # Reset defaults button (applies to both)
+        reset_frame = ttk.Frame(scrollable_frame)
+        reset_frame.pack(fill="x", pady=(0, 10))
+        ttk.Button(
+            reset_frame,
+            text="Reset All Directories to Defaults",
+            command=self._reset_directories_to_defaults,
+        ).pack(fill="x")
 
         # Run mode selector
         mode_frame = ttk.LabelFrame(panel, text="Run Mode", padding=8)
@@ -1105,6 +1460,9 @@ class IntegratorGUI:
         # Status display
         status_frame = ttk.LabelFrame(panel, text="Status", padding=8)
         status_frame.pack(fill="both", expand=True)
+
+        # Refresh sweep config list now that widget exists
+        self._refresh_sweep_config_list()
 
         ttk.Label(status_frame, textvariable=self.status_var).pack(anchor="w", pady=2)
 
@@ -1340,19 +1698,25 @@ class IntegratorGUI:
         elif self.config_file_var.get() in configs:
             highlight = configs.index(self.config_file_var.get())
 
-        for config in configs:
-            self.config_list.insert(tk.END, config)
+        for config_name in configs:
+            self.config_list.insert(tk.END, config_name)
 
-        if highlight is None and configs:
-            highlight = 0
-
-        if highlight is not None and configs:
+        if highlight is not None:
             self.config_list.selection_set(highlight)
             self.config_list.see(highlight)
-            filename = configs[highlight]
-            self.config_file_var.set(filename)
-        else:
-            self.config_file_var.set("")
+
+    def _refresh_sweep_config_list(self, selected: Optional[str] = None) -> None:
+        """Refresh the sweep config list."""
+        import os
+
+        sweep_dir = self.sweep_config_dir_var.get()
+        self.sweep_config_list.delete(0, tk.END)
+
+        if os.path.exists(sweep_dir):
+            configs = [f for f in os.listdir(sweep_dir) if f.endswith(".json")]
+            configs.sort()
+            for config_name in configs:
+                self.sweep_config_list.insert(tk.END, config_name)
 
     def _selected_config_filename(self) -> Optional[str]:
         selection = self.config_list.curselection()
@@ -1675,7 +2039,6 @@ class IntegratorGUI:
     def _select_output_dir(self) -> None:
         import os
 
-        # Use last used directory or default
         initial_dir = self.output_dir_var.get()
         if not os.path.exists(initial_dir):
             initial_dir = self._default_output_dir
@@ -1687,6 +2050,63 @@ class IntegratorGUI:
             self.output_dir_var.set(directory)
             self._last_output_dir = directory
             self._save_preferences()
+
+    def _select_sweep_config_dir(self) -> None:
+        """Select sweep config directory."""
+        import os
+
+        initial_dir = self.sweep_config_dir_var.get()
+        if not os.path.exists(initial_dir):
+            initial_dir = self._default_sweep_config_dir
+
+        directory = filedialog.askdirectory(
+            title="Select sweep config directory", initialdir=initial_dir
+        )
+        if directory:
+            self.sweep_config_dir_var.set(directory)
+            self._last_sweep_config_dir = directory
+            self._save_preferences()
+            self._refresh_sweep_config_list()
+            # Update optimization plugin
+            if hasattr(self, "optimization_tab"):
+                self.optimization_tab.sweep_config_dir = directory
+
+    def _select_sweep_output_dir(self) -> None:
+        """Select sweep output directory."""
+        import os
+
+        initial_dir = self.sweep_output_dir_var.get()
+        if not os.path.exists(initial_dir):
+            initial_dir = self._default_sweep_output_dir
+
+        directory = filedialog.askdirectory(
+            title="Select sweep output directory", initialdir=initial_dir
+        )
+        if directory:
+            self.sweep_output_dir_var.set(directory)
+            self._last_sweep_output_dir = directory
+            self._save_preferences()
+            # Update optimization plugin
+            if hasattr(self, "optimization_tab"):
+                self.optimization_tab.sweep_output_dir = directory
+
+    def _load_sweep_config(self) -> None:
+        """Load selected sweep configuration."""
+        selection = self.sweep_config_list.curselection()
+        if not selection:
+            messagebox.showinfo("Load Sweep Config", "Select a configuration to load.")
+            return
+
+        filename = self.sweep_config_list.get(selection[0])
+        if hasattr(self, "optimization_tab"):
+            # Delegate to optimization plugin
+            import os
+
+            path = os.path.join(self.sweep_config_dir_var.get(), filename)
+            self.optimization_tab._load_config_from_path(path)
+            self.current_sweep_config_label.config(
+                text=filename, foreground="black", font=("TkDefaultFont", 9)
+            )
 
     def _save_config(self) -> None:
         try:
@@ -1752,17 +2172,14 @@ class IntegratorGUI:
     # ------------------------------------------------------------------
 
     def _on_tab_changed(self, event=None) -> None:
-        """Handle notebook tab change to update run mode."""
-        try:
-            current_tab = self.notebook.select()
-            tab_text = self.notebook.tab(current_tab, "text")
+        """Handle notebook tab change events.
 
-            # Auto-switch to sweep mode if on Sweep/Optim tab
-            if tab_text == "Sweep/Optim" and not self._running:
-                self.run_mode_var.set("sweep")
-                self._on_run_mode_changed()
-        except Exception:
-            pass
+        Note: We no longer auto-switch run mode when changing tabs.
+        Users must explicitly select run mode via the radio buttons.
+        """
+        # Removed auto-switching behavior - run mode is now only changed
+        # via explicit radio button selection in the control panel
+        pass
 
     def _open_optimization_tab(self) -> None:
         """Switch to the Sweep/Optim tab."""
