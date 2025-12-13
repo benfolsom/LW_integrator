@@ -307,10 +307,14 @@ class IntegratorGUI:
             )
             self.driver_param_vars[name] = var
 
-        self.core_param_vars: Dict[str, tk.Variable] = {
-            name: tk.DoubleVar(value=float(value))
-            for name, value in CORE_PARAM_DEFAULTS.items()
-        }
+        self.core_param_vars: Dict[str, tk.Variable] = {}
+        for name, value in CORE_PARAM_DEFAULTS.items():
+            if isinstance(value, str):
+                self.core_param_vars[name] = tk.StringVar(value=value)
+            elif isinstance(value, (int, float)):
+                self.core_param_vars[name] = tk.DoubleVar(value=float(value))
+            else:
+                self.core_param_vars[name] = tk.StringVar(value=str(value))
 
         self.overlay_display_var = tk.BooleanVar(value=self.options.overlay_display)
         self.overlay_save_var = tk.BooleanVar(value=self.options.overlay_save)
@@ -846,9 +850,20 @@ class IntegratorGUI:
             ttk.Label(core_frame, text=CORE_PARAM_LABELS[name] + ":").grid(
                 row=row, column=0, sticky="w", pady=2
             )
-            ttk.Entry(
-                core_frame, textvariable=self.core_param_vars[name], width=16
-            ).grid(row=row, column=1, sticky="ew", pady=2)
+            # Use Combobox for z_cutoff_mode
+            if name == "z_cutoff_mode":
+                combo = ttk.Combobox(
+                    core_frame,
+                    textvariable=self.core_param_vars[name],
+                    values=["absolute", "relative"],
+                    state="readonly",
+                    width=14,
+                )
+                combo.grid(row=row, column=1, sticky="ew", pady=2)
+            else:
+                ttk.Entry(
+                    core_frame, textvariable=self.core_param_vars[name], width=16
+                ).grid(row=row, column=1, sticky="ew", pady=2)
 
         # Stability Settings tab ----------------------------------------
         stability_frame = self._create_scrollable_tab(
@@ -1850,10 +1865,14 @@ class IntegratorGUI:
             if driver_supported
             else None
         )
-        core_params = {
-            name: float(self.core_param_vars[name].get())
-            for name in CORE_PARAM_DEFAULTS
-        }
+        core_params = {}
+        for name in CORE_PARAM_DEFAULTS:
+            value = self.core_param_vars[name].get()
+            # Keep strings as strings, convert others to float
+            if isinstance(CORE_PARAM_DEFAULTS[name], str):
+                core_params[name] = value
+            else:
+                core_params[name] = float(value)
 
         config_name = self.config_name_var.get().strip() or "testbed_config"
         if not config_name.endswith(".json"):

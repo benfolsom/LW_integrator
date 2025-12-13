@@ -75,15 +75,17 @@ CORE_PARAM_LABELS: Dict[str, str] = {
     "mean": "Mean separation (mm)",
     "cav_spacing": "Cavity spacing (mm)",
     "z_cutoff": "z cutoff (mm)",
+    "z_cutoff_mode": "z cutoff mode",
 }
 
-CORE_PARAM_DEFAULTS: Dict[str, float] = {
+CORE_PARAM_DEFAULTS: Dict[str, Any] = {
     "time_step": 2.2e-7,
     "wall_z": 1.0e5,
     "aperture_radius": 1.0e5,
     "mean": 1.0e5,
     "cav_spacing": 1.0e5,
     "z_cutoff": 0.0,
+    "z_cutoff_mode": "absolute",
 }
 
 CORE_REQUIRED_PARAMS: Dict[SimulationType, set[str]] = {
@@ -95,7 +97,12 @@ CORE_REQUIRED_PARAMS: Dict[SimulationType, set[str]] = {
         "cav_spacing",
         "z_cutoff",
     },
-    SimulationType.BUNCH_TO_BUNCH: {"time_step", "aperture_radius"},
+    SimulationType.BUNCH_TO_BUNCH: {
+        "time_step",
+        "aperture_radius",
+        "z_cutoff",
+        "z_cutoff_mode",
+    },
 }
 
 SPECIES_PRESETS: Dict[str, Optional[Dict[str, float]]] = {
@@ -218,8 +225,11 @@ class SimulationOptions:
     driver_params: Optional[Dict[str, float | int]] = field(
         default_factory=lambda: dict(DEFAULT_DRIVER_PARAMS)
     )
-    core_params: Dict[str, float] = field(
-        default_factory=lambda: {k: float(v) for k, v in CORE_PARAM_DEFAULTS.items()}
+    core_params: Dict[str, float | str] = field(
+        default_factory=lambda: {
+            k: float(v) if isinstance(v, (int, float)) else v
+            for k, v in CORE_PARAM_DEFAULTS.items()
+        }
     )
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
@@ -345,14 +355,21 @@ class SimulationOptions:
         else:
             driver_params = dict(DEFAULT_DRIVER_PARAMS)
 
-        core_params = {k: float(v) for k, v in CORE_PARAM_DEFAULTS.items()}
+        core_params = {
+            k: float(v) if isinstance(v, (int, float)) else v
+            for k, v in CORE_PARAM_DEFAULTS.items()
+        }
         core_payload = payload.get("core_params")
         if isinstance(core_payload, dict):
-            for key, value in core_payload.items():
-                try:
-                    core_params[key] = float(value)
-                except (TypeError, ValueError):
-                    continue
+            for key, val in core_payload.items():
+                # Handle both numeric and string values (e.g., z_cutoff_mode)
+                if isinstance(val, str):
+                    core_params[key] = val
+                else:
+                    try:
+                        core_params[key] = float(val)
+                    except (TypeError, ValueError):
+                        continue
 
         options = cls(
             steps=_int("steps", 1000),
@@ -759,10 +776,14 @@ def run_testbed(
         else None
     )
 
-    core_params = {
-        k: float(options.core_params.get(k, CORE_PARAM_DEFAULTS[k]))
-        for k in CORE_PARAM_DEFAULTS
-    }
+    core_params = {}
+    for k in CORE_PARAM_DEFAULTS:
+        val = options.core_params.get(k, CORE_PARAM_DEFAULTS[k])
+        # Keep string values as-is (e.g., z_cutoff_mode), convert numeric to float
+        if isinstance(val, str):
+            core_params[k] = val
+        else:
+            core_params[k] = float(val)
     required_params = CORE_REQUIRED_PARAMS.get(sim_type, set())
     filtered_core_params = {name: core_params[name] for name in required_params}
 

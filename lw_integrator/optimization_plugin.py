@@ -187,6 +187,12 @@ class OptimizationConfig:
     auto_steps_distance_past_wall: float = 10.0  # mm past wall to stop integration
     seed: int = 12345
 
+    # Timestep strategy for energy sweeps
+    timestep_strategy: str = "fixed"  # "fixed", "energy_scaled", or "auto_distance"
+    energy_scale_exponent: float = 1.0  # For energy_scaled: h ∝ γ^-α
+    target_distance_mm: float = 100.0  # For auto_distance: distance to reach
+    z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
+
     # Fixed particle parameters (not swept)
     transv_mom: float = 1.2e-05  # amu·mm/ns
     transv_dist: float = 2e-06  # mm - transverse distance from axis
@@ -239,6 +245,49 @@ class OptimizationConfig:
             self.transverse_offset_fractions = [0.0]
         if self.starting_z_positions is None:
             self.starting_z_positions = [0.0]  # Default: start at origin
+
+    def calculate_timestep_for_energy(
+        self, energy_gev: float, m_particle_amu: float = 0.00054857990907
+    ) -> float:
+        """Calculate appropriate timestep for given energy based on strategy.
+
+        Parameters
+        ----------
+        energy_gev : float
+            Particle energy in GeV
+        m_particle_amu : float
+            Particle mass in amu (default: electron)
+
+        Returns
+        -------
+        float
+            Timestep in ns (proper time)
+        """
+        if self.timestep_strategy == "fixed":
+            return self.timestep
+
+        # Calculate gamma and beta
+        rest_energy_mev = m_particle_amu * 931.494  # amu to MeV
+        gamma = (energy_gev * 1e3) / rest_energy_mev
+        beta = np.sqrt(1.0 - 1.0 / gamma**2)
+
+        if self.timestep_strategy == "energy_scaled":
+            # Scale timestep inversely with gamma
+            # h_sweep = h_base / γ^α
+            return self.timestep / (gamma**self.energy_scale_exponent)
+
+        elif self.timestep_strategy == "auto_distance":
+            # Calculate timestep to reach target distance in given steps
+            # Distance = N_steps × β × c × h × γ
+            # Therefore: h = Distance / (N_steps × β × c × γ)
+            c_mmns = 299.792458  # mm/ns
+            h_calculated = self.target_distance_mm / (
+                self.steps * beta * c_mmns * gamma
+            )
+            return h_calculated
+
+        else:
+            raise ValueError(f"Unknown timestep_strategy: {self.timestep_strategy}")
 
     @classmethod
     def from_simulation_options(cls, options: Any) -> "OptimizationConfig":
@@ -3082,13 +3131,20 @@ class OptimizationPlugin(ttk.Frame):
                     )
                 else:
                     self._log_result(f"  {param_name}: {values[0]:.2e} (fixed)")
-            self._log_result(
-                f"  Timestep mode: {'Auto-adjust' if self.config.auto_steps else 'Fixed'}"
-            )
-            if self.config.auto_steps:
+            self._log_result(f"  Timestep strategy: {self.config.timestep_strategy}")
+            if self.config.timestep_strategy == "energy_scaled":
                 self._log_result(
-                    f"    Target: wall_z + {self.config.auto_steps_distance_past_wall:.1f} mm"
+                    f"    Energy scale exponent: {self.config.energy_scale_exponent} (h ∝ γ^-α)"
                 )
+            elif self.config.timestep_strategy == "auto_distance":
+                self._log_result(
+                    f"    Target distance: {self.config.target_distance_mm:.1f} mm"
+                )
+            elif self.config.auto_steps:
+                self._log_result(
+                    f"    Legacy auto_steps: wall_z + {self.config.auto_steps_distance_past_wall:.1f} mm"
+                )
+            self._log_result(f"  z_cutoff_mode: {self.config.z_cutoff_mode}")
 
             self._log_result("")
 
@@ -3179,9 +3235,38 @@ class OptimizationPlugin(ttk.Frame):
                 # Calculate transverse offset
                 transv_offset = offset_frac * aperture
 
-                # Auto-adjust timestep if enabled
-                if self.config.auto_steps:
-                    # Calculate distance
+                # Calculate timestep based on strategy
+                if self.config.timestep_strategy != "fixed":
+                    # Use energy-aware timestep calculation
+                    timestep = self.config.calculate_timestep_for_energy(
+                        energy, rider_m_particle
+                    )
+                    steps = self.config.steps
+
+                    # Log diagnostic info for first run or every 50th run
+                    if run_num == 1 or run_num % 50 == 0:
+                        # Calculate gamma for diagnostics
+                        AMU_TO_MEV = 931.494
+                        rest_energy_mev = rider_m_particle * AMU_TO_MEV
+                        gamma = (energy * 1e3) / rest_energy_mev
+                        beta = (
+                            np.sqrt(1.0 - 1.0 / (gamma * gamma))
+                            if gamma > 1.0
+                            else 0.999
+                        )
+                        distance_per_step = beta * gamma * C_MMNS * timestep
+                        expected_distance = distance_per_step * steps
+
+                        self._log_result(
+                            f"  Run {run_num} timestep strategy '{self.config.timestep_strategy}': "
+                            f"E={energy:.1f}GeV, gamma={gamma:.1f}, beta={beta:.6f}"
+                        )
+                        self._log_result(
+                            f"    → timestep={timestep:.2e}ns, steps={steps}, "
+                            f"dist/step={distance_per_step:.3f}mm, expected_travel={expected_distance:.1f}mm"
+                        )
+                elif self.config.auto_steps:
+                    # Legacy auto_steps mode (deprecated, but keep for compatibility)
                     distance_to_wall = abs(self.config.wall_z - start_z)
                     total_distance = (
                         distance_to_wall + self.config.auto_steps_distance_past_wall
@@ -3203,29 +3288,6 @@ class OptimizationPlugin(ttk.Frame):
                         particle_energy_gev=energy,
                         particle_mass_amu=rider_m_particle,
                     )
-
-                    # Log diagnostic info for first run or every 50th run
-                    if run_num == 1 or run_num % 50 == 0:
-                        # Calculate gamma for diagnostics
-                        AMU_TO_MEV = 931.494
-                        rest_energy_mev = rider_m_particle * AMU_TO_MEV
-                        gamma = (energy * 1e3) / rest_energy_mev
-                        beta = (
-                            np.sqrt(1.0 - 1.0 / (gamma * gamma))
-                            if gamma > 1.0
-                            else 0.999
-                        )
-                        distance_per_step = beta * gamma * C_MMNS * timestep
-                        expected_distance = distance_per_step * steps
-
-                        self._log_result(
-                            f"  Run {run_num} auto-timestep calc: start_z={start_z:.1f}mm, wall_z={self.config.wall_z:.1f}mm, "
-                            f"target_dist={total_distance:.1f}mm, E={energy:.1f}GeV, gamma={gamma:.1f}"
-                        )
-                        self._log_result(
-                            f"    → timestep={timestep:.2e}ns, steps={steps}, "
-                            f"dist/step={distance_per_step:.3f}mm, expected_travel={expected_distance:.1f}mm"
-                        )
                 else:
                     timestep = self.config.timestep
                     steps = self.config.steps
@@ -3636,7 +3698,10 @@ class OptimizationPlugin(ttk.Frame):
             "aperture_radius": aperture,
             "mean": 1.0e5,  # Large value (not used for CONDUCTING_WALL)
             "cav_spacing": 1.0e5,
-            "z_cutoff": 0.0,
+            "z_cutoff": self.config.target_distance_mm
+            if self.config.z_cutoff_mode == "relative"
+            else 0.0,
+            "z_cutoff_mode": self.config.z_cutoff_mode,
         }
 
         # Create a temporary subdirectory for this run's outputs (will be cleaned up)

@@ -95,7 +95,13 @@ class IntegratorConfig:
         Distance between cavities used by the switching-wall configuration.
     z_cutoff:
         Longitudinal position at which the switching-wall stops mirroring
-        charges. Defaults to ``0`` which effectively disables the cutoff.
+        charges. For BUNCH_TO_BUNCH mode with z_cutoff_mode='relative',
+        this is the distance from starting position. Defaults to ``0``
+        which effectively disables the cutoff.
+    z_cutoff_mode:
+        Interpretation of z_cutoff parameter. 'absolute' (default) uses
+        z_cutoff as absolute z position. 'relative' uses z_cutoff as
+        distance from starting position (for BUNCH_TO_BUNCH simulations).
     image_subcharge_count:
         Number of virtual subcharges used when constructing conducting-wall
         image charges. Must lie between 4 and 128. Defaults to ``12``.
@@ -114,6 +120,7 @@ class IntegratorConfig:
     bunch_mean: float = 0.0
     cavity_spacing: float = 0.0
     z_cutoff: float = 0.0
+    z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
 

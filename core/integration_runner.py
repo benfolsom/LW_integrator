@@ -141,6 +141,7 @@ def retarded_integrator(
     mean: float,
     cav_spacing: float,
     z_cutoff: float,
+    z_cutoff_mode: str = "absolute",
     self_consistency: Optional[SelfConsistencyConfig] = None,
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
     startup_mode: StartupMode = StartupMode.COLD_START,
@@ -175,6 +176,12 @@ def retarded_integrator(
         Longitudinal spacing between cavities when using switching walls.
     z_cutoff:
         Threshold beyond which the switching wall no longer mirrors charges.
+        For BUNCH_TO_BUNCH with z_cutoff_mode='relative', this is the distance
+        from starting position to stop integration.
+    z_cutoff_mode:
+        Interpretation of z_cutoff. 'absolute' (default) treats z_cutoff as
+        absolute z position. 'relative' treats it as distance from start
+        (useful for BUNCH_TO_BUNCH mode to stop after traveling distance X).
     self_consistency:
         Optional :class:`SelfConsistencyConfig` to iterate each step until the
         Lorentz factor converges.
@@ -225,6 +232,16 @@ def retarded_integrator(
     reduced_h_step = h_step
     cooldown_counter = 0
     stable_steps_counter = 0  # Count consecutive stable steps during probing
+
+    # Store initial z position for relative cutoff mode
+    z_initial: Optional[float] = None
+    if z_cutoff_mode == "relative" and sim_type == SimulationType.BUNCH_TO_BUNCH:
+        z_initial = float(np.mean(init_rider["z"]))
+        if adaptive_timestep is not None and adaptive_timestep.debug:
+            print(
+                f"BUNCH_TO_BUNCH relative cutoff mode: z_initial = {z_initial:.6f} mm, "
+                f"will stop after traveling {z_cutoff:.2f} mm"
+            )
 
     if progress_callback is not None:
         progress_callback(0, steps)
@@ -553,6 +570,25 @@ def retarded_integrator(
                 )
             _ensure_startup_metadata(trajectory_drv[i])
 
+        # Check for early termination in BUNCH_TO_BUNCH relative mode
+        if (
+            z_cutoff_mode == "relative"
+            and sim_type == SimulationType.BUNCH_TO_BUNCH
+            and z_initial is not None
+            and z_cutoff > 0
+        ):
+            z_current = float(np.mean(trajectory[i]["z"]))
+            distance_traveled = abs(z_current - z_initial)
+            if distance_traveled > z_cutoff:
+                # Truncate trajectory and return early
+                if adaptive_timestep is not None and adaptive_timestep.debug:
+                    print(
+                        f"Step {i}: BUNCH_TO_BUNCH relative cutoff reached. "
+                        f"Traveled {distance_traveled:.2f} mm > {z_cutoff:.2f} mm cutoff. "
+                        f"Stopping integration early."
+                    )
+                return trajectory[: i + 1], trajectory_drv[: i + 1]
+
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
         if (
             energy_monitor is not None
@@ -613,10 +649,14 @@ def run_integrator(
         mean=config.bunch_mean,
         cav_spacing=config.cavity_spacing,
         z_cutoff=config.z_cutoff,
+        z_cutoff_mode=config.z_cutoff_mode,
+        self_consistency=self_consistency,
         chrono_mode=config.chrono_mode,
         startup_mode=config.startup_mode,
         image_subcharge_count=config.image_subcharge_count,
         use_conducting_image_weighting=config.use_image_weighting,
+        energy_monitor=energy_monitor,
+        adaptive_timestep=adaptive_timestep,
     )
 
 

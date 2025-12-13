@@ -183,6 +183,7 @@ def run_core_integrator(
     mean: float | None,
     cav_spacing: float | None,
     z_cutoff: float | None,
+    z_cutoff_mode: str = "absolute",
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
     self_consistency_enabled: bool = True,
@@ -213,6 +214,7 @@ def run_core_integrator(
     resolved_mean = 0.0 if mean is None else mean
     resolved_cav_spacing = 0.0 if cav_spacing is None else cav_spacing
     resolved_z_cutoff = 0.0 if z_cutoff is None else z_cutoff
+    resolved_z_cutoff_mode = z_cutoff_mode
 
     # Import here to avoid circular dependencies
     from core.integration_runner import (
@@ -268,6 +270,7 @@ def run_core_integrator(
         mean=resolved_mean,
         cav_spacing=resolved_cav_spacing,
         z_cutoff=resolved_z_cutoff,
+        z_cutoff_mode=resolved_z_cutoff_mode,
         self_consistency=self_consistency,
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
@@ -509,6 +512,7 @@ def run_benchmark(
     mean: float | None = 1e5,
     cav_spacing: float | None = 1e5,
     z_cutoff: float | None = 0.0,
+    z_cutoff_mode: str = "absolute",
     save_json: Path | None = None,
     save_fig: Path | None = None,
     show: bool = False,
@@ -581,6 +585,7 @@ def run_benchmark(
         mean=mean,
         cav_spacing=cav_spacing,
         z_cutoff=z_cutoff,
+        z_cutoff_mode=z_cutoff_mode,
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
         self_consistency_enabled=self_consistency_enabled,
