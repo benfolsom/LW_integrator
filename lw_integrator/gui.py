@@ -132,6 +132,53 @@ def _show_warning_dialog(parent: tk.Tk | tk.Toplevel, title: str, message: str) 
     dialog.bind("<Escape>", lambda e: dialog.destroy())
 
 
+class Tooltip:
+    """Hover tooltip for widgets."""
+
+    def __init__(self, widget: tk.Widget, text: str):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window: Optional[tk.Toplevel] = None
+        self.widget.bind("<Enter>", self._show_tooltip)
+        self.widget.bind("<Leave>", self._hide_tooltip)
+
+    def _show_tooltip(self, event: Any = None) -> None:
+        """Display tooltip on hover."""
+        if self.tooltip_window or not self.text:
+            return
+
+        # Position tooltip near widget
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        # Create tooltip window
+        self.tooltip_window = tk.Toplevel(self.widget)
+        self.tooltip_window.wm_overrideredirect(True)  # No window decorations
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
+        # Create tooltip label with wrapped text
+        label = tk.Label(
+            self.tooltip_window,
+            text=self.text,
+            justify="left",
+            background="#ffffe0",
+            foreground="black",
+            relief="solid",
+            borderwidth=1,
+            wraplength=400,
+            padx=8,
+            pady=6,
+            font=("TkDefaultFont", 9),
+        )
+        label.pack()
+
+    def _hide_tooltip(self, event: Any = None) -> None:
+        """Hide tooltip when mouse leaves."""
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+
 @dataclass
 class _FigureHandle:
     name: str
@@ -351,8 +398,14 @@ class IntegratorGUI:
         self.self_consistency_enabled_var = tk.BooleanVar(
             value=self.options.self_consistency_enabled
         )
-        self.self_consistency_tolerance_var = tk.DoubleVar(
-            value=self.options.self_consistency_tolerance
+        self.self_consistency_convergence_mode_var = tk.StringVar(
+            value=self.options.self_consistency_convergence_mode
+        )
+        self.self_consistency_target_ms_tolerance_var = tk.DoubleVar(
+            value=self.options.self_consistency_target_ms_tolerance
+        )
+        self.self_consistency_target_gamma_tolerance_var = tk.DoubleVar(
+            value=self.options.self_consistency_target_gamma_tolerance
         )
         self.self_consistency_max_iterations_var = tk.IntVar(
             value=self.options.self_consistency_max_iterations
@@ -958,39 +1011,148 @@ class IntegratorGUI:
         )
         self.sc_enable_check.grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
 
-        self.sc_tolerance_label = ttk.Label(sc_frame, text="Convergence tolerance:")
-        self.sc_tolerance_label.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.sc_tolerance_entry = ttk.Entry(
-            sc_frame, textvariable=self.self_consistency_tolerance_var, width=16
+        # Convergence mode dropdown
+        mode_frame = ttk.Frame(sc_frame)
+        mode_frame.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_mode_label = ttk.Label(mode_frame, text="Convergence mode:")
+        self.sc_mode_label.pack(side="left")
+        mode_help = ttk.Label(mode_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        mode_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            mode_help,
+            "Convergence criterion mode.\n\n"
+            "• Dual Independent (recommended):\n"
+            "  BOTH mass-shell AND gamma consistency must converge\n"
+            "  Prevents catastrophic failures in high-energy close approaches\n\n"
+            "• Mass-shell Only (legacy):\n"
+            "  Only mass-shell criterion checked\n"
+            "  Not recommended - can produce huge gamma errors\n\n"
+            "Default: Dual Independent",
         )
-        self.sc_tolerance_entry.grid(row=1, column=1, sticky="ew", pady=2)
+        self.sc_mode_combo = ttk.Combobox(
+            sc_frame,
+            textvariable=self.self_consistency_convergence_mode_var,
+            values=["dual_independent", "mass_shell_only"],
+            state="readonly",
+            width=18,
+        )
+        self.sc_mode_combo.grid(row=1, column=1, sticky="ew", pady=2)
 
-        self.sc_max_iterations_label = ttk.Label(sc_frame, text="Max iterations:")
-        self.sc_max_iterations_label.grid(
-            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
+        # Target mass-shell tolerance
+        target_ms_frame = ttk.Frame(sc_frame)
+        target_ms_frame.grid(row=2, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_target_ms_tolerance_label = ttk.Label(
+            target_ms_frame, text="Target MS tolerance:"
+        )
+        self.sc_target_ms_tolerance_label.pack(side="left")
+        target_ms_help = ttk.Label(
+            target_ms_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        target_ms_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            target_ms_help,
+            "TARGET mass-shell convergence criterion.\n\n"
+            "Loop continues until:\n"
+            "  |Pt² - P² - (mc)²|/(mc)² < target_ms_tolerance\n\n"
+            "This ensures energy-momentum relation is satisfied.\n\n"
+            "Default: 1e-6 (0.0001% relative error)\n"
+            "Aggressive: 1e-8 for ultra-relativistic (γ > 1000)\n"
+            "Minimum: 1e-10 (stricter = more iterations)",
+        )
+        self.sc_target_ms_tolerance_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.self_consistency_target_ms_tolerance_var,
+            width=16,
+        )
+        self.sc_target_ms_tolerance_entry.grid(row=2, column=1, sticky="ew", pady=2)
+
+        # Target gamma tolerance
+        target_gamma_frame = ttk.Frame(sc_frame)
+        target_gamma_frame.grid(row=3, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_target_gamma_tolerance_label = ttk.Label(
+            target_gamma_frame, text="Target gamma tolerance:"
+        )
+        self.sc_target_gamma_tolerance_label.pack(side="left")
+        target_gamma_help = ttk.Label(
+            target_gamma_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        target_gamma_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            target_gamma_help,
+            "TARGET gamma consistency convergence criterion.\n\n"
+            "Loop continues until:\n"
+            "  |γ_velocity - γ_energy| / γ < target_gamma_tolerance\n\n"
+            "This ensures position-velocity-potential consistency.\n"
+            "Critical for high-energy close approaches.\n\n"
+            "Default: 1e-6 (0.0001% relative error)\n"
+            "Aggressive: 1e-8 for ultra-relativistic (γ > 1000)\n"
+            "Minimum: 1e-10 (stricter = more iterations)",
+        )
+        self.sc_target_gamma_tolerance_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.self_consistency_target_gamma_tolerance_var,
+            width=16,
+        )
+        self.sc_target_gamma_tolerance_entry.grid(row=3, column=1, sticky="ew", pady=2)
+
+        # Max iterations with help icon
+        iter_frame = ttk.Frame(sc_frame)
+        iter_frame.grid(row=4, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_max_iterations_label = ttk.Label(iter_frame, text="Max iterations:")
+        self.sc_max_iterations_label.pack(side="left")
+        iter_help = ttk.Label(iter_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        iter_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            iter_help,
+            "Maximum self-consistency iterations per particle per step.\n\n"
+            "Loop continues until:\n"
+            "  • BOTH criteria satisfied (dual mode), OR\n"
+            "  • Max iterations reached (applies projection as fallback)\n\n"
+            "More iterations = better accuracy but slower.\n"
+            "Typical convergence: 2-4 iterations\n\n"
+            "Default: 10 (increased for dual criteria)\n"
+            "Aggressive: 15 for ultra-relativistic particles\n"
+            "Increase if seeing 'max iterations reached' warnings",
         )
         self.sc_max_iterations_entry = ttk.Entry(
             sc_frame, textvariable=self.self_consistency_max_iterations_var, width=16
         )
-        self.sc_max_iterations_entry.grid(row=2, column=1, sticky="ew", pady=2)
+        self.sc_max_iterations_entry.grid(row=4, column=1, sticky="ew", pady=2)
 
+        # Mass-shell tolerance (safety net) with help icon
+        ms_frame = ttk.Frame(sc_frame)
+        ms_frame.grid(row=5, column=0, sticky="w", pady=2, padx=(20, 0))
         self.sc_mass_shell_tolerance_label = ttk.Label(
-            sc_frame, text="Mass-shell tolerance:"
+            ms_frame, text="Mass-shell tolerance:"
         )
-        self.sc_mass_shell_tolerance_label.grid(
-            row=3, column=0, sticky="w", pady=2, padx=(20, 0)
+        self.sc_mass_shell_tolerance_label.pack(side="left")
+        ms_help = ttk.Label(ms_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        ms_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            ms_help,
+            "SAFETY NET threshold enforced after iteration loop.\n\n"
+            "PHYSICS: Pt² - P² = (mc)² must hold exactly.\n"
+            "Numerical errors can violate this slightly.\n\n"
+            "When |Pt² - P² - (mc)²|/(mc)² > tolerance:\n"
+            "  → Pt is clamped to √(P² + (mc)²) as fallback\n\n"
+            "This acts as a final safety net AFTER the loop.\n"
+            "Should be LOOSER (larger) than target_tolerance.\n\n"
+            "Default: 0.01 (1% relative error)\n"
+            "Stricter: 0.001 for ultra-relativistic (γ > 1000)\n"
+            "Disable: 1e10 (not recommended)\n\n"
+            "Typical errors after convergence: 1e-12 to 1e-8 (rarely triggers)",
         )
         self.sc_mass_shell_tolerance_entry = ttk.Entry(
             sc_frame,
             textvariable=self.self_consistency_mass_shell_tolerance_var,
             width=16,
         )
-        self.sc_mass_shell_tolerance_entry.grid(row=3, column=1, sticky="ew", pady=2)
+        self.sc_mass_shell_tolerance_entry.grid(row=5, column=1, sticky="ew", pady=2)
 
         self.sc_verbosity_label = ttk.Label(sc_frame, text="Verbosity:")
-        self.sc_verbosity_label.grid(row=4, column=0, sticky="w", pady=2)
+        self.sc_verbosity_label.grid(row=6, column=0, sticky="w", pady=2)
         verbosity_frame = ttk.Frame(sc_frame)
-        verbosity_frame.grid(row=4, column=1, sticky="w", pady=2)
+        verbosity_frame.grid(row=6, column=1, sticky="w", pady=2)
         self.sc_verbosity_entry = ttk.Spinbox(
             verbosity_frame,
             from_=0,
@@ -1022,44 +1184,102 @@ class IntegratorGUI:
             row=0, column=0, columnspan=2, sticky="w", pady=2
         )
 
+        # Energy jump threshold with help icon
+        ejt_frame = ttk.Frame(at_frame)
+        ejt_frame.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_threshold_label = ttk.Label(
-            at_frame, text="Energy jump threshold:"
+            ejt_frame, text="Energy jump threshold:"
         )
-        self.adaptive_threshold_label.grid(
-            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+        self.adaptive_threshold_label.pack(side="left")
+        ejt_help = ttk.Label(ejt_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        ejt_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            ejt_help,
+            "Fractional energy change triggering timestep reduction.\n\n"
+            "When |ΔE/E| > threshold:\n"
+            "  1. Reject step\n"
+            "  2. Reduce timestep by reduction factor\n"
+            "  3. Retry step with smaller timestep\n"
+            "  4. Repeat until energy change < threshold\n\n"
+            "Default: 0.10 (10% energy change)\n"
+            "Stricter: 0.05 for smooth energy evolution\n"
+            "Looser: 0.20 for exploratory runs\n\n"
+            "Lower = more refinements = slower but smoother",
         )
         self.adaptive_threshold_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_threshold_var, width=16
         )
         self.adaptive_threshold_entry.grid(row=1, column=1, sticky="ew", pady=2)
 
+        # Timestep reduction factor with help icon
+        red_frame = ttk.Frame(at_frame)
+        red_frame.grid(row=2, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_reduction_label = ttk.Label(
-            at_frame, text="Timestep reduction factor:"
+            red_frame, text="Timestep reduction factor:"
         )
-        self.adaptive_reduction_label.grid(
-            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
+        self.adaptive_reduction_label.pack(side="left")
+        red_help = ttk.Label(red_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        red_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            red_help,
+            "Timestep reduction on energy jump detection.\n\n"
+            "new_timestep = current_timestep / reduction_factor\n\n"
+            "Default: 10 (reduce by 10x)\n"
+            "Aggressive: 100 for severe jumps/narrow apertures\n"
+            "Conservative: 5 for gentle refinement\n\n"
+            "Higher = more aggressive reduction = finer resolution\n"
+            "Example: h=1e-5, factor=10 → h_new=1e-6",
         )
         self.adaptive_reduction_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_reduction_factor_var, width=16
         )
         self.adaptive_reduction_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
+        # Max refinement attempts with help icon
+        att_frame = ttk.Frame(at_frame)
+        att_frame.grid(row=3, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_max_attempts_label = ttk.Label(
-            at_frame, text="Max refinement attempts:"
+            att_frame, text="Max refinement attempts:"
         )
-        self.adaptive_max_attempts_label.grid(
-            row=3, column=0, sticky="w", pady=2, padx=(20, 0)
+        self.adaptive_max_attempts_label.pack(side="left")
+        att_help = ttk.Label(att_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        att_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            att_help,
+            "Maximum timestep reductions per step.\n\n"
+            "Each attempt: h_new = h / reduction_factor\n"
+            "If energy jump persists after max attempts → fail\n\n"
+            "Default: 5 attempts\n"
+            "Patient: 10 for difficult regions (walls/apertures)\n"
+            "Quick fail: 3 to detect pathological setups\n\n"
+            "Example: factor=10, attempts=5\n"
+            "  → can reduce h by up to 10^5 = 100,000×",
         )
         self.adaptive_max_attempts_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_max_attempts_var, width=16
         )
         self.adaptive_max_attempts_entry.grid(row=3, column=1, sticky="ew", pady=2)
 
+        # Min timestep factor with help icon
+        min_frame = ttk.Frame(at_frame)
+        min_frame.grid(row=4, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_min_factor_label = ttk.Label(
-            at_frame, text="Min timestep factor:"
+            min_frame, text="Min timestep factor:"
         )
-        self.adaptive_min_factor_label.grid(
-            row=4, column=0, sticky="w", pady=2, padx=(20, 0)
+        self.adaptive_min_factor_label.pack(side="left")
+        min_help = ttk.Label(min_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        min_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            min_help,
+            "Minimum timestep as fraction of original.\n\n"
+            "h_min = h_initial × min_factor\n"
+            "Prevents infinitesimal timesteps (runaway refinement).\n\n"
+            "If h_min reached and energy jump persists → fail step.\n\n"
+            "Default: 1e-4 (0.01% of original)\n"
+            "Allow extreme: 1e-6 for ultra-narrow apertures\n"
+            "Fail faster: 1e-3 to detect bad setups early\n\n"
+            "Example: h_initial=1e-5, factor=1e-4\n"
+            "  → h_min = 1e-9 (minimum allowed)",
         )
         self.adaptive_min_factor_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_min_factor_var, width=16
@@ -1067,24 +1287,70 @@ class IntegratorGUI:
         self.adaptive_min_factor_entry.grid(row=4, column=1, sticky="ew", pady=2)
 
         # Hysteresis parameters
-        self.adaptive_cooldown_label = ttk.Label(at_frame, text="Cooldown steps:")
-        self.adaptive_cooldown_label.grid(row=5, column=0, sticky="w", pady=2)
+        cd_frame = ttk.Frame(at_frame)
+        cd_frame.grid(row=5, column=0, sticky="w", pady=2)
+        self.adaptive_cooldown_label = ttk.Label(cd_frame, text="Cooldown steps:")
+        self.adaptive_cooldown_label.pack(side="left")
+        cd_help = ttk.Label(cd_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        cd_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            cd_help,
+            "Steps to remain on reduced timestep after refinement.\n\n"
+            "HYSTERESIS: Prevents oscillation\n"
+            "  refine → restore → refine → restore (bad!)\n\n"
+            "After refinement:\n"
+            "  1. Stay on small h for cooldown steps\n"
+            "  2. Then probe if safe to restore\n\n"
+            "Default: 10 steps\n"
+            "Cautious: 20 for unstable/boundary regions\n"
+            "Aggressive: 5 to restore quickly",
+        )
         self.adaptive_cooldown_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_cooldown_steps_var, width=16
         )
         self.adaptive_cooldown_entry.grid(row=5, column=1, sticky="ew", pady=2)
 
+        pt_frame = ttk.Frame(at_frame)
+        pt_frame.grid(row=6, column=0, sticky="w", pady=2)
         self.adaptive_probe_threshold_label = ttk.Label(
-            at_frame, text="Probe threshold:"
+            pt_frame, text="Probe threshold:"
         )
-        self.adaptive_probe_threshold_label.grid(row=6, column=0, sticky="w", pady=2)
+        self.adaptive_probe_threshold_label.pack(side="left")
+        pt_help = ttk.Label(pt_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        pt_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            pt_help,
+            "Energy threshold for testing timestep restoration.\n\n"
+            "After cooldown, probe if safe to increase h:\n"
+            "  If |ΔE/E| < probe_threshold for N consecutive steps\n"
+            "  → begin restoring h toward original\n\n"
+            "CRITICAL: Must be < energy jump threshold!\n"
+            "  Otherwise: restore → jump → refine → restore (oscillation)\n\n"
+            "Default: 0.01 (1% change, 10× below jump threshold)\n"
+            "Cautious: 0.001 for slower restoration\n"
+            "Faster: 0.05 (ensure jump threshold ≥ 0.10)",
+        )
         self.adaptive_probe_threshold_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_probe_threshold_var, width=16
         )
         self.adaptive_probe_threshold_entry.grid(row=6, column=1, sticky="ew", pady=2)
 
-        self.adaptive_max_probe_label = ttk.Label(at_frame, text="Max probe steps:")
-        self.adaptive_max_probe_label.grid(row=7, column=0, sticky="w", pady=2)
+        mp_frame = ttk.Frame(at_frame)
+        mp_frame.grid(row=7, column=0, sticky="w", pady=2)
+        self.adaptive_max_probe_label = ttk.Label(mp_frame, text="Max probe steps:")
+        self.adaptive_max_probe_label.pack(side="left")
+        mp_help = ttk.Label(mp_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        mp_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            mp_help,
+            "Consecutive 'good' steps needed to restore timestep.\n\n"
+            "After cooldown, requires N consecutive steps with\n"
+            "|ΔE/E| < probe_threshold before increasing h.\n\n"
+            "Prevents premature restoration from one lucky step.\n\n"
+            "Default: 3 steps\n"
+            "Very cautious: 5-10 (verify stability thoroughly)\n"
+            "Quick restore: 1-2 (risky if region is unstable)",
+        )
         self.adaptive_max_probe_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_max_probe_steps_var, width=16
         )
@@ -1112,15 +1378,18 @@ class IntegratorGUI:
         # Help text
         help_text = ttk.Label(
             stability_frame,
-            text="These settings help prevent energy jumps and numerical instabilities.\n"
-            "Self-consistency is recommended for all simulations and is enabled by default.\n"
-            "Adaptive timestep automatically reduces timestep when energy jumps are detected (enabled by default).\n"
-            "When adaptive timestep is disabled, all configuration options are grayed out.",
-            wraplength=450,
-            justify="left",
+            text="💡 These settings prevent energy jumps and numerical instabilities.\n\n"
+            "Self-Consistency: Dual convergence on BOTH mass-shell AND gamma (recommended: ON).\n"
+            "  • Dual Independent: Both criteria must satisfy (prevents catastrophic failures)\n"
+            "  • Target tolerances: Goals for iteration loop (stricter)\n"
+            "  • Mass-shell tolerance: Safety net after loop (looser)\n"
+            "Adaptive Timestep: Automatically reduces timestep on energy jumps (recommended: ON).\n\n"
+            "Click ⓘ icons for detailed parameter explanations.\n"
+            "Defaults work well for most cases — adjust only if needed.",
             foreground="gray",
+            justify="left",
         )
-        help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         # Initialize control states
         self._toggle_self_consistency_controls()
@@ -1938,7 +2207,15 @@ class IntegratorGUI:
         self.image_subcharge_var.set(options.image_subcharge_count)
         self.image_weighting_var.set(options.use_image_weighting)
         self.self_consistency_enabled_var.set(options.self_consistency_enabled)
-        self.self_consistency_tolerance_var.set(options.self_consistency_tolerance)
+        self.self_consistency_convergence_mode_var.set(
+            options.self_consistency_convergence_mode
+        )
+        self.self_consistency_target_ms_tolerance_var.set(
+            options.self_consistency_target_ms_tolerance
+        )
+        self.self_consistency_target_gamma_tolerance_var.set(
+            options.self_consistency_target_gamma_tolerance
+        )
         self.self_consistency_max_iterations_var.set(
             options.self_consistency_max_iterations
         )
@@ -2052,7 +2329,15 @@ class IntegratorGUI:
             image_subcharge_count=int(self.image_subcharge_var.get()),
             use_image_weighting=bool(self.image_weighting_var.get()),
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
-            self_consistency_tolerance=float(self.self_consistency_tolerance_var.get()),
+            self_consistency_convergence_mode=str(
+                self.self_consistency_convergence_mode_var.get()
+            ),
+            self_consistency_target_ms_tolerance=float(
+                self.self_consistency_target_ms_tolerance_var.get()
+            ),
+            self_consistency_target_gamma_tolerance=float(
+                self.self_consistency_target_gamma_tolerance_var.get()
+            ),
             self_consistency_max_iterations=int(
                 self.self_consistency_max_iterations_var.get()
             ),
@@ -2556,13 +2841,14 @@ class IntegratorGUI:
 
         # Gray out all sub-controls when disabled
         controls_to_toggle = [
-            self.sc_tolerance_label,
-            self.sc_tolerance_entry,
-            self.sc_max_iterations_label,
+            self.sc_mode_label,
+            self.sc_mode_combo,
+            self.sc_target_ms_tolerance_label,
+            self.sc_target_ms_tolerance_entry,
+            self.sc_target_gamma_tolerance_label,
+            self.sc_target_gamma_tolerance_entry,
             self.sc_max_iterations_entry,
-            self.sc_mass_shell_tolerance_label,
             self.sc_mass_shell_tolerance_entry,
-            self.sc_verbosity_label,
             self.sc_verbosity_entry,
         ]
 

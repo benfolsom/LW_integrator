@@ -238,10 +238,15 @@ class SimulationOptions:
 
     # Self-consistency options
     self_consistency_enabled: bool = True
-    self_consistency_tolerance: float = 1e-4
-    self_consistency_max_iterations: int = 5
+    self_consistency_tolerance: float = (
+        1e-4  # Legacy parameter for backward compatibility
+    )
+    self_consistency_convergence_mode: str = "dual_independent"  # or "mass_shell_only"
+    self_consistency_target_ms_tolerance: float = 1e-6  # Mass-shell loop criterion
+    self_consistency_target_gamma_tolerance: float = 1e-6  # Gamma loop criterion
+    self_consistency_max_iterations: int = 10  # Increased for dual criteria
     self_consistency_mass_shell_tolerance: float = (
-        1e-2  # Relative error threshold for mass-shell projection
+        1e-2  # Safety net threshold enforced after loop
     )
     self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
 
@@ -298,6 +303,9 @@ class SimulationOptions:
             "use_image_weighting": self.use_image_weighting,
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
+            "self_consistency_convergence_mode": self.self_consistency_convergence_mode,
+            "self_consistency_target_ms_tolerance": self.self_consistency_target_ms_tolerance,
+            "self_consistency_target_gamma_tolerance": self.self_consistency_target_gamma_tolerance,
             "self_consistency_max_iterations": self.self_consistency_max_iterations,
             "self_consistency_mass_shell_tolerance": self.self_consistency_mass_shell_tolerance,
             "self_consistency_verbosity": self.self_consistency_verbosity,
@@ -406,7 +414,16 @@ class SimulationOptions:
             use_image_weighting=_bool("use_image_weighting", True),
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
-            self_consistency_max_iterations=_int("self_consistency_max_iterations", 5),
+            self_consistency_convergence_mode=str(
+                payload.get("self_consistency_convergence_mode", "dual_independent")
+            ),
+            self_consistency_target_ms_tolerance=_float(
+                "self_consistency_target_ms_tolerance", 1e-6
+            ),
+            self_consistency_target_gamma_tolerance=_float(
+                "self_consistency_target_gamma_tolerance", 1e-6
+            ),
+            self_consistency_max_iterations=_int("self_consistency_max_iterations", 10),
             self_consistency_mass_shell_tolerance=_float(
                 "self_consistency_mass_shell_tolerance", 1e-2
             ),
@@ -846,7 +863,9 @@ def run_testbed(
     _log(f"  Image subcharges: {options.image_subcharge_count}")
     _log(f"  Image weighting: {options.use_image_weighting}")
     _log(
-        f"  Self-consistency: {options.self_consistency_enabled} (tol={options.self_consistency_tolerance:.1e}, max_iter={options.self_consistency_max_iterations}, mass_shell_tol={options.self_consistency_mass_shell_tolerance:.1e})"
+        f"  Self-consistency: {options.self_consistency_enabled} (mode={options.self_consistency_convergence_mode}, "
+        f"ms_tol={options.self_consistency_target_ms_tolerance:.1e}, gamma_tol={options.self_consistency_target_gamma_tolerance:.1e}, "
+        f"max_iter={options.self_consistency_max_iterations}, safety_net={options.self_consistency_mass_shell_tolerance:.1e})"
     )
     _log(
         f"  Energy monitoring: {options.energy_monitor_enabled} (threshold={options.energy_monitor_threshold * 100:.0f}%, halt={options.energy_monitor_halt_on_jump})"
@@ -887,7 +906,10 @@ def run_testbed(
             image_subcharge_count=int(options.image_subcharge_count),
             use_image_weighting=bool(options.use_image_weighting),
             self_consistency_enabled=options.self_consistency_enabled,
-            self_consistency_tolerance=options.self_consistency_tolerance,
+            self_consistency_tolerance=options.self_consistency_target_ms_tolerance,  # Map to tolerance for backward compat
+            self_consistency_convergence_mode=options.self_consistency_convergence_mode,
+            self_consistency_target_ms_tolerance=options.self_consistency_target_ms_tolerance,
+            self_consistency_target_gamma_tolerance=options.self_consistency_target_gamma_tolerance,
             self_consistency_max_iterations=options.self_consistency_max_iterations,
             self_consistency_mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
             self_consistency_verbosity=options.self_consistency_verbosity,

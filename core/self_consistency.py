@@ -46,67 +46,104 @@ class SelfConsistencyConfig:
     numerical instabilities in relativistic simulations.
 
     The iterations occur WITHIN the force calculation loop for each particle,
-    solving the circular dependency between gamma and the forces that depend
-    on gamma. This is the correct implementation matching the original
-    Gaussian self-consistent integrator.
+    ensuring both the relativistic mass-shell constraint and gamma consistency
+    are satisfied.
+
+    CONVERGENCE STRATEGY:
+    Dual independent criteria (both must be satisfied):
+    1. Mass-shell error: |Pt² - P² - (mc)²|/(mc)² < target_ms_tolerance
+    2. Gamma consistency: |γ_velocity - γ_energy| / γ < target_gamma_tolerance
+
+    This prevents catastrophic failures observed in high-energy close-approach
+    scenarios where mass-shell converges but gamma diverges by orders of magnitude.
 
     Attributes
     ----------
     enabled : bool
         Whether to perform self-consistency iterations. Default is True.
-    tolerance : float
-        Relative convergence tolerance for gamma. Iterations stop when
-        |Δγ/γ| < tolerance for each particle. Default is 1e-6.
-    max_iterations : int
-        Maximum number of refinement iterations per particle per step. Default is 5.
+    convergence_mode : str
+        Convergence criterion mode. Options:
+        - "dual_independent": Both mass-shell AND gamma must satisfy their tolerances (default, recommended)
+        - "mass_shell_only": Only mass-shell criterion (legacy, not recommended)
+        Default is "dual_independent".
+    target_ms_tolerance : float
+        TARGET mass-shell convergence criterion used inside the iteration loop.
+        Iterations continue until |Pt² - P² - (mc)²|/(mc)² < target_ms_tolerance.
+        Default is 1e-6 (0.0001%).
+    target_gamma_tolerance : float
+        TARGET gamma consistency criterion used inside the iteration loop.
+        Iterations continue until |γ_velocity - γ_energy| / γ < target_gamma_tolerance.
+        Default is 1e-6 (0.0001%).
     mass_shell_tolerance : float
-        Relative error threshold for mass-shell projection. If the relative
-        mass-shell error |Pt² - P² - (mc)²|/(mc)² exceeds this tolerance,
-        Pt will be clamped to √(P² + (mc)²) to enforce the constraint.
-        Default is 1e-2 (1%). Set to a very large value (e.g., 1e10) to
-        effectively disable mass-shell projection.
+        SAFETY NET threshold enforced after the loop. If the final mass-shell error
+        exceeds this value, Pt is clamped to √(P² + (mc)²) as a fallback.
+        Should be larger (looser) than target_ms_tolerance.
+        Default is 1e-2 (1%).
+    max_iterations : int
+        Maximum number of refinement iterations per particle per step. Default is 10.
+        Increased from 5 to accommodate dual-criterion convergence.
     verbosity : int
         Verbosity level for convergence information. Default is 0.
         0 = silent (no output)
         1 = basic (one line per particle showing convergence status)
-        2 = detailed (full convergence details including all gamma values)
+        2 = detailed (full convergence details including all gamma values and checks)
 
     Examples
     --------
     Standard configuration (default)::
 
         config = SelfConsistencyConfig()
-        # enabled=True, tolerance=1e-6, max_iterations=5, mass_shell_tolerance=1e-2
+        # enabled=True, convergence_mode="dual_independent"
+        # target_ms_tolerance=1e-6, target_gamma_tolerance=1e-6, max_iterations=10
 
     Disable for testing/comparison::
 
         config = SelfConsistencyConfig(enabled=False)
 
-    Aggressive convergence for stability::
+    Aggressive convergence for ultra-relativistic particles::
 
         config = SelfConsistencyConfig(
-            tolerance=1e-8,
-            max_iterations=10,
+            convergence_mode="dual_independent",
+            target_ms_tolerance=1e-8,
+            target_gamma_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
+            max_iterations=15,
             verbosity=2
+        )
+
+    Legacy mode (mass-shell only, not recommended)::
+
+        config = SelfConsistencyConfig(
+            convergence_mode="mass_shell_only",
+            target_ms_tolerance=1e-6,
+            max_iterations=5
         )
     """
 
     enabled: bool = True
-    tolerance: float = 1e-6
-    max_iterations: int = 5
-    mass_shell_tolerance: float = 1e-2
+    convergence_mode: str = (
+        "dual_independent"  # "dual_independent" or "mass_shell_only"
+    )
+    target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
+    target_gamma_tolerance: float = 1e-6  # Gamma loop convergence criterion
+    mass_shell_tolerance: float = 1e-2  # Safety net after loop
+    max_iterations: int = 10  # Increased for dual criteria
     verbosity: int = 0
 
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":
         """Return standard configuration for typical relativistic simulations.
 
-        This is the default configuration: enabled with moderate convergence
-        criteria suitable for most high-energy particle tracking applications.
+        This is the default configuration: enabled with dual independent convergence
+        suitable for most high-energy particle tracking applications.
         """
         return cls(
-            enabled=True, tolerance=1e-6, max_iterations=5, mass_shell_tolerance=1e-2
+            enabled=True,
+            convergence_mode="dual_independent",
+            target_ms_tolerance=1e-6,
+            target_gamma_tolerance=1e-6,
+            mass_shell_tolerance=1e-2,
+            max_iterations=10,
         )
 
     @classmethod
@@ -122,15 +159,17 @@ class SelfConsistencyConfig:
     def aggressive(cls) -> "SelfConsistencyConfig":
         """Return aggressive configuration for maximum numerical stability.
 
-        Uses tight convergence tolerance and more iterations to prevent
+        Uses tight convergence tolerances and more iterations to prevent
         energy jumps in challenging scenarios (ultra-relativistic particles,
         narrow apertures, or close approaches to conducting boundaries).
         """
         return cls(
             enabled=True,
-            tolerance=1e-8,
-            max_iterations=10,
+            convergence_mode="dual_independent",
+            target_ms_tolerance=1e-8,
+            target_gamma_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
+            max_iterations=15,
             verbosity=0,
         )
 

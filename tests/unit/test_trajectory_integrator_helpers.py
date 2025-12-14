@@ -402,7 +402,7 @@ def test_run_integrator_matches_direct_invocation_for_simple_case():
         cav_spacing=config.cavity_spacing,
         z_cutoff=config.z_cutoff,
         self_consistency=SelfConsistencyConfig(
-            enabled=True, tolerance=1e-9, max_iterations=2
+            enabled=True, target_tolerance=1e-9, max_iterations=2
         ),
     )
 

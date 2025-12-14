@@ -116,25 +116,46 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
 
 def _extract_self_consistency_params(
     self_consistency: Optional[SelfConsistencyConfig],
-) -> tuple[bool, float, int, float, int]:
+) -> tuple[bool, str, float, float, float, int, int]:
     """Extract self-consistency configuration parameters.
 
     Returns
     -------
-    tuple[bool, float, int, float, int]
-        A tuple containing (enabled, tolerance, max_iterations, mass_shell_tolerance, verbosity).
+    tuple[bool, str, float, float, float, int, int]
+        A tuple containing (enabled, convergence_mode, target_ms_tolerance,
+        target_gamma_tolerance, mass_shell_tolerance, max_iterations, verbosity).
     """
     is_enabled = self_consistency is not None and self_consistency.enabled
-    tolerance = self_consistency.tolerance if self_consistency is not None else 1e-6
-    max_iterations = (
-        self_consistency.max_iterations if self_consistency is not None else 1
+    convergence_mode = (
+        self_consistency.convergence_mode
+        if self_consistency is not None
+        else "dual_independent"
+    )
+    target_ms_tolerance = (
+        self_consistency.target_ms_tolerance if self_consistency is not None else 1e-6
+    )
+    target_gamma_tolerance = (
+        self_consistency.target_gamma_tolerance
+        if self_consistency is not None
+        else 1e-6
     )
     mass_shell_tolerance = (
         self_consistency.mass_shell_tolerance if self_consistency is not None else 1e-2
     )
+    max_iterations = (
+        self_consistency.max_iterations if self_consistency is not None else 10
+    )
     verbosity = self_consistency.verbosity if self_consistency is not None else 0
 
-    return is_enabled, tolerance, max_iterations, mass_shell_tolerance, verbosity
+    return (
+        is_enabled,
+        convergence_mode,
+        target_ms_tolerance,
+        target_gamma_tolerance,
+        mass_shell_tolerance,
+        max_iterations,
+        verbosity,
+    )
 
 
 def _initialize_result_state(current_state: ParticleState) -> ParticleState:
@@ -520,23 +541,56 @@ def _update_beta_running_average(
     return (avg_x, avg_y, avg_z), new_sample_count
 
 
-def _check_self_consistency_convergence(
-    gamma_new: float,
-    gamma_previous: float,
+def _check_mass_shell_convergence(
+    Pt: float,
+    Px: float,
+    Py: float,
+    Pz: float,
+    particle_mass: float,
+    C_MMNS: float,
     tolerance: float,
-) -> tuple[bool, float, float]:
-    """Check if gamma has converged between self-consistency iterations.
+) -> tuple[bool, float]:
+    """Check if mass-shell constraint is satisfied (PRIMARY convergence criterion).
+
+    Mass-shell constraint: Pt² - P² = (mc)²
 
     Returns
     -------
-    tuple[bool, float, float]
-        (has_converged, absolute_change, relative_change)
+    tuple[bool, float]
+        (has_converged, relative_mass_shell_error)
     """
-    gamma_absolute_change = abs(gamma_new - gamma_previous)
-    gamma_relative_change = gamma_absolute_change / max(abs(gamma_previous), 1e-12)
-    has_converged = gamma_relative_change < tolerance
+    P_spatial_sq = Px**2 + Py**2 + Pz**2
+    mass_shell_rhs = (particle_mass * C_MMNS) ** 2
+    mass_shell_lhs = Pt**2 - P_spatial_sq
 
-    return has_converged, gamma_absolute_change, gamma_relative_change
+    mass_shell_error_abs = abs(mass_shell_lhs - mass_shell_rhs)
+    mass_shell_error_rel = mass_shell_error_abs / max(mass_shell_rhs, 1e-40)
+
+    has_converged = mass_shell_error_rel < tolerance
+
+    return has_converged, mass_shell_error_rel
+
+
+def _check_gamma_consistency(
+    gamma_velocity: float,
+    gamma_energy: float,
+    tolerance: float,
+) -> tuple[bool, float]:
+    """Check gamma consistency (DIAGNOSTIC check after convergence).
+
+    This verifies that gamma from velocity matches gamma from energy.
+    If mass-shell is satisfied, these should match to machine precision.
+
+    Returns
+    -------
+    tuple[bool, float]
+        (is_consistent, relative_gamma_error)
+    """
+    gamma_abs_change = abs(gamma_velocity - gamma_energy)
+    gamma_rel_change = gamma_abs_change / max(abs(gamma_velocity), 1e-12)
+    is_consistent = gamma_rel_change < tolerance
+
+    return is_consistent, gamma_rel_change
 
 
 def _print_convergence_info(
@@ -545,16 +599,16 @@ def _print_convergence_info(
     gamma_from_velocity: float,
     gamma_from_energy: float,
     gamma_mass_shell: float,
-    gamma_abs_change: float,
-    gamma_rel_change: float,
+    mass_shell_error: float,
+    gamma_consistency_error: float,
     converged: bool,
     max_iterations: int,
     verbosity: int = 1,
 ) -> None:
-    """Print debug information about self-consistency convergence.
+    """Print debug information about self-consistency dual convergence.
 
-    Compares gamma computed from velocity (kinematics) vs gamma computed
-    from energy (conjugate momentum). Self-consistency requires these to match.
+    Shows both mass-shell and gamma consistency criteria for dual independent
+    convergence mode.
 
     Parameters
     ----------
@@ -564,6 +618,10 @@ def _print_convergence_info(
         Gamma computed from kinetic energy: γ = (Pt - q·Φ)/(mc)
     gamma_mass_shell : float
         Gamma computed from mass-shell constraint: γ = √(P²+(mc)²)/(mc)
+    mass_shell_error : float
+        Relative mass-shell error: |Pt² - P² - (mc)²|/(mc)²
+    gamma_consistency_error : float
+        Relative gamma consistency error: |γ_velocity - γ_energy| / γ
     verbosity : int
         0 = silent (no output)
         1 = basic (one line per particle)
@@ -579,20 +637,20 @@ def _print_convergence_info(
         status = f"max iter ({max_iterations}) reached"
 
     if verbosity == 1:
-        # Truncated: one line per particle
+        # Truncated: one line per particle showing both criteria
         print(
-            f"    P{particle_idx}: {status}, Δγ/γ={gamma_rel_change:.6e}, "
-            f"γ_energy(Pt - q·Φ)={gamma_from_energy:.6e}"
+            f"    P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+            f"E_gamma={gamma_consistency_error:.3e}"
         )
     else:  # verbosity >= 2
         # Detailed: multi-line output with full precision
         print(f"    Particle {particle_idx}: {status}")
-        print(f"      Δγ/γ = {gamma_rel_change:.15e}")
-        print("      Comparing γ_velocity (from β) to γ_energy (from Pt - q·Φ)")
+        print(f"      Mass-shell error = {mass_shell_error:.15e}")
+        print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
+        print("      Dual convergence: BOTH criteria must be satisfied")
         print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
         print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
         print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
-        print(f"      Δγ_abs applied this iter   = {gamma_abs_change:.15e}")
 
 
 def retarded_equations_of_motion(
@@ -653,9 +711,11 @@ def retarded_equations_of_motion(
     # Extract self-consistency configuration
     (
         sc_enabled,
-        sc_tolerance,
-        sc_max_iterations,
+        sc_convergence_mode,
+        sc_target_ms_tolerance,
+        sc_target_gamma_tolerance,
         sc_mass_shell_tolerance,
+        sc_max_iterations,
         sc_verbosity,
     ) = _extract_self_consistency_params(self_consistency)
 
@@ -820,42 +880,10 @@ def retarded_equations_of_motion(
             result["Pt"][particle_idx] = accumulated_momentum_t
 
             # ================================================================
-            # STEP 4a: Project momentum onto mass-shell constraint
+            # STEP 4a: Compute gamma from energy (no projection during iteration)
             # ================================================================
-            # Enforce the relativistic mass-shell constraint: Pt² - P² = (mc)²
-            # This prevents numerical errors from violating fundamental physics,
-            # especially when forces are large (e.g., k-factor → 0 near walls)
-            # Use float64 precision for all mass-shell calculations
-            Px_64 = np.float64(result["Px"][particle_idx])
-            Py_64 = np.float64(result["Py"][particle_idx])
-            Pz_64 = np.float64(result["Pz"][particle_idx])
-            Pt_64 = np.float64(result["Pt"][particle_idx])
-
-            P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
-            mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
-
-            # Compute what Pt should be to satisfy the constraint
-            Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
-
-            # Check if correction is needed (tolerance of 1e-6 relative error)
-            Pt_current = Pt_64
-            mass_shell_error = (
-                np.abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
-            )
-
-            # Store Pt BEFORE mass-shell projection for debug comparison
-            Pt_before_projection = result["Pt"][particle_idx]
-
-            if mass_shell_error > sc_mass_shell_tolerance:
-                # Project Pt onto the mass-shell
-                result["Pt"][particle_idx] = float(Pt_from_mass_shell)
-
-                if sc_verbosity >= 2 and sc_enabled:
-                    print(
-                        f"      Mass-shell projection: Pt {Pt_current:.6e} → "
-                        f"{Pt_from_mass_shell:.6e} (error was {mass_shell_error:.2e})"
-                    )
-
+            # Mass-shell projection moved to AFTER convergence loop
+            # Let iterations naturally drive toward mass-shell satisfaction
             # Gamma from relativistic energy with scalar potential correction:
             # γ = (Pt - q·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
             # This gives the correct kinetic energy, accounting for electromagnetic potential
@@ -869,7 +897,16 @@ def retarded_equations_of_motion(
             gamma_from_energy = kinetic_energy / np.float64(particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy
 
-            # Calculate gamma from mass-shell constraint for logging
+            # Calculate gamma from mass-shell constraint for logging (if needed)
+            # Compute Pt from mass-shell: Pt = √(P² + (mc)²)
+            Px_64 = np.float64(result["Px"][particle_idx])
+            Py_64 = np.float64(result["Py"][particle_idx])
+            Pz_64 = np.float64(result["Pz"][particle_idx])
+            P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
+            mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
+            Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
+            Pt_before_projection = np.float64(result["Pt"][particle_idx])
+
             gamma_mass_shell = Pt_from_mass_shell / (particle_mass * C_MMNS)
 
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
@@ -1105,20 +1142,42 @@ def retarded_equations_of_motion(
             new_working_gamma = result["gamma"][particle_idx]
 
             if sc_enabled and sc_iteration > 0:
-                # Self-consistency requires gamma from energy to match gamma from velocity
-                gamma_from_energy = float(result["gamma"][particle_idx])
-
+                # Check mass-shell convergence
                 (
-                    has_converged,
-                    gamma_abs_change,
-                    gamma_rel_change,
-                ) = _check_self_consistency_convergence(
-                    gamma_from_energy,
-                    gamma_from_velocity,
-                    sc_tolerance,
+                    mass_shell_converged,
+                    mass_shell_error_rel,
+                ) = _check_mass_shell_convergence(
+                    result["Pt"][particle_idx],
+                    result["Px"][particle_idx],
+                    result["Py"][particle_idx],
+                    result["Pz"][particle_idx],
+                    particle_mass,
+                    C_MMNS,
+                    sc_target_ms_tolerance,
                 )
 
-                if has_converged:
+                # Check gamma consistency
+                gamma_from_energy = float(result["gamma"][particle_idx])
+                (
+                    gamma_consistent,
+                    gamma_consistency_error,
+                ) = _check_gamma_consistency(
+                    gamma_from_velocity,
+                    gamma_from_energy,
+                    sc_target_gamma_tolerance,
+                )
+
+                # Determine convergence based on mode
+                if sc_convergence_mode == "dual_independent":
+                    # Both criteria must be satisfied
+                    converged = mass_shell_converged and gamma_consistent
+                elif sc_convergence_mode == "mass_shell_only":
+                    # Legacy: only mass-shell criterion
+                    converged = mass_shell_converged
+                else:
+                    raise ValueError(f"Unknown convergence_mode: {sc_convergence_mode}")
+
+                if converged:
                     if sc_verbosity > 0:
                         _print_convergence_info(
                             particle_idx,
@@ -1126,14 +1185,15 @@ def retarded_equations_of_motion(
                             gamma_from_velocity,
                             gamma_from_energy,
                             gamma_mass_shell,
-                            gamma_abs_change,
-                            gamma_rel_change,
+                            mass_shell_error_rel,
+                            gamma_consistency_error,
                             converged=True,
                             max_iterations=sc_max_iterations,
                             verbosity=sc_verbosity,
                         )
                     break
                 elif sc_iteration == sc_max_iterations - 1:
+                    # Max iterations reached without mass-shell convergence
                     if sc_verbosity > 0:
                         _print_convergence_info(
                             particle_idx,
@@ -1141,18 +1201,83 @@ def retarded_equations_of_motion(
                             gamma_from_velocity,
                             gamma_from_energy,
                             gamma_mass_shell,
-                            gamma_abs_change,
-                            gamma_rel_change,
+                            mass_shell_error_rel,
+                            gamma_consistency_error,
                             converged=False,
                             max_iterations=sc_max_iterations,
                             verbosity=sc_verbosity,
                         )
+
+                    # Apply projection as fallback safety net
+                    if sc_verbosity >= 1:
+                        print(
+                            f"    ⚠️  Mass-shell did not converge after {sc_max_iterations} iterations.\n"
+                            f"        Applying projection: Pt → √(P² + (mc)²)"
+                        )
+
+                    # Apply mass-shell projection as fallback (safety net)
+                    Px_64 = np.float64(result["Px"][particle_idx])
+                    Py_64 = np.float64(result["Py"][particle_idx])
+                    Pz_64 = np.float64(result["Pz"][particle_idx])
+                    P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
+                    mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
+                    Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
+
+                    result["Pt"][particle_idx] = float(Pt_from_mass_shell)
+                    # Recalculate gamma with projected Pt
+                    scalar_potential_contribution = (
+                        particle_charge * accumulated_scalar_potential
+                    )
+                    kinetic_energy = (
+                        result["Pt"][particle_idx] - scalar_potential_contribution
+                    )
+                    result["gamma"][particle_idx] = kinetic_energy / (
+                        particle_mass * C_MMNS
+                    )
 
             # Update working state for next iteration
             working_beta_x = new_working_beta_x
             working_beta_y = new_working_beta_y
             working_beta_z = new_working_beta_z
             working_gamma = new_working_gamma
+
+        # ================================================================
+        # AFTER self-consistency loop: Apply mass-shell projection if needed
+        # ================================================================
+        if sc_enabled:
+            # Check final mass-shell error
+            Px_64 = np.float64(result["Px"][particle_idx])
+            Py_64 = np.float64(result["Py"][particle_idx])
+            Pz_64 = np.float64(result["Pz"][particle_idx])
+            Pt_64 = np.float64(result["Pt"][particle_idx])
+            P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
+            mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
+            mass_shell_error_final = (
+                np.abs(Pt_64**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
+            )
+
+            if mass_shell_error_final > sc_mass_shell_tolerance:
+                # Projection needed as final safety net
+                Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
+
+                if sc_verbosity >= 2:
+                    print(
+                        f"    Final mass-shell projection: Pt {Pt_64:.6e} → "
+                        f"{Pt_from_mass_shell:.6e} (error was {mass_shell_error_final:.2e})"
+                    )
+
+                result["Pt"][particle_idx] = float(Pt_from_mass_shell)
+
+                # Recalculate gamma with projected Pt
+                scalar_potential_contribution = (
+                    particle_charge * accumulated_scalar_potential
+                )
+                kinetic_energy = (
+                    result["Pt"][particle_idx] - scalar_potential_contribution
+                )
+                result["gamma"][particle_idx] = kinetic_energy / (
+                    particle_mass * C_MMNS
+                )
 
     return result
 
