@@ -839,6 +839,9 @@ def retarded_equations_of_motion(
                 np.abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
             )
 
+            # Store Pt BEFORE mass-shell projection for debug comparison
+            Pt_before_projection = result["Pt"][particle_idx]
+
             if mass_shell_error > 1e-2:
                 # Project Pt onto the mass-shell
                 result["Pt"][particle_idx] = float(Pt_from_mass_shell)
@@ -866,16 +869,26 @@ def retarded_equations_of_motion(
             gamma_mass_shell = Pt_from_mass_shell / (particle_mass * C_MMNS)
 
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
-                gamma_from_conjugate = result["Pt"][particle_idx] / (
+                # Use Pt BEFORE projection to show the actual difference
+                gamma_from_conjugate_before = Pt_before_projection / (
                     particle_mass * C_MMNS
                 )
                 print(f"      γ_energy (Pt - q·Φ)/(mc) = {gamma_from_energy:.15e}")
-                print(f"      γ_conjugate (Pt/(mc))     = {gamma_from_conjugate:.15e}")
+                print(
+                    f"      γ_conjugate (Pt/(mc), before projection) = {gamma_from_conjugate_before:.15e}"
+                )
                 print(
                     f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}"
                 )
                 print(
                     f"      Scalar potential term q·Φ = {scalar_potential_contribution:.15e}"
+                )
+                # Show the mass-shell violation
+                mass_shell_violation = abs(
+                    gamma_from_conjugate_before - gamma_mass_shell
+                )
+                print(
+                    f"      Mass-shell violation |γ_conjugate - γ_mass_shell| = {mass_shell_violation:.15e}"
                 )
 
             # Update x^0 = dt = dtau * gamma
