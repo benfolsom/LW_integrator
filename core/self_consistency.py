@@ -59,6 +59,12 @@ class SelfConsistencyConfig:
         |Δγ/γ| < tolerance for each particle. Default is 1e-6.
     max_iterations : int
         Maximum number of refinement iterations per particle per step. Default is 5.
+    mass_shell_tolerance : float
+        Relative error threshold for mass-shell projection. If the relative
+        mass-shell error |Pt² - P² - (mc)²|/(mc)² exceeds this tolerance,
+        Pt will be clamped to √(P² + (mc)²) to enforce the constraint.
+        Default is 1e-2 (1%). Set to a very large value (e.g., 1e10) to
+        effectively disable mass-shell projection.
     verbosity : int
         Verbosity level for convergence information. Default is 0.
         0 = silent (no output)
@@ -70,7 +76,7 @@ class SelfConsistencyConfig:
     Standard configuration (default)::
 
         config = SelfConsistencyConfig()
-        # enabled=True, tolerance=1e-6, max_iterations=5
+        # enabled=True, tolerance=1e-6, max_iterations=5, mass_shell_tolerance=1e-2
 
     Disable for testing/comparison::
 
@@ -81,13 +87,15 @@ class SelfConsistencyConfig:
         config = SelfConsistencyConfig(
             tolerance=1e-8,
             max_iterations=10,
-            debug=True
+            mass_shell_tolerance=1e-3,
+            verbosity=2
         )
     """
 
     enabled: bool = True
     tolerance: float = 1e-6
     max_iterations: int = 5
+    mass_shell_tolerance: float = 1e-2
     verbosity: int = 0
 
     @classmethod
@@ -97,7 +105,9 @@ class SelfConsistencyConfig:
         This is the default configuration: enabled with moderate convergence
         criteria suitable for most high-energy particle tracking applications.
         """
-        return cls(enabled=True, tolerance=1e-6, max_iterations=5)
+        return cls(
+            enabled=True, tolerance=1e-6, max_iterations=5, mass_shell_tolerance=1e-2
+        )
 
     @classmethod
     def disabled(cls) -> "SelfConsistencyConfig":
@@ -116,7 +126,13 @@ class SelfConsistencyConfig:
         energy jumps in challenging scenarios (ultra-relativistic particles,
         narrow apertures, or close approaches to conducting boundaries).
         """
-        return cls(enabled=True, tolerance=1e-8, max_iterations=10, verbosity=0)
+        return cls(
+            enabled=True,
+            tolerance=1e-8,
+            max_iterations=10,
+            mass_shell_tolerance=1e-3,
+            verbosity=0,
+        )
 
 
 def self_consistent_step(

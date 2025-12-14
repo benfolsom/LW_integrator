@@ -240,6 +240,9 @@ class SimulationOptions:
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = 1e-4
     self_consistency_max_iterations: int = 5
+    self_consistency_mass_shell_tolerance: float = (
+        1e-2  # Relative error threshold for mass-shell projection
+    )
     self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
 
     # Energy monitoring options
@@ -296,6 +299,7 @@ class SimulationOptions:
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_max_iterations": self.self_consistency_max_iterations,
+            "self_consistency_mass_shell_tolerance": self.self_consistency_mass_shell_tolerance,
             "self_consistency_verbosity": self.self_consistency_verbosity,
             "energy_monitor_enabled": self.energy_monitor_enabled,
             "energy_monitor_threshold": self.energy_monitor_threshold,
@@ -403,6 +407,9 @@ class SimulationOptions:
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_max_iterations=_int("self_consistency_max_iterations", 5),
+            self_consistency_mass_shell_tolerance=_float(
+                "self_consistency_mass_shell_tolerance", 1e-2
+            ),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
             energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
@@ -839,7 +846,7 @@ def run_testbed(
     _log(f"  Image subcharges: {options.image_subcharge_count}")
     _log(f"  Image weighting: {options.use_image_weighting}")
     _log(
-        f"  Self-consistency: {options.self_consistency_enabled} (tol={options.self_consistency_tolerance:.1e}, max_iter={options.self_consistency_max_iterations})"
+        f"  Self-consistency: {options.self_consistency_enabled} (tol={options.self_consistency_tolerance:.1e}, max_iter={options.self_consistency_max_iterations}, mass_shell_tol={options.self_consistency_mass_shell_tolerance:.1e})"
     )
     _log(
         f"  Energy monitoring: {options.energy_monitor_enabled} (threshold={options.energy_monitor_threshold * 100:.0f}%, halt={options.energy_monitor_halt_on_jump})"
@@ -882,6 +889,7 @@ def run_testbed(
             self_consistency_enabled=options.self_consistency_enabled,
             self_consistency_tolerance=options.self_consistency_tolerance,
             self_consistency_max_iterations=options.self_consistency_max_iterations,
+            self_consistency_mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
             self_consistency_verbosity=options.self_consistency_verbosity,
             energy_monitor_enabled=options.energy_monitor_enabled,
             energy_monitor_threshold=options.energy_monitor_threshold,

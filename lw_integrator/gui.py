@@ -357,6 +357,9 @@ class IntegratorGUI:
         self.self_consistency_max_iterations_var = tk.IntVar(
             value=self.options.self_consistency_max_iterations
         )
+        self.self_consistency_mass_shell_tolerance_var = tk.DoubleVar(
+            value=self.options.self_consistency_mass_shell_tolerance
+        )
         self.self_consistency_verbosity_var = tk.IntVar(
             value=self.options.self_consistency_verbosity
         )
@@ -971,10 +974,23 @@ class IntegratorGUI:
         )
         self.sc_max_iterations_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
+        self.sc_mass_shell_tolerance_label = ttk.Label(
+            sc_frame, text="Mass-shell tolerance:"
+        )
+        self.sc_mass_shell_tolerance_label.grid(
+            row=3, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.sc_mass_shell_tolerance_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.self_consistency_mass_shell_tolerance_var,
+            width=16,
+        )
+        self.sc_mass_shell_tolerance_entry.grid(row=3, column=1, sticky="ew", pady=2)
+
         self.sc_verbosity_label = ttk.Label(sc_frame, text="Verbosity:")
-        self.sc_verbosity_label.grid(row=3, column=0, sticky="w", pady=2)
+        self.sc_verbosity_label.grid(row=4, column=0, sticky="w", pady=2)
         verbosity_frame = ttk.Frame(sc_frame)
-        verbosity_frame.grid(row=3, column=1, sticky="w", pady=2)
+        verbosity_frame.grid(row=4, column=1, sticky="w", pady=2)
         self.sc_verbosity_entry = ttk.Spinbox(
             verbosity_frame,
             from_=0,
@@ -1926,6 +1942,9 @@ class IntegratorGUI:
         self.self_consistency_max_iterations_var.set(
             options.self_consistency_max_iterations
         )
+        self.self_consistency_mass_shell_tolerance_var.set(
+            options.self_consistency_mass_shell_tolerance
+        )
         self.self_consistency_verbosity_var.set(options.self_consistency_verbosity)
         self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
         self.adaptive_timestep_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
@@ -2036,6 +2055,9 @@ class IntegratorGUI:
             self_consistency_tolerance=float(self.self_consistency_tolerance_var.get()),
             self_consistency_max_iterations=int(
                 self.self_consistency_max_iterations_var.get()
+            ),
+            self_consistency_mass_shell_tolerance=float(
+                self.self_consistency_mass_shell_tolerance_var.get()
             ),
             self_consistency_verbosity=int(self.self_consistency_verbosity_var.get()),
             energy_monitor_enabled=False,  # Removed, functionality in adaptive timestep
@@ -2538,6 +2560,8 @@ class IntegratorGUI:
             self.sc_tolerance_entry,
             self.sc_max_iterations_label,
             self.sc_max_iterations_entry,
+            self.sc_mass_shell_tolerance_label,
+            self.sc_mass_shell_tolerance_entry,
             self.sc_verbosity_label,
             self.sc_verbosity_entry,
         ]

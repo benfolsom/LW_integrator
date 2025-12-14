@@ -227,9 +227,10 @@ def run_core_integrator(
     self_consistency = None
     if self_consistency_enabled:
         self_consistency = SelfConsistencyConfig(
-            enabled=True,
+            enabled=self_consistency_enabled,
             tolerance=self_consistency_tolerance,
             max_iterations=self_consistency_max_iterations,
+            mass_shell_tolerance=self_consistency_mass_shell_tolerance,
             verbosity=self_consistency_verbosity,
         )
 
@@ -525,6 +526,7 @@ def run_benchmark(
     self_consistency_enabled: bool = True,
     self_consistency_tolerance: float = 1e-6,
     self_consistency_max_iterations: int = 5,
+    self_consistency_mass_shell_tolerance: float = 1e-2,
     self_consistency_verbosity: int = 0,
     energy_monitor_enabled: bool = True,
     energy_monitor_threshold: float = 2.0,

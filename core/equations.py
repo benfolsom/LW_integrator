@@ -116,22 +116,25 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
 
 def _extract_self_consistency_params(
     self_consistency: Optional[SelfConsistencyConfig],
-) -> tuple[bool, float, int, int]:
+) -> tuple[bool, float, int, float, int]:
     """Extract self-consistency configuration parameters.
 
     Returns
     -------
-    tuple[bool, float, int, int]
-        A tuple containing (enabled, tolerance, max_iterations, verbosity).
+    tuple[bool, float, int, float, int]
+        A tuple containing (enabled, tolerance, max_iterations, mass_shell_tolerance, verbosity).
     """
     is_enabled = self_consistency is not None and self_consistency.enabled
     tolerance = self_consistency.tolerance if self_consistency is not None else 1e-6
     max_iterations = (
         self_consistency.max_iterations if self_consistency is not None else 1
     )
+    mass_shell_tolerance = (
+        self_consistency.mass_shell_tolerance if self_consistency is not None else 1e-2
+    )
     verbosity = self_consistency.verbosity if self_consistency is not None else 0
 
-    return is_enabled, tolerance, max_iterations, verbosity
+    return is_enabled, tolerance, max_iterations, mass_shell_tolerance, verbosity
 
 
 def _initialize_result_state(current_state: ParticleState) -> ParticleState:
@@ -652,6 +655,7 @@ def retarded_equations_of_motion(
         sc_enabled,
         sc_tolerance,
         sc_max_iterations,
+        sc_mass_shell_tolerance,
         sc_verbosity,
     ) = _extract_self_consistency_params(self_consistency)
 
@@ -842,7 +846,7 @@ def retarded_equations_of_motion(
             # Store Pt BEFORE mass-shell projection for debug comparison
             Pt_before_projection = result["Pt"][particle_idx]
 
-            if mass_shell_error > 1e-2:
+            if mass_shell_error > sc_mass_shell_tolerance:
                 # Project Pt onto the mass-shell
                 result["Pt"][particle_idx] = float(Pt_from_mass_shell)
 
