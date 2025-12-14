@@ -1272,11 +1272,10 @@ class OptimizationPlugin(ttk.Frame):
             if steps < 100:
                 return "Steps must be at least 100"
 
-            # Auto-steps parameters
-            if self.auto_steps_var.get():
-                distance_past_wall = float(self.auto_steps_distance_var.get())
-                if distance_past_wall < 0:
-                    return "Distance past wall must be non-negative"
+            # Validate distance past wall (always used in auto-calculation)
+            distance_past_wall = float(self.auto_steps_distance_var.get())
+            if distance_past_wall < 0:
+                return "Distance past wall must be non-negative"
 
             # Validate sweepable parameters
             for param_name, controls in self.sweep_params.items():

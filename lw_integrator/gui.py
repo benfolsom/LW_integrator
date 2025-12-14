@@ -13,6 +13,8 @@ import json
 import locale
 import os
 import re
+import signal
+import sys
 import threading
 import tkinter as tk
 import traceback
@@ -2873,8 +2875,31 @@ def main() -> None:
             pass  # Continue with default locale
 
     root = tk.Tk()
+
+    # Set up signal handler for Ctrl-C to allow clean exit
+    def signal_handler(sig, frame):
+        print("\nReceived interrupt signal, closing GUI...")
+        root.quit()
+        root.destroy()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Schedule periodic check to allow signal processing
+    def check_signals():
+        root.after(100, check_signals)
+
+    check_signals()
+
     IntegratorGUI(root)
-    root.mainloop()
+
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt received, exiting...")
+        root.quit()
+        root.destroy()
+        sys.exit(0)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual launch
