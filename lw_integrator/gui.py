@@ -746,10 +746,6 @@ class IntegratorGUI:
             row=0, column=5, sticky="w"
         )
 
-        ttk.Checkbutton(
-            header, text="Enable legacy comparison", variable=self.legacy_var
-        ).grid(row=0, column=6, sticky="w", padx=(12, 0))
-
         # Create main horizontal split: left (tabs) and right (config/control panel)
         main_horizontal_paned = ttk.Panedwindow(self.root, orient="horizontal")
         main_horizontal_paned.grid(row=1, column=0, sticky="nsew")
@@ -1039,11 +1035,16 @@ class IntegratorGUI:
         output_frame = self._create_scrollable_tab(self.notebook, "Output", padding=12)
         output_frame.columnconfigure(1, weight=1)
 
+        # Legacy comparison toggle (moved from header)
+        ttk.Checkbutton(
+            output_frame, text="Enable legacy comparison", variable=self.legacy_var
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+
         # Trajectory comparison outputs (grouped and dependent on legacy)
         comparison_frame = ttk.LabelFrame(
             output_frame, text="Trajectory Comparison (requires legacy)", padding=8
         )
-        comparison_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        comparison_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         comparison_frame.columnconfigure(1, weight=1)
 
         self._add_output_toggle(
@@ -1072,33 +1073,33 @@ class IntegratorGUI:
             "Energy plot",
             self.energy_display_var,
             self.energy_save_var,
-            row=1,
+            row=2,
         )
         ttk.Checkbutton(
             output_frame,
             text="  ↳ Show ΔE_z (longitudinal) on energy plots",
             variable=self.energy_dual_plot_var,
-        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=(20, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(20, 0))
         self._add_output_toggle(
             output_frame,
             "Transverse plot",
             self.transverse_display_var,
             self.transverse_save_var,
-            row=3,
+            row=4,
         )
 
         ttk.Checkbutton(
             output_frame, text="Save trajectory", variable=self.trajectory_save_var
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Label(output_frame, text="Trajectory stride:").grid(
-            row=5, column=0, sticky="w"
+            row=6, column=0, sticky="w"
         )
         ttk.Entry(
             output_frame, textvariable=self.trajectory_interval_var, width=8
-        ).grid(row=5, column=1, sticky="w")
+        ).grid(row=6, column=1, sticky="w")
 
         ttk.Label(output_frame, text="Plot DPI:").grid(
-            row=6, column=0, sticky="w", pady=(12, 0)
+            row=7, column=0, sticky="w", pady=(12, 0)
         )
         ttk.Combobox(
             output_frame,
@@ -1106,14 +1107,14 @@ class IntegratorGUI:
             values=[str(dpi) for dpi in AVAILABLE_DPI_CHOICES],
             width=8,
             state="readonly",
-        ).grid(row=6, column=1, sticky="w", pady=(12, 0))
+        ).grid(row=7, column=1, sticky="w", pady=(12, 0))
 
         # Log file saving
         ttk.Checkbutton(
             output_frame,
             text="Save log file to test_outputs directory",
             variable=self.save_log_file_var,
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Optimization/Sweep tab ----------------------------------------
         self.optimization_tab = OptimizationPlugin(

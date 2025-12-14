@@ -23,9 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
-from examples.validation.core_vs_legacy_benchmark import (
-    SimulationType,  # type: ignore[import]
-)
+from core.types import SimulationType  # type: ignore[import]
 from lw_integrator.testbed_runner import (  # type: ignore[import]
     RunResult,
     SimulationOptions,

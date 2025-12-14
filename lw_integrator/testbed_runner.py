@@ -32,11 +32,13 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from core.constants import C_MMNS
-from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
+from core.particle_config import (
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     PARTICLE_PARAM_FIELDS,
-    SimulationType,
+)
+from core.types import SimulationType
+from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     compute_delta_energy_components,
     compute_delta_energy_series,
     prepare_two_particle_demo,
