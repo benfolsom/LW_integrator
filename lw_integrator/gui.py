@@ -403,6 +403,10 @@ class IntegratorGUI:
         self.sweep_output_dir_var = tk.StringVar(value=self._last_sweep_output_dir)
         self.config_name_var = tk.StringVar(value=self.options.config_name)
         self.config_file_var = tk.StringVar(value="")
+        self.sweep_config_name_var = tk.StringVar(value="sweep_config.json")
+
+        # Session-based warning suppression flags
+        self._suppress_override_warning = False
 
         # Log file options
         self.save_log_file_var = tk.BooleanVar(value=self.options.save_log_file)
@@ -710,8 +714,6 @@ class IntegratorGUI:
             print(
                 "[FIX] Swedish keyboard keycode remapping applied to all text widgets"
             )
-        else:
-            print("[FIX] Swedish keyboard layout fix enabled")
 
     def _build_layout(self) -> None:
         """Build the complete GUI layout with all controls."""
@@ -1370,9 +1372,17 @@ class IntegratorGUI:
 
         sweep_config_frame.columnconfigure(1, weight=1)
 
+        # Sweep config name entry
+        ttk.Label(sweep_config_frame, text="Config name:").grid(
+            row=2, column=0, sticky="w", pady=(10, 2)
+        )
+        ttk.Entry(sweep_config_frame, textvariable=self.sweep_config_name_var).grid(
+            row=2, column=1, columnspan=2, sticky="ew", pady=(10, 2)
+        )
+
         # Current sweep config display
         ttk.Label(sweep_config_frame, text="Current:").grid(
-            row=2, column=0, sticky="w", pady=(10, 2)
+            row=3, column=0, sticky="w", pady=(5, 2)
         )
         self.current_sweep_config_label = ttk.Label(
             sweep_config_frame,
@@ -1381,16 +1391,16 @@ class IntegratorGUI:
             font=("TkDefaultFont", 9, "italic"),
         )
         self.current_sweep_config_label.grid(
-            row=2, column=1, columnspan=2, sticky="w", pady=(10, 2)
+            row=3, column=1, columnspan=2, sticky="w", pady=(5, 2)
         )
 
         # Saved sweep configs list
         ttk.Label(sweep_config_frame, text="Saved configs:").grid(
-            row=3, column=0, columnspan=3, sticky="w", pady=(10, 2)
+            row=4, column=0, columnspan=3, sticky="w", pady=(10, 2)
         )
 
         sweep_list_frame = ttk.Frame(sweep_config_frame)
-        sweep_list_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=2)
+        sweep_list_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=2)
         sweep_list_frame.rowconfigure(0, weight=1)
         sweep_list_frame.columnconfigure(0, weight=1)
 
@@ -1399,6 +1409,9 @@ class IntegratorGUI:
         self.sweep_config_list.bind(
             "<Double-1>", lambda _event: self._load_sweep_config()
         )
+        self.sweep_config_list.bind(
+            "<<ListboxSelect>>", lambda _event: self._on_sweep_config_selected()
+        )
 
         sweep_scrollbar = ttk.Scrollbar(
             sweep_list_frame, orient="vertical", command=self.sweep_config_list.yview
@@ -1406,14 +1419,17 @@ class IntegratorGUI:
         sweep_scrollbar.grid(row=0, column=1, sticky="ns")
         self.sweep_config_list.configure(yscrollcommand=sweep_scrollbar.set)
 
-        sweep_config_frame.rowconfigure(4, weight=1)
+        sweep_config_frame.rowconfigure(5, weight=1)
 
         # Sweep config buttons
         sweep_btn_frame = ttk.Frame(sweep_config_frame)
-        sweep_btn_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        sweep_btn_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
         ttk.Button(
             sweep_btn_frame, text="Load", command=self._load_sweep_config, width=8
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            sweep_btn_frame, text="Save", command=self._save_sweep_config, width=8
         ).pack(side="left", padx=2)
         ttk.Button(
             sweep_btn_frame,
@@ -1725,14 +1741,24 @@ class IntegratorGUI:
         """Refresh the sweep config list."""
         import os
 
-        sweep_dir = self.sweep_config_dir_var.get()
         self.sweep_config_list.delete(0, tk.END)
+        sweep_dir = self.sweep_config_dir_var.get()
 
-        if os.path.exists(sweep_dir):
+        highlight: Optional[int] = None
+
+        if os.path.isdir(sweep_dir):
             configs = [f for f in os.listdir(sweep_dir) if f.endswith(".json")]
             configs.sort()
+
+            if selected and selected in configs:
+                highlight = configs.index(selected)
+
             for config_name in configs:
                 self.sweep_config_list.insert(tk.END, config_name)
+
+        if highlight is not None:
+            self.sweep_config_list.selection_set(highlight)
+            self.sweep_config_list.see(highlight)
 
     def _selected_config_filename(self) -> Optional[str]:
         selection = self.config_list.curselection()
@@ -1747,8 +1773,21 @@ class IntegratorGUI:
             self.config_file_var.set(filename)
             self.current_config_label.config(text=filename, foreground="black")
         else:
-            self.config_file_var.set("")
-            self.current_config_label.config(text="<unsaved>", foreground="gray")
+            self.current_config_label.config(text="<none>", foreground="gray")
+
+    def _on_sweep_config_selected(self) -> None:
+        """Handle sweep config selection from list."""
+        selection = self.sweep_config_list.curselection()
+        if selection:
+            filename = self.sweep_config_list.get(selection[0])
+            self.sweep_config_name_var.set(filename)
+            self.current_sweep_config_label.config(
+                text=filename, foreground="black", font=("TkDefaultFont", 9)
+            )
+        else:
+            self.current_sweep_config_label.config(
+                text="<none>", foreground="gray", font=("TkDefaultFont", 9, "italic")
+            )
 
     def _load_config(self) -> None:
         filename = self._selected_config_filename()
@@ -1999,44 +2038,50 @@ class IntegratorGUI:
                 f"{summary.rider_beta_y_m:.3f} m"
             )
 
-        if summary.has_driver:
-            lines.append("Driver present")
-            lines.append(f"Driver gamma: {summary.driver_gamma:.4f}")
-            if (
-                summary.driver_rest_mev is not None
-                and summary.driver_rest_gev is not None
-            ):
-                lines.append(
-                    "Driver rest energy: "
-                    f"{summary.driver_rest_mev:.4f} MeV ({summary.driver_rest_gev:.4f} GeV)"
-                )
-            if summary.driver_total_gev is not None:
-                lines.append(f"Driver total energy: {summary.driver_total_gev:.4f} GeV")
+        # Only show driver info if this simulation type supports it
+        if summary.supports_driver:
+            if summary.has_driver:
+                lines.append("Driver present")
+                lines.append(f"Driver gamma: {summary.driver_gamma:.4f}")
+                if (
+                    summary.driver_rest_mev is not None
+                    and summary.driver_rest_gev is not None
+                ):
+                    lines.append(
+                        "Driver rest energy: "
+                        f"{summary.driver_rest_mev:.4f} MeV ({summary.driver_rest_gev:.4f} GeV)"
+                    )
+                if summary.driver_total_gev is not None:
+                    lines.append(
+                        f"Driver total energy: {summary.driver_total_gev:.4f} GeV"
+                    )
 
-            # Add driver beam optics if available
-            if summary.driver_emittance_x_mm_mrad is not None:
-                driver_emit_x_pm = summary.driver_emittance_x_mm_mrad * 1e9
-                driver_emit_y_pm = summary.driver_emittance_y_mm_mrad * 1e9
-                driver_norm_emit_x_pm = summary.driver_norm_emittance_x_mm_mrad * 1e9
-                driver_norm_emit_y_pm = summary.driver_norm_emittance_y_mm_mrad * 1e9
+                # Add driver beam optics if available
+                if summary.driver_emittance_x_mm_mrad is not None:
+                    driver_emit_x_pm = summary.driver_emittance_x_mm_mrad * 1e9
+                    driver_emit_y_pm = summary.driver_emittance_y_mm_mrad * 1e9
+                    driver_norm_emit_x_pm = (
+                        summary.driver_norm_emittance_x_mm_mrad * 1e9
+                    )
+                    driver_norm_emit_y_pm = (
+                        summary.driver_norm_emittance_y_mm_mrad * 1e9
+                    )
 
-                lines.append(
-                    f"Driver ε: "
-                    f"{summary.driver_emittance_x_mm_mrad:.2e} mm·mrad ({driver_emit_x_pm:.2e} pm·rad), "
-                    f"{summary.driver_emittance_y_mm_mrad:.2e} mm·mrad ({driver_emit_y_pm:.2e} pm·rad)"
-                )
-                lines.append(
-                    f"Driver εₙ: "
-                    f"{summary.driver_norm_emittance_x_mm_mrad:.2e} mm·mrad ({driver_norm_emit_x_pm:.2e} pm·rad), "
-                    f"{summary.driver_norm_emittance_y_mm_mrad:.2e} mm·mrad ({driver_norm_emit_y_pm:.2e} pm·rad)"
-                )
-                lines.append(
-                    f"Driver β: "
-                    f"{summary.driver_beta_x_m:.3f} m, "
-                    f"{summary.driver_beta_y_m:.3f} m"
-                )
-        else:
-            lines.append("Driver disabled for this mode")
+                    lines.append(
+                        f"Driver ε: "
+                        f"{summary.driver_emittance_x_mm_mrad:.2e} mm·mrad ({driver_emit_x_pm:.2e} pm·rad), "
+                        f"{summary.driver_emittance_y_mm_mrad:.2e} mm·mrad ({driver_emit_y_pm:.2e} pm·rad)"
+                    )
+                    lines.append(
+                        f"Driver εₙ: "
+                        f"{summary.driver_norm_emittance_x_mm_mrad:.2e} mm·mrad ({driver_norm_emit_x_pm:.2e} pm·rad), "
+                        f"{summary.driver_norm_emittance_y_mm_mrad:.2e} mm·mrad ({driver_norm_emit_y_pm:.2e} pm·rad)"
+                    )
+                    lines.append(
+                        f"Driver β: "
+                        f"{summary.driver_beta_x_m:.3f} m, "
+                        f"{summary.driver_beta_y_m:.3f} m"
+                    )
         return "\n".join(lines)
 
     def _select_config_dir(self) -> None:
@@ -2111,22 +2156,179 @@ class IntegratorGUI:
                 self.optimization_tab.sweep_output_dir = directory
 
     def _load_sweep_config(self) -> None:
-        """Load selected sweep configuration."""
-        selection = self.sweep_config_list.curselection()
-        if not selection:
-            messagebox.showinfo("Load Sweep Config", "Select a configuration to load.")
+        """Load sweep configuration from entry field or list selection."""
+        import os
+
+        # First try to get filename from entry field
+        filename = self.sweep_config_name_var.get().strip()
+
+        # If entry is empty, try to get from list selection
+        if not filename:
+            selection = self.sweep_config_list.curselection()
+            if not selection:
+                messagebox.showinfo(
+                    "Load Sweep Config",
+                    "Enter a config name or select one from the list.",
+                )
+                return
+            filename = self.sweep_config_list.get(selection[0])
+
+        # Ensure .json extension
+        if not filename.endswith(".json"):
+            filename += ".json"
+
+        if not hasattr(self, "optimization_tab"):
             return
 
-        filename = self.sweep_config_list.get(selection[0])
-        if hasattr(self, "optimization_tab"):
-            # Delegate to optimization plugin
-            import os
+        # Build full path
+        sweep_config_dir = self.sweep_config_dir_var.get()
+        path = os.path.join(sweep_config_dir, filename)
 
-            path = os.path.join(self.sweep_config_dir_var.get(), filename)
-            self.optimization_tab._load_config_from_path(path)
+        # Check if file exists
+        if not os.path.exists(path):
+            messagebox.showerror(
+                "Load Sweep Config", f"Configuration file not found: {filename}"
+            )
+            return
+
+        # Load the configuration
+        self.optimization_tab._load_config_from_path(path)
+        self.current_sweep_config_label.config(
+            text=filename, foreground="black", font=("TkDefaultFont", 9)
+        )
+
+    def _save_sweep_config(self) -> None:
+        """Save current sweep configuration using entered filename."""
+        if not hasattr(self, "optimization_tab"):
+            return
+
+        # Get filename from entry field
+        filename = self.sweep_config_name_var.get().strip()
+
+        if not filename:
+            messagebox.showinfo("Save Sweep Config", "Enter a config name to save.")
+            return
+
+        # Ensure .json extension
+        if not filename.endswith(".json"):
+            filename += ".json"
+
+        import os
+
+        sweep_config_dir = self.sweep_config_dir_var.get()
+        os.makedirs(sweep_config_dir, exist_ok=True)
+
+        filepath = os.path.join(sweep_config_dir, filename)
+
+        # Check for override warning
+        if not self._check_override_warning(Path(filepath), "sweep"):
+            return
+
+        # Delegate to optimization plugin with the filepath
+        success = self.optimization_tab._save_config_to_path(filepath)
+
+        if success:
+            self.sweep_config_name_var.set(filename)
             self.current_sweep_config_label.config(
                 text=filename, foreground="black", font=("TkDefaultFont", 9)
             )
+            self._refresh_sweep_config_list(selected=filename)
+            messagebox.showinfo(
+                "Save Sweep Config", f"Configuration saved as {filename}"
+            )
+
+    def _check_override_warning(self, filepath: Path, config_type: str = "run") -> bool:
+        """Check if file exists and show override warning if needed.
+
+        Parameters
+        ----------
+        filepath : Path
+            Path to the file that will be saved
+        config_type : str
+            Type of config ("run" or "sweep") for the dialog title
+
+        Returns
+        -------
+        bool
+            True if save should proceed, False if cancelled
+        """
+        import os
+
+        # If file doesn't exist, no warning needed
+        if not os.path.exists(filepath):
+            return True
+
+        # If user has suppressed warnings for this session, proceed
+        if self._suppress_override_warning:
+            return True
+
+        # Show override warning dialog with checkbox
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Override {config_type.capitalize()} Configuration")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=20)
+        frame.pack(fill="both", expand=True)
+
+        # Warning message
+        msg = f"Configuration file already exists:\n\n{filepath.name}\n\nDo you want to override it?"
+        ttk.Label(frame, text=msg, wraplength=400).pack(pady=(0, 15))
+
+        # Checkbox for suppressing future warnings
+        suppress_var = tk.BooleanVar(value=False)
+        check_frame = ttk.Frame(frame)
+        check_frame.pack(fill="x", pady=(0, 15))
+        ttk.Checkbutton(
+            check_frame,
+            text="Don't show this warning again (this session only)",
+            variable=suppress_var,
+        ).pack(anchor="w")
+
+        # Info label
+        info_label = ttk.Label(
+            check_frame,
+            text="Note: This setting resets when you restart the GUI",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        )
+        info_label.pack(anchor="w", padx=(20, 0), pady=(5, 0))
+
+        # Result container
+        result = [False]
+
+        def on_yes():
+            if suppress_var.get():
+                self._suppress_override_warning = True
+            result[0] = True
+            dialog.destroy()
+
+        def on_no():
+            result[0] = False
+            dialog.destroy()
+
+        # Buttons
+        button_frame = ttk.Frame(frame)
+        button_frame.pack()
+        ttk.Button(button_frame, text="Yes, Override", command=on_yes, width=15).pack(
+            side="left", padx=5
+        )
+        ttk.Button(button_frame, text="No, Cancel", command=on_no, width=15).pack(
+            side="left", padx=5
+        )
+
+        # Center dialog
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # Wait for user response
+        dialog.wait_window()
+
+        return result[0]
 
     def _save_config(self) -> None:
         try:
@@ -2135,8 +2337,30 @@ class IntegratorGUI:
             _show_error_dialog(self.root, "Invalid configuration", str(exc))
             return
 
-        ensure_directory(options.config_dir)
-        config_path = options.config_dir / options.config_name
+        # Use file dialog to get save path
+        config_dir = Path(self.config_dir_var.get())
+        ensure_directory(config_dir)
+
+        filename = filedialog.asksaveasfilename(
+            title="Save Run Configuration",
+            initialdir=config_dir,
+            initialfile=self.config_name_var.get() or "config.json",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+
+        if not filename:
+            return
+
+        config_path = Path(filename)
+
+        # Check for override warning
+        if not self._check_override_warning(config_path, "run"):
+            return
+
+        # Update the config name to match the saved file
+        options.config_name = config_path.name
+
         try:
             save_config(options, config_path)
         except Exception as exc:
@@ -2145,10 +2369,10 @@ class IntegratorGUI:
             )
             return
 
-        self.config_name_var.set(options.config_name)
-        self.config_file_var.set(options.config_name)
-        self._refresh_config_list(selected=options.config_name)
-        self.current_config_label.config(text=options.config_name, foreground="black")
+        self.config_name_var.set(config_path.name)
+        self.config_file_var.set(config_path.name)
+        self._refresh_config_list(selected=config_path.name)
+        self.current_config_label.config(text=config_path.name, foreground="black")
         messagebox.showinfo("Save config", f"Configuration saved as {config_path.name}")
         self._set_status(f"Saved config: {config_path.name}")
 
@@ -2199,7 +2423,9 @@ class IntegratorGUI:
         """
         # Removed auto-switching behavior - run mode is now only changed
         # via explicit radio button selection in the control panel
-        pass
+
+        # Refresh initial summary when switching tabs to ensure it's up-to-date
+        self._refresh_initial_summary()
 
     def _open_optimization_tab(self) -> None:
         """Switch to the Sweep/Optim tab."""

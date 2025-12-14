@@ -641,11 +641,29 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
     if not driver_allowed:
         driver_params = None
 
+    # Spoof pcount to 2 for Twiss parameter calculation if pcount=1
+    # This allows us to always show Twiss parameters in the summary
+    rider_pcount_actual = int(rider_params.get("pcount", 1))
+    rider_params_for_twiss = dict(rider_params)
+    if rider_pcount_actual == 1:
+        rider_params_for_twiss["pcount"] = 2
+        # Ensure non-zero transverse distribution for emittance calculation
+        if abs(rider_params_for_twiss.get("transv_dist", 0.0)) < 1e-10:
+            rider_params_for_twiss["transv_dist"] = 1e-4  # 0.1 micron default
+
+    driver_pcount_actual = int(driver_params.get("pcount", 1)) if driver_params else 1
+    driver_params_for_twiss = dict(driver_params) if driver_params else None
+    if driver_params_for_twiss and driver_pcount_actual == 1:
+        driver_params_for_twiss["pcount"] = 2
+        # Ensure non-zero transverse distribution for emittance calculation
+        if abs(driver_params_for_twiss.get("transv_dist", 0.0)) < 1e-10:
+            driver_params_for_twiss["transv_dist"] = 1e-4  # 0.1 micron default
+
     rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
         prepare_two_particle_demo(
             seed=options.seed,
-            rider_params=rider_params,
-            driver_params=driver_params,
+            rider_params=rider_params_for_twiss,
+            driver_params=driver_params_for_twiss,
         )
     )
 
@@ -653,19 +671,8 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
     rider_rest_gev = rider_rest_mev * 1e-3
     rider_total_gev = rider_gamma * rider_rest_gev
 
-    # Calculate rider beam optics (only if pcount > 1)
-    rider_pcount = int(rider_params.get("pcount", 1))
-    if rider_pcount > 1:
-        rider_optics = compute_beam_optics(rider_state, rider_gamma)
-    else:
-        rider_optics = {
-            "emittance_x_mm_mrad": None,
-            "emittance_y_mm_mrad": None,
-            "norm_emittance_x_mm_mrad": None,
-            "norm_emittance_y_mm_mrad": None,
-            "beta_x_m": None,
-            "beta_y_m": None,
-        }
+    # Always calculate rider beam optics (using spoofed pcount if necessary)
+    rider_optics = compute_beam_optics(rider_state, rider_gamma)
 
     # Declare driver variables with explicit types
     driver_gamma: Optional[float]
@@ -679,23 +686,14 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
         driver_rest_gev = driver_rest_mev * 1e-3
         driver_total_gev = driver_gamma * driver_rest_gev
 
-        # Calculate driver beam optics (only if pcount > 1)
-        driver_pcount = int(driver_params.get("pcount", 1)) if driver_params else 1
-        if driver_pcount > 1:
-            driver_optics_result = compute_beam_optics(driver_state, driver_gamma)
-            driver_emit_x = driver_optics_result["emittance_x_mm_mrad"]
-            driver_emit_y = driver_optics_result["emittance_y_mm_mrad"]
-            driver_norm_emit_x = driver_optics_result["norm_emittance_x_mm_mrad"]
-            driver_norm_emit_y = driver_optics_result["norm_emittance_y_mm_mrad"]
-            driver_beta_x = driver_optics_result["beta_x_m"]
-            driver_beta_y = driver_optics_result["beta_y_m"]
-        else:
-            driver_emit_x = None
-            driver_emit_y = None
-            driver_norm_emit_x = None
-            driver_norm_emit_y = None
-            driver_beta_x = None
-            driver_beta_y = None
+        # Always calculate driver beam optics (using spoofed pcount if necessary)
+        driver_optics_result = compute_beam_optics(driver_state, driver_gamma)
+        driver_emit_x = driver_optics_result["emittance_x_mm_mrad"]
+        driver_emit_y = driver_optics_result["emittance_y_mm_mrad"]
+        driver_norm_emit_x = driver_optics_result["norm_emittance_x_mm_mrad"]
+        driver_norm_emit_y = driver_optics_result["norm_emittance_y_mm_mrad"]
+        driver_beta_x = driver_optics_result["beta_x_m"]
+        driver_beta_y = driver_optics_result["beta_y_m"]
     else:
         driver_gamma = None
         driver_rest_mev_opt = None

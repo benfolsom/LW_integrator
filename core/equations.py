@@ -849,7 +849,7 @@ def retarded_equations_of_motion(
                 np.abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
             )
 
-            if mass_shell_error > 1e-6:
+            if mass_shell_error > 5e-4:
                 # Project Pt onto the mass-shell
                 result["Pt"][particle_idx] = float(Pt_from_mass_shell)
 

@@ -50,7 +50,7 @@ def _show_error_dialog(parent: tk.Widget, title: str, message: str) -> None:
 
     text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
     text.insert("1.0", message)
-    text.configure(state="disabled", bg=frame.cget("background"))
+    text.configure(state="disabled")
     text.pack(side="top", fill="both", expand=True, pady=(0, 10))
 
     button_frame = ttk.Frame(frame)
@@ -1144,14 +1144,6 @@ class OptimizationPlugin(ttk.Frame):
             row=0, column=3, sticky="w", padx=(5, 0), pady=2
         )
 
-        # Fine-tune controls in a second row
-        self.auto_finetune_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            plot_options_frame,
-            text="Auto-prompt for fine-tuning after coarse sweep",
-            variable=self.auto_finetune_var,
-        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(5, 2))
-
     def _build_progress_section(self):
         """Build progress monitoring section."""
         frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Progress", padding=10)
@@ -1804,9 +1796,10 @@ class OptimizationPlugin(ttk.Frame):
                     )
                     return
 
-            # Show stability options confirmation dialog
-            if not self._confirm_stability_options():
-                return
+            # Use stability options from main GUI tab (already loaded in self.config)
+            self._log_result(
+                "[INFO] Using stability options from main GUI Stability tab"
+            )
 
         except Exception as e:
             _show_error_dialog(self, "Configuration Error", str(e))
@@ -1856,10 +1849,14 @@ class OptimizationPlugin(ttk.Frame):
             # Store the loaded config name for later use in results naming
             self.last_loaded_config = filepath
 
-            # Update config name display if it exists
-            if hasattr(self, "config_name_label"):
-                config_name = Path(filepath).stem
-                self.config_name_label.config(text=config_name, foreground="black")
+            # Update GUI config name field if available
+            if self.gui_controller and hasattr(
+                self.gui_controller, "sweep_config_name_var"
+            ):
+                from pathlib import Path
+
+                config_name = Path(filepath).name
+                self.gui_controller.sweep_config_name_var.set(config_name)
 
             # Populate UI fields
             self.sim_type_var.set(data.get("simulation_type", "CONDUCTING_WALL"))
@@ -1978,26 +1975,23 @@ class OptimizationPlugin(ttk.Frame):
 
         self._load_config_from_path(filename)
 
-    def _on_save_config(self):
-        """Save configuration to JSON file."""
+    def _save_config_to_path(self, filepath: str) -> bool:
+        """Save configuration to specified path.
+
+        Parameters
+        ----------
+        filepath : str
+            Full path where config should be saved
+
+        Returns
+        -------
+        bool
+            True if save was successful, False otherwise
+        """
         error = self._validate_inputs()
         if error:
             _show_error_dialog(self, "Invalid Input", f"Cannot save: {error}")
-            return
-
-        import os
-
-        # Use sweep config directory from GUI preferences
-        os.makedirs(self.sweep_config_dir, exist_ok=True)
-
-        filename = filedialog.asksaveasfilename(
-            title="Save Optimization Config",
-            initialdir=self.sweep_config_dir,
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-        )
-        if not filename:
-            return
+            return False
 
         try:
             config = self._gather_config()
@@ -2042,19 +2036,56 @@ class OptimizationPlugin(ttk.Frame):
                 "skip_failed_runs": config.skip_failed_runs,
             }
 
-            with open(filename, "w") as f:
+            with open(filepath, "w") as f:
                 json.dump(data, f, indent=2)
 
             # Update last_loaded_config so sweep results use correct name
-            self.last_loaded_config = filename
+            self.last_loaded_config = filepath
 
-            # Update config name display
-            config_name = Path(filename).stem
-            self.config_name_label.config(text=config_name, foreground="black")
-
-            self._log_result(f"[OK] Configuration saved to {filename}")
+            self._log_result(f"[OK] Configuration saved to {filepath}")
+            return True
         except Exception as e:
             _show_error_dialog(self, "Save Error", f"Failed to save config: {e}")
+            return False
+
+    def _on_save_config(self):
+        """Save configuration to JSON file using file dialog."""
+        error = self._validate_inputs()
+        if error:
+            _show_error_dialog(self, "Invalid Input", f"Cannot save: {error}")
+            return
+
+        import os
+
+        # Use sweep config directory from GUI preferences
+        os.makedirs(self.sweep_config_dir, exist_ok=True)
+
+        filename = filedialog.asksaveasfilename(
+            title="Save Optimization Config",
+            initialdir=self.sweep_config_dir,
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not filename:
+            return
+
+        # Use the new save method
+        success = self._save_config_to_path(filename)
+
+        # Update GUI if we have a controller and save was successful
+        if (
+            success
+            and self.gui_controller
+            and hasattr(self.gui_controller, "sweep_config_name_var")
+        ):
+            from pathlib import Path
+
+            config_name = Path(filename).name
+            self.gui_controller.sweep_config_name_var.set(config_name)
+            self.gui_controller.current_sweep_config_label.config(
+                text=config_name, foreground="black", font=("TkDefaultFont", 9)
+            )
+            self.gui_controller._refresh_sweep_config_list(selected=config_name)
 
     def _on_view_results(self):
         """Open results viewer and automatically load latest results."""
@@ -3026,7 +3057,9 @@ class OptimizationPlugin(ttk.Frame):
                 # Create scatter plot for heatmap
                 scatter = ax_heatmap.scatter(
                     energies,
-                    [a * 1e6 for a in apertures],  # Convert to microns for readability
+                    [
+                        a * 1e3 for a in apertures
+                    ],  # Convert mm to microns for readability
                     c=delta_es,
                     cmap="viridis",
                     s=100,
@@ -3531,10 +3564,6 @@ class OptimizationPlugin(ttk.Frame):
                 if failed_runs:
                     self._log_result(f"  Failed/timed-out runs: {len(failed_runs)}")
                 self._update_progress(100, "Complete!")
-
-                # Offer fine-tuning if enabled and not already a fine-tune run
-                if not is_finetune and self.auto_finetune_var.get() and all_results:
-                    self.after(500, lambda: self._prompt_finetune(all_results))
         except Exception as e:
             self._log_result(f"[ERROR] Error during sweep: {e}")
             import traceback
@@ -3602,38 +3631,6 @@ class OptimizationPlugin(ttk.Frame):
             return np.logspace(np.log10(min_val), np.log10(max_val), points).tolist()
         else:
             return np.linspace(min_val, max_val, points).tolist()
-
-    def _prompt_finetune(self, coarse_results):
-        """Prompt user for fine-tuning after coarse sweep."""
-        # Find top results
-        results_with_energy = [
-            (r, r.get("metrics", {}).get("rider_delta_e_mev", float("-inf")))
-            for r in coarse_results
-        ]
-        results_with_energy.sort(key=lambda x: x[1], reverse=True)
-
-        top_n = min(5, len(results_with_energy))
-        top_results = [r[0] for r in results_with_energy[:top_n]]
-
-        if not top_results:
-            return
-
-        # Create dialog
-        response = messagebox.askyesno(
-            "Fine-Tuning",
-            f"Coarse sweep complete!\n\n"
-            f"Found {top_n} promising configurations.\n"
-            f"Best energy gain: {results_with_energy[0][1]:.2f} MeV\n\n"
-            f"Would you like to run a fine-tuning sweep around these optima?",
-        )
-
-        if response:
-            self._log_result("\n" + "=" * 60)
-            self._log_result("Starting fine-tuning sweep...")
-            self._log_result("=" * 60 + "\n")
-
-            # Implement fine-tuning logic
-            self._run_finetune_sweep(top_results)
 
     def _run_single_integration(
         self,
@@ -4010,7 +4007,7 @@ class OptimizationPlugin(ttk.Frame):
 
             scatter = ax.scatter(
                 energies,
-                [a * 1e6 for a in apertures],  # Convert to microns
+                [a * 1e3 for a in apertures],  # Convert mm to microns
                 c=delta_es,
                 cmap="viridis",
                 s=150,
@@ -4117,7 +4114,7 @@ class OptimizationPlugin(ttk.Frame):
             ax3 = fig.add_subplot(gs[2])
 
             fig.suptitle(
-                f"Best Trajectory: a={aperture * 1e6:.1f}μm, E={energy:.1f}GeV, ΔE={delta_e:.2f}MeV",
+                f"Best Trajectory: a={aperture * 1e3:.1f}μm, E={energy:.1f}GeV, ΔE={delta_e:.2f}MeV",
                 fontsize=12,
                 fontweight="bold",
             )
@@ -4156,88 +4153,6 @@ class OptimizationPlugin(ttk.Frame):
 
         except Exception as e:
             self._log_result(f"[WARNING] Failed to plot trajectory: {e}")
-
-    def _run_finetune_sweep(self, top_results: List[Dict[str, Any]]) -> None:
-        """Run fine-tuning sweep around the best configurations."""
-        # Calculate refined parameter ranges around each optimum
-        finetune_configs = []
-
-        for result in top_results:
-            params = result.get("parameters", {})
-            aperture = params.get("aperture_radius", self.config.aperture_range[0])
-            energy = params.get("particle_energy_gev", self.config.energy_range[0])
-
-            # Create a fine grid around this point (±20% range, 5 points each)
-            aperture_margin = aperture * 0.2
-            energy_margin = energy * 0.2
-
-            finetune_configs.append(
-                {
-                    "aperture_range": (
-                        max(1e-6, aperture - aperture_margin),
-                        aperture + aperture_margin,
-                    ),
-                    "energy_range": (
-                        max(0.1, energy - energy_margin),
-                        energy + energy_margin,
-                    ),
-                    "center_aperture": aperture,
-                    "center_energy": energy,
-                }
-            )
-
-        self._log_result(f"Fine-tuning around {len(finetune_configs)} optimal points")
-        self._log_result(f"Using 5x5 grid (25 runs per optimum)")
-        self._log_result("")
-
-        # Save current config
-        original_aperture_range = self.config.aperture_range
-        original_energy_range = self.config.energy_range
-        original_aperture_points = self.config.aperture_points
-        original_energy_points = self.config.energy_points
-        original_log_scale = self.config.aperture_log_scale
-        original_energy_log = self.config.energy_log_scale
-
-        all_finetune_results = []
-
-        # Run fine-tuning sweep for each optimum
-        for i, config in enumerate(finetune_configs, 1):
-            self._log_result(f"\nFine-tuning optimum {i}/{len(finetune_configs)}:")
-            self._log_result(
-                f"  Center: a={config['center_aperture']:.2e}mm, "
-                f"E={config['center_energy']:.1f}GeV"
-            )
-
-            # Temporarily modify config for fine-tuning
-            self.config.aperture_range = config["aperture_range"]
-            self.config.energy_range = config["energy_range"]
-            self.config.aperture_points = 5
-            self.config.energy_points = 5
-            self.config.aperture_log_scale = False  # Use linear scale for fine-tuning
-            self.config.energy_log_scale = False
-
-            # Run the sweep (pass is_finetune=True to avoid recursive fine-tuning)
-            self._run_sweep_background(is_finetune=True)
-
-            # Wait for sweep to complete
-            while self.running:
-                self.update()
-                self.after(100)
-
-            self._log_result(f"  Completed fine-tuning around optimum {i}")
-
-        # Restore original config
-        self.config.aperture_range = original_aperture_range
-        self.config.energy_range = original_energy_range
-        self.config.aperture_points = original_aperture_points
-        self.config.energy_points = original_energy_points
-        self.config.aperture_log_scale = original_log_scale
-        self.config.energy_log_scale = original_energy_log
-
-        self._log_result("\n" + "=" * 60)
-        self._log_result("[OK] Fine-tuning sweep completed!")
-        self._log_result("=" * 60)
-        self._log_result(f"Check {self.config.output_dir} for detailed results")
 
     def _update_progress(self, value: float, text: str):
         """Update progress bar and label (thread-safe)."""
