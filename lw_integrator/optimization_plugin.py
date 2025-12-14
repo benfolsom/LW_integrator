@@ -217,10 +217,11 @@ class OptimizationConfig:
     self_consistency_max_iterations: int = 5
     self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
 
-    energy_monitor_enabled: bool = True
+    # Energy monitoring removed - functionality integrated into adaptive timestep
+    energy_monitor_enabled: bool = False
     energy_monitor_threshold: float = 2.0
     energy_monitor_check_interval: int = 10
-    energy_monitor_halt_on_jump: bool = False
+    energy_monitor_halt_on_jump: bool = False  # Now in adaptive_timestep
     energy_monitor_debug: bool = False
 
     adaptive_timestep_enabled: bool = True
@@ -327,11 +328,11 @@ class OptimizationConfig:
             self_consistency_tolerance=options.self_consistency_tolerance,
             self_consistency_max_iterations=options.self_consistency_max_iterations,
             self_consistency_verbosity=options.self_consistency_verbosity,
-            energy_monitor_enabled=options.energy_monitor_enabled,
-            energy_monitor_threshold=options.energy_monitor_threshold,
-            energy_monitor_check_interval=options.energy_monitor_check_interval,
+            energy_monitor_enabled=False,  # Removed - integrated into adaptive timestep
+            energy_monitor_threshold=2.0,
+            energy_monitor_check_interval=10,
             energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
-            energy_monitor_debug=options.energy_monitor_debug,
+            energy_monitor_debug=False,
             adaptive_timestep_enabled=options.adaptive_timestep_enabled,
             adaptive_timestep_threshold=options.adaptive_timestep_threshold,
             adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
@@ -458,8 +459,46 @@ def calculate_auto_steps(
     # Calculate steps needed (add 10% margin for safety)
     steps = int(np.ceil(total_distance / distance_per_step * 1.1))
 
-    # Ensure minimum reasonable value
-    return max(steps, 100)
+    # Ensure minimum reasonable value (hard minimum of 200 steps)
+    return max(steps, 200)
+
+
+def calculate_steps_from_duration(
+    total_duration_ns: float,
+    particle_energy_gev: float,
+    particle_mass_amu: float = 0.00054857990907,
+) -> tuple[int, float]:
+    """Calculate timestep and number of steps from total duration.
+
+    Auto-calculates timestep (h) given a desired total duration and step count.
+    Enforces a hard minimum of 200 steps.
+
+    Parameters
+    ----------
+    total_duration_ns : float
+        Desired total duration in proper time (ns)
+    particle_energy_gev : float
+        Particle energy (GeV)
+    particle_mass_amu : float
+        Particle rest mass (amu), default is electron mass
+
+    Returns
+    -------
+    tuple[int, float]
+        (number_of_steps, timestep_in_ns) where steps >= 200
+
+    Notes
+    -----
+    Uses proper time formulation: h = dτ = dt/γ
+    Total proper time = N_steps × h
+    """
+    # Hard minimum of 200 steps
+    min_steps = 200
+
+    # Calculate timestep from duration and minimum steps
+    timestep = total_duration_ns / min_steps
+
+    return min_steps, timestep
 
 
 class OptimizationPlugin(ttk.Frame):
@@ -690,53 +729,62 @@ class OptimizationPlugin(ttk.Frame):
             row=5, column=2, sticky="w", pady=2, padx=5
         )
 
-        # Timestep
-        ttk.Label(frame, text="Timestep:").grid(row=6, column=0, sticky="w", pady=2)
-        ttk.Label(frame, text="h (ns, proper time):").grid(
-            row=6, column=1, sticky="w", pady=2
-        )
-        self.timestep_var = tk.StringVar(value="3e-7")
-        ttk.Entry(frame, textvariable=self.timestep_var, width=10).grid(
-            row=6, column=2, sticky="w", pady=2, padx=5
-        )
-
-        # Steps
-        ttk.Label(frame, text="Integration Steps:").grid(
+        # Timestep Auto-Calculation (always enabled)
+        ttk.Label(frame, text="Timestep Calculation:").grid(
             row=6, column=0, sticky="w", pady=2
         )
-        steps_frame = ttk.Frame(frame)
-        steps_frame.grid(row=6, column=1, columnspan=3, sticky="ew", pady=2)
+        timestep_frame = ttk.Frame(frame)
+        timestep_frame.grid(row=6, column=1, columnspan=3, sticky="ew", pady=2)
 
-        self.steps_var = tk.StringVar(value="2000")
-        self.steps_entry = ttk.Entry(steps_frame, textvariable=self.steps_var, width=10)
-        self.steps_entry.pack(side="left", padx=(0, 10))
+        self.timestep_mode_var = tk.StringVar(value="duration")
+        ttk.Radiobutton(
+            timestep_frame,
+            text="Auto-calc duration, provide count:",
+            variable=self.timestep_mode_var,
+            value="duration",
+            command=self._toggle_timestep_mode,
+        ).pack(side="left", padx=(0, 5))
 
-        self.auto_steps_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            steps_frame,
-            text="Auto-adjust timestep for ~",
-            variable=self.auto_steps_var,
-            command=self._toggle_auto_steps,
-        ).pack(side="left", padx=(0, 2))
-
-        self.auto_steps_target_var = tk.StringVar(value="500")
-        ttk.Entry(steps_frame, textvariable=self.auto_steps_target_var, width=6).pack(
-            side="left", padx=2
+        self.steps_var = tk.StringVar(value="500")
+        self.steps_entry = ttk.Entry(
+            timestep_frame, textvariable=self.steps_var, width=8
         )
-        ttk.Label(steps_frame, text="steps (to wall +").pack(side="left", padx=(2, 2))
+        self.steps_entry.pack(side="left", padx=2)
+        ttk.Label(timestep_frame, text="steps").pack(side="left", padx=(2, 15))
 
+        ttk.Radiobutton(
+            timestep_frame,
+            text="Auto-calc count, provide duration:",
+            variable=self.timestep_mode_var,
+            value="count",
+            command=self._toggle_timestep_mode,
+        ).pack(side="left", padx=(0, 5))
+
+        self.duration_var = tk.StringVar(value="1e-3")
+        self.duration_entry = ttk.Entry(
+            timestep_frame, textvariable=self.duration_var, width=10
+        )
+        self.duration_entry.pack(side="left", padx=2)
+        ttk.Label(timestep_frame, text="ns (proper time)").pack(side="left", padx=2)
+
+        # Distance target
+        distance_frame = ttk.Frame(frame)
+        distance_frame.grid(row=7, column=1, columnspan=3, sticky="ew", pady=2)
+        ttk.Label(distance_frame, text="Target: wall +").pack(side="left", padx=(0, 2))
         self.auto_steps_distance_var = tk.StringVar(value="10.0")
-        ttk.Entry(steps_frame, textvariable=self.auto_steps_distance_var, width=6).pack(
+        ttk.Entry(
+            distance_frame, textvariable=self.auto_steps_distance_var, width=6
+        ).pack(side="left", padx=2)
+        ttk.Label(distance_frame, text="mm (min 200 steps enforced)").pack(
             side="left", padx=2
         )
-        ttk.Label(steps_frame, text="mm)").pack(side="left")
 
         # Trajectory saving
         ttk.Label(frame, text="Trajectory Saving:").grid(
-            row=7, column=0, sticky="w", pady=2
+            row=8, column=0, sticky="w", pady=2
         )
         traj_frame = ttk.Frame(frame)
-        traj_frame.grid(row=7, column=1, columnspan=3, sticky="ew", pady=2)
+        traj_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=2)
 
         self.save_trajectories_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
@@ -753,10 +801,19 @@ class OptimizationPlugin(ttk.Frame):
             side="left"
         )
 
+        # Add info note about what gets saved
+        traj_note = ttk.Label(
+            frame,
+            text="Note: If trajectories are not saved, only heatmap plot and optimization metrics will be saved.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        )
+        traj_note.grid(row=9, column=1, columnspan=3, sticky="w", pady=(2, 0))
+
         frame.columnconfigure(2, weight=1)
 
-        # Initialize auto-steps state
-        self._toggle_auto_steps()
+        # Initialize timestep mode state
+        self._toggle_timestep_mode()
 
     def _build_particle_section(self):
         """Build rider and driver particle parameters sections with optional sweeping."""
@@ -1027,12 +1084,17 @@ class OptimizationPlugin(ttk.Frame):
             controls["range_frame"].grid_remove()
             controls["fixed_entry"].config(state="normal")
 
-    def _toggle_auto_steps(self):
-        """Enable/disable steps entry based on auto-adjust checkbox."""
-        if self.auto_steps_var.get():
-            self.steps_entry.config(state="disabled")
-        else:
+    def _toggle_timestep_mode(self):
+        """Toggle between duration/count auto-calculation modes."""
+        mode = self.timestep_mode_var.get()
+        if mode == "duration":
+            # User provides count, we calculate duration
             self.steps_entry.config(state="normal")
+            self.duration_entry.config(state="disabled")
+        else:  # mode == "count"
+            # User provides duration, we calculate count (min 200)
+            self.steps_entry.config(state="disabled")
+            self.duration_entry.config(state="normal")
 
     def _update_driver_visibility(self):
         """Show/hide driver section based on simulation type."""
@@ -1266,10 +1328,16 @@ class OptimizationPlugin(ttk.Frame):
             ),
             starting_z_positions=self._parse_list_field(self.start_z_var.get()),
             wall_z=float(self.wall_z_var.get()),
-            timestep=float(self.timestep_var.get()),
-            steps=int(self.steps_var.get()),
-            auto_steps=self.auto_steps_var.get(),
-            auto_steps_target=int(self.auto_steps_target_var.get()),
+            timestep=float(self.duration_var.get())
+            if self.timestep_mode_var.get() == "count"
+            else 3e-7,
+            steps=int(self.steps_var.get())
+            if self.timestep_mode_var.get() == "duration"
+            else 200,
+            auto_steps=True,  # Always use auto-calculation
+            auto_steps_target=int(self.steps_var.get())
+            if self.timestep_mode_var.get() == "duration"
+            else 200,
             auto_steps_distance_past_wall=float(self.auto_steps_distance_var.get()),
             objective=self.objective_var.get(),
             transv_mom=float(self.sweep_params["rider_transv_mom"]["fixed_var"].get()),
@@ -1341,9 +1409,7 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(
                 f"  Self-consistency: {opt_config.self_consistency_enabled} (tol={opt_config.self_consistency_tolerance:.1e})"
             )
-            self._log_result(
-                f"  Energy monitoring: {opt_config.energy_monitor_enabled} (threshold={opt_config.energy_monitor_threshold * 100:.0f}%)"
-            )
+            # Energy monitoring removed - functionality in adaptive timestep
             self._log_result(
                 f"  Adaptive timestep: {opt_config.adaptive_timestep_enabled} (threshold={opt_config.adaptive_timestep_threshold * 100:.0f}%)"
             )
@@ -1455,52 +1521,7 @@ class OptimizationPlugin(ttk.Frame):
         sc_verb_entry.pack(anchor="w")
         all_widgets.append(sc_verb_entry)
 
-        # Energy monitor section
-        em_frame = ttk.LabelFrame(scrollable, text="Energy Monitoring", padding=10)
-        em_frame.pack(fill="x", pady=5, padx=5)
-
-        em_enabled_var = tk.BooleanVar(value=self.config.energy_monitor_enabled)
-        em_enabled_cb = ttk.Checkbutton(
-            em_frame, text="Enabled", variable=em_enabled_var
-        )
-        em_enabled_cb.pack(anchor="w")
-        all_widgets.append(em_enabled_cb)
-
-        ttk.Label(em_frame, text="Jump threshold (relative):").pack(
-            anchor="w", pady=(5, 0)
-        )
-        em_thresh_var = tk.StringVar(value=str(self.config.energy_monitor_threshold))
-        em_thresh_entry = ttk.Entry(em_frame, textvariable=em_thresh_var, width=15)
-        em_thresh_entry.pack(anchor="w")
-        all_widgets.append(em_thresh_entry)
-
-        ttk.Label(em_frame, text="Check interval (steps):").pack(
-            anchor="w", pady=(5, 0)
-        )
-        em_interval_var = tk.StringVar(
-            value=str(self.config.energy_monitor_check_interval)
-        )
-        em_interval_entry = ttk.Entry(em_frame, textvariable=em_interval_var, width=15)
-        em_interval_entry.pack(anchor="w")
-        all_widgets.append(em_interval_entry)
-
-        em_halt_var = tk.BooleanVar(value=self.config.energy_monitor_halt_on_jump)
-        em_halt_cb = ttk.Checkbutton(
-            em_frame, text="Halt on energy jump", variable=em_halt_var
-        )
-        em_halt_cb.pack(anchor="w", pady=(5, 0))
-        all_widgets.append(em_halt_cb)
-
-        em_debug_var = tk.BooleanVar(value=self.config.energy_monitor_debug or True)
-        em_debug_cb = ttk.Checkbutton(
-            em_frame,
-            text="Debug logging (recommended for sweeps)",
-            variable=em_debug_var,
-        )
-        em_debug_cb.pack(anchor="w")
-        all_widgets.append(em_debug_cb)
-
-        # Adaptive timestep section
+        # Adaptive timestep section (Energy Monitoring functionality integrated here)
         at_frame = ttk.LabelFrame(scrollable, text="Adaptive Timestep", padding=10)
         at_frame.pack(fill="x", pady=5, padx=5)
 
@@ -1535,6 +1556,13 @@ class OptimizationPlugin(ttk.Frame):
         at_attempts_entry.pack(anchor="w")
         all_widgets.append(at_attempts_entry)
 
+        at_halt_var = tk.BooleanVar(value=self.config.energy_monitor_halt_on_jump)
+        at_halt_cb = ttk.Checkbutton(
+            at_frame, text="Halt simulation on energy jump", variable=at_halt_var
+        )
+        at_halt_cb.pack(anchor="w", pady=(5, 0))
+        all_widgets.append(at_halt_cb)
+
         at_debug_var = tk.BooleanVar(value=self.config.adaptive_timestep_debug or True)
         at_debug_cb = ttk.Checkbutton(
             at_frame,
@@ -1549,11 +1577,9 @@ class OptimizationPlugin(ttk.Frame):
             """Apply safer defaults for sweeps."""
             # Self-consistency: more verbose for debugging
             sc_verb_var.set("1")
-            # Energy monitoring: debug enabled, don't halt
-            em_debug_var.set(True)
-            em_halt_var.set(False)
-            # Adaptive timestep: debug enabled, reduced max attempts to fail faster
+            # Adaptive timestep: debug enabled, don't halt, reduced max attempts to fail faster
             at_debug_var.set(True)
+            at_halt_var.set(False)
             at_attempts_var.set("3")
 
         # Function to toggle widgets based on checkbox
@@ -1615,11 +1641,9 @@ class OptimizationPlugin(ttk.Frame):
                 self.config.self_consistency_max_iterations = int(sc_iter_var.get())
                 self.config.self_consistency_verbosity = int(sc_verb_var.get())
 
-                self.config.energy_monitor_enabled = em_enabled_var.get()
-                self.config.energy_monitor_threshold = float(em_thresh_var.get())
-                self.config.energy_monitor_check_interval = int(em_interval_var.get())
-                self.config.energy_monitor_halt_on_jump = em_halt_var.get()
-                self.config.energy_monitor_debug = em_debug_var.get()
+                # Energy monitoring removed - halt option now in adaptive timestep
+                self.config.energy_monitor_enabled = False
+                self.config.energy_monitor_halt_on_jump = at_halt_var.get()
 
                 self.config.adaptive_timestep_enabled = at_enabled_var.get()
                 self.config.adaptive_timestep_threshold = float(at_thresh_var.get())
@@ -1672,9 +1696,7 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(
                 f"  Self-consistency: {self.config.self_consistency_enabled} (tol={self.config.self_consistency_tolerance:.1e}, max_iter={self.config.self_consistency_max_iterations}, verbosity={self.config.self_consistency_verbosity})"
             )
-            self._log_result(
-                f"  Energy monitoring: {self.config.energy_monitor_enabled} (threshold={self.config.energy_monitor_threshold * 100:.0f}%, halt={self.config.energy_monitor_halt_on_jump}, debug={self.config.energy_monitor_debug})"
-            )
+            # Energy monitoring removed - halt option integrated into adaptive timestep
             self._log_result(
                 f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%, reduction={self.config.adaptive_timestep_reduction_factor}x, max_attempts={self.config.adaptive_timestep_max_attempts}, debug={self.config.adaptive_timestep_debug})"
             )
@@ -1898,19 +1920,14 @@ class OptimizationPlugin(ttk.Frame):
             loaded_config.self_consistency_verbosity = data.get(
                 "self_consistency_verbosity", 0
             )
-            loaded_config.energy_monitor_enabled = data.get(
-                "energy_monitor_enabled", True
-            )
-            loaded_config.energy_monitor_threshold = data.get(
-                "energy_monitor_threshold", 2.0
-            )
-            loaded_config.energy_monitor_check_interval = data.get(
-                "energy_monitor_check_interval", 10
-            )
+            # Energy monitoring removed - functionality in adaptive timestep
+            loaded_config.energy_monitor_enabled = False
+            loaded_config.energy_monitor_threshold = 2.0
+            loaded_config.energy_monitor_check_interval = 10
             loaded_config.energy_monitor_halt_on_jump = data.get(
                 "energy_monitor_halt_on_jump", False
             )
-            loaded_config.energy_monitor_debug = data.get("energy_monitor_debug", False)
+            loaded_config.energy_monitor_debug = False
             loaded_config.adaptive_timestep_enabled = data.get(
                 "adaptive_timestep_enabled", True
             )
@@ -1948,9 +1965,7 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(
                 f"  Self-consistency: {self.config.self_consistency_enabled} (tol={self.config.self_consistency_tolerance:.1e})"
             )
-            self._log_result(
-                f"  Energy monitoring: {self.config.energy_monitor_enabled} (threshold={self.config.energy_monitor_threshold * 100:.0f}%)"
-            )
+            # Energy monitoring removed - functionality in adaptive timestep
             self._log_result(
                 f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%)"
             )
@@ -2017,11 +2032,8 @@ class OptimizationPlugin(ttk.Frame):
                 "self_consistency_tolerance": config.self_consistency_tolerance,
                 "self_consistency_max_iterations": config.self_consistency_max_iterations,
                 "self_consistency_verbosity": config.self_consistency_verbosity,
-                "energy_monitor_enabled": config.energy_monitor_enabled,
-                "energy_monitor_threshold": config.energy_monitor_threshold,
-                "energy_monitor_check_interval": config.energy_monitor_check_interval,
+                # Energy monitoring removed - halt option in adaptive timestep
                 "energy_monitor_halt_on_jump": config.energy_monitor_halt_on_jump,
-                "energy_monitor_debug": config.energy_monitor_debug,
                 "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
                 "adaptive_timestep_threshold": config.adaptive_timestep_threshold,
                 "adaptive_timestep_reduction_factor": config.adaptive_timestep_reduction_factor,
@@ -2819,7 +2831,7 @@ class OptimizationPlugin(ttk.Frame):
             summary = (
                 f"Run #{run_num}: "
                 f"a={aperture:.2e}mm, E={energy:.1f}GeV, "
-                f"ΔE={delta_e:.2f}MeV"
+                f"ΔE={delta_e:.6f}MeV"
             )
             run_listbox.insert("end", summary)
 
@@ -3323,6 +3335,10 @@ class OptimizationPlugin(ttk.Frame):
                     timestep = self.config.timestep
                     steps = self.config.steps
 
+                # Enforce hard minimum of 200 steps
+                if steps < 200:
+                    steps = 200
+
                 # Log run start with full parameters for debugging
                 self._log_result(
                     f"  [DEBUG] Starting Run {run_num}/{total_runs}: "
@@ -3445,7 +3461,7 @@ class OptimizationPlugin(ttk.Frame):
                             log_msg = (
                                 f"  Run {run_num}/{total_runs}: "
                                 f"a={aperture:.2e}mm, E={energy:.1f}GeV, z={start_z:.1f}mm → "
-                                f"ΔE={delta_e:.2f}MeV"
+                                f"ΔE={delta_e:.6f}MeV"
                             )
                             if actual_distance > 0:
                                 log_msg += f", traveled={actual_distance:.1f}mm"
@@ -3736,12 +3752,11 @@ class OptimizationPlugin(ttk.Frame):
             self_consistency_verbosity=max(
                 self.config.self_consistency_verbosity, 1
             ),  # At least basic for debugging
-            energy_monitor_enabled=self.config.energy_monitor_enabled,
-            energy_monitor_threshold=self.config.energy_monitor_threshold,
-            energy_monitor_check_interval=self.config.energy_monitor_check_interval,
+            energy_monitor_enabled=False,  # Removed - functionality in adaptive timestep
+            energy_monitor_threshold=2.0,
+            energy_monitor_check_interval=10,
             energy_monitor_halt_on_jump=self.config.energy_monitor_halt_on_jump,
-            energy_monitor_debug=self.config.energy_monitor_debug
-            or True,  # Enable debug for sweeps
+            energy_monitor_debug=False,  # Removed
             adaptive_timestep_enabled=self.config.adaptive_timestep_enabled,
             adaptive_timestep_threshold=self.config.adaptive_timestep_threshold,
             adaptive_timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
@@ -4114,7 +4129,7 @@ class OptimizationPlugin(ttk.Frame):
             ax3 = fig.add_subplot(gs[2])
 
             fig.suptitle(
-                f"Best Trajectory: a={aperture * 1e3:.1f}μm, E={energy:.1f}GeV, ΔE={delta_e:.2f}MeV",
+                f"Best Trajectory: a={aperture * 1e3:.1f}μm, E={energy:.1f}GeV, ΔE={delta_e:.6f}MeV",
                 fontsize=12,
                 fontweight="bold",
             )

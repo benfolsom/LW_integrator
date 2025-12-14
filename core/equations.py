@@ -497,19 +497,15 @@ def _compute_radiation_reaction_term(
 
 
 def _should_apply_radiation_reaction(
-    beta_magnitude: float,
     beta_dot_magnitude: float,
     threshold_fraction: float = 0.01,
 ) -> bool:
     """Determine if radiation reaction correction should be applied.
 
-    Radiation reaction is applied when beta_dot is a significant percentage
-    of either beta or beta_dot itself.
+    Radiation reaction is applied when beta_dot magnitude is significant.
 
     Parameters
     ----------
-    beta_magnitude : float
-        Magnitude of velocity (|β|).
     beta_dot_magnitude : float
         Magnitude of acceleration (|β̇|).
     threshold_fraction : float, optional
@@ -518,22 +514,10 @@ def _should_apply_radiation_reaction(
     Returns
     -------
     bool
-        True if beta_dot is significant relative to beta or itself.
+        True if beta_dot is significant (above threshold).
     """
-    # Apply radiation reaction if beta_dot is significant compared to beta
-    # (i.e., substantial fractional change in velocity)
-    if (
-        beta_magnitude > 0.0
-        and beta_dot_magnitude >= threshold_fraction * beta_magnitude
-    ):
-        return True
-
-    # Also apply if beta_dot itself is significant (absolute threshold)
-    # This catches cases where beta is small but acceleration is large
-    if beta_dot_magnitude >= threshold_fraction:
-        return True
-
-    return False
+    # Apply radiation reaction if beta_dot is significant (absolute threshold)
+    return beta_dot_magnitude >= threshold_fraction
 
 
 def _update_beta_running_average(
@@ -1009,21 +993,16 @@ def retarded_equations_of_motion(
             # ================================================================
             particle_char_time = _get_particle_char_time(current_state, particle_idx)
 
-            # Compute beta and beta_dot magnitudes to determine if radiation reaction is needed
-            beta_magnitude = np.sqrt(
-                result["bx"][particle_idx] ** 2
-                + result["by"][particle_idx] ** 2
-                + result["bz"][particle_idx] ** 2
-            )
+            # Compute beta_dot magnitude to determine if radiation reaction is needed
             beta_dot_magnitude = np.sqrt(
                 result["bdotx"][particle_idx] ** 2
                 + result["bdoty"][particle_idx] ** 2
                 + result["bdotz"][particle_idx] ** 2
             )
 
-            # Only apply radiation reaction if beta_dot is significant relative to beta or itself
+            # Only apply radiation reaction if beta_dot is significant
             if _should_apply_radiation_reaction(
-                beta_magnitude, beta_dot_magnitude, threshold_fraction=0.01
+                beta_dot_magnitude, threshold_fraction=0.01
             ):
                 # Compute radiation reaction for all three axes
                 rad_lhs_x, rad_rhs_x = _compute_radiation_reaction_term(

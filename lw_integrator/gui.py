@@ -350,26 +350,13 @@ class IntegratorGUI:
             value=self.options.self_consistency_verbosity
         )
 
-        # Energy monitoring options
-        self.energy_monitor_enabled_var = tk.BooleanVar(
-            value=self.options.energy_monitor_enabled
-        )
-        self.energy_monitor_threshold_var = tk.DoubleVar(
-            value=self.options.energy_monitor_threshold
-        )
-        self.energy_monitor_check_interval_var = tk.IntVar(
-            value=self.options.energy_monitor_check_interval
-        )
-        self.energy_monitor_halt_on_jump_var = tk.BooleanVar(
-            value=self.options.energy_monitor_halt_on_jump
-        )
-        self.energy_monitor_debug_var = tk.BooleanVar(
-            value=self.options.energy_monitor_debug
-        )
-
-        # Adaptive timestep options
+        # Adaptive timestep options (includes halt on jump from removed energy monitor)
         self.adaptive_timestep_enabled_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_enabled
+        )
+        # Migrate halt_on_jump from removed energy monitor
+        self.adaptive_timestep_halt_on_jump_var = tk.BooleanVar(
+            value=self.options.energy_monitor_halt_on_jump
         )
         self.adaptive_timestep_threshold_var = tk.DoubleVar(
             value=self.options.adaptive_timestep_threshold
@@ -912,126 +899,125 @@ class IntegratorGUI:
             foreground="gray",
         ).pack(side="left")
 
-        # Energy monitoring section
-        em_frame = ttk.LabelFrame(
-            stability_frame, text="Energy Jump Detection", padding=8
-        )
-        em_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        em_frame.columnconfigure(1, weight=1)
-
-        ttk.Checkbutton(
-            em_frame,
-            text="Enable runtime energy monitoring",
-            variable=self.energy_monitor_enabled_var,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
-
-        ttk.Label(em_frame, text="Jump threshold (rel. change):").grid(
-            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
-        )
-        ttk.Entry(
-            em_frame, textvariable=self.energy_monitor_threshold_var, width=16
-        ).grid(row=1, column=1, sticky="ew", pady=2)
-
-        ttk.Label(em_frame, text="Check interval (steps):").grid(
-            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
-        )
-        ttk.Entry(
-            em_frame, textvariable=self.energy_monitor_check_interval_var, width=16
-        ).grid(row=2, column=1, sticky="ew", pady=2)
-
-        ttk.Checkbutton(
-            em_frame,
-            text="Halt simulation on energy jump",
-            variable=self.energy_monitor_halt_on_jump_var,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
-
-        ttk.Checkbutton(
-            em_frame,
-            text="Debug output",
-            variable=self.energy_monitor_debug_var,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
-
-        # Adaptive timestep section
+        # Adaptive timestep section (Energy Jump Detection functionality integrated here)
         at_frame = ttk.LabelFrame(
             stability_frame, text="Adaptive Timestep Refinement", padding=8
         )
         at_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         at_frame.columnconfigure(1, weight=1)
 
-        ttk.Checkbutton(
+        self.adaptive_enable_check = ttk.Checkbutton(
             at_frame,
             text="Enable adaptive timestep (auto-refine on energy jumps)",
             variable=self.adaptive_timestep_enabled_var,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+            command=self._toggle_adaptive_timestep_controls,
+        )
+        self.adaptive_enable_check.grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=2
+        )
 
-        ttk.Label(at_frame, text="Energy jump threshold:").grid(
+        self.adaptive_threshold_label = ttk.Label(
+            at_frame, text="Energy jump threshold:"
+        )
+        self.adaptive_threshold_label.grid(
             row=1, column=0, sticky="w", pady=2, padx=(20, 0)
         )
-        ttk.Entry(
+        self.adaptive_threshold_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_threshold_var, width=16
-        ).grid(row=1, column=1, sticky="ew", pady=2)
+        )
+        self.adaptive_threshold_entry.grid(row=1, column=1, sticky="ew", pady=2)
 
-        ttk.Label(at_frame, text="Timestep reduction factor:").grid(
+        self.adaptive_reduction_label = ttk.Label(
+            at_frame, text="Timestep reduction factor:"
+        )
+        self.adaptive_reduction_label.grid(
             row=2, column=0, sticky="w", pady=2, padx=(20, 0)
         )
-        ttk.Entry(
+        self.adaptive_reduction_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_reduction_factor_var, width=16
-        ).grid(row=2, column=1, sticky="ew", pady=2)
+        )
+        self.adaptive_reduction_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
-        ttk.Label(at_frame, text="Max refinement attempts:").grid(
+        self.adaptive_max_attempts_label = ttk.Label(
+            at_frame, text="Max refinement attempts:"
+        )
+        self.adaptive_max_attempts_label.grid(
             row=3, column=0, sticky="w", pady=2, padx=(20, 0)
         )
-        ttk.Entry(
+        self.adaptive_max_attempts_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_max_attempts_var, width=16
-        ).grid(row=3, column=1, sticky="ew", pady=2)
+        )
+        self.adaptive_max_attempts_entry.grid(row=3, column=1, sticky="ew", pady=2)
 
-        ttk.Label(at_frame, text="Min timestep factor:").grid(
+        self.adaptive_min_factor_label = ttk.Label(
+            at_frame, text="Min timestep factor:"
+        )
+        self.adaptive_min_factor_label.grid(
             row=4, column=0, sticky="w", pady=2, padx=(20, 0)
         )
-        ttk.Entry(
+        self.adaptive_min_factor_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_min_factor_var, width=16
-        ).grid(row=4, column=1, sticky="ew", pady=2)
+        )
+        self.adaptive_min_factor_entry.grid(row=4, column=1, sticky="ew", pady=2)
 
         # Hysteresis parameters
-        ttk.Label(at_frame, text="Cooldown steps:").grid(
-            row=5, column=0, sticky="w", pady=2
-        )
-        ttk.Entry(
+        self.adaptive_cooldown_label = ttk.Label(at_frame, text="Cooldown steps:")
+        self.adaptive_cooldown_label.grid(row=5, column=0, sticky="w", pady=2)
+        self.adaptive_cooldown_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_cooldown_steps_var, width=16
-        ).grid(row=5, column=1, sticky="ew", pady=2)
-
-        ttk.Label(at_frame, text="Probe threshold:").grid(
-            row=6, column=0, sticky="w", pady=2
         )
-        ttk.Entry(
+        self.adaptive_cooldown_entry.grid(row=5, column=1, sticky="ew", pady=2)
+
+        self.adaptive_probe_threshold_label = ttk.Label(
+            at_frame, text="Probe threshold:"
+        )
+        self.adaptive_probe_threshold_label.grid(row=6, column=0, sticky="w", pady=2)
+        self.adaptive_probe_threshold_entry = ttk.Entry(
             at_frame, textvariable=self.adaptive_timestep_probe_threshold_var, width=16
-        ).grid(row=6, column=1, sticky="ew", pady=2)
-
-        ttk.Label(at_frame, text="Max probe steps:").grid(
-            row=7, column=0, sticky="w", pady=2
         )
-        ttk.Entry(
-            at_frame, textvariable=self.adaptive_timestep_max_probe_steps_var, width=16
-        ).grid(row=7, column=1, sticky="ew", pady=2)
+        self.adaptive_probe_threshold_entry.grid(row=6, column=1, sticky="ew", pady=2)
 
-        ttk.Checkbutton(
+        self.adaptive_max_probe_label = ttk.Label(at_frame, text="Max probe steps:")
+        self.adaptive_max_probe_label.grid(row=7, column=0, sticky="w", pady=2)
+        self.adaptive_max_probe_entry = ttk.Entry(
+            at_frame, textvariable=self.adaptive_timestep_max_probe_steps_var, width=16
+        )
+        self.adaptive_max_probe_entry.grid(row=7, column=1, sticky="ew", pady=2)
+
+        # Halt on jump option (migrated from removed Energy Jump Detection)
+        self.adaptive_halt_check = ttk.Checkbutton(
+            at_frame,
+            text="Halt simulation on energy jump",
+            variable=self.adaptive_timestep_halt_on_jump_var,
+        )
+        self.adaptive_halt_check.grid(
+            row=8, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+
+        self.adaptive_debug_check = ttk.Checkbutton(
             at_frame,
             text="Debug output (show refinement actions)",
             variable=self.adaptive_timestep_debug_var,
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0))
+        )
+        self.adaptive_debug_check.grid(
+            row=9, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
 
         # Help text
         help_text = ttk.Label(
             stability_frame,
             text="These settings help prevent energy jumps and numerical instabilities.\n"
             "Self-consistency is recommended for all simulations and is enabled by default.\n"
-            "Energy monitoring detects problems during runtime (threshold: 2.0 = 200% change).\n"
-            "Adaptive timestep automatically reduces timestep when energy jumps are detected (enabled by default).",
+            "Adaptive timestep automatically reduces timestep when energy jumps are detected (enabled by default).\n"
+            "When adaptive timestep is disabled, only 'Halt on jump' and 'Debug output' remain active.",
             wraplength=450,
             justify="left",
             foreground="gray",
         )
         help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+        # Initialize adaptive timestep control states
+        self._toggle_adaptive_timestep_controls()
 
         # Outputs tab ---------------------------------------------------
         output_frame = self._create_scrollable_tab(self.notebook, "Output", padding=12)
@@ -1842,14 +1828,8 @@ class IntegratorGUI:
             options.self_consistency_max_iterations
         )
         self.self_consistency_verbosity_var.set(options.self_consistency_verbosity)
-        self.energy_monitor_enabled_var.set(options.energy_monitor_enabled)
-        self.energy_monitor_threshold_var.set(options.energy_monitor_threshold)
-        self.energy_monitor_check_interval_var.set(
-            options.energy_monitor_check_interval
-        )
-        self.energy_monitor_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
-        self.energy_monitor_debug_var.set(options.energy_monitor_debug)
         self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
+        self.adaptive_timestep_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
         self.adaptive_timestep_threshold_var.set(options.adaptive_timestep_threshold)
         self.adaptive_timestep_reduction_factor_var.set(
             options.adaptive_timestep_reduction_factor
@@ -1950,15 +1930,13 @@ class IntegratorGUI:
                 self.self_consistency_max_iterations_var.get()
             ),
             self_consistency_verbosity=int(self.self_consistency_verbosity_var.get()),
-            energy_monitor_enabled=bool(self.energy_monitor_enabled_var.get()),
-            energy_monitor_threshold=float(self.energy_monitor_threshold_var.get()),
-            energy_monitor_check_interval=int(
-                self.energy_monitor_check_interval_var.get()
-            ),
+            energy_monitor_enabled=False,  # Removed, functionality in adaptive timestep
+            energy_monitor_threshold=2.0,  # Default (unused)
+            energy_monitor_check_interval=10,  # Default (unused)
             energy_monitor_halt_on_jump=bool(
-                self.energy_monitor_halt_on_jump_var.get()
+                self.adaptive_timestep_halt_on_jump_var.get()
             ),
-            energy_monitor_debug=bool(self.energy_monitor_debug_var.get()),
+            energy_monitor_debug=False,  # Removed
             adaptive_timestep_enabled=bool(self.adaptive_timestep_enabled_var.get()),
             adaptive_timestep_threshold=float(
                 self.adaptive_timestep_threshold_var.get()
@@ -2410,6 +2388,45 @@ class IntegratorGUI:
             self.difference_display_var.set(False)
             self.difference_save_var.set(False)
             self.metrics_save_var.set(False)
+
+    def _toggle_adaptive_timestep_controls(self) -> None:
+        """Enable/disable adaptive timestep controls based on enabled checkbox.
+
+        When disabled, gray out all controls except 'Halt on jump' and 'Debug output'.
+        """
+        enabled = self.adaptive_timestep_enabled_var.get()
+
+        # State for main configuration parameters
+        param_state = "normal" if enabled else "disabled"
+
+        # These controls are grayed out when adaptive timestep is disabled
+        controls_to_toggle = [
+            self.adaptive_threshold_label,
+            self.adaptive_threshold_entry,
+            self.adaptive_reduction_label,
+            self.adaptive_reduction_entry,
+            self.adaptive_max_attempts_label,
+            self.adaptive_max_attempts_entry,
+            self.adaptive_min_factor_label,
+            self.adaptive_min_factor_entry,
+            self.adaptive_cooldown_label,
+            self.adaptive_cooldown_entry,
+            self.adaptive_probe_threshold_label,
+            self.adaptive_probe_threshold_entry,
+            self.adaptive_max_probe_label,
+            self.adaptive_max_probe_entry,
+        ]
+
+        for control in controls_to_toggle:
+            if isinstance(control, ttk.Entry):
+                control.configure(state=param_state)
+            elif isinstance(control, ttk.Label):
+                # Labels don't have a state, but we can change their appearance
+                fg_color = "black" if enabled else "gray"
+                control.configure(foreground=fg_color)
+
+        # Halt on jump and debug output remain active always
+        # (they are checkbuttons, always enabled)
 
     # ------------------------------------------------------------------
     # Simulation execution
