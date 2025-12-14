@@ -496,30 +496,6 @@ def _compute_radiation_reaction_term(
     return lhs_term, rhs_term
 
 
-def _should_apply_radiation_reaction(
-    beta_dot_magnitude: float,
-    threshold_fraction: float = 0.01,
-) -> bool:
-    """Determine if radiation reaction correction should be applied.
-
-    Radiation reaction is applied when beta_dot magnitude is significant.
-
-    Parameters
-    ----------
-    beta_dot_magnitude : float
-        Magnitude of acceleration (|β̇|).
-    threshold_fraction : float, optional
-        Fraction threshold (default 0.01 = 1%).
-
-    Returns
-    -------
-    bool
-        True if beta_dot is significant (above threshold).
-    """
-    # Apply radiation reaction if beta_dot is significant (absolute threshold)
-    return beta_dot_magnitude >= threshold_fraction
-
-
 def _update_beta_running_average(
     previous_avg: tuple[float, float, float],
     previous_sample_count: float,
@@ -993,17 +969,26 @@ def retarded_equations_of_motion(
             # ================================================================
             particle_char_time = _get_particle_char_time(current_state, particle_idx)
 
-            # Compute beta_dot magnitude to determine if radiation reaction is needed
+            # Compute current and previous beta_dot magnitudes
             beta_dot_magnitude = np.sqrt(
                 result["bdotx"][particle_idx] ** 2
                 + result["bdoty"][particle_idx] ** 2
                 + result["bdotz"][particle_idx] ** 2
             )
+            beta_dot_prev_magnitude = np.sqrt(
+                current_state["bdotx"][particle_idx] ** 2
+                + current_state["bdoty"][particle_idx] ** 2
+                + current_state["bdotz"][particle_idx] ** 2
+            )
 
-            # Only apply radiation reaction if beta_dot is significant
-            if _should_apply_radiation_reaction(
-                beta_dot_magnitude, threshold_fraction=0.01
-            ):
+            # Apply radiation reaction if beta_dot has changed significantly (0.1% default)
+            beta_dot_change_fraction = (
+                abs(beta_dot_magnitude - beta_dot_prev_magnitude)
+                / beta_dot_prev_magnitude
+                if beta_dot_prev_magnitude > 0.0
+                else 0.0
+            )
+            if beta_dot_change_fraction >= 0.001:  # 0.1% threshold
                 # Compute radiation reaction for all three axes
                 rad_lhs_x, rad_rhs_x = _compute_radiation_reaction_term(
                     axis="x",

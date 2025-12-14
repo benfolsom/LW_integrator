@@ -350,6 +350,11 @@ class IntegratorGUI:
             value=self.options.self_consistency_verbosity
         )
 
+        # Trace to update control states
+        self.self_consistency_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_self_consistency_controls()
+        )
+
         # Adaptive timestep options (includes halt on jump from removed energy monitor)
         self.adaptive_timestep_enabled_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_enabled
@@ -863,36 +868,42 @@ class IntegratorGUI:
         sc_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         sc_frame.columnconfigure(1, weight=1)
 
-        ttk.Checkbutton(
+        self.sc_enable_check = ttk.Checkbutton(
             sc_frame,
             text="Enable self-consistency iterations (recommended)",
             variable=self.self_consistency_enabled_var,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
-
-        ttk.Label(sc_frame, text="Convergence tolerance:").grid(
-            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+            command=self._toggle_self_consistency_controls,
         )
-        ttk.Entry(
-            sc_frame, textvariable=self.self_consistency_tolerance_var, width=16
-        ).grid(row=1, column=1, sticky="ew", pady=2)
+        self.sc_enable_check.grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
 
-        ttk.Label(sc_frame, text="Max iterations:").grid(
+        self.sc_tolerance_label = ttk.Label(sc_frame, text="Convergence tolerance:")
+        self.sc_tolerance_label.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_tolerance_entry = ttk.Entry(
+            sc_frame, textvariable=self.self_consistency_tolerance_var, width=16
+        )
+        self.sc_tolerance_entry.grid(row=1, column=1, sticky="ew", pady=2)
+
+        self.sc_max_iterations_label = ttk.Label(sc_frame, text="Max iterations:")
+        self.sc_max_iterations_label.grid(
             row=2, column=0, sticky="w", pady=2, padx=(20, 0)
         )
-        ttk.Entry(
+        self.sc_max_iterations_entry = ttk.Entry(
             sc_frame, textvariable=self.self_consistency_max_iterations_var, width=16
-        ).grid(row=2, column=1, sticky="ew", pady=2)
+        )
+        self.sc_max_iterations_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
-        ttk.Label(sc_frame, text="Verbosity:").grid(row=3, column=0, sticky="w", pady=2)
+        self.sc_verbosity_label = ttk.Label(sc_frame, text="Verbosity:")
+        self.sc_verbosity_label.grid(row=3, column=0, sticky="w", pady=2)
         verbosity_frame = ttk.Frame(sc_frame)
         verbosity_frame.grid(row=3, column=1, sticky="w", pady=2)
-        ttk.Spinbox(
+        self.sc_verbosity_entry = ttk.Spinbox(
             verbosity_frame,
             from_=0,
             to=2,
             textvariable=self.self_consistency_verbosity_var,
             width=5,
-        ).pack(side="left")
+        )
+        self.sc_verbosity_entry.pack(side="left")
         ttk.Label(
             verbosity_frame,
             text=" (0=silent, 1=basic, 2=detailed)",
@@ -1009,14 +1020,15 @@ class IntegratorGUI:
             text="These settings help prevent energy jumps and numerical instabilities.\n"
             "Self-consistency is recommended for all simulations and is enabled by default.\n"
             "Adaptive timestep automatically reduces timestep when energy jumps are detected (enabled by default).\n"
-            "When adaptive timestep is disabled, only 'Halt on jump' and 'Debug output' remain active.",
+            "When adaptive timestep is disabled, all configuration options are grayed out.",
             wraplength=450,
             justify="left",
             foreground="gray",
         )
         help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
-        # Initialize adaptive timestep control states
+        # Initialize control states
+        self._toggle_self_consistency_controls()
         self._toggle_adaptive_timestep_controls()
 
         # Outputs tab ---------------------------------------------------
@@ -2389,18 +2401,44 @@ class IntegratorGUI:
             self.difference_save_var.set(False)
             self.metrics_save_var.set(False)
 
+    def _toggle_self_consistency_controls(self) -> None:
+        """Enable/disable self-consistency controls based on enabled checkbox."""
+        if not hasattr(self, "sc_tolerance_label"):
+            return  # Widgets not created yet
+
+        enabled = self.self_consistency_enabled_var.get()
+        param_state = "normal" if enabled else "disabled"
+
+        # Gray out all sub-controls when disabled
+        controls_to_toggle = [
+            self.sc_tolerance_label,
+            self.sc_tolerance_entry,
+            self.sc_max_iterations_label,
+            self.sc_max_iterations_entry,
+            self.sc_verbosity_label,
+            self.sc_verbosity_entry,
+        ]
+
+        for control in controls_to_toggle:
+            if isinstance(control, ttk.Entry):
+                control.configure(state=param_state)
+            elif isinstance(control, ttk.Label):
+                fg_color = "black" if enabled else "gray"
+                control.configure(foreground=fg_color)
+
     def _toggle_adaptive_timestep_controls(self) -> None:
         """Enable/disable adaptive timestep controls based on enabled checkbox.
 
-        When disabled, gray out all controls except 'Halt on jump' and 'Debug output'.
+        When adaptive timestep is disabled: gray out ALL controls
         """
-        enabled = self.adaptive_timestep_enabled_var.get()
+        if not hasattr(self, "adaptive_threshold_label"):
+            return  # Widgets not created yet
 
-        # State for main configuration parameters
-        param_state = "normal" if enabled else "disabled"
+        adaptive_enabled = self.adaptive_timestep_enabled_var.get()
+        param_state = "normal" if adaptive_enabled else "disabled"
 
-        # These controls are grayed out when adaptive timestep is disabled
-        controls_to_toggle = [
+        # All controls are grayed out when adaptive timestep is disabled
+        all_controls = [
             self.adaptive_threshold_label,
             self.adaptive_threshold_entry,
             self.adaptive_reduction_label,
@@ -2415,18 +2453,16 @@ class IntegratorGUI:
             self.adaptive_probe_threshold_entry,
             self.adaptive_max_probe_label,
             self.adaptive_max_probe_entry,
+            self.adaptive_halt_check,
+            self.adaptive_debug_check,
         ]
 
-        for control in controls_to_toggle:
-            if isinstance(control, ttk.Entry):
+        for control in all_controls:
+            if isinstance(control, (ttk.Entry, ttk.Checkbutton)):
                 control.configure(state=param_state)
             elif isinstance(control, ttk.Label):
-                # Labels don't have a state, but we can change their appearance
-                fg_color = "black" if enabled else "gray"
+                fg_color = "black" if adaptive_enabled else "gray"
                 control.configure(foreground=fg_color)
-
-        # Halt on jump and debug output remain active always
-        # (they are checkbuttons, always enabled)
 
     # ------------------------------------------------------------------
     # Simulation execution

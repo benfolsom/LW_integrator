@@ -1376,8 +1376,13 @@ class OptimizationPlugin(ttk.Frame):
             # Update UI fields
             self.sim_type_var.set(opt_config.simulation_type.name)
             self.wall_z_var.set(str(opt_config.wall_z))
-            self.timestep_var.set(f"{opt_config.timestep:.2e}")
+
+            # Set timestep mode and values based on loaded config
+            # Default to "duration" mode (auto-calc duration, user provides count)
+            self.timestep_mode_var.set("duration")
             self.steps_var.set(str(opt_config.steps))
+            self.duration_var.set(f"{opt_config.timestep:.2e}")
+            self._toggle_timestep_mode()  # Update UI state
             self.sweep_params["rider_m_particle"]["fixed_var"].set(
                 f"{opt_config.m_particle:.14e}"
             )
@@ -1397,8 +1402,11 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result("[OK] Loaded parameters from main GUI configuration")
             self._log_result(f"  Simulation type: {opt_config.simulation_type.name}")
             self._log_result(f"  Wall z: {opt_config.wall_z} mm")
-            self._log_result(f"  Timestep: {opt_config.timestep:.2e} ns")
+            self._log_result(
+                f"  Timestep mode: auto-calc duration (user provides count)"
+            )
             self._log_result(f"  Steps: {opt_config.steps}")
+            self._log_result(f"  Duration: {opt_config.timestep:.2e} ns")
             self._log_result(f"  Particle mass: {opt_config.m_particle:.6e} amu")
             self._log_result(
                 f"  Transverse momentum: {opt_config.transv_mom:.2e} amu·mm/ns"
