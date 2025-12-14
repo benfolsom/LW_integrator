@@ -319,6 +319,14 @@ class IntegratorGUI:
             else:
                 self.core_param_vars[name] = tk.StringVar(value=str(value))
 
+        # z_cutoff enable checkbox variable
+        self.z_cutoff_enabled_var = tk.BooleanVar(value=False)
+
+        # Trace to update control states
+        self.z_cutoff_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_z_cutoff_controls()
+        )
+
         self.overlay_display_var = tk.BooleanVar(value=self.options.overlay_display)
         self.overlay_save_var = tk.BooleanVar(value=self.options.overlay_save)
         self.difference_display_var = tk.BooleanVar(
@@ -839,24 +847,86 @@ class IntegratorGUI:
         )
         core_frame.columnconfigure(1, weight=1)
 
-        for row, name in enumerate(CORE_PARAM_LABELS, start=0):
+        # Store widgets for dynamic enable/disable
+        self.core_param_widgets = {}
+
+        row = 0
+        for name in CORE_PARAM_LABELS:
+            # Skip z_cutoff and z_cutoff_mode - handled separately below
+            if name in ["z_cutoff", "z_cutoff_mode"]:
+                continue
+
             ttk.Label(core_frame, text=CORE_PARAM_LABELS[name] + ":").grid(
                 row=row, column=0, sticky="w", pady=2
             )
-            # Use Combobox for z_cutoff_mode
-            if name == "z_cutoff_mode":
-                combo = ttk.Combobox(
-                    core_frame,
-                    textvariable=self.core_param_vars[name],
-                    values=["absolute", "relative"],
-                    state="readonly",
-                    width=14,
-                )
-                combo.grid(row=row, column=1, sticky="ew", pady=2)
-            else:
-                ttk.Entry(
-                    core_frame, textvariable=self.core_param_vars[name], width=16
-                ).grid(row=row, column=1, sticky="ew", pady=2)
+
+            # Grey out cavity_spacing unless SWITCHING mode
+            widget = ttk.Entry(
+                core_frame, textvariable=self.core_param_vars[name], width=16
+            )
+            widget.grid(row=row, column=1, sticky="ew", pady=2)
+            self.core_param_widgets[name] = widget
+            row += 1
+
+        # Z-cutoff section with enable checkbox
+        ttk.Separator(core_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+        )
+        row += 1
+
+        ttk.Label(
+            core_frame,
+            text="Force Cutoff (optional):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        row += 1
+
+        self.z_cutoff_enable_check = ttk.Checkbutton(
+            core_frame,
+            text="Enable z-cutoff (SWITCHING_WALL: turn off images | BUNCH_TO_BUNCH: early stop)",
+            variable=self.z_cutoff_enabled_var,
+            command=self._toggle_z_cutoff_controls,
+        )
+        self.z_cutoff_enable_check.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        row += 1
+
+        # z_cutoff value entry (indented)
+        self.z_cutoff_label = ttk.Label(core_frame, text="z cutoff (mm):")
+        self.z_cutoff_label.grid(row=row, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.z_cutoff_entry = ttk.Entry(
+            core_frame, textvariable=self.core_param_vars["z_cutoff"], width=16
+        )
+        self.z_cutoff_entry.grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+
+        # z_cutoff_mode combobox (indented)
+        self.z_cutoff_mode_label = ttk.Label(core_frame, text="Reference:")
+        self.z_cutoff_mode_label.grid(
+            row=row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.z_cutoff_mode_combo = ttk.Combobox(
+            core_frame,
+            textvariable=self.core_param_vars["z_cutoff_mode"],
+            values=["absolute", "relative"],
+            state="readonly",
+            width=14,
+        )
+        self.z_cutoff_mode_combo.grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+
+        # Help text for z_cutoff
+        help_label = ttk.Label(
+            core_frame,
+            text="'absolute': cutoff at fixed z position\n'relative': distance from start (BUNCH_TO_BUNCH mode only)",
+            foreground="gray",
+            font=("TkDefaultFont", 8),
+            justify="left",
+        )
+        help_label.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(0, 5), padx=(20, 0)
+        )
 
         # Stability Settings tab ----------------------------------------
         stability_frame = self._create_scrollable_tab(
@@ -1033,6 +1103,8 @@ class IntegratorGUI:
         # Initialize control states
         self._toggle_self_consistency_controls()
         self._toggle_adaptive_timestep_controls()
+        self._toggle_z_cutoff_controls()
+        self._update_cavity_spacing_state()
 
         # Outputs tab ---------------------------------------------------
         output_frame = self._create_scrollable_tab(self.notebook, "Output", padding=12)
@@ -1815,6 +1887,8 @@ class IntegratorGUI:
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+        self._update_cavity_spacing_state()
+        self._toggle_z_cutoff_controls()
         self._set_status(f"Loaded config: {filename}")
         self.current_config_label.config(text=filename, foreground="black")
 
@@ -1893,6 +1967,11 @@ class IntegratorGUI:
         for name in CORE_PARAM_DEFAULTS:
             self.core_param_vars[name].set(options.core_params[name])
 
+        # Set z_cutoff_enabled based on whether z_cutoff is non-zero
+        z_cutoff_val = options.core_params.get("z_cutoff", 0.0)
+        self.z_cutoff_enabled_var.set(z_cutoff_val != 0.0)
+        self._toggle_z_cutoff_controls()
+
     def _build_options_from_ui(self) -> SimulationOptions:
         sim_type = SimulationType[self.sim_type_var.get()]
         rider_params = {
@@ -1912,6 +1991,10 @@ class IntegratorGUI:
                 core_params[name] = value
             else:
                 core_params[name] = float(value)
+
+        # If z_cutoff is disabled, force it to 0 (or None equivalent)
+        if not self.z_cutoff_enabled_var.get():
+            core_params["z_cutoff"] = 0.0
 
         config_name = self.config_name_var.get().strip() or "testbed_config"
         if not config_name.endswith(".json"):
@@ -2375,6 +2458,7 @@ class IntegratorGUI:
 
     def _on_sim_type_change(self) -> None:
         self._update_driver_visibility()
+        self._update_cavity_spacing_state()
         self._refresh_initial_summary()
 
     def _update_driver_visibility(self) -> None:
@@ -2407,6 +2491,32 @@ class IntegratorGUI:
             self.difference_display_var.set(False)
             self.difference_save_var.set(False)
             self.metrics_save_var.set(False)
+
+    def _update_cavity_spacing_state(self) -> None:
+        """Grey out cavity_spacing unless simulation type is SWITCHING_WALL."""
+        is_switching = self.sim_type_var.get() == "SWITCHING_WALL"
+        state = "normal" if is_switching else "disabled"
+
+        if (
+            hasattr(self, "core_param_widgets")
+            and "cav_spacing" in self.core_param_widgets
+        ):
+            self.core_param_widgets["cav_spacing"].configure(state=state)
+
+    def _toggle_z_cutoff_controls(self) -> None:
+        """Enable/disable z_cutoff controls based on checkbox state."""
+        enabled = self.z_cutoff_enabled_var.get()
+        state = "normal" if enabled else "disabled"
+        combo_state = "readonly" if enabled else "disabled"
+
+        if hasattr(self, "z_cutoff_entry"):
+            self.z_cutoff_entry.configure(state=state)
+        if hasattr(self, "z_cutoff_mode_combo"):
+            self.z_cutoff_mode_combo.configure(state=combo_state)
+
+        # If disabled, set z_cutoff to None/0 to indicate it's not active
+        if not enabled:
+            self.core_param_vars["z_cutoff"].set(0.0)
 
     def _toggle_self_consistency_controls(self) -> None:
         """Enable/disable self-consistency controls based on enabled checkbox."""

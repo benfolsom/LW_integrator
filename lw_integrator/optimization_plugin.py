@@ -208,8 +208,6 @@ class OptimizationConfig:
     save_plots: bool = True
     save_trajectories: bool = False  # Save trajectory data for each run
     trajectory_stride: int = 10  # Save every Nth point to reduce file size
-    display_plots: bool = False  # Display plots during sweep
-    plot_display_stride: int = 1  # Display every Nth plot (1 = all, 10 = every 10th)
 
     # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
@@ -1188,13 +1186,6 @@ class OptimizationPlugin(ttk.Frame):
         )
         plot_options_frame.pack(fill="x", padx=10, pady=5)
 
-        self.display_plots_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            plot_options_frame,
-            text="Display plots during sweep",
-            variable=self.display_plots_var,
-        ).grid(row=0, column=0, sticky="w", pady=2)
-
         ttk.Label(plot_options_frame, text="Display every Nth run:").grid(
             row=0, column=1, sticky="w", padx=(20, 5), pady=2
         )
@@ -1343,8 +1334,6 @@ class OptimizationPlugin(ttk.Frame):
             transv_dist=float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
-            display_plots=self.display_plots_var.get(),
-            plot_display_stride=int(self.plot_stride_var.get()),
             m_particle=float(self.sweep_params["rider_m_particle"]["fixed_var"].get()),
             pcount=int(self.sweep_params["rider_pcount"]["fixed_var"].get()),
             charge_sign=float(
@@ -1909,9 +1898,8 @@ class OptimizationPlugin(ttk.Frame):
             self.steps_var.set(str(data.get("steps", 2000)))
             self.objective_var.set(data.get("objective", "max_energy_gain"))
 
-            # Load trajectory and display options
+            # Load trajectory options
             self.save_trajectories_var.set(data.get("save_trajectories", False))
-            self.display_plots_var.set(data.get("display_plots", False))
 
             # Load stability options (with defaults from SimulationOptions)
             loaded_config = self._gather_config()
@@ -2033,7 +2021,6 @@ class OptimizationPlugin(ttk.Frame):
                 "steps": config.steps,
                 "objective": config.objective,
                 "save_trajectories": config.save_trajectories,
-                "display_plots": config.display_plots,
                 # Stability options
                 "self_consistency_enabled": config.self_consistency_enabled,
                 "self_consistency_tolerance": config.self_consistency_tolerance,
@@ -3741,8 +3728,7 @@ class OptimizationPlugin(ttk.Frame):
             legacy_enabled=False,
             trajectory_save=False,  # Don't save individual trajectory files to disk
             trajectory_interval=self.config.trajectory_stride,
-            energy_display=self.config.display_plots
-            and (run_num % self.config.plot_display_stride == 0),
+            energy_display=False,  # Don't display plots during sweep
             energy_save=False,
             transverse_display=False,
             transverse_save=True,  # Always return trajectory data for metrics calculation
@@ -3846,9 +3832,8 @@ class OptimizationPlugin(ttk.Frame):
         # Display figures if requested, otherwise close them
         import matplotlib.pyplot as plt
 
-        if self.config.display_plots and (
-            run_num % self.config.plot_display_stride == 0
-        ):
+        # Plot display during sweep removed - plots generated only at end
+        if False:
             # Show the plots
             for fig in result.figures.values():
                 fig.show()
