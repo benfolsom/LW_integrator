@@ -497,17 +497,43 @@ def _compute_radiation_reaction_term(
 
 
 def _should_apply_radiation_reaction(
-    lhs_term: float,
-    rhs_term: float,
-    char_time: float,
+    beta_magnitude: float,
+    beta_dot_magnitude: float,
+    threshold_fraction: float = 0.01,
 ) -> bool:
     """Determine if radiation reaction correction should be applied.
 
-    Radiation effects are only significant when the force terms exceed
-    a threshold based on the characteristic time scale.
+    Radiation reaction is applied when beta_dot is a significant percentage
+    of either beta or beta_dot itself.
+
+    Parameters
+    ----------
+    beta_magnitude : float
+        Magnitude of velocity (|β|).
+    beta_dot_magnitude : float
+        Magnitude of acceleration (|β̇|).
+    threshold_fraction : float, optional
+        Fraction threshold (default 0.01 = 1%).
+
+    Returns
+    -------
+    bool
+        True if beta_dot is significant relative to beta or itself.
     """
-    threshold = char_time / 1e1  # Changed from 1e2 to 1e1 for 10x more sensitivity
-    return lhs_term > threshold or rhs_term > threshold
+    # Apply radiation reaction if beta_dot is significant compared to beta
+    # (i.e., substantial fractional change in velocity)
+    if (
+        beta_magnitude > 0.0
+        and beta_dot_magnitude >= threshold_fraction * beta_magnitude
+    ):
+        return True
+
+    # Also apply if beta_dot itself is significant (absolute threshold)
+    # This catches cases where beta is small but acceleration is large
+    if beta_dot_magnitude >= threshold_fraction:
+        return True
+
+    return False
 
 
 def _update_beta_running_average(
@@ -983,29 +1009,23 @@ def retarded_equations_of_motion(
             # ================================================================
             particle_char_time = _get_particle_char_time(current_state, particle_idx)
 
-            # Compute z-component radiation reaction first
-            rad_lhs_z, rad_rhs_z = _compute_radiation_reaction_term(
-                axis="z",
-                beta_component=result["bz"][particle_idx],
-                beta_dot_component=result["bdotz"][particle_idx],
-                gamma_current=result["gamma"][particle_idx],
-                gamma_previous=current_state["gamma"][particle_idx],
-                time_step=h,
-                mass=float(particle_mass),
+            # Compute beta and beta_dot magnitudes to determine if radiation reaction is needed
+            beta_magnitude = np.sqrt(
+                result["bx"][particle_idx] ** 2
+                + result["by"][particle_idx] ** 2
+                + result["bz"][particle_idx] ** 2
+            )
+            beta_dot_magnitude = np.sqrt(
+                result["bdotx"][particle_idx] ** 2
+                + result["bdoty"][particle_idx] ** 2
+                + result["bdotz"][particle_idx] ** 2
             )
 
-            # Only apply radiation reaction if forces are significant
+            # Only apply radiation reaction if beta_dot is significant relative to beta or itself
             if _should_apply_radiation_reaction(
-                rad_lhs_z, rad_rhs_z, float(particle_char_time)
+                beta_magnitude, beta_dot_magnitude, threshold_fraction=0.01
             ):
-                radiation_correction_z = (
-                    particle_char_time
-                    * (rad_lhs_z + rad_rhs_z)
-                    / (particle_mass * C_MMNS)
-                )
-                result["bdotz"][particle_idx] += radiation_correction_z
-
-                # If z-axis needs correction, apply to x and y as well
+                # Compute radiation reaction for all three axes
                 rad_lhs_x, rad_rhs_x = _compute_radiation_reaction_term(
                     axis="x",
                     beta_component=result["bx"][particle_idx],
@@ -1026,6 +1046,17 @@ def retarded_equations_of_motion(
                     mass=float(particle_mass),
                 )
 
+                rad_lhs_z, rad_rhs_z = _compute_radiation_reaction_term(
+                    axis="z",
+                    beta_component=result["bz"][particle_idx],
+                    beta_dot_component=result["bdotz"][particle_idx],
+                    gamma_current=result["gamma"][particle_idx],
+                    gamma_previous=current_state["gamma"][particle_idx],
+                    time_step=h,
+                    mass=float(particle_mass),
+                )
+
+                # Apply corrections to all three axes
                 radiation_correction_x = (
                     particle_char_time
                     * (rad_lhs_x + rad_rhs_x)
@@ -1036,9 +1067,15 @@ def retarded_equations_of_motion(
                     * (rad_lhs_y + rad_rhs_y)
                     / (particle_mass * C_MMNS)
                 )
+                radiation_correction_z = (
+                    particle_char_time
+                    * (rad_lhs_z + rad_rhs_z)
+                    / (particle_mass * C_MMNS)
+                )
 
                 result["bdotx"][particle_idx] += radiation_correction_x
                 result["bdoty"][particle_idx] += radiation_correction_y
+                result["bdotz"][particle_idx] += radiation_correction_z
 
             # ================================================================
             # STEP 9: Update running average of beta

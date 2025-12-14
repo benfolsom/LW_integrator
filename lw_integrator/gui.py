@@ -2006,7 +2006,7 @@ class IntegratorGUI:
             self.summary_text.config(state="disabled")
 
     def _format_summary(self, summary: InitialSummary) -> str:
-        lines = [f"Seed: {summary.seed}"]
+        lines = ["(single run)", f"Seed: {summary.seed}"]
         lines.append(f"Rider gamma: {summary.rider_gamma:.4f}")
         lines.append(
             "Rider rest energy: "
