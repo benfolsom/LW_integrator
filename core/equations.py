@@ -541,6 +541,7 @@ def _print_convergence_info(
     iteration: int,
     gamma_from_velocity: float,
     gamma_from_energy: float,
+    gamma_mass_shell: float,
     gamma_abs_change: float,
     gamma_rel_change: float,
     converged: bool,
@@ -558,6 +559,8 @@ def _print_convergence_info(
         Gamma computed from velocity: γ = 1/√(1-β²)
     gamma_from_energy : float
         Gamma computed from kinetic energy: γ = (Pt - q·Φ)/(mc)
+    gamma_mass_shell : float
+        Gamma computed from mass-shell constraint: γ = √(P²+(mc)²)/(mc)
     verbosity : int
         0 = silent (no output)
         1 = basic (one line per particle)
@@ -585,6 +588,7 @@ def _print_convergence_info(
         print("      Comparing γ_velocity (from β) to γ_energy (from Pt - q·Φ)")
         print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
         print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
+        print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
         print(f"      Δγ_abs applied this iter   = {gamma_abs_change:.15e}")
 
 
@@ -835,7 +839,7 @@ def retarded_equations_of_motion(
                 np.abs(Pt_current**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
             )
 
-            if mass_shell_error > 1e-1:
+            if mass_shell_error > 1e-2:
                 # Project Pt onto the mass-shell
                 result["Pt"][particle_idx] = float(Pt_from_mass_shell)
 
@@ -858,12 +862,18 @@ def retarded_equations_of_motion(
             gamma_from_energy = kinetic_energy / np.float64(particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy
 
+            # Calculate gamma from mass-shell constraint for logging
+            gamma_mass_shell = Pt_from_mass_shell / (particle_mass * C_MMNS)
+
             if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
                 gamma_from_conjugate = result["Pt"][particle_idx] / (
                     particle_mass * C_MMNS
                 )
                 print(f"      γ_energy (Pt - q·Φ)/(mc) = {gamma_from_energy:.15e}")
                 print(f"      γ_conjugate (Pt/(mc))     = {gamma_from_conjugate:.15e}")
+                print(
+                    f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}"
+                )
                 print(
                     f"      Scalar potential term q·Φ = {scalar_potential_contribution:.15e}"
                 )
@@ -1098,6 +1108,7 @@ def retarded_equations_of_motion(
                             sc_iteration,
                             gamma_from_velocity,
                             gamma_from_energy,
+                            gamma_mass_shell,
                             gamma_abs_change,
                             gamma_rel_change,
                             converged=True,
@@ -1112,6 +1123,7 @@ def retarded_equations_of_motion(
                             sc_iteration,
                             gamma_from_velocity,
                             gamma_from_energy,
+                            gamma_mass_shell,
                             gamma_abs_change,
                             gamma_rel_change,
                             converged=False,

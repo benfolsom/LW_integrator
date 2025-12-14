@@ -71,7 +71,8 @@ def _show_error_dialog(parent: tk.Tk | tk.Toplevel, title: str, message: str) ->
     # Message text (read-only but selectable)
     text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
     text.insert("1.0", message)
-    text.configure(state="disabled", bg=frame.cget("background"))
+    # Use a light gray background that matches typical dialog backgrounds
+    text.configure(state="disabled", bg="#f0f0f0")
     text.pack(side="top", fill="both", expand=True, pady=(0, 10))
 
     # OK button
@@ -1804,9 +1805,13 @@ class IntegratorGUI:
             )
             return
 
-        self._apply_options_to_ui(options)
+        # Always preserve directories when loading a config - directories should only
+        # change when explicitly set by the user via directory selection buttons
+        self._apply_options_to_ui(options, preserve_directories=True)
         self.config_name_var.set(filename)
         self.config_file_var.set(filename)
+        # Refresh config list to update highlighting
+        self._refresh_config_list(selected=filename)
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
@@ -2346,9 +2351,9 @@ class IntegratorGUI:
 
         config_path = Path(filename)
 
-        # Check for override warning
-        if not self._check_override_warning(config_path, "run"):
-            return
+        # Note: filedialog.asksaveasfilename already shows an override warning on most platforms,
+        # so we don't need to show our custom warning here to avoid double prompts.
+        # If the user proceeded past the file dialog, they already confirmed any override.
 
         # Update the config name to match the saved file
         options.config_name = config_path.name
