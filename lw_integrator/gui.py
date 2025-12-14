@@ -853,14 +853,15 @@ class IntegratorGUI:
         row = 0
         for name in CORE_PARAM_LABELS:
             # Skip z_cutoff and z_cutoff_mode - handled separately below
-            if name in ["z_cutoff", "z_cutoff_mode"]:
+            # Skip mean - deprecated parameter, not used in any simulation mode
+            if name in ["z_cutoff", "z_cutoff_mode", "mean"]:
                 continue
 
             ttk.Label(core_frame, text=CORE_PARAM_LABELS[name] + ":").grid(
                 row=row, column=0, sticky="w", pady=2
             )
 
-            # Grey out cavity_spacing unless SWITCHING mode
+            # Grey out cavity_spacing unless SWITCHING_WALL mode
             widget = ttk.Entry(
                 core_frame, textvariable=self.core_param_vars[name], width=16
             )
@@ -883,7 +884,7 @@ class IntegratorGUI:
 
         self.z_cutoff_enable_check = ttk.Checkbutton(
             core_frame,
-            text="Enable z-cutoff (SWITCHING_WALL: turn off images | BUNCH_TO_BUNCH: early stop)",
+            text="Enable z-cutoff (SWITCHING_WALL: periodic cavities | BUNCH_TO_BUNCH: early stop)",
             variable=self.z_cutoff_enabled_var,
             command=self._toggle_z_cutoff_controls,
         )
@@ -919,10 +920,15 @@ class IntegratorGUI:
         # Help text for z_cutoff
         help_label = ttk.Label(
             core_frame,
-            text="'absolute': cutoff at fixed z position\n'relative': distance from start (BUNCH_TO_BUNCH mode only)",
+            text="'absolute': initial cutoff (advances by cavity_spacing in SWITCHING_WALL)\n"
+            "'relative': distance from start (BUNCH_TO_BUNCH mode only)\n\n"
+            "SWITCHING_WALL: z_cutoff and wall_z both advance by cavity_spacing\n"
+            "when particle passes z_cutoff, creating periodic cavity structure.\n"
+            "Set cavity_spacing > 0 for multi-cavity; cavity_spacing = 0 for single cavity.",
             foreground="gray",
             font=("TkDefaultFont", 8),
             justify="left",
+            wraplength=450,
         )
         help_label.grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(0, 5), padx=(20, 0)
