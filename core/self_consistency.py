@@ -50,22 +50,22 @@ class SelfConsistencyConfig:
     are satisfied.
 
     CONVERGENCE STRATEGY:
-    Dual independent criteria (both must be satisfied):
+    Both convergence criteria must be satisfied in all modes:
     1. Mass-shell error: |Pt² - P² - (mc)²|/(mc)² < target_ms_tolerance
     2. Gamma consistency: |γ_velocity - γ_energy| / γ < target_gamma_tolerance
 
-    This prevents catastrophic failures observed in high-energy close-approach
-    scenarios where mass-shell converges but gamma diverges by orders of magnitude.
+    The mode determines HOW Pt is corrected during iterations, not what is checked.
 
     Attributes
     ----------
     enabled : bool
         Whether to perform self-consistency iterations. Default is True.
     convergence_mode : str
-        Convergence criterion mode. Options:
-        - "dual_independent": Both mass-shell AND gamma must satisfy their tolerances (default, recommended)
-        - "mass_shell_only": Only mass-shell criterion (legacy, not recommended)
-        Default is "dual_independent".
+        Pt correction mode during iterations. Options:
+        - "mass_shell_only": Project Pt onto mass shell with relaxation (default)
+        - "dual_weighted": Blend mass-shell and velocity-based Pt, then apply relaxation
+        Both modes check both convergence criteria.
+        Default is "mass_shell_only".
     target_ms_tolerance : float
         TARGET mass-shell convergence criterion used inside the iteration loop.
         Iterations continue until |Pt² - P² - (mc)²|/(mc)² < target_ms_tolerance.
@@ -79,6 +79,20 @@ class SelfConsistencyConfig:
         exceeds this value, Pt is clamped to √(P² + (mc)²) as a fallback.
         Should be larger (looser) than target_ms_tolerance.
         Default is 1e-2 (1%).
+    mass_shell_relaxation : float
+        Relaxation weight applied after Pt correction (used in both modes).
+        Pt_final = α*Pt_corrected + (1-α)*Pt_old where α = mass_shell_relaxation.
+        - 1.0 = full correction (aggressive, fastest convergence)
+        - 0.7 = recommended (good balance, default)
+        - 0.5 = conservative (more stable, slower)
+        Default is 0.7.
+    dual_weight : float
+        Blending weight between mass-shell and velocity-based Pt (dual_weighted mode only).
+        Pt_blend = w*Pt_mass_shell + (1-w)*Pt_velocity where w = dual_weight.
+        - 1.0 = pure mass-shell (equivalent to mass_shell_only)
+        - 0.5 = equal weighting (default, balanced)
+        - 0.0 = pure velocity-based (kinematic only)
+        Default is 0.5. Ignored in mass_shell_only mode.
     max_iterations : int
         Maximum number of refinement iterations per particle per step. Default is 10.
         Increased from 5 to accommodate dual-criterion convergence.
@@ -90,43 +104,45 @@ class SelfConsistencyConfig:
 
     Examples
     --------
-    Standard configuration (default)::
+    Standard configuration (default, mass-shell only)::
 
         config = SelfConsistencyConfig()
-        # enabled=True, convergence_mode="dual_independent"
-        # target_ms_tolerance=1e-6, target_gamma_tolerance=1e-6, max_iterations=10
+        # enabled=True, convergence_mode="mass_shell_only"
+        # target_ms_tolerance=1e-6, target_gamma_tolerance=1e-6
+        # mass_shell_relaxation=0.7, max_iterations=10
 
-    Disable for testing/comparison::
+    Dual-weighted mode (blend velocity and mass-shell)::
 
-        config = SelfConsistencyConfig(enabled=False)
+        config = SelfConsistencyConfig(
+            convergence_mode="dual_weighted",
+            dual_weight=0.5,  # Equal weighting
+            mass_shell_relaxation=0.7,
+        )
 
     Aggressive convergence for ultra-relativistic particles::
 
         config = SelfConsistencyConfig(
-            convergence_mode="dual_independent",
+            convergence_mode="mass_shell_only",
             target_ms_tolerance=1e-8,
             target_gamma_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
+            mass_shell_relaxation=1.0,  # Full projection
             max_iterations=15,
             verbosity=2
         )
 
-    Legacy mode (mass-shell only, not recommended)::
+    Disable for testing/comparison::
 
-        config = SelfConsistencyConfig(
-            convergence_mode="mass_shell_only",
-            target_ms_tolerance=1e-6,
-            max_iterations=5
-        )
+        config = SelfConsistencyConfig(enabled=False)
     """
 
     enabled: bool = True
-    convergence_mode: str = (
-        "dual_independent"  # "dual_independent" or "mass_shell_only"
-    )
+    convergence_mode: str = "mass_shell_only"  # "mass_shell_only" or "dual_weighted"
     target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
     target_gamma_tolerance: float = 1e-6  # Gamma loop convergence criterion
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
+    mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
+    dual_weight: float = 0.5  # Blending weight (dual_weighted mode only)
     max_iterations: int = 10  # Increased for dual criteria
     verbosity: int = 0
 
@@ -134,15 +150,17 @@ class SelfConsistencyConfig:
     def standard(cls) -> "SelfConsistencyConfig":
         """Return standard configuration for typical relativistic simulations.
 
-        This is the default configuration: enabled with dual independent convergence
+        This is the default configuration: enabled with mass-shell projection
         suitable for most high-energy particle tracking applications.
         """
         return cls(
             enabled=True,
-            convergence_mode="dual_independent",
+            convergence_mode="mass_shell_only",
             target_ms_tolerance=1e-6,
             target_gamma_tolerance=1e-6,
             mass_shell_tolerance=1e-2,
+            mass_shell_relaxation=0.7,
+            dual_weight=0.5,
             max_iterations=10,
         )
 
@@ -165,10 +183,12 @@ class SelfConsistencyConfig:
         """
         return cls(
             enabled=True,
-            convergence_mode="dual_independent",
+            convergence_mode="mass_shell_only",
             target_ms_tolerance=1e-8,
             target_gamma_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
+            mass_shell_relaxation=1.0,  # Full projection for aggressive mode
+            dual_weight=0.5,
             max_iterations=15,
             verbosity=0,
         )

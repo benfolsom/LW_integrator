@@ -401,6 +401,12 @@ class IntegratorGUI:
         self.self_consistency_convergence_mode_var = tk.StringVar(
             value=self.options.self_consistency_convergence_mode
         )
+        self.self_consistency_mass_shell_relaxation_var = tk.DoubleVar(
+            value=self.options.self_consistency_mass_shell_relaxation
+        )
+        self.self_consistency_dual_weight_var = tk.DoubleVar(
+            value=self.options.self_consistency_dual_weight
+        )
         self.self_consistency_target_ms_tolerance_var = tk.DoubleVar(
             value=self.options.self_consistency_target_ms_tolerance
         )
@@ -1020,23 +1026,27 @@ class IntegratorGUI:
         mode_help.pack(side="left", padx=(3, 0))
         Tooltip(
             mode_help,
-            "Convergence criterion mode.\n\n"
-            "• Dual Independent (recommended):\n"
-            "  BOTH mass-shell AND gamma consistency must converge\n"
-            "  Prevents catastrophic failures in high-energy close approaches\n\n"
-            "• Mass-shell Only (legacy):\n"
-            "  Only mass-shell criterion checked\n"
-            "  Not recommended - can produce huge gamma errors\n\n"
-            "Default: Dual Independent",
+            "Pt correction mode during self-consistency iterations.\n\n"
+            "• Mass-Shell Only (default):\n"
+            "  Project Pt onto mass shell: Pt = √(P² + (mc)²)\n"
+            "  Fast, reliable, recommended for most cases\n\n"
+            "• Dual-Weighted:\n"
+            "  Blend velocity-based and mass-shell Pt\n"
+            "  More sophisticated, use for difficult convergence\n\n"
+            "BOTH modes check BOTH convergence criteria:\n"
+            "  - Mass-shell error must be < target_ms_tolerance\n"
+            "  - Gamma consistency must be < target_gamma_tolerance\n\n"
+            "Default: Mass-Shell Only",
         )
         self.sc_mode_combo = ttk.Combobox(
             sc_frame,
             textvariable=self.self_consistency_convergence_mode_var,
-            values=["dual_independent", "mass_shell_only"],
+            values=["mass_shell_only", "dual_weighted"],
             state="readonly",
             width=18,
         )
         self.sc_mode_combo.grid(row=1, column=1, sticky="ew", pady=2)
+        self.sc_mode_combo.bind("<<ComboboxSelected>>", self._on_sc_mode_changed)
 
         # Target mass-shell tolerance
         target_ms_frame = ttk.Frame(sc_frame)
@@ -1149,10 +1159,76 @@ class IntegratorGUI:
         )
         self.sc_mass_shell_tolerance_entry.grid(row=5, column=1, sticky="ew", pady=2)
 
+        # Mass-shell relaxation with help icon
+        relaxation_frame = ttk.Frame(sc_frame)
+        relaxation_frame.grid(row=6, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_relaxation_label = ttk.Label(
+            relaxation_frame, text="Relaxation weight:"
+        )
+        self.sc_relaxation_label.pack(side="left")
+        relaxation_help = ttk.Label(
+            relaxation_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        relaxation_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            relaxation_help,
+            "Relaxation weight applied after Pt correction (both modes).\n\n"
+            "Prevents oscillations by damping the correction:\n"
+            "  Pt_final = α*Pt_corrected + (1-α)*Pt_old\n"
+            "  where α = relaxation weight\n\n"
+            "Values:\n"
+            "  • 1.0 = Full correction (fastest, may oscillate)\n"
+            "  • 0.7 = Recommended (default, good balance)\n"
+            "  • 0.5 = Conservative (more stable, slower)\n"
+            "  • 0.0 = No correction (broken, testing only)\n\n"
+            "Increase for ultra-relativistic (γ > 1000) particles.\n"
+            "Decrease if seeing convergence oscillations.\n\n"
+            "Default: 0.7",
+        )
+        self.sc_relaxation_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.self_consistency_mass_shell_relaxation_var,
+            width=16,
+        )
+        self.sc_relaxation_entry.grid(row=6, column=1, sticky="ew", pady=2)
+
+        # Dual weight (only for dual_weighted mode) with help icon
+        dual_weight_frame = ttk.Frame(sc_frame)
+        dual_weight_frame.grid(row=7, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_dual_weight_label = ttk.Label(dual_weight_frame, text="Dual weight:")
+        self.sc_dual_weight_label.pack(side="left")
+        dual_weight_help = ttk.Label(
+            dual_weight_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        dual_weight_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            dual_weight_help,
+            "Blending weight between mass-shell and velocity-based Pt.\n"
+            "(Only used in dual_weighted mode)\n\n"
+            "Blending formula:\n"
+            "  Pt_blend = w*Pt_mass_shell + (1-w)*Pt_velocity\n"
+            "  where w = dual weight\n\n"
+            "Values:\n"
+            "  • 1.0 = Pure mass-shell (same as mass_shell_only mode)\n"
+            "  • 0.5 = Equal weighting (default, balanced)\n"
+            "  • 0.0 = Pure velocity-based (kinematic only)\n\n"
+            "Mass-shell: Uses energy-momentum relation Pt² = P² + (mc)²\n"
+            "Velocity: Uses kinematic Pt = γ_vel * m * c from position changes\n\n"
+            "Equal weighting (0.5) usually works best.\n\n"
+            "Default: 0.5\n"
+            "Ignored in mass_shell_only mode (greyed out)",
+        )
+        self.sc_dual_weight_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.self_consistency_dual_weight_var,
+            width=16,
+        )
+        self.sc_dual_weight_entry.grid(row=7, column=1, sticky="ew", pady=2)
+
         self.sc_verbosity_label = ttk.Label(sc_frame, text="Verbosity:")
-        self.sc_verbosity_label.grid(row=6, column=0, sticky="w", pady=2)
+        self.sc_verbosity_label.grid(row=8, column=0, sticky="w", pady=2)
         verbosity_frame = ttk.Frame(sc_frame)
-        verbosity_frame.grid(row=6, column=1, sticky="w", pady=2)
+        verbosity_frame.grid(row=8, column=1, sticky="w", pady=2)
         self.sc_verbosity_entry = ttk.Spinbox(
             verbosity_frame,
             from_=0,
@@ -2210,6 +2286,10 @@ class IntegratorGUI:
         self.self_consistency_convergence_mode_var.set(
             options.self_consistency_convergence_mode
         )
+        self.self_consistency_mass_shell_relaxation_var.set(
+            options.self_consistency_mass_shell_relaxation
+        )
+        self.self_consistency_dual_weight_var.set(options.self_consistency_dual_weight)
         self.self_consistency_target_ms_tolerance_var.set(
             options.self_consistency_target_ms_tolerance
         )
@@ -2331,6 +2411,12 @@ class IntegratorGUI:
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
+            ),
+            self_consistency_mass_shell_relaxation=float(
+                self.self_consistency_mass_shell_relaxation_var.get()
+            ),
+            self_consistency_dual_weight=float(
+                self.self_consistency_dual_weight_var.get()
             ),
             self_consistency_target_ms_tolerance=float(
                 self.self_consistency_target_ms_tolerance_var.get()
@@ -2833,7 +2919,7 @@ class IntegratorGUI:
 
     def _toggle_self_consistency_controls(self) -> None:
         """Enable/disable self-consistency controls based on enabled checkbox."""
-        if not hasattr(self, "sc_tolerance_label"):
+        if not hasattr(self, "sc_target_ms_tolerance_label"):
             return  # Widgets not created yet
 
         enabled = self.self_consistency_enabled_var.get()
@@ -2847,17 +2933,45 @@ class IntegratorGUI:
             self.sc_target_ms_tolerance_entry,
             self.sc_target_gamma_tolerance_label,
             self.sc_target_gamma_tolerance_entry,
+            self.sc_max_iterations_label,
             self.sc_max_iterations_entry,
+            self.sc_mass_shell_tolerance_label,
             self.sc_mass_shell_tolerance_entry,
+            self.sc_relaxation_label,
+            self.sc_relaxation_entry,
+            self.sc_dual_weight_label,
+            self.sc_dual_weight_entry,
+            self.sc_verbosity_label,
             self.sc_verbosity_entry,
         ]
 
         for control in controls_to_toggle:
-            if isinstance(control, ttk.Entry):
+            if isinstance(control, (ttk.Entry, ttk.Spinbox)):
                 control.configure(state=param_state)
+            elif isinstance(control, ttk.Combobox):
+                control.configure(state="readonly" if enabled else "disabled")
             elif isinstance(control, ttk.Label):
                 fg_color = "black" if enabled else "gray"
                 control.configure(foreground=fg_color)
+
+        # Also update mode-specific greying
+        if enabled:
+            self._on_sc_mode_changed()
+
+    def _on_sc_mode_changed(self, event=None) -> None:
+        """Grey out parameters not relevant to selected convergence mode."""
+        if not hasattr(self, "sc_dual_weight_entry"):
+            return  # Widgets not created yet
+
+        mode = self.self_consistency_convergence_mode_var.get()
+
+        # dual_weight is only used in dual_weighted mode
+        if mode == "dual_weighted":
+            self.sc_dual_weight_label.configure(foreground="black")
+            self.sc_dual_weight_entry.configure(state="normal")
+        else:  # mass_shell_only
+            self.sc_dual_weight_label.configure(foreground="gray")
+            self.sc_dual_weight_entry.configure(state="disabled")
 
     def _toggle_adaptive_timestep_controls(self) -> None:
         """Enable/disable adaptive timestep controls based on enabled checkbox.

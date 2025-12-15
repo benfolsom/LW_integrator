@@ -116,20 +116,21 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
 
 def _extract_self_consistency_params(
     self_consistency: Optional[SelfConsistencyConfig],
-) -> tuple[bool, str, float, float, float, int, int]:
+) -> tuple[bool, str, float, float, float, float, float, int, int]:
     """Extract self-consistency configuration parameters.
 
     Returns
     -------
-    tuple[bool, str, float, float, float, int, int]
+    tuple[bool, str, float, float, float, float, float, int, int]
         A tuple containing (enabled, convergence_mode, target_ms_tolerance,
-        target_gamma_tolerance, mass_shell_tolerance, max_iterations, verbosity).
+        target_gamma_tolerance, mass_shell_tolerance, mass_shell_relaxation,
+        dual_weight, max_iterations, verbosity).
     """
     is_enabled = self_consistency is not None and self_consistency.enabled
     convergence_mode = (
         self_consistency.convergence_mode
         if self_consistency is not None
-        else "dual_independent"
+        else "mass_shell_only"
     )
     target_ms_tolerance = (
         self_consistency.target_ms_tolerance if self_consistency is not None else 1e-6
@@ -142,6 +143,10 @@ def _extract_self_consistency_params(
     mass_shell_tolerance = (
         self_consistency.mass_shell_tolerance if self_consistency is not None else 1e-2
     )
+    mass_shell_relaxation = (
+        self_consistency.mass_shell_relaxation if self_consistency is not None else 0.7
+    )
+    dual_weight = self_consistency.dual_weight if self_consistency is not None else 0.5
     max_iterations = (
         self_consistency.max_iterations if self_consistency is not None else 10
     )
@@ -153,6 +158,8 @@ def _extract_self_consistency_params(
         target_ms_tolerance,
         target_gamma_tolerance,
         mass_shell_tolerance,
+        mass_shell_relaxation,
+        dual_weight,
         max_iterations,
         verbosity,
     )
@@ -715,6 +722,8 @@ def retarded_equations_of_motion(
         sc_target_ms_tolerance,
         sc_target_gamma_tolerance,
         sc_mass_shell_tolerance,
+        sc_mass_shell_relaxation,
+        sc_dual_weight,
         sc_max_iterations,
         sc_verbosity,
     ) = _extract_self_consistency_params(self_consistency)
@@ -880,10 +889,88 @@ def retarded_equations_of_motion(
             result["Pt"][particle_idx] = accumulated_momentum_t
 
             # ================================================================
-            # STEP 4a: Compute gamma from energy (no projection during iteration)
+            # STEP 4a: Correct Pt during SC iterations based on mode
             # ================================================================
-            # Mass-shell projection moved to AFTER convergence loop
-            # Let iterations naturally drive toward mass-shell satisfaction
+            # CRITICAL: Enforce constraints at each iteration
+            # Mode determines HOW we correct Pt, but both modes check both errors
+            if sc_enabled and sc_iteration > 0:
+                # Compute mass-shell-constrained Pt
+                Px_64 = np.float64(result["Px"][particle_idx])
+                Py_64 = np.float64(result["Py"][particle_idx])
+                Pz_64 = np.float64(result["Pz"][particle_idx])
+                P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
+                mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
+                Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
+
+                Pt_before_correction = np.float64(result["Pt"][particle_idx])
+
+                # Determine Pt correction based on mode
+                if sc_convergence_mode == "mass_shell_only":
+                    # Mode 1: Pure mass-shell projection
+                    Pt_corrected = Pt_from_mass_shell
+
+                    if sc_verbosity >= 2:
+                        print(
+                            f"      Mode: mass_shell_only, "
+                            f"Pt_ms={Pt_from_mass_shell:.6e}"
+                        )
+
+                elif sc_convergence_mode == "dual_weighted":
+                    # Mode 2: Blend velocity-based and mass-shell Pt
+                    # First compute Pt from velocity
+                    # (velocity was computed in STEP 6, but we need it here)
+                    # We'll compute it from current beta values
+                    beta_x_curr = result["bx"][particle_idx]
+                    beta_y_curr = result["by"][particle_idx]
+                    beta_z_curr = result["bz"][particle_idx]
+                    beta_sq_curr = beta_x_curr**2 + beta_y_curr**2 + beta_z_curr**2
+
+                    if beta_sq_curr >= 1.0:
+                        # Velocity exceeds c, fall back to mass-shell only
+                        gamma_from_velocity_curr = 1e10  # Large value
+                        Pt_from_velocity = Pt_from_mass_shell  # Fall back
+                    else:
+                        gamma_from_velocity_curr = 1.0 / np.sqrt(1.0 - beta_sq_curr)
+                        Pt_from_velocity = (
+                            gamma_from_velocity_curr * particle_mass * C_MMNS
+                        )
+
+                    # Blend: w*Pt_ms + (1-w)*Pt_vel where w = dual_weight
+                    w = sc_dual_weight
+                    Pt_blended = w * Pt_from_mass_shell + (1.0 - w) * Pt_from_velocity
+                    Pt_corrected = Pt_blended
+
+                    if sc_verbosity >= 2:
+                        print(
+                            f"      Mode: dual_weighted (w={w}), "
+                            f"Pt_ms={Pt_from_mass_shell:.6e}, "
+                            f"Pt_vel={Pt_from_velocity:.6e}, "
+                            f"Pt_blend={Pt_blended:.6e}"
+                        )
+                else:
+                    raise ValueError(f"Unknown convergence_mode: {sc_convergence_mode}")
+
+                # Apply relaxation to prevent oscillations (both modes)
+                # Pt_final = α*Pt_corrected + (1-α)*Pt_old
+                relaxation_weight = sc_mass_shell_relaxation
+                Pt_final = (
+                    relaxation_weight * Pt_corrected
+                    + (1.0 - relaxation_weight) * Pt_before_correction
+                )
+
+                result["Pt"][particle_idx] = float(Pt_final)
+
+                if sc_verbosity >= 2:
+                    correction_magnitude = abs(Pt_final - Pt_before_correction)
+                    print(
+                        f"      After relaxation (α={relaxation_weight}): "
+                        f"Pt {Pt_before_correction:.6e} → {Pt_final:.6e} "
+                        f"(Δ={correction_magnitude:.6e})"
+                    )
+
+            # ================================================================
+            # STEP 4b: Compute gamma from energy
+            # ================================================================
             # Gamma from relativistic energy with scalar potential correction:
             # γ = (Pt - q·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
             # This gives the correct kinetic energy, accounting for electromagnetic potential
@@ -1167,15 +1254,8 @@ def retarded_equations_of_motion(
                     sc_target_gamma_tolerance,
                 )
 
-                # Determine convergence based on mode
-                if sc_convergence_mode == "dual_independent":
-                    # Both criteria must be satisfied
-                    converged = mass_shell_converged and gamma_consistent
-                elif sc_convergence_mode == "mass_shell_only":
-                    # Legacy: only mass-shell criterion
-                    converged = mass_shell_converged
-                else:
-                    raise ValueError(f"Unknown convergence_mode: {sc_convergence_mode}")
+                # Both modes require BOTH criteria to be satisfied
+                converged = mass_shell_converged and gamma_consistent
 
                 if converged:
                     if sc_verbosity > 0:
