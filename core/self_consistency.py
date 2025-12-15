@@ -99,8 +99,9 @@ class SelfConsistencyConfig:
     verbosity : int
         Verbosity level for convergence information. Default is 0.
         0 = silent (no output)
-        1 = basic (one line per particle showing convergence status)
-        2 = detailed (full convergence details including all gamma values and checks)
+        1 = summary (one line per step: converged/failed with final errors)
+        2 = failures only (detailed output only for non-converged steps)
+        3 = full detail (iteration-by-iteration for all steps, very large logs)
 
     Examples
     --------

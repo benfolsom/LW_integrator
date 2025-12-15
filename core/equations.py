@@ -631,8 +631,9 @@ def _print_convergence_info(
         Relative gamma consistency error: |γ_velocity - γ_energy| / γ
     verbosity : int
         0 = silent (no output)
-        1 = basic (one line per particle)
-        2 = detailed (full convergence details)
+        1 = summary (one line per step)
+        2 = failures only (detailed only for non-converged)
+        3 = full detail (all iterations)
     """
     if verbosity == 0:
         return
@@ -644,13 +645,29 @@ def _print_convergence_info(
         status = f"max iter ({max_iterations}) reached"
 
     if verbosity == 1:
-        # Truncated: one line per particle showing both criteria
+        # Summary: one line per particle showing both criteria
         print(
             f"    P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
             f"E_gamma={gamma_consistency_error:.3e}"
         )
-    else:  # verbosity >= 2
-        # Detailed: multi-line output with full precision
+    elif verbosity == 2:
+        # Failures only: detailed output only for non-converged steps
+        if not converged:
+            print(f"    Particle {particle_idx}: {status}")
+            print(f"      Mass-shell error = {mass_shell_error:.15e}")
+            print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
+            print("      Dual convergence: BOTH criteria must be satisfied")
+            print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
+            print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
+            print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
+        else:
+            # For converged steps at verbosity 2, just show summary
+            print(
+                f"    P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+                f"E_gamma={gamma_consistency_error:.3e}"
+            )
+    else:  # verbosity >= 3
+        # Full detail: multi-line output with full precision for all steps
         print(f"    Particle {particle_idx}: {status}")
         print(f"      Mass-shell error = {mass_shell_error:.15e}")
         print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
@@ -740,7 +757,7 @@ def retarded_equations_of_motion(
 
         # Self-consistency loop: iterate until gamma converges
         for sc_iteration in range(sc_max_iterations):
-            if sc_verbosity >= 2 and sc_iteration > 0:
+            if sc_verbosity >= 3 and sc_iteration > 0:
                 print(
                     f"    Particle {particle_idx} iteration {sc_iteration}: "
                     f"Starting refinement"
@@ -848,7 +865,7 @@ def retarded_equations_of_motion(
                 )
 
                 # Debug: Log what forces were computed
-                if sc_verbosity >= 2 and sc_enabled:
+                if sc_verbosity >= 3 and sc_enabled:
                     print(
                         f"      Force contributions: ΔPx={delta_momentum_x:.15e}, "
                         f"ΔPy={delta_momentum_y:.15e}, ΔPz={delta_momentum_z:.15e}, "
@@ -874,7 +891,7 @@ def retarded_equations_of_motion(
                 # Accumulate scalar potential
                 accumulated_scalar_potential += delta_scalar_potential
 
-                if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
+                if sc_verbosity >= 3 and sc_enabled and sc_iteration > 0:
                     print(
                         f"      After forces: ΔPt={delta_momentum_t:.15e}, "
                         f"accumulated_pt={accumulated_momentum_t:.15e}"
@@ -909,7 +926,7 @@ def retarded_equations_of_motion(
                     # Mode 1: Pure mass-shell projection
                     Pt_corrected = Pt_from_mass_shell
 
-                    if sc_verbosity >= 2:
+                    if sc_verbosity >= 3:
                         print(
                             f"      Mode: mass_shell_only, "
                             f"Pt_ms={Pt_from_mass_shell:.6e}"
@@ -940,7 +957,7 @@ def retarded_equations_of_motion(
                     Pt_blended = w * Pt_from_mass_shell + (1.0 - w) * Pt_from_velocity
                     Pt_corrected = Pt_blended
 
-                    if sc_verbosity >= 2:
+                    if sc_verbosity >= 3:
                         print(
                             f"      Mode: dual_weighted (w={w}), "
                             f"Pt_ms={Pt_from_mass_shell:.6e}, "
@@ -960,7 +977,7 @@ def retarded_equations_of_motion(
 
                 result["Pt"][particle_idx] = float(Pt_final)
 
-                if sc_verbosity >= 2:
+                if sc_verbosity >= 3:
                     correction_magnitude = abs(Pt_final - Pt_before_correction)
                     print(
                         f"      After relaxation (α={relaxation_weight}): "
@@ -996,7 +1013,7 @@ def retarded_equations_of_motion(
 
             gamma_mass_shell = Pt_from_mass_shell / (particle_mass * C_MMNS)
 
-            if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
+            if sc_verbosity >= 3 and sc_enabled and sc_iteration > 0:
                 # Use Pt BEFORE projection to show the actual difference
                 gamma_from_conjugate_before = Pt_before_projection / (
                     particle_mass * C_MMNS
@@ -1079,14 +1096,14 @@ def retarded_equations_of_motion(
                 beta_x_limited, beta_y_limited, beta_z_limited
             )
 
-            # Debug: Print newly computed beta on all iterations when verbosity >= 2
-            if sc_verbosity >= 2:
+            # Debug: Print newly computed beta on all iterations when verbosity >= 3
+            if sc_verbosity >= 3:
                 print(
                     f"      Newly computed β: βx={beta_x_limited:.15e}, "
                     f"βy={beta_y_limited:.15e}, βz={beta_z_limited:.15e}"
                 )
 
-            if sc_verbosity >= 2 and sc_enabled and sc_iteration > 0:
+            if sc_verbosity >= 3 and sc_enabled and sc_iteration > 0:
                 beta_total = np.sqrt(
                     beta_x_limited**2 + beta_y_limited**2 + beta_z_limited**2
                 )
@@ -1342,7 +1359,7 @@ def retarded_equations_of_motion(
 
                 if sc_verbosity >= 2:
                     print(
-                        f"    Final mass-shell projection: Pt {Pt_64:.6e} → "
+                        f"    ⚠️  Final mass-shell projection: Pt {Pt_64:.6e} → "
                         f"{Pt_from_mass_shell:.6e} (error was {mass_shell_error_final:.2e})"
                     )
 

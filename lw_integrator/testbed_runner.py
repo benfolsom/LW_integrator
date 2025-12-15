@@ -254,7 +254,9 @@ class SimulationOptions:
     self_consistency_dual_weight: float = (
         0.5  # Blending weight for dual_weighted mode (0.0-1.0, default 0.5)
     )
-    self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
+    self_consistency_verbosity: int = (
+        0  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
+    )
 
     # Energy monitoring options
     energy_monitor_enabled: bool = True
@@ -1850,6 +1852,17 @@ def run_testbed(
             _log(f"Saved log file to: {log_path}")
         except Exception as exc:
             _log(f"Failed to save log file: {exc}")
+
+        # Save verbose logs (SC convergence details) to separate file
+        if captured_stdout:
+            verbose_log_path = output_dir / f"{filename_base}_verbose.txt"
+            try:
+                with verbose_log_path.open("w", encoding="utf-8") as vlog_file:
+                    vlog_file.write(captured_stdout)
+                saved_paths["verbose_log"] = verbose_log_path
+                _log(f"Saved verbose log to: {verbose_log_path}")
+            except Exception as exc:
+                _log(f"Failed to save verbose log: {exc}")
 
     return RunResult(
         metrics=metrics,

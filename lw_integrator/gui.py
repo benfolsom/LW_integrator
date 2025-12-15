@@ -1225,21 +1225,45 @@ class IntegratorGUI:
         )
         self.sc_dual_weight_entry.grid(row=7, column=1, sticky="ew", pady=2)
 
-        self.sc_verbosity_label = ttk.Label(sc_frame, text="Verbosity:")
-        self.sc_verbosity_label.grid(row=8, column=0, sticky="w", pady=2)
+        # Verbosity with help icon
+        verbosity_label_frame = ttk.Frame(sc_frame)
+        verbosity_label_frame.grid(row=8, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_verbosity_label = ttk.Label(verbosity_label_frame, text="Verbosity:")
+        self.sc_verbosity_label.pack(side="left")
+        verbosity_help = ttk.Label(
+            verbosity_label_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        verbosity_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            verbosity_help,
+            "Self-consistency convergence diagnostic output level.\n\n"
+            "Output is printed to BOTH:\n"
+            "  • Console (real-time during run)\n"
+            "  • Saved verbose log file (*_verbose.txt)\n\n"
+            "Levels:\n"
+            "  • 0 = Silent (no convergence details)\n"
+            "  • 1 = Summary (one line per step: converged/failed)\n"
+            "  • 2 = Failures only (detailed output only for non-converged steps)\n"
+            "  • 3 = Full detail (iteration-by-iteration for all steps)\n\n"
+            "Recommended:\n"
+            "  • Production runs: 0 or 1 (small logs)\n"
+            "  • Debugging: 2 (shows only problems, moderate logs)\n"
+            "  • Deep diagnostics: 3 (very large logs, 100k+ lines)\n\n"
+            "Default: 0 (silent)",
+        )
         verbosity_frame = ttk.Frame(sc_frame)
         verbosity_frame.grid(row=8, column=1, sticky="w", pady=2)
         self.sc_verbosity_entry = ttk.Spinbox(
             verbosity_frame,
             from_=0,
-            to=2,
+            to=3,
             textvariable=self.self_consistency_verbosity_var,
             width=5,
         )
         self.sc_verbosity_entry.pack(side="left")
         ttk.Label(
             verbosity_frame,
-            text=" (0=silent, 1=basic, 2=detailed)",
+            text=" (0=silent, 1=summary, 2=failures, 3=full)",
             foreground="gray",
         ).pack(side="left")
 
