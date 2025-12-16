@@ -241,18 +241,18 @@ class SimulationOptions:
     self_consistency_tolerance: float = (
         1e-4  # Legacy parameter for backward compatibility
     )
-    self_consistency_convergence_mode: str = "mass_shell_only"  # or "dual_weighted"
+    self_consistency_convergence_mode: str = (
+        "fixed_geometry"  # or "variable_geometry" or "bidirectional_search"
+    )
     self_consistency_target_ms_tolerance: float = 1e-6  # Mass-shell loop criterion
-    self_consistency_target_gamma_tolerance: float = 1e-6  # Gamma loop criterion
-    self_consistency_max_iterations: int = 10  # Increased for dual criteria
+    self_consistency_max_iterations: int = (
+        10  # Maximum SC iterations per particle per step
+    )
     self_consistency_mass_shell_tolerance: float = (
         1e-2  # Safety net threshold enforced after loop
     )
     self_consistency_mass_shell_relaxation: float = (
         0.7  # Relaxation weight for Pt correction (0.0-1.0, default 0.7)
-    )
-    self_consistency_dual_weight: float = (
-        0.5  # Blending weight for dual_weighted mode (0.0-1.0, default 0.5)
     )
     self_consistency_verbosity: int = (
         0  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
@@ -313,11 +313,9 @@ class SimulationOptions:
             "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_convergence_mode": self.self_consistency_convergence_mode,
             "self_consistency_target_ms_tolerance": self.self_consistency_target_ms_tolerance,
-            "self_consistency_target_gamma_tolerance": self.self_consistency_target_gamma_tolerance,
             "self_consistency_max_iterations": self.self_consistency_max_iterations,
             "self_consistency_mass_shell_tolerance": self.self_consistency_mass_shell_tolerance,
             "self_consistency_mass_shell_relaxation": self.self_consistency_mass_shell_relaxation,
-            "self_consistency_dual_weight": self.self_consistency_dual_weight,
             "self_consistency_verbosity": self.self_consistency_verbosity,
             "energy_monitor_enabled": self.energy_monitor_enabled,
             "energy_monitor_threshold": self.energy_monitor_threshold,
@@ -430,9 +428,6 @@ class SimulationOptions:
             self_consistency_target_ms_tolerance=_float(
                 "self_consistency_target_ms_tolerance", 1e-6
             ),
-            self_consistency_target_gamma_tolerance=_float(
-                "self_consistency_target_gamma_tolerance", 1e-6
-            ),
             self_consistency_max_iterations=_int("self_consistency_max_iterations", 10),
             self_consistency_mass_shell_tolerance=_float(
                 "self_consistency_mass_shell_tolerance", 1e-2
@@ -440,7 +435,6 @@ class SimulationOptions:
             self_consistency_mass_shell_relaxation=_float(
                 "self_consistency_mass_shell_relaxation", 0.7
             ),
-            self_consistency_dual_weight=_float("self_consistency_dual_weight", 0.5),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
             energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
@@ -876,11 +870,20 @@ def run_testbed(
     _log(f"  Legacy enabled: {legacy_enabled}")
     _log(f"  Image subcharges: {options.image_subcharge_count}")
     _log(f"  Image weighting: {options.use_image_weighting}")
+    # Normalize mode name for display (handle legacy aliases)
+    mode_aliases = {
+        "mass_shell_only": "fixed_geometry",
+        "full_iteration": "variable_geometry",
+    }
+    display_mode = mode_aliases.get(
+        options.self_consistency_convergence_mode,
+        options.self_consistency_convergence_mode,
+    )
     _log(
-        f"  Self-consistency: {options.self_consistency_enabled} (mode={options.self_consistency_convergence_mode}, "
-        f"ms_tol={options.self_consistency_target_ms_tolerance:.1e}, gamma_tol={options.self_consistency_target_gamma_tolerance:.1e}, "
+        f"  Self-consistency: {options.self_consistency_enabled} (mode={display_mode}, "
+        f"ms_tol={options.self_consistency_target_ms_tolerance:.1e}, "
         f"max_iter={options.self_consistency_max_iterations}, safety_net={options.self_consistency_mass_shell_tolerance:.1e}, "
-        f"relaxation={options.self_consistency_mass_shell_relaxation:.1f}, dual_weight={options.self_consistency_dual_weight:.1f})"
+        f"relaxation={options.self_consistency_mass_shell_relaxation:.1f})"
     )
     _log(
         f"  Energy monitoring: {options.energy_monitor_enabled} (threshold={options.energy_monitor_threshold * 100:.0f}%, halt={options.energy_monitor_halt_on_jump})"
@@ -924,11 +927,9 @@ def run_testbed(
             self_consistency_tolerance=options.self_consistency_target_ms_tolerance,  # Map to tolerance for backward compat
             self_consistency_convergence_mode=options.self_consistency_convergence_mode,
             self_consistency_target_ms_tolerance=options.self_consistency_target_ms_tolerance,
-            self_consistency_target_gamma_tolerance=options.self_consistency_target_gamma_tolerance,
             self_consistency_max_iterations=options.self_consistency_max_iterations,
             self_consistency_mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
             self_consistency_mass_shell_relaxation=options.self_consistency_mass_shell_relaxation,
-            self_consistency_dual_weight=options.self_consistency_dual_weight,
             self_consistency_verbosity=options.self_consistency_verbosity,
             energy_monitor_enabled=options.energy_monitor_enabled,
             energy_monitor_threshold=options.energy_monitor_threshold,

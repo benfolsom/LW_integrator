@@ -37,13 +37,17 @@ residual-wake acceleration with a covariant retarded-potential integrator*
   ``APPROXIMATE_BACK_HISTORY`` mode that reconstructs a constant-velocity past
   for better legacy alignment.  All entry points—CLI, scripts, and notebooks—take
   the new enum so you can toggle behaviour without patching call sites.
-* **Self-consistency and energy conservation.**  The integrator now properly
-  handles conjugate vs. kinetic energy in the presence of electromagnetic
-  potentials. Self-consistency iterations (enabled by default) ensure that
-  gamma derived from energy matches gamma derived from velocity, enforcing
-  the physical requirement γ = 1/√(1 - β²). This is critical for energy
-  conservation in high-energy simulations (γ > 10⁴). These corrections were
-  implemented in December 2025.
+* **Self-consistency and energy conservation.**  The integrator enforces the
+  relativistic mass-shell constraint Pt² = P² + (mc)² through iterative
+  projection during each timestep. Two modes are available:
+  * **mass_shell_only (default)**: Fast iteration with fixed geometry—retarded
+    distances computed once per step. Suitable for most simulations.
+  * **full_iteration**: Updates particle positions and recomputes retarded
+    distances each iteration for maximum accuracy when particles move
+    significantly (|Δx| ~ 0.1×R_separation). Computationally expensive but
+    accounts for geometric changes during the timestep.
+  Self-consistency is enabled by default and critical for energy conservation
+  in high-energy simulations (γ > 10⁴). Implemented December 2024.
 * **Adaptive timestep and beta clamping.**  The integrator includes numerical
   safety features for extreme relativistic regimes (γ > 10⁶):
   * **Beta clamping** prevents particle velocities from reaching the speed of
@@ -244,9 +248,9 @@ potential handling. Key improvements include:
   electromagnetic potential computation
 * **Proper kinetic energy separation** - Now correctly subtracts potential
   energy (q·Φ) from conjugate energy to obtain kinetic gamma
-* **Fixed self-consistency convergence** - Iterations now compare energy-derived
-  gamma vs. velocity-derived gamma (the physical requirement), not just
-  iteration-to-iteration changes
+* **Fixed self-consistency convergence** - Iterations now enforce the mass-shell
+  constraint Pt² = P² + (mc)² through projection, ensuring energy-momentum
+  consistency without relying on numerically unstable velocity calculations
 * **Improved numerical precision** - Float64 throughout, relaxed k_factor
   threshold to 1e-20 for extreme angles
 * **Self-consistency enabled by default** - Essential for energy conservation
@@ -283,8 +287,10 @@ metadata and Sphinx footer remain consistent.  To cut a new release:
   The repository treats Sphinx warnings as errors to keep the rendered site
   trustworthy.
 * For high-energy simulations (γ > 10⁴), self-consistency is now enabled by
-  default. To disable (not recommended), explicitly set
-  ``SelfConsistencyConfig(enabled=False)``.
+  default with ``mass_shell_only`` mode (fixed geometry, fast). For maximum
+  accuracy when particle motion during timesteps is significant, use
+  ``SelfConsistencyConfig.full_iteration()``. To disable (not recommended),
+  explicitly set ``SelfConsistencyConfig(enabled=False)``.
 
 ---
 

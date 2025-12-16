@@ -51,29 +51,49 @@ class SelfConsistencyConfig:
     are satisfied.
 
     CONVERGENCE STRATEGY:
-    Both convergence criteria must be satisfied in all modes:
-    1. Mass-shell error: |Pt² - P² - (mc)²|/(mc)² < target_ms_tolerance
-    2. Gamma consistency: |γ_velocity - γ_energy| / γ < target_gamma_tolerance
+    Three convergence modes with distinct behaviors:
 
-    The mode determines HOW Pt is corrected during iterations, not what is checked.
+    1. "fixed_geometry" (formerly "mass_shell_only"):
+       - Fixed geometry (positions, retarded distances computed once)
+       - Pt projected onto mass shell each iteration
+       - One-way mass-shell convergence check
+       - Fastest, use for most cases
+
+    2. "variable_geometry" (formerly "full_iteration"):
+       - Variable geometry (positions/distances recomputed each iteration)
+       - Pt projected onto mass shell each iteration
+       - One-way mass-shell convergence check
+       - More accurate when particle moves significantly
+
+    3. "bidirectional_search" (NEW):
+       - Variable geometry (positions/distances recomputed each iteration)
+       - Symmetric relaxation of BOTH Pt and P (no full projection)
+       - Bidirectional convergence check (forward AND backward)
+       - Exploratory mode, finds mutually consistent (P, Pt, geometry) state
+       - Slowest, use for diagnostics or when standard modes fail
 
     Attributes
     ----------
     enabled : bool
         Whether to perform self-consistency iterations. Default is True.
     convergence_mode : str
-        Pt correction mode during iterations. Options:
-        - "mass_shell_only": Project Pt onto mass shell with relaxation (default)
-        - "dual_weighted": Blend mass-shell and velocity-based Pt, then apply relaxation
-        Both modes check both convergence criteria.
-        Default is "mass_shell_only".
+        Convergence mode determining iteration strategy. Options:
+        - "fixed_geometry": Pt projection, fixed geometry (default, fastest)
+        - "variable_geometry": Pt projection, variable geometry (accurate, slower)
+        - "bidirectional_search": Symmetric relaxation, variable geometry (exploratory, slowest)
+
+        Differences:
+        - fixed_geometry: Geometry computed once, Pt projected, one-way check
+        - variable_geometry: Geometry recomputed each iteration, Pt projected, one-way check
+        - bidirectional_search: Geometry recomputed, symmetric P+Pt relaxation, bidirectional check
+
+        Legacy aliases supported: "mass_shell_only" → "fixed_geometry",
+                                  "full_iteration" → "variable_geometry"
+
+        Default is "fixed_geometry".
     target_ms_tolerance : float
         TARGET mass-shell convergence criterion used inside the iteration loop.
         Iterations continue until |Pt² - P² - (mc)²|/(mc)² < target_ms_tolerance.
-        Default is 1e-6 (0.0001%).
-    target_gamma_tolerance : float
-        TARGET gamma consistency criterion used inside the iteration loop.
-        Iterations continue until |γ_velocity - γ_energy| / γ < target_gamma_tolerance.
         Default is 1e-6 (0.0001%).
     mass_shell_tolerance : float
         SAFETY NET threshold enforced after the loop. If the final mass-shell error
@@ -87,13 +107,7 @@ class SelfConsistencyConfig:
         - 0.7 = recommended (good balance, default)
         - 0.5 = conservative (more stable, slower)
         Default is 0.7.
-    dual_weight : float
-        Blending weight between mass-shell and velocity-based Pt (dual_weighted mode only).
-        Pt_blend = w*Pt_mass_shell + (1-w)*Pt_velocity where w = dual_weight.
-        - 1.0 = pure mass-shell (equivalent to mass_shell_only)
-        - 0.5 = equal weighting (default, balanced)
-        - 0.0 = pure velocity-based (kinematic only)
-        Default is 0.5. Ignored in mass_shell_only mode.
+
     max_iterations : int
         Maximum number of refinement iterations per particle per step. Default is 10.
         Increased from 5 to accommodate dual-criterion convergence.
@@ -104,32 +118,52 @@ class SelfConsistencyConfig:
         2 = failures only (detailed output only for non-converged steps)
         3 = full detail (iteration-by-iteration for all steps, very large logs)
 
+    Notes on bidirectional_search mode
+    -----------------------------------
+    This mode uses symmetric relaxation on both Pt and P, which is non-standard:
+    - Allows P to be modified (not just from forces)
+    - Searches for mutually consistent (P, Pt, geometry) state
+    - May find solutions when geometry/force errors accumulate
+    - Trade-off: slightly corrupts force integration for global consistency
+    - Use conservatively with relaxation weight ≈ 0.5-0.7
+    - Experimental - validate results carefully
+
     Examples
     --------
-    Standard configuration (default, mass-shell only)::
+    Standard configuration (default, fixed geometry)::
 
         config = SelfConsistencyConfig()
-        # enabled=True, convergence_mode="mass_shell_only"
-        # target_ms_tolerance=1e-6, target_gamma_tolerance=1e-6
-        # mass_shell_relaxation=0.7, max_iterations=10
+        # enabled=True, convergence_mode="fixed_geometry"
+        # Pt projection with fixed geometry (fast)
+        # target_ms_tolerance=1e-6, mass_shell_relaxation=0.7, max_iterations=10
 
-    Dual-weighted mode (blend velocity and mass-shell)::
+    Variable geometry mode (high accuracy, updates geometry)::
 
         config = SelfConsistencyConfig(
-            convergence_mode="dual_weighted",
-            dual_weight=0.5,  # Equal weighting
+            convergence_mode="variable_geometry",
+            target_ms_tolerance=1e-6,
             mass_shell_relaxation=0.7,
+            max_iterations=20,
+        )
+
+    Bidirectional search mode (exploratory, symmetric relaxation)::
+
+        config = SelfConsistencyConfig(
+            convergence_mode="bidirectional_search",
+            target_ms_tolerance=1e-6,
+            mass_shell_relaxation=0.5,  # Conservative for symmetric relax
+            max_iterations=30,
+            verbosity=2,  # Monitor convergence
         )
 
     Aggressive convergence for ultra-relativistic particles::
 
         config = SelfConsistencyConfig(
-            convergence_mode="mass_shell_only",
+            convergence_mode="full_iteration",  # Variable geometry for accuracy
             target_ms_tolerance=1e-8,
-            target_gamma_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
             mass_shell_relaxation=1.0,  # Full projection
-            max_iterations=15,
+            max_iterations=20,
             verbosity=2
         )
 
@@ -139,30 +173,40 @@ class SelfConsistencyConfig:
     """
 
     enabled: bool = True
-    convergence_mode: str = "mass_shell_only"  # "mass_shell_only" or "dual_weighted"
+    convergence_mode: str = "fixed_geometry"  # "fixed_geometry", "variable_geometry", or "bidirectional_search"
     target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
-    target_gamma_tolerance: float = 1e-6  # Gamma loop convergence criterion
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
     mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
-    dual_weight: float = 0.5  # Blending weight (dual_weighted mode only)
-    max_iterations: int = 10  # Increased for dual criteria
+    max_iterations: int = 10  # Maximum SC iterations per particle per step
     verbosity: int = 0
+
+    # Mode name aliases for backwards compatibility
+    _MODE_ALIASES = {
+        "mass_shell_only": "fixed_geometry",
+        "full_iteration": "variable_geometry",
+    }
+
+    def __post_init__(self):
+        """Normalize mode name using aliases."""
+        if self.convergence_mode in self._MODE_ALIASES:
+            object.__setattr__(
+                self, "convergence_mode", self._MODE_ALIASES[self.convergence_mode]
+            )
 
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":
         """Return standard configuration for typical relativistic simulations.
 
         This is the default configuration: enabled with mass-shell projection
-        suitable for most high-energy particle tracking applications.
+        and mass-shell-only convergence check (no velocity check).
+        Suitable for most high-energy particle tracking applications.
         """
         return cls(
             enabled=True,
-            convergence_mode="mass_shell_only",
+            convergence_mode="fixed_geometry",
             target_ms_tolerance=1e-6,
-            target_gamma_tolerance=1e-6,
             mass_shell_tolerance=1e-2,
             mass_shell_relaxation=0.7,
-            dual_weight=0.5,
             max_iterations=10,
         )
 
@@ -182,18 +226,76 @@ class SelfConsistencyConfig:
         Uses tight convergence tolerances and more iterations to prevent
         energy jumps in challenging scenarios (ultra-relativistic particles,
         narrow apertures, or close approaches to conducting boundaries).
+
+        Uses full iteration mode for maximum accuracy.
         """
         return cls(
             enabled=True,
-            convergence_mode="mass_shell_only",
+            convergence_mode="variable_geometry",
             target_ms_tolerance=1e-8,
-            target_gamma_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
             mass_shell_relaxation=1.0,  # Full projection for aggressive mode
-            dual_weight=0.5,
-            max_iterations=15,
+            max_iterations=20,
             verbosity=0,
         )
+
+    @classmethod
+    def full_iteration(cls, tolerance: float = 1e-6) -> "SelfConsistencyConfig":
+        """Return full position/momentum iteration configuration.
+
+        Recomputes positions, retarded distances, and forces at each SC iteration.
+        Most accurate but computationally expensive. Use when light iteration modes
+        fail to converge or when geometric changes during the timestep are significant.
+
+        Parameters
+        ----------
+        tolerance : float
+            Target tolerance for both mass-shell and gamma convergence.
+
+        Returns
+        -------
+        SelfConsistencyConfig
+            Configuration using full iteration mode.
+        """
+        return cls(
+            enabled=True,
+            convergence_mode="variable_geometry",
+            target_ms_tolerance=tolerance,
+            mass_shell_tolerance=1e-2,
+            mass_shell_relaxation=0.7,
+            max_iterations=20,
+            verbosity=0,
+        )
+
+    @classmethod
+    def bidirectional(cls, tolerance: float = 1e-6) -> "SelfConsistencyConfig":
+        """Create a bidirectional search configuration.
+
+        Uses symmetric relaxation to explore mutually consistent states.
+        Experimental mode - use for diagnostics or when standard modes fail.
+
+        Parameters
+        ----------
+        tolerance : float
+            Target mass-shell tolerance for convergence criterion.
+
+        Returns
+        -------
+        SelfConsistencyConfig
+            Configuration with bidirectional search enabled.
+        """
+        return cls(
+            enabled=True,
+            convergence_mode="bidirectional_search",
+            target_ms_tolerance=tolerance,
+            mass_shell_tolerance=1e-2,
+            mass_shell_relaxation=0.5,  # Conservative for symmetric relaxation
+            max_iterations=30,  # More iterations needed
+            verbosity=2,  # Monitor convergence
+        )
+
+
+__all__ = ["SelfConsistencyConfig", "self_consistent_step"]
 
 
 def self_consistent_step(

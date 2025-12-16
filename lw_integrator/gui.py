@@ -404,14 +404,8 @@ class IntegratorGUI:
         self.self_consistency_mass_shell_relaxation_var = tk.DoubleVar(
             value=self.options.self_consistency_mass_shell_relaxation
         )
-        self.self_consistency_dual_weight_var = tk.DoubleVar(
-            value=self.options.self_consistency_dual_weight
-        )
         self.self_consistency_target_ms_tolerance_var = tk.DoubleVar(
             value=self.options.self_consistency_target_ms_tolerance
-        )
-        self.self_consistency_target_gamma_tolerance_var = tk.DoubleVar(
-            value=self.options.self_consistency_target_gamma_tolerance
         )
         self.self_consistency_max_iterations_var = tk.IntVar(
             value=self.options.self_consistency_max_iterations
@@ -1026,24 +1020,35 @@ class IntegratorGUI:
         mode_help.pack(side="left", padx=(3, 0))
         Tooltip(
             mode_help,
-            "Pt correction mode during self-consistency iterations.\n\n"
-            "• Mass-Shell Only (default):\n"
-            "  Project Pt onto mass shell: Pt = √(P² + (mc)²)\n"
-            "  Fast, reliable, recommended for most cases\n\n"
-            "• Dual-Weighted:\n"
-            "  Blend velocity-based and mass-shell Pt\n"
-            "  More sophisticated, use for difficult convergence\n\n"
-            "BOTH modes check BOTH convergence criteria:\n"
-            "  - Mass-shell error must be < target_ms_tolerance\n"
-            "  - Gamma consistency must be < target_gamma_tolerance\n\n"
-            "Default: Mass-Shell Only",
+            "Self-consistency convergence mode.\n\n"
+            "• Fixed Geometry (default, fastest):\n"
+            "  Projects Pt onto mass shell each iteration\n"
+            "  Geometry computed once per timestep\n"
+            "  Use for most cases\n"
+            "  Speed: 1× baseline, 2-5 iterations typical\n\n"
+            "• Variable Geometry (accurate, slower):\n"
+            "  Projects Pt onto mass shell each iteration\n"
+            "  Recomputes geometry each SC iteration\n"
+            "  Use when particle moves significantly: |Δx| ~ 0.1×R\n"
+            "  Speed: 2-10× slower than fixed\n\n"
+            "• Bidirectional Search (experimental, slowest):\n"
+            "  Symmetric relaxation of BOTH Pt and P (no full projection)\n"
+            "  Searches for mutually consistent (P, Pt, geometry) state\n"
+            "  Use for diagnostics or when standard modes fail\n"
+            "  Speed: 5-20× slower, needs 10-30 iterations\n"
+            "  ⚠️  Non-standard: modifies P from forces\n\n"
+            "Default: Fixed Geometry",
         )
         self.sc_mode_combo = ttk.Combobox(
             sc_frame,
             textvariable=self.self_consistency_convergence_mode_var,
-            values=["mass_shell_only", "dual_weighted"],
+            values=[
+                "fixed_geometry",
+                "variable_geometry",
+                "bidirectional_search",
+            ],
             state="readonly",
-            width=18,
+            width=20,
         )
         self.sc_mode_combo.grid(row=1, column=1, sticky="ew", pady=2)
         self.sc_mode_combo.bind("<<ComboboxSelected>>", self._on_sc_mode_changed)
@@ -1077,51 +1082,25 @@ class IntegratorGUI:
         self.sc_target_ms_tolerance_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
         # Target gamma tolerance
-        target_gamma_frame = ttk.Frame(sc_frame)
-        target_gamma_frame.grid(row=3, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.sc_target_gamma_tolerance_label = ttk.Label(
-            target_gamma_frame, text="Target gamma tolerance:"
-        )
-        self.sc_target_gamma_tolerance_label.pack(side="left")
-        target_gamma_help = ttk.Label(
-            target_gamma_frame, text="ⓘ", foreground="blue", cursor="hand2"
-        )
-        target_gamma_help.pack(side="left", padx=(3, 0))
-        Tooltip(
-            target_gamma_help,
-            "TARGET gamma consistency convergence criterion.\n\n"
-            "Loop continues until:\n"
-            "  |γ_velocity - γ_energy| / γ < target_gamma_tolerance\n\n"
-            "This ensures position-velocity-potential consistency.\n"
-            "Critical for high-energy close approaches.\n\n"
-            "Default: 1e-6 (0.0001% relative error)\n"
-            "Aggressive: 1e-8 for ultra-relativistic (γ > 1000)\n"
-            "Minimum: 1e-10 (stricter = more iterations)",
-        )
-        self.sc_target_gamma_tolerance_entry = ttk.Entry(
-            sc_frame,
-            textvariable=self.self_consistency_target_gamma_tolerance_var,
-            width=16,
-        )
-        self.sc_target_gamma_tolerance_entry.grid(row=3, column=1, sticky="ew", pady=2)
-
         # Max iterations with help icon
-        iter_frame = ttk.Frame(sc_frame)
-        iter_frame.grid(row=4, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.sc_max_iterations_label = ttk.Label(iter_frame, text="Max iterations:")
+        max_iter_frame = ttk.Frame(sc_frame)
+        max_iter_frame.grid(row=4, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_max_iterations_label = ttk.Label(max_iter_frame, text="Max iterations:")
         self.sc_max_iterations_label.pack(side="left")
-        iter_help = ttk.Label(iter_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        iter_help = ttk.Label(
+            max_iter_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
         iter_help.pack(side="left", padx=(3, 0))
         Tooltip(
             iter_help,
             "Maximum self-consistency iterations per particle per step.\n\n"
             "Loop continues until:\n"
-            "  • BOTH criteria satisfied (dual mode), OR\n"
+            "  • Mass-shell constraint satisfied (momentum-based check), OR\n"
             "  • Max iterations reached (applies projection as fallback)\n\n"
             "More iterations = better accuracy but slower.\n"
             "Typical convergence: 2-4 iterations\n\n"
-            "Default: 10 (increased for dual criteria)\n"
-            "Aggressive: 15 for ultra-relativistic particles\n"
+            "Default: 10\n"
+            "Aggressive: 20 for ultra-relativistic particles (γ > 1000)\n"
             "Increase if seeing 'max iterations reached' warnings",
         )
         self.sc_max_iterations_entry = ttk.Entry(
@@ -1192,46 +1171,13 @@ class IntegratorGUI:
         )
         self.sc_relaxation_entry.grid(row=6, column=1, sticky="ew", pady=2)
 
-        # Dual weight (only for dual_weighted mode) with help icon
-        dual_weight_frame = ttk.Frame(sc_frame)
-        dual_weight_frame.grid(row=7, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.sc_dual_weight_label = ttk.Label(dual_weight_frame, text="Dual weight:")
-        self.sc_dual_weight_label.pack(side="left")
-        dual_weight_help = ttk.Label(
-            dual_weight_frame, text="ⓘ", foreground="blue", cursor="hand2"
-        )
-        dual_weight_help.pack(side="left", padx=(3, 0))
-        Tooltip(
-            dual_weight_help,
-            "Blending weight between mass-shell and velocity-based Pt.\n"
-            "(Only used in dual_weighted mode)\n\n"
-            "Blending formula:\n"
-            "  Pt_blend = w*Pt_mass_shell + (1-w)*Pt_velocity\n"
-            "  where w = dual weight\n\n"
-            "Values:\n"
-            "  • 1.0 = Pure mass-shell (same as mass_shell_only mode)\n"
-            "  • 0.5 = Equal weighting (default, balanced)\n"
-            "  • 0.0 = Pure velocity-based (kinematic only)\n\n"
-            "Mass-shell: Uses energy-momentum relation Pt² = P² + (mc)²\n"
-            "Velocity: Uses kinematic Pt = γ_vel * m * c from position changes\n\n"
-            "Equal weighting (0.5) usually works best.\n\n"
-            "Default: 0.5\n"
-            "Ignored in mass_shell_only mode (greyed out)",
-        )
-        self.sc_dual_weight_entry = ttk.Entry(
-            sc_frame,
-            textvariable=self.self_consistency_dual_weight_var,
-            width=16,
-        )
-        self.sc_dual_weight_entry.grid(row=7, column=1, sticky="ew", pady=2)
-
         # Verbosity with help icon
-        verbosity_label_frame = ttk.Frame(sc_frame)
-        verbosity_label_frame.grid(row=8, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.sc_verbosity_label = ttk.Label(verbosity_label_frame, text="Verbosity:")
+        verbosity_frame = ttk.Frame(sc_frame)
+        verbosity_frame.grid(row=7, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.sc_verbosity_label = ttk.Label(verbosity_frame, text="Verbosity:")
         self.sc_verbosity_label.pack(side="left")
         verbosity_help = ttk.Label(
-            verbosity_label_frame, text="ⓘ", foreground="blue", cursor="hand2"
+            verbosity_frame, text="ⓘ", foreground="blue", cursor="hand2"
         )
         verbosity_help.pack(side="left", padx=(3, 0))
         Tooltip(
@@ -1251,21 +1197,14 @@ class IntegratorGUI:
             "  • Deep diagnostics: 3 (very large logs, 100k+ lines)\n\n"
             "Default: 0 (silent)",
         )
-        verbosity_frame = ttk.Frame(sc_frame)
-        verbosity_frame.grid(row=8, column=1, sticky="w", pady=2)
         self.sc_verbosity_entry = ttk.Spinbox(
-            verbosity_frame,
+            sc_frame,
             from_=0,
             to=3,
             textvariable=self.self_consistency_verbosity_var,
             width=5,
         )
-        self.sc_verbosity_entry.pack(side="left")
-        ttk.Label(
-            verbosity_frame,
-            text=" (0=silent, 1=summary, 2=failures, 3=full)",
-            foreground="gray",
-        ).pack(side="left")
+        self.sc_verbosity_entry.grid(row=7, column=1, sticky="w", pady=2)
 
         # Adaptive timestep section (Energy Jump Detection functionality integrated here)
         at_frame = ttk.LabelFrame(
@@ -1479,10 +1418,12 @@ class IntegratorGUI:
         help_text = ttk.Label(
             stability_frame,
             text="💡 These settings prevent energy jumps and numerical instabilities.\n\n"
-            "Self-Consistency: Dual convergence on BOTH mass-shell AND gamma (recommended: ON).\n"
-            "  • Dual Independent: Both criteria must satisfy (prevents catastrophic failures)\n"
-            "  • Target tolerances: Goals for iteration loop (stricter)\n"
-            "  • Mass-shell tolerance: Safety net after loop (looser)\n"
+            "Self-Consistency: Enforces mass-shell constraint iteratively (recommended: ON).\n"
+            "  • fixed_geometry: Fixed geometry, fast (default)\n"
+            "  • variable_geometry: Variable geometry, accurate but slower\n"
+            "  • bidirectional_search: Symmetric relaxation, exploratory (experimental)\n"
+            "  • Target tolerance: Convergence goal for iteration loop (default: 1e-6)\n"
+            "  • Mass-shell tolerance: Safety net after loop if convergence fails (default: 1e-2)\n"
             "Adaptive Timestep: Automatically reduces timestep on energy jumps (recommended: ON).\n\n"
             "Click ⓘ icons for detailed parameter explanations.\n"
             "Defaults work well for most cases — adjust only if needed.",
@@ -2313,12 +2254,8 @@ class IntegratorGUI:
         self.self_consistency_mass_shell_relaxation_var.set(
             options.self_consistency_mass_shell_relaxation
         )
-        self.self_consistency_dual_weight_var.set(options.self_consistency_dual_weight)
         self.self_consistency_target_ms_tolerance_var.set(
             options.self_consistency_target_ms_tolerance
-        )
-        self.self_consistency_target_gamma_tolerance_var.set(
-            options.self_consistency_target_gamma_tolerance
         )
         self.self_consistency_max_iterations_var.set(
             options.self_consistency_max_iterations
@@ -2439,14 +2376,8 @@ class IntegratorGUI:
             self_consistency_mass_shell_relaxation=float(
                 self.self_consistency_mass_shell_relaxation_var.get()
             ),
-            self_consistency_dual_weight=float(
-                self.self_consistency_dual_weight_var.get()
-            ),
             self_consistency_target_ms_tolerance=float(
                 self.self_consistency_target_ms_tolerance_var.get()
-            ),
-            self_consistency_target_gamma_tolerance=float(
-                self.self_consistency_target_gamma_tolerance_var.get()
             ),
             self_consistency_max_iterations=int(
                 self.self_consistency_max_iterations_var.get()
@@ -2955,16 +2886,12 @@ class IntegratorGUI:
             self.sc_mode_combo,
             self.sc_target_ms_tolerance_label,
             self.sc_target_ms_tolerance_entry,
-            self.sc_target_gamma_tolerance_label,
-            self.sc_target_gamma_tolerance_entry,
             self.sc_max_iterations_label,
             self.sc_max_iterations_entry,
             self.sc_mass_shell_tolerance_label,
             self.sc_mass_shell_tolerance_entry,
             self.sc_relaxation_label,
             self.sc_relaxation_entry,
-            self.sc_dual_weight_label,
-            self.sc_dual_weight_entry,
             self.sc_verbosity_label,
             self.sc_verbosity_entry,
         ]
@@ -2982,20 +2909,10 @@ class IntegratorGUI:
         if enabled:
             self._on_sc_mode_changed()
 
-    def _on_sc_mode_changed(self, event=None) -> None:
-        """Grey out parameters not relevant to selected convergence mode."""
-        if not hasattr(self, "sc_dual_weight_entry"):
-            return  # Widgets not created yet
-
-        mode = self.self_consistency_convergence_mode_var.get()
-
-        # dual_weight is only used in dual_weighted mode
-        if mode == "dual_weighted":
-            self.sc_dual_weight_label.configure(foreground="black")
-            self.sc_dual_weight_entry.configure(state="normal")
-        else:  # mass_shell_only
-            self.sc_dual_weight_label.configure(foreground="gray")
-            self.sc_dual_weight_entry.configure(state="disabled")
+    def _on_sc_mode_changed(self, event=None):
+        """Handle convergence mode changes."""
+        # No mode-specific UI updates needed
+        pass
 
     def _toggle_adaptive_timestep_controls(self) -> None:
         """Enable/disable adaptive timestep controls based on enabled checkbox.

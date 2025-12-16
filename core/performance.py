@@ -163,7 +163,12 @@ def _compute_electromagnetic_forces(
                 np.float64(beta_ext), np.float64(nhat_vec)
             )
             # Allow k_factor down to 1e-20 for ultra-relativistic particles
-            if abs(k_factor) < 1e-20:
+            k_threshold = 1e-20
+            if abs(k_factor) < k_threshold:
+                print(f"    ⚠️  k-factor threshold triggered: interaction filtered")
+                print(
+                    f"       |k| = {abs(k_factor):.6e}, threshold = {k_threshold:.6e}"
+                )
                 continue
 
             bdot_ext = np.array([bdotx_ext[j], bdoty_ext[j], bdotz_ext[j]])
