@@ -1031,12 +1031,6 @@ class IntegratorGUI:
             "  Recomputes geometry each SC iteration\n"
             "  Use when particle moves significantly: |Δx| ~ 0.1×R\n"
             "  Speed: 2-10× slower than fixed\n\n"
-            "• Bidirectional Search (experimental, slowest):\n"
-            "  Symmetric relaxation of BOTH Pt and P (no full projection)\n"
-            "  Searches for mutually consistent (P, Pt, geometry) state\n"
-            "  Use for diagnostics or when standard modes fail\n"
-            "  Speed: 5-20× slower, needs 10-30 iterations\n"
-            "  ⚠️  Non-standard: modifies P from forces\n\n"
             "Default: Fixed Geometry",
         )
         self.sc_mode_combo = ttk.Combobox(
@@ -1045,7 +1039,6 @@ class IntegratorGUI:
             values=[
                 "fixed_geometry",
                 "variable_geometry",
-                "bidirectional_search",
             ],
             state="readonly",
             width=20,
@@ -1421,7 +1414,6 @@ class IntegratorGUI:
             "Self-Consistency: Enforces mass-shell constraint iteratively (recommended: ON).\n"
             "  • fixed_geometry: Fixed geometry, fast (default)\n"
             "  • variable_geometry: Variable geometry, accurate but slower\n"
-            "  • bidirectional_search: Symmetric relaxation, exploratory (experimental)\n"
             "  • Target tolerance: Convergence goal for iteration loop (default: 1e-6)\n"
             "  • Mass-shell tolerance: Safety net after loop if convergence fails (default: 1e-2)\n"
             "Adaptive Timestep: Automatically reduces timestep on energy jumps (recommended: ON).\n\n"

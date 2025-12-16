@@ -241,9 +241,7 @@ class SimulationOptions:
     self_consistency_tolerance: float = (
         1e-4  # Legacy parameter for backward compatibility
     )
-    self_consistency_convergence_mode: str = (
-        "fixed_geometry"  # or "variable_geometry" or "bidirectional_search"
-    )
+    self_consistency_convergence_mode: str = "fixed_geometry"  # or "variable_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6  # Mass-shell loop criterion
     self_consistency_max_iterations: int = (
         10  # Maximum SC iterations per particle per step

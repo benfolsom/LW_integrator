@@ -623,78 +623,6 @@ def _check_gamma_consistency(
     return is_consistent, gamma_rel_change
 
 
-def _check_bidirectional_mass_shell_convergence(
-    Pt: float,
-    Px: float,
-    Py: float,
-    Pz: float,
-    particle_mass: float,
-    C_MMNS: float,
-    tolerance: float,
-) -> tuple[bool, float, float]:
-    """Check bidirectional mass-shell convergence (momentum-only, no velocity).
-
-    This is a symmetric approach that checks consistency in both directions:
-
-    Forward:  P_xyz → P_t^ms = sqrt(P_xyz² + (mc)²)
-              Error_forward = |P_t - P_t^ms|
-
-    Backward: P_t → |P_xyz|^ms = sqrt(P_t² - (mc)²)
-              Error_backward = ||P_xyz| - |P_xyz|^ms||
-
-    Both errors are normalized by (mc) and must be below tolerance.
-
-    This avoids computing velocity from position changes, which is numerically
-    unstable at ultra-relativistic speeds.
-
-    Parameters
-    ----------
-    Pt, Px, Py, Pz : float
-        Current 4-momentum components
-    particle_mass : float
-        Rest mass
-    C_MMNS : float
-        Speed of light in simulation units
-    tolerance : float
-        Relative tolerance for both forward and backward checks
-
-    Returns
-    -------
-    tuple[bool, float, float]
-        (has_converged, error_forward, error_backward)
-        Both errors are relative to (mc).
-    """
-    # Compute spatial momentum magnitude
-    P_spatial_sq = Px**2 + Py**2 + Pz**2
-    P_spatial_mag = np.sqrt(P_spatial_sq)
-
-    # Rest energy
-    mc = particle_mass * C_MMNS
-    mc_sq = mc**2
-
-    # Forward check: Given P_xyz, what should P_t be?
-    Pt_from_mass_shell = np.sqrt(P_spatial_sq + mc_sq)
-    error_forward = abs(Pt - Pt_from_mass_shell) / mc
-
-    # Backward check: Given P_t, what should |P_xyz| be?
-    # P_t² = P_xyz² + (mc)² → |P_xyz| = sqrt(P_t² - (mc)²)
-    Pt_sq = Pt**2
-    if Pt_sq > mc_sq:
-        P_spatial_from_Pt = np.sqrt(Pt_sq - mc_sq)
-        error_backward = abs(P_spatial_mag - P_spatial_from_Pt) / mc
-    else:
-        # If Pt < mc, particle is below rest mass (unphysical)
-        # This indicates a serious problem - set large error
-        error_backward = 1.0
-
-    # Both criteria must be satisfied
-    forward_converged = error_forward < tolerance
-    backward_converged = error_backward < tolerance
-    has_converged = forward_converged and backward_converged
-
-    return has_converged, error_forward, error_backward
-
-
 def _print_convergence_info(
     particle_idx: int,
     iteration: int,
@@ -707,14 +635,10 @@ def _print_convergence_info(
     max_iterations: int,
     verbosity: int = 1,
     step_idx: Optional[int] = None,
-    bidirectional_mode: bool = False,
-    error_forward: Optional[float] = None,
-    error_backward: Optional[float] = None,
 ) -> None:
     """Print debug information about self-consistency convergence.
 
-    Shows either dual convergence (mass-shell + gamma) or bidirectional
-    momentum-only convergence depending on mode.
+    Shows mass-shell convergence status.
 
     Parameters
     ----------
@@ -735,12 +659,6 @@ def _print_convergence_info(
         3 = full detail (all iterations)
     step_idx : Optional[int]
         Integration step number for context in error messages
-    bidirectional_mode : bool
-        If True, use bidirectional forward/backward errors instead of gamma consistency
-    error_forward : Optional[float]
-        Forward error |Pt - Pt^ms|/(mc) for bidirectional mode
-    error_backward : Optional[float]
-        Backward error ||Pxyz| - |Pxyz^ms||/(mc) for bidirectional mode
     """
     if verbosity == 0:
         return
@@ -754,71 +672,16 @@ def _print_convergence_info(
     # Prepare step prefix if step_idx is provided
     step_prefix = f"Step {step_idx}, " if step_idx is not None else ""
 
-    if bidirectional_mode:
-        # Bidirectional mode: show forward and backward momentum errors
-        if verbosity == 1:
-            print(
-                f"    {step_prefix}P{particle_idx}: {status}, "
-                f"E_fwd={error_forward:.3e}, E_back={error_backward:.3e}"
-            )
-        elif verbosity == 2:
-            if not converged:
-                print(f"    {step_prefix}Particle {particle_idx}: {status}")
-                print(
-                    f"      Forward error  |Pt - Pt^ms|/(mc)     = {error_forward:.15e}"
-                )
-                print(
-                    f"      Backward error ||Pxyz| - |Pxyz^ms||/(mc) = {error_backward:.15e}"
-                )
-                print(
-                    "      Bidirectional: BOTH forward and backward must be satisfied"
-                )
-                print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
-                print(
-                    f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}"
-                )
-            else:
-                print(
-                    f"    {step_prefix}P{particle_idx}: {status}, "
-                    f"E_fwd={error_forward:.3e}, E_back={error_backward:.3e}"
-                )
-        else:  # verbosity >= 3
-            print(f"    {step_prefix}Particle {particle_idx}: {status}")
-            print(f"      Forward error  |Pt - Pt^ms|/(mc)     = {error_forward:.15e}")
-            print(
-                f"      Backward error ||Pxyz| - |Pxyz^ms||/(mc) = {error_backward:.15e}"
-            )
-            print("      Bidirectional: BOTH forward and backward must be satisfied")
-            print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
-            print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
-    else:
-        # Dual mode: show mass-shell and gamma consistency
-        if verbosity == 1:
-            # Summary: one line per particle showing both criteria
-            print(
-                f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
-                f"E_gamma={gamma_consistency_error:.3e}"
-            )
-        elif verbosity == 2:
-            # Failures only: detailed output only for non-converged steps
-            if not converged:
-                print(f"    {step_prefix}Particle {particle_idx}: {status}")
-                print(f"      Mass-shell error = {mass_shell_error:.15e}")
-                print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
-                print("      Dual convergence: BOTH criteria must be satisfied")
-                print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
-                print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
-                print(
-                    f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}"
-                )
-            else:
-                # For converged steps at verbosity 2, just show summary
-                print(
-                    f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
-                    f"E_gamma={gamma_consistency_error:.3e}"
-                )
-        else:  # verbosity >= 3
-            # Full detail: multi-line output with full precision for all steps
+    # Standard mode: mass-shell convergence
+    if verbosity == 1:
+        # Summary: one line per particle showing both criteria
+        print(
+            f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+            f"E_gamma={gamma_consistency_error:.3e}"
+        )
+    elif verbosity == 2:
+        # Failures only: detailed output only for non-converged steps
+        if not converged:
             print(f"    {step_prefix}Particle {particle_idx}: {status}")
             print(f"      Mass-shell error = {mass_shell_error:.15e}")
             print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
@@ -826,6 +689,21 @@ def _print_convergence_info(
             print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
             print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
             print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
+        else:
+            # For converged steps at verbosity 2, just show summary
+            print(
+                f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+                f"E_gamma={gamma_consistency_error:.3e}"
+            )
+    else:  # verbosity >= 3
+        # Full detail: multi-line output with full precision for all steps
+        print(f"    {step_prefix}Particle {particle_idx}: {status}")
+        print(f"      Mass-shell error = {mass_shell_error:.15e}")
+        print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
+        print("      Dual convergence: BOTH criteria must be satisfied")
+        print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
+        print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
+        print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
 
 
 def retarded_equations_of_motion(
@@ -935,11 +813,10 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 1: Determine observer state for retarded distance calculation
             # ================================================================
-            # In variable_geometry and bidirectional_search modes, use position from previous iteration
+            # In variable_geometry mode, use position from previous iteration
             # In fixed_geometry mode, use initial position for all iterations
             if (
-                sc_convergence_mode
-                in ("variable_geometry", "bidirectional_search", "full_iteration")
+                sc_convergence_mode in ("variable_geometry", "full_iteration")
                 and sc_iteration > 0
             ):
                 # Create temporary state with updated position for retarded distance calc
@@ -984,8 +861,7 @@ def retarded_equations_of_motion(
             else:
                 # For variable geometry modes, need to create trajectory with observer_state
                 if (
-                    sc_convergence_mode
-                    in ("variable_geometry", "bidirectional_search", "full_iteration")
+                    sc_convergence_mode in ("variable_geometry", "full_iteration")
                     and sc_iteration > 0
                 ):
                     # Create temporary trajectory for retarded distance calculation
@@ -1172,80 +1048,11 @@ def retarded_equations_of_motion(
                     result["Pt"][particle_idx] = float(Pt_final)
                     # P_xyz unchanged (from forces)
 
-                elif sc_convergence_mode == "bidirectional_search":
-                    # Mode 3: Symmetric relaxation of BOTH Pt and P
-                    # Target Pt from mass-shell constraint
-                    Pt_target = Pt_from_mass_shell
-
-                    # Target P magnitude from backward mass-shell constraint
-                    Pt_sq = Pt_before_correction**2
-                    if Pt_sq > mass_shell_rhs:
-                        P_target_mag = np.sqrt(Pt_sq - mass_shell_rhs)
-                    else:
-                        # Pt below rest mass - use forward projection only
-                        P_target_mag = np.sqrt(P_spatial_sq)
-
-                    # Current P magnitude
-                    P_current_mag = np.sqrt(P_spatial_sq)
-
-                    # Scale P to target magnitude (keep direction)
-                    if P_current_mag > 0:
-                        P_scale = P_target_mag / P_current_mag
-                        Px_target = Px_64 * P_scale
-                        Py_target = Py_64 * P_scale
-                        Pz_target = Pz_64 * P_scale
-                    else:
-                        Px_target = Px_64
-                        Py_target = Py_64
-                        Pz_target = Pz_64
-
-                    # Get previous values for relaxation
-                    Px_before = Px_64
-                    Py_before = Py_64
-                    Pz_before = Pz_64
-
-                    # Apply symmetric relaxation
-                    relaxation_weight = sc_mass_shell_relaxation
-                    Pt_final = (
-                        relaxation_weight * Pt_target
-                        + (1.0 - relaxation_weight) * Pt_before_correction
-                    )
-                    Px_final = (
-                        relaxation_weight * Px_target
-                        + (1.0 - relaxation_weight) * Px_before
-                    )
-                    Py_final = (
-                        relaxation_weight * Py_target
-                        + (1.0 - relaxation_weight) * Py_before
-                    )
-                    Pz_final = (
-                        relaxation_weight * Pz_target
-                        + (1.0 - relaxation_weight) * Pz_before
-                    )
-
-                    # Update all momentum components
-                    result["Pt"][particle_idx] = float(Pt_final)
-                    result["Px"][particle_idx] = float(Px_final)
-                    result["Py"][particle_idx] = float(Py_final)
-                    result["Pz"][particle_idx] = float(Pz_final)
-
-                    if sc_verbosity >= 3:
-                        print(
-                            f"      Mode: bidirectional_search (symmetric relaxation)"
-                        )
-                        print(
-                            f"        Pt: {Pt_before_correction:.6e} → {Pt_final:.6e} (target: {Pt_target:.6e})"
-                        )
-                        print(
-                            f"        |P|: {P_current_mag:.6e} → {np.sqrt(Px_final**2 + Py_final**2 + Pz_final**2):.6e} (target: {P_target_mag:.6e})"
-                        )
                 else:
                     raise ValueError(f"Unknown convergence_mode: {sc_convergence_mode}")
 
-                # Log relaxation details for non-bidirectional modes
-                if sc_verbosity >= 3 and sc_convergence_mode not in (
-                    "bidirectional_search",
-                ):
+                # Log relaxation details
+                if sc_verbosity >= 3:
                     correction_magnitude = abs(Pt_final - Pt_before_correction)
                     print(
                         f"      After relaxation (α={relaxation_weight}): "
@@ -1522,114 +1329,54 @@ def retarded_equations_of_motion(
             new_working_gamma = result["gamma"][particle_idx]
 
             if sc_enabled and sc_iteration > 0:
-                # Check convergence based on mode
-                if sc_convergence_mode == "bidirectional_search":
-                    # Mode 3: Bidirectional check (both forward and backward must pass)
-                    (
-                        converged,
-                        error_forward,
-                        error_backward,
-                    ) = _check_bidirectional_mass_shell_convergence(
-                        result["Pt"][particle_idx],
-                        result["Px"][particle_idx],
-                        result["Py"][particle_idx],
-                        result["Pz"][particle_idx],
-                        particle_mass,
-                        C_MMNS,
-                        sc_target_ms_tolerance,
-                    )
+                # Check mass-shell convergence
+                (
+                    converged,
+                    mass_shell_error_rel,
+                ) = _check_mass_shell_convergence(
+                    result["Pt"][particle_idx],
+                    result["Px"][particle_idx],
+                    result["Py"][particle_idx],
+                    result["Pz"][particle_idx],
+                    particle_mass,
+                    C_MMNS,
+                    sc_target_ms_tolerance,
+                )
 
-                    # Set dummy values for unused variables
-                    mass_shell_error_rel = max(error_forward, error_backward)
-                    gamma_consistency_error = 0.0
+                # Set dummy gamma consistency error (not checked)
+                gamma_consistency_error = 0.0
 
-                    if converged:
-                        if sc_verbosity > 0:
-                            _print_convergence_info(
-                                particle_idx,
-                                sc_iteration,
-                                gamma_from_velocity,
-                                gamma_from_energy,
-                                gamma_mass_shell,
-                                mass_shell_error_rel,
-                                gamma_consistency_error,
-                                converged=True,
-                                max_iterations=sc_max_iterations,
-                                verbosity=sc_verbosity,
-                                step_idx=step_idx,
-                                bidirectional_mode=True,
-                                error_forward=error_forward,
-                                error_backward=error_backward,
-                            )
-                        break
-                    elif sc_iteration == sc_max_iterations - 1:
-                        if sc_verbosity > 0:
-                            _print_convergence_info(
-                                particle_idx,
-                                sc_iteration,
-                                gamma_from_velocity,
-                                gamma_from_energy,
-                                gamma_mass_shell,
-                                mass_shell_error_rel,
-                                gamma_consistency_error,
-                                converged=False,
-                                max_iterations=sc_max_iterations,
-                                verbosity=sc_verbosity,
-                                step_idx=step_idx,
-                                bidirectional_mode=True,
-                                error_forward=error_forward,
-                                error_backward=error_backward,
-                            )
-                else:
-                    # Modes 1 & 2: One-way mass-shell check
-                    # fixed_geometry, variable_geometry, or legacy names
-                    (
-                        converged,
-                        mass_shell_error_rel,
-                    ) = _check_mass_shell_convergence(
-                        result["Pt"][particle_idx],
-                        result["Px"][particle_idx],
-                        result["Py"][particle_idx],
-                        result["Pz"][particle_idx],
-                        particle_mass,
-                        C_MMNS,
-                        sc_target_ms_tolerance,
-                    )
-
-                    # Set dummy gamma consistency error (not checked)
-                    gamma_consistency_error = 0.0
-
-                    if converged:
-                        if sc_verbosity > 0:
-                            _print_convergence_info(
-                                particle_idx,
-                                sc_iteration,
-                                gamma_from_velocity,
-                                gamma_from_energy,
-                                gamma_mass_shell,
-                                mass_shell_error_rel,
-                                gamma_consistency_error,
-                                converged=True,
-                                max_iterations=sc_max_iterations,
-                                verbosity=sc_verbosity,
-                                step_idx=step_idx,
-                            )
-                        break
-                    elif sc_iteration == sc_max_iterations - 1:
-                        if sc_verbosity > 0:
-                            _print_convergence_info(
-                                particle_idx,
-                                sc_iteration,
-                                gamma_from_velocity,
-                                gamma_from_energy,
-                                gamma_mass_shell,
-                                mass_shell_error_rel,
-                                gamma_consistency_error,
-                                converged=False,
-                                max_iterations=sc_max_iterations,
-                                verbosity=sc_verbosity,
-                                step_idx=step_idx,
-                            )
+                if converged:
+                    if sc_verbosity > 0:
+                        _print_convergence_info(
+                            particle_idx,
+                            sc_iteration,
+                            gamma_from_velocity,
+                            gamma_from_energy,
+                            gamma_mass_shell,
+                            mass_shell_error_rel,
+                            gamma_consistency_error,
+                            converged=True,
+                            max_iterations=sc_max_iterations,
+                            verbosity=sc_verbosity,
+                            step_idx=step_idx,
+                        )
+                    break
+                elif sc_iteration == sc_max_iterations - 1:
+                    if sc_verbosity > 0:
+                        _print_convergence_info(
+                            particle_idx,
+                            sc_iteration,
+                            gamma_from_velocity,
+                            gamma_from_energy,
+                            gamma_mass_shell,
+                            mass_shell_error_rel,
+                            gamma_consistency_error,
+                            converged=False,
+                            max_iterations=sc_max_iterations,
+                            verbosity=sc_verbosity,
+                            step_idx=step_idx,
+                        )
 
             # Update working state for next iteration
             working_beta_x = new_working_beta_x

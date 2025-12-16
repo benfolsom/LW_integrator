@@ -51,7 +51,7 @@ class SelfConsistencyConfig:
     are satisfied.
 
     CONVERGENCE STRATEGY:
-    Three convergence modes with distinct behaviors:
+    Two convergence modes with distinct behaviors:
 
     1. "fixed_geometry" (formerly "mass_shell_only"):
        - Fixed geometry (positions, retarded distances computed once)
@@ -65,13 +65,6 @@ class SelfConsistencyConfig:
        - One-way mass-shell convergence check
        - More accurate when particle moves significantly
 
-    3. "bidirectional_search" (NEW):
-       - Variable geometry (positions/distances recomputed each iteration)
-       - Symmetric relaxation of BOTH Pt and P (no full projection)
-       - Bidirectional convergence check (forward AND backward)
-       - Exploratory mode, finds mutually consistent (P, Pt, geometry) state
-       - Slowest, use for diagnostics or when standard modes fail
-
     Attributes
     ----------
     enabled : bool
@@ -80,12 +73,10 @@ class SelfConsistencyConfig:
         Convergence mode determining iteration strategy. Options:
         - "fixed_geometry": Pt projection, fixed geometry (default, fastest)
         - "variable_geometry": Pt projection, variable geometry (accurate, slower)
-        - "bidirectional_search": Symmetric relaxation, variable geometry (exploratory, slowest)
 
         Differences:
         - fixed_geometry: Geometry computed once, Pt projected, one-way check
         - variable_geometry: Geometry recomputed each iteration, Pt projected, one-way check
-        - bidirectional_search: Geometry recomputed, symmetric P+Pt relaxation, bidirectional check
 
         Legacy aliases supported: "mass_shell_only" → "fixed_geometry",
                                   "full_iteration" → "variable_geometry"
@@ -118,16 +109,6 @@ class SelfConsistencyConfig:
         2 = failures only (detailed output only for non-converged steps)
         3 = full detail (iteration-by-iteration for all steps, very large logs)
 
-    Notes on bidirectional_search mode
-    -----------------------------------
-    This mode uses symmetric relaxation on both Pt and P, which is non-standard:
-    - Allows P to be modified (not just from forces)
-    - Searches for mutually consistent (P, Pt, geometry) state
-    - May find solutions when geometry/force errors accumulate
-    - Trade-off: slightly corrupts force integration for global consistency
-    - Use conservatively with relaxation weight ≈ 0.5-0.7
-    - Experimental - validate results carefully
-
     Examples
     --------
     Standard configuration (default, fixed geometry)::
@@ -144,16 +125,6 @@ class SelfConsistencyConfig:
             target_ms_tolerance=1e-6,
             mass_shell_relaxation=0.7,
             max_iterations=20,
-        )
-
-    Bidirectional search mode (exploratory, symmetric relaxation)::
-
-        config = SelfConsistencyConfig(
-            convergence_mode="bidirectional_search",
-            target_ms_tolerance=1e-6,
-            mass_shell_relaxation=0.5,  # Conservative for symmetric relax
-            max_iterations=30,
-            verbosity=2,  # Monitor convergence
         )
 
     Aggressive convergence for ultra-relativistic particles::
@@ -173,7 +144,7 @@ class SelfConsistencyConfig:
     """
 
     enabled: bool = True
-    convergence_mode: str = "fixed_geometry"  # "fixed_geometry", "variable_geometry", or "bidirectional_search"
+    convergence_mode: str = "fixed_geometry"  # "fixed_geometry" or "variable_geometry"
     target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
     mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
@@ -265,33 +236,6 @@ class SelfConsistencyConfig:
             mass_shell_relaxation=0.7,
             max_iterations=20,
             verbosity=0,
-        )
-
-    @classmethod
-    def bidirectional(cls, tolerance: float = 1e-6) -> "SelfConsistencyConfig":
-        """Create a bidirectional search configuration.
-
-        Uses symmetric relaxation to explore mutually consistent states.
-        Experimental mode - use for diagnostics or when standard modes fail.
-
-        Parameters
-        ----------
-        tolerance : float
-            Target mass-shell tolerance for convergence criterion.
-
-        Returns
-        -------
-        SelfConsistencyConfig
-            Configuration with bidirectional search enabled.
-        """
-        return cls(
-            enabled=True,
-            convergence_mode="bidirectional_search",
-            target_ms_tolerance=tolerance,
-            mass_shell_tolerance=1e-2,
-            mass_shell_relaxation=0.5,  # Conservative for symmetric relaxation
-            max_iterations=30,  # More iterations needed
-            verbosity=2,  # Monitor convergence
         )
 
 
