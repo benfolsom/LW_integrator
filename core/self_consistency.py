@@ -33,6 +33,7 @@ StepFunction = Callable[
         ChronoMatchingMode,
         StartupMode,
         Optional["SelfConsistencyConfig"],
+        Optional[int],
     ],
     ParticleState,
 ]
@@ -206,6 +207,7 @@ def self_consistent_step(
     config: Optional[SelfConsistencyConfig],
     chrono_mode: ChronoMatchingMode,
     startup_mode: StartupMode,
+    step_idx: Optional[int] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -241,6 +243,8 @@ def self_consistent_step(
         Retarded time matching mode.
     startup_mode : StartupMode
         Early-step handling mode.
+    step_idx : Optional[int]
+        Integration step number for context in error messages.
 
     Returns
     -------
@@ -261,7 +265,8 @@ def self_consistent_step(
         sim_type,
         chrono_mode,
         startup_mode,
-        config,  # Pass config to equations - iteration happens there
+        config,
+        step_idx,
     )
 
     return result

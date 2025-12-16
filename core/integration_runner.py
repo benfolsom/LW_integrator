@@ -386,6 +386,7 @@ def retarded_integrator(
                         self_consistency,
                         chrono_mode,
                         startup_mode,
+                        step_idx=i,  # Pass main step index for error messages
                     )
 
                     # Update driver state for this substep
@@ -567,6 +568,7 @@ def retarded_integrator(
                     self_consistency,
                     chrono_mode,
                     startup_mode,
+                    step_idx=i,  # Pass step index for error messages
                 )
             _ensure_startup_metadata(trajectory_drv[i])
 

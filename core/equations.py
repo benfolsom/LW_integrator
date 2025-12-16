@@ -611,6 +611,7 @@ def _print_convergence_info(
     converged: bool,
     max_iterations: int,
     verbosity: int = 1,
+    step_idx: Optional[int] = None,
 ) -> None:
     """Print debug information about self-consistency dual convergence.
 
@@ -634,6 +635,8 @@ def _print_convergence_info(
         1 = summary (one line per step)
         2 = failures only (detailed only for non-converged)
         3 = full detail (all iterations)
+    step_idx : Optional[int]
+        Integration step number for context in error messages
     """
     if verbosity == 0:
         return
@@ -644,16 +647,19 @@ def _print_convergence_info(
     else:
         status = f"max iter ({max_iterations}) reached"
 
+    # Prepare step prefix if step_idx is provided
+    step_prefix = f"Step {step_idx}, " if step_idx is not None else ""
+
     if verbosity == 1:
         # Summary: one line per particle showing both criteria
         print(
-            f"    P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+            f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
             f"E_gamma={gamma_consistency_error:.3e}"
         )
     elif verbosity == 2:
         # Failures only: detailed output only for non-converged steps
         if not converged:
-            print(f"    Particle {particle_idx}: {status}")
+            print(f"    {step_prefix}Particle {particle_idx}: {status}")
             print(f"      Mass-shell error = {mass_shell_error:.15e}")
             print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
             print("      Dual convergence: BOTH criteria must be satisfied")
@@ -663,12 +669,12 @@ def _print_convergence_info(
         else:
             # For converged steps at verbosity 2, just show summary
             print(
-                f"    P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+                f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
                 f"E_gamma={gamma_consistency_error:.3e}"
             )
     else:  # verbosity >= 3
         # Full detail: multi-line output with full precision for all steps
-        print(f"    Particle {particle_idx}: {status}")
+        print(f"    {step_prefix}Particle {particle_idx}: {status}")
         print(f"      Mass-shell error = {mass_shell_error:.15e}")
         print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
         print("      Dual convergence: BOTH criteria must be satisfied")
@@ -687,6 +693,7 @@ def retarded_equations_of_motion(
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
     startup_mode: StartupMode = StartupMode.COLD_START,
     self_consistency: Optional[SelfConsistencyConfig] = None,
+    step_idx: Optional[int] = None,
 ) -> ParticleState:
     """Core equations of motion mirroring the validated legacy implementation.
 
@@ -717,6 +724,8 @@ def retarded_equations_of_motion(
         Optional configuration for self-consistency iterations. If provided and
         enabled, each particle's update will iterate until gamma converges,
         solving the circular dependency between forces and gamma.
+    step_idx:
+        Optional integration step number for context in error messages.
 
     Returns
     -------
@@ -1287,6 +1296,7 @@ def retarded_equations_of_motion(
                             converged=True,
                             max_iterations=sc_max_iterations,
                             verbosity=sc_verbosity,
+                            step_idx=step_idx,
                         )
                     break
                 elif sc_iteration == sc_max_iterations - 1:
@@ -1303,6 +1313,7 @@ def retarded_equations_of_motion(
                             converged=False,
                             max_iterations=sc_max_iterations,
                             verbosity=sc_verbosity,
+                            step_idx=step_idx,
                         )
 
                     # Apply projection as fallback safety net
