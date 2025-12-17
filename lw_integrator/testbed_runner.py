@@ -306,8 +306,19 @@ class SimulationOptions:
             "metrics_save": self.metrics_save,
             "energy_display": self.energy_display,
             "energy_save": self.energy_save,
+            "energy_xaxis": self.energy_xaxis,
+            "energy_yaxis": self.energy_yaxis,
             "transverse_display": self.transverse_display,
             "transverse_save": self.transverse_save,
+            "transverse_xaxis": self.transverse_xaxis,
+            "beta_display": self.beta_display,
+            "beta_save": self.beta_save,
+            "beta_xaxis": self.beta_xaxis,
+            "momentum_display": self.momentum_display,
+            "momentum_save": self.momentum_save,
+            "momentum_xaxis": self.momentum_xaxis,
+            "zposition_display": self.zposition_display,
+            "zposition_save": self.zposition_save,
             "trajectory_save": self.trajectory_save,
             "trajectory_interval": self.trajectory_interval,
             "plot_dpi": self.plot_dpi,
@@ -415,8 +426,19 @@ class SimulationOptions:
             metrics_save=_bool("metrics_save", False),
             energy_display=_bool("energy_display", True),
             energy_save=_bool("energy_save", True),
+            energy_xaxis=str(payload.get("energy_xaxis", "z")),
+            energy_yaxis=str(payload.get("energy_yaxis", "delta_total")),
             transverse_display=_bool("transverse_display", False),
             transverse_save=_bool("transverse_save", False),
+            transverse_xaxis=str(payload.get("transverse_xaxis", "t")),
+            beta_display=_bool("beta_display", False),
+            beta_save=_bool("beta_save", False),
+            beta_xaxis=str(payload.get("beta_xaxis", "t")),
+            momentum_display=_bool("momentum_display", False),
+            momentum_save=_bool("momentum_save", False),
+            momentum_xaxis=str(payload.get("momentum_xaxis", "t")),
+            zposition_display=_bool("zposition_display", False),
+            zposition_save=_bool("zposition_save", False),
             trajectory_save=_bool("trajectory_save", False),
             trajectory_interval=_int("trajectory_interval", 10),
             plot_dpi=_int("plot_dpi", DEFAULT_PLOT_DPI),
@@ -1261,9 +1283,9 @@ def run_testbed(
                             label="Legacy",
                             **SCATTER_STYLE,
                         )
-                axes[0].set_xlabel("Delta z (mm)", labelpad=8)
-                axes[0].set_ylabel("Delta E (GeV)", labelpad=12)
-                axes[0].set_title("Rider Delta E vs Delta z", pad=10)
+                axes[0].set_xlabel("Δz (mm)")
+                axes[0].set_ylabel("ΔE (GeV)")
+                axes[0].set_title("Rider ΔE vs Δz", pad=10)
                 axes[0].grid(True, alpha=0.3)
                 axes[0].tick_params(axis="both", which="major", labelsize=10)
                 axes[0].tick_params(axis="both", which="minor", labelsize=8)
@@ -1311,9 +1333,9 @@ def run_testbed(
                                 label="Legacy",
                                 **SCATTER_STYLE,
                             )
-                    axes[1].set_xlabel("Delta z (mm)", labelpad=8)
-                    axes[1].set_ylabel("Delta E (GeV)", labelpad=12)
-                    axes[1].set_title("Driver Delta E vs Delta z", pad=10)
+                    axes[1].set_xlabel("Δz (mm)")
+                    axes[1].set_ylabel("ΔE (GeV)")
+                    axes[1].set_title("Driver ΔE vs Δz", pad=10)
                     axes[1].grid(True, alpha=0.3)
                     axes[1].tick_params(axis="both", which="major", labelsize=10)
                     axes[1].tick_params(axis="both", which="minor", labelsize=8)
@@ -1325,6 +1347,47 @@ def run_testbed(
                     axes[1].yaxis.get_major_formatter().set_useOffset(False)
                     if legacy_enabled:
                         axes[1].legend()
+
+                # Attach metadata for interactive replotting
+                # Extract time data from rider states
+                rider_times = np.array(
+                    [float(np.asarray(s.get("t", 0)).flat[0]) for s in rider_states]
+                )
+
+                fig_energy._lw_plot_data = {
+                    "plot_type": "energy",
+                    "times_ns": rider_times[valid_mask]
+                    if np.any(valid_mask)
+                    else np.array([]),
+                    "z_mm": rider_z_rel[valid_mask]
+                    if np.any(valid_mask)
+                    else np.array([]),
+                    "z_mm_driver": driver_z_rel[driver_valid]
+                    if driver_delta_e is not None and np.any(driver_valid)
+                    else None,
+                    "z_mm_legacy": legacy_rider_z_rel[legacy_valid]
+                    if legacy_rider_z_rel is not None and np.any(legacy_valid)
+                    else None,
+                    "z_mm_legacy_driver": legacy_driver_z_rel[legacy_driver_valid]
+                    if legacy_driver_z_rel is not None and np.any(legacy_driver_valid)
+                    else None,
+                    "core_r_energy_changes": rider_delta_e[valid_mask]
+                    if np.any(valid_mask)
+                    else np.array([]),
+                    "core_d_energy_changes": driver_delta_e[driver_valid]
+                    if driver_delta_e is not None and np.any(driver_valid)
+                    else None,
+                    "legacy_r_energy_changes": legacy_rider_delta_e[legacy_valid]
+                    if legacy_rider_delta_e is not None and np.any(legacy_valid)
+                    else None,
+                    "legacy_d_energy_changes": legacy_driver_delta_e[
+                        legacy_driver_valid
+                    ]
+                    if legacy_driver_delta_e is not None and np.any(legacy_driver_valid)
+                    else None,
+                    "driver_allowed": driver_allowed,
+                    "legacy_enabled": legacy_enabled,
+                }
 
                 fig_energy.tight_layout(pad=2.5, w_pad=3.0, h_pad=2.5)
                 if energy_save and should_save:
@@ -1383,9 +1446,9 @@ def run_testbed(
                 linewidth=2.0,
                 linestyle="--",
             )
-            axes[0].set_xlabel("Delta z (mm)")
-            axes[0].set_ylabel("Delta E (GeV)")
-            axes[0].set_title("Rider Delta E Comparison")
+            axes[0].set_xlabel("Δz (mm)")
+            axes[0].set_ylabel("ΔE (GeV)")
+            axes[0].set_title("Rider ΔE Comparison")
             axes[0].legend()
             axes[0].grid(True, alpha=0.3)
 
@@ -1411,9 +1474,9 @@ def run_testbed(
                     linewidth=2.0,
                     linestyle="--",
                 )
-                axes[1].set_xlabel("Delta z (mm)")
-                axes[1].set_ylabel("Delta E (GeV)")
-                axes[1].set_title("Driver Delta E Comparison")
+                axes[1].set_xlabel("Δz (mm)")
+                axes[1].set_ylabel("ΔE (GeV)")
+                axes[1].set_title("Driver ΔE Comparison")
                 axes[1].legend()
                 axes[1].grid(True, alpha=0.3)
 
@@ -1433,11 +1496,11 @@ def run_testbed(
         )
         core_r_gamma = _extract_scalar_series(rider_states, "gamma")
         core_r_momentum = _extract_vector_series(rider_states, ("Px", "Py", "Pz"))
+        core_r_pt = _extract_scalar_series(rider_states, "Pt")
         core_r_beta = _extract_vector_series(rider_states, ("bx", "by", "bz"))
         core_r_betadot = _extract_vector_series(
             rider_states, ("bdotx", "bdoty", "bdotz")
         )
-        core_r_pt = _extract_scalar_series(rider_states, "Pt")
         plot_times_ns = core_r_hist[:, 0]
         plot_z_mm = core_r_hist[:, 3]
 
@@ -1456,9 +1519,9 @@ def run_testbed(
             core_d_hist = None
             core_d_gamma = None
             core_d_momentum = None
+            core_d_pt = None
             core_d_beta = None
             core_d_betadot = None
-            core_d_pt = None
 
         if legacy_enabled and legacy_traj:
             legacy_r_hist = np.array(
@@ -1566,8 +1629,8 @@ def run_testbed(
                 linestyle=":",
             )
             axes[0].set_xlabel("Time (ns)")
-            axes[0].set_ylabel("Delta position (mm)")
-            axes[0].set_title("Rider Delta (core - legacy)")
+            axes[0].set_ylabel("Δ position (mm)")
+            axes[0].set_title("Rider Δ (core - legacy)")
             axes[0].legend()
             axes[0].grid(True, alpha=0.3)
 
@@ -1601,8 +1664,8 @@ def run_testbed(
                     linestyle=":",
                 )
                 axes[1].set_xlabel("Time (ns)")
-                axes[1].set_ylabel("Delta position (mm)")
-                axes[1].set_title("Driver Delta (core - legacy)")
+                axes[1].set_ylabel("Δ position (mm)")
+                axes[1].set_title("Driver Δ (core - legacy)")
                 axes[1].legend()
                 axes[1].grid(True, alpha=0.3)
 
@@ -1622,6 +1685,30 @@ def run_testbed(
             fig_transverse, (ax_x, ax_y) = plt.subplots(
                 1, 2, figsize=(16, 6), dpi=options.plot_dpi
             )
+
+            # Attach metadata for interactive replotting
+            fig_transverse._lw_plot_data = {
+                "plot_type": "transverse",
+                "times_ns": plot_times_ns,
+                "z_mm": plot_z_mm,
+                "z_mm_driver": core_d_hist[:, 3]
+                if driver_allowed and core_d_hist is not None
+                else None,
+                "z_mm_legacy": legacy_r_hist[:, 3]
+                if legacy_enabled and legacy_r_hist is not None
+                else None,
+                "z_mm_legacy_driver": legacy_d_hist[:, 3]
+                if legacy_enabled and driver_allowed and legacy_d_hist is not None
+                else None,
+                "core_r_hist": core_r_hist,
+                "core_d_hist": core_d_hist if driver_allowed else None,
+                "legacy_r_hist": legacy_r_hist if legacy_enabled else None,
+                "legacy_d_hist": legacy_d_hist
+                if legacy_enabled and driver_allowed
+                else None,
+                "driver_allowed": driver_allowed,
+                "legacy_enabled": legacy_enabled,
+            }
 
             # Determine x-axis data
             if transverse_xaxis == "z":
@@ -1698,14 +1785,14 @@ def run_testbed(
                         linestyle="--",
                         label="Driver (Legacy)",
                     )
-            ax_x.set_xlabel(xlabel, labelpad=8)
-            ax_x.set_ylabel("Average x (mm)", labelpad=15)
+            ax_x.set_xlabel(xlabel)
+            ax_x.set_ylabel("Average x (mm)")
             ax_x.set_title("Average X Position", pad=12)
             ax_x.legend()
             ax_x.grid(True, alpha=0.3)
             ax_x.tick_params(axis="both", which="major", labelsize=10)
-            ax_y.set_xlabel(xlabel, labelpad=8)
-            ax_y.set_ylabel("Average y (mm)", labelpad=15)
+            ax_y.set_xlabel(xlabel)
+            ax_y.set_ylabel("Average y (mm)")
             ax_y.set_title("Average Y Position", pad=12)
             ax_y.legend()
             ax_y.grid(True, alpha=0.3)
@@ -1727,9 +1814,30 @@ def run_testbed(
         beta_xaxis = getattr(options, "beta_xaxis", "t")
         if (beta_display or beta_save) and core_r_beta is not None:
             fig_beta, axes_beta = plt.subplots(
-                2, 2, figsize=(16, 12), dpi=options.plot_dpi
+                2, 2, figsize=(16, 14), dpi=options.plot_dpi, constrained_layout=True
             )
             axes_beta = axes_beta.flatten()
+
+            # Attach metadata for interactive replotting
+            fig_beta._lw_plot_data = {
+                "plot_type": "beta",
+                "times_ns": plot_times_ns,
+                "z_mm": plot_z_mm,
+                "z_mm_driver": core_d_hist[:, 3]
+                if driver_allowed and core_d_hist is not None
+                else None,
+                "z_mm_legacy": legacy_r_hist[:, 3]
+                if legacy_enabled and legacy_r_hist is not None
+                else None,
+                "core_r_beta": core_r_beta,
+                "core_d_beta": core_d_beta if driver_allowed else None,
+                "legacy_r_beta": legacy_r_beta if legacy_enabled else None,
+                "legacy_d_beta": legacy_d_beta
+                if legacy_enabled and driver_allowed
+                else None,
+                "driver_allowed": driver_allowed,
+                "legacy_enabled": legacy_enabled,
+            }
 
             # Determine x-axis data for beta plots
             if beta_xaxis == "z":
@@ -1773,8 +1881,8 @@ def run_testbed(
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_beta[0].set_xlabel(xlabel_beta, labelpad=8)
-            axes_beta[0].set_ylabel("β_x", labelpad=12)
+            axes_beta[0].set_xlabel(xlabel_beta)
+            axes_beta[0].set_ylabel("β⟨x⟩")
             axes_beta[0].set_title("Beta X Component", pad=10)
             axes_beta[0].legend()
             axes_beta[0].grid(True, alpha=0.3)
@@ -1801,8 +1909,8 @@ def run_testbed(
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_beta[1].set_xlabel(xlabel_beta, labelpad=8)
-            axes_beta[1].set_ylabel("β_y", labelpad=12)
+            axes_beta[1].set_xlabel(xlabel_beta)
+            axes_beta[1].set_ylabel("β⟨y⟩")
             axes_beta[1].set_title("Beta Y Component", pad=10)
             axes_beta[1].legend()
             axes_beta[1].grid(True, alpha=0.3)
@@ -1829,8 +1937,8 @@ def run_testbed(
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_beta[2].set_xlabel(xlabel_beta, labelpad=8)
-            axes_beta[2].set_ylabel("β_z", labelpad=12)
+            axes_beta[2].set_xlabel(xlabel_beta)
+            axes_beta[2].set_ylabel("β⟨z⟩")
             axes_beta[2].set_title("Beta Z Component", pad=10)
             axes_beta[2].legend()
             axes_beta[2].grid(True, alpha=0.3)
@@ -1863,7 +1971,6 @@ def run_testbed(
             axes_beta[3].legend()
             axes_beta[3].grid(True, alpha=0.3)
 
-            fig_beta.tight_layout(pad=3.0, w_pad=3.0, h_pad=3.0)
             if beta_save and should_save:
                 beta_path = output_dir / f"{filename_base}_beta.png"
                 fig_beta.savefig(beta_path)
@@ -1880,9 +1987,36 @@ def run_testbed(
         momentum_xaxis = getattr(options, "momentum_xaxis", "t")
         if (momentum_display or momentum_save) and core_r_momentum is not None:
             fig_momentum, axes_mom = plt.subplots(
-                2, 2, figsize=(16, 12), dpi=options.plot_dpi
+                2, 3, figsize=(20, 14), dpi=options.plot_dpi, constrained_layout=True
             )
             axes_mom = axes_mom.flatten()
+
+            # Attach metadata for interactive replotting
+            fig_momentum._lw_plot_data = {
+                "plot_type": "momentum",
+                "times_ns": plot_times_ns,
+                "z_mm": plot_z_mm,
+                "z_mm_driver": core_d_hist[:, 3]
+                if driver_allowed and core_d_hist is not None
+                else None,
+                "z_mm_legacy": legacy_r_hist[:, 3]
+                if legacy_enabled and legacy_r_hist is not None
+                else None,
+                "core_r_momentum": core_r_momentum,
+                "core_r_pt": core_r_pt,
+                "core_d_momentum": core_d_momentum if driver_allowed else None,
+                "core_d_pt": core_d_pt if driver_allowed else None,
+                "legacy_r_momentum": legacy_r_momentum if legacy_enabled else None,
+                "legacy_r_pt": legacy_r_pt if legacy_enabled else None,
+                "legacy_d_momentum": legacy_d_momentum
+                if legacy_enabled and driver_allowed
+                else None,
+                "legacy_d_pt": legacy_d_pt
+                if legacy_enabled and driver_allowed
+                else None,
+                "driver_allowed": driver_allowed,
+                "legacy_enabled": legacy_enabled,
+            }
 
             # Determine x-axis data for momentum plots
             if momentum_xaxis == "z":
@@ -1926,11 +2060,9 @@ def run_testbed(
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_mom[0].set_xlabel("Time (ns)", labelpad=8)
-            axes_mom[0].set_ylabel("P_x (amu·mm/ns)", labelpad=12)
             axes_mom[0].set_xlabel(xlabel_mom)
-            axes_mom[0].set_ylabel("P_x (amu·mm/ns)")
-            axes_mom[0].set_title("Conjugate Momentum X")
+            axes_mom[0].set_ylabel("Pˣ (amu·mm/ns)")
+            axes_mom[0].set_title("Conjugate Momentum Pˣ", pad=10)
             axes_mom[0].legend()
             axes_mom[0].grid(True, alpha=0.3)
 
@@ -1956,11 +2088,9 @@ def run_testbed(
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_mom[1].set_xlabel("Time (ns)", labelpad=8)
-            axes_mom[1].set_ylabel("P_y (amu·mm/ns)", labelpad=12)
             axes_mom[1].set_xlabel(xlabel_mom)
-            axes_mom[1].set_ylabel("P_y (amu·mm/ns)")
-            axes_mom[1].set_title("Conjugate Momentum Y")
+            axes_mom[1].set_ylabel("Pʸ (amu·mm/ns)")
+            axes_mom[1].set_title("Conjugate Momentum Pʸ", pad=10)
             axes_mom[1].legend()
             axes_mom[1].grid(True, alpha=0.3)
 
@@ -1987,8 +2117,8 @@ def run_testbed(
                     label="Rider (Legacy)",
                 )
             axes_mom[2].set_xlabel(xlabel_mom)
-            axes_mom[2].set_ylabel("P_z (amu·mm/ns)")
-            axes_mom[2].set_title("Conjugate Momentum Z")
+            axes_mom[2].set_ylabel("Pᶻ (amu·mm/ns)")
+            axes_mom[2].set_title("Conjugate Momentum Pᶻ", pad=10)
             axes_mom[2].legend()
             axes_mom[2].grid(True, alpha=0.3)
 
@@ -2021,12 +2151,79 @@ def run_testbed(
                     label="Rider (Legacy)",
                 )
             axes_mom[3].set_xlabel(xlabel_mom)
-            axes_mom[3].set_ylabel("|P_t| (amu·mm/ns)")
-            axes_mom[3].set_title("Transverse Momentum Magnitude")
+            axes_mom[3].set_ylabel("|P⊥| (amu·mm/ns)")
+            axes_mom[3].set_title("Transverse Momentum |P⊥|", pad=10)
             axes_mom[3].legend()
             axes_mom[3].grid(True, alpha=0.3)
 
-            fig_momentum.tight_layout(pad=3.0, w_pad=3.0, h_pad=3.0)
+            # P_t (temporal/energy component)
+            axes_mom[4].plot(
+                xdata_mom,
+                core_r_pt,
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+            )
+            if driver_allowed and core_d_pt is not None:
+                axes_mom[4].plot(
+                    xdata_mom_d,
+                    core_d_pt,
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_r_pt is not None:
+                axes_mom[4].plot(
+                    xdata_mom_leg,
+                    legacy_r_pt,
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_mom[4].set_xlabel(xlabel_mom)
+            axes_mom[4].set_ylabel("Pᵗ (amu·mm/ns)")
+            axes_mom[4].set_title("Temporal Momentum Pᵗ (Energy/c)", pad=10)
+            axes_mom[4].legend()
+            axes_mom[4].grid(True, alpha=0.3)
+
+            # P magnitude (optional - fourth momentum invariant check)
+            core_p_mag = np.sqrt(
+                core_r_momentum[:, 0] ** 2
+                + core_r_momentum[:, 1] ** 2
+                + core_r_momentum[:, 2] ** 2
+            )
+            axes_mom[5].plot(
+                xdata_mom, core_p_mag, color=COLOR_RIDER, label="Rider (Core)"
+            )
+            if driver_allowed and core_d_momentum is not None:
+                driver_p_mag = np.sqrt(
+                    core_d_momentum[:, 0] ** 2
+                    + core_d_momentum[:, 1] ** 2
+                    + core_d_momentum[:, 2] ** 2
+                )
+                axes_mom[5].plot(
+                    xdata_mom_d,
+                    driver_p_mag,
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_r_momentum is not None:
+                legacy_p_mag = np.sqrt(
+                    legacy_r_momentum[:, 0] ** 2
+                    + legacy_r_momentum[:, 1] ** 2
+                    + legacy_r_momentum[:, 2] ** 2
+                )
+                axes_mom[5].plot(
+                    xdata_mom_leg,
+                    legacy_p_mag,
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_mom[5].set_xlabel(xlabel_mom)
+            axes_mom[5].set_ylabel("|P| (amu·mm/ns)")
+            axes_mom[5].set_title("Total Spatial Momentum |P|", pad=10)
+            axes_mom[5].legend()
+            axes_mom[5].grid(True, alpha=0.3)
+
             if momentum_save and should_save:
                 momentum_path = output_dir / f"{filename_base}_momentum.png"
                 fig_momentum.savefig(momentum_path)
@@ -2038,9 +2235,12 @@ def run_testbed(
                 plt.close(fig_momentum)
 
         # Z-position vs time plot
-        zposition_display = options.zposition_display
-        zposition_save = options.zposition_save
+        zposition_display = getattr(options, "zposition_display", False)
+        zposition_save = getattr(options, "zposition_save", False)
         if zposition_display or zposition_save:
+            _log(
+                f"Generating z-position vs time plot (display={zposition_display}, save={zposition_save})"
+            )
             fig_zpos = plt.figure(figsize=(12, 8), dpi=options.plot_dpi)
             ax_zpos = fig_zpos.add_subplot(111)
 
@@ -2080,13 +2280,13 @@ def run_testbed(
                         linewidth=2.0,
                     )
 
-            ax_zpos.set_xlabel("Time (ns)", labelpad=8)
-            ax_zpos.set_ylabel("z position (mm)", labelpad=12)
-            ax_zpos.set_title("Longitudinal Position vs Time", pad=12)
+            ax_zpos.set_xlabel("Time (ns)")
+            ax_zpos.set_ylabel("z position (mm)")
+            ax_zpos.set_title("Longitudinal Position vs Time")
             ax_zpos.legend()
             ax_zpos.grid(True, alpha=0.3)
             ax_zpos.tick_params(axis="both", which="major", labelsize=10)
-            fig_zpos.tight_layout(pad=3.0)
+            fig_zpos.tight_layout()
 
             if zposition_save and should_save:
                 zposition_path = output_dir / f"{filename_base}_zposition.png"
@@ -2095,6 +2295,7 @@ def run_testbed(
                 _log(f"Saved z-position plot to: {zposition_path}")
             if zposition_display:
                 figures["zposition"] = fig_zpos
+                _log("Z-position plot added to display figures")
             else:
                 plt.close(fig_zpos)
 
