@@ -394,10 +394,25 @@ class IntegratorGUI:
             value=self.options.transverse_display
         )
         self.transverse_save_var = tk.BooleanVar(value=self.options.transverse_save)
+        self.transverse_xaxis_var = tk.StringVar(
+            value=getattr(self.options, "transverse_xaxis", "t")
+        )
         self.beta_display_var = tk.BooleanVar(value=self.options.beta_display)
         self.beta_save_var = tk.BooleanVar(value=self.options.beta_save)
+        self.beta_xaxis_var = tk.StringVar(
+            value=getattr(self.options, "beta_xaxis", "t")
+        )
         self.momentum_display_var = tk.BooleanVar(value=self.options.momentum_display)
         self.momentum_save_var = tk.BooleanVar(value=self.options.momentum_save)
+        self.momentum_xaxis_var = tk.StringVar(
+            value=getattr(self.options, "momentum_xaxis", "t")
+        )
+        self.zposition_display_var = tk.BooleanVar(
+            value=getattr(self.options, "zposition_display", False)
+        )
+        self.zposition_save_var = tk.BooleanVar(
+            value=getattr(self.options, "zposition_save", False)
+        )
         self.trajectory_save_var = tk.BooleanVar(value=self.options.trajectory_save)
         self.trajectory_interval_var = tk.IntVar(value=self.options.trajectory_interval)
         self.dpi_var = tk.IntVar(value=self.options.plot_dpi)
@@ -1530,38 +1545,81 @@ class IntegratorGUI:
         ).grid(row=4, column=1, sticky="w")
         self._add_output_toggle(
             output_frame,
-            "Position plot (⟨x⟩, ⟨y⟩ vs time)",
+            "Position plot (⟨x⟩, ⟨y⟩)",
             self.transverse_display_var,
             self.transverse_save_var,
             row=5,
         )
+        # Transverse plot x-axis configuration
+        ttk.Label(output_frame, text="  ↳ X-axis:").grid(
+            row=6, column=0, sticky="w", padx=(20, 0)
+        )
+        ttk.Combobox(
+            output_frame,
+            textvariable=self.transverse_xaxis_var,
+            values=["t", "z"],
+            width=12,
+            state="readonly",
+        ).grid(row=6, column=1, sticky="w")
+
         self._add_output_toggle(
             output_frame,
-            "Beta plot (β_x, β_y, β_z vs time)",
+            "Beta plot (β_x, β_y, β_z, |β|)",
             self.beta_display_var,
             self.beta_save_var,
-            row=6,
+            row=7,
         )
+        # Beta plot x-axis configuration
+        ttk.Label(output_frame, text="  ↳ X-axis:").grid(
+            row=8, column=0, sticky="w", padx=(20, 0)
+        )
+        ttk.Combobox(
+            output_frame,
+            textvariable=self.beta_xaxis_var,
+            values=["t", "z"],
+            width=12,
+            state="readonly",
+        ).grid(row=8, column=1, sticky="w")
+
         self._add_output_toggle(
             output_frame,
-            "Momentum plot (P_x, P_y, P_z vs time)",
+            "Momentum plot (P_x, P_y, P_z, |P_t|)",
             self.momentum_display_var,
             self.momentum_save_var,
-            row=7,
+            row=9,
+        )
+        # Momentum plot x-axis configuration
+        ttk.Label(output_frame, text="  ↳ X-axis:").grid(
+            row=10, column=0, sticky="w", padx=(20, 0)
+        )
+        ttk.Combobox(
+            output_frame,
+            textvariable=self.momentum_xaxis_var,
+            values=["t", "z"],
+            width=12,
+            state="readonly",
+        ).grid(row=10, column=1, sticky="w")
+
+        self._add_output_toggle(
+            output_frame,
+            "Z-position vs time plot",
+            self.zposition_display_var,
+            self.zposition_save_var,
+            row=11,
         )
 
         ttk.Checkbutton(
             output_frame, text="Save trajectory", variable=self.trajectory_save_var
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Label(output_frame, text="Trajectory stride:").grid(
-            row=9, column=0, sticky="w"
+            row=13, column=0, sticky="w"
         )
         ttk.Entry(
             output_frame, textvariable=self.trajectory_interval_var, width=8
-        ).grid(row=9, column=1, sticky="w")
+        ).grid(row=13, column=1, sticky="w")
 
         ttk.Label(output_frame, text="Plot DPI:").grid(
-            row=10, column=0, sticky="w", pady=(12, 0)
+            row=14, column=0, sticky="w", pady=(12, 0)
         )
         ttk.Combobox(
             output_frame,
@@ -1569,7 +1627,7 @@ class IntegratorGUI:
             values=[str(dpi) for dpi in AVAILABLE_DPI_CHOICES],
             width=8,
             state="readonly",
-        ).grid(row=10, column=1, sticky="w", pady=(12, 0))
+        ).grid(row=14, column=1, sticky="w", pady=(12, 0))
 
         # Log file saving
         ttk.Checkbutton(
@@ -2298,10 +2356,15 @@ class IntegratorGUI:
         self.energy_yaxis_var.set(getattr(options, "energy_yaxis", "delta_total"))
         self.transverse_display_var.set(options.transverse_display)
         self.transverse_save_var.set(options.transverse_save)
+        self.transverse_xaxis_var.set(getattr(options, "transverse_xaxis", "t"))
         self.beta_display_var.set(options.beta_display)
         self.beta_save_var.set(options.beta_save)
+        self.beta_xaxis_var.set(getattr(options, "beta_xaxis", "t"))
         self.momentum_display_var.set(options.momentum_display)
         self.momentum_save_var.set(options.momentum_save)
+        self.momentum_xaxis_var.set(getattr(options, "momentum_xaxis", "t"))
+        self.zposition_display_var.set(getattr(options, "zposition_display", False))
+        self.zposition_save_var.set(getattr(options, "zposition_save", False))
         self.trajectory_save_var.set(options.trajectory_save)
         self.trajectory_interval_var.set(options.trajectory_interval)
         self.dpi_var.set(options.plot_dpi)
@@ -2430,10 +2493,15 @@ class IntegratorGUI:
             energy_yaxis=str(self.energy_yaxis_var.get()),
             transverse_display=bool(self.transverse_display_var.get()),
             transverse_save=bool(self.transverse_save_var.get()),
+            transverse_xaxis=str(self.transverse_xaxis_var.get()),
             beta_display=bool(self.beta_display_var.get()),
             beta_save=bool(self.beta_save_var.get()),
+            beta_xaxis=str(self.beta_xaxis_var.get()),
             momentum_display=bool(self.momentum_display_var.get()),
             momentum_save=bool(self.momentum_save_var.get()),
+            momentum_xaxis=str(self.momentum_xaxis_var.get()),
+            zposition_display=bool(self.zposition_display_var.get()),
+            zposition_save=bool(self.zposition_save_var.get()),
             trajectory_save=bool(self.trajectory_save_var.get()),
             trajectory_interval=int(self.trajectory_interval_var.get()),
             plot_dpi=int(self.dpi_var.get()),
@@ -3236,13 +3304,13 @@ class IntegratorGUI:
                 name.replace("_", " ").title() if isinstance(name, str) else str(name)
             )
             try:
-                self._show_figure(title, figure)
+                self._show_figure(title, figure, plot_name=name)
             except Exception as e:
                 error_msg = f"Error displaying {title} plot: {e}"
                 self._append_log(error_msg)
                 _show_warning_dialog(self.root, "Plot Display Error", error_msg)
 
-    def _show_figure(self, title: str, figure: Any) -> None:
+    def _show_figure(self, title: str, figure: Any, plot_name: str = "") -> None:
         try:
             width_px, height_px = self._prepare_figure_for_display(figure)
         except Exception as e:
@@ -3316,6 +3384,67 @@ class IntegratorGUI:
         ttk.Checkbutton(
             controls_frame, text="Y-axis", variable=y_log_var, command=toggle_log_scale
         ).pack(side=tk.LEFT, padx=5)
+
+        # Separator
+        ttk.Separator(controls_frame, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=10
+        )
+
+        # Add axis switching for applicable plots
+        plot_supports_axis_switch = plot_name in [
+            "beta",
+            "momentum",
+            "transverse",
+            "zposition",
+        ]
+        if plot_supports_axis_switch and plot_name != "zposition":
+            # Get current x-axis setting from the plot's x-label
+            current_xaxis = "t"  # default
+            try:
+                first_ax = figure.get_axes()[0]
+                xlabel = first_ax.get_xlabel().lower()
+                if "z position" in xlabel or "delta z" in xlabel:
+                    current_xaxis = "z"
+                elif "time" in xlabel:
+                    current_xaxis = "t"
+            except:
+                pass
+
+            xaxis_var = tk.StringVar(value=current_xaxis)
+
+            def switch_xaxis() -> None:
+                """Regenerate the plot with a different x-axis."""
+                new_xaxis = xaxis_var.get()
+                try:
+                    # Update the corresponding option variable
+                    if plot_name == "beta":
+                        self.beta_xaxis_var.set(new_xaxis)
+                    elif plot_name == "momentum":
+                        self.momentum_xaxis_var.set(new_xaxis)
+                    elif plot_name == "transverse":
+                        self.transverse_xaxis_var.set(new_xaxis)
+
+                    self._append_log(
+                        f"X-axis changed to '{new_xaxis}' for {plot_name} plot. Re-run simulation to see changes."
+                    )
+                    _show_warning_dialog(
+                        window,
+                        "Axis Changed",
+                        f"X-axis preference saved. Please re-run the simulation to regenerate the {title} plot with the new axis.",
+                    )
+                except Exception as e:
+                    self._append_log(f"Error switching axis: {e}")
+
+            ttk.Label(controls_frame, text="X-axis:").pack(side=tk.LEFT, padx=(10, 5))
+            xaxis_combo = ttk.Combobox(
+                controls_frame,
+                textvariable=xaxis_var,
+                values=["t", "z"],
+                width=8,
+                state="readonly",
+            )
+            xaxis_combo.pack(side=tk.LEFT, padx=5)
+            xaxis_combo.bind("<<ComboboxSelected>>", lambda e: switch_xaxis())
 
         # Separator
         ttk.Separator(controls_frame, orient=tk.VERTICAL).pack(

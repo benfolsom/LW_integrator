@@ -218,10 +218,15 @@ class SimulationOptions:
     )
     transverse_display: bool = False
     transverse_save: bool = False
+    transverse_xaxis: str = "t"  # "t" or "z"
     beta_display: bool = False
     beta_save: bool = False
+    beta_xaxis: str = "t"  # "t" or "z"
     momentum_display: bool = False
     momentum_save: bool = False
+    momentum_xaxis: str = "t"  # "t" or "z"
+    zposition_display: bool = False
+    zposition_save: bool = False
     trajectory_save: bool = False
     trajectory_interval: int = 10
     plot_dpi: int = DEFAULT_PLOT_DPI
@@ -1434,6 +1439,7 @@ def run_testbed(
         )
         core_r_pt = _extract_scalar_series(rider_states, "Pt")
         plot_times_ns = core_r_hist[:, 0]
+        plot_z_mm = core_r_hist[:, 3]
 
         if driver_allowed and driver_states is not None:
             core_d_hist = np.array(
@@ -1611,72 +1617,94 @@ def run_testbed(
             else:
                 plt.close(fig_diff)
 
+        transverse_xaxis = getattr(options, "transverse_xaxis", "t")
         if transverse_display or transverse_save:
             fig_transverse, (ax_x, ax_y) = plt.subplots(
                 1, 2, figsize=(16, 6), dpi=options.plot_dpi
             )
+
+            # Determine x-axis data
+            if transverse_xaxis == "z":
+                xdata = plot_z_mm
+                xlabel = "z position (mm)"
+            else:
+                xdata = plot_times_ns
+                xlabel = "Time (ns)"
+
             ax_x.plot(
-                plot_times_ns,
+                xdata,
                 core_r_hist[:, 1] * 1e3,
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
             ax_y.plot(
-                plot_times_ns,
+                xdata,
                 core_r_hist[:, 2] * 1e3,
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
             if driver_allowed and core_d_hist is not None:
+                if transverse_xaxis == "z":
+                    xdata_d = core_d_hist[:, 3]
+                else:
+                    xdata_d = plot_times_ns
                 ax_x.plot(
-                    plot_times_ns,
+                    xdata_d,
                     core_d_hist[:, 1] * 1e3,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
                 ax_y.plot(
-                    plot_times_ns,
+                    xdata_d,
                     core_d_hist[:, 2] * 1e3,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
             if legacy_enabled and legacy_r_hist is not None:
+                if transverse_xaxis == "z":
+                    xdata_leg = legacy_r_hist[:, 3]
+                else:
+                    xdata_leg = plot_times_ns
                 ax_x.plot(
-                    plot_times_ns,
+                    xdata_leg,
                     legacy_r_hist[:, 1] * 1e3,
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
                 ax_y.plot(
-                    plot_times_ns,
+                    xdata_leg,
                     legacy_r_hist[:, 2] * 1e3,
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
                 if driver_allowed and legacy_d_hist is not None:
+                    if transverse_xaxis == "z":
+                        xdata_leg_d = legacy_d_hist[:, 3]
+                    else:
+                        xdata_leg_d = plot_times_ns
                     ax_x.plot(
-                        plot_times_ns,
+                        xdata_leg_d,
                         legacy_d_hist[:, 1] * 1e3,
                         color=COLOR_LEGACY_DRIVER,
                         linestyle="--",
                         label="Driver (Legacy)",
                     )
                     ax_y.plot(
-                        plot_times_ns,
+                        xdata_leg_d,
                         legacy_d_hist[:, 2] * 1e3,
                         color=COLOR_LEGACY_DRIVER,
                         linestyle="--",
                         label="Driver (Legacy)",
                     )
-            ax_x.set_xlabel("Time (ns)", labelpad=8)
+            ax_x.set_xlabel(xlabel, labelpad=8)
             ax_x.set_ylabel("Average x (mm)", labelpad=15)
             ax_x.set_title("Average X Position", pad=12)
             ax_x.legend()
             ax_x.grid(True, alpha=0.3)
             ax_x.tick_params(axis="both", which="major", labelsize=10)
-            ax_y.set_xlabel("Time (ns)", labelpad=8)
+            ax_y.set_xlabel(xlabel, labelpad=8)
             ax_y.set_ylabel("Average y (mm)", labelpad=15)
             ax_y.set_title("Average Y Position", pad=12)
             ax_y.legend()
@@ -1696,121 +1724,142 @@ def run_testbed(
         # Beta (velocity) plots
         beta_display = options.beta_display
         beta_save = options.beta_save
-        if (beta_display or beta_save) and core_beta_hist is not None:
+        beta_xaxis = getattr(options, "beta_xaxis", "t")
+        if (beta_display or beta_save) and core_r_beta is not None:
             fig_beta, axes_beta = plt.subplots(
                 2, 2, figsize=(16, 12), dpi=options.plot_dpi
             )
             axes_beta = axes_beta.flatten()
 
+            # Determine x-axis data for beta plots
+            if beta_xaxis == "z":
+                xdata_beta = plot_z_mm
+                xlabel_beta = "z position (mm)"
+            else:
+                xdata_beta = plot_times_ns
+                xlabel_beta = "Time (ns)"
+
             # β_x
             axes_beta[0].plot(
-                plot_times_ns,
-                core_beta_hist[:, 0],
+                xdata_beta,
+                core_r_beta[:, 0],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
-            if driver_allowed and core_beta_d_hist is not None:
+            if driver_allowed and core_d_beta is not None:
+                if beta_xaxis == "z":
+                    xdata_beta_d = (
+                        core_d_hist[:, 3] if core_d_hist is not None else plot_z_mm
+                    )
+                else:
+                    xdata_beta_d = plot_times_ns
                 axes_beta[0].plot(
-                    plot_times_ns,
-                    core_beta_d_hist[:, 0],
+                    xdata_beta_d,
+                    core_d_beta[:, 0],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_beta_hist is not None:
+            if legacy_enabled and legacy_r_beta is not None:
+                if beta_xaxis == "z":
+                    xdata_beta_leg = (
+                        legacy_r_hist[:, 3] if legacy_r_hist is not None else plot_z_mm
+                    )
+                else:
+                    xdata_beta_leg = plot_times_ns
                 axes_beta[0].plot(
-                    plot_times_ns,
-                    legacy_beta_hist[:, 0],
+                    xdata_beta_leg,
+                    legacy_r_beta[:, 0],
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_beta[0].set_xlabel("Time (ns)", labelpad=8)
-            axes_beta[0].set_ylabel("β_x (v_x/c)", labelpad=12)
-            axes_beta[0].set_title("Transverse-X Velocity", pad=10)
+            axes_beta[0].set_xlabel(xlabel_beta, labelpad=8)
+            axes_beta[0].set_ylabel("β_x", labelpad=12)
+            axes_beta[0].set_title("Beta X Component", pad=10)
             axes_beta[0].legend()
             axes_beta[0].grid(True, alpha=0.3)
 
             # β_y
             axes_beta[1].plot(
-                plot_times_ns,
-                core_beta_hist[:, 1],
+                xdata_beta,
+                core_r_beta[:, 1],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
-            if driver_allowed and core_beta_d_hist is not None:
+            if driver_allowed and core_d_beta is not None:
                 axes_beta[1].plot(
-                    plot_times_ns,
-                    core_beta_d_hist[:, 1],
+                    xdata_beta_d,
+                    core_d_beta[:, 1],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_beta_hist is not None:
+            if legacy_enabled and legacy_r_beta is not None:
                 axes_beta[1].plot(
-                    plot_times_ns,
-                    legacy_beta_hist[:, 1],
+                    xdata_beta_leg,
+                    legacy_r_beta[:, 1],
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_beta[1].set_xlabel("Time (ns)", labelpad=8)
-            axes_beta[1].set_ylabel("β_y (v_y/c)", labelpad=12)
-            axes_beta[1].set_title("Transverse-Y Velocity", pad=10)
+            axes_beta[1].set_xlabel(xlabel_beta, labelpad=8)
+            axes_beta[1].set_ylabel("β_y", labelpad=12)
+            axes_beta[1].set_title("Beta Y Component", pad=10)
             axes_beta[1].legend()
             axes_beta[1].grid(True, alpha=0.3)
 
             # β_z
             axes_beta[2].plot(
-                plot_times_ns,
-                core_beta_hist[:, 2],
+                xdata_beta,
+                core_r_beta[:, 2],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
-            if driver_allowed and core_beta_d_hist is not None:
+            if driver_allowed and core_d_beta is not None:
                 axes_beta[2].plot(
-                    plot_times_ns,
-                    core_beta_d_hist[:, 2],
+                    xdata_beta_d,
+                    core_d_beta[:, 2],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_beta_hist is not None:
+            if legacy_enabled and legacy_r_beta is not None:
                 axes_beta[2].plot(
-                    plot_times_ns,
-                    legacy_beta_hist[:, 2],
+                    xdata_beta_leg,
+                    legacy_r_beta[:, 2],
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_beta[2].set_xlabel("Time (ns)", labelpad=8)
-            axes_beta[2].set_ylabel("β_z (v_z/c)", labelpad=12)
-            axes_beta[2].set_title("Longitudinal Velocity", pad=10)
+            axes_beta[2].set_xlabel(xlabel_beta, labelpad=8)
+            axes_beta[2].set_ylabel("β_z", labelpad=12)
+            axes_beta[2].set_title("Beta Z Component", pad=10)
             axes_beta[2].legend()
             axes_beta[2].grid(True, alpha=0.3)
 
             # |β| (magnitude)
-            core_beta_mag = np.sqrt(np.sum(core_beta_hist**2, axis=1))
+            core_beta_mag = np.sqrt(np.sum(core_r_beta**2, axis=1))
             axes_beta[3].plot(
-                plot_times_ns, core_beta_mag, color=COLOR_RIDER, label="Rider (Core)"
+                xdata_beta, core_beta_mag, color=COLOR_RIDER, label="Rider (Core)"
             )
-            if driver_allowed and core_beta_d_hist is not None:
-                driver_beta_mag = np.sqrt(np.sum(core_beta_d_hist**2, axis=1))
+            if driver_allowed and core_d_beta is not None:
+                driver_beta_mag = np.sqrt(np.sum(core_d_beta**2, axis=1))
                 axes_beta[3].plot(
-                    plot_times_ns,
+                    xdata_beta_d,
                     driver_beta_mag,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_beta_hist is not None:
-                legacy_beta_mag = np.sqrt(np.sum(legacy_beta_hist**2, axis=1))
+            if legacy_enabled and legacy_r_beta is not None:
+                legacy_beta_mag = np.sqrt(np.sum(legacy_r_beta**2, axis=1))
                 axes_beta[3].plot(
-                    plot_times_ns,
+                    xdata_beta_leg,
                     legacy_beta_mag,
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_beta[3].set_xlabel("Time (ns)", labelpad=8)
-            axes_beta[3].set_ylabel("|β| (v/c)", labelpad=12)
-            axes_beta[3].set_title("Total Velocity Magnitude", pad=10)
+            axes_beta[3].set_xlabel(xlabel_beta)
+            axes_beta[3].set_ylabel("|β|")
+            axes_beta[3].set_title("Beta Magnitude")
             axes_beta[3].legend()
             axes_beta[3].grid(True, alpha=0.3)
 
@@ -1828,125 +1877,152 @@ def run_testbed(
         # Momentum plots (conjugate four-momentum in amu·mm/ns)
         momentum_display = options.momentum_display
         momentum_save = options.momentum_save
-        if (momentum_display or momentum_save) and core_p_hist is not None:
+        momentum_xaxis = getattr(options, "momentum_xaxis", "t")
+        if (momentum_display or momentum_save) and core_r_momentum is not None:
             fig_momentum, axes_mom = plt.subplots(
                 2, 2, figsize=(16, 12), dpi=options.plot_dpi
             )
             axes_mom = axes_mom.flatten()
 
+            # Determine x-axis data for momentum plots
+            if momentum_xaxis == "z":
+                xdata_mom = plot_z_mm
+                xlabel_mom = "z position (mm)"
+            else:
+                xdata_mom = plot_times_ns
+                xlabel_mom = "Time (ns)"
+
             # P_x (conjugate momentum)
             axes_mom[0].plot(
-                plot_times_ns,
-                core_p_hist[:, 0],
+                xdata_mom,
+                core_r_momentum[:, 0],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
-            if driver_allowed and core_p_d_hist is not None:
+            if driver_allowed and core_d_momentum is not None:
+                if momentum_xaxis == "z":
+                    xdata_mom_d = (
+                        core_d_hist[:, 3] if core_d_hist is not None else plot_z_mm
+                    )
+                else:
+                    xdata_mom_d = plot_times_ns
                 axes_mom[0].plot(
-                    plot_times_ns,
-                    core_p_d_hist[:, 0],
+                    xdata_mom_d,
+                    core_d_momentum[:, 0],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_p_hist is not None:
+            if legacy_enabled and legacy_r_momentum is not None:
+                if momentum_xaxis == "z":
+                    xdata_mom_leg = (
+                        legacy_r_hist[:, 3] if legacy_r_hist is not None else plot_z_mm
+                    )
+                else:
+                    xdata_mom_leg = plot_times_ns
                 axes_mom[0].plot(
-                    plot_times_ns,
-                    legacy_p_hist[:, 0],
+                    xdata_mom_leg,
+                    legacy_r_momentum[:, 0],
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
             axes_mom[0].set_xlabel("Time (ns)", labelpad=8)
             axes_mom[0].set_ylabel("P_x (amu·mm/ns)", labelpad=12)
-            axes_mom[0].set_title("Conjugate Momentum X", pad=10)
+            axes_mom[0].set_xlabel(xlabel_mom)
+            axes_mom[0].set_ylabel("P_x (amu·mm/ns)")
+            axes_mom[0].set_title("Conjugate Momentum X")
             axes_mom[0].legend()
             axes_mom[0].grid(True, alpha=0.3)
 
             # P_y
             axes_mom[1].plot(
-                plot_times_ns,
-                core_p_hist[:, 1],
+                xdata_mom,
+                core_r_momentum[:, 1],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
-            if driver_allowed and core_p_d_hist is not None:
+            if driver_allowed and core_d_momentum is not None:
                 axes_mom[1].plot(
-                    plot_times_ns,
-                    core_p_d_hist[:, 1],
+                    xdata_mom_d,
+                    core_d_momentum[:, 1],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_p_hist is not None:
+            if legacy_enabled and legacy_r_momentum is not None:
                 axes_mom[1].plot(
-                    plot_times_ns,
-                    legacy_p_hist[:, 1],
+                    xdata_mom_leg,
+                    legacy_r_momentum[:, 1],
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
             axes_mom[1].set_xlabel("Time (ns)", labelpad=8)
             axes_mom[1].set_ylabel("P_y (amu·mm/ns)", labelpad=12)
-            axes_mom[1].set_title("Conjugate Momentum Y", pad=10)
+            axes_mom[1].set_xlabel(xlabel_mom)
+            axes_mom[1].set_ylabel("P_y (amu·mm/ns)")
+            axes_mom[1].set_title("Conjugate Momentum Y")
             axes_mom[1].legend()
             axes_mom[1].grid(True, alpha=0.3)
 
             # P_z
             axes_mom[2].plot(
-                plot_times_ns,
-                core_p_hist[:, 2],
+                xdata_mom,
+                core_r_momentum[:, 2],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
             )
-            if driver_allowed and core_p_d_hist is not None:
+            if driver_allowed and core_d_momentum is not None:
                 axes_mom[2].plot(
-                    plot_times_ns,
-                    core_p_d_hist[:, 2],
+                    xdata_mom_d,
+                    core_d_momentum[:, 2],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_p_hist is not None:
+            if legacy_enabled and legacy_r_momentum is not None:
                 axes_mom[2].plot(
-                    plot_times_ns,
-                    legacy_p_hist[:, 2],
+                    xdata_mom_leg,
+                    legacy_r_momentum[:, 2],
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_mom[2].set_xlabel("Time (ns)", labelpad=8)
-            axes_mom[2].set_ylabel("P_z (amu·mm/ns)", labelpad=12)
-            axes_mom[2].set_title("Conjugate Momentum Z", pad=10)
+            axes_mom[2].set_xlabel(xlabel_mom)
+            axes_mom[2].set_ylabel("P_z (amu·mm/ns)")
+            axes_mom[2].set_title("Conjugate Momentum Z")
             axes_mom[2].legend()
             axes_mom[2].grid(True, alpha=0.3)
 
             # |P_t| (transverse magnitude)
-            core_pt_mag = np.sqrt(core_p_hist[:, 0] ** 2 + core_p_hist[:, 1] ** 2)
-            axes_mom[3].plot(
-                plot_times_ns, core_pt_mag, color=COLOR_RIDER, label="Rider (Core)"
+            core_pt_mag = np.sqrt(
+                core_r_momentum[:, 0] ** 2 + core_r_momentum[:, 1] ** 2
             )
-            if driver_allowed and core_p_d_hist is not None:
+            axes_mom[3].plot(
+                xdata_mom, core_pt_mag, color=COLOR_RIDER, label="Rider (Core)"
+            )
+            if driver_allowed and core_d_momentum is not None:
                 driver_pt_mag = np.sqrt(
-                    core_p_d_hist[:, 0] ** 2 + core_p_d_hist[:, 1] ** 2
+                    core_d_momentum[:, 0] ** 2 + core_d_momentum[:, 1] ** 2
                 )
                 axes_mom[3].plot(
-                    plot_times_ns,
+                    xdata_mom_d,
                     driver_pt_mag,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
                 )
-            if legacy_enabled and legacy_p_hist is not None:
+            if legacy_enabled and legacy_r_momentum is not None:
                 legacy_pt_mag = np.sqrt(
-                    legacy_p_hist[:, 0] ** 2 + legacy_p_hist[:, 1] ** 2
+                    legacy_r_momentum[:, 0] ** 2 + legacy_r_momentum[:, 1] ** 2
                 )
                 axes_mom[3].plot(
-                    plot_times_ns,
+                    xdata_mom_leg,
                     legacy_pt_mag,
                     color=COLOR_LEGACY_RIDER,
                     linestyle="--",
                     label="Rider (Legacy)",
                 )
-            axes_mom[3].set_xlabel("Time (ns)", labelpad=8)
-            axes_mom[3].set_ylabel("|P_t| (amu·mm/ns)", labelpad=12)
-            axes_mom[3].set_title("Transverse Momentum Magnitude", pad=10)
+            axes_mom[3].set_xlabel(xlabel_mom)
+            axes_mom[3].set_ylabel("|P_t| (amu·mm/ns)")
+            axes_mom[3].set_title("Transverse Momentum Magnitude")
             axes_mom[3].legend()
             axes_mom[3].grid(True, alpha=0.3)
 
@@ -1960,6 +2036,67 @@ def run_testbed(
                 figures["momentum"] = fig_momentum
             else:
                 plt.close(fig_momentum)
+
+        # Z-position vs time plot
+        zposition_display = options.zposition_display
+        zposition_save = options.zposition_save
+        if zposition_display or zposition_save:
+            fig_zpos = plt.figure(figsize=(12, 8), dpi=options.plot_dpi)
+            ax_zpos = fig_zpos.add_subplot(111)
+
+            ax_zpos.plot(
+                plot_times_ns,
+                plot_z_mm,
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+                linewidth=2.0,
+            )
+
+            if driver_allowed and core_d_hist is not None:
+                ax_zpos.plot(
+                    plot_times_ns,
+                    core_d_hist[:, 3],
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                    linewidth=2.0,
+                )
+
+            if legacy_enabled and legacy_r_hist is not None:
+                ax_zpos.plot(
+                    plot_times_ns,
+                    legacy_r_hist[:, 3],
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                    linewidth=2.0,
+                )
+                if driver_allowed and legacy_d_hist is not None:
+                    ax_zpos.plot(
+                        plot_times_ns,
+                        legacy_d_hist[:, 3],
+                        color=COLOR_LEGACY_DRIVER,
+                        linestyle="--",
+                        label="Driver (Legacy)",
+                        linewidth=2.0,
+                    )
+
+            ax_zpos.set_xlabel("Time (ns)", labelpad=8)
+            ax_zpos.set_ylabel("z position (mm)", labelpad=12)
+            ax_zpos.set_title("Longitudinal Position vs Time", pad=12)
+            ax_zpos.legend()
+            ax_zpos.grid(True, alpha=0.3)
+            ax_zpos.tick_params(axis="both", which="major", labelsize=10)
+            fig_zpos.tight_layout(pad=3.0)
+
+            if zposition_save and should_save:
+                zposition_path = output_dir / f"{filename_base}_zposition.png"
+                fig_zpos.savefig(zposition_path)
+                saved_paths["zposition"] = zposition_path
+                _log(f"Saved z-position plot to: {zposition_path}")
+            if zposition_display:
+                figures["zposition"] = fig_zpos
+            else:
+                plt.close(fig_zpos)
 
         if trajectory_save and should_save:
             interval = max(1, int(options.trajectory_interval))
