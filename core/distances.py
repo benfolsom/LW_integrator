@@ -427,8 +427,13 @@ def chrono_match_indices(
     max_res = float(np.max(residuals)) if len(residuals) > 0 else 0.0
 
     # Print diagnostics if requested
-    if verbosity >= 2 and max_res > effective_tolerance:
-        n_bad = int(np.sum(needs_interp))
+    # Only print if there are particles needing interpolation (verbosity >= 2)
+    # OR if in maximum verbosity mode (verbosity >= 3, show even if none need interpolation)
+    n_bad = int(np.sum(needs_interp))
+
+    if verbosity >= 3 or (
+        verbosity >= 2 and n_bad > 0 and max_res > effective_tolerance
+    ):
         mode_str = "cubic" if high_precision else "linear"
         print(
             f"  [Chrono-match] Max residual: {max_res:.3e} ns (tolerance: {effective_tolerance:.3e} ns)"

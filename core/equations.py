@@ -263,6 +263,7 @@ def _compute_full_retarded_distance(
     particle_idx: int,
     chrono_mode: ChronoMatchingMode,
     self_consistency: Optional[SelfConsistencyConfig] = None,
+    timestep_h: float = 1e-3,
 ) -> tuple[dict, np.ndarray, Optional[ChronoMatchResult]]:
     """Compute retarded distance using full chronological matching.
 
@@ -304,7 +305,7 @@ def _compute_full_retarded_distance(
         verbosity=verbosity,
         high_precision=chrono_high_precision,
         adaptive_tolerance=chrono_adaptive_tolerance,
-        timestep_h=h,
+        timestep_h=timestep_h,
     )
 
     # Handle both legacy (array) and new (ChronoMatchResult) returns
@@ -837,6 +838,13 @@ def retarded_equations_of_motion(
         sc_verbosity,
     ) = _extract_self_consistency_params(self_consistency)
 
+    # Extract chrono-match parameters (needed for interpolation later)
+    chrono_high_precision = False
+    if self_consistency is not None:
+        chrono_high_precision = getattr(
+            self_consistency, "chrono_high_precision", False
+        )
+
     # Process each particle independently
     for particle_idx in range(num_particles):
         # Working state for SC iterations - tracks evolving state
@@ -938,6 +946,7 @@ def retarded_equations_of_motion(
                             observer_particle_idx,
                             chrono_mode,
                             self_consistency,
+                            timestep_h=h,
                         )
                     )
                 else:
@@ -949,6 +958,7 @@ def retarded_equations_of_motion(
                             particle_idx,
                             chrono_mode,
                             self_consistency,
+                            timestep_h=h,
                         )
                     )
 
