@@ -208,6 +208,10 @@ def gather_external_samples(
     indices: np.ndarray,
     indices_next: np.ndarray | None = None,
     weights: np.ndarray | None = None,
+    indices_prev: np.ndarray | None = None,
+    indices_next2: np.ndarray | None = None,
+    use_cubic: bool = False,
+    interpolate_positions: bool = False,
 ) -> ExternalSampleBatch:
     """Extract external bunch samples for the provided retarded indices.
 
@@ -220,9 +224,16 @@ def gather_external_samples(
     indices_next : np.ndarray, optional
         Secondary indices for interpolation. If None, no interpolation is performed.
     weights : np.ndarray, optional
-        Interpolation weights in [0,1]. weight=1.0 uses indices only,
-        weight=0.0 uses indices_next only. Linear interpolation:
-        value = weight * value[indices] + (1-weight) * value[indices_next]
+        Interpolation weights in [0,1]. For linear: weight=1.0 uses indices only,
+        weight=0.0 uses indices_next only. For cubic: weight is normalized parameter u.
+    indices_prev : np.ndarray, optional
+        Previous indices for cubic interpolation (4-point).
+    indices_next2 : np.ndarray, optional
+        Second-next indices for cubic interpolation (4-point).
+    use_cubic : bool, optional
+        If True, use cubic interpolation with 4 points. Requires indices_prev and indices_next2.
+    interpolate_positions : bool, optional
+        If True, also interpolate x/y/z positions (high-precision mode).
 
     Returns
     -------
@@ -241,7 +252,15 @@ def gather_external_samples(
     bdotz = np.zeros(sample_count, dtype=float)
     valid_mask = np.zeros(sample_count, dtype=bool)
 
+    # Position arrays for interpolation if needed
+    x_vals = np.zeros(sample_count, dtype=float)
+    y_vals = np.zeros(sample_count, dtype=float)
+    z_vals = np.zeros(sample_count, dtype=float)
+
     use_interpolation = (indices_next is not None) and (weights is not None)
+    use_cubic_interp = (
+        use_cubic and (indices_prev is not None) and (indices_next2 is not None)
+    )
 
     for j, ext_idx in enumerate(indices):
         if ext_idx < 0:
@@ -274,37 +293,172 @@ def gather_external_samples(
         else:
             gamma_val = float(gamma_j)
 
+        # Store positions (may be interpolated later)
+        x_vals[j] = float(state["x"][j])
+        y_vals[j] = float(state["y"][j])
+        z_vals[j] = float(state["z"][j])
+
         # If interpolation is requested and weight < 1, blend with next sample
         if use_interpolation and weights[j] < 1.0:
-            ext_idx_next = indices_next[j]
-            weight = weights[j]
+            if use_cubic_interp:
+                # Cubic interpolation using 4 points: prev, next, indices, next2
+                # Catmull-Rom spline interpolation
+                u = weights[j]  # normalized parameter in [0,1]
 
-            if 0 <= ext_idx_next < len(trajectory_ext):
-                state_next = trajectory_ext[ext_idx_next]
-                if j < len(state_next["x"]):
-                    # Interpolate: val = w*val1 + (1-w)*val2
-                    bx_next = float(state_next["bx"][j])
-                    by_next = float(state_next["by"][j])
-                    bz_next = float(state_next["bz"][j])
-                    bdotx_next = float(state_next["bdotx"][j])
-                    bdoty_next = float(state_next["bdoty"][j])
-                    bdotz_next = float(state_next["bdotz"][j])
+                # Get all 4 trajectory states
+                idx_prev = indices_prev[j]
+                idx_next = indices_next[j]
+                idx_curr = ext_idx
+                idx_next2 = indices_next2[j]
 
-                    bx_val = weight * bx_val + (1.0 - weight) * bx_next
-                    by_val = weight * by_val + (1.0 - weight) * by_next
-                    bz_val = weight * bz_val + (1.0 - weight) * bz_next
-                    bdotx_val = weight * bdotx_val + (1.0 - weight) * bdotx_next
-                    bdoty_val = weight * bdoty_val + (1.0 - weight) * bdoty_next
-                    bdotz_val = weight * bdotz_val + (1.0 - weight) * bdotz_next
+                if (
+                    0 <= idx_prev < len(trajectory_ext)
+                    and 0 <= idx_next < len(trajectory_ext)
+                    and 0 <= idx_next2 < len(trajectory_ext)
+                ):
+                    state_prev = trajectory_ext[idx_prev]
+                    state_next = trajectory_ext[idx_next]
+                    state_next2 = trajectory_ext[idx_next2]
 
-                    gamma_next_j = state_next["gamma"]
-                    if hasattr(gamma_next_j, "__getitem__"):
-                        gamma_next = float(gamma_next_j[j])
-                    else:
-                        gamma_next = float(gamma_next_j)
-                    gamma_val = weight * gamma_val + (1.0 - weight) * gamma_next
+                    if (
+                        j < len(state_prev["x"])
+                        and j < len(state_next["x"])
+                        and j < len(state_next2["x"])
+                    ):
+                        # Catmull-Rom cubic interpolation
+                        # P(u) = 0.5 * [2*P1 + (-P0 + P2)*u + (2*P0 - 5*P1 + 4*P2 - P3)*u^2 + (-P0 + 3*P1 - 3*P2 + P3)*u^3]
+                        # where P0=prev, P1=next, P2=curr, P3=next2
+                        u2 = u * u
+                        u3 = u2 * u
 
-                    # Charge is not interpolated (discrete quantity)
+                        def cubic_interp(v0, v1, v2, v3):
+                            return 0.5 * (
+                                2.0 * v1
+                                + (-v0 + v2) * u
+                                + (2.0 * v0 - 5.0 * v1 + 4.0 * v2 - v3) * u2
+                                + (-v0 + 3.0 * v1 - 3.0 * v2 + v3) * u3
+                            )
+
+                        # Interpolate velocities
+                        bx_0 = float(state_prev["bx"][j])
+                        bx_1 = float(state_next["bx"][j])
+                        bx_2 = bx_val  # current
+                        bx_3 = float(state_next2["bx"][j])
+                        bx_val = cubic_interp(bx_0, bx_1, bx_2, bx_3)
+
+                        by_0 = float(state_prev["by"][j])
+                        by_1 = float(state_next["by"][j])
+                        by_2 = by_val
+                        by_3 = float(state_next2["by"][j])
+                        by_val = cubic_interp(by_0, by_1, by_2, by_3)
+
+                        bz_0 = float(state_prev["bz"][j])
+                        bz_1 = float(state_next["bz"][j])
+                        bz_2 = bz_val
+                        bz_3 = float(state_next2["bz"][j])
+                        bz_val = cubic_interp(bz_0, bz_1, bz_2, bz_3)
+
+                        # Interpolate accelerations
+                        bdotx_0 = float(state_prev["bdotx"][j])
+                        bdotx_1 = float(state_next["bdotx"][j])
+                        bdotx_2 = bdotx_val
+                        bdotx_3 = float(state_next2["bdotx"][j])
+                        bdotx_val = cubic_interp(bdotx_0, bdotx_1, bdotx_2, bdotx_3)
+
+                        bdoty_0 = float(state_prev["bdoty"][j])
+                        bdoty_1 = float(state_next["bdoty"][j])
+                        bdoty_2 = bdoty_val
+                        bdoty_3 = float(state_next2["bdoty"][j])
+                        bdoty_val = cubic_interp(bdoty_0, bdoty_1, bdoty_2, bdoty_3)
+
+                        bdotz_0 = float(state_prev["bdotz"][j])
+                        bdotz_1 = float(state_next["bdotz"][j])
+                        bdotz_2 = bdotz_val
+                        bdotz_3 = float(state_next2["bdotz"][j])
+                        bdotz_val = cubic_interp(bdotz_0, bdotz_1, bdotz_2, bdotz_3)
+
+                        # Interpolate gamma
+                        gamma_0_j = state_prev["gamma"]
+                        gamma_0 = (
+                            float(gamma_0_j[j])
+                            if hasattr(gamma_0_j, "__getitem__")
+                            else float(gamma_0_j)
+                        )
+                        gamma_1_j = state_next["gamma"]
+                        gamma_1 = (
+                            float(gamma_1_j[j])
+                            if hasattr(gamma_1_j, "__getitem__")
+                            else float(gamma_1_j)
+                        )
+                        gamma_2 = gamma_val
+                        gamma_3_j = state_next2["gamma"]
+                        gamma_3 = (
+                            float(gamma_3_j[j])
+                            if hasattr(gamma_3_j, "__getitem__")
+                            else float(gamma_3_j)
+                        )
+                        gamma_val = cubic_interp(gamma_0, gamma_1, gamma_2, gamma_3)
+
+                        # Interpolate positions if requested
+                        if interpolate_positions:
+                            x_0 = float(state_prev["x"][j])
+                            x_1 = float(state_next["x"][j])
+                            x_2 = x_vals[j]
+                            x_3 = float(state_next2["x"][j])
+                            x_vals[j] = cubic_interp(x_0, x_1, x_2, x_3)
+
+                            y_0 = float(state_prev["y"][j])
+                            y_1 = float(state_next["y"][j])
+                            y_2 = y_vals[j]
+                            y_3 = float(state_next2["y"][j])
+                            y_vals[j] = cubic_interp(y_0, y_1, y_2, y_3)
+
+                            z_0 = float(state_prev["z"][j])
+                            z_1 = float(state_next["z"][j])
+                            z_2 = z_vals[j]
+                            z_3 = float(state_next2["z"][j])
+                            z_vals[j] = cubic_interp(z_0, z_1, z_2, z_3)
+            else:
+                # Linear interpolation
+                ext_idx_next = indices_next[j]
+                weight = weights[j]
+
+                if 0 <= ext_idx_next < len(trajectory_ext):
+                    state_next = trajectory_ext[ext_idx_next]
+                    if j < len(state_next["x"]):
+                        # Interpolate: val = w*val1 + (1-w)*val2
+                        bx_next = float(state_next["bx"][j])
+                        by_next = float(state_next["by"][j])
+                        bz_next = float(state_next["bz"][j])
+                        bdotx_next = float(state_next["bdotx"][j])
+                        bdoty_next = float(state_next["bdoty"][j])
+                        bdotz_next = float(state_next["bdotz"][j])
+
+                        bx_val = weight * bx_val + (1.0 - weight) * bx_next
+                        by_val = weight * by_val + (1.0 - weight) * by_next
+                        bz_val = weight * bz_val + (1.0 - weight) * bz_next
+                        bdotx_val = weight * bdotx_val + (1.0 - weight) * bdotx_next
+                        bdoty_val = weight * bdoty_val + (1.0 - weight) * bdoty_next
+                        bdotz_val = weight * bdotz_val + (1.0 - weight) * bdotz_next
+
+                        gamma_next_j = state_next["gamma"]
+                        if hasattr(gamma_next_j, "__getitem__"):
+                            gamma_next = float(gamma_next_j[j])
+                        else:
+                            gamma_next = float(gamma_next_j)
+                        gamma_val = weight * gamma_val + (1.0 - weight) * gamma_next
+
+                        # Interpolate positions if requested
+                        if interpolate_positions:
+                            x_next = float(state_next["x"][j])
+                            y_next = float(state_next["y"][j])
+                            z_next = float(state_next["z"][j])
+
+                            x_vals[j] = weight * x_vals[j] + (1.0 - weight) * x_next
+                            y_vals[j] = weight * y_vals[j] + (1.0 - weight) * y_next
+                            z_vals[j] = weight * z_vals[j] + (1.0 - weight) * z_next
+
+                        # Charge is not interpolated (discrete quantity)
 
         bx[j] = bx_val
         by[j] = by_val
