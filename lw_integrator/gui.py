@@ -420,6 +420,15 @@ class IntegratorGUI:
         self.momentum_xaxis_var = tk.StringVar(
             value=getattr(self.options, "momentum_xaxis", "t")
         )
+        self.gamma_display_var = tk.BooleanVar(
+            value=getattr(self.options, "gamma_display", False)
+        )
+        self.gamma_save_var = tk.BooleanVar(
+            value=getattr(self.options, "gamma_save", False)
+        )
+        self.gamma_xaxis_var = tk.StringVar(
+            value=getattr(self.options, "gamma_xaxis", "t")
+        )
         self.zposition_display_var = tk.BooleanVar(
             value=getattr(self.options, "zposition_display", False)
         )
@@ -1638,46 +1647,66 @@ class IntegratorGUI:
             state="readonly",
         ).grid(row=10, column=1, sticky="w")
 
+        # Gamma (Lorentz factor) plot
+        self._add_output_toggle(
+            output_frame,
+            "Gamma (Lorentz factor γ)",
+            self.gamma_display_var,
+            self.gamma_save_var,
+            row=11,
+        )
+        # Gamma plot x-axis configuration
+        ttk.Label(output_frame, text="  ↳ X-axis:").grid(
+            row=12, column=0, sticky="w", padx=(20, 0)
+        )
+        ttk.Combobox(
+            output_frame,
+            textvariable=self.gamma_xaxis_var,
+            values=["t", "z"],
+            width=12,
+            state="readonly",
+        ).grid(row=12, column=1, sticky="w")
+
         # Separator for position plots
         ttk.Separator(output_frame, orient="horizontal").grid(
-            row=11, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+            row=13, column=0, columnspan=2, sticky="ew", pady=(10, 10)
         )
 
         # Z-position vs time plot
         ttk.Label(output_frame, text="Longitudinal trajectory:").grid(
-            row=12, column=0, columnspan=2, sticky="w", pady=(0, 2)
+            row=14, column=0, columnspan=2, sticky="w", pady=(0, 2)
         )
         self._add_output_toggle(
             output_frame,
             "z(t) plot",
             self.zposition_display_var,
             self.zposition_save_var,
-            row=13,
+            row=15,
         )
 
         # Separator before trajectory/output options
         ttk.Separator(output_frame, orient="horizontal").grid(
-            row=14, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+            row=16, column=0, columnspan=2, sticky="ew", pady=(10, 10)
         )
 
-        ttk.Label(output_frame, text="Plot DPI:").grid(row=15, column=0, sticky="w")
+        ttk.Label(output_frame, text="Plot DPI:").grid(row=17, column=0, sticky="w")
         ttk.Combobox(
             output_frame,
             textvariable=self.dpi_var,
             values=[str(dpi) for dpi in AVAILABLE_DPI_CHOICES],
             width=8,
             state="readonly",
-        ).grid(row=15, column=1, sticky="w")
+        ).grid(row=17, column=1, sticky="w")
 
         ttk.Checkbutton(
             output_frame, text="Save trajectory", variable=self.trajectory_save_var
-        ).grid(row=16, column=0, columnspan=2, sticky="w", pady=(12, 2))
+        ).grid(row=18, column=0, columnspan=2, sticky="w", pady=(12, 2))
         ttk.Label(output_frame, text="Trajectory stride:").grid(
-            row=17, column=0, sticky="w"
+            row=19, column=0, sticky="w"
         )
         ttk.Entry(
             output_frame, textvariable=self.trajectory_interval_var, width=8
-        ).grid(row=17, column=1, sticky="w")
+        ).grid(row=19, column=1, sticky="w")
 
         # Log file saving
         ttk.Checkbutton(
@@ -2413,6 +2442,9 @@ class IntegratorGUI:
         self.momentum_display_var.set(options.momentum_display)
         self.momentum_save_var.set(options.momentum_save)
         self.momentum_xaxis_var.set(getattr(options, "momentum_xaxis", "t"))
+        self.gamma_display_var.set(getattr(options, "gamma_display", False))
+        self.gamma_save_var.set(getattr(options, "gamma_save", False))
+        self.gamma_xaxis_var.set(getattr(options, "gamma_xaxis", "t"))
         self.zposition_display_var.set(getattr(options, "zposition_display", False))
         self.zposition_save_var.set(getattr(options, "zposition_save", False))
         self.trajectory_save_var.set(options.trajectory_save)
@@ -2550,6 +2582,9 @@ class IntegratorGUI:
             momentum_display=bool(self.momentum_display_var.get()),
             momentum_save=bool(self.momentum_save_var.get()),
             momentum_xaxis=str(self.momentum_xaxis_var.get()),
+            gamma_display=bool(self.gamma_display_var.get()),
+            gamma_save=bool(self.gamma_save_var.get()),
+            gamma_xaxis=str(self.gamma_xaxis_var.get()),
             zposition_display=bool(self.zposition_display_var.get()),
             zposition_save=bool(self.zposition_save_var.get()),
             trajectory_save=bool(self.trajectory_save_var.get()),
@@ -3303,29 +3338,20 @@ class IntegratorGUI:
         self.root.after(0, partial(self._append_log, text))
 
     def _replot_with_new_axis(
-        self, figure: Any, plot_name: str, new_xaxis: str, canvas: Any
+        self,
+        figure: Any,
+        plot_name: str,
+        new_xaxis: str,
+        canvas: Any,
+        new_yaxis: str = None,
     ) -> None:
-        """Regenerate plot with new x-axis using stored data."""
-        import matplotlib.pyplot as plt
+        """Regenerate plot with new x-axis (and optionally y-axis for energy) using stored data by updating artists in-place."""
         import numpy as np
 
         if not hasattr(figure, "_lw_plot_data"):
             return
 
         data = figure._lw_plot_data
-
-        # AGGRESSIVELY disable constrained_layout to prevent font explosion
-        try:
-            figure.set_layout_engine("none")
-        except (AttributeError, TypeError):
-            try:
-                figure.set_constrained_layout(False)
-            except (AttributeError, TypeError):
-                pass
-
-        # Store current figure properties
-        original_dpi = figure.dpi
-        original_size = figure.get_size_inches()
 
         # Determine x-axis data
         if new_xaxis == "z":
@@ -3335,553 +3361,341 @@ class IntegratorGUI:
             xdata = data["times_ns"]
             xlabel = "Time (ns)"
 
-        # Force matplotlib to use specific font sizes
-        plt.rcParams.update(
-            {
-                "font.size": 10,
-                "axes.titlesize": 12,
-                "axes.labelsize": 10,
-                "xtick.labelsize": 9,
-                "ytick.labelsize": 9,
-                "legend.fontsize": 9,
-            }
-        )
-
         axes = figure.get_axes()
 
-        if plot_name == "energy":
-            # Clear and replot energy
-            if len(axes) == 1:
-                # Single subplot (rider only)
-                axes[0].clear()
-            else:
-                # Two subplots (rider and driver)
-                for ax in axes:
-                    ax.clear()
-
-            # Rider energy
-            axes[0].scatter(
-                xdata,
-                data["core_r_energy_changes"],
-                color=COLOR_RIDER,
-                label="Core",
-                s=20,
-                alpha=0.6,
+        # Store original font sizes to prevent explosion
+        original_label_sizes = [ax.xaxis.label.get_fontsize() for ax in axes]
+        original_title_sizes = [ax.title.get_fontsize() for ax in axes]
+        original_xtick_sizes = []
+        original_ytick_sizes = []
+        for ax in axes:
+            xtick_labels = ax.get_xticklabels()
+            ytick_labels = ax.get_yticklabels()
+            original_xtick_sizes.append(
+                xtick_labels[0].get_fontsize() if xtick_labels else 9
             )
-            if (
-                data["legacy_enabled"]
-                and data.get("legacy_r_energy_changes") is not None
-            ):
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                axes[0].scatter(
-                    xdata_leg,
-                    data["legacy_r_energy_changes"],
-                    color=COLOR_LEGACY_RIDER,
-                    label="Legacy",
-                    s=20,
-                    alpha=0.6,
-                )
-            axes[0].set_xlabel(xlabel)
-            axes[0].set_ylabel("ΔE (GeV)")
-            axes[0].set_title("Rider ΔE vs " + ("z" if new_xaxis == "z" else "Time"))
-            axes[0].legend()
-            axes[0].grid(True, alpha=0.3)
+            original_ytick_sizes.append(
+                ytick_labels[0].get_fontsize() if ytick_labels else 9
+            )
 
-            # Driver energy (if present)
-            if (
-                len(axes) > 1
-                and data["driver_allowed"]
-                and data.get("core_d_energy_changes") is not None
-            ):
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                axes[1].scatter(
-                    xdata_d,
-                    data["core_d_energy_changes"],
-                    color=COLOR_DRIVER,
-                    label="Core",
-                    s=20,
-                    alpha=0.6,
-                )
+        if plot_name == "energy":
+            # Update energy plot artists in-place (avoid clearing to prevent font explosion)
+            # Determine y-axis data based on new_yaxis parameter (if provided)
+            if new_yaxis and data.get("energy_components"):
+                if new_yaxis == "delta_total":
+                    ydata_r = data["energy_components"]["delta_total_r"]
+                    ydata_d = data["energy_components"].get("delta_total_d")
+                    ylabel = "ΔE (GeV)"
+                    title_suffix = "ΔE"
+                elif new_yaxis == "delta_z":
+                    ydata_r = data["energy_components"]["delta_z_r"]
+                    ydata_d = data["energy_components"].get("delta_z_d")
+                    ylabel = "ΔE_z (GeV)"
+                    title_suffix = "ΔE_z"
+                elif new_yaxis == "delta_x":
+                    ydata_r = data["energy_components"]["delta_x_r"]
+                    ydata_d = data["energy_components"].get("delta_x_d")
+                    ylabel = "ΔE_x (GeV)"
+                    title_suffix = "ΔE_x"
+                elif new_yaxis == "delta_y":
+                    ydata_r = data["energy_components"]["delta_y_r"]
+                    ydata_d = data["energy_components"].get("delta_y_d")
+                    ylabel = "ΔE_y (GeV)"
+                    title_suffix = "ΔE_y"
+                elif new_yaxis == "total":
+                    ydata_r = data["energy_components"]["total_r"]
+                    ydata_d = data["energy_components"].get("total_d")
+                    ylabel = "E (GeV)"
+                    title_suffix = "E"
+                else:
+                    ydata_r = data["core_r_energy_changes"]
+                    ydata_d = data.get("core_d_energy_changes")
+                    ylabel = "ΔE (GeV)"
+                    title_suffix = "ΔE"
+            else:
+                ydata_r = data["core_r_energy_changes"]
+                ydata_d = data.get("core_d_energy_changes")
+                ylabel = "ΔE (GeV)"
+                title_suffix = "ΔE"
+
+            # Rider energy axis
+            collections = axes[0].collections
+            if len(collections) > 0:
+                # Update core rider scatter
+                collections[0].set_offsets(np.c_[xdata, ydata_r])
                 if (
-                    data["legacy_enabled"]
-                    and data.get("legacy_d_energy_changes") is not None
+                    len(collections) > 1
+                    and data["legacy_enabled"]
+                    and data.get("legacy_r_energy_changes") is not None
                 ):
-                    xdata_leg_d = (
-                        data["z_mm_legacy_driver"]
-                        if new_xaxis == "z"
-                        else data["times_ns"]
+                    # Update legacy rider scatter (use same y-data for now)
+                    xdata_leg = (
+                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
                     )
-                    axes[1].scatter(
-                        xdata_leg_d,
-                        data["legacy_d_energy_changes"],
-                        color=COLOR_LEGACY_DRIVER,
-                        label="Legacy",
-                        s=20,
-                        alpha=0.6,
+                    collections[1].set_offsets(
+                        np.c_[xdata_leg, data["legacy_r_energy_changes"]]
                     )
-                axes[1].set_xlabel(xlabel)
-                axes[1].set_ylabel("ΔE (GeV)")
+
+            axes[0].set_xlabel(xlabel, fontsize=10)
+            axes[0].set_ylabel(ylabel, fontsize=10)
+            axes[0].set_title(
+                f"Rider {title_suffix} vs " + ("z" if new_xaxis == "z" else "Time"),
+                fontsize=12,
+            )
+            axes[0].relim()
+            axes[0].autoscale_view(tight=True)
+            # Force proper x-axis and y-axis limits with 10% buffer
+            x_min, x_max = xdata.min(), xdata.max()
+            x_range = x_max - x_min
+            x_buffer = x_range * 0.1 if x_range > 0 else 0.1 * abs(x_max)
+            axes[0].set_xlim(x_min - x_buffer, x_max + x_buffer)
+            if len(ydata_r) > 0:
+                y_min, y_max = ydata_r.min(), ydata_r.max()
+                y_range = y_max - y_min
+                y_buffer = y_range * 0.1 if y_range > 0 else 0.1 * abs(y_max)
+                axes[0].set_ylim(y_min - y_buffer, y_max + y_buffer)
+
+            # Driver energy axis (if present)
+            if len(axes) > 1 and data["driver_allowed"] and ydata_d is not None:
+                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
+                collections_d = axes[1].collections
+                if len(collections_d) > 0:
+                    # Update core driver scatter
+                    collections_d[0].set_offsets(np.c_[xdata_d, ydata_d])
+                    if (
+                        len(collections_d) > 1
+                        and data["legacy_enabled"]
+                        and data.get("legacy_d_energy_changes") is not None
+                    ):
+                        # Update legacy driver scatter
+                        xdata_leg_d = (
+                            data["z_mm_legacy_driver"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        collections_d[1].set_offsets(
+                            np.c_[xdata_leg_d, data["legacy_d_energy_changes"]]
+                        )
+
+                axes[1].set_xlabel(xlabel, fontsize=10)
+                axes[1].set_ylabel(ylabel, fontsize=10)
                 axes[1].set_title(
-                    "Driver ΔE vs " + ("z" if new_xaxis == "z" else "Time")
+                    f"Driver {title_suffix} vs "
+                    + ("z" if new_xaxis == "z" else "Time"),
+                    fontsize=12,
                 )
-                axes[1].legend()
-                axes[1].grid(True, alpha=0.3)
+                axes[1].relim()
+                axes[1].autoscale_view(tight=True)
+                # Force proper x-axis and y-axis limits with 10% buffer
+                x_min_d, x_max_d = xdata_d.min(), xdata_d.max()
+                x_range_d = x_max_d - x_min_d
+                x_buffer_d = x_range_d * 0.1 if x_range_d > 0 else 0.1 * abs(x_max_d)
+                axes[1].set_xlim(x_min_d - x_buffer_d, x_max_d + x_buffer_d)
+                if len(ydata_d) > 0:
+                    y_min_d, y_max_d = ydata_d.min(), ydata_d.max()
+                    y_range_d = y_max_d - y_min_d
+                    y_buffer_d = (
+                        y_range_d * 0.1 if y_range_d > 0 else 0.1 * abs(y_max_d)
+                    )
+                    axes[1].set_ylim(y_min_d - y_buffer_d, y_max_d + y_buffer_d)
 
         elif plot_name == "transverse":
-            # Clear and replot transverse (x, y position)
+            # Update transverse plot artists in-place
             ax_x, ax_y = axes[0], axes[1]
 
-            ax_x.clear()
-            ax_y.clear()
-
-            # Rider core
-            ax_x.plot(
-                xdata,
-                data["core_r_hist"][:, 1] * 1e3,
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-            ax_y.plot(
-                xdata,
-                data["core_r_hist"][:, 2] * 1e3,
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-
-            # Driver core
-            if data["driver_allowed"] and data["core_d_hist"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                ax_x.plot(
-                    xdata_d,
-                    data["core_d_hist"][:, 1] * 1e3,
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-                ax_y.plot(
-                    xdata_d,
-                    data["core_d_hist"][:, 2] * 1e3,
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-
-            # Legacy
-            if data["legacy_enabled"] and data["legacy_r_hist"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                ax_x.plot(
-                    xdata_leg,
-                    data["legacy_r_hist"][:, 1] * 1e3,
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-                ax_y.plot(
-                    xdata_leg,
-                    data["legacy_r_hist"][:, 2] * 1e3,
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-
-                if data["driver_allowed"] and data["legacy_d_hist"] is not None:
-                    xdata_leg_d = (
-                        data["z_mm_legacy_driver"]
-                        if new_xaxis == "z"
-                        else data["times_ns"]
+            # Update line artists for x-axis subplot
+            lines_x = ax_x.get_lines()
+            if len(lines_x) > 0:
+                lines_x[0].set_xdata(xdata)
+                idx = 1
+                if data["driver_allowed"] and data["core_d_hist"] is not None:
+                    xdata_d = (
+                        data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
                     )
-                    ax_x.plot(
-                        xdata_leg_d,
-                        data["legacy_d_hist"][:, 1] * 1e3,
-                        color=COLOR_LEGACY_DRIVER,
-                        linestyle="--",
-                        label="Driver (Legacy)",
+                    if len(lines_x) > idx:
+                        lines_x[idx].set_xdata(xdata_d)
+                        idx += 1
+                if data["legacy_enabled"] and data["legacy_r_hist"] is not None:
+                    xdata_leg = (
+                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
                     )
-                    ax_y.plot(
-                        xdata_leg_d,
-                        data["legacy_d_hist"][:, 2] * 1e3,
-                        color=COLOR_LEGACY_DRIVER,
-                        linestyle="--",
-                        label="Driver (Legacy)",
+                    if len(lines_x) > idx:
+                        lines_x[idx].set_xdata(xdata_leg)
+                        idx += 1
+                    if data["driver_allowed"] and data["legacy_d_hist"] is not None:
+                        xdata_leg_d = (
+                            data["z_mm_legacy_driver"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(lines_x) > idx:
+                            lines_x[idx].set_xdata(xdata_leg_d)
+
+            ax_x.set_xlabel(xlabel, fontsize=10)
+            ax_x.relim()
+            ax_x.autoscale_view(tight=True)
+
+            # Update line artists for y-axis subplot
+            lines_y = ax_y.get_lines()
+            if len(lines_y) > 0:
+                lines_y[0].set_xdata(xdata)
+                idx = 1
+                if data["driver_allowed"] and data["core_d_hist"] is not None:
+                    xdata_d = (
+                        data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
                     )
+                    if len(lines_y) > idx:
+                        lines_y[idx].set_xdata(xdata_d)
+                        idx += 1
+                if data["legacy_enabled"] and data["legacy_r_hist"] is not None:
+                    xdata_leg = (
+                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
+                    )
+                    if len(lines_y) > idx:
+                        lines_y[idx].set_xdata(xdata_leg)
+                        idx += 1
+                    if data["driver_allowed"] and data["legacy_d_hist"] is not None:
+                        xdata_leg_d = (
+                            data["z_mm_legacy_driver"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(lines_y) > idx:
+                            lines_y[idx].set_xdata(xdata_leg_d)
 
-            ax_x.set_xlabel(xlabel)
-            ax_x.set_ylabel("Average ⟨x⟩ (mm)")
-            ax_x.set_title("Average X Position")
-            ax_x.legend()
-            ax_x.grid(True, alpha=0.3)
-
-            ax_y.set_xlabel(xlabel)
-            ax_y.set_ylabel("Average ⟨y⟩ (mm)")
-            ax_y.set_title("Average Y Position")
-            ax_y.legend()
-            ax_y.grid(True, alpha=0.3)
+            ax_y.set_xlabel(xlabel, fontsize=10)
+            ax_y.relim()
+            ax_y.autoscale_view(tight=True)
 
         elif plot_name == "beta":
-            # Clear and replot beta
-            for ax in axes:
-                ax.clear()
+            # Update beta plot artists in-place for all 4 subplots
+            for i, ax in enumerate(axes):
+                lines = ax.get_lines()
+                if len(lines) > 0:
+                    lines[0].set_xdata(xdata)
+                    idx = 1
+                    if data["driver_allowed"] and data["core_d_beta"] is not None:
+                        xdata_d = (
+                            data["z_mm_driver"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(lines) > idx:
+                            lines[idx].set_xdata(xdata_d)
+                            idx += 1
+                    if data["legacy_enabled"] and data["legacy_r_beta"] is not None:
+                        xdata_leg = (
+                            data["z_mm_legacy"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(lines) > idx:
+                            lines[idx].set_xdata(xdata_leg)
 
-            # β_x
-            axes[0].plot(
-                xdata,
-                data["core_r_beta"][:, 0],
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-            if data["driver_allowed"] and data["core_d_beta"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                axes[0].plot(
-                    xdata_d,
-                    data["core_d_beta"][:, 0],
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-            if data["legacy_enabled"] and data["legacy_r_beta"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                axes[0].plot(
-                    xdata_leg,
-                    data["legacy_r_beta"][:, 0],
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[0].set_xlabel(xlabel)
-            axes[0].set_ylabel("β⟨x⟩")
-            axes[0].set_title("Beta X Component")
-            axes[0].legend()
-            axes[0].grid(True, alpha=0.3)
-
-            # β_y
-            axes[1].plot(
-                xdata,
-                data["core_r_beta"][:, 1],
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-            if data["driver_allowed"] and data["core_d_beta"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                axes[1].plot(
-                    xdata_d,
-                    data["core_d_beta"][:, 1],
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-            if data["legacy_enabled"] and data["legacy_r_beta"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                axes[1].plot(
-                    xdata_leg,
-                    data["legacy_r_beta"][:, 1],
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[1].set_xlabel(xlabel)
-            axes[1].set_ylabel("β⟨y⟩")
-            axes[1].set_title("Beta Y Component")
-            axes[1].legend()
-            axes[1].grid(True, alpha=0.3)
-
-            # β_z
-            axes[2].plot(
-                xdata,
-                data["core_r_beta"][:, 2],
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-            if data["driver_allowed"] and data["core_d_beta"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                axes[2].plot(
-                    xdata_d,
-                    data["core_d_beta"][:, 2],
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-            if data["legacy_enabled"] and data["legacy_r_beta"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                axes[2].plot(
-                    xdata_leg,
-                    data["legacy_r_beta"][:, 2],
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[2].set_xlabel(xlabel)
-            axes[2].set_ylabel("β⟨z⟩")
-            axes[2].set_title("Beta Z Component")
-            axes[2].legend()
-            axes[2].grid(True, alpha=0.3)
-
-            # |β|
-            core_beta_mag = np.sqrt(np.sum(data["core_r_beta"] ** 2, axis=1))
-            axes[3].plot(xdata, core_beta_mag, color=COLOR_RIDER, label="Rider (Core)")
-            if data["driver_allowed"] and data["core_d_beta"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                driver_beta_mag = np.sqrt(np.sum(data["core_d_beta"] ** 2, axis=1))
-                axes[3].plot(
-                    xdata_d,
-                    driver_beta_mag,
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-            if data["legacy_enabled"] and data["legacy_r_beta"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                legacy_beta_mag = np.sqrt(np.sum(data["legacy_r_beta"] ** 2, axis=1))
-                axes[3].plot(
-                    xdata_leg,
-                    legacy_beta_mag,
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[3].set_xlabel(xlabel)
-            axes[3].set_ylabel("|β|")
-            axes[3].set_title("Beta Magnitude")
-            axes[3].legend()
-            axes[3].grid(True, alpha=0.3)
+                ax.set_xlabel(xlabel, fontsize=10)
+                ax.relim()
+                ax.autoscale_view(tight=True)
 
         elif plot_name == "momentum":
-            # Clear and replot momentum (now 2x3 grid with Pt and |P|)
-            for ax in axes:
-                ax.clear()
+            # Update momentum plot artists in-place for all 6 subplots
+            for i, ax in enumerate(axes[:6]):  # Process first 6 axes
+                lines = ax.get_lines()
+                if len(lines) > 0:
+                    lines[0].set_xdata(xdata)
+                    idx = 1
+                    if data["driver_allowed"] and data["core_d_momentum"] is not None:
+                        xdata_d = (
+                            data["z_mm_driver"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(lines) > idx:
+                            lines[idx].set_xdata(xdata_d)
+                            idx += 1
+                    if data["legacy_enabled"] and data["legacy_r_momentum"] is not None:
+                        xdata_leg = (
+                            data["z_mm_legacy"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(lines) > idx:
+                            lines[idx].set_xdata(xdata_leg)
 
-            # Pˣ
-            axes[0].plot(
-                xdata,
-                data["core_r_momentum"][:, 0],
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-            if data["driver_allowed"] and data["core_d_momentum"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                axes[0].plot(
-                    xdata_d,
-                    data["core_d_momentum"][:, 0],
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-            if data["legacy_enabled"] and data["legacy_r_momentum"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                axes[0].plot(
-                    xdata_leg,
-                    data["legacy_r_momentum"][:, 0],
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[0].set_xlabel(xlabel)
-            axes[0].set_ylabel("Pˣ (amu·mm/ns)")
-            axes[0].set_title("Conjugate Momentum Pˣ")
-            axes[0].legend()
-            axes[0].grid(True, alpha=0.3)
+                ax.set_xlabel(xlabel, fontsize=10)
+                ax.relim()
+                ax.autoscale_view(tight=True)
 
-            # Pʸ
-            axes[1].plot(
-                xdata,
-                data["core_r_momentum"][:, 1],
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-            if data["driver_allowed"] and data["core_d_momentum"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                axes[1].plot(
-                    xdata_d,
-                    data["core_d_momentum"][:, 1],
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-            if data["legacy_enabled"] and data["legacy_r_momentum"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                axes[1].plot(
-                    xdata_leg,
-                    data["legacy_r_momentum"][:, 1],
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[1].set_xlabel(xlabel)
-            axes[1].set_ylabel("Pʸ (amu·mm/ns)")
-            axes[1].set_title("Conjugate Momentum Pʸ")
-            axes[1].legend()
-            axes[1].grid(True, alpha=0.3)
+        elif plot_name == "gamma":
+            # Update gamma plot artists in-place
+            for i, ax in enumerate(axes):
+                collections = ax.collections
+                if len(collections) > 0:
+                    # Update rider core gamma scatter
+                    collections[0].set_offsets(np.c_[xdata, data["core_r_gamma"]])
+                    idx = 1
+                    if data["driver_allowed"] and data.get("core_d_gamma") is not None:
+                        xdata_d = (
+                            data["z_mm_driver"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(collections) > idx:
+                            collections[idx].set_offsets(
+                                np.c_[xdata_d, data["core_d_gamma"]]
+                            )
+                            idx += 1
+                    if (
+                        data["legacy_enabled"]
+                        and data.get("legacy_r_gamma") is not None
+                    ):
+                        xdata_leg = (
+                            data["z_mm_legacy"]
+                            if new_xaxis == "z"
+                            else data["times_ns"]
+                        )
+                        if len(collections) > idx:
+                            collections[idx].set_offsets(
+                                np.c_[xdata_leg, data["legacy_r_gamma"]]
+                            )
+                            idx += 1
+                        if (
+                            data["driver_allowed"]
+                            and data.get("legacy_d_gamma") is not None
+                            and i == 1
+                        ):
+                            xdata_leg_d = (
+                                data["z_mm_legacy_driver"]
+                                if new_xaxis == "z"
+                                else data["times_ns"]
+                            )
+                            if len(collections) > idx:
+                                collections[idx].set_offsets(
+                                    np.c_[xdata_leg_d, data["legacy_d_gamma"]]
+                                )
 
-            # Pᶻ
-            axes[2].plot(
-                xdata,
-                data["core_r_momentum"][:, 2],
-                color=COLOR_RIDER,
-                label="Rider (Core)",
-            )
-            if data["driver_allowed"] and data["core_d_momentum"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                axes[2].plot(
-                    xdata_d,
-                    data["core_d_momentum"][:, 2],
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
-                )
-            if data["legacy_enabled"] and data["legacy_r_momentum"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                axes[2].plot(
-                    xdata_leg,
-                    data["legacy_r_momentum"][:, 2],
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[2].set_xlabel(xlabel)
-            axes[2].set_ylabel("Pᶻ (amu·mm/ns)")
-            axes[2].set_title("Conjugate Momentum Pᶻ")
-            axes[2].legend()
-            axes[2].grid(True, alpha=0.3)
+                ax.set_xlabel(xlabel, fontsize=10)
+                ax.relim()
+                ax.autoscale_view(tight=True)
 
-            # |P⊥| (transverse momentum magnitude)
-            core_pt_mag = np.sqrt(
-                data["core_r_momentum"][:, 0] ** 2 + data["core_r_momentum"][:, 1] ** 2
-            )
-            axes[3].plot(xdata, core_pt_mag, color=COLOR_RIDER, label="Rider (Core)")
-            if data["driver_allowed"] and data["core_d_momentum"] is not None:
-                xdata_d = data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                driver_pt_mag = np.sqrt(
-                    data["core_d_momentum"][:, 0] ** 2
-                    + data["core_d_momentum"][:, 1] ** 2
+        # Restore original font sizes to prevent explosion
+        for i, ax in enumerate(axes):
+            if i < len(original_label_sizes):
+                ax.xaxis.label.set_fontsize(original_label_sizes[i])
+                ax.yaxis.label.set_fontsize(original_label_sizes[i])
+            if i < len(original_title_sizes):
+                ax.title.set_fontsize(original_title_sizes[i])
+            # Restore tick label sizes
+            if i < len(original_xtick_sizes):
+                ax.tick_params(
+                    axis="x", which="major", labelsize=original_xtick_sizes[i]
                 )
-                axes[3].plot(
-                    xdata_d,
-                    driver_pt_mag,
-                    color=COLOR_DRIVER,
-                    label="Driver (Core)",
+            if i < len(original_ytick_sizes):
+                ax.tick_params(
+                    axis="y", which="major", labelsize=original_ytick_sizes[i]
                 )
-            if data["legacy_enabled"] and data["legacy_r_momentum"] is not None:
-                xdata_leg = (
-                    data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                )
-                legacy_pt_mag = np.sqrt(
-                    data["legacy_r_momentum"][:, 0] ** 2
-                    + data["legacy_r_momentum"][:, 1] ** 2
-                )
-                axes[3].plot(
-                    xdata_leg,
-                    legacy_pt_mag,
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                )
-            axes[3].set_xlabel(xlabel)
-            axes[3].set_ylabel("|P⊥| (amu·mm/ns)")
-            axes[3].set_title("Transverse Momentum |P⊥|")
-            axes[3].legend()
-            axes[3].grid(True, alpha=0.3)
 
-            # Pᵗ (temporal/energy component)
-            if data.get("core_r_pt") is not None:
-                axes[4].plot(
-                    xdata,
-                    data["core_r_pt"],
-                    color=COLOR_RIDER,
-                    label="Rider (Core)",
-                )
-                if data["driver_allowed"] and data.get("core_d_pt") is not None:
-                    xdata_d = (
-                        data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                    )
-                    axes[4].plot(
-                        xdata_d,
-                        data["core_d_pt"],
-                        color=COLOR_DRIVER,
-                        label="Driver (Core)",
-                    )
-                if data["legacy_enabled"] and data.get("legacy_r_pt") is not None:
-                    xdata_leg = (
-                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                    )
-                    axes[4].plot(
-                        xdata_leg,
-                        data["legacy_r_pt"],
-                        color=COLOR_LEGACY_RIDER,
-                        linestyle="--",
-                        label="Rider (Legacy)",
-                    )
-                axes[4].set_xlabel(xlabel)
-                axes[4].set_ylabel("Pᵗ (amu·mm/ns)")
-                axes[4].set_title("Temporal Momentum Pᵗ (Energy/c)")
-                axes[4].legend()
-                axes[4].grid(True, alpha=0.3)
-
-            # |P| (total spatial momentum magnitude)
-            if len(axes) > 5:
-                core_p_mag = np.sqrt(
-                    data["core_r_momentum"][:, 0] ** 2
-                    + data["core_r_momentum"][:, 1] ** 2
-                    + data["core_r_momentum"][:, 2] ** 2
-                )
-                axes[5].plot(xdata, core_p_mag, color=COLOR_RIDER, label="Rider (Core)")
-                if data["driver_allowed"] and data["core_d_momentum"] is not None:
-                    xdata_d = (
-                        data["z_mm_driver"] if new_xaxis == "z" else data["times_ns"]
-                    )
-                    driver_p_mag = np.sqrt(
-                        data["core_d_momentum"][:, 0] ** 2
-                        + data["core_d_momentum"][:, 1] ** 2
-                        + data["core_d_momentum"][:, 2] ** 2
-                    )
-                    axes[5].plot(
-                        xdata_d,
-                        driver_p_mag,
-                        color=COLOR_DRIVER,
-                        label="Driver (Core)",
-                    )
-                if data["legacy_enabled"] and data["legacy_r_momentum"] is not None:
-                    xdata_leg = (
-                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                    )
-                    legacy_p_mag = np.sqrt(
-                        data["legacy_r_momentum"][:, 0] ** 2
-                        + data["legacy_r_momentum"][:, 1] ** 2
-                        + data["legacy_r_momentum"][:, 2] ** 2
-                    )
-                    axes[5].plot(
-                        xdata_leg,
-                        legacy_p_mag,
-                        color=COLOR_LEGACY_RIDER,
-                        linestyle="--",
-                        label="Rider (Legacy)",
-                    )
-                axes[5].set_xlabel(xlabel)
-                axes[5].set_ylabel("|P| (amu·mm/ns)")
-                axes[5].set_title("Total Spatial Momentum |P|")
-                axes[5].legend()
-                axes[5].grid(True, alpha=0.3)
-
-        # Restore original figure properties
-        figure.set_dpi(original_dpi)
-        figure.set_size_inches(original_size)
-
-        # Apply tight_layout with explicit font sizes set
-        try:
-            figure.tight_layout(pad=2.0)
-        except Exception:
-            pass  # Ignore layout errors
-
-        # Force canvas redraw with explicit size
+        # Force canvas redraw
         canvas.draw_idle()
-        canvas.get_tk_widget().update_idletasks()
 
     def _on_cancelled(self) -> None:
         self._running = False
@@ -3983,62 +3797,140 @@ class IntegratorGUI:
         controls_frame = ttk.Frame(main_frame, padding=5)
         controls_frame.pack(side=tk.TOP, fill=tk.X)
 
-        # Log scale controls
+        # Log scale controls - check if data is suitable for log scaling
         ttk.Label(controls_frame, text="Log scale:").pack(side=tk.LEFT, padx=(0, 5))
 
         x_log_var = tk.BooleanVar(value=False)
         y_log_var = tk.BooleanVar(value=False)
 
+        # Check if axes contain non-positive values
+        def check_axis_data_for_log(ax, axis="x"):
+            """Check if axis data is suitable for log scaling (all positive)."""
+            import numpy as np
+
+            try:
+                if axis == "x":
+                    # Check x-data from all artists
+                    for line in ax.get_lines():
+                        xdata = line.get_xdata()
+                        if len(xdata) > 0 and np.any(xdata <= 0):
+                            return False
+                    for coll in ax.collections:
+                        offsets = coll.get_offsets()
+                        if len(offsets) > 0 and np.any(offsets[:, 0] <= 0):
+                            return False
+                else:  # y-axis
+                    for line in ax.get_lines():
+                        ydata = line.get_ydata()
+                        if len(ydata) > 0 and np.any(ydata <= 0):
+                            return False
+                    for coll in ax.collections:
+                        offsets = coll.get_offsets()
+                        if len(offsets) > 0 and np.any(offsets[:, 1] <= 0):
+                            return False
+                return True
+            except Exception:
+                return False
+
+        # Check all axes for log scale suitability
+        x_log_suitable = all(
+            check_axis_data_for_log(ax, "x") for ax in figure.get_axes()
+        )
+        y_log_suitable = all(
+            check_axis_data_for_log(ax, "y") for ax in figure.get_axes()
+        )
+
         def toggle_log_scale() -> None:
             try:
-                from matplotlib.ticker import ScalarFormatter
+                import numpy as np
+                from matplotlib.ticker import LogFormatterSciNotation, ScalarFormatter
 
                 for ax in figure.get_axes():
                     if x_log_var.get():
-                        try:
-                            ax.set_xscale("log")
-                        except (ValueError, RuntimeWarning):
+                        if not check_axis_data_for_log(ax, "x"):
                             x_log_var.set(False)
                             _show_warning_dialog(
                                 window,
                                 "Log Scale Warning",
-                                "X-axis cannot be log-scaled (data may contain non-positive values)",
+                                "X-axis cannot be log-scaled: data contains non-positive values",
                             )
+                            return
+                        try:
+                            ax.set_xscale("log")
+                            # Use scientific notation for log scale
+                            formatter = LogFormatterSciNotation()
+                            ax.xaxis.set_major_formatter(formatter)
+                            ax.tick_params(axis="x", which="major", labelsize=9)
+                            ax.tick_params(axis="x", which="minor", labelsize=8)
+                        except Exception as e:
+                            x_log_var.set(False)
+                            _show_warning_dialog(
+                                window,
+                                "Log Scale Error",
+                                f"Failed to set X-axis log scale: {e}",
+                            )
+                            return
                     else:
                         ax.set_xscale("linear")
+                        formatter = ScalarFormatter()
+                        formatter.set_scientific(False)
+                        formatter.set_useOffset(False)
+                        ax.xaxis.set_major_formatter(formatter)
+                        ax.tick_params(axis="x", which="major", labelsize=9)
+
                     if y_log_var.get():
-                        try:
-                            ax.set_yscale("log")
-                            # Fix large tick labels in log scale
-                            formatter = ScalarFormatter()
-                            formatter.set_scientific(False)
-                            formatter.set_useOffset(False)
-                            ax.yaxis.set_major_formatter(formatter)
-                            ax.yaxis.set_minor_formatter(ScalarFormatter())
-                            ax.tick_params(axis="y", which="major", labelsize=9)
-                        except (ValueError, RuntimeWarning):
+                        if not check_axis_data_for_log(ax, "y"):
                             y_log_var.set(False)
                             _show_warning_dialog(
                                 window,
                                 "Log Scale Warning",
-                                "Y-axis cannot be log-scaled (data may contain non-positive values)",
+                                "Y-axis cannot be log-scaled: data contains non-positive values",
                             )
+                            return
+                        try:
+                            ax.set_yscale("log")
+                            # Use scientific notation for log scale
+                            formatter = LogFormatterSciNotation()
+                            ax.yaxis.set_major_formatter(formatter)
+                            ax.tick_params(axis="y", which="major", labelsize=9)
+                            ax.tick_params(axis="y", which="minor", labelsize=8)
+                        except Exception as e:
+                            y_log_var.set(False)
+                            _show_warning_dialog(
+                                window,
+                                "Log Scale Error",
+                                f"Failed to set Y-axis log scale: {e}",
+                            )
+                            return
                     else:
                         ax.set_yscale("linear")
-                        # Reset formatter
-                        ax.yaxis.set_major_formatter(ScalarFormatter())
-                        ax.tick_params(axis="y", which="major", labelsize=10)
-                canvas.draw()
+                        formatter = ScalarFormatter()
+                        formatter.set_scientific(False)
+                        formatter.set_useOffset(False)
+                        ax.yaxis.set_major_formatter(formatter)
+                        ax.tick_params(axis="y", which="major", labelsize=9)
+
+                    # Force axis relimiting after scale change
+                    ax.relim()
+                    ax.autoscale_view(tight=False)
+
+                canvas.draw_idle()
             except Exception as e:
                 self._append_log(f"Error toggling log scale: {e}")
 
-        ttk.Checkbutton(
+        x_log_check = ttk.Checkbutton(
             controls_frame, text="X-axis", variable=x_log_var, command=toggle_log_scale
-        ).pack(side=tk.LEFT, padx=5)
+        )
+        x_log_check.pack(side=tk.LEFT, padx=5)
+        if not x_log_suitable:
+            x_log_check.configure(state="disabled")
 
-        ttk.Checkbutton(
+        y_log_check = ttk.Checkbutton(
             controls_frame, text="Y-axis", variable=y_log_var, command=toggle_log_scale
-        ).pack(side=tk.LEFT, padx=5)
+        )
+        y_log_check.pack(side=tk.LEFT, padx=5)
+        if not y_log_suitable:
+            y_log_check.configure(state="disabled")
 
         # Separator
         ttk.Separator(controls_frame, orient=tk.VERTICAL).pack(
@@ -4046,19 +3938,28 @@ class IntegratorGUI:
         )
 
         # Add axis switching for applicable plots
-        plot_supports_axis_switch = plot_name in [
+        plot_supports_xaxis_switch = plot_name in [
             "beta",
             "momentum",
             "transverse",
             "zposition",
+            "energy",
+            "gamma",
         ]
-        if plot_supports_axis_switch and plot_name != "zposition":
+        plot_supports_yaxis_switch = plot_name == "energy"
+
+        if plot_supports_xaxis_switch and plot_name != "zposition":
             # Get current x-axis setting from the plot's x-label
             current_xaxis = "t"  # default
             try:
                 first_ax = figure.get_axes()[0]
                 xlabel = first_ax.get_xlabel().lower()
-                if "z position" in xlabel or "delta z" in xlabel:
+                if (
+                    "z position" in xlabel
+                    or "delta z" in xlabel
+                    or "δz" in xlabel
+                    or "z (mm)" in xlabel
+                ):
                     current_xaxis = "z"
                 elif "time" in xlabel:
                     current_xaxis = "t"
@@ -4067,9 +3968,18 @@ class IntegratorGUI:
 
             xaxis_var = tk.StringVar(value=current_xaxis)
 
+            # For energy plots, also set up Y-axis switching
+            yaxis_var = None
+            if plot_supports_yaxis_switch:
+                current_yaxis = getattr(
+                    self, "energy_yaxis_var", tk.StringVar(value="delta_total")
+                ).get()
+                yaxis_var = tk.StringVar(value=current_yaxis)
+
             def switch_xaxis() -> None:
                 """Regenerate the plot with a different x-axis."""
                 new_xaxis = xaxis_var.get()
+                new_yaxis = yaxis_var.get() if yaxis_var else None
                 try:
                     # Check if plot has data attached
                     if not hasattr(figure, "_lw_plot_data"):
@@ -4080,22 +3990,30 @@ class IntegratorGUI:
                             self.momentum_xaxis_var.set(new_xaxis)
                         elif plot_name == "transverse":
                             self.transverse_xaxis_var.set(new_xaxis)
+                        elif plot_name == "energy":
+                            self.energy_xaxis_var.set(new_xaxis)
+                            if new_yaxis:
+                                self.energy_yaxis_var.set(new_yaxis)
+                        elif plot_name == "gamma":
+                            self.gamma_xaxis_var.set(new_xaxis)
 
                         self._append_log(
-                            f"X-axis changed to '{new_xaxis}' for {plot_name} plot. Re-run simulation to see changes."
+                            f"Axis changed for {plot_name} plot. Re-run simulation to see changes."
                         )
                         window.after(
                             100,
                             lambda: _show_warning_dialog(
                                 window,
                                 "Axis Changed",
-                                f"X-axis preference saved. Please re-run the simulation to regenerate the {title} plot with the new axis.",
+                                f"Axis preference saved. Please re-run the simulation to regenerate the {title} plot with the new axes.",
                             ),
                         )
                         return
 
                     # Regenerate plot with new axis
-                    self._replot_with_new_axis(figure, plot_name, new_xaxis, canvas)
+                    self._replot_with_new_axis(
+                        figure, plot_name, new_xaxis, canvas, new_yaxis
+                    )
 
                     # Update preference for future runs
                     if plot_name == "beta":
@@ -4104,10 +4022,14 @@ class IntegratorGUI:
                         self.momentum_xaxis_var.set(new_xaxis)
                     elif plot_name == "transverse":
                         self.transverse_xaxis_var.set(new_xaxis)
+                    elif plot_name == "energy":
+                        self.energy_xaxis_var.set(new_xaxis)
+                        if new_yaxis:
+                            self.energy_yaxis_var.set(new_yaxis)
+                    elif plot_name == "gamma":
+                        self.gamma_xaxis_var.set(new_xaxis)
 
-                    self._append_log(
-                        f"X-axis changed to '{new_xaxis}' for {plot_name} plot."
-                    )
+                    self._append_log(f"Axis changed for {plot_name} plot.")
 
                 except Exception as e:
                     self._append_log(f"Error switching axis: {e}")
@@ -4125,6 +4047,21 @@ class IntegratorGUI:
             )
             xaxis_combo.pack(side=tk.LEFT, padx=5)
             xaxis_combo.bind("<<ComboboxSelected>>", lambda e: switch_xaxis())
+
+            # Add Y-axis control for energy plots
+            if plot_supports_yaxis_switch and yaxis_var:
+                ttk.Label(controls_frame, text="Y-axis:").pack(
+                    side=tk.LEFT, padx=(10, 5)
+                )
+                yaxis_combo = ttk.Combobox(
+                    controls_frame,
+                    textvariable=yaxis_var,
+                    values=["delta_total", "delta_z", "delta_x", "delta_y", "total"],
+                    width=12,
+                    state="readonly",
+                )
+                yaxis_combo.pack(side=tk.LEFT, padx=5)
+                yaxis_combo.bind("<<ComboboxSelected>>", lambda e: switch_xaxis())
 
         # Separator
         ttk.Separator(controls_frame, orient=tk.VERTICAL).pack(

@@ -225,6 +225,9 @@ class SimulationOptions:
     momentum_display: bool = False
     momentum_save: bool = False
     momentum_xaxis: str = "t"  # "t" or "z"
+    gamma_display: bool = False
+    gamma_save: bool = False
+    gamma_xaxis: str = "t"  # "t" or "z"
     zposition_display: bool = False
     zposition_save: bool = False
     trajectory_save: bool = False
@@ -317,6 +320,9 @@ class SimulationOptions:
             "momentum_display": self.momentum_display,
             "momentum_save": self.momentum_save,
             "momentum_xaxis": self.momentum_xaxis,
+            "gamma_display": self.gamma_display,
+            "gamma_save": self.gamma_save,
+            "gamma_xaxis": self.gamma_xaxis,
             "zposition_display": self.zposition_display,
             "zposition_save": self.zposition_save,
             "trajectory_save": self.trajectory_save,
@@ -437,6 +443,9 @@ class SimulationOptions:
             momentum_display=_bool("momentum_display", False),
             momentum_save=_bool("momentum_save", False),
             momentum_xaxis=str(payload.get("momentum_xaxis", "t")),
+            gamma_display=_bool("gamma_display", False),
+            gamma_save=_bool("gamma_save", False),
+            gamma_xaxis=str(payload.get("gamma_xaxis", "t")),
             zposition_display=_bool("zposition_display", False),
             zposition_save=_bool("zposition_save", False),
             trajectory_save=_bool("trajectory_save", False),
@@ -1077,14 +1086,35 @@ def run_testbed(
             rider_initial = initial_states.get("rider")
             rider_rest_mev = rest_energies.get("rider")
 
-            # Compute energy series - always get total for now
-            rider_delta_e, rider_z = compute_delta_energy_series(
-                rider_states,
-                rider_initial,
-                rider_rest_mev,
+            # Compute energy series with all components for plotting
+            rider_delta_e_total, rider_delta_e_z, rider_z = (
+                compute_delta_energy_components(
+                    rider_states,
+                    rider_initial,
+                    rider_rest_mev,
+                )
             )
-            rider_delta_e_z = None
+            rider_delta_e = rider_delta_e_total  # For backward compatibility
             rider_z_rel = rider_z - rider_z[0]
+
+            # Compute transverse energy components
+            rider_gamma_series = np.array([float(s["gamma"][0]) for s in rider_states])
+            rider_bx_series = np.array([float(s["bx"][0]) for s in rider_states])
+            rider_by_series = np.array([float(s["by"][0]) for s in rider_states])
+            rider_initial_gamma = float(rider_initial["gamma"][0])
+            rider_initial_bx = float(rider_initial["bx"][0])
+            rider_initial_by = float(rider_initial["by"][0])
+            rider_rest_gev = rider_rest_mev * 1e-3
+
+            rider_delta_e_x = (
+                rider_gamma_series * rider_bx_series
+                - rider_initial_gamma * rider_initial_bx
+            ) * rider_rest_gev
+            rider_delta_e_y = (
+                rider_gamma_series * rider_by_series
+                - rider_initial_gamma * rider_initial_by
+            ) * rider_rest_gev
+            rider_e_total = rider_gamma_series * rider_rest_gev
 
             # Extract values for RunResult
             if rider_delta_e is not None and len(rider_delta_e) > 0:
@@ -1164,14 +1194,37 @@ def run_testbed(
                 driver_initial = initial_states.get("driver")
                 driver_rest_mev = rest_energies.get("driver")
 
-                # Compute energy series - always get total for now
-                driver_delta_e, driver_z = compute_delta_energy_series(
-                    driver_states,
-                    driver_initial,
-                    driver_rest_mev,
+                # Compute energy series with all components for plotting
+                driver_delta_e_total, driver_delta_e_z, driver_z = (
+                    compute_delta_energy_components(
+                        driver_states,
+                        driver_initial,
+                        driver_rest_mev,
+                    )
                 )
-                driver_delta_e_z = None
+                driver_delta_e = driver_delta_e_total  # For backward compatibility
                 driver_z_rel = driver_z - driver_z[0]
+
+                # Compute transverse energy components
+                driver_gamma_series = np.array(
+                    [float(s["gamma"][0]) for s in driver_states]
+                )
+                driver_bx_series = np.array([float(s["bx"][0]) for s in driver_states])
+                driver_by_series = np.array([float(s["by"][0]) for s in driver_states])
+                driver_initial_gamma = float(driver_initial["gamma"][0])
+                driver_initial_bx = float(driver_initial["bx"][0])
+                driver_initial_by = float(driver_initial["by"][0])
+                driver_rest_gev = driver_rest_mev * 1e-3
+
+                driver_delta_e_x = (
+                    driver_gamma_series * driver_bx_series
+                    - driver_initial_gamma * driver_initial_bx
+                ) * driver_rest_gev
+                driver_delta_e_y = (
+                    driver_gamma_series * driver_by_series
+                    - driver_initial_gamma * driver_initial_by
+                ) * driver_rest_gev
+                driver_e_total = driver_gamma_series * driver_rest_gev
             except Exception as exc:  # pragma: no cover - defensive guard
                 _log(f"Failed to compute driver energy series: {exc}")
                 _log(
@@ -1283,9 +1336,9 @@ def run_testbed(
                             label="Legacy",
                             **SCATTER_STYLE,
                         )
-                axes[0].set_xlabel("Δz (mm)")
+                axes[0].set_xlabel("z position (mm)")
                 axes[0].set_ylabel("ΔE (GeV)")
-                axes[0].set_title("Rider ΔE vs Δz", pad=10)
+                axes[0].set_title("Rider ΔE vs z", pad=10)
                 axes[0].grid(True, alpha=0.3)
                 axes[0].tick_params(axis="both", which="major", labelsize=10)
                 axes[0].tick_params(axis="both", which="minor", labelsize=8)
@@ -1333,9 +1386,9 @@ def run_testbed(
                                 label="Legacy",
                                 **SCATTER_STYLE,
                             )
-                    axes[1].set_xlabel("Δz (mm)")
+                    axes[1].set_xlabel("z position (mm)")
                     axes[1].set_ylabel("ΔE (GeV)")
-                    axes[1].set_title("Driver ΔE vs Δz", pad=10)
+                    axes[1].set_title("Driver ΔE vs z", pad=10)
                     axes[1].grid(True, alpha=0.3)
                     axes[1].tick_params(axis="both", which="major", labelsize=10)
                     axes[1].tick_params(axis="both", which="minor", labelsize=8)
@@ -1387,6 +1440,39 @@ def run_testbed(
                     else None,
                     "driver_allowed": driver_allowed,
                     "legacy_enabled": legacy_enabled,
+                    # Energy components for Y-axis switching
+                    "energy_components": {
+                        "delta_total_r": rider_delta_e_total[valid_mask]
+                        if np.any(valid_mask)
+                        else np.array([]),
+                        "delta_z_r": rider_delta_e_z[valid_mask]
+                        if np.any(valid_mask)
+                        else np.array([]),
+                        "delta_x_r": rider_delta_e_x[valid_mask]
+                        if np.any(valid_mask)
+                        else np.array([]),
+                        "delta_y_r": rider_delta_e_y[valid_mask]
+                        if np.any(valid_mask)
+                        else np.array([]),
+                        "total_r": rider_e_total[valid_mask]
+                        if np.any(valid_mask)
+                        else np.array([]),
+                        "delta_total_d": driver_delta_e_total[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None,
+                        "delta_z_d": driver_delta_e_z[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None,
+                        "delta_x_d": driver_delta_e_x[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None,
+                        "delta_y_d": driver_delta_e_y[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None,
+                        "total_d": driver_e_total[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None,
+                    },
                 }
 
                 fig_energy.tight_layout(pad=2.5, w_pad=3.0, h_pad=2.5)
@@ -1431,20 +1517,19 @@ def run_testbed(
             else:
                 axes = list(axes_overlay)
 
-            axes[0].plot(
+            axes[0].scatter(
                 rider_z_rel,
                 rider_delta_e,
                 color=COLOR_RIDER,
                 label="Core",
-                linewidth=2.0,
+                **SCATTER_STYLE,
             )
-            axes[0].plot(
+            axes[0].scatter(
                 legacy_rider_z_rel,
                 legacy_rider_delta_e,
                 color=COLOR_LEGACY_RIDER,
                 label="Legacy",
-                linewidth=2.0,
-                linestyle="--",
+                **SCATTER_STYLE,
             )
             axes[0].set_xlabel("Δz (mm)")
             axes[0].set_ylabel("ΔE (GeV)")
@@ -1459,20 +1544,19 @@ def run_testbed(
                 and legacy_driver_z_rel is not None
                 and len(axes) > 1
             ):
-                axes[1].plot(
+                axes[1].scatter(
                     driver_z_rel,
                     driver_delta_e,
                     color=COLOR_DRIVER,
                     label="Core",
-                    linewidth=2.0,
+                    **SCATTER_STYLE,
                 )
-                axes[1].plot(
+                axes[1].scatter(
                     legacy_driver_z_rel,
                     legacy_driver_delta_e,
                     color=COLOR_LEGACY_DRIVER,
                     label="Legacy",
-                    linewidth=2.0,
-                    linestyle="--",
+                    **SCATTER_STYLE,
                 )
                 axes[1].set_xlabel("Δz (mm)")
                 axes[1].set_ylabel("ΔE (GeV)")
@@ -1611,22 +1695,28 @@ def run_testbed(
             r_delta_x = (core_r_hist[:, 1] - legacy_r_hist[:, 1]) * 1e3
             r_delta_y = (core_r_hist[:, 2] - legacy_r_hist[:, 2]) * 1e3
             r_delta_z = (core_r_hist[:, 3] - legacy_r_hist[:, 3]) * 1e3
-            axes[0].plot(
-                plot_times_ns, r_delta_x, label="Delta x (mm)", color=COLOR_DIFF_RIDER
+            axes[0].scatter(
+                plot_times_ns,
+                r_delta_x,
+                label="Delta x (mm)",
+                color=COLOR_DIFF_RIDER,
+                **SCATTER_STYLE,
             )
-            axes[0].plot(
+            axes[0].scatter(
                 plot_times_ns,
                 r_delta_y,
                 label="Delta y (mm)",
                 color=COLOR_DIFF_RIDER,
-                linestyle="--",
+                marker="^",
+                **SCATTER_STYLE,
             )
-            axes[0].plot(
+            axes[0].scatter(
                 plot_times_ns,
                 r_delta_z,
                 label="Delta z (mm)",
                 color=COLOR_DIFF_RIDER,
-                linestyle=":",
+                marker="s",
+                **SCATTER_STYLE,
             )
             axes[0].set_xlabel("Time (ns)")
             axes[0].set_ylabel("Δ position (mm)")
@@ -1643,25 +1733,28 @@ def run_testbed(
                 d_delta_x = (core_d_hist[:, 1] - legacy_d_hist[:, 1]) * 1e3
                 d_delta_y = (core_d_hist[:, 2] - legacy_d_hist[:, 2]) * 1e3
                 d_delta_z = (core_d_hist[:, 3] - legacy_d_hist[:, 3]) * 1e3
-                axes[1].plot(
+                axes[1].scatter(
                     plot_times_ns,
                     d_delta_x,
                     label="Delta x (mm)",
                     color=COLOR_DIFF_DRIVER,
+                    **SCATTER_STYLE,
                 )
-                axes[1].plot(
+                axes[1].scatter(
                     plot_times_ns,
                     d_delta_y,
                     label="Delta y (mm)",
                     color=COLOR_DIFF_DRIVER,
-                    linestyle="--",
+                    marker="^",
+                    **SCATTER_STYLE,
                 )
-                axes[1].plot(
+                axes[1].scatter(
                     plot_times_ns,
                     d_delta_z,
                     label="Delta z (mm)",
                     color=COLOR_DIFF_DRIVER,
-                    linestyle=":",
+                    marker="s",
+                    **SCATTER_STYLE,
                 )
                 axes[1].set_xlabel("Time (ns)")
                 axes[1].set_ylabel("Δ position (mm)")
@@ -1718,72 +1811,76 @@ def run_testbed(
                 xdata = plot_times_ns
                 xlabel = "Time (ns)"
 
-            ax_x.plot(
+            ax_x.scatter(
                 xdata,
                 core_r_hist[:, 1] * 1e3,
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
-            ax_y.plot(
+            ax_y.scatter(
                 xdata,
                 core_r_hist[:, 2] * 1e3,
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_hist is not None:
                 if transverse_xaxis == "z":
                     xdata_d = core_d_hist[:, 3]
                 else:
                     xdata_d = plot_times_ns
-                ax_x.plot(
+                ax_x.scatter(
                     xdata_d,
                     core_d_hist[:, 1] * 1e3,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
-                ax_y.plot(
+                ax_y.scatter(
                     xdata_d,
                     core_d_hist[:, 2] * 1e3,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_hist is not None:
                 if transverse_xaxis == "z":
                     xdata_leg = legacy_r_hist[:, 3]
                 else:
                     xdata_leg = plot_times_ns
-                ax_x.plot(
+                ax_x.scatter(
                     xdata_leg,
                     legacy_r_hist[:, 1] * 1e3,
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
-                ax_y.plot(
+                ax_y.scatter(
                     xdata_leg,
                     legacy_r_hist[:, 2] * 1e3,
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
                 if driver_allowed and legacy_d_hist is not None:
                     if transverse_xaxis == "z":
                         xdata_leg_d = legacy_d_hist[:, 3]
                     else:
                         xdata_leg_d = plot_times_ns
-                    ax_x.plot(
+                    ax_x.scatter(
                         xdata_leg_d,
                         legacy_d_hist[:, 1] * 1e3,
                         color=COLOR_LEGACY_DRIVER,
-                        linestyle="--",
                         label="Driver (Legacy)",
+                        **SCATTER_STYLE,
                     )
-                    ax_y.plot(
+                    ax_y.scatter(
                         xdata_leg_d,
                         legacy_d_hist[:, 2] * 1e3,
                         color=COLOR_LEGACY_DRIVER,
-                        linestyle="--",
                         label="Driver (Legacy)",
+                        **SCATTER_STYLE,
                     )
             ax_x.set_xlabel(xlabel)
             ax_x.set_ylabel("Average x (mm)")
@@ -1848,11 +1945,12 @@ def run_testbed(
                 xlabel_beta = "Time (ns)"
 
             # β_x
-            axes_beta[0].plot(
+            axes_beta[0].scatter(
                 xdata_beta,
                 core_r_beta[:, 0],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_beta is not None:
                 if beta_xaxis == "z":
@@ -1861,11 +1959,12 @@ def run_testbed(
                     )
                 else:
                     xdata_beta_d = plot_times_ns
-                axes_beta[0].plot(
+                axes_beta[0].scatter(
                     xdata_beta_d,
                     core_d_beta[:, 0],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_beta is not None:
                 if beta_xaxis == "z":
@@ -1874,12 +1973,12 @@ def run_testbed(
                     )
                 else:
                     xdata_beta_leg = plot_times_ns
-                axes_beta[0].plot(
+                axes_beta[0].scatter(
                     xdata_beta_leg,
                     legacy_r_beta[:, 0],
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_beta[0].set_xlabel(xlabel_beta)
             axes_beta[0].set_ylabel("β⟨x⟩")
@@ -1888,26 +1987,28 @@ def run_testbed(
             axes_beta[0].grid(True, alpha=0.3)
 
             # β_y
-            axes_beta[1].plot(
+            axes_beta[1].scatter(
                 xdata_beta,
                 core_r_beta[:, 1],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_beta is not None:
-                axes_beta[1].plot(
+                axes_beta[1].scatter(
                     xdata_beta_d,
                     core_d_beta[:, 1],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_beta is not None:
-                axes_beta[1].plot(
+                axes_beta[1].scatter(
                     xdata_beta_leg,
                     legacy_r_beta[:, 1],
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_beta[1].set_xlabel(xlabel_beta)
             axes_beta[1].set_ylabel("β⟨y⟩")
@@ -1916,26 +2017,28 @@ def run_testbed(
             axes_beta[1].grid(True, alpha=0.3)
 
             # β_z
-            axes_beta[2].plot(
+            axes_beta[2].scatter(
                 xdata_beta,
                 core_r_beta[:, 2],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_beta is not None:
-                axes_beta[2].plot(
+                axes_beta[2].scatter(
                     xdata_beta_d,
                     core_d_beta[:, 2],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_beta is not None:
-                axes_beta[2].plot(
+                axes_beta[2].scatter(
                     xdata_beta_leg,
                     legacy_r_beta[:, 2],
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_beta[2].set_xlabel(xlabel_beta)
             axes_beta[2].set_ylabel("β⟨z⟩")
@@ -1945,25 +2048,30 @@ def run_testbed(
 
             # |β| (magnitude)
             core_beta_mag = np.sqrt(np.sum(core_r_beta**2, axis=1))
-            axes_beta[3].plot(
-                xdata_beta, core_beta_mag, color=COLOR_RIDER, label="Rider (Core)"
+            axes_beta[3].scatter(
+                xdata_beta,
+                core_beta_mag,
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_beta is not None:
                 driver_beta_mag = np.sqrt(np.sum(core_d_beta**2, axis=1))
-                axes_beta[3].plot(
+                axes_beta[3].scatter(
                     xdata_beta_d,
                     driver_beta_mag,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_beta is not None:
                 legacy_beta_mag = np.sqrt(np.sum(legacy_r_beta**2, axis=1))
-                axes_beta[3].plot(
+                axes_beta[3].scatter(
                     xdata_beta_leg,
                     legacy_beta_mag,
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_beta[3].set_xlabel(xlabel_beta)
             axes_beta[3].set_ylabel("|β|")
@@ -2027,11 +2135,12 @@ def run_testbed(
                 xlabel_mom = "Time (ns)"
 
             # P_x (conjugate momentum)
-            axes_mom[0].plot(
+            axes_mom[0].scatter(
                 xdata_mom,
                 core_r_momentum[:, 0],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_momentum is not None:
                 if momentum_xaxis == "z":
@@ -2040,11 +2149,12 @@ def run_testbed(
                     )
                 else:
                     xdata_mom_d = plot_times_ns
-                axes_mom[0].plot(
+                axes_mom[0].scatter(
                     xdata_mom_d,
                     core_d_momentum[:, 0],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_momentum is not None:
                 if momentum_xaxis == "z":
@@ -2053,12 +2163,12 @@ def run_testbed(
                     )
                 else:
                     xdata_mom_leg = plot_times_ns
-                axes_mom[0].plot(
+                axes_mom[0].scatter(
                     xdata_mom_leg,
                     legacy_r_momentum[:, 0],
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_mom[0].set_xlabel(xlabel_mom)
             axes_mom[0].set_ylabel("Pˣ (amu·mm/ns)")
@@ -2067,26 +2177,28 @@ def run_testbed(
             axes_mom[0].grid(True, alpha=0.3)
 
             # P_y
-            axes_mom[1].plot(
+            axes_mom[1].scatter(
                 xdata_mom,
                 core_r_momentum[:, 1],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_momentum is not None:
-                axes_mom[1].plot(
+                axes_mom[1].scatter(
                     xdata_mom_d,
                     core_d_momentum[:, 1],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_momentum is not None:
-                axes_mom[1].plot(
+                axes_mom[1].scatter(
                     xdata_mom_leg,
                     legacy_r_momentum[:, 1],
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_mom[1].set_xlabel(xlabel_mom)
             axes_mom[1].set_ylabel("Pʸ (amu·mm/ns)")
@@ -2095,26 +2207,28 @@ def run_testbed(
             axes_mom[1].grid(True, alpha=0.3)
 
             # P_z
-            axes_mom[2].plot(
+            axes_mom[2].scatter(
                 xdata_mom,
                 core_r_momentum[:, 2],
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_momentum is not None:
-                axes_mom[2].plot(
+                axes_mom[2].scatter(
                     xdata_mom_d,
                     core_d_momentum[:, 2],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_momentum is not None:
-                axes_mom[2].plot(
+                axes_mom[2].scatter(
                     xdata_mom_leg,
                     legacy_r_momentum[:, 2],
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_mom[2].set_xlabel(xlabel_mom)
             axes_mom[2].set_ylabel("Pᶻ (amu·mm/ns)")
@@ -2126,29 +2240,34 @@ def run_testbed(
             core_pt_mag = np.sqrt(
                 core_r_momentum[:, 0] ** 2 + core_r_momentum[:, 1] ** 2
             )
-            axes_mom[3].plot(
-                xdata_mom, core_pt_mag, color=COLOR_RIDER, label="Rider (Core)"
+            axes_mom[3].scatter(
+                xdata_mom,
+                core_pt_mag,
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_momentum is not None:
                 driver_pt_mag = np.sqrt(
                     core_d_momentum[:, 0] ** 2 + core_d_momentum[:, 1] ** 2
                 )
-                axes_mom[3].plot(
+                axes_mom[3].scatter(
                     xdata_mom_d,
                     driver_pt_mag,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_momentum is not None:
                 legacy_pt_mag = np.sqrt(
                     legacy_r_momentum[:, 0] ** 2 + legacy_r_momentum[:, 1] ** 2
                 )
-                axes_mom[3].plot(
+                axes_mom[3].scatter(
                     xdata_mom_leg,
                     legacy_pt_mag,
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_mom[3].set_xlabel(xlabel_mom)
             axes_mom[3].set_ylabel("|P⊥| (amu·mm/ns)")
@@ -2157,26 +2276,28 @@ def run_testbed(
             axes_mom[3].grid(True, alpha=0.3)
 
             # P_t (temporal/energy component)
-            axes_mom[4].plot(
+            axes_mom[4].scatter(
                 xdata_mom,
                 core_r_pt,
                 color=COLOR_RIDER,
                 label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_pt is not None:
-                axes_mom[4].plot(
+                axes_mom[4].scatter(
                     xdata_mom_d,
                     core_d_pt,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_pt is not None:
-                axes_mom[4].plot(
+                axes_mom[4].scatter(
                     xdata_mom_leg,
                     legacy_r_pt,
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_mom[4].set_xlabel(xlabel_mom)
             axes_mom[4].set_ylabel("Pᵗ (amu·mm/ns)")
@@ -2190,8 +2311,12 @@ def run_testbed(
                 + core_r_momentum[:, 1] ** 2
                 + core_r_momentum[:, 2] ** 2
             )
-            axes_mom[5].plot(
-                xdata_mom, core_p_mag, color=COLOR_RIDER, label="Rider (Core)"
+            axes_mom[5].scatter(
+                xdata_mom,
+                core_p_mag,
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+                **SCATTER_STYLE,
             )
             if driver_allowed and core_d_momentum is not None:
                 driver_p_mag = np.sqrt(
@@ -2199,11 +2324,12 @@ def run_testbed(
                     + core_d_momentum[:, 1] ** 2
                     + core_d_momentum[:, 2] ** 2
                 )
-                axes_mom[5].plot(
+                axes_mom[5].scatter(
                     xdata_mom_d,
                     driver_p_mag,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
+                    **SCATTER_STYLE,
                 )
             if legacy_enabled and legacy_r_momentum is not None:
                 legacy_p_mag = np.sqrt(
@@ -2211,12 +2337,12 @@ def run_testbed(
                     + legacy_r_momentum[:, 1] ** 2
                     + legacy_r_momentum[:, 2] ** 2
                 )
-                axes_mom[5].plot(
+                axes_mom[5].scatter(
                     xdata_mom_leg,
                     legacy_p_mag,
                     color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
                     label="Rider (Legacy)",
+                    **SCATTER_STYLE,
                 )
             axes_mom[5].set_xlabel(xlabel_mom)
             axes_mom[5].set_ylabel("|P| (amu·mm/ns)")
@@ -2233,6 +2359,168 @@ def run_testbed(
                 figures["momentum"] = fig_momentum
             else:
                 plt.close(fig_momentum)
+
+        # Gamma (Lorentz factor) plot
+        gamma_display = getattr(options, "gamma_display", False)
+        gamma_save = getattr(options, "gamma_save", False)
+        gamma_xaxis = getattr(options, "gamma_xaxis", "t")
+        if (gamma_display or gamma_save) and core_r_hist is not None:
+            _log(f"Generating gamma plot (display={gamma_display}, save={gamma_save})")
+
+            # Extract gamma from states
+            core_r_gamma = np.array([float(s["gamma"][0]) for s in rider_states])
+
+            core_d_gamma = None
+            if driver_allowed and driver_states is not None:
+                core_d_gamma = np.array([float(s["gamma"][0]) for s in driver_states])
+
+            legacy_r_gamma = None
+            if legacy_enabled and legacy_rider_states is not None:
+                legacy_r_gamma = np.array(
+                    [float(s["gamma"][0]) for s in legacy_rider_states]
+                )
+
+            legacy_d_gamma = None
+            if (
+                legacy_enabled
+                and driver_allowed
+                and legacy_traj
+                and "driver" in legacy_traj
+            ):
+                legacy_d_gamma = np.array(
+                    [float(s["gamma"][0]) for s in legacy_traj["driver"]]
+                )
+
+            fig_gamma, axes_gamma = plt.subplots(
+                1,
+                2 if driver_allowed else 1,
+                figsize=(16 if driver_allowed else 8, 6),
+                dpi=options.plot_dpi,
+            )
+            if not isinstance(axes_gamma, np.ndarray):
+                axes_gamma = [axes_gamma]
+            else:
+                axes_gamma = list(axes_gamma)
+
+            # Determine x-axis data
+            if gamma_xaxis == "z":
+                xdata_gamma = plot_z_mm
+                xlabel_gamma = "z position (mm)"
+            else:
+                xdata_gamma = plot_times_ns
+                xlabel_gamma = "Time (ns)"
+
+            # Rider gamma
+            axes_gamma[0].scatter(
+                xdata_gamma,
+                core_r_gamma,
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+                **SCATTER_STYLE,
+            )
+
+            if driver_allowed and core_d_gamma is not None:
+                if gamma_xaxis == "z":
+                    xdata_gamma_d = (
+                        core_d_hist[:, 3] if core_d_hist is not None else plot_z_mm
+                    )
+                else:
+                    xdata_gamma_d = plot_times_ns
+                axes_gamma[0].scatter(
+                    xdata_gamma_d,
+                    core_d_gamma,
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                    **SCATTER_STYLE,
+                )
+
+            if legacy_enabled and legacy_r_gamma is not None:
+                if gamma_xaxis == "z":
+                    xdata_gamma_leg = (
+                        legacy_r_hist[:, 3] if legacy_r_hist is not None else plot_z_mm
+                    )
+                else:
+                    xdata_gamma_leg = plot_times_ns
+                axes_gamma[0].scatter(
+                    xdata_gamma_leg,
+                    legacy_r_gamma,
+                    color=COLOR_LEGACY_RIDER,
+                    label="Rider (Legacy)",
+                    **SCATTER_STYLE,
+                )
+
+            axes_gamma[0].set_xlabel(xlabel_gamma)
+            axes_gamma[0].set_ylabel("γ (Lorentz factor)")
+            axes_gamma[0].set_title("Rider Lorentz Factor γ", pad=10)
+            axes_gamma[0].legend()
+            axes_gamma[0].grid(True, alpha=0.3)
+
+            # Driver gamma (if present)
+            if driver_allowed and len(axes_gamma) > 1:
+                if core_d_gamma is not None:
+                    axes_gamma[1].scatter(
+                        xdata_gamma_d,
+                        core_d_gamma,
+                        color=COLOR_DRIVER,
+                        label="Core",
+                        **SCATTER_STYLE,
+                    )
+
+                if legacy_enabled and legacy_d_gamma is not None:
+                    if gamma_xaxis == "z":
+                        xdata_gamma_leg_d = (
+                            legacy_d_hist[:, 3]
+                            if legacy_d_hist is not None
+                            else plot_z_mm
+                        )
+                    else:
+                        xdata_gamma_leg_d = plot_times_ns
+                    axes_gamma[1].scatter(
+                        xdata_gamma_leg_d,
+                        legacy_d_gamma,
+                        color=COLOR_LEGACY_DRIVER,
+                        label="Legacy",
+                        **SCATTER_STYLE,
+                    )
+
+                axes_gamma[1].set_xlabel(xlabel_gamma)
+                axes_gamma[1].set_ylabel("γ (Lorentz factor)")
+                axes_gamma[1].set_title("Driver Lorentz Factor γ", pad=10)
+                axes_gamma[1].legend()
+                axes_gamma[1].grid(True, alpha=0.3)
+
+            # Attach metadata for interactive replotting
+            fig_gamma._lw_plot_data = {
+                "plot_type": "gamma",
+                "times_ns": plot_times_ns,
+                "z_mm": plot_z_mm,
+                "z_mm_driver": core_d_hist[:, 3]
+                if driver_allowed and core_d_hist is not None
+                else None,
+                "z_mm_legacy": legacy_r_hist[:, 3]
+                if legacy_enabled and legacy_r_hist is not None
+                else None,
+                "z_mm_legacy_driver": legacy_d_hist[:, 3]
+                if legacy_enabled and driver_allowed and legacy_d_hist is not None
+                else None,
+                "core_r_gamma": core_r_gamma,
+                "core_d_gamma": core_d_gamma,
+                "legacy_r_gamma": legacy_r_gamma,
+                "legacy_d_gamma": legacy_d_gamma,
+                "driver_allowed": driver_allowed,
+                "legacy_enabled": legacy_enabled,
+            }
+
+            fig_gamma.tight_layout(pad=2.5, w_pad=3.0, h_pad=2.5)
+            if gamma_save and should_save:
+                gamma_path = output_dir / f"{filename_base}_gamma.png"
+                fig_gamma.savefig(gamma_path)
+                saved_paths["gamma"] = gamma_path
+                _log(f"Saved gamma plot to: {gamma_path}")
+            if gamma_display:
+                figures["gamma"] = fig_gamma
+            else:
+                plt.close(fig_gamma)
 
         # Z-position vs time plot
         zposition_display = getattr(options, "zposition_display", False)
