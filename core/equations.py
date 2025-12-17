@@ -78,6 +78,7 @@ import numpy as np
 
 from .constants import C_MMNS
 from .distances import (
+    ChronoMatchResult,
     chrono_match_indices,
     compute_instantaneous_distance,
     compute_retarded_distance,
@@ -261,7 +262,8 @@ def _compute_full_retarded_distance(
     time_step_idx: int,
     particle_idx: int,
     chrono_mode: ChronoMatchingMode,
-) -> tuple[dict, np.ndarray]:
+    self_consistency: Optional[SelfConsistencyConfig] = None,
+) -> tuple[dict, np.ndarray, Optional[ChronoMatchResult]]:
     """Compute retarded distance using full chronological matching.
 
     This uses the complete trajectory history to find the proper retarded time
@@ -269,16 +271,38 @@ def _compute_full_retarded_distance(
 
     Returns
     -------
-    tuple[dict, np.ndarray]
-        A tuple of (nhat dictionary, bounded_indices array).
+    tuple[dict, np.ndarray, Optional[ChronoMatchResult]]
+        A tuple of (nhat dictionary, bounded_indices array, chrono_match_result).
+        chrono_match_result is None if interpolation is disabled.
     """
-    retarded_indices = chrono_match_indices(
+    # Check if chrono-match interpolation is enabled
+    chrono_interpolate = False
+    chrono_tolerance = 1e-3
+    verbosity = 0
+
+    if self_consistency is not None:
+        chrono_interpolate = self_consistency.chrono_interpolate
+        chrono_tolerance = self_consistency.chrono_tolerance
+        verbosity = self_consistency.verbosity
+
+    retarded_result = chrono_match_indices(
         trajectory,
         trajectory_ext,
         time_step_idx,
         particle_idx,
         mode=chrono_mode,
+        interpolate=chrono_interpolate,
+        tolerance=chrono_tolerance,
+        verbosity=verbosity,
     )
+
+    # Handle both legacy (array) and new (ChronoMatchResult) returns
+    if isinstance(retarded_result, ChronoMatchResult):
+        retarded_indices = retarded_result.indices
+        chrono_match_result = retarded_result
+    else:
+        retarded_indices = retarded_result
+        chrono_match_result = None
 
     max_external_idx = len(trajectory_ext) - 1
     indices_bounded = np.minimum(np.maximum(retarded_indices, 0), max_external_idx)
@@ -291,7 +315,7 @@ def _compute_full_retarded_distance(
         indices_bounded,
     )
 
-    return nhat, indices_bounded
+    return nhat, indices_bounded, chrono_match_result
 
 
 def _calculate_travel_distance(
@@ -878,6 +902,7 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 2: Compute retarded distances to external sources
             # ================================================================
+            chrono_result: Optional[ChronoMatchResult] = None
             if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
                 nhat, indices_bounded = _compute_approximate_retarded_distance(
                     observer_state,
@@ -894,20 +919,26 @@ def retarded_equations_of_motion(
                     # Create temporary trajectory for retarded distance calculation
                     temp_trajectory = trajectory.copy()
                     temp_trajectory[index_traj] = observer_state
-                    nhat, indices_bounded = _compute_full_retarded_distance(
-                        temp_trajectory,
-                        trajectory_ext,
-                        index_traj,
-                        observer_particle_idx,
-                        chrono_mode,
+                    nhat, indices_bounded, chrono_result = (
+                        _compute_full_retarded_distance(
+                            temp_trajectory,
+                            trajectory_ext,
+                            index_traj,
+                            observer_particle_idx,
+                            chrono_mode,
+                            self_consistency,
+                        )
                     )
                 else:
-                    nhat, indices_bounded = _compute_full_retarded_distance(
-                        trajectory,
-                        trajectory_ext,
-                        index_traj,
-                        particle_idx,
-                        chrono_mode,
+                    nhat, indices_bounded, chrono_result = (
+                        _compute_full_retarded_distance(
+                            trajectory,
+                            trajectory_ext,
+                            index_traj,
+                            particle_idx,
+                            chrono_mode,
+                            self_consistency,
+                        )
                     )
 
             # Initialize position and time from current_state
@@ -952,11 +983,21 @@ def retarded_equations_of_motion(
             # STEP 4: Compute and accumulate external force contributions
             # ================================================================
             if apply_forces and nhat["R"].size > 0:
-                # Gather external particle data at retarded times
-                external_samples = gather_external_samples(
-                    trajectory_ext,
-                    indices_bounded,
-                )
+                # Gather external particle data at retarded times (with interpolation if enabled)
+                if chrono_result is not None:
+                    # Use interpolation
+                    external_samples = gather_external_samples(
+                        trajectory_ext,
+                        indices_bounded,
+                        indices_next=chrono_result.indices_next,
+                        weights=chrono_result.weights,
+                    )
+                else:
+                    # Legacy path: no interpolation
+                    external_samples = gather_external_samples(
+                        trajectory_ext,
+                        indices_bounded,
+                    )
 
                 # Compute electromagnetic force contributions
                 (

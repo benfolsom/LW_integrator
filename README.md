@@ -255,10 +255,20 @@ potential handling. Key improvements include:
   threshold to 1e-20 for extreme angles
 * **Self-consistency enabled by default** - Essential for energy conservation
   in high-energy simulations
+* **Chrono-match interpolation** - New sub-timestep accuracy for retarded field
+  calculations. When the time residual |t_matched - t_target| exceeds tolerance,
+  source particle quantities (velocity, acceleration, gamma) are linearly
+  interpolated between bracketing trajectory points. Provides 10-100× reduction
+  in time residual with ~1-2% performance overhead. Critical for ultra-relativistic
+  simulations (γ > 100) with moderate timesteps. Enabled via GUI checkbox or
+  `SelfConsistencyConfig(chrono_interpolate=True)`. Default: OFF (backward
+  compatible). See `local/CHRONO_INTERPOLATION_SUMMARY.md` for details.
 
 **Impact**: Energy conservation improved by 3+ orders of magnitude in
 high-energy electron-wall simulations. Eliminated gamma KeyErrors and
-artificial velocity clamping that plagued previous versions.
+artificial velocity clamping that plagued previous versions. Chrono interpolation
+addresses retarded-field discretization errors that can cause self-consistency
+failures and singularities.
 
 See the Sphinx documentation for complete details on the physics corrections,
 numerical thresholds, and migration guidance.

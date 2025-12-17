@@ -194,6 +194,8 @@ def run_core_integrator(
     self_consistency_mass_shell_tolerance: float = 1e-2,
     self_consistency_mass_shell_relaxation: float = 0.7,
     self_consistency_verbosity: int = 0,
+    self_consistency_chrono_interpolate: bool = False,
+    self_consistency_chrono_tolerance: float = 1e-3,
     energy_monitor_enabled: bool = True,
     energy_monitor_threshold: float = 2.0,
     energy_monitor_check_interval: int = 10,
@@ -238,6 +240,8 @@ def run_core_integrator(
             mass_shell_tolerance=self_consistency_mass_shell_tolerance,
             mass_shell_relaxation=self_consistency_mass_shell_relaxation,
             verbosity=self_consistency_verbosity,
+            chrono_interpolate=self_consistency_chrono_interpolate,
+            chrono_tolerance=self_consistency_chrono_tolerance,
         )
 
     # Configure energy monitoring
@@ -537,6 +541,8 @@ def run_benchmark(
     self_consistency_mass_shell_tolerance: float = 1e-2,
     self_consistency_mass_shell_relaxation: float = 0.7,
     self_consistency_verbosity: int = 0,
+    self_consistency_chrono_interpolate: bool = False,
+    self_consistency_chrono_tolerance: float = 1e-3,
     energy_monitor_enabled: bool = True,
     energy_monitor_threshold: float = 2.0,
     energy_monitor_check_interval: int = 10,
@@ -607,6 +613,8 @@ def run_benchmark(
         self_consistency_mass_shell_tolerance=self_consistency_mass_shell_tolerance,
         self_consistency_mass_shell_relaxation=self_consistency_mass_shell_relaxation,
         self_consistency_verbosity=self_consistency_verbosity,
+        self_consistency_chrono_interpolate=self_consistency_chrono_interpolate,
+        self_consistency_chrono_tolerance=self_consistency_chrono_tolerance,
         energy_monitor_enabled=energy_monitor_enabled,
         energy_monitor_threshold=energy_monitor_threshold,
         energy_monitor_check_interval=energy_monitor_check_interval,

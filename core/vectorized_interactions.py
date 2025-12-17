@@ -206,8 +206,29 @@ class ExternalSampleBatch:
 def gather_external_samples(
     trajectory_ext: Sequence[Dict[str, np.ndarray]],
     indices: np.ndarray,
+    indices_next: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
 ) -> ExternalSampleBatch:
-    """Extract external bunch samples for the provided retarded indices."""
+    """Extract external bunch samples for the provided retarded indices.
+
+    Parameters
+    ----------
+    trajectory_ext : Sequence[Dict[str, np.ndarray]]
+        External trajectory history.
+    indices : np.ndarray
+        Primary trajectory indices for each source particle.
+    indices_next : np.ndarray, optional
+        Secondary indices for interpolation. If None, no interpolation is performed.
+    weights : np.ndarray, optional
+        Interpolation weights in [0,1]. weight=1.0 uses indices only,
+        weight=0.0 uses indices_next only. Linear interpolation:
+        value = weight * value[indices] + (1-weight) * value[indices_next]
+
+    Returns
+    -------
+    ExternalSampleBatch
+        Sampled (and optionally interpolated) external particle data.
+    """
 
     sample_count = int(len(indices))
     charge = np.zeros(sample_count, dtype=float)
@@ -220,6 +241,8 @@ def gather_external_samples(
     bdotz = np.zeros(sample_count, dtype=float)
     valid_mask = np.zeros(sample_count, dtype=bool)
 
+    use_interpolation = (indices_next is not None) and (weights is not None)
+
     for j, ext_idx in enumerate(indices):
         if ext_idx < 0:
             continue
@@ -230,24 +253,67 @@ def gather_external_samples(
             continue
 
         valid_mask[j] = True
-        bx[j] = float(state["bx"][j])
-        by[j] = float(state["by"][j])
-        bz[j] = float(state["bz"][j])
-        bdotx[j] = float(state["bdotx"][j])
-        bdoty[j] = float(state["bdoty"][j])
-        bdotz[j] = float(state["bdotz"][j])
+
+        # Get primary sample
+        bx_val = float(state["bx"][j])
+        by_val = float(state["by"][j])
+        bz_val = float(state["bz"][j])
+        bdotx_val = float(state["bdotx"][j])
+        bdoty_val = float(state["bdoty"][j])
+        bdotz_val = float(state["bdotz"][j])
 
         charge_j = state["q"]
         if hasattr(charge_j, "__getitem__"):
-            charge[j] = float(charge_j[j])
+            charge_val = float(charge_j[j])
         else:
-            charge[j] = float(charge_j)
+            charge_val = float(charge_j)
 
         gamma_j = state["gamma"]
         if hasattr(gamma_j, "__getitem__"):
-            gamma[j] = float(gamma_j[j])
+            gamma_val = float(gamma_j[j])
         else:
-            gamma[j] = float(gamma_j)
+            gamma_val = float(gamma_j)
+
+        # If interpolation is requested and weight < 1, blend with next sample
+        if use_interpolation and weights[j] < 1.0:
+            ext_idx_next = indices_next[j]
+            weight = weights[j]
+
+            if 0 <= ext_idx_next < len(trajectory_ext):
+                state_next = trajectory_ext[ext_idx_next]
+                if j < len(state_next["x"]):
+                    # Interpolate: val = w*val1 + (1-w)*val2
+                    bx_next = float(state_next["bx"][j])
+                    by_next = float(state_next["by"][j])
+                    bz_next = float(state_next["bz"][j])
+                    bdotx_next = float(state_next["bdotx"][j])
+                    bdoty_next = float(state_next["bdoty"][j])
+                    bdotz_next = float(state_next["bdotz"][j])
+
+                    bx_val = weight * bx_val + (1.0 - weight) * bx_next
+                    by_val = weight * by_val + (1.0 - weight) * by_next
+                    bz_val = weight * bz_val + (1.0 - weight) * bz_next
+                    bdotx_val = weight * bdotx_val + (1.0 - weight) * bdotx_next
+                    bdoty_val = weight * bdoty_val + (1.0 - weight) * bdoty_next
+                    bdotz_val = weight * bdotz_val + (1.0 - weight) * bdotz_next
+
+                    gamma_next_j = state_next["gamma"]
+                    if hasattr(gamma_next_j, "__getitem__"):
+                        gamma_next = float(gamma_next_j[j])
+                    else:
+                        gamma_next = float(gamma_next_j)
+                    gamma_val = weight * gamma_val + (1.0 - weight) * gamma_next
+
+                    # Charge is not interpolated (discrete quantity)
+
+        bx[j] = bx_val
+        by[j] = by_val
+        bz[j] = bz_val
+        bdotx[j] = bdotx_val
+        bdoty[j] = bdoty_val
+        bdotz[j] = bdotz_val
+        charge[j] = charge_val
+        gamma[j] = gamma_val
 
     return ExternalSampleBatch(
         charge=charge,

@@ -463,6 +463,12 @@ class IntegratorGUI:
         self.self_consistency_verbosity_var = tk.IntVar(
             value=self.options.self_consistency_verbosity
         )
+        self.self_consistency_chrono_interpolate_var = tk.BooleanVar(
+            value=getattr(self.options, "self_consistency_chrono_interpolate", False)
+        )
+        self.self_consistency_chrono_tolerance_var = tk.DoubleVar(
+            value=getattr(self.options, "self_consistency_chrono_tolerance", 1e-3)
+        )
 
         # Trace to update control states
         self.self_consistency_enabled_var.trace_add(
@@ -1291,6 +1297,71 @@ class IntegratorGUI:
             width=5,
         )
         self.sc_verbosity_entry.grid(row=7, column=1, sticky="w", pady=2)
+
+        # Chrono-match interpolation with help icon
+        chrono_interp_frame = ttk.Frame(sc_frame)
+        chrono_interp_frame.grid(
+            row=8, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.sc_chrono_interpolate_check = ttk.Checkbutton(
+            chrono_interp_frame,
+            text="Enable chrono-match interpolation",
+            variable=self.self_consistency_chrono_interpolate_var,
+        )
+        self.sc_chrono_interpolate_check.pack(side="left")
+        chrono_interp_help = ttk.Label(
+            chrono_interp_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_interp_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_interp_help,
+            "Interpolate source particle state when retarded-time residual exceeds tolerance.\n\n"
+            "When computing Liénard-Wiechert fields, the code searches backward through\n"
+            "the source particle trajectory to find t_ret = t_obs - R/c. With coarse\n"
+            "timesteps, the 'nearest' match may have significant time residual.\n\n"
+            "When enabled:\n"
+            "  • Computes time residual |t_matched - t_target|\n"
+            "  • If residual > tolerance, linearly interpolates source quantities\n"
+            "    (velocity, acceleration, gamma) between bracketing trajectory points\n"
+            "  • Provides sub-timestep accuracy for retarded fields\n\n"
+            "When to enable:\n"
+            "  • Large timesteps relative to 1/γ characteristic time\n"
+            "  • Ultra-relativistic simulations (γ > 100)\n"
+            "  • Self-consistency failures related to field discontinuities\n"
+            "  • Image-charge singularities\n\n"
+            "Performance impact: ~1-2% overhead (minimal)\n\n"
+            "Default: OFF (preserves legacy behavior)",
+        )
+
+        # Chrono tolerance with help icon
+        chrono_tol_frame = ttk.Frame(sc_frame)
+        chrono_tol_frame.grid(row=9, column=0, sticky="w", pady=2, padx=(40, 0))
+        self.sc_chrono_tolerance_label = ttk.Label(
+            chrono_tol_frame, text="Chrono tolerance (ns):"
+        )
+        self.sc_chrono_tolerance_label.pack(side="left")
+        chrono_tol_help = ttk.Label(
+            chrono_tol_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_tol_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_tol_help,
+            "Time residual tolerance for chrono-matching (nanoseconds).\n\n"
+            "If |t_matched - t_target| > chrono_tolerance, interpolation is applied\n"
+            "(if chrono_interpolate is enabled) or a warning is issued (if verbosity >= 2).\n\n"
+            "Typical values:\n"
+            "  • 1e-3 ns (1 ps): Default, good for most simulations\n"
+            "  • 5e-4 ns (0.5 ps): Tighter tolerance for high-precision work\n"
+            "  • 1e-4 ns (0.1 ps): Very tight, for ultra-relativistic particles\n\n"
+            "Rule of thumb: Set to ~0.1 × average_timestep\n\n"
+            "Default: 1e-3 ns (1 picosecond)",
+        )
+        self.sc_chrono_tolerance_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.self_consistency_chrono_tolerance_var,
+            width=16,
+        )
+        self.sc_chrono_tolerance_entry.grid(row=9, column=1, sticky="w", pady=2)
 
         # Adaptive timestep section (Energy Jump Detection functionality integrated here)
         at_frame = ttk.LabelFrame(
@@ -2469,6 +2540,12 @@ class IntegratorGUI:
             options.self_consistency_mass_shell_tolerance
         )
         self.self_consistency_verbosity_var.set(options.self_consistency_verbosity)
+        self.self_consistency_chrono_interpolate_var.set(
+            getattr(options, "self_consistency_chrono_interpolate", False)
+        )
+        self.self_consistency_chrono_tolerance_var.set(
+            getattr(options, "self_consistency_chrono_tolerance", 1e-3)
+        )
         self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
         self.adaptive_timestep_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
         self.adaptive_timestep_threshold_var.set(options.adaptive_timestep_threshold)
@@ -2612,6 +2689,12 @@ class IntegratorGUI:
                 self.self_consistency_mass_shell_tolerance_var.get()
             ),
             self_consistency_verbosity=int(self.self_consistency_verbosity_var.get()),
+            self_consistency_chrono_interpolate=bool(
+                self.self_consistency_chrono_interpolate_var.get()
+            ),
+            self_consistency_chrono_tolerance=float(
+                self.self_consistency_chrono_tolerance_var.get()
+            ),
             energy_monitor_enabled=False,  # Removed, functionality in adaptive timestep
             energy_monitor_threshold=2.0,  # Default (unused)
             energy_monitor_check_interval=10,  # Default (unused)
@@ -3140,6 +3223,9 @@ class IntegratorGUI:
             self.sc_relaxation_entry,
             self.sc_verbosity_label,
             self.sc_verbosity_entry,
+            self.sc_chrono_interpolate_check,
+            self.sc_chrono_tolerance_label,
+            self.sc_chrono_tolerance_entry,
         ]
 
         for control in controls_to_toggle:

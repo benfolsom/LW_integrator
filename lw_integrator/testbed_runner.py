@@ -270,6 +270,12 @@ class SimulationOptions:
     self_consistency_verbosity: int = (
         0  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
     )
+    self_consistency_chrono_interpolate: bool = (
+        False  # Enable chrono-match interpolation for retarded fields
+    )
+    self_consistency_chrono_tolerance: float = (
+        1e-3  # Time residual tolerance for chrono-matching (ns)
+    )
 
     # Energy monitoring options
     energy_monitor_enabled: bool = True
@@ -972,6 +978,8 @@ def run_testbed(
             self_consistency_mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
             self_consistency_mass_shell_relaxation=options.self_consistency_mass_shell_relaxation,
             self_consistency_verbosity=options.self_consistency_verbosity,
+            self_consistency_chrono_interpolate=options.self_consistency_chrono_interpolate,
+            self_consistency_chrono_tolerance=options.self_consistency_chrono_tolerance,
             energy_monitor_enabled=options.energy_monitor_enabled,
             energy_monitor_threshold=options.energy_monitor_threshold,
             energy_monitor_check_interval=options.energy_monitor_check_interval,

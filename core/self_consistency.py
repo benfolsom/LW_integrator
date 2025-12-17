@@ -65,6 +65,12 @@ class SelfConsistencyConfig:
        - One-way mass-shell convergence check
        - More accurate when particle moves significantly
 
+    CHRONO-MATCH INTERPOLATION:
+    When computing retarded times for Liénard-Wiechert fields, the code searches
+    backward through the source particle trajectory to find t_ret = t_obs - R/c.
+    With coarse timesteps, the "nearest" match may have significant time residual.
+    Interpolation blends adjacent trajectory points when residual exceeds tolerance.
+
     Attributes
     ----------
     enabled : bool
@@ -98,6 +104,16 @@ class SelfConsistencyConfig:
         - 0.7 = recommended (good balance, default)
         - 0.5 = conservative (more stable, slower)
         Default is 0.7.
+    chrono_interpolate : bool
+        Enable interpolation in chrono-matching when time residual exceeds tolerance.
+        When True, source-particle quantities (velocity, acceleration, gamma) are
+        linearly interpolated between bracketing trajectory indices.
+        Default is False (legacy behavior: use nearest discrete sample).
+    chrono_tolerance : float
+        Time residual tolerance for chrono-matching, in nanoseconds.
+        If |t_matched - t_target| > chrono_tolerance, interpolation is applied
+        (if chrono_interpolate=True) or a warning is issued (if verbosity >= 2).
+        Default is 1e-3 ns (1 picosecond).
 
     max_iterations : int
         Maximum number of refinement iterations per particle per step. Default is 10.
@@ -148,6 +164,8 @@ class SelfConsistencyConfig:
     target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
     mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
+    chrono_interpolate: bool = False  # Enable chrono-match interpolation
+    chrono_tolerance: float = 1e-3  # Time residual tolerance (ns)
     max_iterations: int = 10  # Maximum SC iterations per particle per step
     verbosity: int = 0
 
