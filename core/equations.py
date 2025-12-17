@@ -635,6 +635,9 @@ def _print_convergence_info(
     max_iterations: int,
     verbosity: int = 1,
     step_idx: Optional[int] = None,
+    convergence_mode: str = "mass_shell_only",
+    particle_position: Optional[tuple[float, float, float]] = None,
+    particle_time: Optional[float] = None,
 ) -> None:
     """Print debug information about self-consistency convergence.
 
@@ -659,6 +662,8 @@ def _print_convergence_info(
         3 = full detail (all iterations)
     step_idx : Optional[int]
         Integration step number for context in error messages
+    convergence_mode : str
+        Convergence mode: "mass_shell_only" or "dual"
     """
     if verbosity == 0:
         return
@@ -672,35 +677,57 @@ def _print_convergence_info(
     # Prepare step prefix if step_idx is provided
     step_prefix = f"Step {step_idx}, " if step_idx is not None else ""
 
-    # Standard mode: mass-shell convergence
+    # Adjust output based on convergence mode
     if verbosity == 1:
-        # Summary: one line per particle showing both criteria
-        print(
-            f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
-            f"E_gamma={gamma_consistency_error:.3e}"
-        )
+        # Summary: one line per particle
+        if convergence_mode == "mass_shell_only":
+            print(
+                f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}"
+            )
+        else:
+            print(
+                f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+                f"E_gamma={gamma_consistency_error:.3e}"
+            )
     elif verbosity == 2:
         # Failures only: detailed output only for non-converged steps
         if not converged:
             print(f"    {step_prefix}Particle {particle_idx}: {status}")
             print(f"      Mass-shell error = {mass_shell_error:.15e}")
-            print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
-            print("      Dual convergence: BOTH criteria must be satisfied")
+            # Print position and time for failures
+            if particle_position is not None and particle_time is not None:
+                x, y, z = particle_position
+                print(f"      Position: x={x:.6e} mm, y={y:.6e} mm, z={z:.6e} mm")
+                print(f"      Time: t={particle_time:.6e} ns")
+            # Only print gamma values, no "dual convergence" or gamma consistency messages
             print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
             print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
             print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
         else:
             # For converged steps at verbosity 2, just show summary
-            print(
-                f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
-                f"E_gamma={gamma_consistency_error:.3e}"
-            )
+            if convergence_mode == "mass_shell_only":
+                print(
+                    f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}"
+                )
+            else:
+                print(
+                    f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}, "
+                    f"E_gamma={gamma_consistency_error:.3e}"
+                )
     else:  # verbosity >= 3
         # Full detail: multi-line output with full precision for all steps
         print(f"    {step_prefix}Particle {particle_idx}: {status}")
         print(f"      Mass-shell error = {mass_shell_error:.15e}")
-        print(f"      Gamma consistency error = {gamma_consistency_error:.15e}")
-        print("      Dual convergence: BOTH criteria must be satisfied")
+        # Print position and time for verbosity 3 when showing failures
+        if (
+            not converged
+            and particle_position is not None
+            and particle_time is not None
+        ):
+            x, y, z = particle_position
+            print(f"      Position: x={x:.6e} mm, y={y:.6e} mm, z={z:.6e} mm")
+            print(f"      Time: t={particle_time:.6e} ns")
+        # Only print gamma values, no "dual convergence" or gamma consistency messages
         print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
         print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
         print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
@@ -1360,6 +1387,13 @@ def retarded_equations_of_motion(
                             max_iterations=sc_max_iterations,
                             verbosity=sc_verbosity,
                             step_idx=step_idx,
+                            convergence_mode=sc_convergence_mode,
+                            particle_position=(
+                                result["x"][particle_idx],
+                                result["y"][particle_idx],
+                                result["z"][particle_idx],
+                            ),
+                            particle_time=result["t"][particle_idx],
                         )
                     break
                 elif sc_iteration == sc_max_iterations - 1:
@@ -1376,6 +1410,13 @@ def retarded_equations_of_motion(
                             max_iterations=sc_max_iterations,
                             verbosity=sc_verbosity,
                             step_idx=step_idx,
+                            convergence_mode=sc_convergence_mode,
+                            particle_position=(
+                                result["x"][particle_idx],
+                                result["y"][particle_idx],
+                                result["z"][particle_idx],
+                            ),
+                            particle_time=result["t"][particle_idx],
                         )
 
             # Update working state for next iteration

@@ -212,9 +212,16 @@ class SimulationOptions:
     metrics_save: bool = False
     energy_display: bool = True
     energy_save: bool = True
-    energy_dual_plot: bool = False  # Show both total ΔE and ΔE_z on same plot
+    energy_xaxis: str = "z"  # "z", "t", or "dual"
+    energy_yaxis: str = (
+        "delta_total"  # "delta_total", "delta_z", "delta_x", "delta_y", "total"
+    )
     transverse_display: bool = False
     transverse_save: bool = False
+    beta_display: bool = False
+    beta_save: bool = False
+    momentum_display: bool = False
+    momentum_save: bool = False
     trajectory_save: bool = False
     trajectory_interval: int = 10
     plot_dpi: int = DEFAULT_PLOT_DPI
@@ -1043,23 +1050,13 @@ def run_testbed(
             rider_initial = initial_states.get("rider")
             rider_rest_mev = rest_energies.get("rider")
 
-            # Compute energy series - use components if dual plot requested
-            if options.energy_dual_plot:
-                rider_delta_e_total, rider_delta_e_z, rider_z = (
-                    compute_delta_energy_components(
-                        rider_states,
-                        rider_initial,
-                        rider_rest_mev,
-                    )
-                )
-                rider_delta_e = rider_delta_e_total  # Use total for main plot
-            else:
-                rider_delta_e, rider_z = compute_delta_energy_series(
-                    rider_states,
-                    rider_initial,
-                    rider_rest_mev,
-                )
-                rider_delta_e_z = None
+            # Compute energy series - always get total for now
+            rider_delta_e, rider_z = compute_delta_energy_series(
+                rider_states,
+                rider_initial,
+                rider_rest_mev,
+            )
+            rider_delta_e_z = None
             rider_z_rel = rider_z - rider_z[0]
 
             # Extract values for RunResult
@@ -1140,23 +1137,13 @@ def run_testbed(
                 driver_initial = initial_states.get("driver")
                 driver_rest_mev = rest_energies.get("driver")
 
-                # Compute energy series - use components if dual plot requested
-                if options.energy_dual_plot:
-                    driver_delta_e_total, driver_delta_e_z, driver_z = (
-                        compute_delta_energy_components(
-                            driver_states,
-                            driver_initial,
-                            driver_rest_mev,
-                        )
-                    )
-                    driver_delta_e = driver_delta_e_total
-                else:
-                    driver_delta_e, driver_z = compute_delta_energy_series(
-                        driver_states,
-                        driver_initial,
-                        driver_rest_mev,
-                    )
-                    driver_delta_e_z = None
+                # Compute energy series - always get total for now
+                driver_delta_e, driver_z = compute_delta_energy_series(
+                    driver_states,
+                    driver_initial,
+                    driver_rest_mev,
+                )
+                driver_delta_e_z = None
                 driver_z_rel = driver_z - driver_z[0]
             except Exception as exc:  # pragma: no cover - defensive guard
                 _log(f"Failed to compute driver energy series: {exc}")
@@ -1252,23 +1239,11 @@ def run_testbed(
                     rider_z_rel[valid_mask],
                     rider_delta_e[valid_mask],
                     color=COLOR_RIDER,
-                    label="Core (ΔE total)"
-                    if show_legend and options.energy_dual_plot
-                    else ("Core" if show_legend else None),
+                    label="Core" if show_legend else None,
                     **SCATTER_STYLE,
                 )
 
-                # Plot ΔE_z if dual plot enabled
-                if options.energy_dual_plot and rider_delta_e_z is not None:
-                    axes[0].scatter(
-                        rider_z_rel[valid_mask],
-                        rider_delta_e_z[valid_mask],
-                        color=COLOR_RIDER,
-                        marker="x",
-                        alpha=0.7,
-                        label="Core (ΔE_z)" if show_legend else None,
-                        s=30,
-                    )
+                # Note: ΔE_z plotting removed - use energy_yaxis dropdown instead
                 if legacy_rider_delta_e is not None and legacy_rider_z_rel is not None:
                     legacy_valid = np.isfinite(legacy_rider_delta_e) & np.isfinite(
                         legacy_rider_z_rel
@@ -1281,14 +1256,19 @@ def run_testbed(
                             label="Legacy",
                             **SCATTER_STYLE,
                         )
-                axes[0].set_xlabel("Delta z (mm)")
-                axes[0].set_ylabel("Delta E (GeV)")
-                title_suffix = (
-                    " (Total & Longitudinal)" if options.energy_dual_plot else ""
-                )
-                axes[0].set_title(f"Rider Delta E vs Delta z{title_suffix}")
+                axes[0].set_xlabel("Delta z (mm)", labelpad=8)
+                axes[0].set_ylabel("Delta E (GeV)", labelpad=12)
+                axes[0].set_title("Rider Delta E vs Delta z", pad=10)
                 axes[0].grid(True, alpha=0.3)
-                if show_legend or options.energy_dual_plot:
+                axes[0].tick_params(axis="both", which="major", labelsize=10)
+                axes[0].tick_params(axis="both", which="minor", labelsize=8)
+                # Fix log scale tick label formatting
+                from matplotlib.ticker import ScalarFormatter
+
+                axes[0].yaxis.set_major_formatter(ScalarFormatter())
+                axes[0].yaxis.get_major_formatter().set_scientific(False)
+                axes[0].yaxis.get_major_formatter().set_useOffset(False)
+                if show_legend:
                     axes[0].legend()
 
                 if (
@@ -1304,23 +1284,11 @@ def run_testbed(
                             driver_z_rel[driver_valid],
                             driver_delta_e[driver_valid],
                             color=COLOR_DRIVER,
-                            label="Core (ΔE total)"
-                            if legacy_enabled and options.energy_dual_plot
-                            else ("Core" if legacy_enabled else None),
+                            label="Core" if legacy_enabled else None,
                             **SCATTER_STYLE,
                         )
 
-                        # Plot ΔE_z if dual plot enabled
-                        if options.energy_dual_plot and driver_delta_e_z is not None:
-                            axes[1].scatter(
-                                driver_z_rel[driver_valid],
-                                driver_delta_e_z[driver_valid],
-                                color=COLOR_DRIVER,
-                                marker="x",
-                                alpha=0.7,
-                                label="Core (ΔE_z)" if legacy_enabled else None,
-                                s=30,
-                            )
+                        # Note: ΔE_z plotting removed - use energy_yaxis dropdown instead
                     else:
                         _log("Warning: All driver energy data points are invalid")
                     if (
@@ -1338,17 +1306,22 @@ def run_testbed(
                                 label="Legacy",
                                 **SCATTER_STYLE,
                             )
-                    axes[1].set_xlabel("Delta z (mm)")
-                    axes[1].set_ylabel("Delta E (GeV)")
-                    title_suffix = (
-                        " (Total & Longitudinal)" if options.energy_dual_plot else ""
-                    )
-                    axes[1].set_title(f"Driver Delta E vs Delta z{title_suffix}")
+                    axes[1].set_xlabel("Delta z (mm)", labelpad=8)
+                    axes[1].set_ylabel("Delta E (GeV)", labelpad=12)
+                    axes[1].set_title("Driver Delta E vs Delta z", pad=10)
                     axes[1].grid(True, alpha=0.3)
-                    if legacy_enabled or options.energy_dual_plot:
+                    axes[1].tick_params(axis="both", which="major", labelsize=10)
+                    axes[1].tick_params(axis="both", which="minor", labelsize=8)
+                    # Fix log scale tick label formatting
+                    from matplotlib.ticker import ScalarFormatter
+
+                    axes[1].yaxis.set_major_formatter(ScalarFormatter())
+                    axes[1].yaxis.get_major_formatter().set_scientific(False)
+                    axes[1].yaxis.get_major_formatter().set_useOffset(False)
+                    if legacy_enabled:
                         axes[1].legend()
 
-                fig_energy.tight_layout()
+                fig_energy.tight_layout(pad=2.5, w_pad=3.0, h_pad=2.5)
                 if energy_save and should_save:
                     energy_path = output_dir / f"{filename_base}_energy.png"
                     fig_energy.savefig(energy_path)
@@ -1697,17 +1670,19 @@ def run_testbed(
                         linestyle="--",
                         label="Driver (Legacy)",
                     )
-            ax_x.set_xlabel("Time (ns)")
-            ax_x.set_ylabel("Average x (mm)")
-            ax_x.set_title("Average X Position")
+            ax_x.set_xlabel("Time (ns)", labelpad=8)
+            ax_x.set_ylabel("Average x (mm)", labelpad=15)
+            ax_x.set_title("Average X Position", pad=12)
             ax_x.legend()
             ax_x.grid(True, alpha=0.3)
-            ax_y.set_xlabel("Time (ns)")
-            ax_y.set_ylabel("Average y (mm)")
-            ax_y.set_title("Average Y Position")
+            ax_x.tick_params(axis="both", which="major", labelsize=10)
+            ax_y.set_xlabel("Time (ns)", labelpad=8)
+            ax_y.set_ylabel("Average y (mm)", labelpad=15)
+            ax_y.set_title("Average Y Position", pad=12)
             ax_y.legend()
             ax_y.grid(True, alpha=0.3)
-            fig_transverse.tight_layout()
+            ax_y.tick_params(axis="both", which="major", labelsize=10)
+            fig_transverse.tight_layout(pad=3.0, w_pad=4.0, h_pad=3.0)
             if transverse_save and should_save:
                 transverse_path = output_dir / f"{filename_base}_transverse.png"
                 fig_transverse.savefig(transverse_path)
@@ -1717,6 +1692,274 @@ def run_testbed(
                 figures["transverse"] = fig_transverse
             else:
                 plt.close(fig_transverse)
+
+        # Beta (velocity) plots
+        beta_display = options.beta_display
+        beta_save = options.beta_save
+        if (beta_display or beta_save) and core_beta_hist is not None:
+            fig_beta, axes_beta = plt.subplots(
+                2, 2, figsize=(16, 12), dpi=options.plot_dpi
+            )
+            axes_beta = axes_beta.flatten()
+
+            # β_x
+            axes_beta[0].plot(
+                plot_times_ns,
+                core_beta_hist[:, 0],
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+            )
+            if driver_allowed and core_beta_d_hist is not None:
+                axes_beta[0].plot(
+                    plot_times_ns,
+                    core_beta_d_hist[:, 0],
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_beta_hist is not None:
+                axes_beta[0].plot(
+                    plot_times_ns,
+                    legacy_beta_hist[:, 0],
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_beta[0].set_xlabel("Time (ns)", labelpad=8)
+            axes_beta[0].set_ylabel("β_x (v_x/c)", labelpad=12)
+            axes_beta[0].set_title("Transverse-X Velocity", pad=10)
+            axes_beta[0].legend()
+            axes_beta[0].grid(True, alpha=0.3)
+
+            # β_y
+            axes_beta[1].plot(
+                plot_times_ns,
+                core_beta_hist[:, 1],
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+            )
+            if driver_allowed and core_beta_d_hist is not None:
+                axes_beta[1].plot(
+                    plot_times_ns,
+                    core_beta_d_hist[:, 1],
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_beta_hist is not None:
+                axes_beta[1].plot(
+                    plot_times_ns,
+                    legacy_beta_hist[:, 1],
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_beta[1].set_xlabel("Time (ns)", labelpad=8)
+            axes_beta[1].set_ylabel("β_y (v_y/c)", labelpad=12)
+            axes_beta[1].set_title("Transverse-Y Velocity", pad=10)
+            axes_beta[1].legend()
+            axes_beta[1].grid(True, alpha=0.3)
+
+            # β_z
+            axes_beta[2].plot(
+                plot_times_ns,
+                core_beta_hist[:, 2],
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+            )
+            if driver_allowed and core_beta_d_hist is not None:
+                axes_beta[2].plot(
+                    plot_times_ns,
+                    core_beta_d_hist[:, 2],
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_beta_hist is not None:
+                axes_beta[2].plot(
+                    plot_times_ns,
+                    legacy_beta_hist[:, 2],
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_beta[2].set_xlabel("Time (ns)", labelpad=8)
+            axes_beta[2].set_ylabel("β_z (v_z/c)", labelpad=12)
+            axes_beta[2].set_title("Longitudinal Velocity", pad=10)
+            axes_beta[2].legend()
+            axes_beta[2].grid(True, alpha=0.3)
+
+            # |β| (magnitude)
+            core_beta_mag = np.sqrt(np.sum(core_beta_hist**2, axis=1))
+            axes_beta[3].plot(
+                plot_times_ns, core_beta_mag, color=COLOR_RIDER, label="Rider (Core)"
+            )
+            if driver_allowed and core_beta_d_hist is not None:
+                driver_beta_mag = np.sqrt(np.sum(core_beta_d_hist**2, axis=1))
+                axes_beta[3].plot(
+                    plot_times_ns,
+                    driver_beta_mag,
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_beta_hist is not None:
+                legacy_beta_mag = np.sqrt(np.sum(legacy_beta_hist**2, axis=1))
+                axes_beta[3].plot(
+                    plot_times_ns,
+                    legacy_beta_mag,
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_beta[3].set_xlabel("Time (ns)", labelpad=8)
+            axes_beta[3].set_ylabel("|β| (v/c)", labelpad=12)
+            axes_beta[3].set_title("Total Velocity Magnitude", pad=10)
+            axes_beta[3].legend()
+            axes_beta[3].grid(True, alpha=0.3)
+
+            fig_beta.tight_layout(pad=3.0, w_pad=3.0, h_pad=3.0)
+            if beta_save and should_save:
+                beta_path = output_dir / f"{filename_base}_beta.png"
+                fig_beta.savefig(beta_path)
+                saved_paths["beta"] = beta_path
+                _log(f"Saved beta plot to: {beta_path}")
+            if beta_display:
+                figures["beta"] = fig_beta
+            else:
+                plt.close(fig_beta)
+
+        # Momentum plots (conjugate four-momentum in amu·mm/ns)
+        momentum_display = options.momentum_display
+        momentum_save = options.momentum_save
+        if (momentum_display or momentum_save) and core_p_hist is not None:
+            fig_momentum, axes_mom = plt.subplots(
+                2, 2, figsize=(16, 12), dpi=options.plot_dpi
+            )
+            axes_mom = axes_mom.flatten()
+
+            # P_x (conjugate momentum)
+            axes_mom[0].plot(
+                plot_times_ns,
+                core_p_hist[:, 0],
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+            )
+            if driver_allowed and core_p_d_hist is not None:
+                axes_mom[0].plot(
+                    plot_times_ns,
+                    core_p_d_hist[:, 0],
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_p_hist is not None:
+                axes_mom[0].plot(
+                    plot_times_ns,
+                    legacy_p_hist[:, 0],
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_mom[0].set_xlabel("Time (ns)", labelpad=8)
+            axes_mom[0].set_ylabel("P_x (amu·mm/ns)", labelpad=12)
+            axes_mom[0].set_title("Conjugate Momentum X", pad=10)
+            axes_mom[0].legend()
+            axes_mom[0].grid(True, alpha=0.3)
+
+            # P_y
+            axes_mom[1].plot(
+                plot_times_ns,
+                core_p_hist[:, 1],
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+            )
+            if driver_allowed and core_p_d_hist is not None:
+                axes_mom[1].plot(
+                    plot_times_ns,
+                    core_p_d_hist[:, 1],
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_p_hist is not None:
+                axes_mom[1].plot(
+                    plot_times_ns,
+                    legacy_p_hist[:, 1],
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_mom[1].set_xlabel("Time (ns)", labelpad=8)
+            axes_mom[1].set_ylabel("P_y (amu·mm/ns)", labelpad=12)
+            axes_mom[1].set_title("Conjugate Momentum Y", pad=10)
+            axes_mom[1].legend()
+            axes_mom[1].grid(True, alpha=0.3)
+
+            # P_z
+            axes_mom[2].plot(
+                plot_times_ns,
+                core_p_hist[:, 2],
+                color=COLOR_RIDER,
+                label="Rider (Core)",
+            )
+            if driver_allowed and core_p_d_hist is not None:
+                axes_mom[2].plot(
+                    plot_times_ns,
+                    core_p_d_hist[:, 2],
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_p_hist is not None:
+                axes_mom[2].plot(
+                    plot_times_ns,
+                    legacy_p_hist[:, 2],
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_mom[2].set_xlabel("Time (ns)", labelpad=8)
+            axes_mom[2].set_ylabel("P_z (amu·mm/ns)", labelpad=12)
+            axes_mom[2].set_title("Conjugate Momentum Z", pad=10)
+            axes_mom[2].legend()
+            axes_mom[2].grid(True, alpha=0.3)
+
+            # |P_t| (transverse magnitude)
+            core_pt_mag = np.sqrt(core_p_hist[:, 0] ** 2 + core_p_hist[:, 1] ** 2)
+            axes_mom[3].plot(
+                plot_times_ns, core_pt_mag, color=COLOR_RIDER, label="Rider (Core)"
+            )
+            if driver_allowed and core_p_d_hist is not None:
+                driver_pt_mag = np.sqrt(
+                    core_p_d_hist[:, 0] ** 2 + core_p_d_hist[:, 1] ** 2
+                )
+                axes_mom[3].plot(
+                    plot_times_ns,
+                    driver_pt_mag,
+                    color=COLOR_DRIVER,
+                    label="Driver (Core)",
+                )
+            if legacy_enabled and legacy_p_hist is not None:
+                legacy_pt_mag = np.sqrt(
+                    legacy_p_hist[:, 0] ** 2 + legacy_p_hist[:, 1] ** 2
+                )
+                axes_mom[3].plot(
+                    plot_times_ns,
+                    legacy_pt_mag,
+                    color=COLOR_LEGACY_RIDER,
+                    linestyle="--",
+                    label="Rider (Legacy)",
+                )
+            axes_mom[3].set_xlabel("Time (ns)", labelpad=8)
+            axes_mom[3].set_ylabel("|P_t| (amu·mm/ns)", labelpad=12)
+            axes_mom[3].set_title("Transverse Momentum Magnitude", pad=10)
+            axes_mom[3].legend()
+            axes_mom[3].grid(True, alpha=0.3)
+
+            fig_momentum.tight_layout(pad=3.0, w_pad=3.0, h_pad=3.0)
+            if momentum_save and should_save:
+                momentum_path = output_dir / f"{filename_base}_momentum.png"
+                fig_momentum.savefig(momentum_path)
+                saved_paths["momentum"] = momentum_path
+                _log(f"Saved momentum plot to: {momentum_path}")
+            if momentum_display:
+                figures["momentum"] = fig_momentum
+            else:
+                plt.close(fig_momentum)
 
         if trajectory_save and should_save:
             interval = max(1, int(options.trajectory_interval))

@@ -330,6 +330,7 @@ class IntegratorGUI:
         self.sim_type_var = tk.StringVar(value=self.options.simulation_type.name)
         self.steps_var = tk.IntVar(value=self.options.steps)
         self.seed_var = tk.IntVar(value=self.options.seed)
+        self.random_seed_var = tk.BooleanVar(value=False)
         self.legacy_var = tk.BooleanVar(value=self.options.legacy_enabled)
 
         self._species_by_label = {label: key for label, key in SPECIES_OPTIONS}
@@ -383,11 +384,20 @@ class IntegratorGUI:
         self.metrics_save_var = tk.BooleanVar(value=self.options.metrics_save)
         self.energy_display_var = tk.BooleanVar(value=self.options.energy_display)
         self.energy_save_var = tk.BooleanVar(value=self.options.energy_save)
-        self.energy_dual_plot_var = tk.BooleanVar(value=self.options.energy_dual_plot)
+        self.energy_xaxis_var = tk.StringVar(
+            value=getattr(self.options, "energy_xaxis", "z")
+        )
+        self.energy_yaxis_var = tk.StringVar(
+            value=getattr(self.options, "energy_yaxis", "delta_total")
+        )
         self.transverse_display_var = tk.BooleanVar(
             value=self.options.transverse_display
         )
         self.transverse_save_var = tk.BooleanVar(value=self.options.transverse_save)
+        self.beta_display_var = tk.BooleanVar(value=self.options.beta_display)
+        self.beta_save_var = tk.BooleanVar(value=self.options.beta_save)
+        self.momentum_display_var = tk.BooleanVar(value=self.options.momentum_display)
+        self.momentum_save_var = tk.BooleanVar(value=self.options.momentum_save)
         self.trajectory_save_var = tk.BooleanVar(value=self.options.trajectory_save)
         self.trajectory_interval_var = tk.IntVar(value=self.options.trajectory_interval)
         self.dpi_var = tk.IntVar(value=self.options.plot_dpi)
@@ -797,16 +807,6 @@ class IntegratorGUI:
         )
         sim_type.grid(row=0, column=1, sticky="ew")
 
-        ttk.Label(header, text="Steps:").grid(row=0, column=2, sticky="w", padx=(12, 0))
-        ttk.Entry(header, textvariable=self.steps_var, width=8).grid(
-            row=0, column=3, sticky="w"
-        )
-
-        ttk.Label(header, text="Seed:").grid(row=0, column=4, sticky="w", padx=(12, 0))
-        ttk.Entry(header, textvariable=self.seed_var, width=8).grid(
-            row=0, column=5, sticky="w"
-        )
-
         # Create main horizontal split: left (tabs) and right (config/control panel)
         main_horizontal_paned = ttk.Panedwindow(self.root, orient="horizontal")
         main_horizontal_paned.grid(row=1, column=0, sticky="nsew")
@@ -907,6 +907,37 @@ class IntegratorGUI:
         self.core_param_widgets = {}
 
         row = 0
+
+        # Steps and Seed at the top of Core params
+        ttk.Label(core_frame, text="Steps:").grid(row=row, column=0, sticky="w", pady=2)
+        steps_widget = ttk.Entry(core_frame, textvariable=self.steps_var, width=16)
+        steps_widget.grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+
+        ttk.Label(core_frame, text="Seed:").grid(row=row, column=0, sticky="w", pady=2)
+        seed_frame = ttk.Frame(core_frame)
+        seed_frame.grid(row=row, column=1, sticky="ew", pady=2)
+        seed_frame.columnconfigure(0, weight=1)
+
+        self.seed_entry = ttk.Entry(seed_frame, textvariable=self.seed_var, width=16)
+        self.seed_entry.grid(row=0, column=0, sticky="ew")
+
+        self.random_seed_var = tk.BooleanVar(value=False)
+        self.random_seed_check = ttk.Checkbutton(
+            seed_frame,
+            text="Random",
+            variable=self.random_seed_var,
+            command=self._toggle_random_seed,
+        )
+        self.random_seed_check.grid(row=0, column=1, sticky="w", padx=(5, 0))
+        row += 1
+
+        # Separator after steps/seed
+        ttk.Separator(core_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+        )
+        row += 1
+
         for name in CORE_PARAM_LABELS:
             # Skip z_cutoff and z_cutoff_mode - handled separately below
             # Skip mean - deprecated parameter, not used in any simulation mode
@@ -940,7 +971,7 @@ class IntegratorGUI:
 
         self.z_cutoff_enable_check = ttk.Checkbutton(
             core_frame,
-            text="Enable z-cutoff (SWITCHING_WALL: periodic cavities | BUNCH_TO_BUNCH: early stop)",
+            text="Enable z-cutoff (stops applying external forces when particle z > cutoff)",
             variable=self.z_cutoff_enabled_var,
             command=self._toggle_z_cutoff_controls,
         )
@@ -976,11 +1007,11 @@ class IntegratorGUI:
         # Help text for z_cutoff
         help_label = ttk.Label(
             core_frame,
-            text="'absolute': initial cutoff (advances by cavity_spacing in SWITCHING_WALL)\n"
-            "'relative': distance from start (BUNCH_TO_BUNCH mode only)\n\n"
-            "SWITCHING_WALL: z_cutoff and wall_z both advance by cavity_spacing\n"
-            "when particle passes z_cutoff, creating periodic cavity structure.\n"
-            "Set cavity_spacing > 0 for multi-cavity; cavity_spacing = 0 for single cavity.",
+            text="'absolute': fixed z position in lab frame\n"
+            "'relative': distance from particle starting position\n\n"
+            "Works in all simulation modes (BUNCH_TO_BUNCH, CONDUCTING_WALL, SWITCHING_WALL).\n"
+            "In SWITCHING_WALL mode with cavity_spacing > 0, cutoff advances by cavity_spacing\n"
+            "when particle passes threshold, creating periodic cavity structure.",
             foreground="gray",
             font=("TkDefaultFont", 8),
             justify="left",
@@ -1474,31 +1505,63 @@ class IntegratorGUI:
             self.energy_save_var,
             row=2,
         )
-        ttk.Checkbutton(
+        # Energy plot x-axis configuration
+        ttk.Label(output_frame, text="  ↳ X-axis:").grid(
+            row=3, column=0, sticky="w", padx=(20, 0)
+        )
+        ttk.Combobox(
             output_frame,
-            text="  ↳ Show ΔE_z (longitudinal) on energy plots",
-            variable=self.energy_dual_plot_var,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(20, 0))
+            textvariable=self.energy_xaxis_var,
+            values=["z", "t", "dual"],
+            width=12,
+            state="readonly",
+        ).grid(row=3, column=1, sticky="w")
+
+        # Energy plot y-axis configuration
+        ttk.Label(output_frame, text="  ↳ Y-axis:").grid(
+            row=4, column=0, sticky="w", padx=(20, 0)
+        )
+        ttk.Combobox(
+            output_frame,
+            textvariable=self.energy_yaxis_var,
+            values=["delta_total", "delta_z", "delta_x", "delta_y", "total"],
+            width=12,
+            state="readonly",
+        ).grid(row=4, column=1, sticky="w")
         self._add_output_toggle(
             output_frame,
-            "Transverse plot",
+            "Position plot (⟨x⟩, ⟨y⟩ vs time)",
             self.transverse_display_var,
             self.transverse_save_var,
-            row=4,
+            row=5,
+        )
+        self._add_output_toggle(
+            output_frame,
+            "Beta plot (β_x, β_y, β_z vs time)",
+            self.beta_display_var,
+            self.beta_save_var,
+            row=6,
+        )
+        self._add_output_toggle(
+            output_frame,
+            "Momentum plot (P_x, P_y, P_z vs time)",
+            self.momentum_display_var,
+            self.momentum_save_var,
+            row=7,
         )
 
         ttk.Checkbutton(
             output_frame, text="Save trajectory", variable=self.trajectory_save_var
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Label(output_frame, text="Trajectory stride:").grid(
-            row=6, column=0, sticky="w"
+            row=9, column=0, sticky="w"
         )
         ttk.Entry(
             output_frame, textvariable=self.trajectory_interval_var, width=8
-        ).grid(row=6, column=1, sticky="w")
+        ).grid(row=9, column=1, sticky="w")
 
         ttk.Label(output_frame, text="Plot DPI:").grid(
-            row=7, column=0, sticky="w", pady=(12, 0)
+            row=10, column=0, sticky="w", pady=(12, 0)
         )
         ttk.Combobox(
             output_frame,
@@ -1506,14 +1569,14 @@ class IntegratorGUI:
             values=[str(dpi) for dpi in AVAILABLE_DPI_CHOICES],
             width=8,
             state="readonly",
-        ).grid(row=7, column=1, sticky="w", pady=(12, 0))
+        ).grid(row=10, column=1, sticky="w", pady=(12, 0))
 
         # Log file saving
         ttk.Checkbutton(
             output_frame,
             text="Save log file to test_outputs directory",
             variable=self.save_log_file_var,
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         # Optimization/Sweep tab ----------------------------------------
         self.optimization_tab = OptimizationPlugin(
@@ -2231,9 +2294,14 @@ class IntegratorGUI:
         self.metrics_save_var.set(options.metrics_save)
         self.energy_display_var.set(options.energy_display)
         self.energy_save_var.set(options.energy_save)
-        self.energy_dual_plot_var.set(options.energy_dual_plot)
+        self.energy_xaxis_var.set(getattr(options, "energy_xaxis", "z"))
+        self.energy_yaxis_var.set(getattr(options, "energy_yaxis", "delta_total"))
         self.transverse_display_var.set(options.transverse_display)
         self.transverse_save_var.set(options.transverse_save)
+        self.beta_display_var.set(options.beta_display)
+        self.beta_save_var.set(options.beta_save)
+        self.momentum_display_var.set(options.momentum_display)
+        self.momentum_save_var.set(options.momentum_save)
         self.trajectory_save_var.set(options.trajectory_save)
         self.trajectory_interval_var.set(options.trajectory_interval)
         self.dpi_var.set(options.plot_dpi)
@@ -2335,10 +2403,18 @@ class IntegratorGUI:
         if not config_name.endswith(".json"):
             config_name += ".json"
 
+        # Handle random seed
+        if self.random_seed_var.get():
+            import random
+
+            seed = random.randint(1, 2**31 - 1)
+        else:
+            seed = int(self.seed_var.get())
+
         options = SimulationOptions(
             simulation_type=sim_type,
             steps=int(self.steps_var.get()),
-            seed=int(self.seed_var.get()),
+            seed=seed,
             rider_params=rider_params,
             driver_params=driver_params,
             core_params=core_params,
@@ -2350,9 +2426,14 @@ class IntegratorGUI:
             metrics_save=bool(self.metrics_save_var.get()),
             energy_display=bool(self.energy_display_var.get()),
             energy_save=bool(self.energy_save_var.get()),
-            energy_dual_plot=bool(self.energy_dual_plot_var.get()),
+            energy_xaxis=str(self.energy_xaxis_var.get()),
+            energy_yaxis=str(self.energy_yaxis_var.get()),
             transverse_display=bool(self.transverse_display_var.get()),
             transverse_save=bool(self.transverse_save_var.get()),
+            beta_display=bool(self.beta_display_var.get()),
+            beta_save=bool(self.beta_save_var.get()),
+            momentum_display=bool(self.momentum_display_var.get()),
+            momentum_save=bool(self.momentum_save_var.get()),
             trajectory_save=bool(self.trajectory_save_var.get()),
             trajectory_interval=int(self.trajectory_interval_var.get()),
             plot_dpi=int(self.dpi_var.get()),
@@ -2848,6 +2929,14 @@ class IntegratorGUI:
             and "cav_spacing" in self.core_param_widgets
         ):
             self.core_param_widgets["cav_spacing"].configure(state=state)
+
+    def _toggle_random_seed(self) -> None:
+        """Enable/disable seed entry based on random seed checkbox."""
+        random_enabled = self.random_seed_var.get()
+        state = "disabled" if random_enabled else "normal"
+
+        if hasattr(self, "seed_entry"):
+            self.seed_entry.configure(state=state)
 
     def _toggle_z_cutoff_controls(self) -> None:
         """Enable/disable z_cutoff controls based on checkbox state."""

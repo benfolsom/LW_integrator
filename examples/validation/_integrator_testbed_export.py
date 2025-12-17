@@ -82,12 +82,14 @@ PARAM_LABELS = {
 }
 
 CORE_PARAM_LABELS = {
+    "steps": "Steps",
+    "seed": "Seed",
     "time_step": "Time step (ns)",
     "wall_z": "Wall z (mm)",
     "aperture_radius": "Aperture radius (mm)",
     "mean": "Mean separation (mm)",
     "cav_spacing": "Cavity spacing (mm)",
-    "z_cutoff": "z cutoff (mm)",
+    "z_cutoff": "Force cutoff z (mm)",
 }
 
 PARTICLE_WIDGET_WIDTH = widgets.Layout(width="320px")
@@ -147,6 +149,8 @@ SPECIES_DROPDOWN_OPTIONS = [
 ]
 
 CORE_PARAM_DEFAULTS = {
+    "steps": 1000,
+    "seed": 12345,
     "time_step": 2.2e-7,
     "wall_z": 1e5,
     "aperture_radius": 1e5,
@@ -156,20 +160,27 @@ CORE_PARAM_DEFAULTS = {
 }
 
 CORE_REQUIRED_PARAMS = {
-    SimulationType.CONDUCTING_WALL: {"time_step", "wall_z", "aperture_radius"},
+    SimulationType.CONDUCTING_WALL: {
+        "steps",
+        "seed",
+        "time_step",
+        "wall_z",
+        "aperture_radius",
+    },
     SimulationType.SWITCHING_WALL: {
+        "steps",
+        "seed",
         "time_step",
         "wall_z",
         "aperture_radius",
         "cav_spacing",
-        "z_cutoff",
     },
-    SimulationType.BUNCH_TO_BUNCH: {"time_step", "aperture_radius"},
+    SimulationType.BUNCH_TO_BUNCH: {"steps", "seed", "time_step", "aperture_radius"},
 }
 
 
 def _make_particle_widgets(
-    defaults: Dict[str, float | int]
+    defaults: Dict[str, float | int],
 ) -> Dict[str, widgets.Widget]:
     controls: Dict[str, widgets.Widget] = {}
     for name in PARTICLE_PARAM_FIELDS:
@@ -197,12 +208,21 @@ def _make_core_widgets() -> Dict[str, widgets.Widget]:
     controls: Dict[str, widgets.Widget] = {}
     for name, default_value in CORE_PARAM_DEFAULTS.items():
         description = CORE_PARAM_LABELS.get(name, name.replace("_", " ").title())
-        controls[name] = widgets.FloatText(
-            value=float(default_value),
-            description=description,
-            layout=CORE_WIDGET_WIDTH,
-            style=CORE_WIDGET_STYLE,
-        )
+        # Use IntText for steps and seed, FloatText for others
+        if name in ("steps", "seed"):
+            controls[name] = widgets.IntText(
+                value=int(default_value),
+                description=description,
+                layout=CORE_WIDGET_WIDTH,
+                style=CORE_WIDGET_STYLE,
+            )
+        else:
+            controls[name] = widgets.FloatText(
+                value=float(default_value),
+                description=description,
+                layout=CORE_WIDGET_WIDTH,
+                style=CORE_WIDGET_STYLE,
+            )
     return controls
 
 
@@ -234,21 +254,40 @@ def _particle_rows(controls: Dict[str, widgets.Widget]) -> List[widgets.Widget]:
     return rows
 
 
-def _core_rows(controls: Dict[str, widgets.Widget]) -> List[widgets.Widget]:
+def _core_rows(
+    controls: Dict[str, widgets.Widget],
+    z_cutoff_checkbox: widgets.Checkbox,
+    random_seed_checkbox: widgets.Checkbox,
+) -> List[widgets.Widget]:
     rows: List[widgets.Widget] = []
     row: List[widgets.Widget] = []
     for name in CORE_PARAM_DEFAULTS:
-        row.append(controls[name])
-        if len(row) == 3:
-            rows.append(widgets.HBox(row, layout=ROW_LAYOUT))
-            row = []
+        # Add z_cutoff checkbox right after z_cutoff field
+        if name == "z_cutoff":
+            row.append(controls[name])
+            row.append(z_cutoff_checkbox)
+            if len(row) >= 3:
+                rows.append(widgets.HBox(row, layout=ROW_LAYOUT))
+                row = []
+        # Add random_seed checkbox right after seed field
+        elif name == "seed":
+            row.append(controls[name])
+            row.append(random_seed_checkbox)
+            if len(row) >= 3:
+                rows.append(widgets.HBox(row, layout=ROW_LAYOUT))
+                row = []
+        else:
+            row.append(controls[name])
+            if len(row) == 3:
+                rows.append(widgets.HBox(row, layout=ROW_LAYOUT))
+                row = []
     if row:
         rows.append(widgets.HBox(row, layout=ROW_LAYOUT))
     return rows
 
 
 def _collect_particle_values(
-    controls: Dict[str, widgets.Widget]
+    controls: Dict[str, widgets.Widget],
 ) -> Dict[str, float | int]:
     values: Dict[str, float | int] = {}
     for name, control in controls.items():
@@ -256,10 +295,14 @@ def _collect_particle_values(
     return values
 
 
-def _collect_core_values(controls: Dict[str, widgets.Widget]) -> Dict[str, float]:
-    values: Dict[str, float] = {}
+def _collect_core_values(controls: Dict[str, widgets.Widget]) -> Dict[str, float | int]:
+    values: Dict[str, float | int] = {}
     for name, control in controls.items():
-        values[name] = float(control.value)
+        # Keep steps and seed as int, others as float
+        if name in ("steps", "seed"):
+            values[name] = int(control.value)
+        else:
+            values[name] = float(control.value)
     return values
 
 
@@ -277,8 +320,12 @@ def _build_particle_section(
     return accordion
 
 
-def _build_core_section(controls: Dict[str, widgets.Widget]) -> widgets.Accordion:
-    rows = _core_rows(controls)
+def _build_core_section(
+    controls: Dict[str, widgets.Widget],
+    z_cutoff_checkbox: widgets.Checkbox,
+    random_seed_checkbox: widgets.Checkbox,
+) -> widgets.Accordion:
+    rows = _core_rows(controls, z_cutoff_checkbox, random_seed_checkbox)
     accordion = widgets.Accordion(children=[widgets.VBox(rows)])
     accordion.set_title(0, "Core configuration")
     return accordion
@@ -304,11 +351,33 @@ def _required_params_for(sim_type: SimulationType) -> set[str]:
 
 
 def _apply_core_param_state(
-    controls: Dict[str, widgets.Widget], required_params: set[str]
+    controls: Dict[str, widgets.Widget],
+    required_params: set[str],
+    z_cutoff_checkbox: widgets.Checkbox,
+    random_seed_checkbox: widgets.Checkbox,
+    sim_type: SimulationType,
 ) -> None:
     for name, control in controls.items():
         control.disabled = name not in required_params
         control.layout.opacity = 1.0 if name in required_params else 0.45
+
+    # z_cutoff checkbox is available for all modes
+    z_cutoff_checkbox.disabled = False
+    z_cutoff_checkbox.layout.opacity = 1.0
+
+    # Disable z_cutoff field if checkbox is not checked
+    if "z_cutoff" in controls:
+        controls["z_cutoff"].disabled = not z_cutoff_checkbox.value
+        controls["z_cutoff"].layout.opacity = 1.0 if z_cutoff_checkbox.value else 0.45
+
+    # random_seed checkbox is available for all modes
+    random_seed_checkbox.disabled = False
+    random_seed_checkbox.layout.opacity = 1.0
+
+    # Disable seed field if random_seed checkbox is checked
+    if "seed" in controls:
+        controls["seed"].disabled = random_seed_checkbox.value
+        controls["seed"].layout.opacity = 0.45 if random_seed_checkbox.value else 1.0
 
 
 def _sync_config_name_after_load(_button) -> None:
@@ -319,16 +388,17 @@ def _sync_config_name_after_load(_button) -> None:
 
 
 # In[ ]:
-steps_widget = widgets.IntSlider(
-    value=1000,
-    min=10,
-    max=20000,
-    step=10,
-    description="Steps:",
-    continuous_update=False,
-)
-seed_widget = widgets.IntText(value=12345, description="Seed:")
 legacy_toggle = widgets.Checkbox(value=False, description="Include legacy comparison")
+z_cutoff_checkbox = widgets.Checkbox(
+    value=False,
+    description="Enable z cutoff",
+    tooltip="Stop applying external forces when particle z > z_cutoff (all modes)",
+)
+random_seed_checkbox = widgets.Checkbox(
+    value=False,
+    description="Random seed",
+    tooltip="Generate a new random seed for each run",
+)
 simulation_widget = widgets.Dropdown(
     options=[(label, value) for label, value in SIMULATION_TYPE_OPTIONS.items()],
     value=SimulationType.BUNCH_TO_BUNCH,
@@ -349,6 +419,29 @@ difference_save_widget = widgets.Checkbox(
 metrics_save_widget = widgets.Checkbox(value=False, description="Save metrics JSON")
 energy_save_widget = widgets.Checkbox(value=True, description="Save ΔE plots")
 energy_display_widget = widgets.Checkbox(value=True, description="Show ΔE plots")
+
+# Energy plot configuration widgets
+energy_xaxis_widget = widgets.Dropdown(
+    options=[("z position", "z"), ("time", "t"), ("both (dual axis)", "dual")],
+    value="z",
+    description="Energy plot x-axis:",
+    layout=widgets.Layout(width="320px"),
+    style={"description_width": "120px"},
+)
+energy_yaxis_widget = widgets.Dropdown(
+    options=[
+        ("ΔE total", "delta_total"),
+        ("ΔE_z (longitudinal)", "delta_z"),
+        ("ΔE_x (transverse)", "delta_x"),
+        ("ΔE_y (transverse)", "delta_y"),
+        ("E total (absolute)", "total"),
+    ],
+    value="delta_total",
+    description="Energy plot y-axis:",
+    layout=widgets.Layout(width="320px"),
+    style={"description_width": "120px"},
+)
+
 transverse_display_widget = widgets.Checkbox(
     value=False, description="Show ⟨x⟩, ⟨y⟩ plots"
 )
@@ -425,7 +518,9 @@ rider_section = _build_particle_section(
 driver_section = _build_particle_section(
     "Driver particle", driver_controls, driver_species_widget
 )
-core_section = _build_core_section(core_controls)
+core_section = _build_core_section(
+    core_controls, z_cutoff_checkbox, random_seed_checkbox
+)
 image_subcharge_widget = widgets.IntSlider(
     value=12,
     min=4,
@@ -528,7 +623,7 @@ def _refresh_initial_properties(change=None) -> None:
     try:
         rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
             prepare_two_particle_demo(
-                seed=seed_widget.value,
+                seed=int(core_controls.get("seed", widgets.IntText(value=12345)).value),
                 rider_params=rider_params,
                 driver_params=driver_params,
             )
@@ -573,7 +668,7 @@ def _refresh_initial_properties(change=None) -> None:
     )
     table_html = (
         "<p style='margin:0 0 6px'><strong>Seed:</strong> "
-        f"{seed_widget.value}</p><table style='border-collapse:collapse'>"
+        f"{int(core_controls.get('seed', widgets.IntText(value=12345)).value)}</p><table style='border-collapse:collapse'>"
         f"{table_rows}</table>{driver_note}"
     )
     with initial_state_output:
@@ -590,8 +685,6 @@ def _collect_configuration_snapshot() -> dict:
     )
     core_params = _collect_core_values(core_controls)
     snapshot = {
-        "steps": steps_widget.value,
-        "seed": seed_widget.value,
         "simulation_type": sim_type_value.name,
         "legacy_enabled": legacy_toggle.value,
         "overlay_display": overlay_display_widget.value,
@@ -601,6 +694,8 @@ def _collect_configuration_snapshot() -> dict:
         "metrics_save": metrics_save_widget.value,
         "energy_display": energy_display_widget.value,
         "energy_save": energy_save_widget.value,
+        "energy_xaxis": energy_xaxis_widget.value,
+        "energy_yaxis": energy_yaxis_widget.value,
         "transverse_display": transverse_display_widget.value,
         "transverse_save": transverse_save_widget.value,
         "trajectory_save": trajectory_save_widget.value,
@@ -613,6 +708,8 @@ def _collect_configuration_snapshot() -> dict:
         "driver_params": driver_params,
         "core_params": core_params,
         "image_subcharge_count": image_subcharge_widget.value,
+        "z_cutoff_enabled": z_cutoff_checkbox.value,
+        "random_seed_enabled": random_seed_checkbox.value,
     }
     return snapshot
 
@@ -625,10 +722,10 @@ def _apply_configuration_snapshot(snapshot: dict) -> None:
             sim_name = snapshot["simulation_type"]
             if isinstance(sim_name, str) and hasattr(SimulationType, sim_name):
                 simulation_widget.value = getattr(SimulationType, sim_name)
-        if "steps" in snapshot:
-            steps_widget.value = int(snapshot["steps"])
-        if "seed" in snapshot:
-            seed_widget.value = int(snapshot["seed"])
+        if "z_cutoff_enabled" in snapshot:
+            z_cutoff_checkbox.value = bool(snapshot["z_cutoff_enabled"])
+        if "random_seed_enabled" in snapshot:
+            random_seed_checkbox.value = bool(snapshot["random_seed_enabled"])
         if "legacy_enabled" in snapshot:
             legacy_toggle.value = bool(snapshot["legacy_enabled"])
         for widget, key in [
@@ -639,6 +736,8 @@ def _apply_configuration_snapshot(snapshot: dict) -> None:
             (metrics_save_widget, "metrics_save"),
             (energy_display_widget, "energy_display"),
             (energy_save_widget, "energy_save"),
+            (energy_xaxis_widget, "energy_xaxis"),
+            (energy_yaxis_widget, "energy_yaxis"),
             (transverse_display_widget, "transverse_display"),
             (transverse_save_widget, "transverse_save"),
             (trajectory_save_widget, "trajectory_save"),
@@ -744,8 +843,21 @@ def _update_core_controls(change) -> None:
         change["new"] if isinstance(change, dict) else simulation_widget.value
     )
     required_params = CORE_REQUIRED_PARAMS.get(sim_value, set())
+
+    # Handle z_cutoff for all modes when checkbox is enabled
+    if z_cutoff_checkbox.value:
+        required_params = required_params | {"z_cutoff"}
+    else:
+        required_params = required_params - {"z_cutoff"}
+
     _apply_driver_visibility(sim_value)
-    _apply_core_param_state(core_controls, required_params)
+    _apply_core_param_state(
+        core_controls,
+        required_params,
+        z_cutoff_checkbox,
+        random_seed_checkbox,
+        sim_value,
+    )
     image_subcharge_widget.disabled = sim_value != SimulationType.CONDUCTING_WALL
     image_subcharge_widget.layout.opacity = (
         1.0 if not image_subcharge_widget.disabled else 0.45
@@ -771,7 +883,6 @@ if hasattr(simulation_widget, "_testbed_observers_attached"):
     for widget in [
         simulation_widget,
         legacy_toggle,
-        seed_widget,
         rider_species_widget,
         driver_species_widget,
     ]:
@@ -786,11 +897,15 @@ if hasattr(simulation_widget, "_testbed_observers_attached"):
 simulation_widget.observe(_update_core_controls, names="value")
 legacy_toggle.observe(_update_legacy_controls, names="value")
 simulation_widget.observe(_refresh_initial_properties, names="value")
-seed_widget.observe(_refresh_initial_properties, names="value")
+z_cutoff_checkbox.observe(_update_core_controls, names="value")
+random_seed_checkbox.observe(_update_core_controls, names="value")
 for control in rider_controls.values():
     control.observe(_refresh_initial_properties, names="value")
 for control in driver_controls.values():
     control.observe(_refresh_initial_properties, names="value")
+# Observe seed changes in core_controls
+if "seed" in core_controls:
+    core_controls["seed"].observe(_refresh_initial_properties, names="value")
 rider_species_widget.observe(
     lambda change: _apply_species_preset(rider_controls, change["new"]), names="value"
 )
@@ -861,14 +976,30 @@ def handle_run() -> None:
         )
         core_params = _collect_core_values(core_controls)
         required_params = CORE_REQUIRED_PARAMS.get(sim_type_value, set())
+
+        # Handle z_cutoff for all modes when checkbox is enabled
+        if z_cutoff_checkbox.value:
+            required_params = required_params | {"z_cutoff"}
+        else:
+            required_params = required_params - {"z_cutoff"}
+
+        # Extract steps and seed from core_params
+        num_steps = int(core_params.get("steps", 1000))
+        # Use random seed if checkbox is enabled
+        if random_seed_checkbox.value:
+            import random
+
+            seed = random.randint(1, 2**31 - 1)
+            log(f"  Generated random seed: {seed}")
+        else:
+            seed = int(core_params.get("seed", 12345))
+
         filtered_core_params = {
             name: value
             for name, value in core_params.items()
-            if name in required_params
+            if name in required_params and name not in ("steps", "seed")
         }
         legacy_enabled = legacy_toggle.value
-        num_steps = steps_widget.value
-        seed = seed_widget.value
         dpi_value = dpi_widget.value
         image_subcharge_count = int(image_subcharge_widget.value)
         filename_base = _generate_filename_base()
@@ -965,6 +1096,8 @@ def handle_run() -> None:
                         rest_energies.get("rider"),
                     )
                     rider_z_rel = rider_z - rider_z[0]
+                    # Extract time series for dual x-axis
+                    rider_t = np.array([s["t"][0] for s in core_traj["rider"]])
 
                     if supports_driver:
                         driver_delta_e, driver_z = compute_delta_energy_series(
@@ -973,9 +1106,11 @@ def handle_run() -> None:
                             rest_energies.get("driver"),
                         )
                         driver_z_rel = driver_z - driver_z[0]
+                        driver_t = np.array([s["t"][0] for s in core_traj["driver"]])
                     else:
                         driver_delta_e = None
                         driver_z_rel = None
+                        driver_t = None
 
                     if legacy_enabled and legacy_traj:
                         legacy_rider_delta_e, legacy_rider_z = (
@@ -986,6 +1121,9 @@ def handle_run() -> None:
                             )
                         )
                         legacy_rider_z_rel = legacy_rider_z - legacy_rider_z[0]
+                        legacy_rider_t = np.array(
+                            [s["t"][0] for s in legacy_traj["rider"]]
+                        )
 
                         if supports_driver:
                             legacy_driver_delta_e, legacy_driver_z = (
@@ -996,16 +1134,112 @@ def handle_run() -> None:
                                 )
                             )
                             legacy_driver_z_rel = legacy_driver_z - legacy_driver_z[0]
+                            legacy_driver_t = np.array(
+                                [s["t"][0] for s in legacy_traj["driver"]]
+                            )
                         else:
                             legacy_driver_delta_e = None
                             legacy_driver_z_rel = None
+                            legacy_driver_t = None
                     else:
                         legacy_rider_delta_e = None
                         legacy_rider_z_rel = None
+                        legacy_rider_t = None
                         legacy_driver_delta_e = None
                         legacy_driver_z_rel = None
+                        legacy_driver_t = None
 
                     if energy_save_widget.value or energy_display_widget.value:
+                        # Extract energy plot configuration
+                        xaxis_mode = energy_xaxis_widget.value  # "z", "t", or "dual"
+                        yaxis_mode = (
+                            energy_yaxis_widget.value
+                        )  # "delta_total", "delta_z", etc.
+
+                        # Prepare x-axis data
+                        if xaxis_mode == "z":
+                            rider_x = rider_z_rel
+                            driver_x = driver_z_rel if supports_driver else None
+                            xlabel = "z (mm)"
+                        elif xaxis_mode == "t":
+                            rider_x = rider_t
+                            driver_x = driver_t if supports_driver else None
+                            xlabel = "t (ns)"
+                        else:  # dual
+                            rider_x = rider_z_rel
+                            driver_x = driver_z_rel if supports_driver else None
+                            xlabel = "z (mm)"
+
+                        # Prepare y-axis data
+                        if yaxis_mode == "delta_total":
+                            rider_y = rider_delta_e
+                            driver_y = driver_delta_e if supports_driver else None
+                            ylabel = "ΔE (GeV)"
+                            title_suffix = "Energy Change"
+                        elif yaxis_mode == "delta_z":
+                            # Extract ΔE_z from trajectories
+                            rider_Pz = np.array(
+                                [s["Pz"][0] for s in core_traj["rider"]]
+                            )
+                            rider_Pz0 = rider_Pz[0]
+                            rider_y = (
+                                (rider_Pz - rider_Pz0) * 3e8 * 1e-9 / 1e9
+                            )  # Convert to GeV
+                            if supports_driver and driver_delta_e is not None:
+                                driver_Pz = np.array(
+                                    [s["Pz"][0] for s in core_traj["driver"]]
+                                )
+                                driver_Pz0 = driver_Pz[0]
+                                driver_y = (driver_Pz - driver_Pz0) * 3e8 * 1e-9 / 1e9
+                            else:
+                                driver_y = None
+                            ylabel = "ΔE_z (GeV)"
+                            title_suffix = "Longitudinal Energy Change"
+                        elif yaxis_mode == "delta_x":
+                            rider_Px = np.array(
+                                [s["Px"][0] for s in core_traj["rider"]]
+                            )
+                            rider_Px0 = rider_Px[0]
+                            rider_y = (rider_Px - rider_Px0) * 3e8 * 1e-9 / 1e9
+                            if supports_driver and driver_delta_e is not None:
+                                driver_Px = np.array(
+                                    [s["Px"][0] for s in core_traj["driver"]]
+                                )
+                                driver_Px0 = driver_Px[0]
+                                driver_y = (driver_Px - driver_Px0) * 3e8 * 1e-9 / 1e9
+                            else:
+                                driver_y = None
+                            ylabel = "ΔE_x (GeV)"
+                            title_suffix = "Transverse-X Energy Change"
+                        elif yaxis_mode == "delta_y":
+                            rider_Py = np.array(
+                                [s["Py"][0] for s in core_traj["rider"]]
+                            )
+                            rider_Py0 = rider_Py[0]
+                            rider_y = (rider_Py - rider_Py0) * 3e8 * 1e-9 / 1e9
+                            if supports_driver and driver_delta_e is not None:
+                                driver_Py = np.array(
+                                    [s["Py"][0] for s in core_traj["driver"]]
+                                )
+                                driver_Py0 = driver_Py[0]
+                                driver_y = (driver_Py - driver_Py0) * 3e8 * 1e-9 / 1e9
+                            else:
+                                driver_y = None
+                            ylabel = "ΔE_y (GeV)"
+                            title_suffix = "Transverse-Y Energy Change"
+                        else:  # total (absolute energy)
+                            rider_E = np.array([s["E"][0] for s in core_traj["rider"]])
+                            rider_y = rider_E * 3e8 * 1e-9 / 1e9  # Convert to GeV
+                            if supports_driver and driver_delta_e is not None:
+                                driver_E = np.array(
+                                    [s["E"][0] for s in core_traj["driver"]]
+                                )
+                                driver_y = driver_E * 3e8 * 1e-9 / 1e9
+                            else:
+                                driver_y = None
+                            ylabel = "E (GeV)"
+                            title_suffix = "Total Energy"
+
                         fig_energy, axes_energy = plt.subplots(
                             1,
                             2 if supports_driver else 1,
@@ -1015,66 +1249,103 @@ def handle_run() -> None:
                         if not supports_driver:
                             axes_energy = [axes_energy]
 
+                        # Rider plot
                         axes_energy[0].scatter(
-                            rider_z_rel,
-                            rider_delta_e,
+                            rider_x,
+                            rider_y,
                             color=COLOR_RIDER,
                             label="Core",
                             **SCATTER_STYLE,
                         )
-                        if legacy_enabled and legacy_rider_delta_e is not None:
+                        if (
+                            legacy_enabled
+                            and legacy_rider_delta_e is not None
+                            and yaxis_mode == "delta_total"
+                        ):
+                            legacy_x = (
+                                legacy_rider_z_rel
+                                if xaxis_mode == "z"
+                                else (
+                                    legacy_rider_t
+                                    if xaxis_mode == "t"
+                                    else legacy_rider_z_rel
+                                )
+                            )
                             axes_energy[0].scatter(
-                                legacy_rider_z_rel,
+                                legacy_x,
                                 legacy_rider_delta_e,
                                 color=COLOR_LEGACY_RIDER,
                                 label="Legacy",
                                 **SCATTER_STYLE,
                             )
-                        axes_energy[0].set_xlabel("Δz (mm)", fontsize=LABEL_FONTSIZE)
-                        axes_energy[0].set_ylabel("ΔE (GeV)", fontsize=LABEL_FONTSIZE)
+                        axes_energy[0].set_xlabel(xlabel, fontsize=LABEL_FONTSIZE)
+                        axes_energy[0].set_ylabel(ylabel, fontsize=LABEL_FONTSIZE)
                         axes_energy[0].set_title(
-                            "Rider ΔE vs Δz", fontsize=TITLE_FONTSIZE
+                            f"Rider {title_suffix}", fontsize=TITLE_FONTSIZE
                         )
                         axes_energy[0].legend(fontsize=LEGEND_FONTSIZE)
                         axes_energy[0].tick_params(labelsize=TICK_FONTSIZE)
                         axes_energy[0].grid(True, alpha=0.3)
 
-                        if supports_driver and driver_delta_e is not None:
+                        # Add dual x-axis if requested
+                        if xaxis_mode == "dual":
+                            ax_time_0 = axes_energy[0].twiny()
+                            ax_time_0.scatter(rider_t, rider_y, alpha=0)
+                            ax_time_0.set_xlabel("t (ns)", fontsize=LABEL_FONTSIZE)
+                            ax_time_0.tick_params(labelsize=TICK_FONTSIZE)
+
+                        if supports_driver and driver_y is not None:
                             axes_energy[1].scatter(
-                                driver_z_rel,
-                                driver_delta_e,
+                                driver_x,
+                                driver_y,
                                 color=COLOR_DRIVER,
                                 label="Core",
                                 **SCATTER_STYLE,
                             )
-                            if legacy_enabled and legacy_driver_delta_e is not None:
+                            if (
+                                legacy_enabled
+                                and legacy_driver_delta_e is not None
+                                and yaxis_mode == "delta_total"
+                            ):
+                                legacy_x = (
+                                    legacy_driver_z_rel
+                                    if xaxis_mode == "z"
+                                    else (
+                                        legacy_driver_t
+                                        if xaxis_mode == "t"
+                                        else legacy_driver_z_rel
+                                    )
+                                )
                                 axes_energy[1].scatter(
-                                    legacy_driver_z_rel,
+                                    legacy_x,
                                     legacy_driver_delta_e,
                                     color=COLOR_LEGACY_DRIVER,
                                     label="Legacy",
                                     **SCATTER_STYLE,
                                 )
-                            axes_energy[1].set_xlabel(
-                                "Δz (mm)", fontsize=LABEL_FONTSIZE
-                            )
-                            axes_energy[1].set_ylabel(
-                                "ΔE (GeV)", fontsize=LABEL_FONTSIZE
-                            )
+                            axes_energy[1].set_xlabel(xlabel, fontsize=LABEL_FONTSIZE)
+                            axes_energy[1].set_ylabel(ylabel, fontsize=LABEL_FONTSIZE)
                             axes_energy[1].set_title(
-                                "Driver ΔE vs Δz", fontsize=TITLE_FONTSIZE
+                                f"Driver {title_suffix}", fontsize=TITLE_FONTSIZE
                             )
                             axes_energy[1].legend(fontsize=LEGEND_FONTSIZE)
                             axes_energy[1].tick_params(labelsize=TICK_FONTSIZE)
                             axes_energy[1].grid(True, alpha=0.3)
 
+                            # Add dual x-axis if requested
+                            if xaxis_mode == "dual":
+                                ax_time_1 = axes_energy[1].twiny()
+                                ax_time_1.scatter(driver_t, driver_y, alpha=0)
+                                ax_time_1.set_xlabel("t (ns)", fontsize=LABEL_FONTSIZE)
+                                ax_time_1.tick_params(labelsize=TICK_FONTSIZE)
+
                         fig_energy.tight_layout()
                         if energy_save_widget.value:
                             energy_path = output_dir / f"{filename_base}_energy.png"
-                            fig_energy.savefig(energy_path)
+                            fig_energy.savefig(energy_path, bbox_inches="tight")
                             log(f"Saved energy plots to: {energy_path}")
                         if energy_display_widget.value:
-                            plt.show()
+                            display(fig_energy)
                         plt.close(fig_energy)
 
                     if (
@@ -1151,10 +1422,10 @@ def handle_run() -> None:
                         fig_overlay.tight_layout()
                         if overlay_save_widget.value:
                             overlay_path = output_dir / f"{filename_base}_overlay.png"
-                            fig_overlay.savefig(overlay_path)
-                            log(f"Saved overlay plot to: {overlay_path}")
+                            fig_overlay.savefig(overlay_path, bbox_inches="tight")
+                            log(f"Saved overlay plots to: {overlay_path}")
                         if overlay_display_widget.value:
-                            plt.show()
+                            display(fig_overlay)
                         plt.close(fig_overlay)
 
                     rider_states = core_traj["rider"]
@@ -1352,8 +1623,11 @@ def handle_run() -> None:
                             axes_diff[1].grid(True, alpha=0.3)
 
                         fig_diff.tight_layout()
-                        fig_diff.savefig(diff_path)
-                        log(f"Saved difference plot to: {diff_path}")
+                        if difference_save_widget.value:
+                            fig_diff.savefig(diff_path, bbox_inches="tight")
+                            log(f"Saved difference plot to: {diff_path}")
+                        if difference_display_widget.value:
+                            display(fig_diff)
                         plt.close(fig_diff)
 
                     if transverse_display_widget.value or transverse_save_widget.value:
@@ -1440,10 +1714,10 @@ def handle_run() -> None:
                             transverse_path = (
                                 output_dir / f"{filename_base}_transverse.png"
                             )
-                            fig_transverse.savefig(transverse_path)
+                            fig_transverse.savefig(transverse_path, bbox_inches="tight")
                             log(f"Saved transverse plots to: {transverse_path}")
                         if transverse_display_widget.value:
-                            plt.show()
+                            display(fig_transverse)
                         plt.close(fig_transverse)
 
                     if trajectory_save_widget.value:
@@ -1595,7 +1869,7 @@ controls_layout = widgets.VBox(
     [
         widgets.HTML("<h2 style='margin:12px 0 8px'>Integrator Testbed</h2>"),
         widgets.HBox(
-            [simulation_widget, steps_widget, seed_widget, legacy_toggle],
+            [simulation_widget, legacy_toggle],
             layout=ROW_LAYOUT,
         ),
         initial_state_output,
@@ -1609,6 +1883,7 @@ controls_layout = widgets.VBox(
             [difference_display_widget, difference_save_widget], layout=ROW_LAYOUT
         ),
         widgets.HBox([energy_display_widget, energy_save_widget], layout=ROW_LAYOUT),
+        widgets.HBox([energy_xaxis_widget, energy_yaxis_widget], layout=ROW_LAYOUT),
         widgets.HBox(
             [transverse_display_widget, transverse_save_widget], layout=ROW_LAYOUT
         ),
@@ -1620,7 +1895,15 @@ controls_layout = widgets.VBox(
         config_controls,
         widgets.HBox([run_button], layout=ROW_LAYOUT),
         output_area,
-    ]
+    ],
+    layout=widgets.Layout(
+        width="98%",
+        max_height="95vh",
+        overflow_y="auto",
+        overflow_x="hidden",
+        border="1px solid #ddd",
+        padding="10px",
+    ),
 )
 
 display(controls_layout)
