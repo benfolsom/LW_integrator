@@ -270,7 +270,7 @@ def chrono_match_indices(
     effective_tolerance = tolerance
     if adaptive_tolerance and timestep_h is not None and timestep_h > 0:
         effective_tolerance = 0.1 * timestep_h
-        if verbosity >= 2:
+        if verbosity >= 3:
             print(
                 f"  [Chrono-match] Adaptive tolerance: {effective_tolerance:.3e} ns (0.1 × {timestep_h:.3e} ns)"
             )
