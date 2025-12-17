@@ -21,6 +21,7 @@ if str(LEGACY_ROOT) not in sys.path:
     sys.path.insert(0, str(LEGACY_ROOT))
 
 from core.trajectory_integrator import SimulationType, retarded_integrator
+from core.types import ChronoMatchingMode
 from legacy.bunch_inits import init_bunch  # type: ignore
 from legacy.covariant_integrator_library import (  # type: ignore
     retarded_integrator as legacy_retarded_integrator,
@@ -196,6 +197,7 @@ def run_core_integrator(
     self_consistency_verbosity: int = 0,
     self_consistency_chrono_interpolate: bool = False,
     self_consistency_chrono_tolerance: float = 1e-3,
+    self_consistency_chrono_matching_mode: str = "AVERAGED",
     energy_monitor_enabled: bool = True,
     energy_monitor_threshold: float = 2.0,
     energy_monitor_check_interval: int = 10,
@@ -242,7 +244,18 @@ def run_core_integrator(
             verbosity=self_consistency_verbosity,
             chrono_interpolate=self_consistency_chrono_interpolate,
             chrono_tolerance=self_consistency_chrono_tolerance,
+            chrono_matching_mode=self_consistency_chrono_matching_mode,
         )
+
+    # Extract and convert chrono_mode to enum
+    chrono_mode_str = self_consistency_chrono_matching_mode.upper()
+    if chrono_mode_str == "FAST":
+        chrono_mode = ChronoMatchingMode.FAST
+    elif chrono_mode_str == "AVERAGED":
+        chrono_mode = ChronoMatchingMode.AVERAGED
+    else:
+        # Default to AVERAGED if invalid
+        chrono_mode = ChronoMatchingMode.AVERAGED
 
     # Configure energy monitoring
     energy_monitor = None
@@ -283,6 +296,7 @@ def run_core_integrator(
         z_cutoff=resolved_z_cutoff,
         z_cutoff_mode=resolved_z_cutoff_mode,
         self_consistency=self_consistency,
+        chrono_mode=chrono_mode,
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
         image_subcharge_count=image_subcharge_count,
@@ -543,6 +557,7 @@ def run_benchmark(
     self_consistency_verbosity: int = 0,
     self_consistency_chrono_interpolate: bool = False,
     self_consistency_chrono_tolerance: float = 1e-3,
+    self_consistency_chrono_matching_mode: str = "AVERAGED",
     energy_monitor_enabled: bool = True,
     energy_monitor_threshold: float = 2.0,
     energy_monitor_check_interval: int = 10,
@@ -615,6 +630,7 @@ def run_benchmark(
         self_consistency_verbosity=self_consistency_verbosity,
         self_consistency_chrono_interpolate=self_consistency_chrono_interpolate,
         self_consistency_chrono_tolerance=self_consistency_chrono_tolerance,
+        self_consistency_chrono_matching_mode=self_consistency_chrono_matching_mode,
         energy_monitor_enabled=energy_monitor_enabled,
         energy_monitor_threshold=energy_monitor_threshold,
         energy_monitor_check_interval=energy_monitor_check_interval,

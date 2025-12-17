@@ -276,6 +276,15 @@ class SimulationOptions:
     self_consistency_chrono_tolerance: float = (
         1e-3  # Time residual tolerance for chrono-matching (ns)
     )
+    self_consistency_chrono_matching_mode: str = (
+        "FAST"  # Chrono-matching mode: "FAST" (default) or "AVERAGED" (internal only)
+    )
+    self_consistency_chrono_high_precision: bool = (
+        False  # Enable cubic interpolation + position interpolation
+    )
+    self_consistency_chrono_adaptive_tolerance: bool = (
+        False  # Auto-set tolerance = 0.1 × timestep
+    )
 
     # Energy monitoring options
     energy_monitor_enabled: bool = True
@@ -350,6 +359,11 @@ class SimulationOptions:
             "self_consistency_mass_shell_tolerance": self.self_consistency_mass_shell_tolerance,
             "self_consistency_mass_shell_relaxation": self.self_consistency_mass_shell_relaxation,
             "self_consistency_verbosity": self.self_consistency_verbosity,
+            "self_consistency_chrono_interpolate": self.self_consistency_chrono_interpolate,
+            "self_consistency_chrono_tolerance": self.self_consistency_chrono_tolerance,
+            "self_consistency_chrono_matching_mode": self.self_consistency_chrono_matching_mode,
+            "self_consistency_chrono_high_precision": self.self_consistency_chrono_high_precision,
+            "self_consistency_chrono_adaptive_tolerance": self.self_consistency_chrono_adaptive_tolerance,
             "energy_monitor_enabled": self.energy_monitor_enabled,
             "energy_monitor_threshold": self.energy_monitor_threshold,
             "energy_monitor_check_interval": self.energy_monitor_check_interval,
@@ -387,6 +401,10 @@ class SimulationOptions:
                 return float(value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return default
+
+        def _str(name: str, default: str) -> str:
+            value = payload.get(name, default)
+            return str(value) if value is not None else default
 
         sim_value = payload.get("simulation_type", "BUNCH_TO_BUNCH")
         if isinstance(sim_value, SimulationType):
@@ -483,6 +501,21 @@ class SimulationOptions:
                 "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
+            self_consistency_chrono_interpolate=_bool(
+                "self_consistency_chrono_interpolate", False
+            ),
+            self_consistency_chrono_tolerance=_float(
+                "self_consistency_chrono_tolerance", 1e-3
+            ),
+            self_consistency_chrono_matching_mode=_str(
+                "self_consistency_chrono_matching_mode", "FAST"
+            ),
+            self_consistency_chrono_high_precision=_bool(
+                "self_consistency_chrono_high_precision", False
+            ),
+            self_consistency_chrono_adaptive_tolerance=_bool(
+                "self_consistency_chrono_adaptive_tolerance", False
+            ),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
             energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
             energy_monitor_check_interval=_int("energy_monitor_check_interval", 10),
@@ -816,6 +849,88 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
 # ---------------------------------------------------------------------------
 
 
+def build_self_consistency_config(options: SimulationOptions) -> Optional[object]:
+    """Build SelfConsistencyConfig from SimulationOptions.
+
+    Returns None if self_consistency is disabled.
+    """
+    if not options.self_consistency_enabled:
+        return None
+
+    from core.self_consistency import SelfConsistencyConfig
+
+    return SelfConsistencyConfig(
+        enabled=True,
+        convergence_mode=options.self_consistency_convergence_mode,
+        target_ms_tolerance=options.self_consistency_target_ms_tolerance,
+        max_iterations=options.self_consistency_max_iterations,
+        mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
+        mass_shell_relaxation=options.self_consistency_mass_shell_relaxation,
+        verbosity=options.self_consistency_verbosity,
+        chrono_interpolate=options.self_consistency_chrono_interpolate,
+        chrono_tolerance=options.self_consistency_chrono_tolerance,
+        chrono_matching_mode=options.self_consistency_chrono_matching_mode,
+        chrono_high_precision=options.self_consistency_chrono_high_precision,
+        chrono_adaptive_tolerance=options.self_consistency_chrono_adaptive_tolerance,
+    )
+
+
+def build_energy_monitor_config(options: SimulationOptions) -> Optional[object]:
+    """Build EnergyMonitorConfig from SimulationOptions.
+
+    Returns None if energy_monitor is disabled.
+    """
+    if not options.energy_monitor_enabled:
+        return None
+
+    from core.integration_runner import EnergyMonitorConfig
+
+    return EnergyMonitorConfig(
+        enabled=True,
+        relative_threshold=options.energy_monitor_threshold,
+        check_interval=options.energy_monitor_check_interval,
+        halt_on_jump=options.energy_monitor_halt_on_jump,
+        debug=options.energy_monitor_debug,
+    )
+
+
+def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[object]:
+    """Build AdaptiveTimestepConfig from SimulationOptions.
+
+    Returns None if adaptive_timestep is disabled.
+    """
+    if not options.adaptive_timestep_enabled:
+        return None
+
+    from core.integration_runner import AdaptiveTimestepConfig
+
+    return AdaptiveTimestepConfig(
+        enabled=True,
+        energy_jump_threshold=options.adaptive_timestep_threshold,
+        timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
+        max_refinement_attempts=options.adaptive_timestep_max_attempts,
+        min_timestep_factor=options.adaptive_timestep_min_factor,
+        cooldown_steps=options.adaptive_timestep_cooldown_steps,
+        probe_threshold=options.adaptive_timestep_probe_threshold,
+        max_probe_steps=options.adaptive_timestep_max_probe_steps,
+        debug=options.adaptive_timestep_debug,
+    )
+
+
+def build_chrono_mode_enum(chrono_mode_str: str) -> object:
+    """Convert chrono mode string to ChronoMatchingMode enum."""
+    from core.types import ChronoMatchingMode
+
+    chrono_mode_upper = chrono_mode_str.upper()
+    if chrono_mode_upper == "FAST":
+        return ChronoMatchingMode.FAST
+    elif chrono_mode_upper == "AVERAGED":
+        return ChronoMatchingMode.AVERAGED
+    else:
+        # Default to AVERAGED if invalid
+        return ChronoMatchingMode.AVERAGED
+
+
 def run_testbed(
     options: SimulationOptions,
     *,
@@ -959,45 +1074,96 @@ def run_testbed(
     stdout_capture = TeeStringIO(sys.stdout)
     stderr_capture = TeeStringIO(sys.stderr)
 
+    # Build configuration objects using helper functions
+    import copy
+
+    from core.trajectory_integrator import retarded_integrator
+    from examples.validation.core_vs_legacy_benchmark import (
+        _normalize_state,
+        prepare_two_particle_demo,
+    )
+
+    self_consistency_config = build_self_consistency_config(options)
+    energy_monitor_config = build_energy_monitor_config(options)
+    adaptive_timestep_config = build_adaptive_timestep_config(options)
+    chrono_mode_enum = build_chrono_mode_enum(
+        options.self_consistency_chrono_matching_mode
+    )
+
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-        result = run_benchmark(
+        # Prepare initial states
+        rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
+            prepare_two_particle_demo(
+                options.seed,
+                rider_params=rider_params,
+                driver_params=driver_params,
+            )
+        )
+
+        rider_initial = _normalize_state(copy.deepcopy(rider_state))
+        driver_initial = _normalize_state(copy.deepcopy(driver_state))
+
+        # Run legacy if requested
+        legacy_traj_rider = None
+        legacy_traj_driver = None
+        if legacy_enabled:
+            from legacy.covariant_integrator_library import (
+                retarded_integrator as legacy_retarded_integrator,
+            )
+
+            legacy_traj_rider, legacy_traj_driver = legacy_retarded_integrator(
+                copy.deepcopy(rider_state),
+                copy.deepcopy(driver_state),
+                options.steps,
+                **filtered_core_params,
+            )
+
+        # Run core integrator directly
+        core_traj_rider, core_traj_driver = retarded_integrator(
             steps=options.steps,
-            simulation_type=sim_type,
-            rider_params=rider_params,
-            driver_params=driver_params,
-            seed=options.seed,
-            legacy_enabled=legacy_enabled,
-            return_trajectories=return_traj_flag,
+            h_step=filtered_core_params.get("time_step", 2.2e-7),
+            wall_z=filtered_core_params.get("wall_z", 1e5),
+            aperture_radius=filtered_core_params.get("aperture_radius", 1e5),
+            sim_type=sim_type,
+            init_rider=copy.deepcopy(rider_initial),
+            init_driver=copy.deepcopy(driver_initial),
+            mean=filtered_core_params.get("mean", 1e5),
+            cav_spacing=filtered_core_params.get("cav_spacing", 1e5),
+            z_cutoff=filtered_core_params.get("z_cutoff", 0.0),
+            z_cutoff_mode=filtered_core_params.get("z_cutoff_mode", "absolute"),
+            self_consistency=self_consistency_config,
+            chrono_mode=chrono_mode_enum,
+            energy_monitor=energy_monitor_config,
+            adaptive_timestep=adaptive_timestep_config,
             image_subcharge_count=int(options.image_subcharge_count),
-            use_image_weighting=bool(options.use_image_weighting),
-            self_consistency_enabled=options.self_consistency_enabled,
-            self_consistency_tolerance=options.self_consistency_target_ms_tolerance,  # Map to tolerance for backward compat
-            self_consistency_convergence_mode=options.self_consistency_convergence_mode,
-            self_consistency_target_ms_tolerance=options.self_consistency_target_ms_tolerance,
-            self_consistency_max_iterations=options.self_consistency_max_iterations,
-            self_consistency_mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
-            self_consistency_mass_shell_relaxation=options.self_consistency_mass_shell_relaxation,
-            self_consistency_verbosity=options.self_consistency_verbosity,
-            self_consistency_chrono_interpolate=options.self_consistency_chrono_interpolate,
-            self_consistency_chrono_tolerance=options.self_consistency_chrono_tolerance,
-            energy_monitor_enabled=options.energy_monitor_enabled,
-            energy_monitor_threshold=options.energy_monitor_threshold,
-            energy_monitor_check_interval=options.energy_monitor_check_interval,
-            energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
-            energy_monitor_debug=options.energy_monitor_debug,
-            adaptive_timestep_enabled=options.adaptive_timestep_enabled,
-            adaptive_timestep_threshold=options.adaptive_timestep_threshold,
-            adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
-            adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
-            adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
-            adaptive_timestep_cooldown_steps=options.adaptive_timestep_cooldown_steps,
-            adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
-            adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
-            adaptive_timestep_debug=options.adaptive_timestep_debug,
+            use_conducting_image_weighting=bool(options.use_image_weighting),
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
-            **filtered_core_params,
         )
+
+        # Build result in same format as run_benchmark
+        payload = {
+            "core": {
+                "rider": [_normalize_state(s) for s in core_traj_rider],
+                "driver": [_normalize_state(s) for s in core_traj_driver],
+            },
+            "initial_states": {
+                "rider": rider_initial,
+                "driver": driver_initial,
+            },
+            "rest_energy_mev": {
+                "rider": rider_rest_mev,
+                "driver": driver_rest_mev,
+            },
+        }
+
+        if legacy_enabled and legacy_traj_rider and legacy_traj_driver:
+            payload["legacy"] = {
+                "rider": [_normalize_state(s) for s in legacy_traj_rider],
+                "driver": [_normalize_state(s) for s in legacy_traj_driver],
+            }
+
+        result = ({}, payload)  # Empty metrics dict, payload with trajectories
 
     # Store captured stdout/stderr separately for verbose logs button
     captured_stdout = stdout_capture.getvalue()

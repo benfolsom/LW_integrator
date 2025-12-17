@@ -114,6 +114,23 @@ class SelfConsistencyConfig:
         If |t_matched - t_target| > chrono_tolerance, interpolation is applied
         (if chrono_interpolate=True) or a warning is issued (if verbosity >= 2).
         Default is 1e-3 ns (1 picosecond).
+    chrono_matching_mode : str
+        Chrono-matching algorithm mode. Options:
+        - "FAST": Single-sample delay Δt = R(1 + β·n̂)/c (default, legacy behavior)
+        - "AVERAGED": Reserved for APPROXIMATE_BACK_HISTORY startup mode only.
+          Not recommended for general use until fully validated (~2-5× slower).
+        Default is "FAST" (matches legacy implementation).
+    chrono_high_precision : bool
+        Enable high-precision chrono-matching features. When True:
+        - Uses cubic (Catmull-Rom) interpolation instead of linear
+        - Interpolates particle positions (x/y/z) in addition to velocities
+        - Provides smoother derivatives for acceleration terms
+        Adds ~3-5% overhead. Useful for γ > 1000. Default is False.
+    chrono_adaptive_tolerance : bool
+        Automatically set chrono_tolerance = 0.1 × timestep_h. When True,
+        overrides the manual chrono_tolerance setting and scales with the
+        integration timestep. Useful for variable-timestep simulations.
+        Default is False (use fixed tolerance).
 
     max_iterations : int
         Maximum number of refinement iterations per particle per step. Default is 10.
@@ -166,6 +183,11 @@ class SelfConsistencyConfig:
     mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
     chrono_interpolate: bool = False  # Enable chrono-match interpolation
     chrono_tolerance: float = 1e-3  # Time residual tolerance (ns)
+    chrono_matching_mode: str = (
+        "FAST"  # "FAST" or "AVERAGED" (AVERAGED for APPROXIMATE_BACK_HISTORY only)
+    )
+    chrono_high_precision: bool = False  # Enable cubic + position interpolation
+    chrono_adaptive_tolerance: bool = False  # Auto-set tolerance = 0.1 × timestep
     max_iterations: int = 10  # Maximum SC iterations per particle per step
     verbosity: int = 0
 

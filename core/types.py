@@ -37,18 +37,21 @@ class SimulationType(IntEnum):
 class ChronoMatchingMode(Enum):
     """Retardation sampling strategies used by chrono-matching.
 
-    ``FAST`` reproduces the historical implementation by evaluating the causal
-    delay once using the instantaneous dot product of particle velocity and the
-    line-of-sight unit vector (``Δt = R (1 + β·n̂) / c``).  ``AVERAGED`` augments
-    this by sampling two limiting cases—first assuming the source particle is
-    stationary (``R / c``) and then assuming it moves at the speed of light in
-    the line-of-sight direction (``2R / c``).  The averaged dot product from
-    those two samples is used to compute the retardation interval, providing a
-    more conservative estimate when highly relativistic motion is present.
+    ``FAST`` (default) reproduces the historical implementation by evaluating
+    the causal delay once using the instantaneous dot product of particle
+    velocity and the line-of-sight unit vector (``Δt = R (1 + β·n̂) / c``).
+
+    ``AVERAGED`` is reserved for internal use with ``APPROXIMATE_BACK_HISTORY``
+    startup mode. It samples two limiting cases—first assuming the source
+    particle is stationary (``R / c``) and then assuming it moves at the speed
+    of light in the line-of-sight direction (``2R / c``). The averaged dot
+    product from those two samples is used to compute the retardation interval.
+    This mode should NOT be used in production until APPROXIMATE_BACK_HISTORY
+    is fully implemented and validated.
     """
 
-    AVERAGED = auto()
     FAST = auto()
+    AVERAGED = auto()
 
 
 class StartupMode(Enum):
@@ -115,7 +118,7 @@ class IntegratorConfig:
     wall_position: float
     aperture_radius: float
     simulation_type: SimulationType
-    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.FAST
     startup_mode: StartupMode = StartupMode.COLD_START
     bunch_mean: float = 0.0
     cavity_spacing: float = 0.0

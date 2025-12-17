@@ -469,6 +469,15 @@ class IntegratorGUI:
         self.self_consistency_chrono_tolerance_var = tk.DoubleVar(
             value=getattr(self.options, "self_consistency_chrono_tolerance", 1e-3)
         )
+        self.self_consistency_chrono_high_precision_var = tk.BooleanVar(
+            value=getattr(self.options, "self_consistency_chrono_high_precision", False)
+        )
+        self.self_consistency_chrono_adaptive_tolerance_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "self_consistency_chrono_adaptive_tolerance", False
+            )
+        )
+        # chrono_matching_mode kept at FAST (internal only, not exposed in GUI)
 
         # Trace to update control states
         self.self_consistency_enabled_var.trace_add(
@@ -1362,6 +1371,72 @@ class IntegratorGUI:
             width=16,
         )
         self.sc_chrono_tolerance_entry.grid(row=9, column=1, sticky="w", pady=2)
+
+        # Advanced chrono options (high-precision mode)
+        chrono_highprec_frame = ttk.Frame(sc_frame)
+        chrono_highprec_frame.grid(
+            row=10, column=0, columnspan=2, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.sc_chrono_high_precision_check = ttk.Checkbutton(
+            chrono_highprec_frame,
+            text="High-precision mode (cubic + position interpolation)",
+            variable=self.self_consistency_chrono_high_precision_var,
+        )
+        self.sc_chrono_high_precision_check.pack(side="left")
+        chrono_highprec_help = ttk.Label(
+            chrono_highprec_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_highprec_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_highprec_help,
+            "Enable high-precision chrono-matching features.\n\n"
+            "When enabled:\n"
+            "  • Uses cubic (Catmull-Rom) interpolation instead of linear\n"
+            "  • Interpolates particle positions (x/y/z) in addition to velocities\n"
+            "  • Provides smoother derivatives for acceleration terms\n"
+            "  • Better accuracy for ultra-relativistic particles (γ > 1000)\n\n"
+            "Performance impact:\n"
+            "  • ~3-5% overhead vs linear interpolation\n"
+            "  • Requires at least 4 trajectory points for cubic fit\n\n"
+            "When to enable:\n"
+            "  • γ > 1000 with coarse timesteps\n"
+            "  • Need smooth βdot derivatives\n"
+            "  • Critical accuracy requirements\n\n"
+            "Default: OFF (linear interpolation is usually sufficient)",
+        )
+
+        # Adaptive tolerance
+        chrono_adaptive_frame = ttk.Frame(sc_frame)
+        chrono_adaptive_frame.grid(
+            row=11, column=0, columnspan=2, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.sc_chrono_adaptive_check = ttk.Checkbutton(
+            chrono_adaptive_frame,
+            text="Adaptive tolerance (auto-scale with timestep)",
+            variable=self.self_consistency_chrono_adaptive_tolerance_var,
+        )
+        self.sc_chrono_adaptive_check.pack(side="left")
+        chrono_adaptive_help = ttk.Label(
+            chrono_adaptive_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_adaptive_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_adaptive_help,
+            "Automatically set chrono tolerance based on timestep.\n\n"
+            "Formula: tolerance = 0.1 × timestep_h\n\n"
+            "When enabled:\n"
+            "  • Overrides manual chrono_tolerance setting\n"
+            "  • Scales tolerance with integration timestep\n"
+            "  • Useful for variable-timestep simulations\n\n"
+            "Example:\n"
+            "  • h = 1e-3 ns → tolerance = 1e-4 ns\n"
+            "  • h = 5e-4 ns → tolerance = 5e-5 ns\n\n"
+            "Default: OFF (use fixed tolerance)",
+        )
+
+        # Note: chrono_matching_mode removed from GUI
+        # Always uses FAST mode (legacy behavior)
+        # AVERAGED mode reserved for future APPROXIMATE_BACK_HISTORY implementation
 
         # Adaptive timestep section (Energy Jump Detection functionality integrated here)
         at_frame = ttk.LabelFrame(
@@ -2546,6 +2621,13 @@ class IntegratorGUI:
         self.self_consistency_chrono_tolerance_var.set(
             getattr(options, "self_consistency_chrono_tolerance", 1e-3)
         )
+        self.self_consistency_chrono_high_precision_var.set(
+            getattr(options, "self_consistency_chrono_high_precision", False)
+        )
+        self.self_consistency_chrono_adaptive_tolerance_var.set(
+            getattr(options, "self_consistency_chrono_adaptive_tolerance", False)
+        )
+        # chrono_matching_mode not exposed in GUI, always FAST
         self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
         self.adaptive_timestep_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
         self.adaptive_timestep_threshold_var.set(options.adaptive_timestep_threshold)
@@ -2695,6 +2777,13 @@ class IntegratorGUI:
             self_consistency_chrono_tolerance=float(
                 self.self_consistency_chrono_tolerance_var.get()
             ),
+            self_consistency_chrono_high_precision=bool(
+                self.self_consistency_chrono_high_precision_var.get()
+            ),
+            self_consistency_chrono_adaptive_tolerance=bool(
+                self.self_consistency_chrono_adaptive_tolerance_var.get()
+            ),
+            self_consistency_chrono_matching_mode="FAST",  # Always FAST, not exposed in GUI
             energy_monitor_enabled=False,  # Removed, functionality in adaptive timestep
             energy_monitor_threshold=2.0,  # Default (unused)
             energy_monitor_check_interval=10,  # Default (unused)
@@ -3226,6 +3315,8 @@ class IntegratorGUI:
             self.sc_chrono_interpolate_check,
             self.sc_chrono_tolerance_label,
             self.sc_chrono_tolerance_entry,
+            self.sc_chrono_high_precision_check,
+            self.sc_chrono_adaptive_check,
         ]
 
         for control in controls_to_toggle:

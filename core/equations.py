@@ -278,11 +278,19 @@ def _compute_full_retarded_distance(
     # Check if chrono-match interpolation is enabled
     chrono_interpolate = False
     chrono_tolerance = 1e-3
+    chrono_high_precision = False
+    chrono_adaptive_tolerance = False
     verbosity = 0
 
     if self_consistency is not None:
         chrono_interpolate = self_consistency.chrono_interpolate
         chrono_tolerance = self_consistency.chrono_tolerance
+        chrono_high_precision = getattr(
+            self_consistency, "chrono_high_precision", False
+        )
+        chrono_adaptive_tolerance = getattr(
+            self_consistency, "chrono_adaptive_tolerance", False
+        )
         verbosity = self_consistency.verbosity
 
     retarded_result = chrono_match_indices(
@@ -294,6 +302,9 @@ def _compute_full_retarded_distance(
         interpolate=chrono_interpolate,
         tolerance=chrono_tolerance,
         verbosity=verbosity,
+        high_precision=chrono_high_precision,
+        adaptive_tolerance=chrono_adaptive_tolerance,
+        timestep_h=h,
     )
 
     # Handle both legacy (array) and new (ChronoMatchResult) returns
@@ -985,12 +996,16 @@ def retarded_equations_of_motion(
             if apply_forces and nhat["R"].size > 0:
                 # Gather external particle data at retarded times (with interpolation if enabled)
                 if chrono_result is not None:
-                    # Use interpolation
+                    # Use interpolation (with cubic and position interpolation if high-precision)
                     external_samples = gather_external_samples(
                         trajectory_ext,
                         indices_bounded,
                         indices_next=chrono_result.indices_next,
                         weights=chrono_result.weights,
+                        indices_prev=chrono_result.indices_prev,
+                        indices_next2=chrono_result.indices_next2,
+                        use_cubic=chrono_result.use_cubic,
+                        interpolate_positions=chrono_high_precision,
                     )
                 else:
                     # Legacy path: no interpolation
