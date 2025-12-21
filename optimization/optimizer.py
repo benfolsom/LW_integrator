@@ -190,6 +190,7 @@ def optimize_parameters(
     method: str = "differential_evolution",
     maximize: bool = True,
     maxiter: int = 100,
+    objective_function: Optional[Callable] = None,
     **optimizer_kwargs,
 ) -> OptimizeResult:
     """Optimize parameters to maximize/minimize a metric.
@@ -211,6 +212,9 @@ def optimize_parameters(
         If True, maximizes metric; if False, minimizes (default: True)
     maxiter : int, optional
         Maximum number of iterations (default: 100)
+    objective_function : Callable, optional
+        Custom objective function that takes parameter array and returns scalar
+        to minimize. If None, uses default ObjectiveFunction class.
     **optimizer_kwargs
         Additional keyword arguments passed to optimizer
 
@@ -226,14 +230,17 @@ def optimize_parameters(
     logger.info(f"Bounds: {parameter_bounds}")
     logger.info(f"Method: {method}")
 
-    # Create objective function
-    objective = ObjectiveFunction(
-        config_template=config_template,
-        parameter_names=parameter_names,
-        parameter_bounds=parameter_bounds,
-        metric_name=metric_name,
-        maximize=maximize,
-    )
+    # Create or use provided objective function
+    if objective_function is None:
+        objective = ObjectiveFunction(
+            config_template=config_template,
+            parameter_names=parameter_names,
+            parameter_bounds=parameter_bounds,
+            metric_name=metric_name,
+            maximize=maximize,
+        )
+    else:
+        objective = objective_function
 
     # Run optimization
     if method == "differential_evolution":
@@ -277,10 +284,11 @@ def multi_start_optimize(
     parameter_names: List[str],
     parameter_bounds: List[Tuple[float, float]],
     metric_name: str = "max_energy_gain_gev",
-    n_starts: int = 5,
-    method: str = "nelder_mead",
+    n_starts: int = 10,
     maximize: bool = True,
-    maxiter: int = 50,
+    maxiter: int = 100,
+    method: str = "nelder_mead",
+    objective_function: Optional[Callable] = None,
     **optimizer_kwargs,
 ) -> OptimizeResult:
     """Run multiple optimization attempts with random starting points.
@@ -298,13 +306,16 @@ def multi_start_optimize(
     metric_name : str, optional
         Name of metric to optimize
     n_starts : int, optional
-        Number of random starts (default: 5)
-    method : str, optional
-        Optimization method (default: 'nelder_mead')
+        Number of random starts (default: 10)
     maximize : bool, optional
         If True, maximizes metric (default: True)
     maxiter : int, optional
-        Maximum iterations per start (default: 50)
+        Maximum iterations per start (default: 100)
+    method : str, optional
+        Optimization method (default: 'nelder_mead')
+    objective_function : Callable, optional
+        Custom objective function that takes parameter array and returns scalar
+        to minimize. If None, uses default ObjectiveFunction class.
     **optimizer_kwargs
         Additional kwargs for optimizer
 
@@ -334,6 +345,7 @@ def multi_start_optimize(
             method=method,
             maximize=maximize,
             maxiter=maxiter,
+            objective_function=objective_function,
             x0=x0,
             **optimizer_kwargs,
         )
@@ -341,7 +353,15 @@ def multi_start_optimize(
         all_results.append(result)
 
         # Check if this is best
-        objective_value = result.objective_function.best_value
+        # Handle both ObjectiveFunction and custom objective functions
+        if hasattr(result, "objective_function") and hasattr(
+            result.objective_function, "best_value"
+        ):
+            objective_value = result.objective_function.best_value
+        else:
+            # For custom objective functions, use result.fun (negated if maximizing)
+            objective_value = -result.fun if maximize else result.fun
+
         if maximize:
             if objective_value > best_value:
                 best_value = objective_value
@@ -369,7 +389,8 @@ def adaptive_grid_search(
     maximize: bool = True,
     initial_points_per_dim: int = 5,
     refinement_levels: int = 2,
-    refinement_factor: float = 0.2,
+    refinement_factor: float = 0.5,
+    objective_function: Optional[Callable] = None,
 ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
     """Adaptive grid search that refines around promising regions.
 
@@ -421,17 +442,20 @@ def adaptive_grid_search(
         level_results = []
 
         for params in np.array(np.meshgrid(*grids)).T.reshape(-1, len(parameter_names)):
-            # Create objective
-            objective = ObjectiveFunction(
-                config_template=config_template,
-                parameter_names=parameter_names,
-                parameter_bounds=parameter_bounds,
-                metric_name=metric_name,
-                maximize=maximize,
-            )
-
-            # Evaluate
-            obj_value = objective(params)
+            # Create or use provided objective function
+            if objective_function is None:
+                objective = ObjectiveFunction(
+                    config_template=config_template,
+                    parameter_names=parameter_names,
+                    parameter_bounds=parameter_bounds,
+                    metric_name=metric_name,
+                    maximize=maximize,
+                )
+                # Evaluate
+                obj_value = objective(params)
+            else:
+                # Use provided objective function directly
+                obj_value = objective_function(params)
             metric_value = -obj_value if maximize else obj_value
 
             level_results.append(
@@ -502,6 +526,7 @@ def genetic_algorithm(
     elite_fraction: float = 0.1,
     tournament_size: int = 3,
     seed: Optional[int] = None,
+    objective_function: Optional[Callable] = None,
 ) -> OptimizeResult:
     """Genetic algorithm optimization.
 
@@ -534,6 +559,9 @@ def genetic_algorithm(
         Size of tournament for selection (default: 3)
     seed : int, optional
         Random seed for reproducibility
+    objective_function : Callable, optional
+        Custom objective function that takes parameter array and returns scalar
+        to minimize. If None, uses default ObjectiveFunction class.
 
     Returns
     -------
@@ -551,14 +579,17 @@ def genetic_algorithm(
     n_params = len(parameter_names)
     n_elite = max(1, int(population_size * elite_fraction))
 
-    # Create objective function
-    objective = ObjectiveFunction(
-        config_template=config_template,
-        parameter_names=parameter_names,
-        parameter_bounds=parameter_bounds,
-        metric_name=metric_name,
-        maximize=maximize,
-    )
+    # Create or use provided objective function
+    if objective_function is None:
+        objective = ObjectiveFunction(
+            config_template=config_template,
+            parameter_names=parameter_names,
+            parameter_bounds=parameter_bounds,
+            metric_name=metric_name,
+            maximize=maximize,
+        )
+    else:
+        objective = objective_function
 
     # Initialize population randomly within bounds
     population = np.random.uniform(
@@ -654,7 +685,11 @@ def genetic_algorithm(
     result = OptimizeResult()
     result.x = best_individual
     result.fun = best_fitness
-    result.nfev = objective.n_calls
+    # Handle both ObjectiveFunction and custom objective functions
+    if hasattr(objective, "n_calls"):
+        result.nfev = objective.n_calls
+    else:
+        result.nfev = population_size * n_generations  # Approximate
     result.nit = n_generations
     result.success = True
     result.message = f"Genetic algorithm completed {n_generations} generations"
@@ -664,9 +699,17 @@ def genetic_algorithm(
     result.final_population = population
     result.final_fitness = fitness
 
-    logger.info(
-        f"Genetic algorithm complete. Best {metric_name}: {objective.best_value:.6f}"
-    )
+    # Log completion with appropriate metric value
+    if hasattr(objective, "best_value"):
+        logger.info(
+            f"Genetic algorithm complete. Best {metric_name}: {objective.best_value:.6f}"
+        )
+    else:
+        # For custom objective functions, use the best fitness (negated if maximizing)
+        best_metric_value = -best_fitness if maximize else best_fitness
+        logger.info(
+            f"Genetic algorithm complete. Best {metric_name}: {best_metric_value:.6f}"
+        )
     logger.info(f"Best parameters: {result.best_params_dict}")
 
     return result

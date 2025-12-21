@@ -491,8 +491,9 @@ def calculate_auto_steps(
     # Calculate steps needed (add 10% margin for safety)
     steps = int(np.ceil(total_distance / distance_per_step * 1.1))
 
-    # Ensure minimum reasonable value (hard minimum of 200 steps)
-    return max(steps, 200)
+    # Ensure minimum reasonable value (5% of target steps, with absolute floor of 20)
+    min_steps = max(20, int(target_steps * 0.05))
+    return max(steps, min_steps)
 
 
 def calculate_steps_from_duration(
@@ -503,7 +504,7 @@ def calculate_steps_from_duration(
     """Calculate timestep and number of steps from total duration.
 
     Auto-calculates timestep (h) given a desired total duration and step count.
-    Enforces a hard minimum of 200 steps.
+    Enforces a minimum of 5% of requested steps (absolute floor of 20).
 
     Parameters
     ----------
@@ -517,15 +518,16 @@ def calculate_steps_from_duration(
     Returns
     -------
     tuple[int, float]
-        (number_of_steps, timestep_in_ns) where steps >= 200
+        (number_of_steps, timestep_in_ns) where steps >= max(20, requested_steps * 0.05)
 
     Notes
     -----
     Uses proper time formulation: h = dτ = dt/γ
     Total proper time = N_steps × h
     """
-    # Hard minimum of 200 steps
-    min_steps = 200
+    # For duration mode, we don't have a target step count to base the minimum on,
+    # so use an absolute minimum of 20 steps
+    min_steps = 20
 
     # Calculate timestep from duration and minimum steps
     timestep = total_duration_ns / min_steps
@@ -864,23 +866,26 @@ class OptimizationPlugin(ttk.Frame):
         ttk.Label(timestep_frame, text="ns (proper time)").pack(side="left", padx=2)
 
         # Distance target
+        ttk.Label(frame, text="Distance Target:").grid(
+            row=8, column=0, sticky="w", pady=2
+        )
         distance_frame = ttk.Frame(frame)
-        distance_frame.grid(row=7, column=1, columnspan=3, sticky="ew", pady=2)
+        distance_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=2)
         ttk.Label(distance_frame, text="Target: wall +").pack(side="left", padx=(0, 2))
         self.auto_steps_distance_var = tk.StringVar(value="10.0")
         ttk.Entry(
             distance_frame, textvariable=self.auto_steps_distance_var, width=6
         ).pack(side="left", padx=2)
-        ttk.Label(distance_frame, text="mm (min 200 steps enforced)").pack(
+        ttk.Label(distance_frame, text="mm (min 5% of steps enforced)").pack(
             side="left", padx=2
         )
 
         # Trajectory saving
         ttk.Label(frame, text="Trajectory Saving:").grid(
-            row=8, column=0, sticky="w", pady=2
+            row=9, column=0, sticky="w", pady=2
         )
         strategy_frame = ttk.Frame(frame)
-        strategy_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=(10, 2))
+        strategy_frame.grid(row=9, column=1, columnspan=3, sticky="ew", pady=(10, 2))
 
         self.save_trajectories_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
@@ -902,7 +907,7 @@ class OptimizationPlugin(ttk.Frame):
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray50",
         )
-        traj_note.grid(row=9, column=1, columnspan=3, sticky="w", pady=(2, 0))
+        traj_note.grid(row=10, column=1, columnspan=3, sticky="w", pady=(2, 0))
 
         frame.columnconfigure(2, weight=1)
 
@@ -1467,6 +1472,27 @@ class OptimizationPlugin(ttk.Frame):
             results_frame,
             text="Plot Trajectories",
             command=self._on_plot_trajectories,
+        ).pack(side="left", padx=5)
+
+        # Row 3: Robustness options
+        robustness_frame = ttk.Frame(frame)
+        robustness_frame.pack(fill="x", pady=(10, 2))
+
+        ttk.Label(robustness_frame, text="Robustness:").pack(side="left", padx=(5, 10))
+
+        ttk.Label(robustness_frame, text="Per-run timeout (s, 0=unlimited):").pack(
+            side="left", padx=(0, 5)
+        )
+        self.per_run_timeout_var = tk.StringVar(value="300.0")
+        ttk.Entry(
+            robustness_frame, textvariable=self.per_run_timeout_var, width=8
+        ).pack(side="left", padx=(0, 15))
+
+        self.skip_failed_runs_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            robustness_frame,
+            text="Skip failed runs and continue sweep",
+            variable=self.skip_failed_runs_var,
         ).pack(side="left", padx=5)
 
         # Plot display options
@@ -2119,6 +2145,10 @@ class OptimizationPlugin(ttk.Frame):
                 "[INFO] Using stability options from main GUI Stability tab"
             )
 
+            # Update robustness options from UI
+            self.config.per_run_timeout = float(self.per_run_timeout_var.get())
+            self.config.skip_failed_runs = self.skip_failed_runs_var.get()
+
         except Exception as e:
             _show_error_dialog(self, "Configuration Error", str(e))
             return
@@ -2279,6 +2309,10 @@ class OptimizationPlugin(ttk.Frame):
             loaded_config.per_run_timeout = data.get("per_run_timeout", 300.0)
             loaded_config.skip_failed_runs = data.get("skip_failed_runs", True)
             self.config = loaded_config
+
+            # Update UI controls
+            self.per_run_timeout_var.set(str(loaded_config.per_run_timeout))
+            self.skip_failed_runs_var.set(loaded_config.skip_failed_runs)
 
             self._log_result("[OK] Configuration loaded successfully")
             self._log_result("[INFO] Stability options:")
@@ -3562,6 +3596,119 @@ class OptimizationPlugin(ttk.Frame):
 
             result = None
 
+            # Create custom objective function that uses our integration runner
+            def evaluate_params(x):
+                """Evaluate parameter vector and return value to minimize."""
+                try:
+                    # Map parameters
+                    aperture = self.config.aperture_range[0]  # default
+                    energy = self.config.energy_range[0]  # default
+                    start_z = (
+                        self.config.starting_z_positions[0]
+                        if self.config.starting_z_positions
+                        else 0.0
+                    )
+                    offset_frac = (
+                        self.config.transverse_offset_fractions[0]
+                        if self.config.transverse_offset_fractions
+                        else 0.0
+                    )
+                    timestep = self.config.timestep
+                    steps = self.config.steps
+
+                    for i, param_name in enumerate(param_names):
+                        if param_name == "aperture_radius":
+                            aperture = x[i]
+                        elif param_name == "particle_energy_gev":
+                            energy = x[i]
+                        elif param_name == "start_z":
+                            start_z = x[i]
+                        elif param_name == "transverse_offset":
+                            offset_frac = x[i]
+                        elif param_name == "timestep":
+                            timestep = x[i]
+
+                    # Calculate transverse offset in mm from fraction
+                    transv_offset = offset_frac * aperture
+
+                    # Run integration with timeout if enabled
+                    result = None
+                    timed_out = False
+
+                    if self.config.per_run_timeout > 0:
+                        import threading
+
+                        result_container = [None]
+                        error_container = [None]
+
+                        def run_integration():
+                            try:
+                                result_container[0] = self._run_single_integration(
+                                    aperture=aperture,
+                                    energy_gev=energy,
+                                    start_z=start_z,
+                                    transv_offset=transv_offset,
+                                    timestep=timestep,
+                                    steps=steps,
+                                    rider_m_particle=self.config.m_particle,
+                                    rider_charge_sign=self.config.charge_sign,
+                                    rider_pcount=int(self.config.pcount),
+                                    rider_transv_mom=self.config.transv_mom,
+                                    driver_params=None,
+                                    run_num=0,
+                                )
+                            except Exception as e:
+                                error_container[0] = e
+
+                        thread = threading.Thread(target=run_integration)
+                        thread.daemon = True
+                        thread.start()
+                        thread.join(timeout=self.config.per_run_timeout)
+
+                        if thread.is_alive():
+                            timed_out = True
+                            self._log_result(
+                                f"[WARNING] Evaluation timed out for params {x} after {self.config.per_run_timeout}s"
+                            )
+                            return np.inf if not maximize else -np.inf
+                        elif error_container[0] is not None:
+                            raise error_container[0]
+                        else:
+                            result = result_container[0]
+                    else:
+                        # No timeout - run directly
+                        result = self._run_single_integration(
+                            aperture=aperture,
+                            energy_gev=energy,
+                            start_z=start_z,
+                            transv_offset=transv_offset,
+                            timestep=timestep,
+                            steps=steps,
+                            rider_m_particle=self.config.m_particle,
+                            rider_charge_sign=self.config.charge_sign,
+                            rider_pcount=int(self.config.pcount),
+                            rider_transv_mom=self.config.transv_mom,
+                            driver_params=None,
+                            run_num=0,
+                        )
+
+                    if result is None or "metrics" not in result:
+                        return np.inf if not maximize else -np.inf
+
+                    # Extract metric value
+                    metrics = result["metrics"]
+                    value = metrics.get(metric_name, np.nan)
+
+                    if np.isnan(value):
+                        return np.inf if not maximize else -np.inf
+
+                    # Return value to minimize (negate if maximizing)
+                    return -value if maximize else value
+
+                except Exception as e:
+                    self._log_result(f"[WARNING] Evaluation failed for params {x}: {e}")
+                    return np.inf if not maximize else -np.inf
+
             if method == "genetic_algorithm":
                 result = genetic_algorithm(
                     config_template=config_template,
@@ -3574,6 +3721,7 @@ class OptimizationPlugin(ttk.Frame):
                     mutation_rate=self.config.optimization_mutation_rate,
                     crossover_rate=self.config.optimization_crossover_rate,
                     seed=self.config.seed,
+                    objective_function=evaluate_params,
                 )
 
             elif method == "differential_evolution":
@@ -3586,6 +3734,7 @@ class OptimizationPlugin(ttk.Frame):
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
                     popsize=self.config.optimization_population_size,
+                    objective_function=evaluate_params,
                 )
 
             elif method == "nelder_mead":
@@ -3597,6 +3746,7 @@ class OptimizationPlugin(ttk.Frame):
                     method="nelder_mead",
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
+                    objective_function=evaluate_params,
                 )
 
             elif method == "multi_start":
@@ -3608,6 +3758,7 @@ class OptimizationPlugin(ttk.Frame):
                     n_starts=self.config.optimization_n_starts,
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
+                    objective_function=evaluate_params,
                 )
 
             elif method == "adaptive_grid":
@@ -3619,6 +3770,7 @@ class OptimizationPlugin(ttk.Frame):
                     maximize=maximize,
                     initial_points_per_dim=5,
                     refinement_levels=2,
+                    objective_function=evaluate_params,
                 )
                 # Convert to OptimizeResult format
                 from scipy.optimize import OptimizeResult
@@ -3892,9 +4044,10 @@ class OptimizationPlugin(ttk.Frame):
                     timestep = self.config.timestep
                     steps = self.config.steps
 
-                # Enforce hard minimum of 200 steps
-                if steps < 200:
-                    steps = 200
+                # Enforce minimum of 5% of requested steps (absolute floor of 20)
+                min_steps = max(20, int(self.config.steps * 0.05))
+                if steps < min_steps:
+                    steps = min_steps
 
                 # Log run start with full parameters for debugging
                 self._log_result(
@@ -4305,9 +4458,7 @@ class OptimizationPlugin(ttk.Frame):
             self_consistency_enabled=self.config.self_consistency_enabled,
             self_consistency_tolerance=self.config.self_consistency_tolerance,
             self_consistency_max_iterations=self.config.self_consistency_max_iterations,
-            self_consistency_verbosity=max(
-                self.config.self_consistency_verbosity, 1
-            ),  # At least basic for debugging
+            self_consistency_verbosity=self.config.self_consistency_verbosity,
             energy_monitor_enabled=False,  # Removed - functionality in adaptive timestep
             energy_monitor_threshold=2.0,
             energy_monitor_check_interval=10,
@@ -4321,8 +4472,7 @@ class OptimizationPlugin(ttk.Frame):
             adaptive_timestep_cooldown_steps=self.config.adaptive_timestep_cooldown_steps,
             adaptive_timestep_probe_threshold=self.config.adaptive_timestep_probe_threshold,
             adaptive_timestep_max_probe_steps=self.config.adaptive_timestep_max_probe_steps,
-            adaptive_timestep_debug=self.config.adaptive_timestep_debug
-            or True,  # Enable debug for sweeps
+            adaptive_timestep_debug=self.config.adaptive_timestep_debug,
         )
 
         # Create progress callback to track integration and detect hangs
@@ -4392,7 +4542,11 @@ class OptimizationPlugin(ttk.Frame):
             if hang_check_timer:
                 hang_check_timer.cancel()
 
+        self._log_result(f"  [DEBUG] Processing figures for Run {run_num}...")
         # Display figures if requested, otherwise close them
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)  # Force non-interactive backend
         import matplotlib.pyplot as plt
 
         # Plot display during sweep removed - plots generated only at end
@@ -4403,19 +4557,28 @@ class OptimizationPlugin(ttk.Frame):
                 plt.pause(0.1)  # Allow GUI to update
 
         # Always close figures after displaying to prevent memory leak
-        for fig in result.figures.values():
-            plt.close(fig)
+        self._log_result(f"  [DEBUG] Closing {len(result.figures)} figures...")
+        if result.figures:
+            for fig in result.figures.values():
+                try:
+                    plt.close(fig)
+                except Exception as e:
+                    self._log_result(f"  [DEBUG] Error closing figure: {e}")
+        self._log_result(f"  [DEBUG] Figures closed")
 
         # Clean up temporary run directory
         import shutil
 
+        self._log_result(f"  [DEBUG] Cleaning up temp directory...")
         try:
             if run_output_dir.exists():
                 shutil.rmtree(run_output_dir)
         except Exception:
             pass  # Ignore cleanup errors
+        self._log_result(f"  [DEBUG] Temp directory cleaned")
 
         # Extract metrics
+        self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
         metrics = {}
         if result.rider_delta_e is not None:
             metrics["rider_delta_e_mev"] = result.rider_delta_e
@@ -4444,6 +4607,7 @@ class OptimizationPlugin(ttk.Frame):
 
         output = {"metrics": metrics}
 
+        self._log_result(f"  [DEBUG] Processing trajectory data for Run {run_num}...")
         # Add trajectory data for distance calculation even if not saving full arrays
         # (needed for diagnostics and basic metrics)
         if result.rider_trajectory is not None:
@@ -4479,6 +4643,9 @@ class OptimizationPlugin(ttk.Frame):
                         f"    [WARNING] Failed to save trajectory arrays: {e}"
                     )
 
+        self._log_result(
+            f"  [DEBUG] _run_single_integration returning for Run {run_num}"
+        )
         return output
 
     def _save_sweep_results(
