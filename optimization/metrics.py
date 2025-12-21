@@ -250,6 +250,7 @@ def compute_trajectory_metrics(
         Dictionary containing:
         - 'max_energy_gain_gev': Maximum energy gain in GeV
         - 'max_relative_gain': Maximum ΔE/E₀
+        - 'max_percent_energy_gain': Maximum percent energy gain (%)
         - 'final_energy_gain_gev': Energy gain at final step
         - 'near_aperture_max_gev': Max energy near aperture (if aperture_z given)
         - 'near_aperture_z_mm': Z position of near-aperture max
@@ -268,6 +269,11 @@ def compute_trajectory_metrics(
 
     # Relative gain
     metrics["max_relative_gain"] = compute_relative_energy_gain(
+        trajectory, initial_gamma
+    )
+
+    # Percent energy gain
+    metrics["max_percent_energy_gain"] = compute_percent_energy_gain(
         trajectory, initial_gamma
     )
 

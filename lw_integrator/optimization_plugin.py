@@ -156,6 +156,20 @@ class OptimizationConfig:
     # Simulation type
     simulation_type: SimulationType = SimulationType.CONDUCTING_WALL
 
+    # Mode selection
+    mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
+
+    # Optimization settings (only used when mode="optimization")
+    optimization_method: str = "genetic_algorithm"  # "genetic_algorithm", "differential_evolution", "nelder_mead", "multi_start", "adaptive_grid"
+    optimization_maxiter: int = 50  # Max iterations/generations
+    optimization_population_size: int = (
+        20  # For genetic algorithm and differential evolution
+    )
+    optimization_mutation_rate: float = 0.1  # For genetic algorithm
+    optimization_crossover_rate: float = 0.7  # For genetic algorithm
+    optimization_n_starts: int = 5  # For multi_start method
+    optimization_save_top_n: int = 3  # Save trajectories from top N results
+
     # Parameter ranges
     aperture_range: Tuple[float, float] = (1e-5, 1e-3)  # mm (10 μm to 1 mm)
     aperture_points: int = 10
@@ -171,11 +185,24 @@ class OptimizationConfig:
     # Sweepable parameters (can be added to grid)
     transverse_momentum_range: Optional[Tuple[float, float]] = None  # amu·mm/ns
     transverse_momentum_points: int = 1
+    transverse_spread_range: Optional[Tuple[float, float]] = None  # mm (transv_dist)
+    transverse_spread_points: int = 1
     timestep_range: Optional[Tuple[float, float]] = None  # ns (proper time)
     timestep_points: int = 1
+    starting_z_range: Optional[Tuple[float, float]] = None  # mm
+    starting_z_points: int = 1
+    wall_z_range: Optional[Tuple[float, float]] = None  # mm
+    wall_z_points: int = 1
+    particle_mass_range: Optional[Tuple[float, float]] = None  # amu
+    particle_mass_points: int = 1
+    particle_charge_range: Optional[Tuple[float, float]] = None  # charge_sign
+    particle_charge_points: int = 1
+    cavity_spacing_range: Optional[Tuple[float, float]] = None  # mm (SWITCHING_WALL)
+    cavity_spacing_points: int = 1
 
     # Fixed parameters
     wall_z: float = 100.0  # mm
+    cavity_spacing: float = 1e5  # mm (for SWITCHING_WALL)
     steps: int = 2000
     timestep: float = 3e-7  # ns (proper time) - default from main GUI
     auto_steps: bool = False  # Automatically calculate steps based on distance
@@ -200,7 +227,12 @@ class OptimizationConfig:
     stripped_ions: float = 1.0
 
     # Optimization objective
-    objective: str = "max_energy_gain"  # or "max_energy_efficiency", etc.
+    objective: str = "max_energy_gain"  # Primary objective to optimize
+
+    # Multi-objective weighting (for future use)
+    objective_weights: Dict[str, float] = (
+        None  # e.g., {"max_energy_gain": 1.0, "min_transverse_spread": 0.5}
+    )
 
     # Output
     output_dir: str = "results/sweeps"
@@ -242,6 +274,8 @@ class OptimizationConfig:
             self.transverse_offset_fractions = [0.0]
         if self.starting_z_positions is None:
             self.starting_z_positions = [0.0]  # Default: start at origin
+        if self.objective_weights is None:
+            self.objective_weights = {}
 
     def calculate_timestep_for_energy(
         self, energy_gev: float, m_particle_amu: float = 0.00054857990907
@@ -584,10 +618,15 @@ class OptimizationPlugin(ttk.Frame):
 
         # Build sections
         self._build_simulation_section()
+        self._build_mode_section()
         self._build_parameter_section()
         self._build_objective_section()
+        self._build_optimization_section()
         self._build_control_section()
         self._build_progress_section()
+
+        # Initialize mode visibility
+        self._update_mode_visibility()
 
     def _build_simulation_section(self):
         """Build simulation type selection section."""
@@ -609,9 +648,54 @@ class OptimizationPlugin(ttk.Frame):
                 text=label,
                 variable=self.sim_type_var,
                 value=value,
-                command=self._update_driver_visibility,
+                command=self._on_sim_type_changed,
             )
             rb.grid(row=0, column=i, padx=5, sticky="w")
+
+        # Store reference for updating visibility
+        self.sim_type_frame = frame
+
+    def _build_mode_section(self):
+        """Build mode selection section (blind sweep vs optimization)."""
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Run Mode", padding=10)
+        frame.pack(fill="x", padx=10, pady=5)
+        self.mode_section_frame = frame
+
+        # Mode selection
+        self.mode_var = tk.StringVar(value="blind_sweep")
+
+        mode_frame = ttk.Frame(frame)
+        mode_frame.pack(fill="x", pady=5)
+
+        ttk.Radiobutton(
+            mode_frame,
+            text="Blind Sweep (Grid Search)",
+            variable=self.mode_var,
+            value="blind_sweep",
+            command=self._update_mode_visibility,
+        ).grid(row=0, column=0, padx=5, sticky="w")
+
+        ttk.Radiobutton(
+            mode_frame,
+            text="Optimization (Intelligent Search)",
+            variable=self.mode_var,
+            value="optimization",
+            command=self._update_mode_visibility,
+        ).grid(row=0, column=1, padx=5, sticky="w")
+
+        # Help text
+        help_frame = ttk.Frame(frame)
+        help_frame.pack(fill="x", pady=(5, 0))
+
+        self.mode_help_label = ttk.Label(
+            help_frame,
+            text="Blind Sweep: Exhaustively evaluate all parameter combinations (good for exploring full space).\n"
+            "Optimization: Use intelligent algorithms to find optimal parameters (faster, finds best configurations).",
+            foreground="gray40",
+            font=("TkDefaultFont", 8),
+            wraplength=600,
+        )
+        self.mode_help_label.pack(anchor="w")
 
     def _build_parameter_section(self):
         """Build parameter range specification section."""
@@ -619,6 +703,7 @@ class OptimizationPlugin(ttk.Frame):
             self.scrollable_frame, text="Parameter Ranges", padding=10
         )
         frame.pack(fill="x", padx=10, pady=5)
+        self.parameter_frame = frame
 
         # Add explanatory help text
         help_frame = ttk.Frame(frame)
@@ -727,12 +812,25 @@ class OptimizationPlugin(ttk.Frame):
             row=5, column=2, sticky="w", pady=2, padx=5
         )
 
-        # Timestep Auto-Calculation (always enabled)
-        ttk.Label(frame, text="Timestep Calculation:").grid(
+        # Cavity Spacing (for SWITCHING_WALL)
+        ttk.Label(frame, text="Cavity Spacing:").grid(
             row=6, column=0, sticky="w", pady=2
         )
+        ttk.Label(frame, text="Cavity spacing (mm, SWITCHING_WALL only):").grid(
+            row=6, column=1, sticky="w", pady=2
+        )
+        self.cavity_spacing_var = tk.StringVar(value="1e5")
+        self.cavity_spacing_entry = ttk.Entry(
+            frame, textvariable=self.cavity_spacing_var, width=10
+        )
+        self.cavity_spacing_entry.grid(row=6, column=2, sticky="w", pady=2, padx=5)
+
+        # Timestep Auto-Calculation (always enabled)
+        ttk.Label(frame, text="Timestep Calculation:").grid(
+            row=7, column=0, sticky="w", pady=2
+        )
         timestep_frame = ttk.Frame(frame)
-        timestep_frame.grid(row=6, column=1, columnspan=3, sticky="ew", pady=2)
+        timestep_frame.grid(row=7, column=1, columnspan=3, sticky="ew", pady=2)
 
         self.timestep_mode_var = tk.StringVar(value="duration")
         ttk.Radiobutton(
@@ -781,8 +879,8 @@ class OptimizationPlugin(ttk.Frame):
         ttk.Label(frame, text="Trajectory Saving:").grid(
             row=8, column=0, sticky="w", pady=2
         )
-        traj_frame = ttk.Frame(frame)
-        traj_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=2)
+        strategy_frame = ttk.Frame(frame)
+        strategy_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=(10, 2))
 
         self.save_trajectories_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
@@ -1110,6 +1208,24 @@ class OptimizationPlugin(ttk.Frame):
         else:
             self.driver_frame.pack_forget()
 
+    def _on_sim_type_changed(self):
+        """Handle simulation type change."""
+        self._update_driver_visibility()
+        self._update_parameter_visibility()
+
+    def _update_parameter_visibility(self):
+        """Update parameter field states based on simulation type."""
+        if not hasattr(self, "cavity_spacing_entry"):
+            return
+
+        sim_type = self.sim_type_var.get()
+
+        # Grey out cavity_spacing unless SWITCHING_WALL mode
+        if sim_type == "SWITCHING_WALL":
+            self.cavity_spacing_entry.config(state="normal")
+        else:
+            self.cavity_spacing_entry.config(state="disabled")
+
     def _build_objective_section(self):
         """Build optimization objective selection section."""
         # First build particle section
@@ -1122,7 +1238,8 @@ class OptimizationPlugin(ttk.Frame):
 
         self.objective_var = tk.StringVar(value="max_energy_gain")
         objectives = [
-            ("Maximize Energy Gain", "max_energy_gain"),
+            ("Maximize Energy Gain (GeV)", "max_energy_gain"),
+            ("Maximize Energy Gain (%)", "max_percent_energy_gain"),
             ("Maximize Energy Efficiency", "max_energy_efficiency"),
             ("Minimize Transverse Deflection", "min_transverse_deflection"),
         ]
@@ -1132,6 +1249,180 @@ class OptimizationPlugin(ttk.Frame):
                 frame, text=label, variable=self.objective_var, value=value
             )
             rb.grid(row=i, column=0, sticky="w", pady=2)
+
+    def _build_optimization_section(self):
+        """Build optimization method selection section."""
+        self.optimization_frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Optimization Settings", padding=10
+        )
+        self.optimization_frame.pack(fill="x", padx=10, pady=5)
+
+        # Method selection
+        ttk.Label(self.optimization_frame, text="Optimization Method:").grid(
+            row=0, column=0, sticky="w", pady=2
+        )
+
+        self.optimization_method_var = tk.StringVar(value="genetic_algorithm")
+        method_combo = ttk.Combobox(
+            self.optimization_frame,
+            textvariable=self.optimization_method_var,
+            values=[
+                "genetic_algorithm",
+                "differential_evolution",
+                "nelder_mead",
+                "multi_start",
+                "adaptive_grid",
+            ],
+            state="readonly",
+            width=25,
+        )
+        method_combo.grid(
+            row=0, column=1, columnspan=2, sticky="ew", pady=2, padx=(5, 0)
+        )
+        method_combo.bind("<<ComboboxSelected>>", self._update_optimization_controls)
+
+        # Method descriptions
+        method_descriptions = {
+            "genetic_algorithm": "Evolutionary approach with selection, crossover, and mutation (robust, parallelizable)",
+            "differential_evolution": "Global optimizer using vector differences (robust for rugged landscapes)",
+            "nelder_mead": "Local simplex method (fast convergence, may find local optima)",
+            "multi_start": "Multiple random starting points with local optimization (finds global optima)",
+            "adaptive_grid": "Coarse-to-fine grid refinement (systematic, interpretable)",
+        }
+
+        self.method_desc_label = ttk.Label(
+            self.optimization_frame,
+            text=method_descriptions["genetic_algorithm"],
+            foreground="gray40",
+            font=("TkDefaultFont", 8),
+            wraplength=500,
+        )
+        self.method_desc_label.grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(0, 10)
+        )
+
+        # Common parameters
+        params_frame = ttk.Frame(self.optimization_frame)
+        params_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=5)
+
+        # Max iterations / generations
+        ttk.Label(params_frame, text="Max Iterations/Generations:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_maxiter_var = tk.StringVar(value="50")
+        ttk.Entry(
+            params_frame, textvariable=self.optimization_maxiter_var, width=10
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        # Population size (for GA and DE)
+        ttk.Label(params_frame, text="Population Size:").grid(
+            row=0, column=2, sticky="w", pady=2, padx=(15, 5)
+        )
+        self.optimization_popsize_var = tk.StringVar(value="20")
+        self.popsize_entry = ttk.Entry(
+            params_frame, textvariable=self.optimization_popsize_var, width=10
+        )
+        self.popsize_entry.grid(row=0, column=3, sticky="w", pady=2)
+
+        # GA-specific parameters
+        self.ga_frame = ttk.LabelFrame(
+            self.optimization_frame, text="Genetic Algorithm Parameters", padding=5
+        )
+        self.ga_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=5)
+
+        ga_params_frame = ttk.Frame(self.ga_frame)
+        ga_params_frame.pack(fill="x")
+
+        ttk.Label(ga_params_frame, text="Mutation Rate:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_mutation_var = tk.StringVar(value="0.1")
+        ttk.Entry(
+            ga_params_frame, textvariable=self.optimization_mutation_var, width=8
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(ga_params_frame, text="Crossover Rate:").grid(
+            row=0, column=2, sticky="w", pady=2, padx=(15, 5)
+        )
+        self.optimization_crossover_var = tk.StringVar(value="0.7")
+        ttk.Entry(
+            ga_params_frame, textvariable=self.optimization_crossover_var, width=8
+        ).grid(row=0, column=3, sticky="w", pady=2)
+
+        # Multi-start parameter
+        self.multistart_frame = ttk.Frame(self.optimization_frame)
+        self.multistart_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=5)
+
+        ttk.Label(self.multistart_frame, text="Number of Random Starts:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_nstarts_var = tk.StringVar(value="5")
+        ttk.Entry(
+            self.multistart_frame, textvariable=self.optimization_nstarts_var, width=10
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        # Output settings
+        output_frame = ttk.LabelFrame(
+            self.optimization_frame, text="Output Options", padding=5
+        )
+        output_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+
+        ttk.Label(output_frame, text="Save trajectories from top N results:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_save_top_n_var = tk.StringVar(value="3")
+        ttk.Entry(
+            output_frame, textvariable=self.optimization_save_top_n_var, width=8
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        # Initialize visibility
+        self._update_optimization_controls()
+
+    def _update_mode_visibility(self):
+        """Update visibility of sections based on selected mode."""
+        mode = self.mode_var.get()
+
+        if mode == "blind_sweep":
+            # Hide optimization settings
+            self.optimization_frame.pack_forget()
+        else:  # optimization
+            # Show optimization settings
+            self.optimization_frame.pack(fill="x", padx=10, pady=5)
+
+        # Update parameter visibility based on simulation type
+        self._update_parameter_visibility()
+
+    def _update_optimization_controls(self, event=None):
+        """Update visibility of optimization controls based on selected method."""
+        method = self.optimization_method_var.get()
+
+        # Update description
+        method_descriptions = {
+            "genetic_algorithm": "Evolutionary approach with selection, crossover, and mutation (robust, parallelizable)",
+            "differential_evolution": "Global optimizer using vector differences (robust for rugged landscapes)",
+            "nelder_mead": "Local simplex method (fast convergence, may find local optima)",
+            "multi_start": "Multiple random starting points with local optimization (finds global optima)",
+            "adaptive_grid": "Coarse-to-fine grid refinement (systematic, interpretable)",
+        }
+        self.method_desc_label.config(text=method_descriptions.get(method, ""))
+
+        # Show/hide method-specific controls
+        if method == "genetic_algorithm":
+            self.ga_frame.grid()
+            self.multistart_frame.grid_forget()
+            self.popsize_entry.config(state="normal")
+        elif method == "differential_evolution":
+            self.ga_frame.grid_forget()
+            self.multistart_frame.grid_forget()
+            self.popsize_entry.config(state="normal")
+        elif method == "multi_start":
+            self.ga_frame.grid_forget()
+            self.multistart_frame.grid()
+            self.popsize_entry.config(state="disabled")
+        else:  # nelder_mead, adaptive_grid
+            self.ga_frame.grid_forget()
+            self.multistart_frame.grid_forget()
+            self.popsize_entry.config(state="disabled")
 
     def _build_control_section(self):
         """Build control buttons section."""
@@ -1301,6 +1592,14 @@ class OptimizationPlugin(ttk.Frame):
         """Gather configuration from UI fields."""
         return OptimizationConfig(
             simulation_type=SimulationType[self.sim_type_var.get()],
+            mode=self.mode_var.get(),
+            optimization_method=self.optimization_method_var.get(),
+            optimization_maxiter=int(self.optimization_maxiter_var.get()),
+            optimization_population_size=int(self.optimization_popsize_var.get()),
+            optimization_mutation_rate=float(self.optimization_mutation_var.get()),
+            optimization_crossover_rate=float(self.optimization_crossover_var.get()),
+            optimization_n_starts=int(self.optimization_nstarts_var.get()),
+            optimization_save_top_n=int(self.optimization_save_top_n_var.get()),
             aperture_range=(
                 float(self.aperture_min_var.get()),
                 float(self.aperture_max_var.get()),
@@ -1318,6 +1617,7 @@ class OptimizationPlugin(ttk.Frame):
             ),
             starting_z_positions=self._parse_list_field(self.start_z_var.get()),
             wall_z=float(self.wall_z_var.get()),
+            cavity_spacing=float(self.cavity_spacing_var.get()),
             timestep=float(self.duration_var.get())
             if self.timestep_mode_var.get() == "count"
             else 3e-7,
@@ -1364,6 +1664,7 @@ class OptimizationPlugin(ttk.Frame):
             # Update UI fields
             self.sim_type_var.set(opt_config.simulation_type.name)
             self.wall_z_var.set(str(opt_config.wall_z))
+            self.cavity_spacing_var.set(str(opt_config.cavity_spacing))
 
             # Set timestep mode and values based on loaded config
             # Default to "duration" mode (auto-calc duration, user provides count)
@@ -1390,6 +1691,7 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result("[OK] Loaded parameters from main GUI configuration")
             self._log_result(f"  Simulation type: {opt_config.simulation_type.name}")
             self._log_result(f"  Wall z: {opt_config.wall_z} mm")
+            self._log_result(f"  Cavity spacing: {opt_config.cavity_spacing} mm")
             self._log_result(
                 f"  Timestep mode: auto-calc duration (user provides count)"
             )
@@ -1878,6 +2180,7 @@ class OptimizationPlugin(ttk.Frame):
 
             # Populate UI fields
             self.sim_type_var.set(data.get("simulation_type", "CONDUCTING_WALL"))
+            self.mode_var.set(data.get("mode", "blind_sweep"))
             self.aperture_min_var.set(str(data.get("aperture_min", 1e-5)))
             self.aperture_max_var.set(str(data.get("aperture_max", 1e-3)))
             self.aperture_points_var.set(str(data.get("aperture_points", 10)))
@@ -1895,11 +2198,35 @@ class OptimizationPlugin(ttk.Frame):
                 ", ".join(map(str, data.get("starting_z_positions", [0.0])))
             )
             self.wall_z_var.set(str(data.get("wall_z", 100.0)))
+            self.cavity_spacing_var.set(str(data.get("cavity_spacing", 1e5)))
             self.steps_var.set(str(data.get("steps", 2000)))
             self.objective_var.set(data.get("objective", "max_energy_gain"))
 
             # Load trajectory options
             self.save_trajectories_var.set(data.get("save_trajectories", False))
+
+            # Load optimization parameters
+            self.optimization_method_var.set(
+                data.get("optimization_method", "genetic_algorithm")
+            )
+            self.optimization_maxiter_var.set(str(data.get("optimization_maxiter", 50)))
+            self.optimization_popsize_var.set(
+                str(data.get("optimization_population_size", 20))
+            )
+            self.optimization_mutation_var.set(
+                str(data.get("optimization_mutation_rate", 0.1))
+            )
+            self.optimization_crossover_var.set(
+                str(data.get("optimization_crossover_rate", 0.7))
+            )
+            self.optimization_nstarts_var.set(str(data.get("optimization_n_starts", 5)))
+            self.optimization_save_top_n_var.set(
+                str(data.get("optimization_save_top_n", 3))
+            )
+
+            # Update mode visibility
+            self._update_mode_visibility()
+            self._update_optimization_controls()
 
             # Load stability options (with defaults from SimulationOptions)
             loaded_config = self._gather_config()
@@ -2007,6 +2334,7 @@ class OptimizationPlugin(ttk.Frame):
             config = self._gather_config()
             data = {
                 "simulation_type": config.simulation_type.name,
+                "mode": config.mode,
                 "aperture_min": config.aperture_range[0],
                 "aperture_max": config.aperture_range[1],
                 "aperture_points": config.aperture_points,
@@ -2018,9 +2346,18 @@ class OptimizationPlugin(ttk.Frame):
                 "transverse_offset_fractions": config.transverse_offset_fractions,
                 "starting_z_positions": config.starting_z_positions,
                 "wall_z": config.wall_z,
+                "cavity_spacing": config.cavity_spacing,
                 "steps": config.steps,
                 "objective": config.objective,
                 "save_trajectories": config.save_trajectories,
+                # Optimization parameters
+                "optimization_method": config.optimization_method,
+                "optimization_maxiter": config.optimization_maxiter,
+                "optimization_population_size": config.optimization_population_size,
+                "optimization_mutation_rate": config.optimization_mutation_rate,
+                "optimization_crossover_rate": config.optimization_crossover_rate,
+                "optimization_n_starts": config.optimization_n_starts,
+                "optimization_save_top_n": config.optimization_save_top_n,
                 # Stability options
                 "self_consistency_enabled": config.self_consistency_enabled,
                 "self_consistency_tolerance": config.self_consistency_tolerance,
@@ -3139,6 +3476,227 @@ class OptimizationPlugin(ttk.Frame):
                 self, "Plotting Error", f"Failed to plot trajectories:\n{e}"
             )
 
+    def _run_optimization_background(self):
+        """Run optimization in background using selected algorithm."""
+        try:
+            from optimization.optimizer import (
+                adaptive_grid_search,
+                genetic_algorithm,
+                multi_start_optimize,
+                optimize_parameters,
+            )
+
+            self._log_result("=" * 80)
+            self._log_result(f"OPTIMIZATION MODE: {self.config.optimization_method}")
+            self._log_result("=" * 80)
+            self._log_result("")
+
+            # Build parameter names and bounds from config
+            param_names = []
+            param_bounds = []
+
+            # Aperture
+            if self.config.aperture_points > 1:
+                param_names.append("aperture_radius")
+                param_bounds.append(self.config.aperture_range)
+
+            # Energy
+            if self.config.energy_points > 1:
+                param_names.append("initial_energy_gev")
+                param_bounds.append(self.config.energy_range)
+
+            # Transverse momentum (if enabled as sweep parameter)
+            if (
+                self.config.transverse_momentum_range is not None
+                and self.config.transverse_momentum_points > 1
+            ):
+                param_names.append("transverse_momentum")
+                param_bounds.append(self.config.transverse_momentum_range)
+
+            # Timestep (if enabled as sweep parameter)
+            if (
+                self.config.timestep_range is not None
+                and self.config.timestep_points > 1
+            ):
+                param_names.append("timestep")
+                param_bounds.append(self.config.timestep_range)
+
+            if len(param_names) == 0:
+                self._log_result(
+                    "[ERROR] No parameters to optimize! Enable at least 2 points for aperture or energy."
+                )
+                self.running = False
+                return
+
+            self._log_result(f"Optimizing parameters: {param_names}")
+            self._log_result(f"Parameter bounds: {param_bounds}")
+            self._log_result(f"Objective: {self.config.objective}")
+            self._log_result("")
+
+            # Create base config template (this would need proper implementation)
+            # For now, create a minimal dict representation
+            config_template = {
+                "simulation_type": self.config.simulation_type,
+                "wall_z": self.config.wall_z,
+                "steps": self.config.steps,
+                "timestep": self.config.timestep,
+                "m_particle": self.config.m_particle,
+                "charge_sign": self.config.charge_sign,
+                "stripped_ions": self.config.stripped_ions,
+                "transv_mom": self.config.transv_mom,
+                # Add other fixed parameters
+            }
+
+            # Determine metric name from objective
+            metric_name = "max_energy_gain_gev"
+            maximize = True
+
+            if self.config.objective == "max_percent_energy_gain":
+                metric_name = "max_percent_energy_gain"
+                maximize = True
+            elif "min" in self.config.objective.lower():
+                maximize = False
+
+            # Run optimization based on selected method
+            method = self.config.optimization_method
+            self._log_result(f"Starting {method} optimization...")
+            self._log_result("")
+
+            result = None
+
+            if method == "genetic_algorithm":
+                result = genetic_algorithm(
+                    config_template=config_template,
+                    parameter_names=param_names,
+                    parameter_bounds=param_bounds,
+                    metric_name=metric_name,
+                    maximize=maximize,
+                    population_size=self.config.optimization_population_size,
+                    n_generations=self.config.optimization_maxiter,
+                    mutation_rate=self.config.optimization_mutation_rate,
+                    crossover_rate=self.config.optimization_crossover_rate,
+                    seed=self.config.seed,
+                )
+
+            elif method == "differential_evolution":
+                result = optimize_parameters(
+                    config_template=config_template,
+                    parameter_names=param_names,
+                    parameter_bounds=param_bounds,
+                    metric_name=metric_name,
+                    method="differential_evolution",
+                    maximize=maximize,
+                    maxiter=self.config.optimization_maxiter,
+                    popsize=self.config.optimization_population_size,
+                )
+
+            elif method == "nelder_mead":
+                result = optimize_parameters(
+                    config_template=config_template,
+                    parameter_names=param_names,
+                    parameter_bounds=param_bounds,
+                    metric_name=metric_name,
+                    method="nelder_mead",
+                    maximize=maximize,
+                    maxiter=self.config.optimization_maxiter,
+                )
+
+            elif method == "multi_start":
+                result = multi_start_optimize(
+                    config_template=config_template,
+                    parameter_names=param_names,
+                    parameter_bounds=param_bounds,
+                    metric_name=metric_name,
+                    n_starts=self.config.optimization_n_starts,
+                    maximize=maximize,
+                    maxiter=self.config.optimization_maxiter,
+                )
+
+            elif method == "adaptive_grid":
+                best_params, best_value, history = adaptive_grid_search(
+                    config_template=config_template,
+                    parameter_names=param_names,
+                    parameter_bounds=param_bounds,
+                    metric_name=metric_name,
+                    maximize=maximize,
+                    initial_points_per_dim=5,
+                    refinement_levels=2,
+                )
+                # Convert to OptimizeResult format
+                from scipy.optimize import OptimizeResult
+
+                result = OptimizeResult()
+                result.x = best_params
+                result.fun = -best_value if maximize else best_value
+                result.best_params_dict = dict(zip(param_names, best_params))
+                result.success = True
+
+            if result is None:
+                self._log_result(f"[ERROR] Unknown optimization method: {method}")
+                self.running = False
+                return
+
+            # Log results
+            self._log_result("")
+            self._log_result("=" * 80)
+            self._log_result("OPTIMIZATION COMPLETE")
+            self._log_result("=" * 80)
+            self._log_result(f"Best {metric_name}: {result.fun:.6e}")
+            self._log_result("Best parameters:")
+            for param_name, value in result.best_params_dict.items():
+                self._log_result(f"  {param_name}: {value:.6e}")
+            self._log_result("")
+            self._log_result(
+                f"Function evaluations: {result.nfev if hasattr(result, 'nfev') else 'N/A'}"
+            )
+            self._log_result("")
+
+            # Save results
+            self._save_optimization_results(result, param_names)
+
+            self._log_result("[OK] Optimization complete!")
+
+        except Exception as e:
+            import traceback
+
+            error_msg = f"Optimization failed: {e}\n{traceback.format_exc()}"
+            self._log_result(f"[ERROR] {error_msg}")
+        finally:
+            self.running = False
+            self._update_progress(100, "Done")
+
+    def _save_optimization_results(self, result, param_names):
+        """Save optimization results to file."""
+        import json
+        from pathlib import Path
+
+        output_dir = Path(self.config.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create results dictionary
+        results_dict = {
+            "optimization_method": self.config.optimization_method,
+            "objective": self.config.objective,
+            "best_parameters": result.best_params_dict,
+            "best_value": float(result.fun),
+            "function_evaluations": int(result.nfev)
+            if hasattr(result, "nfev")
+            else None,
+            "success": bool(result.success),
+            "message": str(result.message) if hasattr(result, "message") else None,
+        }
+
+        # Add convergence history if available
+        if hasattr(result, "convergence_history"):
+            results_dict["convergence_history"] = result.convergence_history
+
+        # Save to JSON
+        results_file = output_dir / "optimization_results.json"
+        with open(results_file, "w") as f:
+            json.dump(results_dict, f, indent=2)
+
+        self._log_result(f"Results saved to: {results_file}")
+
     def _run_sweep_background(self, is_finetune=False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
 
@@ -3147,6 +3705,11 @@ class OptimizationPlugin(ttk.Frame):
             finetune_regions: List of parameter regions for fine-tuning
         """
         try:
+            # Check mode and route accordingly
+            if self.config.mode == "optimization":
+                self._run_optimization_background()
+                return
+
             # Generate parameter grid including sweepable parameters
             param_grids = self._generate_parameter_grids()
 
@@ -3155,7 +3718,9 @@ class OptimizationPlugin(ttk.Frame):
             for values in param_grids.values():
                 total_runs *= len(values)
 
-            self._log_result(f"Starting parameter sweep: {total_runs} total runs")
+            self._log_result(
+                f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs"
+            )
             self._log_result(
                 f"Trajectory saving: {'ENABLED' if self.config.save_trajectories else 'DISABLED'}"
             )

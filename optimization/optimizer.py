@@ -8,6 +8,9 @@ for robust optimization algorithms.
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Genetic algorithm utilities
+from typing import Tuple as TypingTuple
+
 import numpy as np
 from scipy.optimize import OptimizeResult, differential_evolution, minimize
 
@@ -484,3 +487,284 @@ def adaptive_grid_search(
     )
 
     return final_best["best_params"], final_best["best_value"], history
+
+
+def genetic_algorithm(
+    config_template: Dict[str, Any],
+    parameter_names: List[str],
+    parameter_bounds: List[Tuple[float, float]],
+    metric_name: str = "max_energy_gain_gev",
+    maximize: bool = True,
+    population_size: int = 20,
+    n_generations: int = 50,
+    mutation_rate: float = 0.1,
+    crossover_rate: float = 0.7,
+    elite_fraction: float = 0.1,
+    tournament_size: int = 3,
+    seed: Optional[int] = None,
+) -> OptimizeResult:
+    """Genetic algorithm optimization.
+
+    Uses evolutionary approach with selection, crossover, and mutation to find
+    optimal parameter configurations.
+
+    Parameters
+    ----------
+    config_template : Dict[str, Any]
+        Base configuration template
+    parameter_names : List[str]
+        Names of parameters to optimize
+    parameter_bounds : List[Tuple[float, float]]
+        Bounds for each parameter
+    metric_name : str, optional
+        Name of metric to optimize
+    maximize : bool, optional
+        If True, maximizes metric (default: True)
+    population_size : int, optional
+        Size of population (default: 20)
+    n_generations : int, optional
+        Number of generations to evolve (default: 50)
+    mutation_rate : float, optional
+        Probability of mutation per gene (default: 0.1)
+    crossover_rate : float, optional
+        Probability of crossover (default: 0.7)
+    elite_fraction : float, optional
+        Fraction of population to preserve as elite (default: 0.1)
+    tournament_size : int, optional
+        Size of tournament for selection (default: 3)
+    seed : int, optional
+        Random seed for reproducibility
+
+    Returns
+    -------
+    OptimizeResult
+        Optimization result with best individual and convergence history
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    logger.info(f"Starting genetic algorithm optimization of {metric_name}")
+    logger.info(f"Population: {population_size}, Generations: {n_generations}")
+    logger.info(f"Parameters: {parameter_names}")
+    logger.info(f"Bounds: {parameter_bounds}")
+
+    n_params = len(parameter_names)
+    n_elite = max(1, int(population_size * elite_fraction))
+
+    # Create objective function
+    objective = ObjectiveFunction(
+        config_template=config_template,
+        parameter_names=parameter_names,
+        parameter_bounds=parameter_bounds,
+        metric_name=metric_name,
+        maximize=maximize,
+    )
+
+    # Initialize population randomly within bounds
+    population = np.random.uniform(
+        low=[b[0] for b in parameter_bounds],
+        high=[b[1] for b in parameter_bounds],
+        size=(population_size, n_params),
+    )
+
+    # Evaluate initial population
+    fitness = np.array([objective(ind) for ind in population])
+
+    # Track best individual (remember: objective returns value to minimize)
+    if maximize:
+        best_idx = np.argmin(fitness)  # Most negative = best for maximization
+    else:
+        best_idx = np.argmin(fitness)  # Most positive = best for minimization
+
+    best_individual = population[best_idx].copy()
+    best_fitness = fitness[best_idx]
+
+    convergence_history = []
+
+    # Evolution loop
+    for generation in range(n_generations):
+        # Sort population by fitness
+        sorted_indices = np.argsort(fitness)
+        population = population[sorted_indices]
+        fitness = fitness[sorted_indices]
+
+        # Track convergence
+        current_best_fitness = fitness[0]
+        convergence_history.append(
+            {
+                "generation": generation,
+                "best_fitness": current_best_fitness,
+                "mean_fitness": np.mean(fitness),
+                "std_fitness": np.std(fitness),
+            }
+        )
+
+        # Update global best
+        if current_best_fitness < best_fitness:
+            best_fitness = current_best_fitness
+            best_individual = population[0].copy()
+
+        logger.info(
+            f"Generation {generation + 1}/{n_generations}: "
+            f"Best = {-best_fitness if maximize else best_fitness:.6f}, "
+            f"Mean = {-np.mean(fitness) if maximize else np.mean(fitness):.6f}"
+        )
+
+        # Create new population
+        new_population = []
+
+        # Elitism: preserve best individuals
+        new_population.extend(population[:n_elite])
+
+        # Generate offspring
+        while len(new_population) < population_size:
+            # Tournament selection
+            parent1 = _tournament_selection(population, fitness, tournament_size)
+            parent2 = _tournament_selection(population, fitness, tournament_size)
+
+            # Crossover
+            if np.random.random() < crossover_rate:
+                child1, child2 = _crossover(parent1, parent2)
+            else:
+                child1, child2 = parent1.copy(), parent2.copy()
+
+            # Mutation
+            child1 = _mutate(child1, parameter_bounds, mutation_rate)
+            child2 = _mutate(child2, parameter_bounds, mutation_rate)
+
+            new_population.append(child1)
+            if len(new_population) < population_size:
+                new_population.append(child2)
+
+        population = np.array(new_population)
+
+        # Evaluate new population
+        fitness = np.array([objective(ind) for ind in population])
+
+    # Final evaluation
+    sorted_indices = np.argsort(fitness)
+    population = population[sorted_indices]
+    fitness = fitness[sorted_indices]
+
+    if fitness[0] < best_fitness:
+        best_fitness = fitness[0]
+        best_individual = population[0].copy()
+
+    # Create result object
+    result = OptimizeResult()
+    result.x = best_individual
+    result.fun = best_fitness
+    result.nfev = objective.n_calls
+    result.nit = n_generations
+    result.success = True
+    result.message = f"Genetic algorithm completed {n_generations} generations"
+    result.best_params_dict = dict(zip(parameter_names, best_individual))
+    result.objective_function = objective
+    result.convergence_history = convergence_history
+    result.final_population = population
+    result.final_fitness = fitness
+
+    logger.info(
+        f"Genetic algorithm complete. Best {metric_name}: {objective.best_value:.6f}"
+    )
+    logger.info(f"Best parameters: {result.best_params_dict}")
+
+    return result
+
+
+def _tournament_selection(
+    population: np.ndarray, fitness: np.ndarray, tournament_size: int
+) -> np.ndarray:
+    """Select individual using tournament selection.
+
+    Parameters
+    ----------
+    population : np.ndarray
+        Population array (n_individuals, n_params)
+    fitness : np.ndarray
+        Fitness values (lower is better)
+    tournament_size : int
+        Number of individuals to compete
+
+    Returns
+    -------
+    np.ndarray
+        Selected individual
+    """
+    # Randomly select tournament_size individuals
+    tournament_indices = np.random.choice(
+        len(population), size=tournament_size, replace=False
+    )
+    tournament_fitness = fitness[tournament_indices]
+
+    # Select best from tournament (lowest fitness)
+    winner_idx = tournament_indices[np.argmin(tournament_fitness)]
+
+    return population[winner_idx].copy()
+
+
+def _crossover(
+    parent1: np.ndarray, parent2: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Perform uniform crossover between two parents.
+
+    Parameters
+    ----------
+    parent1 : np.ndarray
+        First parent
+    parent2 : np.ndarray
+        Second parent
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Two offspring
+    """
+    n_params = len(parent1)
+
+    # Uniform crossover: randomly choose genes from each parent
+    mask = np.random.random(n_params) < 0.5
+
+    child1 = np.where(mask, parent1, parent2)
+    child2 = np.where(mask, parent2, parent1)
+
+    return child1, child2
+
+
+def _mutate(
+    individual: np.ndarray,
+    bounds: List[Tuple[float, float]],
+    mutation_rate: float,
+) -> np.ndarray:
+    """Apply mutation to individual.
+
+    Uses Gaussian mutation with adaptive step size based on parameter range.
+
+    Parameters
+    ----------
+    individual : np.ndarray
+        Individual to mutate
+    bounds : List[Tuple[float, float]]
+        Parameter bounds
+    mutation_rate : float
+        Probability of mutation per gene
+
+    Returns
+    -------
+    np.ndarray
+        Mutated individual
+    """
+    mutated = individual.copy()
+
+    for i in range(len(individual)):
+        if np.random.random() < mutation_rate:
+            # Gaussian mutation with range-based step size
+            param_range = bounds[i][1] - bounds[i][0]
+            step_size = 0.1 * param_range  # 10% of range
+
+            mutated[i] += np.random.normal(0, step_size)
+
+            # Clip to bounds
+            mutated[i] = np.clip(mutated[i], bounds[i][0], bounds[i][1])
+
+    return mutated
