@@ -884,19 +884,17 @@ class OptimizationPlugin(ttk.Frame):
 
         self.save_trajectories_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            traj_frame,
+            strategy_frame,
             text="Save trajectories (stride:",
             variable=self.save_trajectories_var,
         ).pack(side="left", padx=(0, 2))
 
         self.trajectory_stride_var = tk.StringVar(value="10")
-        ttk.Entry(traj_frame, textvariable=self.trajectory_stride_var, width=6).pack(
-            side="left", padx=2
-        )
-        ttk.Label(traj_frame, text="points, conservative to reduce file size)").pack(
-            side="left"
-        )
+        ttk.Entry(
+            strategy_frame, textvariable=self.trajectory_stride_var, width=6
+        ).pack(side="left", padx=2)
 
+        ttk.Label(strategy_frame, text="points)").pack(side="left", padx=(0, 5))
         # Add info note about what gets saved
         traj_note = ttk.Label(
             frame,
