@@ -59,6 +59,17 @@ residual-wake acceleration with a covariant retarded-potential integrator*
     and automatically retries problematic steps with smaller timesteps. This
     is configurable via ``AdaptiveTimestepConfig`` and particularly useful for
     high-energy electron-wall simulations.
+* **Trajectory stability analysis.**  Post-integration validation assesses
+  whether trajectories are numerically stable across multiple timesteps, even
+  in regions with strong physical forces (radiation reaction, image charges).
+  Rather than rejecting runs with large single-step jumps—which can represent
+  valid physics—the analyzer checks for oscillatory instabilities, erratic
+  evolution that cannot fit smooth polynomial trends, and multi-scale
+  inconsistencies. This multi-step approach distinguishes numerical artifacts
+  from physical behavior and is essential for unattended sweep and optimization
+  runs. Configured via ``SmoothnessConfig`` with presets for strict,
+  balanced, and permissive validation. See ``core/smoothness_analyzer.py``
+  and ``local/smoothness_checking_implementation.md`` for details.
 * **Reference publication.**  For the scientific context, derivations, and
   benchmark scenarios, see the project paper referenced above; the codebase
   tracks the configurations described there.
