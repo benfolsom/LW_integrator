@@ -169,6 +169,8 @@ class OptimizationConfig:
     optimization_crossover_rate: float = 0.7  # For genetic algorithm
     optimization_n_starts: int = 5  # For multi_start method
     optimization_save_top_n: int = 3  # Save trajectories from top N results
+    optimization_convergence_tol: float = 1e-6  # Convergence tolerance (relative)
+    optimization_convergence_patience: int = 10  # Generations for plateau detection
 
     # Parameter ranges
     aperture_range: Tuple[float, float] = (1e-5, 1e-3)  # mm (10 μm to 1 mm)
@@ -679,7 +681,7 @@ class OptimizationPlugin(ttk.Frame):
 
         ttk.Radiobutton(
             mode_frame,
-            text="Optimization (Intelligent Search)",
+            text="Optimization",
             variable=self.mode_var,
             value="optimization",
             command=self._update_mode_visibility,
@@ -692,7 +694,7 @@ class OptimizationPlugin(ttk.Frame):
         self.mode_help_label = ttk.Label(
             help_frame,
             text="Blind Sweep: Exhaustively evaluate all parameter combinations (good for exploring full space).\n"
-            "Optimization: Use intelligent algorithms to find optimal parameters (faster, finds best configurations).",
+            "Optimization: Use algorithms to find optimal parameters (faster, finds best configurations).",
             foreground="gray40",
             font=("TkDefaultFont", 8),
             wraplength=600,
@@ -1368,15 +1370,48 @@ class OptimizationPlugin(ttk.Frame):
         output_frame = ttk.LabelFrame(
             self.optimization_frame, text="Output Options", padding=5
         )
-        output_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        output_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
-        ttk.Label(output_frame, text="Save trajectories from top N results:").grid(
+        ttk.Label(output_frame, text="Save top N configs:").grid(
             row=0, column=0, sticky="w", pady=2, padx=(0, 5)
         )
         self.optimization_save_top_n_var = tk.StringVar(value="3")
         ttk.Entry(
             output_frame, textvariable=self.optimization_save_top_n_var, width=8
         ).grid(row=0, column=1, sticky="w", pady=2)
+
+        # Convergence settings
+        convergence_frame = ttk.LabelFrame(
+            self.optimization_frame, text="Convergence Settings", padding=5
+        )
+        convergence_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Label(convergence_frame, text="Tolerance (rel):").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_convergence_tol_var = tk.StringVar(value="1e-6")
+        ttk.Entry(
+            convergence_frame,
+            textvariable=self.optimization_convergence_tol_var,
+            width=10,
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(convergence_frame, text="Patience (generations):").grid(
+            row=0, column=2, sticky="w", pady=2, padx=(15, 5)
+        )
+        self.optimization_convergence_patience_var = tk.StringVar(value="10")
+        ttk.Entry(
+            convergence_frame,
+            textvariable=self.optimization_convergence_patience_var,
+            width=8,
+        ).grid(row=0, column=3, sticky="w", pady=2)
+
+        ttk.Label(
+            convergence_frame,
+            text="Early stopping: stops if fitness doesn't improve by tolerance over patience generations",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray40",
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(2, 0))
 
         # Initialize visibility
         self._update_optimization_controls()
@@ -1624,6 +1659,12 @@ class OptimizationPlugin(ttk.Frame):
             optimization_crossover_rate=float(self.optimization_crossover_var.get()),
             optimization_n_starts=int(self.optimization_nstarts_var.get()),
             optimization_save_top_n=int(self.optimization_save_top_n_var.get()),
+            optimization_convergence_tol=float(
+                self.optimization_convergence_tol_var.get()
+            ),
+            optimization_convergence_patience=int(
+                self.optimization_convergence_patience_var.get()
+            ),
             aperture_range=(
                 float(self.aperture_min_var.get()),
                 float(self.aperture_max_var.get()),
@@ -2251,6 +2292,12 @@ class OptimizationPlugin(ttk.Frame):
             self.optimization_save_top_n_var.set(
                 str(data.get("optimization_save_top_n", 3))
             )
+            self.optimization_convergence_tol_var.set(
+                str(data.get("optimization_convergence_tol", 1e-6))
+            )
+            self.optimization_convergence_patience_var.set(
+                str(data.get("optimization_convergence_patience", 10))
+            )
 
             # Update mode visibility
             self._update_mode_visibility()
@@ -2390,6 +2437,8 @@ class OptimizationPlugin(ttk.Frame):
                 "optimization_crossover_rate": config.optimization_crossover_rate,
                 "optimization_n_starts": config.optimization_n_starts,
                 "optimization_save_top_n": config.optimization_save_top_n,
+                "optimization_convergence_tol": config.optimization_convergence_tol,
+                "optimization_convergence_patience": config.optimization_convergence_patience,
                 # Stability options
                 "self_consistency_enabled": config.self_consistency_enabled,
                 "self_consistency_tolerance": config.self_consistency_tolerance,
@@ -3596,9 +3645,21 @@ class OptimizationPlugin(ttk.Frame):
 
             result = None
 
+            # Track evaluation count
+            eval_counter = [0]  # Use list for mutable closure
+
             # Create custom objective function that uses our integration runner
             def evaluate_params(x):
                 """Evaluate parameter vector and return value to minimize."""
+                eval_num = eval_counter[0]
+                eval_counter[0] += 1
+
+                # Log evaluation start
+                param_str = ", ".join(
+                    [f"{name}={val:.4g}" for name, val in zip(param_names, x)]
+                )
+                self._log_result(f"[OPTIMIZATION] Evaluation {eval_num}: {param_str}")
+
                 try:
                     # Map parameters
                     aperture = self.config.aperture_range[0]  # default
@@ -3619,7 +3680,7 @@ class OptimizationPlugin(ttk.Frame):
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
                             aperture = x[i]
-                        elif param_name == "particle_energy_gev":
+                        elif param_name == "initial_energy_gev":
                             energy = x[i]
                         elif param_name == "start_z":
                             start_z = x[i]
@@ -3655,7 +3716,7 @@ class OptimizationPlugin(ttk.Frame):
                                     rider_pcount=int(self.config.pcount),
                                     rider_transv_mom=self.config.transv_mom,
                                     driver_params=None,
-                                    run_num=0,
+                                    run_num=eval_num,
                                 )
                             except Exception as e:
                                 error_container[0] = e
@@ -3689,7 +3750,7 @@ class OptimizationPlugin(ttk.Frame):
                             rider_pcount=int(self.config.pcount),
                             rider_transv_mom=self.config.transv_mom,
                             driver_params=None,
-                            run_num=0,
+                            run_num=eval_num,
                         )
 
                     if result is None or "metrics" not in result:
@@ -3702,11 +3763,26 @@ class OptimizationPlugin(ttk.Frame):
                     if np.isnan(value):
                         return np.inf if not maximize else -np.inf
 
+                    # Log completion
+                    result_value = -value if maximize else value
+                    self._log_result(
+                        f"[OPTIMIZATION] Evaluation {eval_num} complete: "
+                        f"{metric_name}={value:.6g}, objective={result_value:.6g}"
+                    )
+
                     # Return value to minimize (negate if maximizing)
-                    return -value if maximize else value
+                    return result_value
 
                 except Exception as e:
-                    self._log_result(f"[WARNING] Evaluation failed for params {x}: {e}")
+                    import traceback
+
+                    self._log_result(
+                        f"[ERROR] Evaluation {eval_num} failed for params {x}"
+                    )
+                    self._log_result(f"[ERROR] Exception: {type(e).__name__}: {e}")
+                    self._log_result(f"[ERROR] Traceback:")
+                    for line in traceback.format_exc().splitlines():
+                        self._log_result(f"  {line}")
                     return np.inf if not maximize else -np.inf
 
             if method == "genetic_algorithm":
@@ -3722,6 +3798,8 @@ class OptimizationPlugin(ttk.Frame):
                     crossover_rate=self.config.optimization_crossover_rate,
                     seed=self.config.seed,
                     objective_function=evaluate_params,
+                    convergence_tol=self.config.optimization_convergence_tol,
+                    convergence_patience=self.config.optimization_convergence_patience,
                 )
 
             elif method == "differential_evolution":
@@ -4475,18 +4553,9 @@ class OptimizationPlugin(ttk.Frame):
             adaptive_timestep_debug=self.config.adaptive_timestep_debug,
         )
 
-        # Create progress callback to track integration and detect hangs
-        import time
-
-        last_progress_time = [time.time()]  # Mutable container for closure
-        last_reported_step = [0]
-        hang_warning_shown = [False]
-
+        # Create progress callback to track integration
         def progress_callback(current: int, total: int):
-            """Log progress periodically to detect hangs."""
-            current_time = time.time()
-            last_progress_time[0] = current_time
-
+            """Log progress periodically."""
             # Log every 10% or every 100 steps for short runs
             if total <= 1000:
                 log_interval = max(1, total // 10)
@@ -4498,49 +4567,12 @@ class OptimizationPlugin(ttk.Frame):
                     f"    [PROGRESS] Run {run_num}: step {current}/{total} "
                     f"({100 * current // total}%)"
                 )
-                last_reported_step[0] = current
 
-        def check_for_hang():
-            """Check if integration appears to be hung."""
-            elapsed = time.time() - last_progress_time[0]
-            if (
-                elapsed > 30.0 and not hang_warning_shown[0]
-            ):  # 30 seconds without progress
-                hang_warning_shown[0] = True
-                self._log_result(
-                    f"  [WARNING] Run {run_num} appears hung - no progress for {elapsed:.0f}s "
-                    f"(last step: {last_reported_step[0]})"
-                )
-                self._log_result(
-                    f"           Possible causes: energy monitor halt, SC iterations, or adaptive timestep refinement"
-                )
-
-        # Run the integration with progress tracking and hang detection
+        # Run the integration with progress tracking
         self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
 
-        # Start a timer thread to check for hangs
-        import threading
-
-        hang_check_timer = None
-
-        def periodic_hang_check():
-            check_for_hang()
-            if self.running:
-                hang_check_timer = threading.Timer(10.0, periodic_hang_check)
-                hang_check_timer.daemon = True
-                hang_check_timer.start()
-
-        hang_check_timer = threading.Timer(10.0, periodic_hang_check)
-        hang_check_timer.daemon = True
-        hang_check_timer.start()
-
-        try:
-            result = run_testbed(options, progress_callback=progress_callback)
-            self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
-        finally:
-            # Cancel hang check timer
-            if hang_check_timer:
-                hang_check_timer.cancel()
+        result = run_testbed(options, progress_callback=progress_callback)
+        self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
 
         self._log_result(f"  [DEBUG] Processing figures for Run {run_num}...")
         # Display figures if requested, otherwise close them
@@ -4586,6 +4618,19 @@ class OptimizationPlugin(ttk.Frame):
             metrics["rider_gamma_initial"] = result.rider_gamma_initial
         if result.rider_gamma_final is not None:
             metrics["rider_gamma_final"] = result.rider_gamma_final
+
+        # Calculate max_percent_energy_gain from gamma values
+        if (
+            result.rider_gamma_initial is not None
+            and result.rider_gamma_final is not None
+            and result.rider_gamma_initial > 0
+        ):
+            energy_gain_percent = (
+                (result.rider_gamma_final - result.rider_gamma_initial)
+                / result.rider_gamma_initial
+                * 100.0
+            )
+            metrics["max_percent_energy_gain"] = energy_gain_percent
 
         # Add beam optics metrics if available
         if result.rider_emittance_x_mm_mrad is not None:

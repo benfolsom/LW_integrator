@@ -527,6 +527,8 @@ def genetic_algorithm(
     tournament_size: int = 3,
     seed: Optional[int] = None,
     objective_function: Optional[Callable] = None,
+    convergence_tol: float = 1e-6,
+    convergence_patience: int = 10,
 ) -> OptimizeResult:
     """Genetic algorithm optimization.
 
@@ -562,6 +564,14 @@ def genetic_algorithm(
     objective_function : Callable, optional
         Custom objective function that takes parameter array and returns scalar
         to minimize. If None, uses default ObjectiveFunction class.
+    convergence_tol : float, optional
+        Relative tolerance for convergence detection (default: 1e-6).
+        Stops if improvement over last `convergence_patience` generations
+        is less than this tolerance.
+    convergence_patience : int, optional
+        Number of generations to look back for convergence check (default: 10).
+        Early stopping triggers if best fitness doesn't improve by
+        `convergence_tol` over this many generations.
 
     Returns
     -------
@@ -640,6 +650,33 @@ def genetic_algorithm(
             f"Best = {-best_fitness if maximize else best_fitness:.6f}, "
             f"Mean = {-np.mean(fitness) if maximize else np.mean(fitness):.6f}"
         )
+
+        # Check for early stopping (fitness plateau detection)
+        if generation >= convergence_patience:
+            recent_best = [
+                h["best_fitness"] for h in convergence_history[-convergence_patience:]
+            ]
+            improvement = abs(recent_best[0] - recent_best[-1])
+            # Use relative tolerance with fallback to absolute for near-zero values
+            tolerance = (
+                convergence_tol * abs(recent_best[-1])
+                if abs(recent_best[-1]) > 1e-10
+                else convergence_tol * 1e-2
+            )
+
+            if improvement < tolerance:
+                logger.info(
+                    f"Early stopping at generation {generation + 1}: "
+                    f"fitness plateau detected (improvement={improvement:.2e} < tolerance={tolerance:.2e})"
+                )
+                logger.info(
+                    f"Best fitness converged to: {-best_fitness if maximize else best_fitness:.6f}"
+                )
+                logger.info(
+                    f"Convergence achieved after {generation + 1}/{n_generations} generations"
+                )
+                # Break out of evolution loop
+                break
 
         # Create new population
         new_population = []
