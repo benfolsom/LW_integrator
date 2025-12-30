@@ -23,6 +23,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
+from core.smoothness_analyzer import (  # type: ignore[import]
+    SmoothnessConfig,
+    analyze_trajectory_smoothness,
+)
 from core.types import SimulationType  # type: ignore[import]
 from lw_integrator.testbed_runner import (  # type: ignore[import]
     RunResult,
@@ -270,6 +274,23 @@ class OptimizationConfig:
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
     skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
 
+    # Trajectory smoothness checking (post-integration validation)
+    smoothness_enabled: bool = True  # Enable trajectory smoothness analysis
+    smoothness_energy_jump_threshold: float = (
+        0.15  # Max fractional energy jump per step
+    )
+    smoothness_velocity_threshold: float = (
+        0.20  # Max fractional velocity change per step
+    )
+    smoothness_acceleration_spike_threshold: float = 10.0  # Max accel spike vs median
+    smoothness_gamma_jump_threshold: float = 0.15  # Max fractional gamma jump per step
+    smoothness_reject_on_violation: bool = (
+        True  # Reject runs with smoothness violations
+    )
+    smoothness_retry_with_finer_timestep: bool = False  # Auto-retry with finer timestep
+    smoothness_timestep_refinement_factor: float = 5.0  # Timestep reduction on retry
+    smoothness_max_retries: int = 2  # Maximum refinement retries
+
     def __post_init__(self):
         """Set defaults for list fields."""
         if self.transverse_offset_fractions is None:
@@ -379,6 +400,10 @@ class OptimizationConfig:
             # Default timeout and skip settings for sweeps
             per_run_timeout=300.0,
             skip_failed_runs=True,
+            # Default smoothness checking for sweeps (stricter than single runs)
+            smoothness_enabled=True,
+            smoothness_reject_on_violation=True,
+            smoothness_retry_with_finer_timestep=False,
         )
 
 
@@ -1530,6 +1555,61 @@ class OptimizationPlugin(ttk.Frame):
             variable=self.skip_failed_runs_var,
         ).pack(side="left", padx=5)
 
+        # Row 4: Trajectory smoothness checking
+        smoothness_frame = ttk.LabelFrame(
+            frame, text="Trajectory Smoothness Checking", padding=8
+        )
+        smoothness_frame.pack(fill="x", pady=(5, 0))
+        smoothness_frame.columnconfigure(1, weight=1)
+
+        self.smoothness_enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            smoothness_frame,
+            text="Enable post-integration smoothness analysis (detects unphysical jumps)",
+            variable=self.smoothness_enabled_var,
+            command=self._toggle_smoothness_controls,
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(smoothness_frame, text="Energy jump threshold:").grid(
+            row=1, column=0, sticky="w", padx=(20, 5), pady=2
+        )
+        self.smoothness_energy_jump_var = tk.StringVar(value="0.15")
+        ttk.Entry(
+            smoothness_frame, textvariable=self.smoothness_energy_jump_var, width=8
+        ).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(smoothness_frame, text="(0.15 = 15% max per step)").grid(
+            row=1, column=2, sticky="w", padx=(5, 0), pady=2
+        )
+
+        ttk.Label(smoothness_frame, text="Gamma jump threshold:").grid(
+            row=2, column=0, sticky="w", padx=(20, 5), pady=2
+        )
+        self.smoothness_gamma_jump_var = tk.StringVar(value="0.15")
+        ttk.Entry(
+            smoothness_frame, textvariable=self.smoothness_gamma_jump_var, width=8
+        ).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(smoothness_frame, text="(0.15 = 15% max per step)").grid(
+            row=2, column=2, sticky="w", padx=(5, 0), pady=2
+        )
+
+        self.smoothness_reject_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            smoothness_frame,
+            text="Reject runs with smoothness violations",
+            variable=self.smoothness_reject_var,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=(20, 0), pady=2)
+
+        # Store widgets for enable/disable toggle
+        self.smoothness_widgets = [
+            smoothness_frame.grid_slaves(row=1, column=0)[0],
+            smoothness_frame.grid_slaves(row=1, column=1)[0],
+            smoothness_frame.grid_slaves(row=1, column=2)[0],
+            smoothness_frame.grid_slaves(row=2, column=0)[0],
+            smoothness_frame.grid_slaves(row=2, column=1)[0],
+            smoothness_frame.grid_slaves(row=2, column=2)[0],
+            smoothness_frame.grid_slaves(row=3, column=0)[0],
+        ]
+
         # Plot display options
         plot_options_frame = ttk.LabelFrame(
             self.scrollable_frame, text="Sweep Display Options", padding=10
@@ -1570,6 +1650,12 @@ class OptimizationPlugin(ttk.Frame):
             foreground="blue",
         )
         log_info.pack(anchor="w", pady=(10, 2))
+
+    def _toggle_smoothness_controls(self):
+        """Enable/disable smoothness controls based on checkbox."""
+        state = "normal" if self.smoothness_enabled_var.get() else "disabled"
+        for widget in self.smoothness_widgets:
+            widget.configure(state=state)
 
     def _parse_list_field(self, value: str) -> List[float]:
         """Parse comma-separated list of floats."""
@@ -1707,6 +1793,13 @@ class OptimizationPlugin(ttk.Frame):
             stripped_ions=float(self.rider_stripped_ions_var.get()),
             save_trajectories=self.save_trajectories_var.get(),
             trajectory_stride=int(self.trajectory_stride_var.get()),
+            # Smoothness checking options
+            smoothness_enabled=self.smoothness_enabled_var.get(),
+            smoothness_energy_jump_threshold=float(
+                self.smoothness_energy_jump_var.get()
+            ),
+            smoothness_gamma_jump_threshold=float(self.smoothness_gamma_jump_var.get()),
+            smoothness_reject_on_violation=self.smoothness_reject_var.get(),
         )
 
     def _on_load_from_main_config(self):
@@ -1752,6 +1845,20 @@ class OptimizationPlugin(ttk.Frame):
                 f"{opt_config.transv_dist:.2e}"
             )
             self.main_timestep_display_var.set(f"{opt_config.timestep:.2e}")
+
+            # Update smoothness options if they exist in config
+            if hasattr(opt_config, "smoothness_enabled"):
+                self.smoothness_enabled_var.set(opt_config.smoothness_enabled)
+                self.smoothness_energy_jump_var.set(
+                    str(opt_config.smoothness_energy_jump_threshold)
+                )
+                self.smoothness_gamma_jump_var.set(
+                    str(opt_config.smoothness_gamma_jump_threshold)
+                )
+                self.smoothness_reject_var.set(
+                    opt_config.smoothness_reject_on_violation
+                )
+                self._toggle_smoothness_controls()
 
             self._log_result("[OK] Loaded parameters from main GUI configuration")
             self._log_result(f"  Simulation type: {opt_config.simulation_type.name}")
@@ -2190,6 +2297,18 @@ class OptimizationPlugin(ttk.Frame):
             self.config.per_run_timeout = float(self.per_run_timeout_var.get())
             self.config.skip_failed_runs = self.skip_failed_runs_var.get()
 
+            # Update smoothness options from UI
+            self.config.smoothness_enabled = self.smoothness_enabled_var.get()
+            self.config.smoothness_energy_jump_threshold = float(
+                self.smoothness_energy_jump_var.get()
+            )
+            self.config.smoothness_gamma_jump_threshold = float(
+                self.smoothness_gamma_jump_var.get()
+            )
+            self.config.smoothness_reject_on_violation = (
+                self.smoothness_reject_var.get()
+            )
+
         except Exception as e:
             _show_error_dialog(self, "Configuration Error", str(e))
             return
@@ -2355,11 +2474,46 @@ class OptimizationPlugin(ttk.Frame):
             # Sweep robustness options
             loaded_config.per_run_timeout = data.get("per_run_timeout", 300.0)
             loaded_config.skip_failed_runs = data.get("skip_failed_runs", True)
+            # Trajectory smoothness checking options
+            loaded_config.smoothness_enabled = data.get("smoothness_enabled", True)
+            loaded_config.smoothness_energy_jump_threshold = data.get(
+                "smoothness_energy_jump_threshold", 0.15
+            )
+            loaded_config.smoothness_velocity_threshold = data.get(
+                "smoothness_velocity_threshold", 0.20
+            )
+            loaded_config.smoothness_acceleration_spike_threshold = data.get(
+                "smoothness_acceleration_spike_threshold", 10.0
+            )
+            loaded_config.smoothness_gamma_jump_threshold = data.get(
+                "smoothness_gamma_jump_threshold", 0.15
+            )
+            loaded_config.smoothness_reject_on_violation = data.get(
+                "smoothness_reject_on_violation", True
+            )
+            loaded_config.smoothness_retry_with_finer_timestep = data.get(
+                "smoothness_retry_with_finer_timestep", False
+            )
+            loaded_config.smoothness_timestep_refinement_factor = data.get(
+                "smoothness_timestep_refinement_factor", 5.0
+            )
+            loaded_config.smoothness_max_retries = data.get("smoothness_max_retries", 2)
             self.config = loaded_config
 
             # Update UI controls
             self.per_run_timeout_var.set(str(loaded_config.per_run_timeout))
             self.skip_failed_runs_var.set(loaded_config.skip_failed_runs)
+
+            # Update smoothness controls
+            self.smoothness_enabled_var.set(loaded_config.smoothness_enabled)
+            self.smoothness_energy_jump_var.set(
+                str(loaded_config.smoothness_energy_jump_threshold)
+            )
+            self.smoothness_gamma_jump_var.set(
+                str(loaded_config.smoothness_gamma_jump_threshold)
+            )
+            self.smoothness_reject_var.set(loaded_config.smoothness_reject_on_violation)
+            self._toggle_smoothness_controls()
 
             self._log_result("[OK] Configuration loaded successfully")
             self._log_result("[INFO] Stability options:")
@@ -2458,6 +2612,16 @@ class OptimizationPlugin(ttk.Frame):
                 # Sweep robustness options
                 "per_run_timeout": config.per_run_timeout,
                 "skip_failed_runs": config.skip_failed_runs,
+                # Trajectory smoothness checking
+                "smoothness_enabled": config.smoothness_enabled,
+                "smoothness_energy_jump_threshold": config.smoothness_energy_jump_threshold,
+                "smoothness_velocity_threshold": config.smoothness_velocity_threshold,
+                "smoothness_acceleration_spike_threshold": config.smoothness_acceleration_spike_threshold,
+                "smoothness_gamma_jump_threshold": config.smoothness_gamma_jump_threshold,
+                "smoothness_reject_on_violation": config.smoothness_reject_on_violation,
+                "smoothness_retry_with_finer_timestep": config.smoothness_retry_with_finer_timestep,
+                "smoothness_timestep_refinement_factor": config.smoothness_timestep_refinement_factor,
+                "smoothness_max_retries": config.smoothness_max_retries,
             }
 
             with open(filepath, "w") as f:
@@ -3761,6 +3925,10 @@ class OptimizationPlugin(ttk.Frame):
                     value = metrics.get(metric_name, np.nan)
 
                     if np.isnan(value):
+                        self._log_result(
+                            f"[WARNING] Evaluation {eval_num} returned NaN "
+                            f"(likely rejected due to smoothness violation or other error)"
+                        )
                         return np.inf if not maximize else -np.inf
 
                     # Log completion
@@ -4669,6 +4837,60 @@ class OptimizationPlugin(ttk.Frame):
                     }
             except Exception as e:
                 print(f"[DEBUG] Failed to extract distance info: {e}")
+
+            # Perform smoothness analysis if enabled
+            if self.config.smoothness_enabled:
+                self._log_result(
+                    f"  [DEBUG] Performing smoothness analysis for Run {run_num}..."
+                )
+
+                # Create smoothness config from optimization config
+                smoothness_config = SmoothnessConfig(
+                    enabled=True,
+                    energy_jump_threshold=self.config.smoothness_energy_jump_threshold,
+                    velocity_derivative_threshold=self.config.smoothness_velocity_threshold,
+                    acceleration_spike_threshold=self.config.smoothness_acceleration_spike_threshold,
+                    gamma_jump_threshold=self.config.smoothness_gamma_jump_threshold,
+                    reject_on_violation=self.config.smoothness_reject_on_violation,
+                    retry_with_finer_timestep=self.config.smoothness_retry_with_finer_timestep,
+                    timestep_refinement_factor=self.config.smoothness_timestep_refinement_factor,
+                    max_retries=self.config.smoothness_max_retries,
+                )
+
+                # Analyze trajectory smoothness
+                smoothness_result = analyze_trajectory_smoothness(
+                    traj, smoothness_config, particle_mass_amu=rider_m_particle
+                )
+
+                # Store smoothness analysis in output
+                output["smoothness_analysis"] = {
+                    "passed": smoothness_result.passed,
+                    "num_violations": len(smoothness_result.violations),
+                    "max_energy_jump": smoothness_result.max_energy_jump,
+                    "max_velocity_change": smoothness_result.max_velocity_change,
+                    "max_acceleration_spike": smoothness_result.max_acceleration_spike,
+                    "max_gamma_jump": smoothness_result.max_gamma_jump,
+                }
+
+                if not smoothness_result.passed:
+                    self._log_result(
+                        f"  [WARNING] Smoothness check FAILED for Run {run_num}: "
+                        f"{len(smoothness_result.violations)} violations detected"
+                    )
+                    for v in smoothness_result.violations[:3]:  # Show first 3
+                        self._log_result(f"    - {v.description}")
+
+                    if self.config.smoothness_reject_on_violation:
+                        self._log_result(
+                            f"  [REJECT] Run {run_num} rejected due to smoothness violations"
+                        )
+                        # Mark metrics as invalid to trigger rejection in optimizer
+                        output["metrics"]["max_percent_energy_gain"] = np.nan
+                        output["smoothness_rejected"] = True
+                else:
+                    self._log_result(
+                        f"  [OK] Smoothness check PASSED for Run {run_num}"
+                    )
 
             # Only save full trajectory arrays if explicitly requested
             if self.config.save_trajectories:
