@@ -1345,11 +1345,17 @@ def run_testbed(
                 # Compute transverse momentum magnitude
                 Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
 
+                # Compute gamma for full trajectory
+                P_total_arr = np.sqrt(Pz_arr**2 + Px_arr**2 + Py_arr**2)
+                p_normalized_arr = P_total_arr / (m_arr * C_MMNS)
+                gamma_arr = np.sqrt(1 + p_normalized_arr**2)
+
                 rider_trajectory_data = {
                     "z": z_arr,
                     "r": r_arr,
                     "pz": Pz_arr / (m_arr * C_MMNS),  # Normalized longitudinal momentum
                     "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
+                    "gamma": gamma_arr,  # Lorentz factor for stability analysis
                     "t": np.array(
                         [float(np.asarray(s.get("t", 0)).flat[0]) for s in rider_states]
                     ),

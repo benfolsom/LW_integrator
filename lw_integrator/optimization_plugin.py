@@ -3904,8 +3904,17 @@ class OptimizationPlugin(ttk.Frame):
 
                     if np.isnan(value):
                         self._log_result(
-                            f"[WARNING] Evaluation {eval_num} returned NaN "
-                            f"(likely rejected due to smoothness violation or other error)"
+                            f"[WARNING] Evaluation {eval_num} returned NaN for metric '{metric_name}'"
+                        )
+                        self._log_result(
+                            f"[WARNING] Available metrics: {list(metrics.keys())}"
+                        )
+                        if len(metrics) > 0:
+                            self._log_result(f"[WARNING] Metric values:")
+                            for k, v in metrics.items():
+                                self._log_result(f"  {k}: {v}")
+                        self._log_result(
+                            f"[WARNING] Returning -inf (rejecting this evaluation)"
                         )
                         return np.inf if not maximize else -np.inf
 
@@ -4766,17 +4775,65 @@ class OptimizationPlugin(ttk.Frame):
             metrics["rider_gamma_final"] = result.rider_gamma_final
 
         # Calculate max_percent_energy_gain from gamma values
-        if (
-            result.rider_gamma_initial is not None
-            and result.rider_gamma_final is not None
-            and result.rider_gamma_initial > 0
-        ):
-            energy_gain_percent = (
-                (result.rider_gamma_final - result.rider_gamma_initial)
-                / result.rider_gamma_initial
-                * 100.0
-            )
+        gamma_initial = result.rider_gamma_initial
+        gamma_final = result.rider_gamma_final
+
+        # Diagnostic logging
+        self._log_result(f"  [DEBUG] Gamma values for Run {run_num}:")
+        self._log_result(f"    rider_gamma_initial: {gamma_initial}")
+        self._log_result(f"    rider_gamma_final: {gamma_final}")
+
+        # Try to calculate from available gamma values
+        if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
+            energy_gain_percent = (gamma_final - gamma_initial) / gamma_initial * 100.0
             metrics["max_percent_energy_gain"] = energy_gain_percent
+            self._log_result(f"    max_percent_energy_gain: {energy_gain_percent:.6f}%")
+        else:
+            # Fallback: Try to calculate from trajectory if gamma values are missing
+            self._log_result(
+                f"  [WARNING] Gamma values missing, attempting trajectory fallback..."
+            )
+            if result.rider_trajectory is not None:
+                try:
+                    traj = result.rider_trajectory
+                    gamma_array = np.asarray(traj.get("gamma", []))
+                    if len(gamma_array) > 0:
+                        gamma_initial_fallback = float(gamma_array[0])
+                        gamma_final_fallback = float(gamma_array[-1])
+                        if gamma_initial_fallback > 0:
+                            energy_gain_percent = (
+                                (gamma_final_fallback - gamma_initial_fallback)
+                                / gamma_initial_fallback
+                                * 100.0
+                            )
+                            metrics["max_percent_energy_gain"] = energy_gain_percent
+                            self._log_result(f"  [OK] Fallback calculation successful:")
+                            self._log_result(
+                                f"    gamma_initial (from traj): {gamma_initial_fallback:.1f}"
+                            )
+                            self._log_result(
+                                f"    gamma_final (from traj): {gamma_final_fallback:.1f}"
+                            )
+                            self._log_result(
+                                f"    max_percent_energy_gain: {energy_gain_percent:.6f}%"
+                            )
+                        else:
+                            self._log_result(f"  [ERROR] Fallback gamma_initial <= 0")
+                    else:
+                        self._log_result(f"  [ERROR] Trajectory gamma array is empty")
+                except Exception as e:
+                    self._log_result(f"  [ERROR] Fallback calculation failed: {e}")
+            else:
+                self._log_result(f"  [ERROR] No trajectory data available for fallback")
+
+            # If still no metric calculated, warn explicitly
+            if "max_percent_energy_gain" not in metrics:
+                self._log_result(
+                    f"  [CRITICAL] max_percent_energy_gain could not be calculated for Run {run_num}"
+                )
+                self._log_result(
+                    f"  [CRITICAL] This will result in NaN/inf for optimization objective"
+                )
 
         # Add beam optics metrics if available
         if result.rider_emittance_x_mm_mrad is not None:
