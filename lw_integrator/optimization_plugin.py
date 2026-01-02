@@ -1604,23 +1604,6 @@ class OptimizationPlugin(ttk.Frame):
             smoothness_frame.grid_slaves(row=3, column=0)[0],
         ]
 
-        # Plot display options
-        plot_options_frame = ttk.LabelFrame(
-            self.scrollable_frame, text="Sweep Display Options", padding=10
-        )
-        plot_options_frame.pack(fill="x", padx=10, pady=5)
-
-        ttk.Label(plot_options_frame, text="Display every Nth run:").grid(
-            row=0, column=1, sticky="w", padx=(20, 5), pady=2
-        )
-        self.plot_stride_var = tk.StringVar(value="10")
-        ttk.Entry(plot_options_frame, textvariable=self.plot_stride_var, width=5).grid(
-            row=0, column=2, sticky="w", pady=2
-        )
-        ttk.Label(plot_options_frame, text="(1=all, 10=every 10th)").grid(
-            row=0, column=3, sticky="w", padx=(5, 0), pady=2
-        )
-
     def _build_progress_section(self):
         """Build progress monitoring section."""
         frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Progress", padding=10)
@@ -1729,7 +1712,7 @@ class OptimizationPlugin(ttk.Frame):
 
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
-        return OptimizationConfig(
+        config_obj = OptimizationConfig(
             simulation_type=SimulationType[self.sim_type_var.get()],
             mode=self.mode_var.get(),
             optimization_method=self.optimization_method_var.get(),
@@ -1795,6 +1778,28 @@ class OptimizationPlugin(ttk.Frame):
             ),
             smoothness_reject_on_violation=self.smoothness_reject_var.get(),
         )
+
+        # Dynamically add sweepable parameter ranges after config creation
+        config = config_obj
+        if self.sweep_params["rider_transv_mom"]["sweep_var"].get():
+            config.transverse_momentum_range = (
+                float(self.sweep_params["rider_transv_mom"]["min_var"].get()),
+                float(self.sweep_params["rider_transv_mom"]["max_var"].get()),
+            )
+            config.transverse_momentum_points = int(
+                self.sweep_params["rider_transv_mom"]["points_var"].get()
+            )
+
+        if self.sweep_params["rider_transv_dist"]["sweep_var"].get():
+            config.transverse_spread_range = (
+                float(self.sweep_params["rider_transv_dist"]["min_var"].get()),
+                float(self.sweep_params["rider_transv_dist"]["max_var"].get()),
+            )
+            config.transverse_spread_points = int(
+                self.sweep_params["rider_transv_dist"]["points_var"].get()
+            )
+
+        return config
 
     def _on_load_from_main_config(self):
         """Load parameters from main GUI configuration."""
@@ -2195,6 +2200,29 @@ class OptimizationPlugin(ttk.Frame):
         rest_energy_mev = self.config.m_particle * AMU_TO_MEV
         gamma_max = (energy_max * 1e3) / rest_energy_mev
 
+        # Determine extreme energy threshold based on particle type
+        # Electron mass in AMU
+        m_electron = 0.00054857990907
+        # Proton mass in AMU
+        m_proton = 1.007276466621
+
+        # Set gamma threshold: ~1 TeV for electrons, ~20 TeV for protons
+        if abs(self.config.m_particle - m_electron) < 1e-6:
+            # Electron: 1 TeV / 0.511 MeV ≈ 1,956,947
+            extreme_gamma_threshold = 1_956_000
+            particle_type = "electron"
+            extreme_energy_tev = 1.0
+        elif abs(self.config.m_particle - m_proton) < 1e-3:
+            # Proton: 20 TeV / 938.27 MeV ≈ 21,321
+            extreme_gamma_threshold = 21_300
+            particle_type = "proton"
+            extreme_energy_tev = 20.0
+        else:
+            # Generic particle: scale based on rest mass relative to proton
+            extreme_gamma_threshold = int(21_300 * m_proton / self.config.m_particle)
+            particle_type = "particle"
+            extreme_energy_tev = extreme_gamma_threshold * rest_energy_mev / 1e6
+
         # Warn if aperture < 10 μm and gamma > 10,000
         if aperture_min < 1e-5 and gamma_max > 10000:
             warnings.append(
@@ -2209,10 +2237,11 @@ class OptimizationPlugin(ttk.Frame):
                 f"  Sub-micron apertures often cause numerical instabilities."
             )
 
-        # Warn if gamma > 50,000 (roughly > 25 GeV for electrons)
-        if gamma_max > 50000:
+        # Warn if gamma exceeds threshold (~1 TeV for electrons, ~20 TeV for protons)
+        if gamma_max > extreme_gamma_threshold:
             warnings.append(
                 f"• Very high energy detected ({energy_max:.1f} GeV, γ≈{gamma_max:.0f})\n"
+                f"  Exceeds recommended threshold for {particle_type}s (~{extreme_energy_tev:.1f} TeV)\n"
                 f"  Ultra-relativistic particles may require very fine timesteps."
             )
 
@@ -2481,6 +2510,7 @@ class OptimizationPlugin(ttk.Frame):
             loaded_config.smoothness_max_violations = data.get(
                 "smoothness_max_violations", 3
             )
+
             self.config = loaded_config
 
             # Update UI controls
@@ -2495,6 +2525,26 @@ class OptimizationPlugin(ttk.Frame):
             )
             self.smoothness_reject_var.set(loaded_config.smoothness_reject_on_violation)
             self._toggle_smoothness_controls()
+
+            # Load sweep parameter states dynamically
+            sweep_state = data.get("sweep_parameters", {})
+            for param_name, controls in self.sweep_params.items():
+                if param_name in sweep_state:
+                    state = sweep_state[param_name]
+                    if state.get("enabled", False):
+                        controls["sweep_var"].set(True)
+                        controls["min_var"].set(str(state.get("min", "")))
+                        controls["max_var"].set(str(state.get("max", "")))
+                        controls["points_var"].set(str(state.get("points", "3")))
+                        controls["log_var"].set(state.get("log", False))
+                        self._toggle_sweep_controls(param_name)
+                    else:
+                        controls["sweep_var"].set(False)
+                        fixed_val = state.get(
+                            "fixed_value", controls["fixed_var"].get()
+                        )
+                        controls["fixed_var"].set(str(fixed_val))
+                        self._toggle_sweep_controls(param_name)
 
             self._log_result("[OK] Configuration loaded successfully")
             self._log_result("[INFO] Stability options:")
@@ -2601,6 +2651,24 @@ class OptimizationPlugin(ttk.Frame):
                 "smoothness_reject_on_violation": config.smoothness_reject_on_violation,
                 "smoothness_max_violations": config.smoothness_max_violations,
             }
+
+            # Dynamically save all sweep parameter states
+            sweep_state = {}
+            for param_name, controls in self.sweep_params.items():
+                if controls["sweep_var"].get():
+                    sweep_state[param_name] = {
+                        "enabled": True,
+                        "min": controls["min_var"].get(),
+                        "max": controls["max_var"].get(),
+                        "points": controls["points_var"].get(),
+                        "log": controls["log_var"].get(),
+                    }
+                else:
+                    sweep_state[param_name] = {
+                        "enabled": False,
+                        "fixed_value": controls["fixed_var"].get(),
+                    }
+            data["sweep_parameters"] = sweep_state
 
             with open(filepath, "w") as f:
                 json.dump(data, f, indent=2)
@@ -3802,6 +3870,18 @@ class OptimizationPlugin(ttk.Frame):
                 )
                 self._log_result(f"[OPTIMIZATION] Evaluation {eval_num}: {param_str}")
 
+                # Check for cancellation
+                if not self.running:
+                    self._log_result("[CANCELLED] Optimization cancelled by user")
+                    return np.inf if not maximize else -np.inf
+
+                if self.gui_controller and hasattr(
+                    self.gui_controller, "_cancel_requested"
+                ):
+                    if self.gui_controller._cancel_requested:
+                        self._log_result("[CANCELLED] Optimization cancelled by user")
+                        return np.inf if not maximize else -np.inf
+
                 try:
                     # Map parameters
                     aperture = self.config.aperture_range[0]  # default
@@ -3922,7 +4002,7 @@ class OptimizationPlugin(ttk.Frame):
                     result_value = -value if maximize else value
                     self._log_result(
                         f"[OPTIMIZATION] Evaluation {eval_num} complete: "
-                        f"{metric_name}={value:.6g}, objective={result_value:.6g}"
+                        f"{metric_name}={value:.12e}, objective={result_value:.12e}"
                     )
 
                     # Return value to minimize (negate if maximizing)
@@ -4024,10 +4104,10 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result("=" * 80)
             self._log_result("OPTIMIZATION COMPLETE")
             self._log_result("=" * 80)
-            self._log_result(f"Best {metric_name}: {result.fun:.6e}")
+            self._log_result(f"Best {metric_name}: {result.fun:.12e}")
             self._log_result("Best parameters:")
             for param_name, value in result.best_params_dict.items():
-                self._log_result(f"  {param_name}: {value:.6e}")
+                self._log_result(f"  {param_name}: {value:.12e}")
             self._log_result("")
             self._log_result(
                 f"Function evaluations: {result.nfev if hasattr(result, 'nfev') else 'N/A'}"
@@ -4785,9 +4865,19 @@ class OptimizationPlugin(ttk.Frame):
 
         # Try to calculate from available gamma values
         if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
-            energy_gain_percent = (gamma_final - gamma_initial) / gamma_initial * 100.0
+            delta_gamma = gamma_final - gamma_initial
+            energy_gain_percent = delta_gamma / gamma_initial * 100.0
+            energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
+
             metrics["max_percent_energy_gain"] = energy_gain_percent
-            self._log_result(f"    max_percent_energy_gain: {energy_gain_percent:.6f}%")
+            metrics["delta_gamma"] = delta_gamma
+            metrics["energy_gain_ppm"] = energy_gain_ppm
+
+            self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
+            self._log_result(
+                f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+            )
+            self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
         else:
             # Fallback: Try to calculate from trajectory if gamma values are missing
             self._log_result(
@@ -4801,21 +4891,35 @@ class OptimizationPlugin(ttk.Frame):
                         gamma_initial_fallback = float(gamma_array[0])
                         gamma_final_fallback = float(gamma_array[-1])
                         if gamma_initial_fallback > 0:
-                            energy_gain_percent = (
-                                (gamma_final_fallback - gamma_initial_fallback)
-                                / gamma_initial_fallback
-                                * 100.0
+                            delta_gamma_fallback = (
+                                gamma_final_fallback - gamma_initial_fallback
                             )
+                            energy_gain_percent = (
+                                delta_gamma_fallback / gamma_initial_fallback * 100.0
+                            )
+                            energy_gain_ppm = (
+                                delta_gamma_fallback / gamma_initial_fallback * 1e6
+                            )
+
                             metrics["max_percent_energy_gain"] = energy_gain_percent
+                            metrics["delta_gamma"] = delta_gamma_fallback
+                            metrics["energy_gain_ppm"] = energy_gain_ppm
+
                             self._log_result(f"  [OK] Fallback calculation successful:")
                             self._log_result(
-                                f"    gamma_initial (from traj): {gamma_initial_fallback:.1f}"
+                                f"    gamma_initial (from traj): {gamma_initial_fallback:.12e}"
                             )
                             self._log_result(
-                                f"    gamma_final (from traj): {gamma_final_fallback:.1f}"
+                                f"    gamma_final (from traj): {gamma_final_fallback:.12e}"
                             )
                             self._log_result(
-                                f"    max_percent_energy_gain: {energy_gain_percent:.6f}%"
+                                f"    delta_gamma: {delta_gamma_fallback:.12e}"
+                            )
+                            self._log_result(
+                                f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+                            )
+                            self._log_result(
+                                f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
                             )
                         else:
                             self._log_result(f"  [ERROR] Fallback gamma_initial <= 0")

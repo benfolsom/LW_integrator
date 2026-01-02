@@ -709,6 +709,15 @@ def genetic_algorithm(
         # Evaluate new population
         fitness = np.array([objective(ind) for ind in population])
 
+        # Check for cancellation (all fitness values are inf)
+        if np.all(np.isinf(fitness)):
+            logger.info(
+                f"Optimization cancelled at generation {generation + 1}: "
+                f"all evaluations returned inf (likely user cancellation)"
+            )
+            # Break out of evolution loop
+            break
+
     # Final evaluation
     sorted_indices = np.argsort(fitness)
     population = population[sorted_indices]
