@@ -633,11 +633,40 @@ def run_integrator(
     config: IntegratorConfig,
     init_rider: ParticleState,
     init_driver: Optional[ParticleState],
+    self_consistency: Optional[SelfConsistencyConfig] = None,
+    energy_monitor: Optional[EnergyMonitorConfig] = None,
+    adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Trajectory, Trajectory]:
     """Convenience wrapper using :class:`IntegratorConfig`.
 
     All parameters are supplied via ``config`` which mirrors the keyword
     arguments accepted by :func:`retarded_integrator`.
+
+    Parameters
+    ----------
+    config : IntegratorConfig
+        Structured configuration for the integrator
+    init_rider : ParticleState
+        Initial state of the primary bunch
+    init_driver : Optional[ParticleState]
+        Optional initial state of the opposing bunch
+    self_consistency : Optional[SelfConsistencyConfig]
+        Optional self-consistency configuration
+    energy_monitor : Optional[EnergyMonitorConfig]
+        Optional energy monitoring configuration
+    adaptive_timestep : Optional[AdaptiveTimestepConfig]
+        Optional adaptive timestep configuration
+    progress_callback : Optional[Callable[[int, int], None]]
+        Optional progress callback
+    cancel_callback : Optional[Callable[[], bool]]
+        Optional cancellation callback
+
+    Returns
+    -------
+    Tuple[Trajectory, Trajectory]
+        Rider and driver trajectories
     """
 
     return retarded_integrator(
@@ -659,6 +688,8 @@ def run_integrator(
         use_conducting_image_weighting=config.use_image_weighting,
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
     )
 
 
