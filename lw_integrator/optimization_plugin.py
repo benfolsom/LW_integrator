@@ -4117,6 +4117,9 @@ class OptimizationPlugin(ttk.Frame):
             # Save results
             self._save_optimization_results(result, param_names)
 
+            # Re-run best parameters to generate and save trajectory
+            self._save_best_optimization_trajectory(result, param_names)
+
             self._log_result("[OK] Optimization complete!")
 
         except Exception as e:
@@ -4159,6 +4162,284 @@ class OptimizationPlugin(ttk.Frame):
             json.dump(results_dict, f, indent=2)
 
         self._log_result(f"Results saved to: {results_file}")
+
+        # Generate plots
+        self._generate_optimization_plots(result, param_names, output_dir)
+
+    def _generate_optimization_plots(self, result, param_names, output_dir):
+        """Generate optimization visualization plots."""
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        try:
+            # Plot 1: Convergence history (if available)
+            if hasattr(result, "convergence_history") and result.convergence_history:
+                fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+
+                history = result.convergence_history
+                generations = [h["generation"] for h in history]
+                best_fitness = [h["best_fitness"] for h in history]
+                mean_fitness = [h["mean_fitness"] for h in history]
+                std_fitness = [h["std_fitness"] for h in history]
+
+                # Determine if maximizing or minimizing
+                maximize = "max" in self.config.objective.lower()
+
+                # Convert fitness back to actual metric values
+                if maximize:
+                    best_values = [-f for f in best_fitness]
+                    mean_values = [-f for f in mean_fitness]
+                else:
+                    best_values = best_fitness
+                    mean_values = mean_fitness
+
+                # Best fitness over generations
+                axes[0].plot(generations, best_values, "b-", linewidth=2, label="Best")
+                axes[0].plot(
+                    generations, mean_values, "g--", linewidth=1.5, label="Mean"
+                )
+                axes[0].fill_between(
+                    generations,
+                    [m - s for m, s in zip(mean_values, std_fitness)],
+                    [m + s for m, s in zip(mean_values, std_fitness)],
+                    alpha=0.2,
+                    color="green",
+                    label="±1 std",
+                )
+                axes[0].set_xlabel("Generation")
+                axes[0].set_ylabel(f"{self.config.objective}")
+                axes[0].set_title("Optimization Convergence")
+                axes[0].legend()
+                axes[0].grid(True, alpha=0.3)
+
+                # Population diversity (std dev)
+                axes[1].plot(generations, std_fitness, "r-", linewidth=2)
+                axes[1].set_xlabel("Generation")
+                axes[1].set_ylabel("Population Std Dev")
+                axes[1].set_title("Population Diversity")
+                axes[1].grid(True, alpha=0.3)
+
+                plt.tight_layout()
+                convergence_plot = output_dir / "optimization_convergence.png"
+                plt.savefig(convergence_plot, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+                self._log_result(f"Convergence plot saved to: {convergence_plot}")
+
+            # Plot 2: Parameter exploration (if 2D parameter space)
+            if len(param_names) == 2 and hasattr(result, "final_population"):
+                fig, ax = plt.subplots(figsize=(8, 6))
+
+                population = result.final_population
+                fitness = result.final_fitness
+
+                # Determine if maximizing
+                maximize = "max" in self.config.objective.lower()
+                if maximize:
+                    plot_fitness = -fitness
+                else:
+                    plot_fitness = fitness
+
+                # Scatter plot of final population
+                scatter = ax.scatter(
+                    population[:, 0],
+                    population[:, 1],
+                    c=plot_fitness,
+                    cmap="viridis",
+                    s=50,
+                    alpha=0.6,
+                    edgecolors="black",
+                    linewidth=0.5,
+                )
+
+                # Mark best point
+                best_idx = np.argmin(fitness)
+                ax.scatter(
+                    population[best_idx, 0],
+                    population[best_idx, 1],
+                    c="red",
+                    s=200,
+                    marker="*",
+                    edgecolors="black",
+                    linewidth=1.5,
+                    label="Best",
+                    zorder=5,
+                )
+
+                ax.set_xlabel(param_names[0])
+                ax.set_ylabel(param_names[1])
+                ax.set_title("Parameter Space Exploration (Final Population)")
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+
+                cbar = plt.colorbar(scatter, ax=ax)
+                cbar.set_label(self.config.objective)
+
+                plt.tight_layout()
+                param_plot = output_dir / "parameter_exploration.png"
+                plt.savefig(param_plot, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+                self._log_result(f"Parameter exploration plot saved to: {param_plot}")
+
+            # Plot 3: Best parameter values (bar chart)
+            if hasattr(result, "best_params_dict"):
+                fig, ax = plt.subplots(figsize=(8, max(4, len(param_names) * 0.5)))
+
+                params = list(result.best_params_dict.keys())
+                values = list(result.best_params_dict.values())
+
+                ax.barh(params, values, color="steelblue", edgecolor="black")
+                ax.set_xlabel("Value")
+                ax.set_title("Best Parameters Found")
+                ax.grid(True, alpha=0.3, axis="x")
+
+                plt.tight_layout()
+                params_plot = output_dir / "best_parameters.png"
+                plt.savefig(params_plot, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+                self._log_result(f"Best parameters plot saved to: {params_plot}")
+
+        except Exception as e:
+            import traceback
+
+            self._log_result(f"[WARNING] Failed to generate optimization plots: {e}")
+            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
+
+    def _save_best_optimization_trajectory(self, result, param_names):
+        """Re-run best parameters and save trajectory."""
+        from pathlib import Path
+
+        try:
+            self._log_result("")
+            self._log_result("Generating best trajectory...")
+
+            # Extract best parameters
+            best_params = result.best_params_dict
+
+            # Set up run parameters (similar to evaluate_params)
+            aperture = self.config.aperture_range[0]
+            energy = self.config.energy_range[0]
+            start_z = (
+                self.config.starting_z_positions[0]
+                if self.config.starting_z_positions
+                else 0.0
+            )
+            offset_frac = (
+                self.config.transverse_offset_fractions[0]
+                if self.config.transverse_offset_fractions
+                else 0.0
+            )
+            timestep = self.config.timestep
+            steps = self.config.steps
+
+            # Map best parameters
+            for param_name, value in best_params.items():
+                if param_name == "aperture_radius":
+                    aperture = value
+                elif param_name == "initial_energy_gev":
+                    energy = value
+                elif param_name == "start_z":
+                    start_z = value
+                elif param_name == "transverse_offset":
+                    offset_frac = value
+                elif param_name == "timestep":
+                    timestep = value
+
+            transv_offset = offset_frac * aperture
+
+            # Temporarily enable trajectory saving
+            save_traj_backup = self.config.save_trajectories
+            self.config.save_trajectories = True
+
+            # Run integration
+            result_data = self._run_single_integration(
+                aperture=aperture,
+                energy_gev=energy,
+                start_z=start_z,
+                transv_offset=transv_offset,
+                timestep=timestep,
+                steps=steps,
+                rider_m_particle=self.config.m_particle,
+                rider_charge_sign=self.config.charge_sign,
+                rider_pcount=int(self.config.pcount),
+                rider_transv_mom=self.config.transv_mom,
+                driver_params=None,
+                run_num=9999,  # Special run number for best trajectory
+            )
+
+            # Restore trajectory setting
+            self.config.save_trajectories = save_traj_backup
+
+            if result_data and "trajectory" in result_data:
+                # Save trajectory to output directory
+                output_dir = Path(self.config.output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                # Plot trajectory
+                import matplotlib.pyplot as plt
+                import numpy as np
+
+                traj = result_data["trajectory"]
+
+                fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+                # z vs t
+                axes[0, 0].plot(traj["t"], traj["z"], "b-", linewidth=1.5)
+                axes[0, 0].set_xlabel("Time (ns)")
+                axes[0, 0].set_ylabel("z (mm)")
+                axes[0, 0].set_title("Longitudinal Position")
+                axes[0, 0].grid(True, alpha=0.3)
+
+                # x vs z
+                axes[0, 1].plot(traj["z"], traj["x"], "r-", linewidth=1.5)
+                axes[0, 1].set_xlabel("z (mm)")
+                axes[0, 1].set_ylabel("x (mm)")
+                axes[0, 1].set_title("Transverse Position")
+                axes[0, 1].grid(True, alpha=0.3)
+
+                # gamma vs z
+                if "gamma" in traj:
+                    axes[1, 0].plot(traj["z"], traj["gamma"], "g-", linewidth=1.5)
+                    axes[1, 0].set_xlabel("z (mm)")
+                    axes[1, 0].set_ylabel("γ")
+                    axes[1, 0].set_title("Lorentz Factor")
+                    axes[1, 0].grid(True, alpha=0.3)
+
+                # Px vs z
+                if "Px" in traj:
+                    axes[1, 1].plot(traj["z"], traj["Px"], "m-", linewidth=1.5)
+                    axes[1, 1].set_xlabel("z (mm)")
+                    axes[1, 1].set_ylabel("Px (amu·mm/ns)")
+                    axes[1, 1].set_title("Transverse Momentum")
+                    axes[1, 1].grid(True, alpha=0.3)
+
+                plt.suptitle(
+                    f"Best Trajectory: {', '.join([f'{k}={v:.4g}' for k, v in best_params.items()])}"
+                )
+                plt.tight_layout()
+
+                traj_plot = output_dir / "best_trajectory.png"
+                plt.savefig(traj_plot, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+
+                self._log_result(f"Best trajectory plot saved to: {traj_plot}")
+
+                # Also save trajectory data as numpy archive
+                traj_data = output_dir / "best_trajectory.npz"
+                np.savez(traj_data, **traj)
+                self._log_result(f"Best trajectory data saved to: {traj_data}")
+
+            else:
+                self._log_result(
+                    "[WARNING] Could not generate best trajectory (integration failed)"
+                )
+
+        except Exception as e:
+            import traceback
+
+            self._log_result(f"[WARNING] Failed to save best trajectory: {e}")
+            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
     def _run_sweep_background(self, is_finetune=False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
