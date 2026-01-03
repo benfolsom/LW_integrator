@@ -441,6 +441,12 @@ class IntegratorGUI:
         self.image_subcharge_var = tk.IntVar(value=self.options.image_subcharge_count)
         self.image_weighting_var = tk.BooleanVar(value=self.options.use_image_weighting)
 
+        # Macroparticle simulation options
+        self.macroparticle_enabled_var = tk.BooleanVar(value=False)
+        self.macroparticle_charge_multiplier_var = tk.StringVar(value="1.0")
+        self.macroparticle_position_spread_var = tk.StringVar(value="0.0")
+        self.macroparticle_momentum_spread_var = tk.StringVar(value="0.0")
+
         # Self-consistency options
         self.self_consistency_enabled_var = tk.BooleanVar(
             value=self.options.self_consistency_enabled
@@ -973,6 +979,110 @@ class IntegratorGUI:
         help_text_weighting.grid(
             row=next_row + 3, column=0, columnspan=2, sticky="w", pady=(0, 2)
         )
+
+        # Macroparticle simulation section
+        next_row += 4
+        ttk.Separator(particle_frame, orient="horizontal").grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(12, 12)
+        )
+        next_row += 1
+
+        ttk.Label(
+            particle_frame,
+            text="Macroparticle Simulation (Conducting Wall only):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        next_row += 1
+
+        self.macroparticle_enable_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable macroparticle simulation",
+            variable=self.macroparticle_enabled_var,
+            command=self._toggle_macroparticle_controls,
+        )
+        self.macroparticle_enable_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        next_row += 1
+
+        # Charge multiplier
+        self.macroparticle_charge_label = ttk.Label(
+            particle_frame, text="Charge multiplier:"
+        )
+        self.macroparticle_charge_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_charge_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.macroparticle_charge_multiplier_var,
+            width=12,
+        )
+        self.macroparticle_charge_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        # Position spread
+        self.macroparticle_position_label = ttk.Label(
+            particle_frame, text="Transverse position spread (mm):"
+        )
+        self.macroparticle_position_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_position_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.macroparticle_position_spread_var,
+            width=12,
+        )
+        self.macroparticle_position_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        # Momentum spread
+        self.macroparticle_momentum_label = ttk.Label(
+            particle_frame, text="Transverse momentum spread:"
+        )
+        self.macroparticle_momentum_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_momentum_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.macroparticle_momentum_spread_var,
+            width=12,
+        )
+        self.macroparticle_momentum_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        # Help text for macroparticle
+        help_text_macroparticle = ttk.Label(
+            particle_frame,
+            text=(
+                "Macroparticle mode scales particle charge and adds stochastic position/momentum\n"
+                "errors to image subcharges. Position spread applies constant Gaussian errors.\n"
+                "Momentum spread creates cumulative displacement that grows with each timestep.\n"
+                "Errors are applied BEFORE charge attenuation calculations.\n"
+                "Only active for CONDUCTING_WALL simulations."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_text_macroparticle.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        # Store macroparticle widgets for enable/disable
+        self._macroparticle_widgets = [
+            self.macroparticle_charge_label,
+            self.macroparticle_charge_entry,
+            self.macroparticle_position_label,
+            self.macroparticle_position_entry,
+            self.macroparticle_momentum_label,
+            self.macroparticle_momentum_entry,
+        ]
 
         # Core tab ------------------------------------------------------
         core_frame = self._create_scrollable_tab(
@@ -1667,7 +1777,9 @@ class IntegratorGUI:
         self._toggle_self_consistency_controls()
         self._toggle_adaptive_timestep_controls()
         self._toggle_z_cutoff_controls()
+        self._toggle_macroparticle_controls()
         self._update_cavity_spacing_state()
+        self._update_macroparticle_state()
 
         # Outputs tab ---------------------------------------------------
         output_frame = self._create_scrollable_tab(self.notebook, "Output", padding=12)
@@ -2559,6 +2671,8 @@ class IntegratorGUI:
         self._update_driver_visibility()
         self._update_cavity_spacing_state()
         self._toggle_z_cutoff_controls()
+        self._toggle_macroparticle_controls()
+        self._update_macroparticle_state()
         self._set_status(f"Loaded config: {filename}")
         self.current_config_label.config(text=filename, foreground="black")
 
@@ -2598,6 +2712,18 @@ class IntegratorGUI:
         self.dpi_var.set(options.plot_dpi)
         self.image_subcharge_var.set(options.image_subcharge_count)
         self.image_weighting_var.set(options.use_image_weighting)
+        self.macroparticle_enabled_var.set(
+            getattr(options, "macroparticle_enabled", False)
+        )
+        self.macroparticle_charge_multiplier_var.set(
+            getattr(options, "macroparticle_charge_multiplier", 1.0)
+        )
+        self.macroparticle_position_spread_var.set(
+            getattr(options, "macroparticle_position_spread", 0.0)
+        )
+        self.macroparticle_momentum_spread_var.set(
+            getattr(options, "macroparticle_momentum_spread", 0.0)
+        )
         self.self_consistency_enabled_var.set(options.self_consistency_enabled)
         self.self_consistency_convergence_mode_var.set(
             options.self_consistency_convergence_mode
@@ -2754,6 +2880,16 @@ class IntegratorGUI:
             config_name=config_name,
             image_subcharge_count=int(self.image_subcharge_var.get()),
             use_image_weighting=bool(self.image_weighting_var.get()),
+            macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
+            macroparticle_charge_multiplier=float(
+                self.macroparticle_charge_multiplier_var.get()
+            ),
+            macroparticle_position_spread=float(
+                self.macroparticle_position_spread_var.get()
+            ),
+            macroparticle_momentum_spread=float(
+                self.macroparticle_momentum_spread_var.get()
+            ),
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
@@ -3223,6 +3359,7 @@ class IntegratorGUI:
     def _on_sim_type_change(self) -> None:
         self._update_driver_visibility()
         self._update_cavity_spacing_state()
+        self._update_macroparticle_state()
         self._refresh_initial_summary()
 
     def _update_driver_visibility(self) -> None:
@@ -3336,6 +3473,49 @@ class IntegratorGUI:
         """Handle convergence mode changes."""
         # No mode-specific UI updates needed
         pass
+
+    def _toggle_macroparticle_controls(self) -> None:
+        """Enable/disable macroparticle controls based on checkbox state."""
+        enabled = self.macroparticle_enabled_var.get()
+        state = "normal" if enabled else "disabled"
+
+        if hasattr(self, "_macroparticle_widgets"):
+            for widget in self._macroparticle_widgets:
+                if isinstance(widget, ttk.Entry):
+                    widget.configure(state=state)
+                elif isinstance(widget, ttk.Label):
+                    fg_color = "black" if enabled else "gray"
+                    widget.configure(foreground=fg_color)
+
+    def _update_macroparticle_state(self) -> None:
+        """Enable/disable macroparticle controls based on simulation type."""
+        if not hasattr(self, "macroparticle_enable_check"):
+            return  # Widgets not created yet
+
+        # Macroparticle simulation only available for CONDUCTING_WALL
+        is_conducting_wall = self.sim_type_var.get() == "CONDUCTING_WALL"
+
+        # Disable the entire macroparticle section if not conducting wall
+        check_state = "normal" if is_conducting_wall else "disabled"
+        self.macroparticle_enable_check.configure(state=check_state)
+
+        # If not conducting wall, force it disabled and grey out all controls
+        if not is_conducting_wall:
+            self.macroparticle_enabled_var.set(False)
+            widget_state = "disabled"
+            label_color = "gray"
+        else:
+            # If conducting wall, respect the enabled checkbox state
+            enabled = self.macroparticle_enabled_var.get()
+            widget_state = "normal" if enabled else "disabled"
+            label_color = "black" if enabled else "gray"
+
+        if hasattr(self, "_macroparticle_widgets"):
+            for widget in self._macroparticle_widgets:
+                if isinstance(widget, ttk.Entry):
+                    widget.configure(state=widget_state)
+                elif isinstance(widget, ttk.Label):
+                    widget.configure(foreground=label_color)
 
     def _toggle_adaptive_timestep_controls(self) -> None:
         """Enable/disable adaptive timestep controls based on enabled checkbox.

@@ -233,6 +233,12 @@ class OptimizationConfig:
     charge_sign: float = -1.0
     stripped_ions: float = 1.0
 
+    # Macroparticle simulation options (CONDUCTING_WALL only)
+    macroparticle_enabled: bool = False
+    macroparticle_charge_multiplier: float = 1.0
+    macroparticle_position_spread: float = 0.0  # mm
+    macroparticle_momentum_spread: float = 0.0
+
     # Optimization objective
     objective: str = "max_energy_gain"  # Primary objective to optimize
 
@@ -1031,6 +1037,104 @@ class OptimizationPlugin(ttk.Frame):
         )
         info_label.grid(row=row, column=0, columnspan=6, sticky="w", pady=(5, 0))
 
+        # Macroparticle simulation section
+        row += 1
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=6, sticky="ew", pady=(10, 10)
+        )
+        row += 1
+
+        ttk.Label(
+            frame,
+            text="Macroparticle Simulation (Conducting Wall only):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=row, column=0, columnspan=6, sticky="w", pady=(0, 5))
+        row += 1
+
+        self.macroparticle_enabled_var = tk.BooleanVar(value=False)
+        self.macroparticle_enable_check = ttk.Checkbutton(
+            frame,
+            text="Enable macroparticle simulation",
+            variable=self.macroparticle_enabled_var,
+            command=self._toggle_macroparticle_controls,
+        )
+        self.macroparticle_enable_check.grid(
+            row=row, column=0, columnspan=6, sticky="w", pady=2
+        )
+        row += 1
+
+        # Charge multiplier
+        self.macroparticle_charge_label = ttk.Label(frame, text="Charge multiplier:")
+        self.macroparticle_charge_label.grid(
+            row=row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_charge_var = tk.StringVar(value="1.0")
+        self.macroparticle_charge_entry = ttk.Entry(
+            frame, textvariable=self.macroparticle_charge_var, width=15
+        )
+        self.macroparticle_charge_entry.grid(
+            row=row, column=1, sticky="w", pady=2, padx=5
+        )
+        row += 1
+
+        # Position spread
+        self.macroparticle_position_label = ttk.Label(
+            frame, text="Transverse position spread (mm):"
+        )
+        self.macroparticle_position_label.grid(
+            row=row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_position_var = tk.StringVar(value="0.0")
+        self.macroparticle_position_entry = ttk.Entry(
+            frame, textvariable=self.macroparticle_position_var, width=15
+        )
+        self.macroparticle_position_entry.grid(
+            row=row, column=1, sticky="w", pady=2, padx=5
+        )
+        row += 1
+
+        # Momentum spread
+        self.macroparticle_momentum_label = ttk.Label(
+            frame, text="Transverse momentum spread:"
+        )
+        self.macroparticle_momentum_label.grid(
+            row=row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_momentum_var = tk.StringVar(value="0.0")
+        self.macroparticle_momentum_entry = ttk.Entry(
+            frame, textvariable=self.macroparticle_momentum_var, width=15
+        )
+        self.macroparticle_momentum_entry.grid(
+            row=row, column=1, sticky="w", pady=2, padx=5
+        )
+        row += 1
+
+        # Help text
+        help_label = ttk.Label(
+            frame,
+            text=(
+                "Macroparticle mode scales test particle charge and adds Gaussian errors to image subcharges.\n"
+                "Position spread: constant σ. Momentum spread: cumulative displacement growing each step.\n"
+                "Only active for CONDUCTING_WALL simulations."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_label.grid(
+            row=row, column=0, columnspan=6, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        # Store macroparticle widgets for enable/disable
+        self._macroparticle_widgets = [
+            self.macroparticle_charge_label,
+            self.macroparticle_charge_entry,
+            self.macroparticle_position_label,
+            self.macroparticle_position_entry,
+            self.macroparticle_momentum_label,
+            self.macroparticle_momentum_entry,
+        ]
+
     def _build_driver_particle_section(self):
         """Build driver particle parameters section with optional sweeping."""
         self.driver_frame = ttk.LabelFrame(
@@ -1235,6 +1339,52 @@ class OptimizationPlugin(ttk.Frame):
     def _on_sim_type_changed(self):
         """Handle simulation type change."""
         self._update_driver_visibility()
+        self._update_macroparticle_state()
+
+    def _toggle_macroparticle_controls(self):
+        """Enable/disable macroparticle controls based on checkbox state."""
+        if not hasattr(self, "_macroparticle_widgets"):
+            return
+
+        enabled = self.macroparticle_enabled_var.get()
+        state = "normal" if enabled else "disabled"
+
+        for widget in self._macroparticle_widgets:
+            if isinstance(widget, ttk.Entry):
+                widget.configure(state=state)
+            elif isinstance(widget, ttk.Label):
+                fg_color = "black" if enabled else "gray"
+                widget.configure(foreground=fg_color)
+
+    def _update_macroparticle_state(self):
+        """Enable/disable macroparticle controls based on simulation type."""
+        if not hasattr(self, "macroparticle_enable_check"):
+            return
+
+        # Macroparticle simulation only available for CONDUCTING_WALL
+        is_conducting_wall = self.sim_type_var.get() == "CONDUCTING_WALL"
+
+        # Disable the entire macroparticle section if not conducting wall
+        check_state = "normal" if is_conducting_wall else "disabled"
+        self.macroparticle_enable_check.configure(state=check_state)
+
+        # If not conducting wall, force it disabled and grey out all controls
+        if not is_conducting_wall:
+            self.macroparticle_enabled_var.set(False)
+            widget_state = "disabled"
+            label_color = "gray"
+        else:
+            # If conducting wall, respect the enabled checkbox state
+            enabled = self.macroparticle_enabled_var.get()
+            widget_state = "normal" if enabled else "disabled"
+            label_color = "black" if enabled else "gray"
+
+        if hasattr(self, "_macroparticle_widgets"):
+            for widget in self._macroparticle_widgets:
+                if isinstance(widget, ttk.Entry):
+                    widget.configure(state=widget_state)
+                elif isinstance(widget, ttk.Label):
+                    widget.configure(foreground=label_color)
         self._update_parameter_visibility()
 
     def _update_parameter_visibility(self):
@@ -1762,6 +1912,10 @@ class OptimizationPlugin(ttk.Frame):
             transv_dist=float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
+            macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
+            macroparticle_charge_multiplier=float(self.macroparticle_charge_var.get()),
+            macroparticle_position_spread=float(self.macroparticle_position_var.get()),
+            macroparticle_momentum_spread=float(self.macroparticle_momentum_var.get()),
             m_particle=float(self.sweep_params["rider_m_particle"]["fixed_var"].get()),
             pcount=int(self.sweep_params["rider_pcount"]["fixed_var"].get()),
             charge_sign=float(
@@ -1843,6 +1997,20 @@ class OptimizationPlugin(ttk.Frame):
             self.sweep_params["rider_transv_dist"]["fixed_var"].set(
                 f"{opt_config.transv_dist:.2e}"
             )
+            self.macroparticle_enabled_var.set(
+                getattr(opt_config, "macroparticle_enabled", False)
+            )
+            self.macroparticle_charge_var.set(
+                f"{getattr(opt_config, 'macroparticle_charge_multiplier', 1.0):.2e}"
+            )
+            self.macroparticle_position_var.set(
+                f"{getattr(opt_config, 'macroparticle_position_spread', 0.0):.2e}"
+            )
+            self.macroparticle_momentum_var.set(
+                f"{getattr(opt_config, 'macroparticle_momentum_spread', 0.0):.2e}"
+            )
+            self._toggle_macroparticle_controls()
+            self._update_macroparticle_state()
             self.main_timestep_display_var.set(f"{opt_config.timestep:.2e}")
 
             # Update stability options if they exist in config
@@ -5042,6 +5210,10 @@ class OptimizationPlugin(ttk.Frame):
             energy_save=False,
             transverse_display=False,
             transverse_save=True,  # Always return trajectory data for metrics calculation
+            macroparticle_enabled=self.config.macroparticle_enabled,
+            macroparticle_charge_multiplier=self.config.macroparticle_charge_multiplier,
+            macroparticle_position_spread=self.config.macroparticle_position_spread,
+            macroparticle_momentum_spread=self.config.macroparticle_momentum_spread,
             overlay_display=False,
             overlay_save=False,
             difference_display=False,

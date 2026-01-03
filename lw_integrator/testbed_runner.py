@@ -251,6 +251,12 @@ class SimulationOptions:
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
 
+    # Macroparticle simulation options (CONDUCTING_WALL only)
+    macroparticle_enabled: bool = False
+    macroparticle_charge_multiplier: float = 1.0
+    macroparticle_position_spread: float = 0.0
+    macroparticle_momentum_spread: float = 0.0
+
     # Self-consistency options
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = (
@@ -351,6 +357,10 @@ class SimulationOptions:
             "core_params": dict(self.core_params),
             "image_subcharge_count": self.image_subcharge_count,
             "use_image_weighting": self.use_image_weighting,
+            "macroparticle_enabled": self.macroparticle_enabled,
+            "macroparticle_charge_multiplier": self.macroparticle_charge_multiplier,
+            "macroparticle_position_spread": self.macroparticle_position_spread,
+            "macroparticle_momentum_spread": self.macroparticle_momentum_spread,
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_convergence_mode": self.self_consistency_convergence_mode,
@@ -485,6 +495,12 @@ class SimulationOptions:
             core_params=core_params,
             image_subcharge_count=_int("image_subcharge_count", 12),
             use_image_weighting=_bool("use_image_weighting", True),
+            macroparticle_enabled=_bool("macroparticle_enabled", False),
+            macroparticle_charge_multiplier=_float(
+                "macroparticle_charge_multiplier", 1.0
+            ),
+            macroparticle_position_spread=_float("macroparticle_position_spread", 0.0),
+            macroparticle_momentum_spread=_float("macroparticle_momentum_spread", 0.0),
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=str(
@@ -1030,8 +1046,13 @@ def run_testbed(
     _log(f"  Seed: {options.seed}")
     _log(f"  Core params: {filtered_core_params}")
     _log(f"  Legacy enabled: {legacy_enabled}")
-    _log(f"  Image subcharges: {options.image_subcharge_count}")
+    _log(f"  Image subcharge count: {options.image_subcharge_count}")
     _log(f"  Image weighting: {options.use_image_weighting}")
+    if options.macroparticle_enabled and sim_type == SimulationType.CONDUCTING_WALL:
+        _log(f"  Macroparticle simulation: ENABLED")
+        _log(f"    Charge multiplier: {options.macroparticle_charge_multiplier}")
+        _log(f"    Position spread: {options.macroparticle_position_spread} mm")
+        _log(f"    Momentum spread: {options.macroparticle_momentum_spread}")
     # Normalize mode name for display (handle legacy aliases)
     mode_aliases = {
         "mass_shell_only": "fixed_geometry",
@@ -1100,6 +1121,14 @@ def run_testbed(
             )
         )
 
+        # Apply macroparticle charge multiplier if enabled
+        if options.macroparticle_enabled and sim_type == SimulationType.CONDUCTING_WALL:
+            charge_mult = float(options.macroparticle_charge_multiplier)
+            if charge_mult != 1.0:
+                rider_state["q"] = rider_state["q"] * charge_mult
+                if driver_state is not None:
+                    driver_state["q"] = driver_state["q"] * charge_mult
+
         rider_initial = _normalize_state(copy.deepcopy(rider_state))
         driver_initial = _normalize_state(copy.deepcopy(driver_state))
 
@@ -1137,6 +1166,17 @@ def run_testbed(
             adaptive_timestep=adaptive_timestep_config,
             image_subcharge_count=int(options.image_subcharge_count),
             use_conducting_image_weighting=bool(options.use_image_weighting),
+            macroparticle_charge_multiplier=float(
+                options.macroparticle_charge_multiplier
+            )
+            if options.macroparticle_enabled
+            else 1.0,
+            macroparticle_position_spread=float(options.macroparticle_position_spread)
+            if options.macroparticle_enabled
+            else 0.0,
+            macroparticle_momentum_spread=float(options.macroparticle_momentum_spread)
+            if options.macroparticle_enabled
+            else 0.0,
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
         )

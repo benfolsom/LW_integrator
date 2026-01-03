@@ -147,6 +147,9 @@ def retarded_integrator(
     startup_mode: StartupMode = StartupMode.COLD_START,
     image_subcharge_count: int = 12,
     use_conducting_image_weighting: bool = True,
+    macroparticle_charge_multiplier: float = 1.0,
+    macroparticle_position_spread: float = 0.0,
+    macroparticle_momentum_spread: float = 0.0,
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
@@ -195,6 +198,17 @@ def retarded_integrator(
         Number of subcharges used when constructing conducting-wall image
         charges. Must remain within the bounds accepted by
         :func:`generate_conducting_image`.
+    use_conducting_image_weighting:
+        Whether to apply radial weighting to conducting-wall image subcharges.
+    macroparticle_charge_multiplier:
+        Multiplier for particle and image charges in macroparticle simulations.
+        Only applies to CONDUCTING_WALL simulations. Default 1.0.
+    macroparticle_position_spread:
+        Transverse position spread (sigma) in mm for Gaussian errors applied to
+        image subcharge positions. Only applies to CONDUCTING_WALL. Default 0.0.
+    macroparticle_momentum_spread:
+        Transverse momentum spread (sigma) creating cumulative displacement.
+        Only applies to CONDUCTING_WALL simulations. Default 0.0.
     energy_monitor:
         Optional :class:`EnergyMonitorConfig` to detect sudden energy jumps
         during integration. Can warn or halt on excessive energy changes.
@@ -259,6 +273,11 @@ def retarded_integrator(
                     aperture_radius,
                     subcharge_count=image_subcharge_count,
                     use_weighting=use_conducting_image_weighting,
+                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                    macroparticle_position_spread=macroparticle_position_spread,
+                    macroparticle_momentum_spread=macroparticle_momentum_spread,
+                    timestep=time_step,
+                    step_number=i,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -401,6 +420,11 @@ def retarded_integrator(
                             aperture_radius,
                             subcharge_count=image_subcharge_count,
                             use_weighting=use_conducting_image_weighting,
+                            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                            macroparticle_position_spread=macroparticle_position_spread,
+                            macroparticle_momentum_spread=macroparticle_momentum_spread,
+                            timestep=current_h,
+                            step_number=i,
                         )
                     else:  # BUNCH_TO_BUNCH - driver doesn't change during substeps
                         trial_driver = temp_driver[-1]
@@ -551,6 +575,11 @@ def retarded_integrator(
                     aperture_radius,
                     subcharge_count=image_subcharge_count,
                     use_weighting=use_conducting_image_weighting,
+                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                    macroparticle_position_spread=macroparticle_position_spread,
+                    macroparticle_momentum_spread=macroparticle_momentum_spread,
+                    timestep=time_step,
+                    step_number=i,
                 )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
                 if init_driver is None:
@@ -686,6 +715,9 @@ def run_integrator(
         startup_mode=config.startup_mode,
         image_subcharge_count=config.image_subcharge_count,
         use_conducting_image_weighting=config.use_image_weighting,
+        macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
+        macroparticle_position_spread=config.macroparticle_position_spread,
+        macroparticle_momentum_spread=config.macroparticle_momentum_spread,
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
         progress_callback=progress_callback,

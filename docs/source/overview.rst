@@ -23,7 +23,9 @@ High-level anatomy
     the underlying physics.  ``self_consistency.py`` holds the fixed-point
     iteration used for radiation-reaction corrections and ensuring gamma
     consistency between energy and velocity calculations (enabled by default
-    as of December 2025).
+    as of December 2025).  ``images.py`` implements conducting-wall image charge
+    generation with optional macroparticle simulation support, applying stochastic
+    position and momentum spread errors to model beam emittance effects.
 
 ``legacy/``
   Archived notebooks and scripts from the original codebase.  They are kept
@@ -82,6 +84,15 @@ Key ideas to keep in mind
   energy matches gamma derived from velocity (γ = 1/√(1 - β²)), which is
   critical for physical correctness. See ``SelfConsistencyConfig`` in the API
   documentation.
+* **Macroparticle simulation for conducting walls.**  The integrator supports
+  macroparticle mode where test particle charges are scaled and image subcharges
+  receive stochastic position/momentum errors. Position spread applies constant
+  Gaussian errors (σ_x), while momentum spread creates cumulative displacement
+  that grows with each timestep. This enables realistic modeling of beam
+  emittance and collective effects. Configure via ``macroparticle_enabled``,
+  ``macroparticle_charge_multiplier``, ``macroparticle_position_spread``, and
+  ``macroparticle_momentum_spread`` parameters. Only active for CONDUCTING_WALL
+  simulation type.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to

@@ -112,6 +112,11 @@ def generate_conducting_image(
     subcharge_count: int = 12,
     *,
     use_weighting: bool = True,
+    macroparticle_charge_multiplier: float = 1.0,
+    macroparticle_position_spread: float = 0.0,
+    macroparticle_momentum_spread: float = 0.0,
+    timestep: float = 0.0,
+    step_number: int = 0,
 ) -> ParticleState:
     """Generate mirror charges for a conducting wall boundary.
 
@@ -126,6 +131,20 @@ def generate_conducting_image(
     use_weighting:
         When ``True`` (default) apply radial attenuation to the subcharges based on
         their cylindrical distance from the aperture axis.
+    macroparticle_charge_multiplier:
+        Multiplier for the charge of both test particle and image subcharges.
+        Default 1.0 (no scaling). Use > 1.0 for macroparticle simulations.
+    macroparticle_position_spread:
+        Transverse position spread (sigma) in mm for Gaussian errors applied to
+        subcharge positions. Default 0.0 (no spread).
+    macroparticle_momentum_spread:
+        Transverse momentum spread (sigma) in units that match the particle momentum.
+        Creates cumulative displacement that grows with step_number. Default 0.0.
+    timestep:
+        Integration timestep in proper time (ns). Required when momentum_spread > 0.
+    step_number:
+        Current integration step number (0-based). Used to compute cumulative
+        displacement from momentum spread.
     """
 
     count = int(subcharge_count)
@@ -208,6 +227,42 @@ def generate_conducting_image(
             x_positions = center_x + shift * np.cos(angles)
             y_positions = center_y + shift * np.sin(angles)
 
+        # Apply macroparticle position and momentum spread errors BEFORE weighting
+        if macroparticle_position_spread > 0.0 or macroparticle_momentum_spread > 0.0:
+            # Compute total transverse spread including momentum-driven displacement
+            position_sigma = float(macroparticle_position_spread)
+
+            # Cumulative displacement from momentum spread
+            # displacement = (p_transverse / m) * timestep * step_number
+            # We need mass from the particle state
+            if macroparticle_momentum_spread > 0.0 and step_number > 0:
+                particle_mass = vector["m"][i] if "m" in vector else 1.0
+                # momentum_spread has units of momentum; divide by mass to get velocity
+                # then multiply by time elapsed to get displacement
+                # Note: timestep is in proper time (dtau = dt/gamma)
+                # For transverse motion: dx/dtau ≈ px/m (in natural units)
+                cumulative_displacement_sigma = (
+                    macroparticle_momentum_spread
+                    / particle_mass
+                    * timestep
+                    * step_number
+                )
+                # Combine position spread and momentum-driven spread in quadrature
+                total_sigma = np.sqrt(
+                    position_sigma**2 + cumulative_displacement_sigma**2
+                )
+            else:
+                total_sigma = position_sigma
+
+            # Apply Gaussian errors to each subcharge position
+            if total_sigma > 0:
+                for j in range(count):
+                    # Independent Gaussian errors for x and y
+                    dx_error = np.random.normal(0.0, total_sigma)
+                    dy_error = np.random.normal(0.0, total_sigma)
+                    x_positions[j] += dx_error
+                    y_positions[j] += dy_error
+
         if weighting_enabled and base_charge_per_sub != 0.0:
             # Geometry-dependent plateau: plateau = (G / 2) with G in [1, 2),
             # increasing with R_dist / aperture_radius
@@ -233,6 +288,10 @@ def generate_conducting_image(
             charge_values = (base_charge_per_sub * weights).astype(
                 result["q"].dtype, copy=False
             )
+
+        # Apply macroparticle charge multiplier to subcharges
+        if macroparticle_charge_multiplier != 1.0:
+            charge_values = charge_values * macroparticle_charge_multiplier
 
         result["x"][start:end] = x_positions
         result["y"][start:end] = y_positions
@@ -262,6 +321,9 @@ def generate_conducting_image(
 
     if charges_suppressed:
         result["q"].fill(0.0)
+    elif macroparticle_charge_multiplier != 1.0 and not charges_suppressed:
+        # Also scale any remaining charges if multiplier is active
+        result["q"] = result["q"] * macroparticle_charge_multiplier
 
     return result
 

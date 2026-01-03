@@ -111,6 +111,18 @@ class IntegratorConfig:
     use_image_weighting:
         Enables radial weighting when distributing conducting-wall subcharges.
         Defaults to ``True`` for improved agreement with the aperture geometry.
+    macroparticle_charge_multiplier:
+        Multiplier for particle and image charges in macroparticle simulations.
+        Defaults to ``1.0`` (no scaling). Use > 1.0 for macroparticle mode.
+        Only applies to CONDUCTING_WALL simulations.
+    macroparticle_position_spread:
+        Transverse position spread (sigma) in mm for Gaussian errors applied to
+        image subcharge positions. Defaults to ``0.0`` (no spread).
+        Only applies to CONDUCTING_WALL simulations.
+    macroparticle_momentum_spread:
+        Transverse momentum spread (sigma) creating cumulative displacement
+        that grows with each timestep. Defaults to ``0.0`` (no spread).
+        Only applies to CONDUCTING_WALL simulations.
     """
 
     steps: int
@@ -126,6 +138,9 @@ class IntegratorConfig:
     z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
+    macroparticle_charge_multiplier: float = 1.0
+    macroparticle_position_spread: float = 0.0
+    macroparticle_momentum_spread: float = 0.0
 
 
 __all__ = [

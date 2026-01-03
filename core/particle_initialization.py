@@ -24,6 +24,7 @@ def create_particle_state(
     transv_distance: float,
     particle_count: int,
     charge_sign: float,
+    charge_multiplier: float = 1.0,
 ) -> Tuple[Dict[str, Any], float]:
     """
     Create particle state initialization compatible with both legacy and modern integrators.
@@ -46,6 +47,8 @@ def create_particle_state(
         Number of particles in bunch
     charge_sign : float
         Charge sign (+1 or -1)
+    charge_multiplier : float
+        Multiplier for particle charge (for macroparticle simulations). Default 1.0.
 
     Returns:
     --------
@@ -68,7 +71,7 @@ def create_particle_state(
     momenta_y = np.zeros(particle_count)
     momenta_z = np.full(particle_count, starting_pz)
 
-    charges = np.full(particle_count, charge_sign * stripped_ions)
+    charges = np.full(particle_count, charge_sign * stripped_ions * charge_multiplier)
     masses = np.full(particle_count, particle_mass_amu)
 
     # Initialize all required integrator fields
@@ -134,7 +137,9 @@ def _as_int(value: Scalar) -> int:
 
 
 def initialize_particle_bunches(
-    rider_params: ParticleParams, driver_params: ParticleParams
+    rider_params: ParticleParams,
+    driver_params: ParticleParams,
+    charge_multiplier: float = 1.0,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], float, float]:
     """
     Initialize both rider and driver particle bunches.
@@ -145,6 +150,8 @@ def initialize_particle_bunches(
         Rider particle parameters
     driver_params : Dict[str, float]
         Driver particle parameters
+    charge_multiplier : float
+        Multiplier for particle charges (for macroparticle simulations). Default 1.0.
 
     Returns:
     --------
@@ -161,6 +168,7 @@ def initialize_particle_bunches(
         _as_float(rider_params["transv_distance"]),
         _as_int(rider_params["particle_count"]),
         _as_float(rider_params["charge_sign"]),
+        charge_multiplier=charge_multiplier,
     )
 
     driver_state, driver_energy = create_particle_state(
@@ -172,6 +180,7 @@ def initialize_particle_bunches(
         -_as_float(rider_params["transv_distance"]),  # Opposite transverse position
         _as_int(driver_params["particle_count"]),
         _as_float(driver_params["charge_sign"]),
+        charge_multiplier=charge_multiplier,
     )
 
     return rider_state, driver_state, rider_energy, driver_energy

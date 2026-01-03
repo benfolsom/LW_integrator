@@ -70,6 +70,16 @@ residual-wake acceleration with a covariant retarded-potential integrator*
   runs. Configured via ``SmoothnessConfig`` with presets for strict,
   balanced, and permissive validation. See ``core/smoothness_analyzer.py``
   and ``local/smoothness_checking_implementation.md`` for details.
+* **Macroparticle simulation.**  For conducting-wall simulations, the integrator
+  supports macroparticle mode where test particle charges are scaled by a
+  configurable multiplier and image subcharge positions receive stochastic errors
+  based on transverse position and momentum spreads. Position spread applies
+  constant Gaussian errors (σ_x), while momentum spread creates cumulative
+  displacement that grows with each timestep: σ_total(step) = sqrt(σ_x² +
+  (σ_p × h × step / m)²). These errors are applied before charge attenuation
+  calculations to accurately model beam emittance effects. Configured via GUI
+  controls in the Particles tab (single runs) and optimization/sweep parameter
+  sections. Only active for CONDUCTING_WALL simulation type.
 * **Reference publication.**  For the scientific context, derivations, and
   benchmark scenarios, see the project paper referenced above; the codebase
   tracks the configurations described there.
@@ -266,6 +276,14 @@ branches can download the output for review.
 
 ## Recent changes (January 2025)
 
+### Macroparticle Simulation (January 20, 2025)
+* **Macroparticle charge scaling** - Test particle and image charges can be multiplied by configurable factor for bunch simulations
+* **Stochastic position errors** - Gaussian position spread (σ_x in mm) applied to image subcharges
+* **Cumulative momentum spread** - Transverse momentum errors accumulate over timesteps: σ_total(step) = sqrt(σ_x² + (σ_p × timestep × step / mass)²)
+* **Pre-attenuation error application** - Errors applied before radial weighting calculations for physical accuracy
+* **GUI integration** - Controls in Particles tab (single runs) and sweep/optimization sections with automatic greying for non-CONDUCTING_WALL modes
+* **Configuration persistence** - All macroparticle parameters saved/loaded with simulation configs
+
 ### Optimization and Convergence (January 17, 2025)
 * **Early stopping for Genetic Algorithm** - Automatic convergence detection stops optimization when fitness plateaus, saving 40-70% computation time
 * **Configurable convergence parameters** - GUI controls for tolerance (default: 1e-6) and patience (default: 10 generations)
@@ -279,7 +297,7 @@ branches can download the output for review.
 * **Self-consistency enabled by default** - Essential for energy conservation in high-energy simulations
 * **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`. See `local/CHRONO_INTERPOLATION_SUMMARY.md` for details.
 
-**Impact**: Energy conservation improved by 3+ orders of magnitude in high-energy electron-wall simulations. Early stopping enables practical parameter optimization for computationally expensive self-consistent simulations.
+**Impact**: Energy conservation improved by 3+ orders of magnitude in high-energy electron-wall simulations. Early stopping enables practical parameter optimization for computationally expensive self-consistent simulations. Macroparticle simulation enables realistic modeling of beam emittance and collective effects in conducting-wall scenarios.
 
 ## Versioning and release notes
 

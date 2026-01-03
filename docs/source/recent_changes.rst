@@ -9,6 +9,70 @@ corrections.
 
 
 
+Macroparticle Simulation (January 2025)
+----------------------------------------
+
+Macroparticle Mode for Conducting-Wall Simulations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The integrator now supports macroparticle simulation for conducting-wall
+scenarios, enabling realistic modeling of beam emittance and collective effects:
+
+* **Charge scaling**: Test particle and image charges multiplied by configurable factor
+* **Position spread**: Gaussian errors (σ_x in mm) applied to image subcharge positions
+* **Momentum spread**: Cumulative displacement growing with timesteps: σ_total(step) = sqrt(σ_x² + (σ_p × h × step / m)²)
+* **Pre-attenuation application**: Errors applied before radial weighting for physical accuracy
+* **GUI integration**: Controls in Particles tab and sweep/optimization sections
+* **Automatic mode detection**: Controls greyed out for non-CONDUCTING_WALL simulations
+
+Configuration Example
+~~~~~~~~~~~~~~~~~~~~~
+
+Single run configuration:
+
+.. code-block:: python
+
+   from lw_integrator.testbed_runner import SimulationOptions
+
+   options = SimulationOptions(
+       simulation_type=SimulationType.CONDUCTING_WALL,
+       macroparticle_enabled=True,
+       macroparticle_charge_multiplier=10.0,      # 10× particle charge
+       macroparticle_position_spread=1e-5,        # 10 μm position σ
+       macroparticle_momentum_spread=1e-6,        # Momentum spread
+       # ... other parameters
+   )
+
+The macroparticle parameters are also exposed in the optimization/sweep configuration:
+
+.. code-block:: python
+
+   from lw_integrator.optimization_plugin import OptimizationConfig
+
+   config = OptimizationConfig(
+       simulation_type=SimulationType.CONDUCTING_WALL,
+       macroparticle_enabled=True,
+       macroparticle_charge_multiplier=5.0,
+       macroparticle_position_spread=2e-5,
+       macroparticle_momentum_spread=5e-7,
+       # ... sweep parameters
+   )
+
+Physics Implementation
+~~~~~~~~~~~~~~~~~~~~~~
+
+The macroparticle errors are applied in ``core/images.py`` during image charge
+generation:
+
+1. **Position errors**: Each subcharge receives independent Gaussian errors in x and y
+2. **Momentum-driven displacement**: Cumulative effect modeled as σ_momentum × (1/m) × timestep × step_number
+3. **Combined spread**: σ_total = sqrt(σ_position² + σ_momentum_displacement²)
+4. **Charge scaling**: Applied after weighting calculations to both test particle and all subcharges
+
+**Impact**: Enables realistic beam emittance modeling in conducting-wall scenarios,
+particularly important for high-charge bunch simulations where collective effects
+dominate single-particle dynamics.
+
 Optimization and Convergence (January 2025)
 --------------------------------------------
 
