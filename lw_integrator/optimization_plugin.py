@@ -5596,10 +5596,18 @@ class OptimizationPlugin(ttk.Frame):
             legacy_enabled=False,
             trajectory_save=False,  # Don't save individual trajectory files to disk
             trajectory_interval=self.config.trajectory_stride,
-            energy_display=False,  # Don't display plots during sweep
+            energy_display=False,  # Don't generate or display plots during sweep
             energy_save=False,
             transverse_display=False,
             transverse_save=True,  # Always return trajectory data for metrics calculation
+            beta_display=False,  # Don't generate beta plots
+            beta_save=False,
+            momentum_display=False,  # Don't generate momentum plots
+            momentum_save=False,
+            gamma_display=False,  # Don't generate gamma plots
+            gamma_save=False,
+            zposition_display=False,  # Don't generate z-position plots
+            zposition_save=False,
             macroparticle_enabled=self.config.macroparticle_enabled,
             macroparticle_charge_multiplier=macroparticle_charge_multiplier,
             macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
@@ -5682,29 +5690,20 @@ class OptimizationPlugin(ttk.Frame):
         )
         self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
 
-        self._log_result(f"  [DEBUG] Processing figures for Run {run_num}...")
-        # Display figures if requested, otherwise close them
-        import matplotlib
-
-        matplotlib.use("Agg", force=True)  # Force non-interactive backend
-        import matplotlib.pyplot as plt
-
-        # Plot display during sweep removed - plots generated only at end
-        if False:
-            # Show the plots
-            for fig in result.figures.values():
-                fig.show()
-                plt.pause(0.1)  # Allow GUI to update
-
-        # Always close figures after displaying to prevent memory leak
-        self._log_result(f"  [DEBUG] Closing {len(result.figures)} figures...")
+        # No figures should be generated during sweeps (all display/save flags set to False)
+        # If any figures were created (shouldn't happen), close them as a safety measure
         if result.figures:
-            for fig in result.figures.values():
+            self._log_result(
+                f"  [WARNING] Run {run_num}: Unexpected figures generated ({len(result.figures)}), closing them"
+            )
+            import matplotlib.pyplot as plt
+
+            for fig_name, fig in result.figures.items():
                 try:
                     plt.close(fig)
+                    self._log_result(f"    Closed unexpected figure: {fig_name}")
                 except Exception as e:
-                    self._log_result(f"  [DEBUG] Error closing figure: {e}")
-        self._log_result(f"  [DEBUG] Figures closed")
+                    self._log_result(f"    Error closing figure {fig_name}: {e}")
 
         # Clean up temporary run directory
         import shutil
