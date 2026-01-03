@@ -276,6 +276,15 @@ branches can download the output for review.
 
 ## Recent changes (January 2025)
 
+### Transverse Offset and Legacy Code Isolation (January 21, 2025)
+* **Transverse offset parameters** - New `transv_offset_x` and `transv_offset_y` fields separate beam center position from beam spread
+* **Beam positioning** - Particles now distributed in `[offset ± spread]` allowing off-axis beams with controllable size
+* **Core bunch initialization** - New `input_output.bunch_initialization.create_bunch_from_params()` replaces legacy initialization for normal operation
+* **Legacy code isolation** - Legacy initialization (`legacy/bunch_inits.py`) now ONLY runs when "Enable legacy comparison" is checked in GUI
+* **GUI integration** - Offset fields automatically appear in Particles tab for both rider and driver bunches
+* **Optimization plugin fix** - "Transverse Offset" now correctly sets beam **position** (not spread), with separate `transv_dist` for beam size
+* **Backward compatibility** - Old configs without offset parameters default to 0.0 (on-axis), no breaking changes
+
 ### Macroparticle Simulation (January 20, 2025)
 * **Macroparticle charge scaling** - Test particle and image charges can be multiplied by configurable factor for bunch simulations
 * **Stochastic position errors** - Gaussian position spread (σ_x in mm) applied to image subcharges
@@ -297,7 +306,7 @@ branches can download the output for review.
 * **Self-consistency enabled by default** - Essential for energy conservation in high-energy simulations
 * **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`. See `local/CHRONO_INTERPOLATION_SUMMARY.md` for details.
 
-**Impact**: Energy conservation improved by 3+ orders of magnitude in high-energy electron-wall simulations. Early stopping enables practical parameter optimization for computationally expensive self-consistent simulations. Macroparticle simulation enables realistic modeling of beam emittance and collective effects in conducting-wall scenarios.
+**Impact**: Energy conservation improved by 3+ orders of magnitude in high-energy electron-wall simulations. Early stopping enables practical parameter optimization for computationally expensive self-consistent simulations. Macroparticle simulation enables realistic modeling of beam emittance and collective effects in conducting-wall scenarios. Transverse offset functionality enables off-axis beam studies critical for aperture tolerance analysis and beam dynamics research. Legacy code isolation ensures modern core implementation is used by default while maintaining validation capability.
 
 ## Versioning and release notes
 

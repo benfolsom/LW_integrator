@@ -9,6 +9,123 @@ corrections.
 
 
 
+Transverse Offset and Legacy Code Isolation (January 2025)
+-----------------------------------------------------------
+
+Beam Positioning with Transverse Offset
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The integrator now separates beam center position (offset) from beam size
+(spread), enabling off-axis beam simulations critical for aperture tolerance
+studies:
+
+* **New offset parameters**: ``transv_offset_x`` and ``transv_offset_y`` specify beam center position in mm
+* **Beam positioning**: Particles distributed in [offset ± spread] for both x and y coordinates
+* **Core initialization**: New ``input_output.bunch_initialization.create_bunch_from_params()`` replaces legacy initialization
+* **Legacy isolation**: Legacy code (``legacy/bunch_inits.py``) now ONLY runs when "Enable legacy comparison" is checked
+* **GUI integration**: Offset fields automatically appear in Particles tab for rider and driver bunches
+* **Optimization fix**: "Transverse Offset" fractions now correctly set beam **position**, not spread
+* **Backward compatibility**: Old configs without offset parameters default to 0.0 (on-axis)
+
+Configuration Example
+~~~~~~~~~~~~~~~~~~~~~
+
+Single run with off-axis beam:
+
+.. code-block:: python
+
+   from lw_integrator.testbed_runner import SimulationOptions
+   from core.types import SimulationType
+
+   # Create beam at 50 μm off-axis with ±10 μm spread
+   rider_params = {
+       'starting_distance': 0.0,
+       'transv_mom': 0.0,
+       'starting_Pz': 1e6,
+       'stripped_ions': 1.0,
+       'm_particle': 0.000548579909,  # electron mass
+       'transv_dist': 1e-5,           # ±10 μm beam spread
+       'transv_offset_x': 5e-5,       # 50 μm off-axis in x
+       'transv_offset_y': 0.0,        # on-axis in y
+       'pcount': 5,
+       'charge_sign': -1.0,
+   }
+
+   options = SimulationOptions(
+       simulation_type=SimulationType.CONDUCTING_WALL,
+       steps=1000,
+       rider_params=rider_params,
+       core_params={
+           'time_step': 1e-7,
+           'wall_z': 100.0,
+           'aperture_radius': 0.0001,  # 100 μm aperture
+       },
+   )
+
+   result = run_testbed(options)
+
+Particles are distributed uniformly in x ∈ [40, 60] μm and y ∈ [-10, 10] μm.
+
+Optimization Plugin Usage
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The optimization plugin's "Transverse Offset" parameter (specified as fractions
+of aperture) now correctly sets beam position:
+
+.. code-block:: python
+
+   from lw_integrator.optimization_plugin import OptimizationConfig
+
+   config = OptimizationConfig(
+       transverse_offset_fractions=[0.1, 0.5, 0.9],  # Fractions of aperture
+       transv_dist=1e-6,  # Beam spread (separate parameter)
+       aperture_range=(0.0001, 0.001),  # 100-1000 μm
+       # ... other parameters
+   )
+
+For aperture = 0.5 mm and offset_fraction = 0.5:
+- Beam center at 0.25 mm (50% of aperture radius)
+- Beam distributed in [0.249, 0.251] mm (±1 μm spread)
+
+Physics Implementation
+~~~~~~~~~~~~~~~~~~~~~~
+
+The offset and spread are applied in ``input_output/bunch_initialization.py``:
+
+.. code-block:: python
+
+   # Generate transverse positions with offset and spread
+   if transv_dist > 0.0:
+       x = np.random.uniform(
+           transv_offset_x - transv_dist,
+           transv_offset_x + transv_dist,
+           pcount
+       )
+       y = np.random.uniform(
+           transv_offset_y - transv_dist,
+           transv_offset_y + transv_dist,
+           pcount
+       )
+
+Legacy Code Isolation
+~~~~~~~~~~~~~~~~~~~~~
+
+Legacy initialization is now only used when explicitly requested:
+
+* **GUI**: "Enable legacy comparison" checkbox in Output tab
+* **API**: ``use_legacy=True`` in ``prepare_particle_bunches()``
+* **Default behavior**: Core initialization (``create_bunch_from_params()``)
+
+When legacy mode is disabled (default), the modern core implementation handles
+all particle initialization, ensuring offset parameters are supported and
+transverse momentum spread is properly applied.
+
+**Impact**: Enables off-axis beam studies for aperture tolerance analysis, beam
+halo characterization, and beam dynamics research. Legacy code isolation ensures
+the modern core implementation is used by default while maintaining validation
+capability against historical results.
+
+
 Macroparticle Simulation (January 2025)
 ----------------------------------------
 

@@ -93,6 +93,17 @@ Key ideas to keep in mind
   ``macroparticle_charge_multiplier``, ``macroparticle_position_spread``, and
   ``macroparticle_momentum_spread`` parameters. Only active for CONDUCTING_WALL
   simulation type.
+* **Transverse offset for off-axis beams.**  Beam center position is now
+  separate from beam size. Use ``transv_offset_x`` and ``transv_offset_y`` to
+  position beam center in mm, and ``transv_dist`` for beam spread (half-width).
+  Particles are distributed uniformly in [offset ± spread] for both x and y.
+  Critical for aperture tolerance studies and beam halo analysis. The
+  optimization plugin's "Transverse Offset" fractions are converted to absolute
+  positions (offset = fraction × aperture_radius). Legacy initialization
+  (``legacy/bunch_inits.py``) now only runs when "Enable legacy comparison" is
+  checked in the GUI or ``use_legacy=True`` is passed to
+  ``prepare_particle_bunches()``. Default behavior uses modern core
+  initialization (``input_output.bunch_initialization.create_bunch_from_params``).
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to

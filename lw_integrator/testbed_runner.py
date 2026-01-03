@@ -797,10 +797,24 @@ def prepare_particle_bunches(
     """
     if use_legacy:
         # Use legacy benchmark function
+        # Filter out offset parameters (legacy doesn't support them)
+        legacy_rider = {
+            k: v
+            for k, v in rider_params.items()
+            if k not in ("transv_offset_x", "transv_offset_y")
+        }
+        legacy_driver = None
+        if driver_params is not None:
+            legacy_driver = {
+                k: v
+                for k, v in driver_params.items()
+                if k not in ("transv_offset_x", "transv_offset_y")
+            }
+
         return prepare_two_particle_demo(
             seed=seed,
-            rider_params=rider_params,
-            driver_params=driver_params,
+            rider_params=legacy_rider,
+            driver_params=legacy_driver,
         )
 
     # Use core (non-legacy) initialization
