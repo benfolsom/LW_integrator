@@ -4438,14 +4438,8 @@ class OptimizationPlugin(ttk.Frame):
                         )
                         return np.inf if not maximize else -np.inf
 
-                    # Log completion
-                    result_value = -value if maximize else value
-                    self._log_result(
-                        f"[OPTIMIZATION] Evaluation {eval_num} complete: "
-                        f"{metric_name}={value:.12e}, objective={result_value:.12e}"
-                    )
-
                     # Return value to minimize (negate if maximizing)
+                    result_value = -value if maximize else value
                     return result_value
 
                 except Exception as e:
@@ -5731,7 +5725,7 @@ class OptimizationPlugin(ttk.Frame):
         gamma_final = result.rider_gamma_final
 
         # Diagnostic logging
-        self._log_result(f"  [DEBUG] Gamma values for Run {run_num}:")
+        self._log_result(f"  [RESULT] Run {run_num} metrics:")
         self._log_result(f"    rider_gamma_initial: {gamma_initial}")
         self._log_result(f"    rider_gamma_final: {gamma_final}")
 
@@ -5750,6 +5744,13 @@ class OptimizationPlugin(ttk.Frame):
                 f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
             )
             self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
+
+            # For optimization runs, show what the optimizer sees
+            if hasattr(self, "config") and hasattr(self.config, "mode"):
+                if self.config.mode == "optimization":
+                    # Optimizer minimizes, so negate for maximization objectives
+                    optimizer_value = -energy_gain_percent  # We maximize percent gain
+                    self._log_result(f"    optimizer_objective: {optimizer_value:.12e}")
         else:
             # Fallback: Try to calculate from trajectory if gamma values are missing
             self._log_result(
