@@ -44,6 +44,7 @@ from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[impor
     prepare_two_particle_demo,
     run_benchmark,
 )
+from input_output.bunch_initialization import create_bunch_from_params
 
 # ---------------------------------------------------------------------------
 # Constants mirroring the notebook defaults
@@ -66,6 +67,8 @@ PARAM_LABELS: Dict[str, str] = {
     "stripped_ions": "Stripped ions",
     "m_particle": "Mass (amu)",
     "transv_dist": "Transverse spread (mm)",
+    "transv_offset_x": "Transverse offset x (mm)",
+    "transv_offset_y": "Transverse offset y (mm)",
     "pcount": "Particle count",
     "charge_sign": "Charge sign",
 }
@@ -761,6 +764,63 @@ def _extract_vector_series(
     return np.stack(components, axis=-1)
 
 
+def prepare_particle_bunches(
+    seed: int,
+    *,
+    rider_params: Dict[str, Any],
+    driver_params: Dict[str, Any] | None = None,
+    use_legacy: bool = False,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray] | None, float, float | None]:
+    """Prepare rider and driver particle bunches.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed for reproducibility
+    rider_params : dict
+        Rider particle parameters
+    driver_params : dict, optional
+        Driver particle parameters (None for single-bunch modes)
+    use_legacy : bool, optional
+        If True, use legacy init_bunch. Otherwise use core initialization.
+
+    Returns
+    -------
+    rider_state : dict
+        Rider particle state
+    driver_state : dict or None
+        Driver particle state (None if not provided)
+    rider_rest_mev : float
+        Rider rest energy in MeV
+    driver_rest_mev : float or None
+        Driver rest energy in MeV (None if not provided)
+    """
+    if use_legacy:
+        # Use legacy benchmark function
+        return prepare_two_particle_demo(
+            seed=seed,
+            rider_params=rider_params,
+            driver_params=driver_params,
+        )
+
+    # Use core (non-legacy) initialization
+    rider_state, rider_rest_mev = create_bunch_from_params(
+        seed=seed,
+        **rider_params,
+    )
+
+    if driver_params is not None:
+        driver_state, driver_rest_mev = create_bunch_from_params(
+            seed=seed + 1,  # Different seed for driver
+            **driver_params,
+        )
+    else:
+        driver_state = None
+        driver_rest_mev = None
+
+    return rider_state, driver_state, rider_rest_mev, driver_rest_mev
+
+
 def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
     sim_type = options.simulation_type
     driver_allowed = supports_driver(sim_type)
@@ -787,11 +847,13 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
         if abs(driver_params_for_twiss.get("transv_dist", 0.0)) < 1e-10:
             driver_params_for_twiss["transv_dist"] = 1e-4  # 0.1 micron default
 
+    # Use core initialization (not legacy)
     rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
-        prepare_two_particle_demo(
+        prepare_particle_bunches(
             seed=options.seed,
             rider_params=rider_params_for_twiss,
             driver_params=driver_params_for_twiss,
+            use_legacy=False,
         )
     )
 
@@ -1101,7 +1163,6 @@ def run_testbed(
     from core.trajectory_integrator import retarded_integrator
     from examples.validation.core_vs_legacy_benchmark import (
         _normalize_state,
-        prepare_two_particle_demo,
     )
 
     self_consistency_config = build_self_consistency_config(options)
@@ -1112,12 +1173,13 @@ def run_testbed(
     )
 
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-        # Prepare initial states
+        # Prepare initial states (use legacy only if enabled)
         rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
-            prepare_two_particle_demo(
-                options.seed,
+            prepare_particle_bunches(
+                seed=options.seed,
                 rider_params=rider_params,
                 driver_params=driver_params,
+                use_legacy=legacy_enabled,
             )
         )
 

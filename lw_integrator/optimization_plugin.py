@@ -227,7 +227,9 @@ class OptimizationConfig:
 
     # Fixed particle parameters (not swept)
     transv_mom: float = 1.2e-05  # amu·mm/ns
-    transv_dist: float = 2e-06  # mm - transverse distance from axis
+    transv_dist: float = 2e-06  # mm - transverse spread (half-width of distribution)
+    transv_offset_x: float = 0.0  # mm - x-offset of bunch center from axis
+    transv_offset_y: float = 0.0  # mm - y-offset of bunch center from axis
     m_particle: float = 0.00054857990907  # amu (electron mass)
     pcount: int = 1
     charge_sign: float = -1.0
@@ -5153,10 +5155,14 @@ class OptimizationPlugin(ttk.Frame):
         )
 
         # Build rider params
+        # transv_offset is the radial offset from axis (in mm)
+        # This is now properly used as an offset, not as spread
         rider_params = {
             "starting_distance": start_z,
             "transv_mom": rider_transv_mom,
-            "transv_dist": transv_offset,  # Use calculated offset
+            "transv_dist": self.config.transv_dist,  # Spread from config (half-width)
+            "transv_offset_x": transv_offset,  # Radial offset as x-offset
+            "transv_offset_y": 0.0,  # Keep on x-axis (radial offset in x-direction)
             "m_particle": rider_m_particle,
             "charge_sign": rider_charge_sign,
             "pcount": rider_pcount,

@@ -26,11 +26,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
-from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
-    DEFAULT_DRIVER_PARAMS,
-    DEFAULT_RIDER_PARAMS,
-    SimulationType,
-)
+from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
+from core.types import SimulationType
 from lw_integrator.testbed_runner import (
     COLOR_DRIVER,
     COLOR_LEGACY_DRIVER,
