@@ -2314,7 +2314,7 @@ class IntegratorGUI:
 
         ttk.Radiobutton(
             mode_frame,
-            text="Parameter Sweep",
+            text="Sweep/Optim",
             variable=self.run_mode_var,
             value="sweep",
             command=self._on_run_mode_changed,

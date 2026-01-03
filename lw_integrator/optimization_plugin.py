@@ -2866,6 +2866,16 @@ class OptimizationPlugin(ttk.Frame):
             self.per_run_timeout_var.set(str(loaded_config.per_run_timeout))
             self.skip_failed_runs_var.set(loaded_config.skip_failed_runs)
 
+            # Load UI-specific fields
+            self.timestep_mode_var.set(data.get("timestep_mode", "duration"))
+            self.auto_steps_distance_var.set(str(data.get("auto_steps_distance", 10.0)))
+            self.trajectory_stride_var.set(str(data.get("trajectory_stride", 10)))
+            self.rider_stripped_ions_var.set(str(data.get("rider_stripped_ions", 1.0)))
+            self.driver_stripped_ions_var.set(
+                str(data.get("driver_stripped_ions", 54.0))
+            )
+            self._toggle_timestep_mode()
+
             # Update stability controls
             self.smoothness_enabled_var.set(loaded_config.smoothness_enabled)
             self.smoothness_window_var.set(str(loaded_config.smoothness_window_size))
@@ -3022,6 +3032,12 @@ class OptimizationPlugin(ttk.Frame):
                 "target_distance_mm": config.target_distance_mm,
                 "timestep": config.timestep,
                 "energy_scale_exponent": config.energy_scale_exponent,
+                # UI-specific fields
+                "timestep_mode": self.timestep_mode_var.get(),
+                "auto_steps_distance": float(self.auto_steps_distance_var.get()),
+                "trajectory_stride": int(self.trajectory_stride_var.get()),
+                "rider_stripped_ions": float(self.rider_stripped_ions_var.get()),
+                "driver_stripped_ions": float(self.driver_stripped_ions_var.get()),
             }
 
             # Dynamically save all sweep parameter states
@@ -5205,10 +5221,10 @@ class OptimizationPlugin(ttk.Frame):
                             if integration_thread.is_alive():
                                 self._log_result(
                                     f"    Warning: Integration thread still running after cancel signal"
-                                    )
-                                    self._log_result(
-                                        f"    Thread will be abandoned (daemon thread will terminate with main thread)"
-                                    )
+                                )
+                                self._log_result(
+                                    f"    Thread will be abandoned (daemon thread will terminate with main thread)"
+                                )
                             elif error_container[0] is not None:
                                 # Exception occurred in thread
                                 raise error_container[0]
