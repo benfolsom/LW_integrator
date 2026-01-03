@@ -4332,6 +4332,7 @@ class OptimizationPlugin(ttk.Frame):
 
                         result_container = [None]
                         error_container = [None]
+                        cancel_flag = [False]
 
                         def run_integration():
                             try:
@@ -4351,6 +4352,7 @@ class OptimizationPlugin(ttk.Frame):
                                     macroparticle_sigma_multiplier=macroparticle_sigma_mult,
                                     driver_params=None,
                                     run_num=eval_num,
+                                    cancel_flag=cancel_flag,
                                 )
                             except Exception as e:
                                 error_container[0] = e
@@ -4362,9 +4364,15 @@ class OptimizationPlugin(ttk.Frame):
 
                         if thread.is_alive():
                             timed_out = True
+                            cancel_flag[0] = True
                             self._log_result(
                                 f"[WARNING] Evaluation timed out for params {x} after {self.config.per_run_timeout}s"
                             )
+                            self._log_result(
+                                f"[WARNING] Signaling integration to cancel..."
+                            )
+                            # Give it a brief moment to respond
+                            thread.join(timeout=2.0)
                             return np.inf if not maximize else -np.inf
                         elif error_container[0] is not None:
                             raise error_container[0]
@@ -4388,6 +4396,7 @@ class OptimizationPlugin(ttk.Frame):
                             macroparticle_sigma_multiplier=macroparticle_sigma_mult,
                             driver_params=None,
                             run_num=eval_num,
+                            cancel_flag=None,
                         )
 
                     if result is None or "metrics" not in result:
@@ -5133,6 +5142,17 @@ class OptimizationPlugin(ttk.Frame):
                         # Container for result (mutable for thread access)
                         result_container = [None]
                         error_container = [None]
+                        cancel_flag = [False]  # Flag to signal cancellation
+
+                        # Log warning for potentially problematic parameter combinations
+                        if aperture < 0.1 and macroparticle_charge_multiplier > 1000:
+                            self._log_result(
+                                f"  [WARNING] Run {run_num}: Very small aperture ({aperture:.4f} mm) "
+                                f"with large charge multiplier ({macroparticle_charge_multiplier:.0f})"
+                            )
+                            self._log_result(
+                                f"    This may cause numerical instability or slow convergence"
+                            )
 
                         def run_with_exception_handling():
                             """Wrapper to run integration and catch exceptions."""
@@ -5155,6 +5175,7 @@ class OptimizationPlugin(ttk.Frame):
                                     == SimulationType.BUNCH_TO_BUNCH
                                     else None,
                                     run_num=run_num,
+                                    cancel_flag=cancel_flag,
                                 )
                             except Exception as e:
                                 error_container[0] = e
@@ -5170,15 +5191,27 @@ class OptimizationPlugin(ttk.Frame):
                         integration_thread.join(timeout=self.config.per_run_timeout)
 
                         if integration_thread.is_alive():
-                            # Timeout occurred
+                            # Timeout occurred - signal the integration to cancel
                             run_timed_out = True
+                            cancel_flag[0] = True
                             self._log_result(
                                 f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
                             )
-                            # Note: Thread will continue running but we move on
-                        elif error_container[0] is not None:
-                            # Exception occurred in thread
-                            raise error_container[0]
+                            self._log_result(
+                                f"    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
+                            )
+                            # Give it a brief moment to respond to cancellation
+                            integration_thread.join(timeout=2.0)
+                            if integration_thread.is_alive():
+                                self._log_result(
+                                    f"    Warning: Integration thread still running after cancel signal"
+                                    )
+                                    self._log_result(
+                                        f"    Thread will be abandoned (daemon thread will terminate with main thread)"
+                                    )
+                            elif error_container[0] is not None:
+                                # Exception occurred in thread
+                                raise error_container[0]
                         else:
                             # Success
                             result = result_container[0]
@@ -5202,6 +5235,7 @@ class OptimizationPlugin(ttk.Frame):
                             == SimulationType.BUNCH_TO_BUNCH
                             else None,
                             run_num=run_num,
+                            cancel_flag=None,
                         )
 
                     if result is not None:
@@ -5454,6 +5488,7 @@ class OptimizationPlugin(ttk.Frame):
         macroparticle_sigma_multiplier: float = None,
         driver_params: Dict[str, Any] = None,
         run_num: int = 0,
+        cancel_flag: Optional[List[bool]] = None,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
         # Use provided rider values or fall back to config defaults
@@ -5596,9 +5631,39 @@ class OptimizationPlugin(ttk.Frame):
                 )
 
         # Run the integration with progress tracking
+        # Log diagnostic info for potentially problematic configurations
+        if aperture < 0.1:
+            self._log_result(
+                f"  [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)"
+            )
+        if macroparticle_charge_multiplier > 1000:
+            self._log_result(
+                f"  [DIAGNOSTIC] Run {run_num}: Large charge multiplier ({macroparticle_charge_multiplier:.0f})"
+            )
+            self._log_result(
+                f"    Note: This may significantly slow integration due to strong image forces"
+            )
+
         self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
 
-        result = run_testbed(options, progress_callback=progress_callback)
+        # Create cancel callback if cancel_flag is provided
+        cancel_callback = None
+        if cancel_flag is not None:
+
+            def check_cancel():
+                if cancel_flag[0]:
+                    self._log_result(
+                        f"  [CANCEL] Run {run_num}: Cancellation requested"
+                    )
+                return cancel_flag[0] if cancel_flag else False
+
+            cancel_callback = check_cancel
+
+        result = run_testbed(
+            options,
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
         self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
 
         self._log_result(f"  [DEBUG] Processing figures for Run {run_num}...")
