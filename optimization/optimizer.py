@@ -529,6 +529,7 @@ def genetic_algorithm(
     objective_function: Optional[Callable] = None,
     convergence_tol: float = 1e-6,
     convergence_patience: int = 10,
+    progress_callback: Optional[Callable] = None,
 ) -> OptimizeResult:
     """Genetic algorithm optimization.
 
@@ -572,6 +573,9 @@ def genetic_algorithm(
         Number of generations to look back for convergence check (default: 10).
         Early stopping triggers if best fitness doesn't improve by
         `convergence_tol` over this many generations.
+    progress_callback : Callable, optional
+        Callback function called after each generation with convergence info.
+        Signature: callback(generation, best_value, improvement, tolerance, patience_remaining)
 
     Returns
     -------
@@ -652,6 +656,10 @@ def genetic_algorithm(
         )
 
         # Check for early stopping (fitness plateau detection)
+        improvement = 0.0
+        tolerance = convergence_tol
+        patience_remaining = convergence_patience - generation
+
         if generation >= convergence_patience:
             recent_best = [
                 h["best_fitness"] for h in convergence_history[-convergence_patience:]
@@ -665,6 +673,15 @@ def genetic_algorithm(
             )
 
             if improvement < tolerance:
+                if progress_callback:
+                    progress_callback(
+                        generation=generation + 1,
+                        best_value=-best_fitness if maximize else best_fitness,
+                        improvement=improvement,
+                        tolerance=tolerance,
+                        patience_remaining=0,
+                        converged=True,
+                    )
                 logger.info(
                     f"Early stopping at generation {generation + 1}: "
                     f"fitness plateau detected (improvement={improvement:.2e} < tolerance={tolerance:.2e})"
@@ -677,6 +694,21 @@ def genetic_algorithm(
                 )
                 # Break out of evolution loop
                 break
+            else:
+                patience_remaining = convergence_patience - (
+                    generation - convergence_patience
+                )
+
+        # Call progress callback with convergence info
+        if progress_callback:
+            progress_callback(
+                generation=generation + 1,
+                best_value=-best_fitness if maximize else best_fitness,
+                improvement=improvement,
+                tolerance=tolerance,
+                patience_remaining=patience_remaining,
+                converged=False,
+            )
 
         # Create new population
         new_population = []

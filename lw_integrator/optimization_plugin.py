@@ -4455,6 +4455,32 @@ class OptimizationPlugin(ttk.Frame):
                     return np.inf if not maximize else -np.inf
 
             if method == "genetic_algorithm":
+                # Define progress callback for convergence monitoring
+                def log_convergence_progress(
+                    generation,
+                    best_value,
+                    improvement,
+                    tolerance,
+                    patience_remaining,
+                    converged,
+                ):
+                    """Log convergence progress after each generation."""
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                    if generation >= self.config.optimization_convergence_patience:
+                        if converged:
+                            self._log_result(
+                                f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
+                                f"< tolerance ({tolerance:.6e})"
+                            )
+                        else:
+                            self._log_result(
+                                f"[CONVERGENCE] Progress: {patience_remaining} generations "
+                                f"remaining before early stop check"
+                            )
+
                 result = genetic_algorithm(
                     config_template=config_template,
                     parameter_names=param_names,
@@ -4469,6 +4495,7 @@ class OptimizationPlugin(ttk.Frame):
                     objective_function=evaluate_params,
                     convergence_tol=self.config.optimization_convergence_tol,
                     convergence_patience=self.config.optimization_convergence_patience,
+                    progress_callback=log_convergence_progress,
                 )
 
             elif method == "differential_evolution":
