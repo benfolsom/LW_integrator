@@ -238,8 +238,10 @@ class OptimizationConfig:
     # Macroparticle simulation options (CONDUCTING_WALL only)
     macroparticle_enabled: bool = False
     macroparticle_charge_multiplier: float = 1.0
-    macroparticle_position_spread: float = 0.0  # mm
-    macroparticle_momentum_spread: float = 0.0
+    macroparticle_sigma_multiplier: float = 1.0  # Multiplier for bunch spread params
+    macroparticle_use_momentum_errors: bool = (
+        True  # Include momentum-based cumulative errors
+    )
 
     # Optimization objective
     objective: str = "max_energy_gain"  # Primary objective to optimize
@@ -988,23 +990,23 @@ class OptimizationPlugin(ttk.Frame):
         )
         row += 1
 
-        # Transverse Momentum
+        # Transverse Momentum (spread, uniform ±)
         self._add_sweepable_param(
             frame,
             row,
             "rider_transv_mom",
-            "Transverse Momentum (amu·mm/ns):",
+            "Transverse Momentum (amu·mm/ns, spread ±):",
             "1.2e-05",
             width=15,
         )
         row += 1
 
-        # Transverse Spread (bunch radius)
+        # Transverse Spread (bunch radius / half-width)
         self._add_sweepable_param(
             frame,
             row,
             "rider_transv_dist",
-            "Transverse Spread (mm):",
+            "Transverse Spread (mm, half-width):",
             "2e-06",
             width=15,
         )
@@ -1056,7 +1058,7 @@ class OptimizationPlugin(ttk.Frame):
         self.macroparticle_enabled_var = tk.BooleanVar(value=False)
         self.macroparticle_enable_check = ttk.Checkbutton(
             frame,
-            text="Enable macroparticle simulation",
+            text="Enable macroparticle simulation (bunch spread inherited from above)",
             variable=self.macroparticle_enabled_var,
             command=self._toggle_macroparticle_controls,
         )
@@ -1079,35 +1081,31 @@ class OptimizationPlugin(ttk.Frame):
         )
         row += 1
 
-        # Position spread
-        self.macroparticle_position_label = ttk.Label(
-            frame, text="Transverse position spread (mm):"
+        # Sigma multiplier for image charge errors
+        self.macroparticle_sigma_label = ttk.Label(
+            frame, text="Image error sigma multiplier:"
         )
-        self.macroparticle_position_label.grid(
+        self.macroparticle_sigma_label.grid(
             row=row, column=0, sticky="w", pady=2, padx=(20, 0)
         )
-        self.macroparticle_position_var = tk.StringVar(value="0.0")
-        self.macroparticle_position_entry = ttk.Entry(
-            frame, textvariable=self.macroparticle_position_var, width=15
+        self.macroparticle_sigma_var = tk.StringVar(value="1.0")
+        self.macroparticle_sigma_entry = ttk.Entry(
+            frame, textvariable=self.macroparticle_sigma_var, width=15
         )
-        self.macroparticle_position_entry.grid(
+        self.macroparticle_sigma_entry.grid(
             row=row, column=1, sticky="w", pady=2, padx=5
         )
         row += 1
 
-        # Momentum spread
-        self.macroparticle_momentum_label = ttk.Label(
-            frame, text="Transverse momentum spread:"
+        # Include momentum errors checkbox
+        self.macroparticle_momentum_errors_var = tk.BooleanVar(value=True)
+        self.macroparticle_momentum_errors_check = ttk.Checkbutton(
+            frame,
+            text="Include momentum errors (cumulative)",
+            variable=self.macroparticle_momentum_errors_var,
         )
-        self.macroparticle_momentum_label.grid(
-            row=row, column=0, sticky="w", pady=2, padx=(20, 0)
-        )
-        self.macroparticle_momentum_var = tk.StringVar(value="0.0")
-        self.macroparticle_momentum_entry = ttk.Entry(
-            frame, textvariable=self.macroparticle_momentum_var, width=15
-        )
-        self.macroparticle_momentum_entry.grid(
-            row=row, column=1, sticky="w", pady=2, padx=5
+        self.macroparticle_momentum_errors_check.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
         )
         row += 1
 
@@ -1116,8 +1114,10 @@ class OptimizationPlugin(ttk.Frame):
             frame,
             text=(
                 "Macroparticle mode scales test particle charge and adds Gaussian errors to image subcharges.\n"
-                "Position spread: constant σ. Momentum spread: cumulative displacement growing each step.\n"
-                "Only active for CONDUCTING_WALL simulations."
+                "Image errors derived from bunch spread (transv_dist, transv_mom) × sigma multiplier.\n"
+                "Position errors: constant σ from transv_dist. Momentum errors: cumulative from transv_mom.\n"
+                "Uncheck 'Include momentum errors' to apply only constant position errors (no cumulative growth).\n"
+                "Only for CONDUCTING_WALL."
             ),
             font=("TkDefaultFont", 8),
             foreground="gray40",
@@ -1131,10 +1131,9 @@ class OptimizationPlugin(ttk.Frame):
         self._macroparticle_widgets = [
             self.macroparticle_charge_label,
             self.macroparticle_charge_entry,
-            self.macroparticle_position_label,
-            self.macroparticle_position_entry,
-            self.macroparticle_momentum_label,
-            self.macroparticle_momentum_entry,
+            self.macroparticle_sigma_label,
+            self.macroparticle_sigma_entry,
+            self.macroparticle_momentum_errors_check,
         ]
 
     def _build_driver_particle_section(self):
@@ -1916,8 +1915,10 @@ class OptimizationPlugin(ttk.Frame):
             ),
             macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
             macroparticle_charge_multiplier=float(self.macroparticle_charge_var.get()),
-            macroparticle_position_spread=float(self.macroparticle_position_var.get()),
-            macroparticle_momentum_spread=float(self.macroparticle_momentum_var.get()),
+            macroparticle_sigma_multiplier=float(self.macroparticle_sigma_var.get()),
+            macroparticle_use_momentum_errors=bool(
+                self.macroparticle_momentum_errors_var.get()
+            ),
             m_particle=float(self.sweep_params["rider_m_particle"]["fixed_var"].get()),
             pcount=int(self.sweep_params["rider_pcount"]["fixed_var"].get()),
             charge_sign=float(
@@ -5218,8 +5219,8 @@ class OptimizationPlugin(ttk.Frame):
             transverse_save=True,  # Always return trajectory data for metrics calculation
             macroparticle_enabled=self.config.macroparticle_enabled,
             macroparticle_charge_multiplier=self.config.macroparticle_charge_multiplier,
-            macroparticle_position_spread=self.config.macroparticle_position_spread,
-            macroparticle_momentum_spread=self.config.macroparticle_momentum_spread,
+            macroparticle_sigma_multiplier=self.config.macroparticle_sigma_multiplier,
+            macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
             overlay_display=False,
             overlay_save=False,
             difference_display=False,

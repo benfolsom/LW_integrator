@@ -113,8 +113,10 @@ def generate_conducting_image(
     *,
     use_weighting: bool = True,
     macroparticle_charge_multiplier: float = 1.0,
-    macroparticle_position_spread: float = 0.0,
-    macroparticle_momentum_spread: float = 0.0,
+    macroparticle_sigma_multiplier: float = 1.0,
+    macroparticle_use_momentum_errors: bool = True,
+    bunch_transv_dist: float = 0.0,
+    bunch_transv_mom: float = 0.0,
     timestep: float = 0.0,
     step_number: int = 0,
 ) -> ParticleState:
@@ -134,14 +136,21 @@ def generate_conducting_image(
     macroparticle_charge_multiplier:
         Multiplier for the charge of both test particle and image subcharges.
         Default 1.0 (no scaling). Use > 1.0 for macroparticle simulations.
-    macroparticle_position_spread:
-        Transverse position spread (sigma) in mm for Gaussian errors applied to
-        subcharge positions. Default 0.0 (no spread).
-    macroparticle_momentum_spread:
-        Transverse momentum spread (sigma) in units that match the particle momentum.
-        Creates cumulative displacement that grows with step_number. Default 0.0.
+    macroparticle_sigma_multiplier:
+        Multiplier applied to bunch spread parameters when computing image charge errors.
+        Default 1.0 (errors = bunch spread). Position errors = bunch_transv_dist × multiplier,
+        momentum errors = bunch_transv_mom × multiplier.
+    macroparticle_use_momentum_errors:
+        Whether to include momentum-based cumulative errors. If False, only constant
+        position errors are applied. Default True (include both position and momentum errors).
+    bunch_transv_dist:
+        Transverse distribution half-width (mm) from particle bunch initialization.
+        Used to compute position spread for image charge errors.
+    bunch_transv_mom:
+        Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
+        Used to compute cumulative displacement errors that grow with step_number.
     timestep:
-        Integration timestep in proper time (ns). Required when momentum_spread > 0.
+        Integration timestep in proper time (ns). Required when bunch_transv_mom > 0.
     step_number:
         Current integration step number (0-based). Used to compute cumulative
         displacement from momentum spread.
@@ -228,21 +237,29 @@ def generate_conducting_image(
             y_positions = center_y + shift * np.sin(angles)
 
         # Apply macroparticle position and momentum spread errors BEFORE weighting
-        if macroparticle_position_spread > 0.0 or macroparticle_momentum_spread > 0.0:
-            # Compute total transverse spread including momentum-driven displacement
-            position_sigma = float(macroparticle_position_spread)
+        # Derive errors from bunch parameters scaled by sigma multiplier
+        if (
+            bunch_transv_dist > 0.0 or bunch_transv_mom > 0.0
+        ) and macroparticle_sigma_multiplier > 0.0:
+            # Position spread derived from bunch distribution
+            position_sigma = float(bunch_transv_dist * macroparticle_sigma_multiplier)
 
             # Cumulative displacement from momentum spread
             # displacement = (p_transverse / m) * timestep * step_number
             # We need mass from the particle state
-            if macroparticle_momentum_spread > 0.0 and step_number > 0:
+            if (
+                macroparticle_use_momentum_errors
+                and bunch_transv_mom > 0.0
+                and step_number > 0
+            ):
                 particle_mass = vector["m"][i] if "m" in vector else 1.0
                 # momentum_spread has units of momentum; divide by mass to get velocity
                 # then multiply by time elapsed to get displacement
                 # Note: timestep is in proper time (dtau = dt/gamma)
                 # For transverse motion: dx/dtau ≈ px/m (in natural units)
                 cumulative_displacement_sigma = (
-                    macroparticle_momentum_spread
+                    bunch_transv_mom
+                    * macroparticle_sigma_multiplier
                     / particle_mass
                     * timestep
                     * step_number

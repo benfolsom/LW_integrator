@@ -441,8 +441,8 @@ class IntegratorGUI:
         # Macroparticle simulation options
         self.macroparticle_enabled_var = tk.BooleanVar(value=False)
         self.macroparticle_charge_multiplier_var = tk.StringVar(value="1.0")
-        self.macroparticle_position_spread_var = tk.StringVar(value="0.0")
-        self.macroparticle_momentum_spread_var = tk.StringVar(value="0.0")
+        self.macroparticle_sigma_multiplier_var = tk.StringVar(value="1.0")
+        self.macroparticle_use_momentum_errors_var = tk.BooleanVar(value=True)
 
         # Self-consistency options
         self.self_consistency_enabled_var = tk.BooleanVar(
@@ -922,7 +922,15 @@ class IntegratorGUI:
         )
         self.driver_species_combo = driver_combo
 
-        for row, name in enumerate(PARTICLE_PARAM_FIELDS, start=1):
+        # Add info note about bunch parameters
+        ttk.Label(
+            particle_frame,
+            text="Note: Particle count, transverse spread, and transverse momentum define the bunch distribution",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 2))
+
+        for row, name in enumerate(PARTICLE_PARAM_FIELDS, start=2):
             ttk.Label(particle_frame, text=PARAM_LABELS[name] + ":").grid(
                 row=row, column=0, sticky="w", pady=2
             )
@@ -939,7 +947,7 @@ class IntegratorGUI:
             self._driver_entries.append(driver_entry)
 
         # Image subcharge controls
-        next_row = len(PARTICLE_PARAM_FIELDS) + 1
+        next_row = len(PARTICLE_PARAM_FIELDS) + 2
         ttk.Label(particle_frame, text="Image subcharge count:").grid(
             row=next_row, column=0, sticky="w", pady=(12, 2)
         )
@@ -993,7 +1001,7 @@ class IntegratorGUI:
 
         self.macroparticle_enable_check = ttk.Checkbutton(
             particle_frame,
-            text="Enable macroparticle simulation",
+            text="Enable macroparticle simulation (bunch spread inherited from above)",
             variable=self.macroparticle_enabled_var,
             command=self._toggle_macroparticle_controls,
         )
@@ -1019,37 +1027,29 @@ class IntegratorGUI:
         )
         next_row += 1
 
-        # Position spread
-        self.macroparticle_position_label = ttk.Label(
-            particle_frame, text="Transverse position spread (mm):"
+        # Sigma multiplier for image charge errors
+        self.macroparticle_sigma_label = ttk.Label(
+            particle_frame, text="Image error sigma multiplier:"
         )
-        self.macroparticle_position_label.grid(
+        self.macroparticle_sigma_label.grid(
             row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
         )
-        self.macroparticle_position_entry = ttk.Entry(
+        self.macroparticle_sigma_entry = ttk.Entry(
             particle_frame,
-            textvariable=self.macroparticle_position_spread_var,
+            textvariable=self.macroparticle_sigma_multiplier_var,
             width=12,
         )
-        self.macroparticle_position_entry.grid(
-            row=next_row, column=1, sticky="ew", pady=2
-        )
+        self.macroparticle_sigma_entry.grid(row=next_row, column=1, sticky="ew", pady=2)
         next_row += 1
 
-        # Momentum spread
-        self.macroparticle_momentum_label = ttk.Label(
-            particle_frame, text="Transverse momentum spread:"
-        )
-        self.macroparticle_momentum_label.grid(
-            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
-        )
-        self.macroparticle_momentum_entry = ttk.Entry(
+        # Include momentum errors checkbox
+        self.macroparticle_momentum_errors_check = ttk.Checkbutton(
             particle_frame,
-            textvariable=self.macroparticle_momentum_spread_var,
-            width=12,
+            text="Include momentum errors (cumulative)",
+            variable=self.macroparticle_use_momentum_errors_var,
         )
-        self.macroparticle_momentum_entry.grid(
-            row=next_row, column=1, sticky="ew", pady=2
+        self.macroparticle_momentum_errors_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
         )
         next_row += 1
 
@@ -1057,10 +1057,10 @@ class IntegratorGUI:
         help_text_macroparticle = ttk.Label(
             particle_frame,
             text=(
-                "Macroparticle mode scales particle charge and adds stochastic position/momentum\n"
-                "errors to image subcharges. Position spread applies constant Gaussian errors.\n"
-                "Momentum spread creates cumulative displacement that grows with each timestep.\n"
-                "Errors are applied BEFORE charge attenuation calculations.\n"
+                "Macroparticle mode scales particle charge and adds Gaussian errors to image subcharges.\n"
+                "Image errors are derived from bunch spread parameters (transv_dist, transv_mom) × sigma multiplier.\n"
+                "Position errors: constant σ from transv_dist. Momentum errors: cumulative from transv_mom.\n"
+                "Uncheck 'Include momentum errors' to apply only constant position errors (no cumulative growth).\n"
                 "Only active for CONDUCTING_WALL simulations."
             ),
             font=("TkDefaultFont", 8),
@@ -1075,10 +1075,9 @@ class IntegratorGUI:
         self._macroparticle_widgets = [
             self.macroparticle_charge_label,
             self.macroparticle_charge_entry,
-            self.macroparticle_position_label,
-            self.macroparticle_position_entry,
-            self.macroparticle_momentum_label,
-            self.macroparticle_momentum_entry,
+            self.macroparticle_sigma_label,
+            self.macroparticle_sigma_entry,
+            self.macroparticle_momentum_errors_check,
         ]
 
         # Core tab ------------------------------------------------------
@@ -2715,11 +2714,11 @@ class IntegratorGUI:
         self.macroparticle_charge_multiplier_var.set(
             getattr(options, "macroparticle_charge_multiplier", 1.0)
         )
-        self.macroparticle_position_spread_var.set(
-            getattr(options, "macroparticle_position_spread", 0.0)
+        self.macroparticle_sigma_multiplier_var.set(
+            getattr(options, "macroparticle_sigma_multiplier", 1.0)
         )
-        self.macroparticle_momentum_spread_var.set(
-            getattr(options, "macroparticle_momentum_spread", 0.0)
+        self.macroparticle_use_momentum_errors_var.set(
+            getattr(options, "macroparticle_use_momentum_errors", True)
         )
         self.self_consistency_enabled_var.set(options.self_consistency_enabled)
         self.self_consistency_convergence_mode_var.set(
@@ -2881,11 +2880,11 @@ class IntegratorGUI:
             macroparticle_charge_multiplier=float(
                 self.macroparticle_charge_multiplier_var.get()
             ),
-            macroparticle_position_spread=float(
-                self.macroparticle_position_spread_var.get()
+            macroparticle_sigma_multiplier=float(
+                self.macroparticle_sigma_multiplier_var.get()
             ),
-            macroparticle_momentum_spread=float(
-                self.macroparticle_momentum_spread_var.get()
+            macroparticle_use_momentum_errors=bool(
+                self.macroparticle_use_momentum_errors_var.get()
             ),
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(

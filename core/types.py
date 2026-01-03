@@ -115,14 +115,21 @@ class IntegratorConfig:
         Multiplier for particle and image charges in macroparticle simulations.
         Defaults to ``1.0`` (no scaling). Use > 1.0 for macroparticle mode.
         Only applies to CONDUCTING_WALL simulations.
-    macroparticle_position_spread:
-        Transverse position spread (sigma) in mm for Gaussian errors applied to
-        image subcharge positions. Defaults to ``0.0`` (no spread).
-        Only applies to CONDUCTING_WALL simulations.
-    macroparticle_momentum_spread:
-        Transverse momentum spread (sigma) creating cumulative displacement
-        that grows with each timestep. Defaults to ``0.0`` (no spread).
-        Only applies to CONDUCTING_WALL simulations.
+    macroparticle_sigma_multiplier:
+        Multiplier for bunch spread parameters when applying to image charge errors.
+        Defaults to ``1.0`` (errors = bunch spread). Use > 1.0 to increase uncertainty.
+        Position errors use transv_dist × multiplier, momentum errors use transv_mom × multiplier.
+        Only applies to CONDUCTING_WALL simulations when macroparticle mode is enabled.
+    macroparticle_use_momentum_errors:
+        Whether to include momentum-based cumulative errors in image charge positions.
+        If False, only constant position errors are applied (no cumulative momentum effects).
+        Defaults to ``True`` (include both position and momentum errors).
+    bunch_transv_dist:
+        Transverse distribution half-width (mm) from particle bunch initialization.
+        Used to compute position spread for image charge errors. Defaults to ``0.0``.
+    bunch_transv_mom:
+        Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
+        Used to compute cumulative displacement errors. Defaults to ``0.0``.
     """
 
     steps: int
@@ -139,8 +146,10 @@ class IntegratorConfig:
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
     macroparticle_charge_multiplier: float = 1.0
-    macroparticle_position_spread: float = 0.0
-    macroparticle_momentum_spread: float = 0.0
+    macroparticle_sigma_multiplier: float = 1.0
+    macroparticle_use_momentum_errors: bool = True
+    bunch_transv_dist: float = 0.0
+    bunch_transv_mom: float = 0.0
 
 
 __all__ = [

@@ -62,14 +62,14 @@ DEFAULT_PLOT_DPI = 300
 
 PARAM_LABELS: Dict[str, str] = {
     "starting_distance": "Start z (mm)",
-    "transv_mom": "Transverse momentum (amu*mm/ns)",
+    "transv_mom": "Transverse momentum spread (amu*mm/ns, ±)",
     "starting_Pz": "Initial Pz (amu*mm/ns)",
     "stripped_ions": "Stripped ions",
     "m_particle": "Mass (amu)",
-    "transv_dist": "Transverse spread (mm)",
+    "transv_dist": "Transverse spread (mm, half-width)",
     "transv_offset_x": "Transverse offset x (mm)",
     "transv_offset_y": "Transverse offset y (mm)",
-    "pcount": "Particle count",
+    "pcount": "Particle count (bunch size)",
     "charge_sign": "Charge sign",
 }
 
@@ -257,8 +257,8 @@ class SimulationOptions:
     # Macroparticle simulation options (CONDUCTING_WALL only)
     macroparticle_enabled: bool = False
     macroparticle_charge_multiplier: float = 1.0
-    macroparticle_position_spread: float = 0.0
-    macroparticle_momentum_spread: float = 0.0
+    macroparticle_sigma_multiplier: float = 1.0
+    macroparticle_use_momentum_errors: bool = True
 
     # Self-consistency options
     self_consistency_enabled: bool = True
@@ -362,8 +362,8 @@ class SimulationOptions:
             "use_image_weighting": self.use_image_weighting,
             "macroparticle_enabled": self.macroparticle_enabled,
             "macroparticle_charge_multiplier": self.macroparticle_charge_multiplier,
-            "macroparticle_position_spread": self.macroparticle_position_spread,
-            "macroparticle_momentum_spread": self.macroparticle_momentum_spread,
+            "macroparticle_sigma_multiplier": self.macroparticle_sigma_multiplier,
+            "macroparticle_use_momentum_errors": self.macroparticle_use_momentum_errors,
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_convergence_mode": self.self_consistency_convergence_mode,
@@ -502,8 +502,12 @@ class SimulationOptions:
             macroparticle_charge_multiplier=_float(
                 "macroparticle_charge_multiplier", 1.0
             ),
-            macroparticle_position_spread=_float("macroparticle_position_spread", 0.0),
-            macroparticle_momentum_spread=_float("macroparticle_momentum_spread", 0.0),
+            macroparticle_sigma_multiplier=_float(
+                "macroparticle_sigma_multiplier", 1.0
+            ),
+            macroparticle_use_momentum_errors=_bool(
+                "macroparticle_use_momentum_errors", True
+            ),
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=str(
@@ -1127,8 +1131,12 @@ def run_testbed(
     if options.macroparticle_enabled and sim_type == SimulationType.CONDUCTING_WALL:
         _log(f"  Macroparticle simulation: ENABLED")
         _log(f"    Charge multiplier: {options.macroparticle_charge_multiplier}")
-        _log(f"    Position spread: {options.macroparticle_position_spread} mm")
-        _log(f"    Momentum spread: {options.macroparticle_momentum_spread}")
+        _log(f"    Sigma multiplier: {options.macroparticle_sigma_multiplier}")
+        _log(f"    Use momentum errors: {options.macroparticle_use_momentum_errors}")
+        _log(
+            f"    Bunch transv_dist: {options.rider_params.get('transv_dist', 0.0)} mm"
+        )
+        _log(f"    Bunch transv_mom: {options.rider_params.get('transv_mom', 0.0)}")
     # Normalize mode name for display (handle legacy aliases)
     mode_aliases = {
         "mass_shell_only": "fixed_geometry",
@@ -1206,7 +1214,11 @@ def run_testbed(
                     driver_state["q"] = driver_state["q"] * charge_mult
 
         rider_initial = _normalize_state(copy.deepcopy(rider_state))
-        driver_initial = _normalize_state(copy.deepcopy(driver_state))
+        driver_initial = (
+            _normalize_state(copy.deepcopy(driver_state))
+            if driver_state is not None
+            else None
+        )
 
         # Run legacy if requested
         legacy_traj_rider = None
@@ -1247,12 +1259,16 @@ def run_testbed(
             )
             if options.macroparticle_enabled
             else 1.0,
-            macroparticle_position_spread=float(options.macroparticle_position_spread)
+            macroparticle_sigma_multiplier=float(options.macroparticle_sigma_multiplier)
             if options.macroparticle_enabled
-            else 0.0,
-            macroparticle_momentum_spread=float(options.macroparticle_momentum_spread)
+            else 1.0,
+            macroparticle_use_momentum_errors=bool(
+                options.macroparticle_use_momentum_errors
+            )
             if options.macroparticle_enabled
-            else 0.0,
+            else True,
+            bunch_transv_dist=float(options.rider_params.get("transv_dist", 0.0)),
+            bunch_transv_mom=float(options.rider_params.get("transv_mom", 0.0)),
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
         )

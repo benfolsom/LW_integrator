@@ -148,8 +148,10 @@ def retarded_integrator(
     image_subcharge_count: int = 12,
     use_conducting_image_weighting: bool = True,
     macroparticle_charge_multiplier: float = 1.0,
-    macroparticle_position_spread: float = 0.0,
-    macroparticle_momentum_spread: float = 0.0,
+    macroparticle_sigma_multiplier: float = 1.0,
+    macroparticle_use_momentum_errors: bool = True,
+    bunch_transv_dist: float = 0.0,
+    bunch_transv_mom: float = 0.0,
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
@@ -203,12 +205,19 @@ def retarded_integrator(
     macroparticle_charge_multiplier:
         Multiplier for particle and image charges in macroparticle simulations.
         Only applies to CONDUCTING_WALL simulations. Default 1.0.
-    macroparticle_position_spread:
-        Transverse position spread (sigma) in mm for Gaussian errors applied to
-        image subcharge positions. Only applies to CONDUCTING_WALL. Default 0.0.
-    macroparticle_momentum_spread:
-        Transverse momentum spread (sigma) creating cumulative displacement.
-        Only applies to CONDUCTING_WALL simulations. Default 0.0.
+    macroparticle_sigma_multiplier:
+        Multiplier applied to bunch spread parameters when computing image charge errors.
+        Default 1.0 (errors = bunch spread). Position errors derived from rider transv_dist,
+        momentum errors derived from rider transv_mom. Only applies to CONDUCTING_WALL.
+    macroparticle_use_momentum_errors:
+        Whether to include momentum-based cumulative errors in image charge positions.
+        If False, only constant position errors are applied. Default True (both types).
+    bunch_transv_dist:
+        Transverse distribution half-width (mm) from particle bunch initialization.
+        Used to compute position spread for image charge errors. Default 0.0.
+    bunch_transv_mom:
+        Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
+        Used to compute cumulative displacement errors. Default 0.0.
     energy_monitor:
         Optional :class:`EnergyMonitorConfig` to detect sudden energy jumps
         during integration. Can warn or halt on excessive energy changes.
@@ -274,9 +283,11 @@ def retarded_integrator(
                     subcharge_count=image_subcharge_count,
                     use_weighting=use_conducting_image_weighting,
                     macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                    macroparticle_position_spread=macroparticle_position_spread,
-                    macroparticle_momentum_spread=macroparticle_momentum_spread,
-                    timestep=time_step,
+                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                    macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                    bunch_transv_dist=bunch_transv_dist,
+                    bunch_transv_mom=bunch_transv_mom,
+                    timestep=h_step,
                     step_number=i,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
@@ -421,9 +432,11 @@ def retarded_integrator(
                             subcharge_count=image_subcharge_count,
                             use_weighting=use_conducting_image_weighting,
                             macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                            macroparticle_position_spread=macroparticle_position_spread,
-                            macroparticle_momentum_spread=macroparticle_momentum_spread,
-                            timestep=current_h,
+                            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                            macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                            bunch_transv_dist=bunch_transv_dist,
+                            bunch_transv_mom=bunch_transv_mom,
+                            timestep=current_h_step,
                             step_number=i,
                         )
                     else:  # BUNCH_TO_BUNCH - driver doesn't change during substeps
@@ -576,9 +589,11 @@ def retarded_integrator(
                     subcharge_count=image_subcharge_count,
                     use_weighting=use_conducting_image_weighting,
                     macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                    macroparticle_position_spread=macroparticle_position_spread,
-                    macroparticle_momentum_spread=macroparticle_momentum_spread,
-                    timestep=time_step,
+                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                    macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                    bunch_transv_dist=bunch_transv_dist,
+                    bunch_transv_mom=bunch_transv_mom,
+                    timestep=current_h_step,
                     step_number=i,
                 )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
@@ -716,8 +731,10 @@ def run_integrator(
         image_subcharge_count=config.image_subcharge_count,
         use_conducting_image_weighting=config.use_image_weighting,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
-        macroparticle_position_spread=config.macroparticle_position_spread,
-        macroparticle_momentum_spread=config.macroparticle_momentum_spread,
+        macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,
+        macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,
+        bunch_transv_dist=config.bunch_transv_dist,
+        bunch_transv_mom=config.bunch_transv_mom,
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
         progress_callback=progress_callback,
