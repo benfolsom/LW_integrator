@@ -206,6 +206,12 @@ class OptimizationConfig:
     particle_charge_points: int = 1
     cavity_spacing_range: Optional[Tuple[float, float]] = None  # mm (SWITCHING_WALL)
     cavity_spacing_points: int = 1
+    macroparticle_charge_range: Optional[Tuple[float, float]] = (
+        None  # charge multiplier
+    )
+    macroparticle_charge_points: int = 1
+    macroparticle_sigma_range: Optional[Tuple[float, float]] = None  # sigma multiplier
+    macroparticle_sigma_points: int = 1
 
     # Fixed parameters
     wall_z: float = 100.0  # mm
@@ -1067,34 +1073,122 @@ class OptimizationPlugin(ttk.Frame):
         )
         row += 1
 
-        # Charge multiplier
-        self.macroparticle_charge_label = ttk.Label(frame, text="Charge multiplier:")
-        self.macroparticle_charge_label.grid(
-            row=row, column=0, sticky="w", pady=2, padx=(20, 0)
+        # Charge multiplier (sweepable)
+        # Add with indented label text
+        ttk.Label(frame, text="    Charge multiplier:").grid(
+            row=row, column=0, sticky="w", pady=2
         )
-        self.macroparticle_charge_var = tk.StringVar(value="1.0")
-        self.macroparticle_charge_entry = ttk.Entry(
-            frame, textvariable=self.macroparticle_charge_var, width=15
+        charge_var = tk.StringVar(value="1.0")
+        charge_entry = ttk.Entry(frame, textvariable=charge_var, width=15)
+        charge_entry.grid(row=row, column=1, sticky="w", pady=2, padx=5)
+
+        charge_sweep_var = tk.BooleanVar(value=False)
+        charge_sweep_cb = ttk.Checkbutton(
+            frame,
+            text="Sweep:",
+            variable=charge_sweep_var,
+            command=lambda: self._toggle_sweep_controls(
+                "macroparticle_charge_multiplier"
+            ),
         )
-        self.macroparticle_charge_entry.grid(
-            row=row, column=1, sticky="w", pady=2, padx=5
+        charge_sweep_cb.grid(row=row, column=2, sticky="w", pady=2, padx=(10, 2))
+
+        charge_range_frame = ttk.Frame(frame)
+        charge_range_frame.grid(row=row, column=3, columnspan=3, sticky="w", pady=2)
+        charge_range_frame.grid_remove()
+
+        ttk.Label(charge_range_frame, text="Min:").pack(side="left", padx=(0, 2))
+        charge_min_var = tk.StringVar(value="1.0")
+        ttk.Entry(charge_range_frame, textvariable=charge_min_var, width=10).pack(
+            side="left", padx=2
         )
+
+        ttk.Label(charge_range_frame, text="Max:").pack(side="left", padx=(5, 2))
+        charge_max_var = tk.StringVar(value="1.0")
+        ttk.Entry(charge_range_frame, textvariable=charge_max_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(charge_range_frame, text="Pts:").pack(side="left", padx=(5, 2))
+        charge_points_var = tk.StringVar(value="3")
+        ttk.Entry(charge_range_frame, textvariable=charge_points_var, width=4).pack(
+            side="left", padx=2
+        )
+
+        charge_log_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(charge_range_frame, text="Log", variable=charge_log_var).pack(
+            side="left", padx=(5, 0)
+        )
+
+        self.sweep_params["macroparticle_charge_multiplier"] = {
+            "fixed_var": charge_var,
+            "fixed_entry": charge_entry,
+            "sweep_var": charge_sweep_var,
+            "range_frame": charge_range_frame,
+            "min_var": charge_min_var,
+            "max_var": charge_max_var,
+            "points_var": charge_points_var,
+            "log_var": charge_log_var,
+        }
         row += 1
 
-        # Sigma multiplier for image charge errors
-        self.macroparticle_sigma_label = ttk.Label(
-            frame, text="Image error sigma multiplier:"
+        # Sigma multiplier for image charge errors (sweepable)
+        # Add with indented label text
+        ttk.Label(frame, text="    Image error sigma multiplier:").grid(
+            row=row, column=0, sticky="w", pady=2
         )
-        self.macroparticle_sigma_label.grid(
-            row=row, column=0, sticky="w", pady=2, padx=(20, 0)
+        sigma_var = tk.StringVar(value="1.0")
+        sigma_entry = ttk.Entry(frame, textvariable=sigma_var, width=15)
+        sigma_entry.grid(row=row, column=1, sticky="w", pady=2, padx=5)
+
+        sigma_sweep_var = tk.BooleanVar(value=False)
+        sigma_sweep_cb = ttk.Checkbutton(
+            frame,
+            text="Sweep:",
+            variable=sigma_sweep_var,
+            command=lambda: self._toggle_sweep_controls(
+                "macroparticle_sigma_multiplier"
+            ),
         )
-        self.macroparticle_sigma_var = tk.StringVar(value="1.0")
-        self.macroparticle_sigma_entry = ttk.Entry(
-            frame, textvariable=self.macroparticle_sigma_var, width=15
+        sigma_sweep_cb.grid(row=row, column=2, sticky="w", pady=2, padx=(10, 2))
+
+        sigma_range_frame = ttk.Frame(frame)
+        sigma_range_frame.grid(row=row, column=3, columnspan=3, sticky="w", pady=2)
+        sigma_range_frame.grid_remove()
+
+        ttk.Label(sigma_range_frame, text="Min:").pack(side="left", padx=(0, 2))
+        sigma_min_var = tk.StringVar(value="1.0")
+        ttk.Entry(sigma_range_frame, textvariable=sigma_min_var, width=10).pack(
+            side="left", padx=2
         )
-        self.macroparticle_sigma_entry.grid(
-            row=row, column=1, sticky="w", pady=2, padx=5
+
+        ttk.Label(sigma_range_frame, text="Max:").pack(side="left", padx=(5, 2))
+        sigma_max_var = tk.StringVar(value="1.0")
+        ttk.Entry(sigma_range_frame, textvariable=sigma_max_var, width=10).pack(
+            side="left", padx=2
         )
+
+        ttk.Label(sigma_range_frame, text="Pts:").pack(side="left", padx=(5, 2))
+        sigma_points_var = tk.StringVar(value="3")
+        ttk.Entry(sigma_range_frame, textvariable=sigma_points_var, width=4).pack(
+            side="left", padx=2
+        )
+
+        sigma_log_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sigma_range_frame, text="Log", variable=sigma_log_var).pack(
+            side="left", padx=(5, 0)
+        )
+
+        self.sweep_params["macroparticle_sigma_multiplier"] = {
+            "fixed_var": sigma_var,
+            "fixed_entry": sigma_entry,
+            "sweep_var": sigma_sweep_var,
+            "range_frame": sigma_range_frame,
+            "min_var": sigma_min_var,
+            "max_var": sigma_max_var,
+            "points_var": sigma_points_var,
+            "log_var": sigma_log_var,
+        }
         row += 1
 
         # Include momentum errors checkbox
@@ -1129,11 +1223,14 @@ class OptimizationPlugin(ttk.Frame):
 
         # Store macroparticle widgets for enable/disable
         self._macroparticle_widgets = [
-            self.macroparticle_charge_label,
-            self.macroparticle_charge_entry,
-            self.macroparticle_sigma_label,
-            self.macroparticle_sigma_entry,
             self.macroparticle_momentum_errors_check,
+            self.sweep_params["macroparticle_charge_multiplier"]["fixed_entry"],
+            self.sweep_params["macroparticle_sigma_multiplier"]["fixed_entry"],
+        ]
+        # Store sweep control references separately for conditional disabling
+        self._macroparticle_sweep_controls = [
+            self.sweep_params["macroparticle_charge_multiplier"],
+            self.sweep_params["macroparticle_sigma_multiplier"],
         ]
 
     def _build_driver_particle_section(self):
@@ -1353,9 +1450,24 @@ class OptimizationPlugin(ttk.Frame):
         for widget in self._macroparticle_widgets:
             if isinstance(widget, ttk.Entry):
                 widget.configure(state=state)
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(state=state)
             elif isinstance(widget, ttk.Label):
                 fg_color = "black" if enabled else "gray"
                 widget.configure(foreground=fg_color)
+
+        # Also handle sweep controls (checkboxes and range frames)
+        if hasattr(self, "_macroparticle_sweep_controls"):
+            for controls in self._macroparticle_sweep_controls:
+                # Disable sweep checkbox
+                if "sweep_var" in controls:
+                    # Get the checkbox widget by finding it in the parent
+                    # We need to find it from the stored frame
+                    pass  # The checkboxes are not directly stored, skip for now
+                # Disable/hide range frame if not sweeping
+                if "range_frame" in controls and not controls["sweep_var"].get():
+                    # Range frames are already hidden when not sweeping
+                    pass
 
     def _update_macroparticle_state(self):
         """Enable/disable macroparticle controls based on simulation type."""
@@ -1384,8 +1496,20 @@ class OptimizationPlugin(ttk.Frame):
             for widget in self._macroparticle_widgets:
                 if isinstance(widget, ttk.Entry):
                     widget.configure(state=widget_state)
+                elif isinstance(widget, ttk.Checkbutton):
+                    widget.configure(state=widget_state)
                 elif isinstance(widget, ttk.Label):
                     widget.configure(foreground=label_color)
+
+        # Also disable/enable macroparticle sweep parameter controls
+        if hasattr(self, "_macroparticle_sweep_controls"):
+            for controls in self._macroparticle_sweep_controls:
+                # Entry widgets in the controls are already in _macroparticle_widgets
+                # Just handle the range frame entries
+                if "range_frame" in controls:
+                    for child in controls["range_frame"].winfo_children():
+                        if isinstance(child, ttk.Entry):
+                            child.configure(state=widget_state)
         self._update_parameter_visibility()
 
     def _update_parameter_visibility(self):
@@ -1914,8 +2038,12 @@ class OptimizationPlugin(ttk.Frame):
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
             macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
-            macroparticle_charge_multiplier=float(self.macroparticle_charge_var.get()),
-            macroparticle_sigma_multiplier=float(self.macroparticle_sigma_var.get()),
+            macroparticle_charge_multiplier=float(
+                self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].get()
+            ),
+            macroparticle_sigma_multiplier=float(
+                self.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].get()
+            ),
             macroparticle_use_momentum_errors=bool(
                 self.macroparticle_momentum_errors_var.get()
             ),
@@ -1954,6 +2082,37 @@ class OptimizationPlugin(ttk.Frame):
             )
             config.transverse_spread_points = int(
                 self.sweep_params["rider_transv_dist"]["points_var"].get()
+            )
+
+        # Add macroparticle sweeps if enabled
+        if self.sweep_params["macroparticle_charge_multiplier"]["sweep_var"].get():
+            config.macroparticle_charge_range = (
+                float(
+                    self.sweep_params["macroparticle_charge_multiplier"][
+                        "min_var"
+                    ].get()
+                ),
+                float(
+                    self.sweep_params["macroparticle_charge_multiplier"][
+                        "max_var"
+                    ].get()
+                ),
+            )
+            config.macroparticle_charge_points = int(
+                self.sweep_params["macroparticle_charge_multiplier"]["points_var"].get()
+            )
+
+        if self.sweep_params["macroparticle_sigma_multiplier"]["sweep_var"].get():
+            config.macroparticle_sigma_range = (
+                float(
+                    self.sweep_params["macroparticle_sigma_multiplier"]["min_var"].get()
+                ),
+                float(
+                    self.sweep_params["macroparticle_sigma_multiplier"]["max_var"].get()
+                ),
+            )
+            config.macroparticle_sigma_points = int(
+                self.sweep_params["macroparticle_sigma_multiplier"]["points_var"].get()
             )
 
         return config
@@ -2681,6 +2840,19 @@ class OptimizationPlugin(ttk.Frame):
             loaded_config.smoothness_max_violations = data.get(
                 "smoothness_max_violations", 3
             )
+            # Macroparticle parameters
+            loaded_config.macroparticle_enabled = data.get(
+                "macroparticle_enabled", False
+            )
+            loaded_config.macroparticle_charge_multiplier = data.get(
+                "macroparticle_charge_multiplier", 1.0
+            )
+            loaded_config.macroparticle_sigma_multiplier = data.get(
+                "macroparticle_sigma_multiplier", 1.0
+            )
+            loaded_config.macroparticle_use_momentum_errors = data.get(
+                "macroparticle_use_momentum_errors", True
+            )
 
             self.config = loaded_config
 
@@ -2696,6 +2868,19 @@ class OptimizationPlugin(ttk.Frame):
             )
             self.smoothness_reject_var.set(loaded_config.smoothness_reject_on_violation)
             self._toggle_smoothness_controls()
+
+            # Update macroparticle controls
+            self.macroparticle_enabled_var.set(loaded_config.macroparticle_enabled)
+            self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].set(
+                str(loaded_config.macroparticle_charge_multiplier)
+            )
+            self.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].set(
+                str(loaded_config.macroparticle_sigma_multiplier)
+            )
+            self.macroparticle_momentum_errors_var.set(
+                loaded_config.macroparticle_use_momentum_errors
+            )
+            self._toggle_macroparticle_controls()
 
             # Load sweep parameter states dynamically
             sweep_state = data.get("sweep_parameters", {})
@@ -2821,6 +3006,11 @@ class OptimizationPlugin(ttk.Frame):
                 "smoothness_trend_threshold": config.smoothness_trend_threshold,
                 "smoothness_reject_on_violation": config.smoothness_reject_on_violation,
                 "smoothness_max_violations": config.smoothness_max_violations,
+                # Macroparticle parameters
+                "macroparticle_enabled": config.macroparticle_enabled,
+                "macroparticle_charge_multiplier": config.macroparticle_charge_multiplier,
+                "macroparticle_sigma_multiplier": config.macroparticle_sigma_multiplier,
+                "macroparticle_use_momentum_errors": config.macroparticle_use_momentum_errors,
             }
 
             # Dynamically save all sweep parameter states
@@ -4733,6 +4923,16 @@ class OptimizationPlugin(ttk.Frame):
                     "rider_transv_dist", self.config.transv_dist
                 )
 
+                # Get macroparticle parameters (either from sweep or fixed values)
+                macroparticle_charge_multiplier = params_dict.get(
+                    "macroparticle_charge_multiplier",
+                    self.config.macroparticle_charge_multiplier,
+                )
+                macroparticle_sigma_multiplier = params_dict.get(
+                    "macroparticle_sigma_multiplier",
+                    self.config.macroparticle_sigma_multiplier,
+                )
+
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
                 if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
@@ -4849,6 +5049,8 @@ class OptimizationPlugin(ttk.Frame):
                                     rider_charge_sign=rider_charge_sign,
                                     rider_pcount=int(rider_pcount),
                                     rider_transv_mom=rider_transv_mom,
+                                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
                                     driver_params=driver_params_dict
                                     if self.config.simulation_type
                                     == SimulationType.BUNCH_TO_BUNCH
@@ -4894,6 +5096,8 @@ class OptimizationPlugin(ttk.Frame):
                             rider_charge_sign=rider_charge_sign,
                             rider_pcount=int(rider_pcount),
                             rider_transv_mom=rider_transv_mom,
+                            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
                             driver_params=driver_params_dict
                             if self.config.simulation_type
                             == SimulationType.BUNCH_TO_BUNCH
@@ -4959,6 +5163,8 @@ class OptimizationPlugin(ttk.Frame):
                                     "rider_pcount": int(rider_pcount),
                                     "rider_transv_mom": rider_transv_mom,
                                     "rider_transv_dist": rider_transv_dist,
+                                    "macroparticle_charge_multiplier": macroparticle_charge_multiplier,
+                                    "macroparticle_sigma_multiplier": macroparticle_sigma_multiplier,
                                     "simulation_type": self.config.simulation_type.name,
                                 },
                                 "metrics": result.get("metrics", {}),
@@ -5135,6 +5341,8 @@ class OptimizationPlugin(ttk.Frame):
         rider_charge_sign: float = None,
         rider_pcount: int = None,
         rider_transv_mom: float = None,
+        macroparticle_charge_multiplier: float = None,
+        macroparticle_sigma_multiplier: float = None,
         driver_params: Dict[str, Any] = None,
         run_num: int = 0,
     ) -> Dict[str, Any]:
@@ -5153,6 +5361,16 @@ class OptimizationPlugin(ttk.Frame):
         )
         rider_transv_mom = (
             rider_transv_mom if rider_transv_mom is not None else self.config.transv_mom
+        )
+        macroparticle_charge_multiplier = (
+            macroparticle_charge_multiplier
+            if macroparticle_charge_multiplier is not None
+            else self.config.macroparticle_charge_multiplier
+        )
+        macroparticle_sigma_multiplier = (
+            macroparticle_sigma_multiplier
+            if macroparticle_sigma_multiplier is not None
+            else self.config.macroparticle_sigma_multiplier
         )
 
         # Build rider params
@@ -5218,8 +5436,8 @@ class OptimizationPlugin(ttk.Frame):
             transverse_display=False,
             transverse_save=True,  # Always return trajectory data for metrics calculation
             macroparticle_enabled=self.config.macroparticle_enabled,
-            macroparticle_charge_multiplier=self.config.macroparticle_charge_multiplier,
-            macroparticle_sigma_multiplier=self.config.macroparticle_sigma_multiplier,
+            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
             macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
             overlay_display=False,
             overlay_save=False,

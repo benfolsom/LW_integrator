@@ -3479,6 +3479,8 @@ class IntegratorGUI:
             for widget in self._macroparticle_widgets:
                 if isinstance(widget, ttk.Entry):
                     widget.configure(state=state)
+                elif isinstance(widget, ttk.Checkbutton):
+                    widget.configure(state=state)
                 elif isinstance(widget, ttk.Label):
                     fg_color = "black" if enabled else "gray"
                     widget.configure(foreground=fg_color)
@@ -3509,6 +3511,8 @@ class IntegratorGUI:
         if hasattr(self, "_macroparticle_widgets"):
             for widget in self._macroparticle_widgets:
                 if isinstance(widget, ttk.Entry):
+                    widget.configure(state=widget_state)
+                elif isinstance(widget, ttk.Checkbutton):
                     widget.configure(state=widget_state)
                 elif isinstance(widget, ttk.Label):
                     widget.configure(foreground=label_color)
