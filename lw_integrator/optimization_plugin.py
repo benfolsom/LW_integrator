@@ -4509,6 +4509,7 @@ class OptimizationPlugin(ttk.Frame):
                     maxiter=self.config.optimization_maxiter,
                     popsize=self.config.optimization_population_size,
                     objective_function=evaluate_params,
+                    progress_callback=log_convergence_progress,
                 )
 
             elif method == "nelder_mead":
@@ -4521,6 +4522,7 @@ class OptimizationPlugin(ttk.Frame):
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
                     objective_function=evaluate_params,
+                    progress_callback=log_convergence_progress,
                 )
 
             elif method == "multi_start":
@@ -4533,6 +4535,7 @@ class OptimizationPlugin(ttk.Frame):
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
                     objective_function=evaluate_params,
+                    progress_callback=log_convergence_progress,
                 )
 
             elif method == "adaptive_grid":
@@ -4545,6 +4548,7 @@ class OptimizationPlugin(ttk.Frame):
                     initial_points_per_dim=5,
                     refinement_levels=2,
                     objective_function=evaluate_params,
+                    progress_callback=log_convergence_progress,
                 )
                 # Convert to OptimizeResult format
                 from scipy.optimize import OptimizeResult

@@ -191,6 +191,7 @@ def optimize_parameters(
     maximize: bool = True,
     maxiter: int = 100,
     objective_function: Optional[Callable] = None,
+    progress_callback: Optional[Callable] = None,
     **optimizer_kwargs,
 ) -> OptimizeResult:
     """Optimize parameters to maximize/minimize a metric.
@@ -215,6 +216,10 @@ def optimize_parameters(
     objective_function : Callable, optional
         Custom objective function that takes parameter array and returns scalar
         to minimize. If None, uses default ObjectiveFunction class.
+    progress_callback : Callable, optional
+        Callback function called during optimization progress.
+        For differential_evolution: called with (xk, convergence) after each generation.
+        For other methods: called with iteration info when available.
     **optimizer_kwargs
         Additional keyword arguments passed to optimizer
 
@@ -244,10 +249,32 @@ def optimize_parameters(
 
     # Run optimization
     if method == "differential_evolution":
+        # Wrap progress callback for scipy's differential_evolution format
+        scipy_callback = None
+        if progress_callback:
+            iteration_counter = [0]
+
+            def scipy_callback(xk, convergence=0.0):
+                iteration_counter[0] += 1
+                best_value = objective(xk)
+                # Convert back to maximization if needed
+                if maximize:
+                    best_value = -best_value
+                progress_callback(
+                    generation=iteration_counter[0],
+                    best_value=best_value,
+                    improvement=convergence,
+                    tolerance=0.01,  # scipy's default
+                    patience_remaining=maxiter - iteration_counter[0],
+                    converged=False,
+                )
+                return False  # Don't stop early
+
         result = differential_evolution(
             objective,
             bounds=parameter_bounds,
             maxiter=maxiter,
+            callback=scipy_callback,
             **optimizer_kwargs,
         )
     elif method in ["nelder_mead", "powell", "cobyla", "slsqp"]:
@@ -289,6 +316,7 @@ def multi_start_optimize(
     maxiter: int = 100,
     method: str = "nelder_mead",
     objective_function: Optional[Callable] = None,
+    progress_callback: Optional[Callable] = None,
     **optimizer_kwargs,
 ) -> OptimizeResult:
     """Run multiple optimization attempts with random starting points.
@@ -316,7 +344,12 @@ def multi_start_optimize(
     objective_function : Callable, optional
         Custom objective function that takes parameter array and returns scalar
         to minimize. If None, uses default ObjectiveFunction class.
+    progress_callback : Callable, optional
+        Callback function called after each refinement level completes.
+    progress_callback : Callable, optional
+        Callback function called after each start completes.
     **optimizer_kwargs
+        Additional keyword arguments passed to the local optimizer
         Additional kwargs for optimizer
 
     Returns
@@ -345,6 +378,7 @@ def multi_start_optimize(
             method=method,
             maximize=maximize,
             maxiter=maxiter,
+            progress_callback=progress_callback,
             objective_function=objective_function,
             x0=x0,
             **optimizer_kwargs,
@@ -391,6 +425,7 @@ def adaptive_grid_search(
     refinement_levels: int = 2,
     refinement_factor: float = 0.5,
     objective_function: Optional[Callable] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
     """Adaptive grid search that refines around promising regions.
 
@@ -484,6 +519,18 @@ def adaptive_grid_search(
             }
         )
 
+        logger.info(f"Level {level} complete. Best: {best_value_level:.6f}")
+
+        # Call progress callback if provided
+        if progress_callback:
+            progress_callback(
+                generation=level + 1,
+                best_value=best_value_level,
+                improvement=0.0,  # Grid search doesn't have improvement metric
+                tolerance=0.0,
+                patience_remaining=refinement_levels - level,
+                converged=(level == refinement_levels),
+            )
         logger.info(
             f"Level {level} best: {best_value_level:.6f} at {best_params_level}"
         )
