@@ -528,8 +528,8 @@ def calculate_auto_steps(
     # Calculate steps needed (add 10% margin for safety)
     steps = int(np.ceil(total_distance / distance_per_step * 1.1))
 
-    # Ensure minimum reasonable value (5% of target steps, with absolute floor of 20)
-    min_steps = max(20, int(target_steps * 0.05))
+    # Ensure minimum reasonable value (absolute floor of 20)
+    min_steps = 20
     return max(steps, min_steps)
 
 
@@ -2854,6 +2854,12 @@ class OptimizationPlugin(ttk.Frame):
                 "macroparticle_use_momentum_errors", True
             )
 
+            # Load timestep strategy and related parameters
+            loaded_config.timestep_strategy = data.get("timestep_strategy", "fixed")
+            loaded_config.target_distance_mm = data.get("target_distance_mm", 100.0)
+            loaded_config.timestep = data.get("timestep", 3e-7)
+            loaded_config.energy_scale_exponent = data.get("energy_scale_exponent", 1.0)
+
             self.config = loaded_config
 
             # Update UI controls
@@ -3011,6 +3017,11 @@ class OptimizationPlugin(ttk.Frame):
                 "macroparticle_charge_multiplier": config.macroparticle_charge_multiplier,
                 "macroparticle_sigma_multiplier": config.macroparticle_sigma_multiplier,
                 "macroparticle_use_momentum_errors": config.macroparticle_use_momentum_errors,
+                # Timestep strategy parameters
+                "timestep_strategy": config.timestep_strategy,
+                "target_distance_mm": config.target_distance_mm,
+                "timestep": config.timestep,
+                "energy_scale_exponent": config.energy_scale_exponent,
             }
 
             # Dynamically save all sweep parameter states
@@ -4173,6 +4184,30 @@ class OptimizationPlugin(ttk.Frame):
                 param_names.append("timestep")
                 param_bounds.append(self.config.timestep_range)
 
+            # Rider transverse distance (spread) - if enabled as sweep parameter
+            if (
+                self.config.transverse_spread_range is not None
+                and self.config.transverse_spread_points > 1
+            ):
+                param_names.append("rider_transv_dist")
+                param_bounds.append(self.config.transverse_spread_range)
+
+            # Macroparticle charge multiplier - if enabled as sweep parameter
+            if (
+                self.config.macroparticle_charge_range is not None
+                and self.config.macroparticle_charge_points > 1
+            ):
+                param_names.append("macroparticle_charge_multiplier")
+                param_bounds.append(self.config.macroparticle_charge_range)
+
+            # Macroparticle sigma multiplier - if enabled as sweep parameter
+            if (
+                self.config.macroparticle_sigma_range is not None
+                and self.config.macroparticle_sigma_points > 1
+            ):
+                param_names.append("macroparticle_sigma_multiplier")
+                param_bounds.append(self.config.macroparticle_sigma_range)
+
             if len(param_names) == 0:
                 self._log_result(
                     "[ERROR] No parameters to optimize! Enable at least 2 points for aperture or energy."
@@ -4259,6 +4294,13 @@ class OptimizationPlugin(ttk.Frame):
                     )
                     timestep = self.config.timestep
                     steps = self.config.steps
+                    rider_transv_dist = self.config.transv_dist  # default
+                    macroparticle_charge_mult = (
+                        self.config.macroparticle_charge_multiplier
+                    )  # default
+                    macroparticle_sigma_mult = (
+                        self.config.macroparticle_sigma_multiplier
+                    )  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -4271,6 +4313,12 @@ class OptimizationPlugin(ttk.Frame):
                             offset_frac = x[i]
                         elif param_name == "timestep":
                             timestep = x[i]
+                        elif param_name == "rider_transv_dist":
+                            rider_transv_dist = x[i]
+                        elif param_name == "macroparticle_charge_multiplier":
+                            macroparticle_charge_mult = x[i]
+                        elif param_name == "macroparticle_sigma_multiplier":
+                            macroparticle_sigma_mult = x[i]
 
                     # Calculate transverse offset in mm from fraction
                     transv_offset = offset_frac * aperture
@@ -4298,6 +4346,9 @@ class OptimizationPlugin(ttk.Frame):
                                     rider_charge_sign=self.config.charge_sign,
                                     rider_pcount=int(self.config.pcount),
                                     rider_transv_mom=self.config.transv_mom,
+                                    rider_transv_dist=rider_transv_dist,
+                                    macroparticle_charge_multiplier=macroparticle_charge_mult,
+                                    macroparticle_sigma_multiplier=macroparticle_sigma_mult,
                                     driver_params=None,
                                     run_num=eval_num,
                                 )
@@ -4332,6 +4383,9 @@ class OptimizationPlugin(ttk.Frame):
                             rider_charge_sign=self.config.charge_sign,
                             rider_pcount=int(self.config.pcount),
                             rider_transv_mom=self.config.transv_mom,
+                            rider_transv_dist=rider_transv_dist,
+                            macroparticle_charge_multiplier=macroparticle_charge_mult,
+                            macroparticle_sigma_multiplier=macroparticle_sigma_mult,
                             driver_params=None,
                             run_num=eval_num,
                         )
@@ -4933,6 +4987,33 @@ class OptimizationPlugin(ttk.Frame):
                     self.config.macroparticle_sigma_multiplier,
                 )
 
+                # Log ALL swept parameter values for this run
+                self._log_result(
+                    f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:"
+                )
+                self._log_result(f"    aperture: {aperture:.4e} mm")
+                self._log_result(f"    energy: {energy:.4f} GeV")
+                self._log_result(f"    start_z: {start_z:.4f} mm")
+                self._log_result(f"    transv_offset_frac: {offset_frac:.4f}")
+                self._log_result(f"    rider_m_particle: {rider_m_particle:.4e} amu")
+                self._log_result(f"    rider_charge_sign: {rider_charge_sign:.1f}")
+                self._log_result(f"    rider_pcount: {rider_pcount}")
+                self._log_result(
+                    f"    rider_transv_mom: {rider_transv_mom:.4e} amu·mm/ns"
+                )
+                self._log_result(f"    rider_transv_dist: {rider_transv_dist:.4e} mm")
+                if self.config.macroparticle_enabled:
+                    self._log_result(f"    macroparticle_enabled: True")
+                    self._log_result(
+                        f"    macroparticle_charge_multiplier: {macroparticle_charge_multiplier:.4f}"
+                    )
+                    self._log_result(
+                        f"    macroparticle_sigma_multiplier: {macroparticle_sigma_multiplier:.4f}"
+                    )
+                    self._log_result(
+                        f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
+                    )
+
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
                 if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
@@ -4960,27 +5041,42 @@ class OptimizationPlugin(ttk.Frame):
                     )
                     steps = self.config.steps
 
-                    # Log diagnostic info for first run or every 50th run
-                    if run_num == 1 or run_num % 50 == 0:
-                        # Calculate gamma for diagnostics
-                        AMU_TO_MEV = 931.494
-                        rest_energy_mev = rider_m_particle * AMU_TO_MEV
-                        gamma = (energy * 1e3) / rest_energy_mev
-                        beta = (
-                            np.sqrt(1.0 - 1.0 / (gamma * gamma))
-                            if gamma > 1.0
-                            else 0.999
-                        )
-                        distance_per_step = beta * gamma * C_MMNS * timestep
-                        expected_distance = distance_per_step * steps
+                    # Calculate gamma for diagnostics (ALWAYS log for debugging)
+                    AMU_TO_MEV = 931.494
+                    rest_energy_mev = rider_m_particle * AMU_TO_MEV
+                    gamma = (energy * 1e3) / rest_energy_mev
+                    beta = (
+                        np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
+                    )
+                    distance_per_step = beta * gamma * C_MMNS * timestep
+                    expected_distance = distance_per_step * steps
 
+                    self._log_result(
+                        f"  [TIMESTEP] Run {run_num} strategy '{self.config.timestep_strategy}':"
+                    )
+                    self._log_result(
+                        f"    E={energy:.4f} GeV, m={rider_m_particle:.4e} amu"
+                    )
+                    self._log_result(f"    gamma={gamma:.2f}, beta={beta:.8f}")
+                    self._log_result(
+                        f"    timestep h={timestep:.4e} ns (proper time = dt/gamma)"
+                    )
+                    self._log_result(f"    steps={steps}")
+                    self._log_result(
+                        f"    distance_per_step = β·γ·c·h = {distance_per_step:.4f} mm"
+                    )
+                    self._log_result(
+                        f"    expected_total_distance = {expected_distance:.2f} mm"
+                    )
+                    self._log_result(
+                        f"    wall_z={self.config.wall_z:.2f} mm, start_z={start_z:.2f} mm"
+                    )
+                    self._log_result(
+                        f"    distance_to_wall = {abs(self.config.wall_z - start_z):.2f} mm"
+                    )
+                    if self.config.timestep_strategy == "auto_distance":
                         self._log_result(
-                            f"  Run {run_num} timestep strategy '{self.config.timestep_strategy}': "
-                            f"E={energy:.1f}GeV, gamma={gamma:.1f}, beta={beta:.6f}"
-                        )
-                        self._log_result(
-                            f"    → timestep={timestep:.2e}ns, steps={steps}, "
-                            f"dist/step={distance_per_step:.3f}mm, expected_travel={expected_distance:.1f}mm"
+                            f"    target_distance={self.config.target_distance_mm:.2f} mm"
                         )
                 elif self.config.auto_steps:
                     # Legacy auto_steps mode (deprecated, but keep for compatibility)
@@ -5012,13 +5108,16 @@ class OptimizationPlugin(ttk.Frame):
                 # Enforce minimum of 5% of requested steps (absolute floor of 20)
                 min_steps = max(20, int(self.config.steps * 0.05))
                 if steps < min_steps:
+                    self._log_result(
+                        f"  [WARNING] Steps adjusted from {steps} to {min_steps} (minimum floor)"
+                    )
                     steps = min_steps
 
-                # Log run start with full parameters for debugging
+                # Log run start summary
                 self._log_result(
-                    f"  [DEBUG] Starting Run {run_num}/{total_runs}: "
-                    f"a={aperture:.2e}mm, E={energy:.1f}GeV, z={start_z:.1f}mm, "
-                    f"timestep={timestep:.2e}ns, steps={steps}"
+                    f"  [START] Run {run_num}/{total_runs}: "
+                    f"a={aperture:.4e}mm, E={energy:.4f}GeV, z={start_z:.2f}mm, "
+                    f"h={timestep:.4e}ns, N={steps}"
                 )
 
                 # Run integration with timeout
@@ -5128,23 +5227,32 @@ class OptimizationPlugin(ttk.Frame):
                                 z_end = float(np.asarray(z_vals[-1]).flat[0])
                                 actual_distance = abs(z_end - z_start)
 
-                        # Log individual run result (every run or every 10th for large sweeps)
-                        if (
-                            total_runs <= 20
-                            or run_num % 10 == 1
-                            or run_num == total_runs
-                        ):
-                            delta_e = result.get("metrics", {}).get(
-                                "rider_delta_e_mev", 0.0
+                        # Always log distance traveled for debugging
+                        delta_e = result.get("metrics", {}).get(
+                            "rider_delta_e_mev", 0.0
+                        )
+                        delta_gamma = result.get("metrics", {}).get(
+                            "rider_delta_gamma", 0.0
+                        )
+                        gamma_initial = result.get("metrics", {}).get(
+                            "rider_gamma_initial", 0.0
+                        )
+                        gamma_final = result.get("metrics", {}).get(
+                            "rider_gamma_final", 0.0
+                        )
+
+                        self._log_result(f"  [RESULT] Run {run_num}/{total_runs}:")
+                        self._log_result(
+                            f"    Distance: expected={expected_distance:.2f}mm, actual={actual_distance:.2f}mm"
+                        )
+                        self._log_result(
+                            f"    Gamma: initial={gamma_initial:.6f}, final={gamma_final:.6f}, delta={delta_gamma:.6e}"
+                        )
+                        self._log_result(f"    Energy: ΔE={delta_e:.6f}MeV")
+                        if actual_distance < 0.1:
+                            self._log_result(
+                                f"  [WARNING] Particle barely moved! Check timestep calculation."
                             )
-                            log_msg = (
-                                f"  Run {run_num}/{total_runs}: "
-                                f"a={aperture:.2e}mm, E={energy:.1f}GeV, z={start_z:.1f}mm → "
-                                f"ΔE={delta_e:.6f}MeV"
-                            )
-                            if actual_distance > 0:
-                                log_msg += f", traveled={actual_distance:.1f}mm"
-                            self._log_result(log_msg)
 
                             # Store result with all parameters
                             run_data = {
@@ -5170,20 +5278,20 @@ class OptimizationPlugin(ttk.Frame):
                                 "metrics": result.get("metrics", {}),
                             }
 
-                            # Add trajectory if requested
-                            if self.config.save_trajectories and "trajectory" in result:
-                                run_data["trajectory"] = result["trajectory"]
+                        # Add trajectory if requested
+                        if self.config.save_trajectories and "trajectory" in result:
+                            run_data["trajectory"] = result["trajectory"]
 
-                            # Add driver params to stored results if applicable
-                            if driver_params_dict is not None:
-                                run_data["parameters"].update(
-                                    {
-                                        f"driver_{k}": v
-                                        for k, v in driver_params_dict.items()
-                                    }
-                                )
+                        # Add driver params to stored results if applicable
+                        if driver_params_dict is not None:
+                            run_data["parameters"].update(
+                                {
+                                    f"driver_{k}": v
+                                    for k, v in driver_params_dict.items()
+                                }
+                            )
 
-                            all_results.append(run_data)
+                        all_results.append(run_data)
 
                 except Exception as e:
                     import traceback
@@ -5341,6 +5449,7 @@ class OptimizationPlugin(ttk.Frame):
         rider_charge_sign: float = None,
         rider_pcount: int = None,
         rider_transv_mom: float = None,
+        rider_transv_dist: float = None,
         macroparticle_charge_multiplier: float = None,
         macroparticle_sigma_multiplier: float = None,
         driver_params: Dict[str, Any] = None,
@@ -5362,6 +5471,11 @@ class OptimizationPlugin(ttk.Frame):
         rider_transv_mom = (
             rider_transv_mom if rider_transv_mom is not None else self.config.transv_mom
         )
+        rider_transv_dist = (
+            rider_transv_dist
+            if rider_transv_dist is not None
+            else self.config.transv_dist
+        )
         macroparticle_charge_multiplier = (
             macroparticle_charge_multiplier
             if macroparticle_charge_multiplier is not None
@@ -5379,7 +5493,7 @@ class OptimizationPlugin(ttk.Frame):
         rider_params = {
             "starting_distance": start_z,
             "transv_mom": rider_transv_mom,
-            "transv_dist": self.config.transv_dist,  # Spread from config (half-width)
+            "transv_dist": rider_transv_dist,  # Use parameter, not config
             "transv_offset_x": transv_offset,  # Radial offset as x-offset
             "transv_offset_y": 0.0,  # Keep on x-axis (radial offset in x-direction)
             "m_particle": rider_m_particle,
