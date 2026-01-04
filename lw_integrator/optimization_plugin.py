@@ -1987,6 +1987,10 @@ class OptimizationPlugin(ttk.Frame):
 
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
+        # Preserve stability and timestep settings from existing config if available
+        # (these are set via stability dialog, not UI fields)
+        existing_config = getattr(self, "config", None)
+
         config_obj = OptimizationConfig(
             simulation_type=SimulationType[self.sim_type_var.get()],
             mode=self.mode_var.get(),
@@ -2062,6 +2066,68 @@ class OptimizationPlugin(ttk.Frame):
                 self.smoothness_oscillation_var.get()
             ),
             smoothness_reject_on_violation=self.smoothness_reject_var.get(),
+            # Sweep robustness options
+            per_run_timeout=float(self.per_run_timeout_var.get()),
+            skip_failed_runs=self.skip_failed_runs_var.get(),
+            # Stability options - preserve from existing config if available
+            self_consistency_enabled=existing_config.self_consistency_enabled
+            if existing_config
+            else True,
+            self_consistency_tolerance=existing_config.self_consistency_tolerance
+            if existing_config
+            else 1e-4,
+            self_consistency_max_iterations=existing_config.self_consistency_max_iterations
+            if existing_config
+            else 5,
+            self_consistency_verbosity=existing_config.self_consistency_verbosity
+            if existing_config
+            else 0,
+            energy_monitor_halt_on_jump=existing_config.energy_monitor_halt_on_jump
+            if existing_config
+            else False,
+            adaptive_timestep_enabled=existing_config.adaptive_timestep_enabled
+            if existing_config
+            else True,
+            adaptive_timestep_threshold=existing_config.adaptive_timestep_threshold
+            if existing_config
+            else 0.10,
+            adaptive_timestep_reduction_factor=existing_config.adaptive_timestep_reduction_factor
+            if existing_config
+            else 10,
+            adaptive_timestep_max_attempts=existing_config.adaptive_timestep_max_attempts
+            if existing_config
+            else 5,
+            adaptive_timestep_min_factor=existing_config.adaptive_timestep_min_factor
+            if existing_config
+            else 1e-4,
+            adaptive_timestep_cooldown_steps=existing_config.adaptive_timestep_cooldown_steps
+            if existing_config
+            else 10,
+            adaptive_timestep_probe_threshold=existing_config.adaptive_timestep_probe_threshold
+            if existing_config
+            else 0.01,
+            adaptive_timestep_max_probe_steps=existing_config.adaptive_timestep_max_probe_steps
+            if existing_config
+            else 3,
+            adaptive_timestep_debug=existing_config.adaptive_timestep_debug
+            if existing_config
+            else False,
+            smoothness_trend_threshold=existing_config.smoothness_trend_threshold
+            if existing_config
+            else 0.30,
+            smoothness_max_violations=existing_config.smoothness_max_violations
+            if existing_config
+            else 3,
+            # Timestep strategy - preserve from existing config if available
+            timestep_strategy=existing_config.timestep_strategy
+            if existing_config
+            else "fixed",
+            target_distance_mm=existing_config.target_distance_mm
+            if existing_config
+            else 100.0,
+            energy_scale_exponent=existing_config.energy_scale_exponent
+            if existing_config
+            else 1.0,
         )
 
         # Dynamically add sweepable parameter ranges after config creation
