@@ -5665,7 +5665,7 @@ class OptimizationPlugin(ttk.Frame):
         )
 
         # Create progress callback to track integration
-        def progress_callback(current: int, total: int):
+        def progress_callback(current: int, total: int, run_id=run_num):
             """Log progress periodically."""
             # Log every 10% or every 100 steps for short runs
             if total <= 1000:
@@ -5675,7 +5675,7 @@ class OptimizationPlugin(ttk.Frame):
 
             if current % log_interval == 0 or current == total:
                 self._log_result(
-                    f"    [PROGRESS] Run {run_num}: step {current}/{total} "
+                    f"    [PROGRESS] Run {run_id}: step {current}/{total} "
                     f"({100 * current // total}%)"
                 )
 
