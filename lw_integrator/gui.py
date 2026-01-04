@@ -57,7 +57,13 @@ from .testbed_runner import (
 )
 
 DISPLAY_MAX_WIDTH = 1600  # pixels
+
 DISPLAY_MAX_HEIGHT = 900  # pixels
+CONTENT_PANEL_WEIGHT = 3  # ttk.Panedwindow weight for the tabbed content area
+CONFIG_PANEL_WEIGHT = 2  # ttk.Panedwindow weight for the configuration panel
+CONTENT_PANEL_MIN_WIDTH = 800  # pixels; ensures input fields in tabs remain accessible
+CONFIG_PANEL_MIN_WIDTH = 450  # pixels; ensures right-side controls have breathing room
+CONFIG_PANEL_CANVAS_PADDING = 24  # pixels; allows scrollable content to render fully
 
 
 def _show_error_dialog(parent: tk.Tk | tk.Toplevel, title: str, message: str) -> None:
@@ -230,7 +236,10 @@ class _ScrollableNotebookPage:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas_configure(self, event: Any) -> None:
-        self.canvas.itemconfigure(self._window_id, width=event.width)
+        # Ensure minimum width to keep input fields accessible
+        min_width = CONTENT_PANEL_MIN_WIDTH - 50  # Account for scrollbar and padding
+        new_width = max(event.width, min_width)
+        self.canvas.itemconfigure(self._window_id, width=new_width)
 
     def _bind_mousewheel(self, widget: tk.Widget) -> None:
         widget_id = widget.winfo_id()
@@ -296,7 +305,9 @@ class IntegratorGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("LW Integrator Testbed")
-        self.root.geometry("1470x1000")
+        self.root.geometry("1800x1000")
+        # Set minimum window size to prevent panels from becoming inaccessible
+        self.root.minsize(CONTENT_PANEL_MIN_WIDTH + CONFIG_PANEL_MIN_WIDTH + 50, 600)
 
         self.options = SimulationOptions()
         self._figure_windows: List[_FigureHandle] = []
@@ -325,6 +336,21 @@ class IntegratorGUI:
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+
+        # Set initial sash position for main horizontal pane (60/40 split)
+        self.root.update_idletasks()  # Ensure window is laid out
+        total_width = self.root.winfo_width()
+        # Position sash to give config panel ~40% (remaining 60% goes to content)
+        sash_position = int(total_width * 0.6)
+        if hasattr(self, "_main_horizontal_paned"):
+            self._main_horizontal_paned.sash_place(0, sash_position, 0)
+            # Bind to enforce minimum panel sizes when sash is dragged
+            self._main_horizontal_paned.bind(
+                "<ButtonRelease-1>", self._enforce_panel_minimums
+            )
+            self._main_horizontal_paned.bind(
+                "<B1-Motion>", self._enforce_panel_minimums
+            )
 
         # Set up keyboard fix for non-US layouts (always enabled)
         self._setup_keyboard_fix()
@@ -551,6 +577,28 @@ class IntegratorGUI:
             self.driver_param_vars[name].trace_add(
                 "write", lambda *_: self._refresh_initial_summary()
             )
+
+    def _enforce_panel_minimums(self, event=None):
+        """Enforce minimum panel sizes when sash is moved."""
+        if not hasattr(self, "_main_horizontal_paned"):
+            return
+
+        try:
+            # Get current sash position
+            sash_pos = self._main_horizontal_paned.sash_coord(0)[0]
+            total_width = self._main_horizontal_paned.winfo_width()
+
+            # Calculate minimum and maximum allowed positions
+            min_left = CONTENT_PANEL_MIN_WIDTH
+            max_left = total_width - CONFIG_PANEL_MIN_WIDTH
+
+            # Enforce limits
+            if sash_pos < min_left:
+                self._main_horizontal_paned.sash_place(0, min_left, 0)
+            elif sash_pos > max_left:
+                self._main_horizontal_paned.sash_place(0, max_left, 0)
+        except:
+            pass  # Ignore errors during layout
 
     def _create_scrollable_tab(
         self, notebook: ttk.Notebook, title: str, *, padding: int = 12
@@ -863,14 +911,20 @@ class IntegratorGUI:
         sim_type.grid(row=0, column=1, sticky="ew")
 
         # Create main horizontal split: left (tabs) and right (config/control panel)
-        main_horizontal_paned = ttk.Panedwindow(self.root, orient="horizontal")
-        main_horizontal_paned.grid(row=1, column=0, sticky="nsew")
+        self._main_horizontal_paned = tk.PanedWindow(
+            self.root,
+            orient="horizontal",
+            sashrelief="raised",
+            sashwidth=8,
+            bg="gray70",
+        )
+        self._main_horizontal_paned.grid(row=1, column=0, sticky="nsew")
 
         # Left side container for all tabs
-        left_container = ttk.Frame(main_horizontal_paned)
+        left_container = ttk.Frame(self._main_horizontal_paned)
         left_container.rowconfigure(0, weight=1)
         left_container.columnconfigure(0, weight=1)
-        main_horizontal_paned.add(left_container, weight=3)
+        self._main_horizontal_paned.add(left_container, minsize=CONTENT_PANEL_MIN_WIDTH)
 
         # Vertical split on left side for tabs and logs
         left_vertical_paned = ttk.Panedwindow(left_container, orient="vertical")
@@ -890,8 +944,8 @@ class IntegratorGUI:
         particle_frame = self._create_scrollable_tab(
             self.notebook, "Particles", padding=12
         )
-        particle_frame.columnconfigure(1, weight=1)
-        particle_frame.columnconfigure(3, weight=1)
+        particle_frame.columnconfigure(1, weight=1, minsize=150)
+        particle_frame.columnconfigure(3, weight=1, minsize=150)
 
         ttk.Label(particle_frame, text="Rider species preset:").grid(
             row=0, column=0, sticky="w"
@@ -1979,10 +2033,10 @@ class IntegratorGUI:
         self.notebook.add(self.optimization_tab, text="Sweep/Optim")
 
         # Right side: Persistent Config/Control Panel -------------------
-        right_container = ttk.Frame(main_horizontal_paned)
+        right_container = ttk.Frame(self._main_horizontal_paned)
         right_container.columnconfigure(0, weight=1)
         right_container.rowconfigure(0, weight=0)
-        main_horizontal_paned.add(right_container, weight=1)
+        self._main_horizontal_paned.add(right_container, minsize=CONFIG_PANEL_MIN_WIDTH)
 
         self._build_config_panel(right_container)
 
@@ -2079,24 +2133,34 @@ class IntegratorGUI:
         panel.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Create scrollable container for config sections
-        canvas = tk.Canvas(panel, highlightthickness=0)
+        canvas = tk.Canvas(
+            panel,
+            highlightthickness=0,
+        )
         scrollbar = ttk.Scrollbar(panel, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+        scrollable_frame = ttk.Frame(canvas, width=CONFIG_PANEL_MIN_WIDTH)
 
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
         )
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Make scrollable_frame expand to fill canvas width, but respect minimum
+        def _on_canvas_resize(event):
+            new_width = max(event.width, CONFIG_PANEL_MIN_WIDTH)
+            canvas.itemconfig(window_id, width=new_width)
+
+        canvas.bind("<Configure>", _on_canvas_resize)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
         # === RUN CONFIG SECTION ===
         run_config_frame = ttk.LabelFrame(
-            scrollable_frame, text="Single Run Configuration", padding=8
+            scrollable_frame, text="Single Run Configuration", padding=4
         )
         run_config_frame.pack(fill="x", pady=(0, 10))
 
@@ -2187,7 +2251,7 @@ class IntegratorGUI:
 
         # === SWEEP CONFIG SECTION ===
         sweep_config_frame = ttk.LabelFrame(
-            scrollable_frame, text="Sweep Configuration", padding=8
+            scrollable_frame, text="Sweep Configuration", padding=4
         )
         sweep_config_frame.pack(fill="x", pady=(0, 10))
 
@@ -2299,7 +2363,7 @@ class IntegratorGUI:
         ).pack(fill="x")
 
         # Run mode selector
-        mode_frame = ttk.LabelFrame(panel, text="Run Mode", padding=8)
+        mode_frame = ttk.LabelFrame(panel, text="Run Mode", padding=4)
         mode_frame.pack(fill="x", pady=(0, 10))
 
         self.run_mode_var = tk.StringVar(value="single")
@@ -2321,7 +2385,7 @@ class IntegratorGUI:
         ).pack(anchor="w", pady=2)
 
         # Control buttons
-        control_frame = ttk.LabelFrame(panel, text="Controls", padding=8)
+        control_frame = ttk.LabelFrame(panel, text="Controls", padding=4)
         control_frame.pack(fill="x", pady=(0, 10))
 
         self._run_button = ttk.Button(
@@ -2341,7 +2405,7 @@ class IntegratorGUI:
         self._cancel_button.pack(fill="x", pady=2)
 
         # Status display
-        status_frame = ttk.LabelFrame(panel, text="Status", padding=8)
+        status_frame = ttk.LabelFrame(panel, text="Status", padding=4)
         status_frame.pack(fill="both", expand=True)
 
         # Refresh sweep config list now that widget exists
