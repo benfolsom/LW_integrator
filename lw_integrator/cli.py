@@ -581,9 +581,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.quiet:
         print_summary(summary)
         if driver is not None:
-            print(
-                "Driver trajectory generated with" f" {len(driver)} integration steps."
-            )
+            print(f"Driver trajectory generated with {len(driver)} integration steps.")
 
     return 0
 

@@ -73,6 +73,70 @@ simulation, and confirm that the regression tooling works on your machine.
 
    Open ``docs/build/html/index.html`` in a browser to browse the rendered pages.
 
+7. Run a macroparticle simulation (conducting-wall mode):
+
+   .. code-block:: python
+
+      from lw_integrator.testbed_runner import SimulationOptions, run_testbed
+      from core.types import SimulationType
+
+      options = SimulationOptions(
+          simulation_type=SimulationType.CONDUCTING_WALL,
+          steps=1000,
+          macroparticle_enabled=True,
+          macroparticle_charge_multiplier=10.0,     # 10× charge scaling
+          macroparticle_position_spread=1e-5,       # 10 μm position σ
+          macroparticle_momentum_spread=1e-6,       # Momentum spread
+          core_params={
+              'time_step': 3e-7,
+              'wall_z': 100.0,
+              'aperture_radius': 0.001,
+          },
+      )
+
+      result = run_testbed(options)
+
+   This example demonstrates beam emittance modeling with stochastic errors
+   applied to image subcharges before charge attenuation calculations.
+
+8. Run an off-axis beam simulation with transverse offset:
+
+   .. code-block:: python
+
+      from lw_integrator.testbed_runner import SimulationOptions, run_testbed
+      from core.types import SimulationType
+
+      # Create an off-axis beam at 50 μm from center with ±10 μm spread
+      rider_params = {
+          'starting_distance': 0.0,
+          'transv_mom': 0.0,
+          'starting_Pz': 1e6,
+          'stripped_ions': 1.0,
+          'm_particle': 0.000548579909,  # electron mass
+          'transv_dist': 1e-5,           # ±10 μm beam spread
+          'transv_offset_x': 5e-5,       # 50 μm off-axis in x
+          'transv_offset_y': 0.0,        # on-axis in y
+          'pcount': 5,
+          'charge_sign': -1.0,
+      }
+
+      options = SimulationOptions(
+          simulation_type=SimulationType.CONDUCTING_WALL,
+          steps=1000,
+          rider_params=rider_params,
+          core_params={
+              'time_step': 1e-7,
+              'wall_z': 100.0,
+              'aperture_radius': 0.0001,  # 100 μm aperture
+          },
+      )
+
+      result = run_testbed(options)
+
+   This demonstrates off-axis beam positioning, useful for aperture tolerance
+   studies and beam halo analysis. Particles are distributed uniformly in
+   x ∈ [40, 60] μm and y ∈ [-10, 10] μm.
+
 Next steps
 ----------
 
@@ -80,5 +144,7 @@ Next steps
   legacy implementations across multiple seeds and integration lengths.
 * :doc:`notebooks` provides guidance on using the interactive assets efficiently
   (plot styling, DPI control, output directories, etc.).
+* :doc:`recent_changes` describes the macroparticle simulation feature and other
+  recent enhancements including optimization convergence and physics corrections.
 * :doc:`development/index` is the entry point for coding conventions, testing
   expectations, and contribution guidelines.

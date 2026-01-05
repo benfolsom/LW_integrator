@@ -8,7 +8,7 @@ import copy
 import json
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, MutableMapping, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -184,8 +184,36 @@ def run_core_integrator(
     mean: float | None,
     cav_spacing: float | None,
     z_cutoff: float | None,
+    z_cutoff_mode: str = "absolute",
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
+    self_consistency_enabled: bool = True,
+    self_consistency_tolerance: float = 1e-6,  # Legacy parameter
+    self_consistency_convergence_mode: str = "mass_shell_only",
+    self_consistency_target_ms_tolerance: float = 1e-6,
+    self_consistency_max_iterations: int = 10,
+    self_consistency_mass_shell_tolerance: float = 1e-2,
+    self_consistency_mass_shell_relaxation: float = 0.7,
+    self_consistency_verbosity: int = 0,
+    self_consistency_chrono_interpolate: bool = False,
+    self_consistency_chrono_tolerance: float = 1e-3,
+    self_consistency_chrono_matching_mode: str = "AVERAGED",
+    energy_monitor_enabled: bool = True,
+    energy_monitor_threshold: float = 2.0,
+    energy_monitor_check_interval: int = 10,
+    energy_monitor_halt_on_jump: bool = False,
+    energy_monitor_debug: bool = False,
+    adaptive_timestep_enabled: bool = True,
+    adaptive_timestep_threshold: float = 0.10,
+    adaptive_timestep_reduction_factor: int = 10,
+    adaptive_timestep_max_attempts: int = 5,
+    adaptive_timestep_min_factor: float = 1e-4,
+    adaptive_timestep_cooldown_steps: int = 10,
+    adaptive_timestep_probe_threshold: float = 0.01,
+    adaptive_timestep_max_probe_steps: int = 3,
+    adaptive_timestep_debug: bool = False,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> TrajectoryPair:
     if aperture_radius is None:
         raise ValueError("aperture_radius is required for the core integrator")
@@ -194,6 +222,66 @@ def run_core_integrator(
     resolved_mean = 0.0 if mean is None else mean
     resolved_cav_spacing = 0.0 if cav_spacing is None else cav_spacing
     resolved_z_cutoff = 0.0 if z_cutoff is None else z_cutoff
+    resolved_z_cutoff_mode = z_cutoff_mode
+
+    # Import here to avoid circular dependencies
+    from core.integration_runner import (
+        AdaptiveTimestepConfig,
+        EnergyMonitorConfig,
+    )
+    from core.self_consistency import SelfConsistencyConfig
+
+    # Configure self-consistency
+    self_consistency = None
+    if self_consistency_enabled:
+        self_consistency = SelfConsistencyConfig(
+            enabled=self_consistency_enabled,
+            convergence_mode=self_consistency_convergence_mode,
+            target_ms_tolerance=self_consistency_target_ms_tolerance,
+            max_iterations=self_consistency_max_iterations,
+            mass_shell_tolerance=self_consistency_mass_shell_tolerance,
+            mass_shell_relaxation=self_consistency_mass_shell_relaxation,
+            verbosity=self_consistency_verbosity,
+            chrono_interpolate=self_consistency_chrono_interpolate,
+            chrono_tolerance=self_consistency_chrono_tolerance,
+            chrono_matching_mode=self_consistency_chrono_matching_mode,
+        )
+
+    # Extract and convert chrono_mode to enum
+    chrono_mode_str = self_consistency_chrono_matching_mode.upper()
+    if chrono_mode_str == "FAST":
+        chrono_mode = ChronoMatchingMode.FAST
+    elif chrono_mode_str == "AVERAGED":
+        chrono_mode = ChronoMatchingMode.AVERAGED
+    else:
+        # Default to AVERAGED if invalid
+        chrono_mode = ChronoMatchingMode.AVERAGED
+
+    # Configure energy monitoring
+    energy_monitor = None
+    if energy_monitor_enabled:
+        energy_monitor = EnergyMonitorConfig(
+            enabled=True,
+            relative_threshold=energy_monitor_threshold,
+            check_interval=energy_monitor_check_interval,
+            halt_on_jump=energy_monitor_halt_on_jump,
+            debug=energy_monitor_debug,
+        )
+
+    # Configure adaptive timestep
+    adaptive_timestep = None
+    if adaptive_timestep_enabled:
+        adaptive_timestep = AdaptiveTimestepConfig(
+            enabled=True,
+            energy_jump_threshold=adaptive_timestep_threshold,
+            timestep_reduction_factor=adaptive_timestep_reduction_factor,
+            max_refinement_attempts=adaptive_timestep_max_attempts,
+            min_timestep_factor=adaptive_timestep_min_factor,
+            cooldown_steps=adaptive_timestep_cooldown_steps,
+            probe_threshold=adaptive_timestep_probe_threshold,
+            max_probe_steps=adaptive_timestep_max_probe_steps,
+            debug=adaptive_timestep_debug,
+        )
 
     core_traj, core_drv = retarded_integrator(
         steps=steps,
@@ -206,9 +294,15 @@ def run_core_integrator(
         mean=resolved_mean,
         cav_spacing=resolved_cav_spacing,
         z_cutoff=resolved_z_cutoff,
-        chrono_mode=ChronoMatchingMode.FAST,
+        z_cutoff_mode=resolved_z_cutoff_mode,
+        self_consistency=self_consistency,
+        chrono_mode=chrono_mode,
+        energy_monitor=energy_monitor,
+        adaptive_timestep=adaptive_timestep,
         image_subcharge_count=image_subcharge_count,
         use_conducting_image_weighting=use_image_weighting,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
     )
     return (
         [_normalize_state(state) for state in core_traj],
@@ -369,12 +463,64 @@ def compute_delta_energy_series(
     initial_state: ParticleState,
     rest_energy_mev: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute total energy change series.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        (delta_energy_gev, z_series) - Total energy change and z positions
+    """
     gamma_series = _extract_series(states, "gamma")
     initial_gamma = float(initial_state["gamma"][0])
     rest_energy_gev = rest_energy_mev * 1e-3
     delta_energy_gev = (gamma_series - initial_gamma) * rest_energy_gev
     z_series = _extract_series(states, "z")
     return delta_energy_gev, z_series
+
+
+def compute_delta_energy_components(
+    states: List[ParticleState],
+    initial_state: ParticleState,
+    rest_energy_mev: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute both total and longitudinal energy change series.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray, np.ndarray]
+        (delta_energy_total_gev, delta_energy_z_gev, z_series)
+        - Total energy change (from Δγ)
+        - Longitudinal energy change (from ΔPz)
+        - z positions
+    """
+    # Total energy from gamma
+    gamma_series = _extract_series(states, "gamma")
+    initial_gamma = float(initial_state["gamma"][0])
+    rest_energy_gev = rest_energy_mev * 1e-3
+    delta_energy_total = (gamma_series - initial_gamma) * rest_energy_gev
+
+    # Longitudinal momentum component
+    # In ultra-relativistic limit: E_z ≈ P_z * c
+    # Our Pz is in units of mass * velocity (amu·mm/ns)
+    # Converting to energy: ΔE_z = ΔPz * c (in natural units where c=1)
+    # But our Pz already includes factors, so we use: ΔE_z ≈ (ΔPz/mass) * E_rest
+    pz_series = _extract_series(states, "Pz")
+    initial_pz = float(initial_state["Pz"][0])
+
+    # For ultra-relativistic particles: ΔE_z ≈ Δ(βz * γ) * mc²
+    # We can approximate using ΔPz directly since Pz = γ * m * βz * c
+    # In our units, the relationship is simpler
+    bz_series = _extract_series(states, "bz")
+    initial_bz = float(initial_state["bz"][0])
+
+    # Longitudinal energy: E_z = γ * βz * mc²
+    delta_energy_z = (
+        gamma_series * bz_series - initial_gamma * initial_bz
+    ) * rest_energy_gev
+
+    z_series = _extract_series(states, "z")
+
+    return delta_energy_total, delta_energy_z, z_series
 
 
 def run_benchmark(
@@ -391,6 +537,7 @@ def run_benchmark(
     mean: float | None = 1e5,
     cav_spacing: float | None = 1e5,
     z_cutoff: float | None = 0.0,
+    z_cutoff_mode: str = "absolute",
     save_json: Path | None = None,
     save_fig: Path | None = None,
     show: bool = False,
@@ -400,6 +547,33 @@ def run_benchmark(
     log_messages: Optional[List[str]] = None,
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
+    self_consistency_enabled: bool = True,
+    self_consistency_tolerance: float = 1e-6,  # Legacy parameter
+    self_consistency_convergence_mode: str = "mass_shell_only",
+    self_consistency_target_ms_tolerance: float = 1e-6,
+    self_consistency_max_iterations: int = 10,
+    self_consistency_mass_shell_tolerance: float = 1e-2,
+    self_consistency_mass_shell_relaxation: float = 0.7,
+    self_consistency_verbosity: int = 0,
+    self_consistency_chrono_interpolate: bool = False,
+    self_consistency_chrono_tolerance: float = 1e-3,
+    self_consistency_chrono_matching_mode: str = "AVERAGED",
+    energy_monitor_enabled: bool = True,
+    energy_monitor_threshold: float = 2.0,
+    energy_monitor_check_interval: int = 10,
+    energy_monitor_halt_on_jump: bool = False,
+    energy_monitor_debug: bool = False,
+    adaptive_timestep_enabled: bool = True,
+    adaptive_timestep_threshold: float = 0.10,
+    adaptive_timestep_reduction_factor: int = 10,
+    adaptive_timestep_max_attempts: int = 5,
+    adaptive_timestep_min_factor: float = 1e-4,
+    adaptive_timestep_cooldown_steps: int = 10,
+    adaptive_timestep_probe_threshold: float = 0.01,
+    adaptive_timestep_max_probe_steps: int = 3,
+    adaptive_timestep_debug: bool = False,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
 ):
     def _log(message: str) -> None:
         if log_messages is not None:
@@ -433,8 +607,8 @@ def run_benchmark(
         )
 
     core_results = run_core_integrator(
-        copy.deepcopy(rider_state),
-        copy.deepcopy(driver_state),
+        copy.deepcopy(rider_initial),
+        copy.deepcopy(driver_initial),
         steps,
         time_step=time_step,
         wall_z=wall_z,
@@ -443,8 +617,36 @@ def run_benchmark(
         mean=mean,
         cav_spacing=cav_spacing,
         z_cutoff=z_cutoff,
+        z_cutoff_mode=z_cutoff_mode,
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
+        self_consistency_enabled=self_consistency_enabled,
+        self_consistency_tolerance=self_consistency_tolerance,
+        self_consistency_convergence_mode=self_consistency_convergence_mode,
+        self_consistency_target_ms_tolerance=self_consistency_target_ms_tolerance,
+        self_consistency_max_iterations=self_consistency_max_iterations,
+        self_consistency_mass_shell_tolerance=self_consistency_mass_shell_tolerance,
+        self_consistency_mass_shell_relaxation=self_consistency_mass_shell_relaxation,
+        self_consistency_verbosity=self_consistency_verbosity,
+        self_consistency_chrono_interpolate=self_consistency_chrono_interpolate,
+        self_consistency_chrono_tolerance=self_consistency_chrono_tolerance,
+        self_consistency_chrono_matching_mode=self_consistency_chrono_matching_mode,
+        energy_monitor_enabled=energy_monitor_enabled,
+        energy_monitor_threshold=energy_monitor_threshold,
+        energy_monitor_check_interval=energy_monitor_check_interval,
+        energy_monitor_halt_on_jump=energy_monitor_halt_on_jump,
+        energy_monitor_debug=energy_monitor_debug,
+        adaptive_timestep_enabled=adaptive_timestep_enabled,
+        adaptive_timestep_threshold=adaptive_timestep_threshold,
+        adaptive_timestep_reduction_factor=adaptive_timestep_reduction_factor,
+        adaptive_timestep_max_attempts=adaptive_timestep_max_attempts,
+        adaptive_timestep_min_factor=adaptive_timestep_min_factor,
+        adaptive_timestep_cooldown_steps=adaptive_timestep_cooldown_steps,
+        adaptive_timestep_probe_threshold=adaptive_timestep_probe_threshold,
+        adaptive_timestep_max_probe_steps=adaptive_timestep_max_probe_steps,
+        adaptive_timestep_debug=adaptive_timestep_debug,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
     )
 
     metrics: Optional[Dict[str, Dict[str, float]]] = None
@@ -574,13 +776,7 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         "--plot-dpi",
         type=int,
         default=DEFAULT_SAVE_DPI,
-        help=(
-            "DPI for saved plots ("
-            f"{MIN_RECOMMENDED_DPI}"
-            "–"
-            f"{MAX_RECOMMENDED_DPI}"
-            ")"
-        ),
+        help=(f"DPI for saved plots ({MIN_RECOMMENDED_DPI}–{MAX_RECOMMENDED_DPI})"),
     )
     parser.add_argument(
         "--image-subcharge-count",

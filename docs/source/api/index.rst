@@ -11,3 +11,4 @@ material for the main modules.
    core
    performance
    input_output
+   images

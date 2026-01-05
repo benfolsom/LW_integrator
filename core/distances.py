@@ -8,15 +8,54 @@ the legacy implementation so that validation data remains comparable.
 
 from __future__ import annotations
 
-from typing import Dict, Iterable
+from dataclasses import dataclass
+from typing import Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
 from .constants import C_MMNS, NUMERICAL_EPSILON
 from .types import ChronoMatchingMode, ParticleState, Trajectory
 
-
 DistanceResult = Dict[str, np.ndarray]
+
+
+@dataclass
+class ChronoMatchResult:
+    """Results from chrono-matching with interpolation support.
+
+    Attributes
+    ----------
+    indices : np.ndarray
+        Primary trajectory indices for each source particle.
+    indices_next : np.ndarray
+        Next trajectory indices (for interpolation). Equal to indices when no interpolation.
+    weights : np.ndarray
+        Interpolation weights in [0, 1]. weight=1.0 means use indices only,
+        weight=0.0 means use indices_next only. Linear interpolation:
+        value = weight * value[indices] + (1-weight) * value[indices_next]
+    residuals : np.ndarray
+        Time residuals |t_matched - t_target| for each source particle (in ns).
+    max_residual : float
+        Maximum residual across all source particles (in ns).
+    needs_interpolation : np.ndarray
+        Boolean mask indicating which particles needed interpolation.
+    use_cubic : bool
+        Whether cubic interpolation is used (requires 4 points).
+    indices_prev : Optional[np.ndarray]
+        Previous trajectory index (for cubic interpolation). None for linear.
+    indices_next2 : Optional[np.ndarray]
+        Second-next trajectory index (for cubic interpolation). None for linear.
+    """
+
+    indices: np.ndarray
+    indices_next: np.ndarray
+    weights: np.ndarray
+    residuals: np.ndarray
+    max_residual: float
+    needs_interpolation: np.ndarray
+    use_cubic: bool = False
+    indices_prev: Optional[np.ndarray] = None
+    indices_next2: Optional[np.ndarray] = None
 
 
 def _compute_delta_t(
@@ -180,7 +219,13 @@ def chrono_match_indices(
     index_part: int,
     *,
     mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
-) -> np.ndarray:
+    interpolate: bool = False,
+    tolerance: float = 1e-3,
+    verbosity: int = 0,
+    high_precision: bool = False,
+    adaptive_tolerance: bool = False,
+    timestep_h: Optional[float] = None,
+) -> np.ndarray | ChronoMatchResult:
     """Find retarded indices for a particle using chrono-matching.
 
     Parameters
@@ -198,21 +243,57 @@ def chrono_match_indices(
         two samples corresponding to emission after ``R / c`` (stationary
         source) and ``2R / c`` (ultrarelativistic source), which can provide a
         smoother retardation sequence for high-``γ`` bunches.
+    interpolate:
+        If True, return ChronoMatchResult with interpolation weights when the
+        time residual exceeds tolerance. If False, return simple index array.
+    tolerance:
+        tolerance in nanoseconds. If |t_matched - t_target| > tolerance,
+        interpolation is flagged as needed.
+    verbosity:
+        If >= 2, print warnings when residuals exceed tolerance.
+    high_precision:
+        If True, use cubic interpolation and position interpolation. Requires at
+        least 4 trajectory points for accurate cubic fit.
+    adaptive_tolerance:
+        If True, automatically set tolerance = 0.1 × timestep_h.
+    timestep_h:
+        Average timestep (ns) for adaptive tolerance calculation.
 
     Returns
     -------
-    numpy.ndarray
-        Indices into ``trajectory_ext`` describing which historical slice
-        influences each particle in the external bunch. Legacy equivalent is
-        called ``chrono_jn``.
+    numpy.ndarray or ChronoMatchResult
+        If interpolate=False: indices array (legacy behavior).
+        If interpolate=True: ChronoMatchResult with interpolation data.
     """
+
+    # Adaptive tolerance: auto-set based on timestep
+    effective_tolerance = tolerance
+    if adaptive_tolerance and timestep_h is not None and timestep_h > 0:
+        effective_tolerance = 0.1 * timestep_h
+        if verbosity >= 3:
+            print(
+                f"  [Chrono-match] Adaptive tolerance: {effective_tolerance:.3e} ns (0.1 × {timestep_h:.3e} ns)"
+            )
 
     nhat = compute_instantaneous_distance(
         trajectory[index_traj], trajectory_ext[index_traj], index_part
     )
-    index_traj_new = np.empty(len(trajectory_ext[index_traj]["x"]), dtype=int)
+    n_particles = len(trajectory_ext[index_traj]["x"])
+    index_traj_new = np.empty(n_particles, dtype=int)
 
-    for sample_index in range(len(trajectory_ext[index_traj]["x"])):
+    # For interpolation mode, track additional data
+    if interpolate:
+        index_traj_next = np.empty(n_particles, dtype=int)
+        weights = np.ones(n_particles, dtype=float)
+        residuals = np.zeros(n_particles, dtype=float)
+        needs_interp = np.zeros(n_particles, dtype=bool)
+
+        # For cubic interpolation (high precision mode)
+        if high_precision:
+            index_traj_prev = np.empty(n_particles, dtype=int)
+            index_traj_next2 = np.empty(n_particles, dtype=int)
+
+    for sample_index in range(n_particles):
         b_nhat = (
             trajectory_ext[index_traj]["bx"][sample_index] * nhat["nx"][sample_index]
             + trajectory_ext[index_traj]["by"][sample_index] * nhat["ny"][sample_index]
@@ -251,19 +332,132 @@ def chrono_match_indices(
         t_ext_new = trajectory_ext[index_traj]["t"][sample_index] - delta_t
 
         index_traj_new[sample_index] = index_traj
+        if interpolate:
+            index_traj_next[sample_index] = index_traj
+
         if t_ext_new < 0:
             continue
 
+        # Find the trajectory index that brackets or is nearest to t_ext_new
+        matched_idx = index_traj
         for k in range(index_traj, -1, -1):
             if trajectory_ext[index_traj - k]["t"][sample_index] > t_ext_new:
-                index_traj_new[sample_index] = index_traj - k
+                matched_idx = index_traj - k
                 break
 
-    return index_traj_new
+        index_traj_new[sample_index] = matched_idx
+
+        # If interpolation is enabled, compute residual and interpolation weights
+        if interpolate:
+            t_matched = trajectory_ext[matched_idx]["t"][sample_index]
+            residual = abs(t_matched - t_ext_new)
+            residuals[sample_index] = residual
+
+            # Check if we need interpolation (residual exceeds tolerance)
+            if residual > effective_tolerance and matched_idx > 0:
+                needs_interp[sample_index] = True
+
+                if high_precision and matched_idx >= 2 and matched_idx < index_traj - 1:
+                    # Cubic interpolation using 4 points
+                    # Use indices: matched_idx-2, matched_idx-1, matched_idx, matched_idx+1
+                    idx_m2 = matched_idx - 2
+                    idx_m1 = matched_idx - 1
+                    idx_0 = matched_idx
+                    idx_p1 = min(matched_idx + 1, index_traj)
+
+                    t_m2 = trajectory_ext[idx_m2]["t"][sample_index]
+                    t_m1 = trajectory_ext[idx_m1]["t"][sample_index]
+                    t_0 = trajectory_ext[idx_0]["t"][sample_index]
+                    t_p1 = trajectory_ext[idx_p1]["t"][sample_index]
+
+                    # Store all 4 indices for cubic interpolation
+                    index_traj_prev[sample_index] = idx_m2
+                    index_traj_next[sample_index] = idx_m1
+                    index_traj_new[sample_index] = idx_0
+                    index_traj_next2[sample_index] = idx_p1
+
+                    # Compute cubic weight (normalized parameter in [0,1] between t_m1 and t_0)
+                    dt_span = t_0 - t_m1
+                    if dt_span > NUMERICAL_EPSILON:
+                        u = (t_ext_new - t_m1) / dt_span
+                        weights[sample_index] = np.clip(u, 0.0, 1.0)
+                    else:
+                        weights[sample_index] = 1.0
+                else:
+                    # Linear interpolation (fallback or standard mode)
+                    # Find the bracketing indices
+                    # matched_idx has t > t_ext_new, so we want matched_idx-1 and matched_idx
+                    idx_before = matched_idx - 1
+                    idx_after = matched_idx
+
+                    t_before = trajectory_ext[idx_before]["t"][sample_index]
+                    t_after = trajectory_ext[idx_after]["t"][sample_index]
+
+                    # Compute linear interpolation weight
+                    # weight for idx_after
+                    dt_span = t_after - t_before
+                    if dt_span > NUMERICAL_EPSILON:
+                        # weight for idx_after
+                        weight_after = (t_ext_new - t_before) / dt_span
+                        weight_after = np.clip(weight_after, 0.0, 1.0)
+                        weights[sample_index] = weight_after
+                        index_traj_new[sample_index] = idx_after
+                        index_traj_next[sample_index] = idx_before
+                    else:
+                        # Degenerate case: same time at both indices
+                        weights[sample_index] = 1.0
+                        index_traj_next[sample_index] = matched_idx
+
+                    if high_precision:
+                        # Initialize cubic indices even if not used
+                        index_traj_prev[sample_index] = matched_idx
+                        index_traj_next2[sample_index] = matched_idx
+            else:
+                # No interpolation needed
+                index_traj_next[sample_index] = matched_idx
+                weights[sample_index] = 1.0
+                if high_precision:
+                    index_traj_prev[sample_index] = matched_idx
+                    index_traj_next2[sample_index] = matched_idx
+
+    if not interpolate:
+        return index_traj_new
+
+    # Return full interpolation result
+    max_res = float(np.max(residuals)) if len(residuals) > 0 else 0.0
+
+    # Print diagnostics if requested
+    # Only print if there are particles needing interpolation (verbosity >= 2)
+    # OR if in maximum verbosity mode (verbosity >= 3, show even if none need interpolation)
+    n_bad = int(np.sum(needs_interp))
+
+    if verbosity >= 3 or (
+        verbosity >= 2 and n_bad > 0 and max_res > effective_tolerance
+    ):
+        mode_str = "cubic" if high_precision else "linear"
+        print(
+            f"  [Chrono-match] Max residual: {max_res:.3e} ns (tolerance: {effective_tolerance:.3e} ns)"
+        )
+        print(
+            f"  [Chrono-match] {n_bad}/{n_particles} particles need {mode_str} interpolation"
+        )
+
+    return ChronoMatchResult(
+        indices=index_traj_new,
+        indices_next=index_traj_next,
+        weights=weights,
+        residuals=residuals,
+        max_residual=max_res,
+        needs_interpolation=needs_interp,
+        use_cubic=high_precision,
+        indices_prev=index_traj_prev if high_precision else None,
+        indices_next2=index_traj_next2 if high_precision else None,
+    )
 
 
 __all__ = [
     "DistanceResult",
+    "ChronoMatchResult",
     "compute_instantaneous_distance",
     "compute_retarded_distance",
     "chrono_match_indices",

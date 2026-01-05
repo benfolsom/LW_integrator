@@ -37,18 +37,21 @@ class SimulationType(IntEnum):
 class ChronoMatchingMode(Enum):
     """Retardation sampling strategies used by chrono-matching.
 
-    ``FAST`` reproduces the historical implementation by evaluating the causal
-    delay once using the instantaneous dot product of particle velocity and the
-    line-of-sight unit vector (``Δt = R (1 + β·n̂) / c``).  ``AVERAGED`` augments
-    this by sampling two limiting cases—first assuming the source particle is
-    stationary (``R / c``) and then assuming it moves at the speed of light in
-    the line-of-sight direction (``2R / c``).  The averaged dot product from
-    those two samples is used to compute the retardation interval, providing a
-    more conservative estimate when highly relativistic motion is present.
+    ``FAST`` (default) reproduces the historical implementation by evaluating
+    the causal delay once using the instantaneous dot product of particle
+    velocity and the line-of-sight unit vector (``Δt = R (1 + β·n̂) / c``).
+
+    ``AVERAGED`` is reserved for internal use with ``APPROXIMATE_BACK_HISTORY``
+    startup mode. It samples two limiting cases—first assuming the source
+    particle is stationary (``R / c``) and then assuming it moves at the speed
+    of light in the line-of-sight direction (``2R / c``). The averaged dot
+    product from those two samples is used to compute the retardation interval.
+    This mode should NOT be used in production until APPROXIMATE_BACK_HISTORY
+    is fully implemented and validated.
     """
 
-    AVERAGED = auto()
     FAST = auto()
+    AVERAGED = auto()
 
 
 class StartupMode(Enum):
@@ -95,13 +98,38 @@ class IntegratorConfig:
         Distance between cavities used by the switching-wall configuration.
     z_cutoff:
         Longitudinal position at which the switching-wall stops mirroring
-        charges. Defaults to ``0`` which effectively disables the cutoff.
+        charges. For BUNCH_TO_BUNCH mode with z_cutoff_mode='relative',
+        this is the distance from starting position. Defaults to ``0``
+        which effectively disables the cutoff.
+    z_cutoff_mode:
+        Interpretation of z_cutoff parameter. 'absolute' (default) uses
+        z_cutoff as absolute z position. 'relative' uses z_cutoff as
+        distance from starting position (for BUNCH_TO_BUNCH simulations).
     image_subcharge_count:
         Number of virtual subcharges used when constructing conducting-wall
         image charges. Must lie between 4 and 128. Defaults to ``12``.
     use_image_weighting:
         Enables radial weighting when distributing conducting-wall subcharges.
         Defaults to ``True`` for improved agreement with the aperture geometry.
+    macroparticle_charge_multiplier:
+        Multiplier for particle and image charges in macroparticle simulations.
+        Defaults to ``1.0`` (no scaling). Use > 1.0 for macroparticle mode.
+        Only applies to CONDUCTING_WALL simulations.
+    macroparticle_sigma_multiplier:
+        Multiplier for bunch spread parameters when applying to image charge errors.
+        Defaults to ``1.0`` (errors = bunch spread). Use > 1.0 to increase uncertainty.
+        Position errors use transv_dist × multiplier, momentum errors use transv_mom × multiplier.
+        Only applies to CONDUCTING_WALL simulations when macroparticle mode is enabled.
+    macroparticle_use_momentum_errors:
+        Whether to include momentum-based cumulative errors in image charge positions.
+        If False, only constant position errors are applied (no cumulative momentum effects).
+        Defaults to ``True`` (include both position and momentum errors).
+    bunch_transv_dist:
+        Transverse distribution half-width (mm) from particle bunch initialization.
+        Used to compute position spread for image charge errors. Defaults to ``0.0``.
+    bunch_transv_mom:
+        Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
+        Used to compute cumulative displacement errors. Defaults to ``0.0``.
     """
 
     steps: int
@@ -109,13 +137,19 @@ class IntegratorConfig:
     wall_position: float
     aperture_radius: float
     simulation_type: SimulationType
-    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.FAST
     startup_mode: StartupMode = StartupMode.COLD_START
     bunch_mean: float = 0.0
     cavity_spacing: float = 0.0
     z_cutoff: float = 0.0
+    z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
+    macroparticle_charge_multiplier: float = 1.0
+    macroparticle_sigma_multiplier: float = 1.0
+    macroparticle_use_momentum_errors: bool = True
+    bunch_transv_dist: float = 0.0
+    bunch_transv_mom: float = 0.0
 
 
 __all__ = [

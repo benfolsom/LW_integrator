@@ -8,6 +8,7 @@ legacy solver (including its stochastic aperture spill model).
 from __future__ import annotations
 
 import random
+
 import numpy as np
 
 from .constants import NUMERICAL_EPSILON
@@ -51,23 +52,57 @@ def zeros_like_state(vector: ParticleState) -> ParticleState:
 
 
 def _radial_weight(
-    x: np.ndarray, y: np.ndarray, aperture_radius: float, shift: float
+    x: np.ndarray,
+    y: np.ndarray,
+    aperture_radius: float,
+    shift: float,
+    plateau: float,
 ) -> np.ndarray:
-    """Compute attenuation factors based on radial distance from the aperture axis.
+    """Return attenuation factors driven by the ``rho - shift`` displacement.
 
-    The weighting ramps linearly with the cylindrical radius and saturates when the
-    image subcharge sits at ``aperture_radius + shift``.  The ``shift`` term reflects
-    the circle traced out by the subcharges and ensures the attenuation does not
-    clamp too aggressively when the primary bunch is offset from the axis.
+    Behaviour by construction:
+    - If ``rho - shift == 0``                -> weight = 0 (center of aperture)
+    - If ``|rho - shift| == aperture_radius`` -> weight = plateau (∈ [0.5, 1.0])
+    - If ``|rho - shift| >= 2*aperture_radius`` -> weight → 1.0
     """
 
-    effective_radius = aperture_radius + max(shift, 0.0)
-    if effective_radius <= 0.0:
-        return np.ones_like(x, dtype=float)
+    rho = np.hypot(x, y)
+    delta = rho - shift
+    weights = np.zeros_like(delta, dtype=float)
 
-    radial = np.hypot(x, y)
-    weights = radial / effective_radius
-    return np.clip(weights, 0.0, 1.0)
+    # If no meaningful aperture scale: give plateau everywhere except the exact center.
+    if aperture_radius <= NUMERICAL_EPSILON:
+        plateau_clamped = float(np.clip(plateau, 0.5, 1.0))
+        weights[np.abs(delta) > 0.0] = plateau_clamped
+        return weights
+
+    a_r = float(aperture_radius)
+    plateau_clamped = float(np.clip(plateau, 0.5, 1.0))
+
+    # Symmetric ramp around the center of the aperture
+    nonzero = np.abs(delta) > 0.0
+    if not np.any(nonzero):
+        return weights
+
+    # Use |delta| to ramp symmetrically; clamp to [0, 2]
+    dn = np.clip(np.abs(delta[nonzero]) / a_r, 0.0, 2.0)
+    w = np.zeros_like(dn)
+
+    # 0 < dn < 1: ramp up to plateau
+    mask_ramp = dn < 1.0
+    if np.any(mask_ramp):
+        w[mask_ramp] = dn[mask_ramp] * plateau_clamped
+
+    # 1 <= dn < 2: ramp from plateau to 1
+    mask_mid = (dn >= 1.0) & (dn < 2.0)
+    if np.any(mask_mid):
+        w[mask_mid] = plateau_clamped + (dn[mask_mid] - 1.0) * (1.0 - plateau_clamped)
+
+    # dn >= 2: saturate at 1
+    w[dn >= 2.0] = 1.0
+
+    weights[nonzero] = np.clip(w, 0.0, 1.0)
+    return weights
 
 
 def generate_conducting_image(
@@ -77,6 +112,13 @@ def generate_conducting_image(
     subcharge_count: int = 12,
     *,
     use_weighting: bool = True,
+    macroparticle_charge_multiplier: float = 1.0,
+    macroparticle_sigma_multiplier: float = 1.0,
+    macroparticle_use_momentum_errors: bool = True,
+    bunch_transv_dist: float = 0.0,
+    bunch_transv_mom: float = 0.0,
+    timestep: float = 0.0,
+    step_number: int = 0,
 ) -> ParticleState:
     """Generate mirror charges for a conducting wall boundary.
 
@@ -91,6 +133,27 @@ def generate_conducting_image(
     use_weighting:
         When ``True`` (default) apply radial attenuation to the subcharges based on
         their cylindrical distance from the aperture axis.
+    macroparticle_charge_multiplier:
+        Multiplier for the charge of both test particle and image subcharges.
+        Default 1.0 (no scaling). Use > 1.0 for macroparticle simulations.
+    macroparticle_sigma_multiplier:
+        Multiplier applied to bunch spread parameters when computing image charge errors.
+        Default 1.0 (errors = bunch spread). Position errors = bunch_transv_dist × multiplier,
+        momentum errors = bunch_transv_mom × multiplier.
+    macroparticle_use_momentum_errors:
+        Whether to include momentum-based cumulative errors. If False, only constant
+        position errors are applied. Default True (include both position and momentum errors).
+    bunch_transv_dist:
+        Transverse distribution half-width (mm) from particle bunch initialization.
+        Used to compute position spread for image charge errors.
+    bunch_transv_mom:
+        Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
+        Used to compute cumulative displacement errors that grow with step_number.
+    timestep:
+        Integration timestep in proper time (ns). Required when bunch_transv_mom > 0.
+    step_number:
+        Current integration step number (0-based). Used to compute cumulative
+        displacement from momentum spread.
     """
 
     count = int(subcharge_count)
@@ -173,7 +236,57 @@ def generate_conducting_image(
             x_positions = center_x + shift * np.cos(angles)
             y_positions = center_y + shift * np.sin(angles)
 
+        # Apply macroparticle position and momentum spread errors BEFORE weighting
+        # Derive errors from bunch parameters scaled by sigma multiplier
+        if (
+            bunch_transv_dist > 0.0 or bunch_transv_mom > 0.0
+        ) and macroparticle_sigma_multiplier > 0.0:
+            # Position spread derived from bunch distribution
+            position_sigma = float(bunch_transv_dist * macroparticle_sigma_multiplier)
+
+            # Cumulative displacement from momentum spread
+            # displacement = (p_transverse / m) * timestep * step_number
+            # We need mass from the particle state
+            if (
+                macroparticle_use_momentum_errors
+                and bunch_transv_mom > 0.0
+                and step_number > 0
+            ):
+                particle_mass = vector["m"][i] if "m" in vector else 1.0
+                # momentum_spread has units of momentum; divide by mass to get velocity
+                # then multiply by time elapsed to get displacement
+                # Note: timestep is in proper time (dtau = dt/gamma)
+                # For transverse motion: dx/dtau ≈ px/m (in natural units)
+                cumulative_displacement_sigma = (
+                    bunch_transv_mom
+                    * macroparticle_sigma_multiplier
+                    / particle_mass
+                    * timestep
+                    * step_number
+                )
+                # Combine position spread and momentum-driven spread in quadrature
+                total_sigma = np.sqrt(
+                    position_sigma**2 + cumulative_displacement_sigma**2
+                )
+            else:
+                total_sigma = position_sigma
+
+            # Apply Gaussian errors to each subcharge position
+            if total_sigma > 0:
+                for j in range(count):
+                    # Independent Gaussian errors for x and y
+                    dx_error = np.random.normal(0.0, total_sigma)
+                    dy_error = np.random.normal(0.0, total_sigma)
+                    x_positions[j] += dx_error
+                    y_positions[j] += dy_error
+
         if weighting_enabled and base_charge_per_sub != 0.0:
+            # Geometry-dependent plateau: plateau = (G / 2) with G in [1, 2),
+            # increasing with R_dist / aperture_radius
+            ratio = float(R_dist / max(aperture_radius, NUMERICAL_EPSILON))
+            geometry_factor = 1.0 + ratio / (1.0 + ratio)
+            plateau = float(np.clip(0.5 * geometry_factor, 0.5, 1.0))
+
             displacement = float(np.hypot(center_x, center_y))
             if displacement > NUMERICAL_EPSILON or shift > NUMERICAL_EPSILON:
                 weights = _radial_weight(
@@ -181,12 +294,21 @@ def generate_conducting_image(
                     y_positions,
                     aperture_radius,
                     shift,
+                    plateau,
                 )
             else:
-                weights = np.ones(count, dtype=float)
+                # Perfectly on-axis: enforce zero weight
+                weights = np.zeros(count, dtype=float)
+
+            # Combine legacy solid-angle reduction (in base_charge_per_sub)
+            # with rho-shift weighting that emphasizes off-axis behaviour.
             charge_values = (base_charge_per_sub * weights).astype(
                 result["q"].dtype, copy=False
             )
+
+        # Apply macroparticle charge multiplier to subcharges
+        if macroparticle_charge_multiplier != 1.0:
+            charge_values = charge_values * macroparticle_charge_multiplier
 
         result["x"][start:end] = x_positions
         result["y"][start:end] = y_positions
@@ -216,6 +338,9 @@ def generate_conducting_image(
 
     if charges_suppressed:
         result["q"].fill(0.0)
+    elif macroparticle_charge_multiplier != 1.0 and not charges_suppressed:
+        # Also scale any remaining charges if multiplier is active
+        result["q"] = result["q"] * macroparticle_charge_multiplier
 
     return result
 

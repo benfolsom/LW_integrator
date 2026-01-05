@@ -20,17 +20,8 @@ except ImportError:
         allow_module_level=True,
     )
 
-try:
-    from physics.constants import C_MMNS  # type: ignore[attr-defined]
-    from physics.particle_initialization import ELEMENTARY_CHARGE  # type: ignore[attr-defined]
-    from physics.simulation_types import SimulationConfig  # type: ignore[attr-defined]
-except ImportError:
-    from archive.physics.constants import C_MMNS  # type: ignore[attr-defined]
-    from archive.physics.particle_initialization import (  # type: ignore[attr-defined]
-        ELEMENTARY_CHARGE,
-    )
-    from archive.physics.simulation_types import SimulationConfig  # type: ignore[attr-defined]
-
+from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.types import IntegratorConfig
 from tests.test_config import (
     PROTON,
     TestConfiguration,
@@ -69,7 +60,7 @@ class TestTrajectoryIntegratorUnits:
         assert hasattr(integrator, "c_mmns")
         assert integrator.c_mmns == C_MMNS
 
-        config = SimulationConfig()
+        config = IntegratorConfig()
         integrator_with_config = LienardWiechertIntegrator(config)
         assert integrator_with_config.config is not None
 

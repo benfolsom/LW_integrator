@@ -106,6 +106,69 @@ sync.  Proper-time stepping avoids runaway behaviour at high :math:`\gamma`
 while keeping the integration scheme close to the legacy implementation (see
 ``legacy/covariant_integrator_library.py`` for a verbatim reference).
 
+Relativistic position updates in coordinate time
+------------------------------------------------
+
+While the covariant formulation uses proper time :math:`d\tau`, the numerical
+implementation steps forward in coordinate time with interval :math:`h = \Delta t`.
+The spatial position update relates proper-time and coordinate-time derivatives:
+
+.. math::
+
+   \Delta \mathbf{x} = \mathbf{v} \, \Delta t = \frac{\mathbf{P}_{\text{kinetic}}}{\gamma m} \, h,
+
+where :math:`\mathbf{P}_{\text{kinetic}} = \mathcal{P} - (e/c)\mathbf{A}` is the
+kinetic (mechanical) momentum. The crucial :math:`1/\gamma` factor ensures that
+velocity :math:`\mathbf{v} = \mathbf{P}_{\text{kinetic}}/(\gamma m)` remains
+subluminal even as momentum grows with :math:`\gamma`.
+
+The corresponding velocity is then computed from the coordinate-time displacement:
+
+.. math::
+
+   \boldsymbol{\beta} = \frac{\mathbf{v}}{c} = \frac{\Delta \mathbf{x}}{c \, h}.
+
+Note that this formula does **not** include a :math:`\gamma` factor in the
+denominator—the time dilation is already accounted for in the position update.
+
+Self-consistency iterations
+---------------------------
+
+For ultra-relativistic particles (:math:`\gamma \gg 1`), forces depend strongly
+on :math:`\gamma` through the retarded field geometry (via :math:`\kappa` and
+field Lorentz contraction). This creates a circular dependency:
+
+.. math::
+
+   \gamma \rightarrow \text{forces} \rightarrow \mathcal{P} \rightarrow \gamma.
+
+The integrator resolves this through self-consistency iterations at each timestep.
+Within iteration :math:`n`:
+
+1. Use :math:`\gamma_{n-1}` from the previous iteration to compute retarded forces
+2. Update conjugate momentum :math:`\mathcal{P}_{n}` from those forces
+3. Compute positions using the **same** :math:`\gamma_{n-1}`:
+   :math:`\Delta \mathbf{x} = (\mathbf{P}_{\text{kinetic}}/(\gamma_{n-1} m)) h`
+4. Compute velocity: :math:`\boldsymbol{\beta}_{n} = \Delta \mathbf{x}/(c h)`
+5. Derive two independent estimates of :math:`\gamma_{n}`:
+
+   * From energy: :math:`\gamma_{\text{E}} = (\mathcal{P}^{0} - e\Phi)/(mc)`
+   * From velocity: :math:`\gamma_{\text{V}} = 1/\sqrt{1 - \beta^{2}}`
+
+6. Check convergence: :math:`|\gamma_{\text{E}} - \gamma_{\text{V}}|/\gamma_{\text{E}} < \epsilon`
+
+If not converged, iteration :math:`n+1` uses :math:`\gamma_{n} = \gamma_{\text{E}}`
+and repeats. Typical tolerance :math:`\epsilon = 10^{-6}` achieves convergence
+within 1–3 iterations even after large energy jumps.
+
+The key to stable convergence is using a **consistent** :math:`\gamma` throughout
+each iteration for both force calculation and position updates, ensuring that
+the velocity extracted from :math:`\Delta \mathbf{x}` corresponds physically to
+the momentum computed from those forces.
+
+Implementation details are in :class:`core.self_consistency.SelfConsistencyConfig`
+and :func:`core.equations.retarded_equations_of_motion`.
+
 Radiation pressure and reaction
 -------------------------------
 

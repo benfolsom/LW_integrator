@@ -177,6 +177,17 @@ results/
 output/
 simulations/
 
+# Results directory - all generated outputs
+results/sweeps/*/
+results/runs/*.json
+!results/sweeps/.gitkeep
+!results/runs/.gitkeep
+!results/archive/.gitkeep
+
+# Legacy optimization results (deprecated, use results/ instead)
+optimization_results/*/
+!optimization_results/.gitkeep
+
 # Text files (but keep README.txt)
 *.txt
 !README.txt
@@ -186,5 +197,14 @@ test_outputs/notebook_runs/
 test_outputs/testbed_runs/
 # Notebook configuration exports
 configs/testbed_runs/
+configs/sweep_configs/*.json
+configs/run_configs/*.json
+!configs/sweep_configs/.gitkeep
+!configs/run_configs/.gitkeep
+
+# Legacy config locations (deprecated)
+configs/optimization/*.json
+!configs/optimization/.gitkeep
 examples/validation/configs/testbed_runs
 examples/validation/test_outputs/
+LW_local_refs/
