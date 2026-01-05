@@ -10,6 +10,8 @@ residual-wake acceleration with a covariant retarded-potential integrator*
 ([Nucl. Instrum. Methods Phys. Res. A 1069 (2024) 169988](https://doi.org/10.1016/j.nima.2024.169988),
 [arXiv:2310.03850](https://arxiv.org/abs/2310.03850)).
 
+**📖 Documentation:** [lw-integrator.readthedocs.io/en/latest](https://lw-integrator.readthedocs.io/en/latest)
+
 ---
 
 ## Contents
