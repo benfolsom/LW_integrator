@@ -129,28 +129,95 @@ LW_windows/
 
 ## Environment setup
 
+### System Dependencies
+
+Before installing Python packages, ensure you have the required system dependencies:
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install python3-tk python3-dev
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install python3-tkinter python3-devel
+```
+
+**macOS:**
+```bash
+# Tkinter is included with Python from python.org
+# If using Homebrew Python:
+brew install python-tk@3.11  # adjust version as needed
+```
+
+**Windows:**
+```powershell
+# Tkinter is included with standard Python installers from python.org
+# No additional installation needed
+```
+
+> **Note:** The GUI components require Tkinter, which is **not** pip-installable and must be installed at the system level. If you see `ModuleNotFoundError: No module named 'tkinter'`, install the appropriate system package above.
+
+### Python Environment
+
 1. **Create and activate a virtual environment** (Python 3.8–3.13 are supported).
 
    ```bash
    python -m venv .venv
-   source .venv/bin/activate
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
 2. **Install the package in editable mode** with commonly used extras.
 
+   **For general usage (simulation + GUI):**
+   ```bash
+   pip install -e .
+   ```
+
+   **For development (includes testing/linting tools and bump2version):**
+   ```bash
+   pip install -e ".[dev]"
+   ```
+
+   **For full installation (dev + examples + documentation):**
    ```bash
    pip install -e ".[dev,examples,docs]"
    ```
 
-   * ``dev`` adds the lint/test toolchain.
-   * ``examples`` installs notebook dependencies.
-   * ``docs`` brings in Sphinx, ``sphinx-autobuild``, and related extensions.
+   * ``dev`` adds pytest, black, flake8, mypy, and bump2version for development
+   * ``examples`` installs Jupyter and ipywidgets for interactive notebooks
+   * ``docs`` brings in Sphinx, ``sphinx-autobuild``, and related extensions
 
 3. **(Optional) register the kernel for Jupyter usage.**
 
    ```bash
    python -m ipykernel install --user --name lw-integrator --display-name "LW Integrator (.venv)"
    ```
+
+### Troubleshooting
+
+**Matplotlib backend issues:**
+
+If you encounter matplotlib GUI errors, try setting a different backend:
+```bash
+export MPLBACKEND=TkAgg  # Linux/macOS
+set MPLBACKEND=TkAgg     # Windows CMD
+```
+
+Or configure it in your script:
+```python
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+```
+
+**Version management (developers only):**
+
+The `bump2version` tool is included in the `dev` extras. If you only installed the base package (`pip install -e .`), you'll need to install dev dependencies to use versioning tools:
+```bash
+pip install -e ".[dev]"
+```
 
 ---
 

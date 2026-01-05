@@ -1,15 +1,65 @@
 # Development Guide
 
+## Getting Started
+
+### Setting Up Your Development Environment
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/benfolsom/LW_integrator.git
+   cd LW_integrator
+   ```
+
+2. **Install system dependencies** (required for GUI):
+   
+   **Ubuntu/Debian:**
+   ```bash
+   sudo apt-get install python3-tk python3-dev
+   ```
+   
+   **Fedora/RHEL:**
+   ```bash
+   sudo dnf install python3-tkinter python3-devel
+   ```
+   
+   **macOS/Windows:** Tkinter is typically included with Python installations.
+
+3. **Create a virtual environment:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # Windows: .venv\Scripts\activate
+   ```
+
+4. **Install with development dependencies:**
+   ```bash
+   pip install -e ".[dev]"
+   ```
+   
+   This installs the package in editable mode plus:
+   - pytest, pytest-cov (testing)
+   - black, flake8, mypy (code quality)
+   - bump2version (version management)
+
+5. **Verify installation:**
+   ```bash
+   pytest
+   python -c "from core._version import __version__; print(__version__)"
+   ```
+
+---
+
 ## Version Management
 
 This project uses [bump2version](https://github.com/c4urself/bump2version) for automated version management.
 
 ### Prerequisites
 
-Install bump2version:
+Install the package with development dependencies (includes bump2version):
 ```bash
-pip install bump2version
+pip install -e ".[dev]"
 ```
+
+> **Note:** If you've already installed the package without dev extras (`pip install -e .`), you need to reinstall with `".[dev]"` to get bump2version and other development tools.
 
 ### Releasing a New Version
 
