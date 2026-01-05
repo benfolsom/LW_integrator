@@ -314,11 +314,27 @@ branches can download the output for review.
 
 The project version is defined exactly once in ``core/_version.py``.  Both
 ``setup.py`` and ``docs/source/conf.py`` import that value, ensuring the wheel
-metadata and Sphinx footer remain consistent.  To cut a new release:
+metadata and Sphinx footer remain consistent.
 
-1. Update ``__version__`` in ``core/_version.py``.
-2. Commit the change alongside relevant release notes or change logs.
-3. Tag and publish as needed; the packaging metadata is already aligned.
+This project uses **bump2version** for automated version management. To cut a new release:
+
+```bash
+# Bump patch version (0.4.1 → 0.4.2)
+bump2version patch
+
+# Bump minor version (0.4.1 → 0.5.0)
+bump2version minor
+
+# Bump major version (0.4.1 → 1.0.0)
+bump2version major
+
+# Push release
+git push origin master development --tags
+```
+
+This automatically updates ``core/_version.py``, creates a commit, and tags the release.
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development and release workflows.
 
 ---
 
