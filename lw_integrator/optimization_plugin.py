@@ -2520,6 +2520,10 @@ class OptimizationPlugin(ttk.Frame):
                 self.config.per_run_timeout = float(timeout_var.get())
                 self.config.skip_failed_runs = skip_failed_var.get()
 
+                # Update UI variables so changes persist when config is saved
+                self.per_run_timeout_var.set(str(self.config.per_run_timeout))
+                self.skip_failed_runs_var.set(self.config.skip_failed_runs)
+
                 result[0] = True
                 dialog.destroy()
             except ValueError as e:
