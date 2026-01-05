@@ -173,7 +173,9 @@ class OptimizationConfig:
     optimization_mutation_rate: float = 0.1  # For genetic algorithm
     optimization_crossover_rate: float = 0.7  # For genetic algorithm
     optimization_n_starts: int = 5  # For multi_start method
-    optimization_save_top_n: int = 3  # Save trajectories from top N results
+    optimization_save_top_n: int = (
+        3  # Save trajectories from top N results (TODO: not yet implemented)
+    )
     optimization_convergence_tol: float = 1e-6  # Convergence tolerance (relative)
     optimization_convergence_patience: int = 10  # Generations for plateau detection
 
@@ -1666,13 +1668,20 @@ class OptimizationPlugin(ttk.Frame):
         )
         output_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
-        ttk.Label(output_frame, text="Save top N configs:").grid(
+        ttk.Label(output_frame, text="Save top N trajectories:").grid(
             row=0, column=0, sticky="w", pady=2, padx=(0, 5)
         )
         self.optimization_save_top_n_var = tk.StringVar(value="3")
         ttk.Entry(
             output_frame, textvariable=self.optimization_save_top_n_var, width=8
         ).grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(
+            output_frame,
+            text="(Note: Currently only best trajectory is saved)",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 2))
 
         # Convergence settings
         convergence_frame = ttk.LabelFrame(
@@ -4649,7 +4658,7 @@ class OptimizationPlugin(ttk.Frame):
             )
             self._log_result("")
 
-            # Save results
+            # Save results (this sets self._last_optimization_dir)
             self._save_optimization_results(result, param_names)
 
             # Re-run best parameters to generate and save trajectory
@@ -4667,12 +4676,25 @@ class OptimizationPlugin(ttk.Frame):
             self._update_progress(100, "Done")
 
     def _save_optimization_results(self, result, param_names):
-        """Save optimization results to file."""
+        """Save optimization results to file in timestamped directory."""
         import json
+        from datetime import datetime
         from pathlib import Path
 
-        output_dir = Path(self.config.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Get config name if available (strip extension and path)
+        config_name = "optimization"
+        if hasattr(self, "last_loaded_config") and self.last_loaded_config:
+            config_name = Path(self.last_loaded_config).stem
+
+        # Create timestamped folder: YYYYMMDD_HHMMSS_configname_method
+        method_suffix = self.config.optimization_method.replace("_", "")
+        opt_dir = (
+            Path(self.sweep_output_dir) / f"{timestamp}_{config_name}_{method_suffix}"
+        )
+        opt_dir.mkdir(parents=True, exist_ok=True)
 
         # Create results dictionary
         results_dict = {
@@ -4685,6 +4707,7 @@ class OptimizationPlugin(ttk.Frame):
             else None,
             "success": bool(result.success),
             "message": str(result.message) if hasattr(result, "message") else None,
+            "timestamp": timestamp,
         }
 
         # Add convergence history if available
@@ -4692,14 +4715,17 @@ class OptimizationPlugin(ttk.Frame):
             results_dict["convergence_history"] = result.convergence_history
 
         # Save to JSON
-        results_file = output_dir / "optimization_results.json"
+        results_file = opt_dir / "optimization_results.json"
         with open(results_file, "w") as f:
             json.dump(results_dict, f, indent=2)
 
         self._log_result(f"Results saved to: {results_file}")
 
         # Generate plots
-        self._generate_optimization_plots(result, param_names, output_dir)
+        self._generate_optimization_plots(result, param_names, opt_dir)
+
+        # Store the output directory for trajectory saving
+        self._last_optimization_dir = opt_dir
 
     def _generate_optimization_plots(self, result, param_names, output_dir):
         """Generate optimization visualization plots."""
@@ -4842,7 +4868,7 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
     def _save_best_optimization_trajectory(self, result, param_names):
-        """Re-run best parameters and save trajectory."""
+        """Re-run best parameters and save trajectory to timestamped directory."""
         from pathlib import Path
 
         try:
@@ -4907,8 +4933,10 @@ class OptimizationPlugin(ttk.Frame):
             self.config.save_trajectories = save_traj_backup
 
             if result_data and "trajectory" in result_data:
-                # Save trajectory to output directory
-                output_dir = Path(self.config.output_dir)
+                # Use the timestamped directory from _save_optimization_results
+                output_dir = getattr(
+                    self, "_last_optimization_dir", Path(self.config.output_dir)
+                )
                 output_dir.mkdir(parents=True, exist_ok=True)
 
                 # Plot trajectory
@@ -6163,7 +6191,7 @@ class OptimizationPlugin(ttk.Frame):
 
             plt.tight_layout()
 
-            heatmap_file = output_dir / "energy_gain_heatmap.png"
+            heatmap_file = output_dir / "sweep_heatmap.png"
             plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
             plt.close(fig)
 
@@ -6182,7 +6210,7 @@ class OptimizationPlugin(ttk.Frame):
                     key=lambda r: r.get("metrics", {}).get("rider_delta_e_mev", -1e9),
                 )
                 self._plot_single_trajectory(
-                    best_result, output_dir / "best_trajectory.png"
+                    best_result, output_dir / "sweep_best_trajectory.png"
                 )
             else:
                 self._log_result(
