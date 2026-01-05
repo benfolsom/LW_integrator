@@ -173,9 +173,7 @@ class OptimizationConfig:
     optimization_mutation_rate: float = 0.1  # For genetic algorithm
     optimization_crossover_rate: float = 0.7  # For genetic algorithm
     optimization_n_starts: int = 5  # For multi_start method
-    optimization_save_top_n: int = (
-        3  # Save trajectories from top N results (TODO: not yet implemented)
-    )
+    optimization_save_top_n: int = 3  # Save trajectories from top N results
     optimization_convergence_tol: float = 1e-6  # Convergence tolerance (relative)
     optimization_convergence_patience: int = 10  # Generations for plateau detection
 
@@ -1678,7 +1676,7 @@ class OptimizationPlugin(ttk.Frame):
 
         ttk.Label(
             output_frame,
-            text="(Note: Currently only best trajectory is saved)",
+            text="(Re-runs top N parameter sets to generate trajectories)",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray50",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 2))
@@ -4661,8 +4659,8 @@ class OptimizationPlugin(ttk.Frame):
             # Save results (this sets self._last_optimization_dir)
             self._save_optimization_results(result, param_names)
 
-            # Re-run best parameters to generate and save trajectory
-            self._save_best_optimization_trajectory(result, param_names)
+            # Re-run top N parameters to generate and save trajectories
+            self._save_top_n_optimization_trajectories(result, param_names)
 
             self._log_result("[OK] Optimization complete!")
 
@@ -4709,6 +4707,35 @@ class OptimizationPlugin(ttk.Frame):
             "message": str(result.message) if hasattr(result, "message") else None,
             "timestamp": timestamp,
         }
+
+        # Add top N summary table if available (for population-based methods)
+        if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
+            top_n = max(1, int(self.config.optimization_save_top_n))
+            sorted_indices = np.argsort(result.final_fitness)
+            n_available = min(top_n, len(sorted_indices))
+
+            top_n_summary = []
+            for i in range(n_available):
+                idx = sorted_indices[i]
+                params_array = result.final_population[idx]
+                params_dict = dict(zip(param_names, params_array))
+                fitness = result.final_fitness[idx]
+
+                # Convert fitness to actual metric value
+                maximize = "max" in self.config.objective.lower()
+                metric_value = -fitness if maximize else fitness
+
+                top_n_summary.append(
+                    {
+                        "rank": i + 1,
+                        "parameters": params_dict,
+                        "fitness": float(fitness),
+                        "metric_value": float(metric_value),
+                    }
+                )
+
+            results_dict["top_n_results"] = top_n_summary
+            results_dict["top_n_count"] = n_available
 
         # Add convergence history if available
         if hasattr(result, "convergence_history"):
@@ -4867,17 +4894,109 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(f"[WARNING] Failed to generate optimization plots: {e}")
             self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
-    def _save_best_optimization_trajectory(self, result, param_names):
-        """Re-run best parameters and save trajectory to timestamped directory."""
+    def _save_top_n_optimization_trajectories(self, result, param_names):
+        """Re-run top N parameter sets and save trajectories to timestamped directory.
+
+        For population-based methods (genetic algorithm, differential evolution),
+        saves the top N individuals. For other methods, saves only the best.
+        """
         from pathlib import Path
 
         try:
-            self._log_result("")
-            self._log_result("Generating best trajectory...")
+            # Determine how many trajectories to save
+            top_n = max(1, int(self.config.optimization_save_top_n))
 
-            # Extract best parameters
-            best_params = result.best_params_dict
+            # Extract top parameter sets based on optimization method
+            top_params_list = []
 
+            if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
+                # Population-based method (genetic algorithm, differential evolution)
+                # Sort by fitness (already sorted, but just to be safe)
+                sorted_indices = np.argsort(result.final_fitness)
+                n_available = min(top_n, len(sorted_indices))
+
+                self._log_result("")
+                self._log_result(
+                    f"Generating top {n_available} trajectories from population..."
+                )
+
+                for i in range(n_available):
+                    idx = sorted_indices[i]
+                    params_array = result.final_population[idx]
+                    params_dict = dict(zip(param_names, params_array))
+                    fitness = result.final_fitness[idx]
+                    top_params_list.append(
+                        {"params": params_dict, "fitness": fitness, "rank": i + 1}
+                    )
+            else:
+                # Single-solution method (Nelder-Mead, multi_start, etc.)
+                # Only save the best
+                self._log_result("")
+                self._log_result("Generating best trajectory...")
+
+                top_params_list.append(
+                    {
+                        "params": result.best_params_dict,
+                        "fitness": result.fun,
+                        "rank": 1,
+                    }
+                )
+
+            # Generate and save trajectory for each top parameter set
+            trajectory_data_list = []
+            for item in top_params_list:
+                traj_data = self._save_single_optimization_trajectory(
+                    params_dict=item["params"],
+                    param_names=param_names,
+                    rank=item["rank"],
+                    fitness=item["fitness"],
+                )
+                if traj_data:
+                    trajectory_data_list.append(
+                        {
+                            "rank": item["rank"],
+                            "params": item["params"],
+                            "fitness": item["fitness"],
+                            "trajectory": traj_data,
+                        }
+                    )
+
+            # Generate comparison plot if we have multiple trajectories
+            if len(trajectory_data_list) > 1:
+                self._generate_trajectory_comparison_plot(trajectory_data_list)
+
+        except Exception as e:
+            import traceback
+
+            self._log_result(f"[WARNING] Failed to save top N trajectories: {e}")
+            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
+
+    def _save_single_optimization_trajectory(
+        self, params_dict, param_names, rank, fitness
+    ):
+        """Re-run a single parameter set and save its trajectory.
+
+        Parameters
+        ----------
+        params_dict : dict
+            Dictionary of parameter names to values
+        param_names : list
+            List of parameter names
+        rank : int
+            Rank of this parameter set (1 = best, 2 = second best, etc.)
+        fitness : float
+            Fitness value (objective function value to minimize)
+
+        Returns
+        -------
+        dict or None
+            Trajectory data dictionary if successful, None otherwise
+        """
+        from pathlib import Path
+
+        import numpy as np
+
+        try:
             # Set up run parameters (similar to evaluate_params)
             aperture = self.config.aperture_range[0]
             energy = self.config.energy_range[0]
@@ -4894,8 +5013,8 @@ class OptimizationPlugin(ttk.Frame):
             timestep = self.config.timestep
             steps = self.config.steps
 
-            # Map best parameters
-            for param_name, value in best_params.items():
+            # Map parameters
+            for param_name, value in params_dict.items():
                 if param_name == "aperture_radius":
                     aperture = value
                 elif param_name == "initial_energy_gev":
@@ -4926,7 +5045,7 @@ class OptimizationPlugin(ttk.Frame):
                 rider_pcount=int(self.config.pcount),
                 rider_transv_mom=self.config.transv_mom,
                 driver_params=None,
-                run_num=9999,  # Special run number for best trajectory
+                run_num=9999 + rank,  # Special run number for trajectory
             )
 
             # Restore trajectory setting
@@ -4941,7 +5060,6 @@ class OptimizationPlugin(ttk.Frame):
 
                 # Plot trajectory
                 import matplotlib.pyplot as plt
-                import numpy as np
 
                 traj = result_data["trajectory"]
 
@@ -4977,31 +5095,165 @@ class OptimizationPlugin(ttk.Frame):
                     axes[1, 1].set_title("Transverse Momentum")
                     axes[1, 1].grid(True, alpha=0.3)
 
+                # Create title with rank and fitness
+                rank_str = f"Rank #{rank}" if rank > 1 else "Best"
+                param_str = ", ".join([f"{k}={v:.4g}" for k, v in params_dict.items()])
                 plt.suptitle(
-                    f"Best Trajectory: {', '.join([f'{k}={v:.4g}' for k, v in best_params.items()])}"
+                    f"{rank_str} Trajectory (fitness={fitness:.6e}): {param_str}",
+                    fontsize=11,
                 )
                 plt.tight_layout()
 
-                traj_plot = output_dir / "best_trajectory.png"
+                # Save with rank in filename
+                if rank == 1:
+                    traj_plot = output_dir / "trajectory_rank1_best.png"
+                    traj_data = output_dir / "trajectory_rank1_best.npz"
+                else:
+                    traj_plot = output_dir / f"trajectory_rank{rank}.png"
+                    traj_data = output_dir / f"trajectory_rank{rank}.npz"
+
                 plt.savefig(traj_plot, dpi=150, bbox_inches="tight")
                 plt.close(fig)
 
-                self._log_result(f"Best trajectory plot saved to: {traj_plot}")
+                self._log_result(
+                    f"  Rank #{rank} trajectory plot saved to: {traj_plot}"
+                )
 
                 # Also save trajectory data as numpy archive
-                traj_data = output_dir / "best_trajectory.npz"
                 np.savez(traj_data, **traj)
-                self._log_result(f"Best trajectory data saved to: {traj_data}")
+                self._log_result(
+                    f"  Rank #{rank} trajectory data saved to: {traj_data}"
+                )
 
             else:
                 self._log_result(
-                    "[WARNING] Could not generate best trajectory (integration failed)"
+                    f"[WARNING] Could not generate rank #{rank} trajectory (integration failed)"
                 )
+                return None
+
+            # Return trajectory data for comparison plot
+            return result_data.get("trajectory")
 
         except Exception as e:
             import traceback
 
-            self._log_result(f"[WARNING] Failed to save best trajectory: {e}")
+            self._log_result(f"[WARNING] Failed to save trajectory: {e}")
+            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
+            return None
+
+    def _generate_trajectory_comparison_plot(self, trajectory_data_list):
+        """Generate comparison plot showing all top N trajectories overlaid.
+
+        Parameters
+        ----------
+        trajectory_data_list : list of dict
+            List of trajectory data with keys: rank, params, fitness, trajectory
+        """
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+
+        try:
+            output_dir = getattr(
+                self, "_last_optimization_dir", Path(self.config.output_dir)
+            )
+
+            # Create figure with 4 subplots
+            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+            # Define colors for different ranks
+            colors = plt.cm.tab10(np.linspace(0, 1, len(trajectory_data_list)))
+
+            for i, item in enumerate(trajectory_data_list):
+                rank = item["rank"]
+                traj = item["trajectory"]
+                fitness = item["fitness"]
+                color = colors[i]
+
+                z = np.array(traj.get("z", []))
+                t = np.array(traj.get("t", []))
+                x = np.array(traj.get("x", []))
+                gamma = np.array(traj.get("gamma", []))
+                px = np.array(traj.get("Px", []))
+
+                if len(z) == 0:
+                    continue
+
+                label = f"Rank #{rank}" if rank > 1 else "Best"
+
+                # Plot 1: z vs t
+                if len(t) > 0 and len(z) > 0:
+                    axes[0, 0].plot(
+                        t, z, color=color, linewidth=2, label=label, alpha=0.8
+                    )
+
+                # Plot 2: x vs z
+                if len(x) > 0 and len(z) > 0:
+                    axes[0, 1].plot(
+                        z, x, color=color, linewidth=2, label=label, alpha=0.8
+                    )
+
+                # Plot 3: gamma vs z
+                if len(gamma) > 0 and len(z) > 0:
+                    axes[1, 0].plot(
+                        z, gamma, color=color, linewidth=2, label=label, alpha=0.8
+                    )
+
+                # Plot 4: Px vs z
+                if len(px) > 0 and len(z) > 0:
+                    axes[1, 1].plot(
+                        z, px, color=color, linewidth=2, label=label, alpha=0.8
+                    )
+
+            # Configure subplot 1: z vs t
+            axes[0, 0].set_xlabel("Time (ns)", fontsize=10)
+            axes[0, 0].set_ylabel("z (mm)", fontsize=10)
+            axes[0, 0].set_title(
+                "Longitudinal Position", fontsize=11, fontweight="bold"
+            )
+            axes[0, 0].grid(True, alpha=0.3)
+            axes[0, 0].legend(fontsize=9, loc="best")
+
+            # Configure subplot 2: x vs z
+            axes[0, 1].set_xlabel("z (mm)", fontsize=10)
+            axes[0, 1].set_ylabel("x (mm)", fontsize=10)
+            axes[0, 1].set_title("Transverse Position", fontsize=11, fontweight="bold")
+            axes[0, 1].grid(True, alpha=0.3)
+            axes[0, 1].legend(fontsize=9, loc="best")
+
+            # Configure subplot 3: gamma vs z
+            axes[1, 0].set_xlabel("z (mm)", fontsize=10)
+            axes[1, 0].set_ylabel("γ", fontsize=10)
+            axes[1, 0].set_title("Lorentz Factor", fontsize=11, fontweight="bold")
+            axes[1, 0].grid(True, alpha=0.3)
+            axes[1, 0].legend(fontsize=9, loc="best")
+
+            # Configure subplot 4: Px vs z
+            axes[1, 1].set_xlabel("z (mm)", fontsize=10)
+            axes[1, 1].set_ylabel("Px (amu·mm/ns)", fontsize=10)
+            axes[1, 1].set_title("Transverse Momentum", fontsize=11, fontweight="bold")
+            axes[1, 1].grid(True, alpha=0.3)
+            axes[1, 1].legend(fontsize=9, loc="best")
+
+            plt.suptitle(
+                f"Top {len(trajectory_data_list)} Trajectory Comparison",
+                fontsize=13,
+                fontweight="bold",
+            )
+            plt.tight_layout()
+
+            comparison_plot = output_dir / "trajectory_comparison.png"
+            plt.savefig(comparison_plot, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+            self._log_result(
+                f"[OK] Trajectory comparison plot saved to: {comparison_plot}"
+            )
+
+        except Exception as e:
+            import traceback
+
+            self._log_result(f"[WARNING] Failed to generate comparison plot: {e}")
             self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
     def _run_sweep_background(self, is_finetune=False, finetune_regions=None):
