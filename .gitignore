@@ -208,3 +208,22 @@ configs/optimization/*.json
 examples/validation/configs/testbed_runs
 examples/validation/test_outputs/
 LW_local_refs/
+
+# Ad-hoc test scripts in root (use tests/ directory for tracked tests)
+/test_*.py
+
+# Temporary zip archives
+*.zip
+
+# LLM-generated documentation (keep only README.md)
+CHANGES_*.md
+COMPLETE_*.md
+FINAL_*.md
+FIXES_*.md
+IMPLEMENTATION_*.md
+MAJOR_*.md
+NOTEBOOK_WORKFLOW.md
+OPTIMIZATION_*.md
+QUICK_START_*.md
+READY_*.md
+TEST_RESULTS_*.md
