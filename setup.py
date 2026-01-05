@@ -64,6 +64,7 @@ setup(
             "black>=21.0",
             "flake8>=3.8",
             "mypy>=0.800",
+            "bump2version>=1.0.0",
         ],
         "examples": [
             "jupyter>=1.0.0",
