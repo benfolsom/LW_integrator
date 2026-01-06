@@ -1937,6 +1937,20 @@ class OptimizationPlugin(ttk.Frame):
         except ValueError:
             raise ValueError(f"Invalid list format: {value}")
 
+    def _parse_range_field(self, value: str) -> Optional[Tuple[float, float]]:
+        """Parse range field (min, max) or return None if empty."""
+        if not value or not value.strip():
+            return None
+        try:
+            parts = [float(x.strip()) for x in value.split(",") if x.strip()]
+            if len(parts) != 2:
+                raise ValueError(f"Range must have exactly 2 values (min, max)")
+            if parts[0] >= parts[1]:
+                raise ValueError(f"Range min must be less than max")
+            return (parts[0], parts[1])
+        except ValueError as e:
+            raise ValueError(f"Invalid range format: {value} - {e}")
+
     def _validate_inputs(self) -> Optional[str]:
         """Validate user inputs. Returns error message or None."""
         try:
