@@ -840,30 +840,67 @@ class OptimizationPlugin(ttk.Frame):
         ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
             row=4, column=2, columnspan=2, sticky="ew", pady=2, padx=5
         )
+        # Wall Position (sweepable)
         ttk.Label(frame, text="Wall Position:").grid(
             row=5, column=0, sticky="w", pady=2
         )
-        ttk.Label(frame, text="Conducting wall z-coordinate (mm):").grid(
-            row=5, column=1, sticky="w", pady=2
-        )
-        self.wall_z_var = tk.StringVar(value="2200.0")
-        ttk.Entry(frame, textvariable=self.wall_z_var, width=10).grid(
-            row=5, column=2, sticky="w", pady=2, padx=5
-        )
 
-        # Wall z sweep controls
-        ttk.Label(frame, text="Sweep (absolute z, mm):").grid(
-            row=5, column=3, sticky="w", pady=2, padx=(10, 0)
+        # Fixed value
+        self.wall_z_var = tk.StringVar(value="2200.0")
+        self.wall_z_entry = ttk.Entry(frame, textvariable=self.wall_z_var, width=10)
+        self.wall_z_entry.grid(row=5, column=1, sticky="w", pady=2, padx=5)
+
+        # Sweep checkbox
+        self.wall_z_sweep_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame,
+            text="Sweep:",
+            variable=self.wall_z_sweep_var,
+            command=self._toggle_wall_z_sweep,
+        ).grid(row=5, column=2, sticky="w", pady=2, padx=(10, 2))
+
+        # Sweep controls frame
+        wall_z_sweep_frame = ttk.Frame(frame)
+        wall_z_sweep_frame.grid(row=5, column=3, columnspan=4, sticky="w", pady=2)
+
+        ttk.Label(wall_z_sweep_frame, text="Min (mm):").pack(side="left", padx=(0, 2))
+        self.wall_z_min_var = tk.StringVar(value="2000.0")
+        self.wall_z_min_entry = ttk.Entry(
+            wall_z_sweep_frame, textvariable=self.wall_z_min_var, width=10
         )
-        self.wall_z_range_var = tk.StringVar(value="")
-        ttk.Entry(frame, textvariable=self.wall_z_range_var, width=15).grid(
-            row=5, column=4, sticky="w", pady=2, padx=5
+        self.wall_z_min_entry.pack(side="left", padx=2)
+
+        ttk.Label(wall_z_sweep_frame, text="Max (mm):").pack(side="left", padx=(5, 2))
+        self.wall_z_max_var = tk.StringVar(value="2400.0")
+        self.wall_z_max_entry = ttk.Entry(
+            wall_z_sweep_frame, textvariable=self.wall_z_max_var, width=10
         )
-        ttk.Label(frame, text="Points:").grid(row=5, column=5, sticky="w", pady=2)
-        self.wall_z_points_var = tk.StringVar(value="1")
-        ttk.Entry(frame, textvariable=self.wall_z_points_var, width=5).grid(
-            row=5, column=6, sticky="w", pady=2, padx=5
+        self.wall_z_max_entry.pack(side="left", padx=2)
+
+        ttk.Label(wall_z_sweep_frame, text="Pts:").pack(side="left", padx=(5, 2))
+        self.wall_z_points_var = tk.StringVar(value="3")
+        self.wall_z_points_entry = ttk.Entry(
+            wall_z_sweep_frame, textvariable=self.wall_z_points_var, width=4
         )
+        self.wall_z_points_entry.pack(side="left", padx=2)
+
+        self.wall_z_log_var = tk.BooleanVar(value=False)
+        self.wall_z_log_check = ttk.Checkbutton(
+            wall_z_sweep_frame, text="Log", variable=self.wall_z_log_var
+        )
+        self.wall_z_log_check.pack(side="left", padx=(5, 0))
+
+        # Store references for sweep control
+        self.wall_z_sweep_frame = wall_z_sweep_frame
+        self.wall_z_sweep_widgets = [
+            self.wall_z_min_entry,
+            self.wall_z_max_entry,
+            self.wall_z_points_entry,
+            self.wall_z_log_check,
+        ]
+
+        # Initially disable sweep controls
+        self._toggle_wall_z_sweep()
 
         # Cavity Spacing (for SWITCHING_WALL)
         ttk.Label(frame, text="Cavity Spacing:").grid(
@@ -1419,6 +1456,19 @@ class OptimizationPlugin(ttk.Frame):
         else:
             controls["range_frame"].grid_remove()
             controls["fixed_entry"].config(state="normal")
+
+    def _toggle_wall_z_sweep(self):
+        """Toggle wall_z sweep controls."""
+        if self.wall_z_sweep_var.get():
+            # Enable sweep controls, disable fixed value
+            self.wall_z_entry.config(state="disabled")
+            for widget in self.wall_z_sweep_widgets:
+                widget.config(state="normal")
+        else:
+            # Disable sweep controls, enable fixed value
+            self.wall_z_entry.config(state="normal")
+            for widget in self.wall_z_sweep_widgets:
+                widget.config(state="disabled")
 
     def _toggle_timestep_mode(self):
         """Toggle between duration/count auto-calculation modes."""
@@ -2059,11 +2109,14 @@ class OptimizationPlugin(ttk.Frame):
             ),
             starting_z_positions=self._parse_list_field(self.start_z_var.get()),
             wall_z=float(self.wall_z_var.get()),
-            wall_z_range=self._parse_range_field(self.wall_z_range_var.get())
-            if hasattr(self, "wall_z_range_var")
+            wall_z_range=(
+                float(self.wall_z_min_var.get()),
+                float(self.wall_z_max_var.get()),
+            )
+            if self.wall_z_sweep_var.get()
             else None,
             wall_z_points=int(self.wall_z_points_var.get())
-            if hasattr(self, "wall_z_points_var")
+            if self.wall_z_sweep_var.get()
             else 1,
             cavity_spacing=float(self.cavity_spacing_var.get()),
             timestep=float(self.duration_var.get())
@@ -2848,11 +2901,16 @@ class OptimizationPlugin(ttk.Frame):
             self.wall_z_var.set(str(data.get("wall_z", 100.0)))
 
             # Load wall_z sweep config if present
-            if "wall_z_range" in data:
-                self.wall_z_range_var.set(
-                    f"{data['wall_z_range'][0]}, {data['wall_z_range'][1]}"
-                )
-                self.wall_z_points_var.set(str(data.get("wall_z_points", 1)))
+            if "wall_z_range" in data and data["wall_z_range"] is not None:
+                wall_z_range = data["wall_z_range"]
+                self.wall_z_min_var.set(str(wall_z_range[0]))
+                self.wall_z_max_var.set(str(wall_z_range[1]))
+                self.wall_z_points_var.set(str(data.get("wall_z_points", 3)))
+                self.wall_z_sweep_var.set(True)
+                self._toggle_wall_z_sweep()
+            else:
+                self.wall_z_sweep_var.set(False)
+                self._toggle_wall_z_sweep()
 
             self.cavity_spacing_var.set(str(data.get("cavity_spacing", 1e5)))
             self.steps_var.set(str(data.get("steps", 2000)))
