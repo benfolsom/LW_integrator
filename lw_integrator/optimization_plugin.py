@@ -4234,6 +4234,10 @@ class OptimizationPlugin(ttk.Frame):
 
     def _run_optimization_background(self):
         """Run optimization in background using selected algorithm."""
+        import time
+
+        start_time = time.time()
+
         try:
             from optimization.optimizer import (
                 adaptive_grid_search,
@@ -4662,7 +4666,22 @@ class OptimizationPlugin(ttk.Frame):
             # Re-run top N parameters to generate and save trajectories
             self._save_top_n_optimization_trajectories(result, param_names)
 
+            elapsed_time = time.time() - start_time
+            hours = int(elapsed_time // 3600)
+            minutes = int((elapsed_time % 3600) // 60)
+            seconds = elapsed_time % 60
+
             self._log_result("[OK] Optimization complete!")
+            if hours > 0:
+                self._log_result(
+                    f"  Total time: {hours}h {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
+                )
+            elif minutes > 0:
+                self._log_result(
+                    f"  Total time: {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
+                )
+            else:
+                self._log_result(f"  Total time: {elapsed_time:.1f}s")
 
         except Exception as e:
             import traceback
@@ -5072,11 +5091,11 @@ class OptimizationPlugin(ttk.Frame):
                 axes[0, 0].set_title("Longitudinal Position")
                 axes[0, 0].grid(True, alpha=0.3)
 
-                # x vs z
-                axes[0, 1].plot(traj["z"], traj["x"], "r-", linewidth=1.5)
+                # r vs z
+                axes[0, 1].plot(traj["z"], traj["r"], "r-", linewidth=1.5)
                 axes[0, 1].set_xlabel("z (mm)")
-                axes[0, 1].set_ylabel("x (mm)")
-                axes[0, 1].set_title("Transverse Position")
+                axes[0, 1].set_ylabel("r (mm)")
+                axes[0, 1].set_title("Transverse Position (Radial)")
                 axes[0, 1].grid(True, alpha=0.3)
 
                 # gamma vs z
@@ -5087,12 +5106,12 @@ class OptimizationPlugin(ttk.Frame):
                     axes[1, 0].set_title("Lorentz Factor")
                     axes[1, 0].grid(True, alpha=0.3)
 
-                # Px vs z
-                if "Px" in traj:
-                    axes[1, 1].plot(traj["z"], traj["Px"], "m-", linewidth=1.5)
+                # pr vs z
+                if "pr" in traj:
+                    axes[1, 1].plot(traj["z"], traj["pr"], "m-", linewidth=1.5)
                     axes[1, 1].set_xlabel("z (mm)")
-                    axes[1, 1].set_ylabel("Px (amu·mm/ns)")
-                    axes[1, 1].set_title("Transverse Momentum")
+                    axes[1, 1].set_ylabel("pr (amu·mm/ns)")
+                    axes[1, 1].set_title("Transverse Momentum (Radial)")
                     axes[1, 1].grid(True, alpha=0.3)
 
                 # Create title with rank and fitness
@@ -5263,6 +5282,10 @@ class OptimizationPlugin(ttk.Frame):
             is_finetune: If True, this is a fine-tuning sweep
             finetune_regions: List of parameter regions for fine-tuning
         """
+        import time
+
+        start_time = time.time()
+
         try:
             # Check mode and route accordingly
             if self.config.mode == "optimization":
@@ -5788,11 +5811,26 @@ class OptimizationPlugin(ttk.Frame):
                 self._save_sweep_results(all_results, failed_runs)
 
             if self.running:
+                elapsed_time = time.time() - start_time
+                hours = int(elapsed_time // 3600)
+                minutes = int((elapsed_time % 3600) // 60)
+                seconds = elapsed_time % 60
+
                 self._log_result("[OK] Sweep completed!")
                 self._log_result(f"  Results saved to: {self.config.output_dir}")
                 self._log_result(f"  Successful runs: {len(all_results)}")
                 if failed_runs:
                     self._log_result(f"  Failed/timed-out runs: {len(failed_runs)}")
+                if hours > 0:
+                    self._log_result(
+                        f"  Total time: {hours}h {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
+                    )
+                elif minutes > 0:
+                    self._log_result(
+                        f"  Total time: {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
+                    )
+                else:
+                    self._log_result(f"  Total time: {elapsed_time:.1f}s")
                 self._update_progress(100, "Complete!")
         except Exception as e:
             self._log_result(f"[ERROR] Error during sweep: {e}")
@@ -6299,6 +6337,7 @@ class OptimizationPlugin(ttk.Frame):
                         "pz": np.asarray(traj["pz"])[::stride].tolist(),
                         "pr": np.asarray(traj["pr"])[::stride].tolist(),
                         "t": np.asarray(traj["t"])[::stride].tolist(),
+                        "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
                     }
                 except Exception as e:
                     self._log_result(
