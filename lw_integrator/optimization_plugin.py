@@ -852,7 +852,7 @@ class OptimizationPlugin(ttk.Frame):
         )
 
         # Wall z sweep controls
-        ttk.Label(frame, text="Sweep range (min, max):").grid(
+        ttk.Label(frame, text="Sweep (absolute z, mm):").grid(
             row=5, column=3, sticky="w", pady=2, padx=(10, 0)
         )
         self.wall_z_range_var = tk.StringVar(value="")
@@ -5826,7 +5826,7 @@ class OptimizationPlugin(ttk.Frame):
                         f"    expected_total_distance = {expected_distance:.2f} mm"
                     )
                     # Use wall_z from grid if available, otherwise use config default
-                    current_wall_z = param_combo.get("wall_z", self.config.wall_z)
+                    current_wall_z = params_dict.get("wall_z", self.config.wall_z)
                     self._log_result(
                         f"    wall_z={current_wall_z:.2f} mm, start_z={start_z:.2f} mm"
                     )
@@ -5839,7 +5839,7 @@ class OptimizationPlugin(ttk.Frame):
                         )
                 elif self.config.auto_steps:
                     # Legacy auto_steps mode (deprecated, but keep for compatibility)
-                    current_wall_z = param_combo.get("wall_z", self.config.wall_z)
+                    current_wall_z = params_dict.get("wall_z", self.config.wall_z)
                     distance_to_wall = abs(current_wall_z - start_z)
                     total_distance = (
                         distance_to_wall + self.config.auto_steps_distance_past_wall
@@ -5925,7 +5925,7 @@ class OptimizationPlugin(ttk.Frame):
                                     if self.config.simulation_type
                                     == SimulationType.BUNCH_TO_BUNCH
                                     else None,
-                                    wall_z=param_combo.get(
+                                    wall_z=params_dict.get(
                                         "wall_z", self.config.wall_z
                                     ),
                                     run_num=run_num,
@@ -6053,7 +6053,7 @@ class OptimizationPlugin(ttk.Frame):
                                     "transverse_offset_fraction": offset_frac,
                                     "timestep": timestep,
                                     "steps": steps,
-                                    "wall_z": param_combo.get(
+                                    "wall_z": params_dict.get(
                                         "wall_z", self.config.wall_z
                                     ),
                                     "rider_m_particle": rider_m_particle,
@@ -6107,7 +6107,7 @@ class OptimizationPlugin(ttk.Frame):
                                     "transverse_offset": transv_offset,
                                     "timestep": timestep,
                                     "steps": steps,
-                                    "wall_z": param_combo.get(
+                                    "wall_z": params_dict.get(
                                         "wall_z", self.config.wall_z
                                     ),
                                 },
