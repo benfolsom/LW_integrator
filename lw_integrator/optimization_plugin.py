@@ -4383,8 +4383,9 @@ class OptimizationPlugin(ttk.Frame):
 
             result = None
 
-            # Track evaluation count
+            # Track evaluation count and all evaluations for heatmap
             eval_counter = [0]  # Use list for mutable closure
+            all_evaluations = []  # Store all parameter sets and their results
 
             # Create custom objective function that uses our integration runner
             def evaluate_params(x):
@@ -4537,6 +4538,14 @@ class OptimizationPlugin(ttk.Frame):
                         )
 
                     if result is None or "metrics" not in result:
+                        # Store failed evaluation
+                        eval_record = {
+                            "evaluation": eval_num,
+                            "parameters": dict(zip(param_names, x)),
+                            "failed": True,
+                            "objective_value": np.inf if not maximize else -np.inf,
+                        }
+                        all_evaluations.append(eval_record)
                         return np.inf if not maximize else -np.inf
 
                     # Extract metric value
@@ -4557,10 +4566,29 @@ class OptimizationPlugin(ttk.Frame):
                         self._log_result(
                             f"[WARNING] Returning -inf (rejecting this evaluation)"
                         )
+                        # Store failed evaluation
+                        eval_record = {
+                            "evaluation": eval_num,
+                            "parameters": dict(zip(param_names, x)),
+                            "failed": True,
+                            "objective_value": np.inf if not maximize else -np.inf,
+                        }
+                        all_evaluations.append(eval_record)
                         return np.inf if not maximize else -np.inf
 
                     # Return value to minimize (negate if maximizing)
                     result_value = -value if maximize else value
+
+                    # Store successful evaluation
+                    eval_record = {
+                        "evaluation": eval_num,
+                        "parameters": dict(zip(param_names, x)),
+                        "objective_value": value,  # Store original value
+                        "fitness": result_value,  # Store fitness (for minimization)
+                        "failed": False,
+                    }
+                    all_evaluations.append(eval_record)
+
                     return result_value
 
                 except Exception as e:
@@ -4573,6 +4601,17 @@ class OptimizationPlugin(ttk.Frame):
                     self._log_result(f"[ERROR] Traceback:")
                     for line in traceback.format_exc().splitlines():
                         self._log_result(f"  {line}")
+
+                    # Store failed evaluation
+                    eval_record = {
+                        "evaluation": eval_num,
+                        "parameters": dict(zip(param_names, x)),
+                        "failed": True,
+                        "error": str(e),
+                        "objective_value": np.inf if not maximize else -np.inf,
+                    }
+                    all_evaluations.append(eval_record)
+
                     return np.inf if not maximize else -np.inf
 
             if method == "genetic_algorithm":
@@ -4706,6 +4745,13 @@ class OptimizationPlugin(ttk.Frame):
             # Re-run top N parameters to generate and save trajectories
             self._save_top_n_optimization_trajectories(result, param_names)
 
+            # Cache all evaluations for saving and generate heatmap
+            if len(all_evaluations) > 0:
+                self._all_evaluations_cache = all_evaluations
+                self._generate_optimization_heatmap(
+                    all_evaluations, param_names, self._last_optimization_dir
+                )
+
             elapsed_time = time.time() - start_time
             hours = int(elapsed_time // 3600)
             minutes = int((elapsed_time % 3600) // 60)
@@ -4799,6 +4845,11 @@ class OptimizationPlugin(ttk.Frame):
         # Add convergence history if available
         if hasattr(result, "convergence_history"):
             results_dict["convergence_history"] = result.convergence_history
+
+        # Add all evaluations if available (from closure)
+        if hasattr(self, "_all_evaluations_cache"):
+            results_dict["all_evaluations"] = self._all_evaluations_cache
+            results_dict["total_evaluations"] = len(self._all_evaluations_cache)
 
         # Save to JSON
         results_file = opt_dir / "optimization_results.json"
@@ -4946,6 +4997,228 @@ class OptimizationPlugin(ttk.Frame):
                 plt.savefig(params_plot, dpi=150, bbox_inches="tight")
                 plt.close(fig)
                 self._log_result(f"Best parameters plot saved to: {params_plot}")
+
+        except Exception as e:
+            import traceback
+
+            self._log_result(f"[WARNING] Failed to generate optimization plots: {e}")
+            self._log_result(traceback.format_exc())
+
+    def _generate_optimization_heatmap(self, all_evaluations, param_names, output_dir):
+        """Generate sparse heatmap from optimization evaluations.
+
+        Parameters
+        ----------
+        all_evaluations : list
+            List of evaluation dictionaries with parameters and objective values
+        param_names : list
+            List of parameter names
+        output_dir : Path
+            Output directory for saving plots
+        """
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from scipy.interpolate import griddata
+
+        try:
+            if len(all_evaluations) < 3:
+                self._log_result(
+                    "[INFO] Not enough evaluations for heatmap (need at least 3)"
+                )
+                return
+
+            # Filter out failed evaluations
+            successful_evals = [
+                e for e in all_evaluations if not e.get("failed", False)
+            ]
+
+            if len(successful_evals) < 3:
+                self._log_result("[INFO] Not enough successful evaluations for heatmap")
+                return
+
+            # Determine if maximizing or minimizing
+            maximize = "max" in self.config.objective.lower()
+
+            # For 2D parameter space, create traditional heatmap
+            if len(param_names) == 2:
+                self._log_result(
+                    f"[INFO] Generating 2D optimization heatmap for {param_names[0]} vs {param_names[1]}"
+                )
+
+                fig, ax = plt.subplots(figsize=(10, 8))
+
+                # Extract data
+                x_vals = [e["parameters"][param_names[0]] for e in successful_evals]
+                y_vals = [e["parameters"][param_names[1]] for e in successful_evals]
+                z_vals = [e["objective_value"] for e in successful_evals]
+
+                # Create interpolated grid
+                x_min, x_max = min(x_vals), max(x_vals)
+                y_min, y_max = min(y_vals), max(y_vals)
+
+                # Add 5% margin
+                x_range = x_max - x_min
+                y_range = y_max - y_min
+                x_min -= x_range * 0.05
+                x_max += x_range * 0.05
+                y_min -= y_range * 0.05
+                y_max += y_range * 0.05
+
+                # Create grid for interpolation
+                grid_x, grid_y = np.meshgrid(
+                    np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100)
+                )
+
+                # Interpolate
+                grid_z = griddata(
+                    (x_vals, y_vals),
+                    z_vals,
+                    (grid_x, grid_y),
+                    method="linear",
+                    fill_value=np.nan,
+                )
+
+                # Plot heatmap
+                im = ax.contourf(
+                    grid_x,
+                    grid_y,
+                    grid_z,
+                    levels=20,
+                    cmap="RdYlGn" if maximize else "RdYlGn_r",
+                )
+
+                # Overlay evaluation points
+                scatter = ax.scatter(
+                    x_vals,
+                    y_vals,
+                    c=z_vals,
+                    s=30,
+                    edgecolors="black",
+                    linewidth=0.5,
+                    cmap="RdYlGn" if maximize else "RdYlGn_r",
+                    zorder=5,
+                    alpha=0.7,
+                )
+
+                # Mark best point
+                best_idx = np.argmax(z_vals) if maximize else np.argmin(z_vals)
+                ax.scatter(
+                    x_vals[best_idx],
+                    y_vals[best_idx],
+                    c="red",
+                    s=300,
+                    marker="*",
+                    edgecolors="black",
+                    linewidth=2,
+                    label="Best",
+                    zorder=10,
+                )
+
+                ax.set_xlabel(param_names[0])
+                ax.set_ylabel(param_names[1])
+                ax.set_title(
+                    f"Optimization Landscape: {self.config.objective}\n({len(successful_evals)} evaluations)"
+                )
+                ax.legend()
+
+                cbar = plt.colorbar(im, ax=ax)
+                cbar.set_label(self.config.objective)
+
+                plt.tight_layout()
+                heatmap_file = output_dir / "optimization_heatmap_2d.png"
+                plt.savefig(heatmap_file, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+                self._log_result(f"2D optimization heatmap saved to: {heatmap_file}")
+
+            # For higher dimensions, create pairwise heatmaps
+            elif len(param_names) > 2:
+                self._log_result(
+                    f"[INFO] Generating pairwise optimization heatmaps for {len(param_names)} parameters"
+                )
+
+                # Create pairwise combinations for first few parameters
+                import itertools
+
+                pairs = list(itertools.combinations(range(min(4, len(param_names))), 2))
+
+                if len(pairs) > 6:
+                    pairs = pairs[:6]  # Limit to 6 pairs
+
+                n_pairs = len(pairs)
+                n_cols = min(3, n_pairs)
+                n_rows = (n_pairs + n_cols - 1) // n_cols
+
+                fig, axes = plt.subplots(
+                    n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows)
+                )
+                if n_pairs == 1:
+                    axes = [axes]
+                else:
+                    axes = axes.flatten() if n_rows > 1 else axes
+
+                for idx, (i, j) in enumerate(pairs):
+                    ax = axes[idx]
+
+                    x_vals = [e["parameters"][param_names[i]] for e in successful_evals]
+                    y_vals = [e["parameters"][param_names[j]] for e in successful_evals]
+                    z_vals = [e["objective_value"] for e in successful_evals]
+
+                    # Scatter plot with color
+                    scatter = ax.scatter(
+                        x_vals,
+                        y_vals,
+                        c=z_vals,
+                        s=50,
+                        cmap="RdYlGn" if maximize else "RdYlGn_r",
+                        edgecolors="black",
+                        linewidth=0.5,
+                        alpha=0.7,
+                    )
+
+                    # Mark best
+                    best_idx = np.argmax(z_vals) if maximize else np.argmin(z_vals)
+                    ax.scatter(
+                        x_vals[best_idx],
+                        y_vals[best_idx],
+                        c="red",
+                        s=300,
+                        marker="*",
+                        edgecolors="black",
+                        linewidth=2,
+                        zorder=10,
+                    )
+
+                    ax.set_xlabel(param_names[i])
+                    ax.set_ylabel(param_names[j])
+                    ax.set_title(f"{param_names[i]} vs {param_names[j]}")
+                    ax.grid(True, alpha=0.3)
+
+                    plt.colorbar(scatter, ax=ax, label=self.config.objective)
+
+                # Hide unused subplots
+                for idx in range(n_pairs, len(axes)):
+                    axes[idx].axis("off")
+
+                plt.suptitle(
+                    f"Pairwise Parameter Exploration ({len(successful_evals)} evaluations)",
+                    fontsize=14,
+                    y=1.0,
+                )
+                plt.tight_layout()
+
+                heatmap_file = output_dir / "optimization_heatmap_pairwise.png"
+                plt.savefig(heatmap_file, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+                self._log_result(
+                    f"Pairwise optimization heatmaps saved to: {heatmap_file}"
+                )
+
+            else:
+                self._log_result(
+                    "[INFO] Single parameter optimization - no heatmap needed"
+                )
 
         except Exception as e:
             import traceback
