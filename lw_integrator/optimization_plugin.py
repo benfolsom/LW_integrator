@@ -851,6 +851,20 @@ class OptimizationPlugin(ttk.Frame):
             row=5, column=2, sticky="w", pady=2, padx=5
         )
 
+        # Wall z sweep controls
+        ttk.Label(frame, text="Sweep range (min, max):").grid(
+            row=5, column=3, sticky="w", pady=2, padx=(10, 0)
+        )
+        self.wall_z_range_var = tk.StringVar(value="")
+        ttk.Entry(frame, textvariable=self.wall_z_range_var, width=15).grid(
+            row=5, column=4, sticky="w", pady=2, padx=5
+        )
+        ttk.Label(frame, text="Points:").grid(row=5, column=5, sticky="w", pady=2)
+        self.wall_z_points_var = tk.StringVar(value="1")
+        ttk.Entry(frame, textvariable=self.wall_z_points_var, width=5).grid(
+            row=5, column=6, sticky="w", pady=2, padx=5
+        )
+
         # Cavity Spacing (for SWITCHING_WALL)
         ttk.Label(frame, text="Cavity Spacing:").grid(
             row=6, column=0, sticky="w", pady=2
@@ -2031,6 +2045,12 @@ class OptimizationPlugin(ttk.Frame):
             ),
             starting_z_positions=self._parse_list_field(self.start_z_var.get()),
             wall_z=float(self.wall_z_var.get()),
+            wall_z_range=self._parse_range_field(self.wall_z_range_var.get())
+            if hasattr(self, "wall_z_range_var")
+            else None,
+            wall_z_points=int(self.wall_z_points_var.get())
+            if hasattr(self, "wall_z_points_var")
+            else 1,
             cavity_spacing=float(self.cavity_spacing_var.get()),
             timestep=float(self.duration_var.get())
             if self.timestep_mode_var.get() == "count"
@@ -2812,6 +2832,14 @@ class OptimizationPlugin(ttk.Frame):
                 ", ".join(map(str, data.get("starting_z_positions", [0.0])))
             )
             self.wall_z_var.set(str(data.get("wall_z", 100.0)))
+
+            # Load wall_z sweep config if present
+            if "wall_z_range" in data:
+                self.wall_z_range_var.set(
+                    f"{data['wall_z_range'][0]}, {data['wall_z_range'][1]}"
+                )
+                self.wall_z_points_var.set(str(data.get("wall_z_points", 1)))
+
             self.cavity_spacing_var.set(str(data.get("cavity_spacing", 1e5)))
             self.steps_var.set(str(data.get("steps", 2000)))
             self.objective_var.set(data.get("objective", "max_energy_gain"))
@@ -3059,6 +3087,8 @@ class OptimizationPlugin(ttk.Frame):
                 "transverse_offset_fractions": config.transverse_offset_fractions,
                 "starting_z_positions": config.starting_z_positions,
                 "wall_z": config.wall_z,
+                "wall_z_range": config.wall_z_range,
+                "wall_z_points": config.wall_z_points,
                 "cavity_spacing": config.cavity_spacing,
                 "steps": config.steps,
                 "objective": config.objective,
@@ -4305,6 +4335,11 @@ class OptimizationPlugin(ttk.Frame):
                 param_names.append("macroparticle_sigma_multiplier")
                 param_bounds.append(self.config.macroparticle_sigma_range)
 
+            # Wall z position - if enabled as sweep parameter
+            if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
+                param_names.append("wall_z")
+                param_bounds.append(self.config.wall_z_range)
+
             if len(param_names) == 0:
                 self._log_result(
                     "[ERROR] No parameters to optimize! Enable at least 2 points for aperture or energy."
@@ -4398,6 +4433,7 @@ class OptimizationPlugin(ttk.Frame):
                     macroparticle_sigma_mult = (
                         self.config.macroparticle_sigma_multiplier
                     )  # default
+                    wall_z = self.config.wall_z  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -4416,6 +4452,8 @@ class OptimizationPlugin(ttk.Frame):
                             macroparticle_charge_mult = x[i]
                         elif param_name == "macroparticle_sigma_multiplier":
                             macroparticle_sigma_mult = x[i]
+                        elif param_name == "wall_z":
+                            wall_z = x[i]
 
                     # Calculate transverse offset in mm from fraction
                     transv_offset = offset_frac * aperture
@@ -4448,6 +4486,7 @@ class OptimizationPlugin(ttk.Frame):
                                     macroparticle_charge_multiplier=macroparticle_charge_mult,
                                     macroparticle_sigma_multiplier=macroparticle_sigma_mult,
                                     driver_params=None,
+                                    wall_z=wall_z,
                                     run_num=eval_num,
                                     cancel_flag=cancel_flag,
                                 )
@@ -4492,6 +4531,7 @@ class OptimizationPlugin(ttk.Frame):
                             macroparticle_charge_multiplier=macroparticle_charge_mult,
                             macroparticle_sigma_multiplier=macroparticle_sigma_mult,
                             driver_params=None,
+                            wall_z=wall_z,
                             run_num=eval_num,
                             cancel_flag=None,
                         )
@@ -5031,6 +5071,7 @@ class OptimizationPlugin(ttk.Frame):
             )
             timestep = self.config.timestep
             steps = self.config.steps
+            wall_z = self.config.wall_z
 
             # Map parameters
             for param_name, value in params_dict.items():
@@ -5044,6 +5085,8 @@ class OptimizationPlugin(ttk.Frame):
                     offset_frac = value
                 elif param_name == "timestep":
                     timestep = value
+                elif param_name == "wall_z":
+                    wall_z = value
 
             transv_offset = offset_frac * aperture
 
@@ -5064,6 +5107,7 @@ class OptimizationPlugin(ttk.Frame):
                 rider_pcount=int(self.config.pcount),
                 rider_transv_mom=self.config.transv_mom,
                 driver_params=None,
+                wall_z=wall_z,
                 run_num=9999 + rank,  # Special run number for trajectory
             )
 
@@ -5314,7 +5358,10 @@ class OptimizationPlugin(ttk.Frame):
                         f"  {param_name}: {len(values)} points from {values[0]:.2e} to {values[-1]:.2e}"
                     )
                 else:
-                    self._log_result(f"  {param_name}: {values[0]:.2e} (fixed)")
+                    if param_name == "wall_z":
+                        self._log_result(f"  {param_name}: {values[0]:.2f} mm (fixed)")
+                    else:
+                        self._log_result(f"  {param_name}: {values[0]:.2e} (fixed)")
             self._log_result(f"  Timestep strategy: {self.config.timestep_strategy}")
             if self.config.timestep_strategy == "energy_scaled":
                 self._log_result(
@@ -5491,11 +5538,13 @@ class OptimizationPlugin(ttk.Frame):
                     self._log_result(
                         f"    expected_total_distance = {expected_distance:.2f} mm"
                     )
+                    # Use wall_z from grid if available, otherwise use config default
+                    current_wall_z = param_combo.get("wall_z", self.config.wall_z)
                     self._log_result(
-                        f"    wall_z={self.config.wall_z:.2f} mm, start_z={start_z:.2f} mm"
+                        f"    wall_z={current_wall_z:.2f} mm, start_z={start_z:.2f} mm"
                     )
                     self._log_result(
-                        f"    distance_to_wall = {abs(self.config.wall_z - start_z):.2f} mm"
+                        f"    distance_to_wall = {abs(current_wall_z - start_z):.2f} mm"
                     )
                     if self.config.timestep_strategy == "auto_distance":
                         self._log_result(
@@ -5503,14 +5552,15 @@ class OptimizationPlugin(ttk.Frame):
                         )
                 elif self.config.auto_steps:
                     # Legacy auto_steps mode (deprecated, but keep for compatibility)
-                    distance_to_wall = abs(self.config.wall_z - start_z)
+                    current_wall_z = param_combo.get("wall_z", self.config.wall_z)
+                    distance_to_wall = abs(current_wall_z - start_z)
                     total_distance = (
                         distance_to_wall + self.config.auto_steps_distance_past_wall
                     )
 
                     timestep = calculate_auto_timestep(
                         start_z=start_z,
-                        wall_z=self.config.wall_z,
+                        wall_z=current_wall_z,
                         distance_past_wall=self.config.auto_steps_distance_past_wall,
                         particle_energy_gev=energy,
                         particle_mass_amu=rider_m_particle,
@@ -5518,7 +5568,7 @@ class OptimizationPlugin(ttk.Frame):
                     )
                     steps = calculate_auto_steps(
                         start_z=start_z,
-                        wall_z=self.config.wall_z,
+                        wall_z=current_wall_z,
                         distance_past_wall=self.config.auto_steps_distance_past_wall,
                         timestep=timestep,
                         particle_energy_gev=energy,
@@ -5588,6 +5638,9 @@ class OptimizationPlugin(ttk.Frame):
                                     if self.config.simulation_type
                                     == SimulationType.BUNCH_TO_BUNCH
                                     else None,
+                                    wall_z=param_combo.get(
+                                        "wall_z", self.config.wall_z
+                                    ),
                                     run_num=run_num,
                                     cancel_flag=cancel_flag,
                                 )
@@ -5713,7 +5766,9 @@ class OptimizationPlugin(ttk.Frame):
                                     "transverse_offset_fraction": offset_frac,
                                     "timestep": timestep,
                                     "steps": steps,
-                                    "wall_z": self.config.wall_z,
+                                    "wall_z": param_combo.get(
+                                        "wall_z", self.config.wall_z
+                                    ),
                                     "rider_m_particle": rider_m_particle,
                                     "rider_charge_sign": rider_charge_sign,
                                     "rider_pcount": int(rider_pcount),
@@ -5765,6 +5820,9 @@ class OptimizationPlugin(ttk.Frame):
                                     "transverse_offset": transv_offset,
                                     "timestep": timestep,
                                     "steps": steps,
+                                    "wall_z": param_combo.get(
+                                        "wall_z", self.config.wall_z
+                                    ),
                                 },
                                 "error": run_error,
                                 "error_details": error_details,
@@ -5868,6 +5926,15 @@ class OptimizationPlugin(ttk.Frame):
         grids["transverse_offset_fraction"] = self.config.transverse_offset_fractions
         grids["start_z"] = self.config.starting_z_positions
 
+        # Wall z (optional sweep)
+        if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
+            grids["wall_z"] = self._generate_range(
+                self.config.wall_z_range[0],
+                self.config.wall_z_range[1],
+                self.config.wall_z_points,
+                False,  # wall_z doesn't need log scale
+            )
+
         # Optional sweeps for rider and driver particle parameters
         sim_type = self.config.simulation_type
         for param_name, controls in self.sweep_params.items():
@@ -5916,6 +5983,7 @@ class OptimizationPlugin(ttk.Frame):
         macroparticle_charge_multiplier: float = None,
         macroparticle_sigma_multiplier: float = None,
         driver_params: Dict[str, Any] = None,
+        wall_z: float = None,
         run_num: int = 0,
         cancel_flag: Optional[List[bool]] = None,
     ) -> Dict[str, Any]:
@@ -5940,6 +6008,7 @@ class OptimizationPlugin(ttk.Frame):
             if rider_transv_dist is not None
             else self.config.transv_dist
         )
+        wall_z = wall_z if wall_z is not None else self.config.wall_z
         macroparticle_charge_multiplier = (
             macroparticle_charge_multiplier
             if macroparticle_charge_multiplier is not None
@@ -5980,7 +6049,7 @@ class OptimizationPlugin(ttk.Frame):
 
         core_params = {
             "time_step": timestep,
-            "wall_z": self.config.wall_z,
+            "wall_z": wall_z,
             "aperture_radius": aperture,
             "mean": 1.0e5,  # Large value (not used for CONDUCTING_WALL)
             "cav_spacing": 1.0e5,
@@ -6391,6 +6460,8 @@ class OptimizationPlugin(ttk.Frame):
                 "starting_z_positions": self.config.starting_z_positions,
                 "simulation_type": self.config.simulation_type.name,
                 "wall_z": self.config.wall_z,
+                "wall_z_range": self.config.wall_z_range,
+                "wall_z_points": self.config.wall_z_points,
                 "auto_steps": self.config.auto_steps,
             },
             "results": results,
