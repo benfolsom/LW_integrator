@@ -265,6 +265,12 @@ class OptimizationConfig:
     save_plots: bool = True
     save_trajectories: bool = False  # Save trajectory data for each run
     trajectory_stride: int = 10  # Save every Nth point to reduce file size
+    save_all_evaluation_trajectories: bool = (
+        False  # Save trajectories for ALL optimization evaluations (not just top N)
+    )
+    export_evaluation_csv: bool = (
+        False  # Export all evaluation parameters and results to CSV
+    )
 
     # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
@@ -313,7 +319,11 @@ class OptimizationConfig:
             self.objective_weights = {}
 
     def calculate_timestep_for_energy(
-        self, energy_gev: float, m_particle_amu: float = 0.00054857990907
+        self,
+        energy_gev: float,
+        m_particle_amu: float = 0.00054857990907,
+        wall_z: float = None,
+        start_z: float = 0.0,
     ) -> float:
         """Calculate appropriate timestep for given energy based on strategy.
 
@@ -323,6 +333,10 @@ class OptimizationConfig:
             Particle energy in GeV
         m_particle_amu : float
             Particle mass in amu (default: electron)
+        wall_z : float, optional
+            Wall position in mm (required for auto_distance strategy)
+        start_z : float, optional
+            Starting z position in mm (default: 0.0)
 
         Returns
         -------
@@ -344,12 +358,15 @@ class OptimizationConfig:
 
         elif self.timestep_strategy == "auto_distance":
             # Calculate timestep to reach target distance in given steps
+            # Total distance = from start_z to wall_z + target_distance_mm
             # Distance = N_steps × β × c × h × γ
             # Therefore: h = Distance / (N_steps × β × c × γ)
+            if wall_z is None:
+                wall_z = self.wall_z
+
+            total_distance = abs(wall_z - start_z) + self.target_distance_mm
             c_mmns = 299.792458  # mm/ns
-            h_calculated = self.target_distance_mm / (
-                self.steps * beta * c_mmns * gamma
-            )
+            h_calculated = total_distance / (self.steps * beta * c_mmns * gamma)
             return h_calculated
 
         else:
@@ -610,6 +627,10 @@ class OptimizationPlugin(ttk.Frame):
         # Store sweep directories
         self.sweep_config_dir = sweep_config_dir or "configs/sweep_configs"
         self.sweep_output_dir = sweep_output_dir or "results/sweeps"
+
+        # Log file tracking
+        self._log_file = None
+        self._log_file_path = None
 
         self._build_ui()
 
@@ -925,11 +946,12 @@ class OptimizationPlugin(ttk.Frame):
         # Add explanatory note
         note_label = ttk.Label(
             frame,
-            text="(All runs travel to wall_z + target distance regardless of energy)",
+            text="All runs travel to wall_z + target distance\nregardless of energy",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray50",
+            justify="left",
         )
-        note_label.grid(row=7, column=1, sticky="w", pady=(0, 2))
+        note_label.grid(row=7, column=1, columnspan=3, sticky="w", pady=(0, 10))
 
         timestep_frame = ttk.Frame(frame)
         timestep_frame.grid(row=7, column=2, columnspan=2, sticky="ew", pady=2)
@@ -1000,14 +1022,44 @@ class OptimizationPlugin(ttk.Frame):
         ).pack(side="left", padx=2)
 
         ttk.Label(strategy_frame, text="points)").pack(side="left", padx=(0, 5))
-        # Add info note about what gets saved
-        traj_note = ttk.Label(
+
+        # Add section label for optimization-specific options
+        opt_label = ttk.Label(
             frame,
-            text="Note: If trajectories are not saved, only heatmap plot and optimization metrics will be saved.",
+            text="Optimization/Sweep Data Export:",
+            font=("TkDefaultFont", 9, "bold"),
+        )
+        opt_label.grid(row=10, column=0, sticky="w", pady=(10, 2))
+
+        # Add options for saving all evaluation trajectories
+        eval_traj_frame = ttk.Frame(frame)
+        eval_traj_frame.grid(row=10, column=1, columnspan=3, sticky="ew", pady=(10, 2))
+
+        self.save_all_eval_traj_var = tk.BooleanVar(value=False)
+        save_all_cb = ttk.Checkbutton(
+            eval_traj_frame,
+            text="Save ALL evaluation trajectories (not just top N)",
+            variable=self.save_all_eval_traj_var,
+        )
+        save_all_cb.pack(side="left", padx=(0, 10))
+
+        self.export_eval_csv_var = tk.BooleanVar(value=False)
+        csv_cb = ttk.Checkbutton(
+            eval_traj_frame,
+            text="Export CSV of all evaluations",
+            variable=self.export_eval_csv_var,
+        )
+        csv_cb.pack(side="left")
+
+        # Add explanatory note about optimization/sweep data export
+        export_note = ttk.Label(
+            frame,
+            text="These options apply to optimization/sweep runs only.\nOptimization logs are always auto-saved to the results directory.\nFor single-run log saving, use the 'Save log file' option in the main GUI Output section.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray50",
+            justify="left",
         )
-        traj_note.grid(row=10, column=1, columnspan=3, sticky="w", pady=(2, 0))
+        export_note.grid(row=11, column=1, columnspan=3, sticky="w", pady=(2, 10))
 
         frame.columnconfigure(2, weight=1)
 
@@ -2163,8 +2215,10 @@ class OptimizationPlugin(ttk.Frame):
                 self.sweep_params["rider_charge_sign"]["fixed_var"].get()
             ),
             stripped_ions=float(self.rider_stripped_ions_var.get()),
-            save_trajectories=self.save_trajectories_var.get(),
+            save_trajectories=bool(self.save_trajectories_var.get()),
             trajectory_stride=int(self.trajectory_stride_var.get()),
+            save_all_evaluation_trajectories=bool(self.save_all_eval_traj_var.get()),
+            export_evaluation_csv=bool(self.export_eval_csv_var.get()),
             # Stability checking options
             smoothness_enabled=self.smoothness_enabled_var.get(),
             smoothness_window_size=int(self.smoothness_window_var.get()),
@@ -2929,6 +2983,10 @@ class OptimizationPlugin(ttk.Frame):
 
             # Load trajectory options
             self.save_trajectories_var.set(data.get("save_trajectories", False))
+            self.save_all_eval_traj_var.set(
+                data.get("save_all_evaluation_trajectories", False)
+            )
+            self.export_eval_csv_var.set(data.get("export_evaluation_csv", False))
 
             # Load optimization parameters
             self.optimization_method_var.set(
@@ -3179,6 +3237,8 @@ class OptimizationPlugin(ttk.Frame):
                 "steps": config.steps,
                 "objective": config.objective,
                 "save_trajectories": config.save_trajectories,
+                "save_all_evaluation_trajectories": config.save_all_evaluation_trajectories,
+                "export_evaluation_csv": config.export_evaluation_csv,
                 # Optimization parameters
                 "optimization_method": config.optimization_method,
                 "optimization_maxiter": config.optimization_maxiter,
@@ -4350,7 +4410,12 @@ class OptimizationPlugin(ttk.Frame):
 
     def _run_optimization_background(self):
         """Run optimization in background using selected algorithm."""
+        # Open log file in temporary location (will be moved when results are saved)
+        import tempfile
         import time
+
+        temp_dir = tempfile.mkdtemp(prefix="opt_log_")
+        self._open_log_file(temp_dir)
 
         start_time = time.time()
 
@@ -4545,6 +4610,16 @@ class OptimizationPlugin(ttk.Frame):
                     # Calculate transverse offset in mm from fraction
                     transv_offset = offset_frac * aperture
 
+                    # Calculate timestep if using auto_distance strategy
+                    if self.config.timestep_strategy == "auto_distance":
+                        timestep = self.config.calculate_timestep_for_energy(
+                            energy,
+                            self.config.m_particle,
+                            wall_z=wall_z,
+                            start_z=start_z,
+                        )
+                        steps = self.config.steps
+
                     # Run integration with timeout if enabled
                     result = None
                     timed_out = False
@@ -4658,6 +4733,7 @@ class OptimizationPlugin(ttk.Frame):
                             "parameters": dict(zip(param_names, x)),
                             "failed": True,
                             "objective_value": np.inf if not maximize else -np.inf,
+                            "metrics": result.get("metrics", {}),
                         }
                         all_evaluations.append(eval_record)
                         return np.inf if not maximize else -np.inf
@@ -4672,7 +4748,17 @@ class OptimizationPlugin(ttk.Frame):
                         "objective_value": value,  # Store original value
                         "fitness": result_value,  # Store fitness (for minimization)
                         "failed": False,
+                        "metrics": result.get("metrics", {}),
                     }
+
+                    # Save trajectory if requested and available
+                    if (
+                        self.config.save_all_evaluation_trajectories
+                        and "trajectory" in result
+                    ):
+                        # We'll save these after optimization dir is created
+                        eval_record["trajectory"] = result["trajectory"]
+
                     all_evaluations.append(eval_record)
 
                     return result_value
@@ -4810,6 +4896,9 @@ class OptimizationPlugin(ttk.Frame):
                 self.running = False
                 return
 
+            # Cache all evaluations for saving with results
+            self._all_evaluations_cache = all_evaluations
+
             # Log results
             self._log_result("")
             self._log_result("=" * 80)
@@ -4863,6 +4952,9 @@ class OptimizationPlugin(ttk.Frame):
         finally:
             self.running = False
             self._update_progress(100, "Done")
+            # Ensure log file is closed
+            if self._log_file is not None:
+                self._close_log_file()
 
     def _save_optimization_results(self, result, param_names):
         """Save optimization results to file in timestamped directory."""
@@ -4872,6 +4964,11 @@ class OptimizationPlugin(ttk.Frame):
 
         # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Close any open log file before creating new directory
+        # (we'll reopen in the new directory)
+        if self._log_file is not None:
+            self._close_log_file()
 
         # Get config name if available (strip extension and path)
         config_name = "optimization"
@@ -4933,9 +5030,19 @@ class OptimizationPlugin(ttk.Frame):
             results_dict["convergence_history"] = result.convergence_history
 
         # Add all evaluations if available (from closure)
+        all_evaluations = None
         if hasattr(self, "_all_evaluations_cache"):
-            results_dict["all_evaluations"] = self._all_evaluations_cache
-            results_dict["total_evaluations"] = len(self._all_evaluations_cache)
+            all_evaluations = self._all_evaluations_cache
+            # Remove trajectory data from JSON (too large), save to separate files
+            all_evaluations_for_json = []
+            for eval_rec in all_evaluations:
+                eval_rec_copy = dict(eval_rec)
+                if "trajectory" in eval_rec_copy:
+                    del eval_rec_copy["trajectory"]
+                all_evaluations_for_json.append(eval_rec_copy)
+
+            results_dict["all_evaluations"] = all_evaluations_for_json
+            results_dict["total_evaluations"] = len(all_evaluations)
 
         # Save to JSON
         results_file = opt_dir / "optimization_results.json"
@@ -4944,11 +5051,33 @@ class OptimizationPlugin(ttk.Frame):
 
         self._log_result(f"Results saved to: {results_file}")
 
+        # Export all evaluations to CSV if requested
+        if self.config.export_evaluation_csv and all_evaluations:
+            self._export_evaluations_csv(all_evaluations, param_names, opt_dir)
+
+        # Save all evaluation trajectories if requested
+        if self.config.save_all_evaluation_trajectories and all_evaluations:
+            self._log_result("")
+            self._log_result("Saving all evaluation trajectories...")
+            saved_count = 0
+            for eval_rec in all_evaluations:
+                if not eval_rec.get("failed", True) and "trajectory" in eval_rec:
+                    eval_num = eval_rec["evaluation"]
+                    traj_file = self._save_evaluation_trajectory(
+                        eval_num, eval_rec["trajectory"], opt_dir
+                    )
+                    if traj_file:
+                        saved_count += 1
+            self._log_result(f"  Saved {saved_count} evaluation trajectories")
+
         # Generate plots
         self._generate_optimization_plots(result, param_names, opt_dir)
 
         # Store the output directory for trajectory saving
         self._last_optimization_dir = opt_dir
+
+        # Reopen log file in the final output directory
+        self._open_log_file(opt_dir)
 
     def _generate_optimization_plots(self, result, param_names, output_dir):
         """Generate optimization visualization plots."""
@@ -5705,7 +5834,12 @@ class OptimizationPlugin(ttk.Frame):
             is_finetune: If True, this is a fine-tuning sweep
             finetune_regions: List of parameter regions for fine-tuning
         """
+        # Open log file in temporary location (will be moved when results are saved)
+        import tempfile
         import time
+
+        temp_dir = tempfile.mkdtemp(prefix="sweep_log_")
+        self._open_log_file(temp_dir)
 
         start_time = time.time()
 
@@ -5888,8 +6022,13 @@ class OptimizationPlugin(ttk.Frame):
                 # Calculate timestep based on strategy
                 if self.config.timestep_strategy != "fixed":
                     # Use energy-aware timestep calculation
+                    # Get wall_z for this run (it may be swept)
+                    wall_z_for_calc = params_dict.get("wall_z", self.config.wall_z)
                     timestep = self.config.calculate_timestep_for_energy(
-                        energy, rider_m_particle
+                        energy,
+                        rider_m_particle,
+                        wall_z=wall_z_for_calc,
+                        start_z=start_z,
                     )
                     steps = self.config.steps
 
@@ -6279,6 +6418,9 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(traceback.format_exc())
         finally:
             self.running = False
+            # Ensure log file is closed
+            if self._log_file is not None:
+                self._close_log_file()
             # Clean up any remaining matplotlib figures
             import matplotlib.pyplot as plt
 
@@ -6554,6 +6696,41 @@ class OptimizationPlugin(ttk.Frame):
         )
         self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
 
+        # Sanity check: Verify final z position doesn't exceed expected distance
+        if (
+            result.rider_trajectory is not None
+            and self.config.timestep_strategy == "auto_distance"
+        ):
+            try:
+                traj = result.rider_trajectory
+                z_array = np.asarray(traj.get("z", []))
+                if len(z_array) > 0:
+                    final_z = float(z_array[-1])
+                    expected_max_z = wall_z + self.config.target_distance_mm
+
+                    if final_z > expected_max_z:
+                        excess = final_z - expected_max_z
+                        self._log_result(
+                            f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!"
+                        )
+                        self._log_result(f"    Final z: {final_z:.2f} mm")
+                        self._log_result(
+                            f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
+                        )
+                        self._log_result(
+                            f"    Exceeded by: {excess:.2f} mm ({excess / expected_max_z * 100:.1f}%)"
+                        )
+                    else:
+                        under = expected_max_z - final_z
+                        self._log_result(f"  [DEBUG] Run {run_num}: Final z check OK")
+                        self._log_result(
+                            f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)"
+                        )
+            except Exception as e:
+                self._log_result(
+                    f"  [WARNING] Run {run_num}: Failed to check final z position: {e}"
+                )
+
         # No figures should be generated during sweeps (all display/save flags set to False)
         # If any figures were created (shouldn't happen), close them as a safety measure
         if result.figures:
@@ -6777,7 +6954,11 @@ class OptimizationPlugin(ttk.Frame):
                     )
 
             # Only save full trajectory arrays if explicitly requested
-            if self.config.save_trajectories:
+            # OR if we're saving all evaluation trajectories during optimization
+            if (
+                self.config.save_trajectories
+                or self.config.save_all_evaluation_trajectories
+            ):
                 # Downsample trajectory
                 stride = self.config.trajectory_stride
                 try:
@@ -6813,6 +6994,10 @@ class OptimizationPlugin(ttk.Frame):
             Failed/skipped run information
         """
         from datetime import datetime
+
+        # Close any open log file before creating new directory
+        if self._log_file is not None:
+            self._close_log_file()
 
         # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -6861,6 +7046,9 @@ class OptimizationPlugin(ttk.Frame):
         self._log_result(f"Results saved to: {output_file}")
         if failed_runs:
             self._log_result(f"  (includes {len(failed_runs)} failed/timed-out runs)")
+
+        # Reopen log file in the final output directory
+        self._open_log_file(sweep_dir)
 
         # Generate and save summary plots
         if len(results) > 0:
@@ -7058,10 +7246,128 @@ class OptimizationPlugin(ttk.Frame):
         """Update only the progress label text (thread-safe)."""
         self.after(0, lambda: self.progress_label.config(text=text))
 
+    def _export_evaluations_csv(self, all_evaluations, param_names, output_dir):
+        """Export all evaluations to CSV file.
+
+        Parameters
+        ----------
+        all_evaluations : list
+            List of evaluation records
+        param_names : list
+            List of parameter names
+        output_dir : Path
+            Output directory
+        """
+        import csv
+        from pathlib import Path
+
+        try:
+            output_path = Path(output_dir)
+            csv_file = output_path / "all_evaluations.csv"
+
+            with open(csv_file, "w", newline="", encoding="utf-8") as f:
+                # Determine all possible metric names from evaluations
+                metric_names = set()
+                for eval_rec in all_evaluations:
+                    if not eval_rec.get("failed", True) and "metrics" in eval_rec:
+                        metric_names.update(eval_rec["metrics"].keys())
+
+                metric_names = sorted(metric_names)
+
+                # Create header
+                header = (
+                    ["evaluation", "failed"]
+                    + param_names
+                    + metric_names
+                    + ["objective_value", "fitness"]
+                )
+                writer = csv.DictWriter(f, fieldnames=header)
+                writer.writeheader()
+
+                # Write rows
+                for eval_rec in all_evaluations:
+                    row = {
+                        "evaluation": eval_rec["evaluation"],
+                        "failed": eval_rec.get("failed", True),
+                        "objective_value": eval_rec.get("objective_value", ""),
+                        "fitness": eval_rec.get("fitness", ""),
+                    }
+
+                    # Add parameters
+                    for param_name in param_names:
+                        row[param_name] = eval_rec.get("parameters", {}).get(
+                            param_name, ""
+                        )
+
+                    # Add metrics
+                    if not eval_rec.get("failed", True) and "metrics" in eval_rec:
+                        for metric_name in metric_names:
+                            row[metric_name] = eval_rec["metrics"].get(metric_name, "")
+
+                    writer.writerow(row)
+
+            self._log_result(f"Evaluation CSV exported to: {csv_file}")
+
+        except Exception as e:
+            self._log_result(f"[WARNING] Failed to export evaluations CSV: {e}")
+
+    def _save_evaluation_trajectory(self, eval_num, trajectory_data, output_dir):
+        """Save a single evaluation trajectory to NPZ file.
+
+        Parameters
+        ----------
+        eval_num : int
+            Evaluation number
+        trajectory_data : dict
+            Dictionary containing trajectory arrays (z, r, pz, pr, t, gamma)
+        output_dir : Path
+            Directory to save the trajectory file
+
+        Returns
+        -------
+        str or None
+            Path to saved file, or None if save failed
+        """
+        try:
+            from pathlib import Path
+
+            import numpy as np
+
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            trajectory_file = output_path / f"evaluation_{eval_num:04d}_trajectory.npz"
+
+            # Convert lists to numpy arrays and save
+            np.savez(
+                trajectory_file,
+                z=np.array(trajectory_data["z"]),
+                r=np.array(trajectory_data["r"]),
+                pz=np.array(trajectory_data["pz"]),
+                pr=np.array(trajectory_data["pr"]),
+                t=np.array(trajectory_data["t"]),
+                gamma=np.array(trajectory_data["gamma"]),
+            )
+
+            return str(trajectory_file)
+        except Exception as e:
+            self._log_result(
+                f"  [WARNING] Failed to save evaluation {eval_num} trajectory: {e}"
+            )
+            return None
+
     def _log_result(self, message: str):
         """Log message to main GUI logs window (thread-safe)."""
         # Log to console/terminal always
         print(f"[OPTIMIZATION] {message}", flush=True)
+
+        # Write to log file if enabled
+        if self._log_file is not None:
+            try:
+                self._log_file.write(f"[OPTIMIZATION] {message}\n")
+                self._log_file.flush()  # Ensure it's written immediately
+            except Exception as e:
+                print(f"[WARNING] Failed to write to log file: {e}", flush=True)
 
         # If we have a gui_controller, log to its log window
         if self.gui_controller is not None and hasattr(
@@ -7075,6 +7381,40 @@ class OptimizationPlugin(ttk.Frame):
                 )
             except Exception:
                 pass  # Fail silently if main GUI log isn't available
+
+    def _open_log_file(self, output_dir):
+        """Open a log file in the output directory."""
+        from datetime import datetime
+        from pathlib import Path
+
+        try:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = f"optimization_log_{timestamp}.txt"
+            self._log_file_path = output_path / log_filename
+
+            self._log_file = open(self._log_file_path, "w", encoding="utf-8")
+            self._log_result(f"Log file opened: {self._log_file_path}")
+            return True
+        except Exception as e:
+            print(f"[WARNING] Failed to open log file: {e}", flush=True)
+            self._log_file = None
+            self._log_file_path = None
+            return False
+
+    def _close_log_file(self):
+        """Close the log file if it's open."""
+        if self._log_file is not None:
+            try:
+                self._log_result("Closing log file")
+                self._log_file.close()
+            except Exception as e:
+                print(f"[WARNING] Failed to close log file: {e}", flush=True)
+            finally:
+                self._log_file = None
+                self._log_file_path = None
 
     def _reset_ui_state(self):
         """Reset UI to ready state after run completes."""
