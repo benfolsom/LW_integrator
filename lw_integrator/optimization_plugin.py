@@ -226,7 +226,9 @@ class OptimizationConfig:
     seed: int = 12345
 
     # Timestep strategy for energy sweeps
-    timestep_strategy: str = "fixed"  # "fixed", "energy_scaled", or "auto_distance"
+    timestep_strategy: str = (
+        "auto_distance"  # "fixed", "energy_scaled", or "auto_distance"
+    )
     energy_scale_exponent: float = 1.0  # For energy_scaled: h ∝ γ^-α
     target_distance_mm: float = 100.0  # For auto_distance: distance to reach
     z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
@@ -915,12 +917,22 @@ class OptimizationPlugin(ttk.Frame):
         )
         self.cavity_spacing_entry.grid(row=6, column=2, sticky="w", pady=2, padx=5)
 
-        # Timestep Auto-Calculation (always enabled)
+        # Timestep Auto-Calculation (always uses auto_distance strategy)
         ttk.Label(frame, text="Timestep Calculation:").grid(
             row=7, column=0, sticky="w", pady=2
         )
+
+        # Add explanatory note
+        note_label = ttk.Label(
+            frame,
+            text="(All runs travel to wall_z + target distance regardless of energy)",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        )
+        note_label.grid(row=7, column=1, sticky="w", pady=(0, 2))
+
         timestep_frame = ttk.Frame(frame)
-        timestep_frame.grid(row=7, column=1, columnspan=3, sticky="ew", pady=2)
+        timestep_frame.grid(row=7, column=2, columnspan=2, sticky="ew", pady=2)
 
         self.timestep_mode_var = tk.StringVar(value="duration")
         ttk.Radiobutton(
@@ -2212,10 +2224,9 @@ class OptimizationPlugin(ttk.Frame):
             smoothness_max_violations=existing_config.smoothness_max_violations
             if existing_config
             else 3,
-            # Timestep strategy - preserve from existing config if available
-            timestep_strategy=existing_config.timestep_strategy
-            if existing_config
-            else "fixed",
+            # Timestep strategy - use auto_distance for sweeps/optimizations
+            # This ensures all runs travel to wall_z + target_distance regardless of energy
+            timestep_strategy="auto_distance",
             target_distance_mm=existing_config.target_distance_mm
             if existing_config
             else 100.0,
@@ -3032,7 +3043,10 @@ class OptimizationPlugin(ttk.Frame):
             )
 
             # Load timestep strategy and related parameters
-            loaded_config.timestep_strategy = data.get("timestep_strategy", "fixed")
+            # Default to auto_distance for sweeps/optimizations
+            loaded_config.timestep_strategy = data.get(
+                "timestep_strategy", "auto_distance"
+            )
             loaded_config.target_distance_mm = data.get("target_distance_mm", 100.0)
             loaded_config.timestep = data.get("timestep", 3e-7)
             loaded_config.energy_scale_exponent = data.get("energy_scale_exponent", 1.0)
@@ -4624,9 +4638,9 @@ class OptimizationPlugin(ttk.Frame):
                     metrics = result["metrics"]
                     value = metrics.get(metric_name, np.nan)
 
-                    if np.isnan(value):
+                    if np.isnan(value) or np.isinf(value):
                         self._log_result(
-                            f"[WARNING] Evaluation {eval_num} returned NaN for metric '{metric_name}'"
+                            f"[WARNING] Evaluation {eval_num} returned {'NaN' if np.isnan(value) else 'inf'} for metric '{metric_name}'"
                         )
                         self._log_result(
                             f"[WARNING] Available metrics: {list(metrics.keys())}"
@@ -5101,9 +5115,12 @@ class OptimizationPlugin(ttk.Frame):
                 )
                 return
 
-            # Filter out failed evaluations
+            # Filter out failed evaluations and non-finite values
             successful_evals = [
-                e for e in all_evaluations if not e.get("failed", False)
+                e
+                for e in all_evaluations
+                if not e.get("failed", False)
+                and np.isfinite(e.get("objective_value", np.inf))
             ]
 
             if len(successful_evals) < 3:
@@ -5159,6 +5176,7 @@ class OptimizationPlugin(ttk.Frame):
                     grid_z,
                     levels=20,
                     cmap="RdYlGn" if maximize else "RdYlGn_r",
+                    extend="both",
                 )
 
                 # Overlay evaluation points
@@ -5194,6 +5212,14 @@ class OptimizationPlugin(ttk.Frame):
                     f"Optimization Landscape: {self.config.objective}\n({len(successful_evals)} evaluations)"
                 )
                 ax.legend()
+
+                # Use log scale if parameter ranges span multiple orders of magnitude
+                x_range = x_max - x_min
+                y_range = y_max - y_min
+                if x_max / (x_min + 1e-10) > 100:  # Avoid division by zero
+                    ax.set_xscale("log")
+                if y_max / (y_min + 1e-10) > 100:
+                    ax.set_yscale("log")
 
                 cbar = plt.colorbar(im, ax=ax)
                 cbar.set_label(self.config.objective)
@@ -5266,6 +5292,14 @@ class OptimizationPlugin(ttk.Frame):
                     ax.set_ylabel(param_names[j])
                     ax.set_title(f"{param_names[i]} vs {param_names[j]}")
                     ax.grid(True, alpha=0.3)
+
+                    # Use log scale if parameter ranges span multiple orders of magnitude
+                    x_range = max(x_vals) - min(x_vals)
+                    y_range = max(y_vals) - min(y_vals)
+                    if max(x_vals) / (min(x_vals) + 1e-10) > 100:
+                        ax.set_xscale("log")
+                    if max(y_vals) / (min(y_vals) + 1e-10) > 100:
+                        ax.set_yscale("log")
 
                     plt.colorbar(scatter, ax=ax, label=self.config.objective)
 
@@ -5714,7 +5748,10 @@ class OptimizationPlugin(ttk.Frame):
                 )
             elif self.config.timestep_strategy == "auto_distance":
                 self._log_result(
-                    f"    Target distance: {self.config.target_distance_mm:.1f} mm"
+                    f"    Target distance: {self.config.target_distance_mm:.1f} mm (wall_z + target)"
+                )
+                self._log_result(
+                    f"    All particles will travel to consistent z regardless of energy"
                 )
             elif self.config.auto_steps:
                 self._log_result(
