@@ -337,11 +337,11 @@ class IntegratorGUI:
         self._update_legacy_state()
         self._update_driver_visibility()
 
-        # Set initial sash position for main horizontal pane (60/40 split)
+        # Set initial sash position for main horizontal pane (70/30 split)
         self.root.update_idletasks()  # Ensure window is laid out
         total_width = self.root.winfo_width()
-        # Position sash to give config panel ~40% (remaining 60% goes to content)
-        sash_position = int(total_width * 0.6)
+        # Position sash to give config panel ~30% (remaining 70% goes to content/optimization)
+        sash_position = int(total_width * 0.7)
         if hasattr(self, "_main_horizontal_paned"):
             self._main_horizontal_paned.sash_place(0, sash_position, 0)
             # Bind to enforce minimum panel sizes when sash is dragged
@@ -490,7 +490,7 @@ class IntegratorGUI:
             value=self.options.self_consistency_mass_shell_tolerance
         )
         self.self_consistency_verbosity_var = tk.IntVar(
-            value=self.options.self_consistency_verbosity
+            value=getattr(self.options, "self_consistency_verbosity", 2)
         )
         self.self_consistency_chrono_interpolate_var = tk.BooleanVar(
             value=getattr(self.options, "self_consistency_chrono_interpolate", False)
@@ -1799,7 +1799,7 @@ class IntegratorGUI:
 
         self.adaptive_debug_check = ttk.Checkbutton(
             at_frame,
-            text="Debug output (show refinement actions)",
+            text="Verbose output (show all refinement actions in logs)",
             variable=self.adaptive_timestep_debug_var,
         )
         self.adaptive_debug_check.grid(
@@ -1835,16 +1835,29 @@ class IntegratorGUI:
         output_frame = self._create_scrollable_tab(self.notebook, "Output", padding=12)
         output_frame.columnconfigure(1, weight=1)
 
+        # Notice about single run vs sweep/optimization
+        notice_frame = ttk.Frame(output_frame)
+        notice_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 15))
+
+        notice_label = ttk.Label(
+            notice_frame,
+            text="⚠ These settings apply to SINGLE RUNS only.\nFor sweep/optimization output configuration, see the 'Sweep/Optim' tab → 'Results & Output Configuration'.",
+            font=("TkDefaultFont", 9, "bold"),
+            foreground="blue",
+            justify="left",
+        )
+        notice_label.pack(anchor="w")
+
         # Legacy comparison toggle (moved from header)
         ttk.Checkbutton(
             output_frame, text="Enable legacy comparison", variable=self.legacy_var
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         # Trajectory comparison outputs (grouped and dependent on legacy)
         comparison_frame = ttk.LabelFrame(
             output_frame, text="Trajectory Comparison (requires legacy)", padding=8
         )
-        comparison_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        comparison_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         comparison_frame.columnconfigure(1, weight=1)
 
         self._add_output_toggle(
@@ -1877,7 +1890,7 @@ class IntegratorGUI:
         )
         # Energy plot x-axis configuration
         ttk.Label(output_frame, text="  ↳ X-axis:").grid(
-            row=3, column=0, sticky="w", padx=(20, 0)
+            row=4, column=0, sticky="w", padx=(20, 0)
         )
         ttk.Combobox(
             output_frame,
@@ -1889,7 +1902,7 @@ class IntegratorGUI:
 
         # Energy plot y-axis configuration
         ttk.Label(output_frame, text="  ↳ Y-axis:").grid(
-            row=4, column=0, sticky="w", padx=(20, 0)
+            row=5, column=0, sticky="w", padx=(20, 0)
         )
         ttk.Combobox(
             output_frame,
@@ -1897,7 +1910,7 @@ class IntegratorGUI:
             values=["delta_total", "delta_z", "delta_x", "delta_y", "total"],
             width=12,
             state="readonly",
-        ).grid(row=4, column=1, sticky="w")
+        ).grid(row=5, column=1, sticky="w")
         self._add_output_toggle(
             output_frame,
             "Transverse position (⟨x⟩, ⟨y⟩)",
@@ -1907,15 +1920,15 @@ class IntegratorGUI:
         )
         # Transverse plot x-axis configuration
         ttk.Label(output_frame, text="  ↳ X-axis:").grid(
-            row=6, column=0, sticky="w", padx=(20, 0)
+            row=7, column=0, sticky="w", padx=(20, 0)
         )
         ttk.Combobox(
             output_frame,
             textvariable=self.transverse_xaxis_var,
             values=["t", "z"],
-            width=12,
+            width=5,
             state="readonly",
-        ).grid(row=6, column=1, sticky="w")
+        ).grid(row=7, column=1, sticky="w")
 
         self._add_output_toggle(
             output_frame,
@@ -1926,15 +1939,15 @@ class IntegratorGUI:
         )
         # Beta plot x-axis configuration
         ttk.Label(output_frame, text="  ↳ X-axis:").grid(
-            row=8, column=0, sticky="w", padx=(20, 0)
+            row=9, column=0, sticky="w", padx=(20, 0)
         )
         ttk.Combobox(
             output_frame,
             textvariable=self.beta_xaxis_var,
             values=["t", "z"],
-            width=12,
+            width=5,
             state="readonly",
-        ).grid(row=8, column=1, sticky="w")
+        ).grid(row=9, column=1, sticky="w")
 
         self._add_output_toggle(
             output_frame,
@@ -1945,15 +1958,15 @@ class IntegratorGUI:
         )
         # Momentum plot x-axis configuration
         ttk.Label(output_frame, text="  ↳ X-axis:").grid(
-            row=10, column=0, sticky="w", padx=(20, 0)
+            row=11, column=0, sticky="w", padx=(20, 0)
         )
         ttk.Combobox(
             output_frame,
             textvariable=self.momentum_xaxis_var,
             values=["t", "z"],
-            width=12,
+            width=5,
             state="readonly",
-        ).grid(row=10, column=1, sticky="w")
+        ).grid(row=11, column=1, sticky="w")
 
         # Gamma (Lorentz factor) plot
         self._add_output_toggle(
@@ -1961,67 +1974,99 @@ class IntegratorGUI:
             "Gamma (Lorentz factor γ)",
             self.gamma_display_var,
             self.gamma_save_var,
-            row=11,
+            row=12,
         )
         # Gamma plot x-axis configuration
         ttk.Label(output_frame, text="  ↳ X-axis:").grid(
-            row=12, column=0, sticky="w", padx=(20, 0)
+            row=13, column=0, sticky="w", padx=(20, 0)
         )
         ttk.Combobox(
             output_frame,
             textvariable=self.gamma_xaxis_var,
             values=["t", "z"],
-            width=12,
+            width=5,
             state="readonly",
-        ).grid(row=12, column=1, sticky="w")
+        ).grid(row=13, column=1, sticky="w")
 
         # Separator for position plots
         ttk.Separator(output_frame, orient="horizontal").grid(
-            row=13, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+            row=14, column=0, columnspan=2, sticky="ew", pady=(10, 10)
         )
 
         # Z-position vs time plot
         ttk.Label(output_frame, text="Longitudinal trajectory:").grid(
-            row=14, column=0, columnspan=2, sticky="w", pady=(0, 2)
+            row=15, column=0, columnspan=2, sticky="w", pady=(0, 2)
         )
         self._add_output_toggle(
             output_frame,
-            "z(t) plot",
+            "  z vs time",
             self.zposition_display_var,
             self.zposition_save_var,
-            row=15,
+            row=16,
         )
 
         # Separator before trajectory/output options
         ttk.Separator(output_frame, orient="horizontal").grid(
-            row=16, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+            row=17, column=0, columnspan=2, sticky="ew", pady=(10, 10)
         )
 
-        ttk.Label(output_frame, text="Plot DPI:").grid(row=17, column=0, sticky="w")
+        ttk.Label(output_frame, text="Plot DPI:").grid(row=18, column=0, sticky="w")
         ttk.Combobox(
             output_frame,
             textvariable=self.dpi_var,
             values=[str(dpi) for dpi in AVAILABLE_DPI_CHOICES],
             width=8,
             state="readonly",
-        ).grid(row=17, column=1, sticky="w")
+        ).grid(row=18, column=1, sticky="w")
 
-        ttk.Checkbutton(
-            output_frame, text="Save trajectory", variable=self.trajectory_save_var
-        ).grid(row=18, column=0, columnspan=2, sticky="w", pady=(12, 2))
-        ttk.Label(output_frame, text="Trajectory stride:").grid(
-            row=19, column=0, sticky="w"
-        )
-        ttk.Entry(
-            output_frame, textvariable=self.trajectory_interval_var, width=8
-        ).grid(row=19, column=1, sticky="w")
+        # Trajectory data saving
+        ttk.Label(
+            output_frame, text="Trajectory Data:", font=("TkDefaultFont", 9, "bold")
+        ).grid(row=19, column=0, columnspan=2, sticky="w", pady=(12, 2))
 
-        # Log file saving
         ttk.Checkbutton(
             output_frame,
-            text="Save log file to output directory",
+            text="Save trajectory data (NPZ format)",
+            variable=self.trajectory_save_var,
+            command=self._on_trajectory_save_toggled,
+        ).grid(row=20, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        self.trajectory_stride_label = ttk.Label(
+            output_frame, text="Trajectory stride:"
+        )
+        self.trajectory_stride_label.grid(row=21, column=0, sticky="w", padx=(20, 0))
+        self.trajectory_stride_entry = ttk.Entry(
+            output_frame, textvariable=self.trajectory_interval_var, width=8
+        )
+        self.trajectory_stride_entry.grid(row=21, column=1, sticky="w")
+
+        ttk.Label(
+            output_frame,
+            text="(Save every Nth point to reduce file size)",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        ).grid(row=22, column=0, columnspan=2, sticky="w", padx=(20, 0), pady=(0, 10))
+
+        # Initialize trajectory stride state
+        self._on_trajectory_save_toggled()
+
+        # Log file saving
+        ttk.Label(
+            output_frame, text="Debug Logs:", font=("TkDefaultFont", 9, "bold")
+        ).grid(row=23, column=0, columnspan=2, sticky="w", pady=(5, 2))
+
+        ttk.Checkbutton(
+            output_frame,
+            text="Save debug log file to output directory",
             variable=self.save_log_file_var,
-        ).grid(row=18, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=24, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        ttk.Label(
+            output_frame,
+            text="(Captures console output, warnings, and diagnostic info)",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        ).grid(row=25, column=0, columnspan=2, sticky="w", padx=(20, 0))
 
         # Optimization/Sweep tab ----------------------------------------
         self.optimization_tab = OptimizationPlugin(
@@ -3619,6 +3664,18 @@ class IntegratorGUI:
                 fg_color = "black" if adaptive_enabled else "gray"
                 control.configure(foreground=fg_color)
 
+    def _on_trajectory_save_toggled(self) -> None:
+        """Enable/disable trajectory stride controls based on save checkbox."""
+        if not hasattr(self, "trajectory_stride_entry"):
+            return  # Widgets not created yet
+
+        save_enabled = self.trajectory_save_var.get()
+        widget_state = "normal" if save_enabled else "disabled"
+        label_color = "black" if save_enabled else "gray"
+
+        self.trajectory_stride_entry.configure(state=widget_state)
+        self.trajectory_stride_label.configure(foreground=label_color)
+
     # ------------------------------------------------------------------
     # Simulation execution
     # ------------------------------------------------------------------
@@ -4097,6 +4154,57 @@ class IntegratorGUI:
                 ax.set_xlabel(xlabel, fontsize=10)
                 ax.relim()
                 ax.autoscale_view(tight=True)
+
+                # Apply intelligent y-axis scaling for gamma to show small fluctuations
+                try:
+                    # Collect all gamma values for this subplot
+                    all_gamma = []
+                    if len(data["core_r_gamma"]) > 0:
+                        all_gamma.extend(data["core_r_gamma"])
+                    if (
+                        i == 1
+                        and data["driver_allowed"]
+                        and data.get("core_d_gamma") is not None
+                    ):
+                        if len(data["core_d_gamma"]) > 0:
+                            all_gamma.extend(data["core_d_gamma"])
+                    if (
+                        data["legacy_enabled"]
+                        and data.get("legacy_r_gamma") is not None
+                    ):
+                        if len(data["legacy_r_gamma"]) > 0:
+                            all_gamma.extend(data["legacy_r_gamma"])
+                    if (
+                        i == 1
+                        and data["driver_allowed"]
+                        and data.get("legacy_d_gamma") is not None
+                    ):
+                        if len(data["legacy_d_gamma"]) > 0:
+                            all_gamma.extend(data["legacy_d_gamma"])
+
+                    if len(all_gamma) > 0:
+                        gamma_array = np.array(all_gamma)
+                        gamma_min = np.min(gamma_array)
+                        gamma_max = np.max(gamma_array)
+                        gamma_mean = np.mean(gamma_array)
+                        gamma_range = gamma_max - gamma_min
+
+                        # Check if variation is small relative to mean (< 5% is considered small)
+                        relative_variation = (
+                            gamma_range / gamma_mean if gamma_mean > 0 else 0
+                        )
+
+                        if relative_variation < 0.05 and gamma_range > 0:
+                            # Small variation: zoom in with 10% buffer around actual range
+                            buffer = (
+                                gamma_range * 0.1
+                                if gamma_range > 0
+                                else gamma_mean * 0.001
+                            )
+                            ax.set_ylim(gamma_min - buffer, gamma_max + buffer)
+                except Exception as e:
+                    # Silently ignore errors in y-axis scaling
+                    pass
 
         # Restore original font sizes to prevent explosion
         for i, ax in enumerate(axes):

@@ -36,6 +36,46 @@ from lw_integrator.testbed_runner import (  # type: ignore[import]
 )
 
 
+class ToolTip:
+    """Simple tooltip widget for displaying help text on hover."""
+
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        """Display the tooltip."""
+        if self.tip_window or not self.text:
+            return
+        x, y, _, _ = (
+            self.widget.bbox("insert") if hasattr(self.widget, "bbox") else (0, 0, 0, 0)
+        )
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            tw,
+            text=self.text,
+            justify="left",
+            background="#ffffe0",
+            relief="solid",
+            borderwidth=1,
+            font=("TkDefaultFont", 9),
+        )
+        label.pack(ipadx=5, ipady=3)
+
+    def hide_tip(self, event=None):
+        """Hide the tooltip."""
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
 def _show_error_dialog(parent: tk.Widget, title: str, message: str) -> None:
     """Show an error dialog with selectable text."""
     # Log to console/terminal
@@ -263,20 +303,31 @@ class OptimizationConfig:
     output_dir: str = "results/sweeps"
     save_results: bool = True
     save_plots: bool = True
-    save_trajectories: bool = False  # Save trajectory data for each run
-    trajectory_stride: int = 10  # Save every Nth point to reduce file size
-    save_all_evaluation_trajectories: bool = (
-        False  # Save trajectories for ALL optimization evaluations (not just top N)
+
+    # Trajectory saving options
+    save_top_n_trajectories: bool = False  # Save trajectories for top N results
+    save_all_trajectories: bool = False  # Save ALL evaluation trajectories
+    save_failed_trajectories: bool = False  # Save only failed trajectories
+    trajectory_stride: int = (
+        1  # Save every Nth point to reduce file size (only used with "All")
     )
-    export_evaluation_csv: bool = (
-        False  # Export all evaluation parameters and results to CSV
-    )
+
+    # Metrics export options
+    export_full_metrics_csv: bool = True  # Export all parameters & results (DEFAULT)
+    export_top_n_metrics_csv: bool = False  # Export only top N metrics
+
+    # Log saving options
+    log_verbosity: str = "truncated"  # "none", "truncated", "full", "top_n_only"
+    # none = no debug logs saved
+    # truncated = 1-2 lines per run with parameters + metrics + errors/warnings only
+    # full = complete debug output with SC iterations and adaptive timestep refinements
+    # top_n_only = logs only for top N trajectories
 
     # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = 1e-4
     self_consistency_max_iterations: int = 5
-    self_consistency_verbosity: int = 0  # 0=silent, 1=basic, 2=detailed
+    self_consistency_verbosity: int = 2  # 0=silent, 1=basic, 2=detailed
 
     # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
@@ -685,10 +736,20 @@ class OptimizationPlugin(ttk.Frame):
         self._build_objective_section()
         self._build_optimization_section()
         self._build_control_section()
+        self._build_results_output_section()
         self._build_progress_section()
 
         # Initialize mode visibility
         self._update_mode_visibility()
+
+    def _add_tooltip(self, widget, text):
+        """Add a tooltip to a widget.
+
+        Args:
+            widget: The tkinter widget to add tooltip to
+            text: The tooltip text to display
+        """
+        ToolTip(widget, text)
 
     def _build_simulation_section(self):
         """Build simulation type selection section."""
@@ -868,35 +929,41 @@ class OptimizationPlugin(ttk.Frame):
             row=5, column=0, sticky="w", pady=2
         )
 
-        # Fixed value
-        self.wall_z_var = tk.StringVar(value="2200.0")
-        self.wall_z_entry = ttk.Entry(frame, textvariable=self.wall_z_var, width=10)
-        self.wall_z_entry.grid(row=5, column=1, sticky="w", pady=2, padx=5)
+        # Fixed value and sweep checkbox on same row
+        wall_z_fixed_frame = ttk.Frame(frame)
+        wall_z_fixed_frame.grid(row=5, column=1, columnspan=3, sticky="w", pady=2)
 
-        # Sweep checkbox
+        self.wall_z_var = tk.StringVar(value="2200.0")
+        self.wall_z_entry = ttk.Entry(
+            wall_z_fixed_frame, textvariable=self.wall_z_var, width=10
+        )
+        self.wall_z_entry.pack(side="left", padx=(0, 10))
+
         self.wall_z_sweep_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            frame,
-            text="Sweep:",
+            wall_z_fixed_frame,
+            text="Sweep",
             variable=self.wall_z_sweep_var,
             command=self._toggle_wall_z_sweep,
-        ).grid(row=5, column=2, sticky="w", pady=2, padx=(10, 2))
+        ).pack(side="left")
 
-        # Sweep controls frame
+        # Sweep controls on new row for better visibility
         wall_z_sweep_frame = ttk.Frame(frame)
-        wall_z_sweep_frame.grid(row=5, column=3, columnspan=4, sticky="w", pady=2)
+        wall_z_sweep_frame.grid(
+            row=6, column=1, columnspan=3, sticky="w", pady=2, padx=(20, 0)
+        )
 
-        ttk.Label(wall_z_sweep_frame, text="Min (mm):").pack(side="left", padx=(0, 2))
+        ttk.Label(wall_z_sweep_frame, text="Min:").pack(side="left", padx=(0, 2))
         self.wall_z_min_var = tk.StringVar(value="2000.0")
         self.wall_z_min_entry = ttk.Entry(
-            wall_z_sweep_frame, textvariable=self.wall_z_min_var, width=10
+            wall_z_sweep_frame, textvariable=self.wall_z_min_var, width=8
         )
         self.wall_z_min_entry.pack(side="left", padx=2)
 
-        ttk.Label(wall_z_sweep_frame, text="Max (mm):").pack(side="left", padx=(5, 2))
+        ttk.Label(wall_z_sweep_frame, text="Max:").pack(side="left", padx=(5, 2))
         self.wall_z_max_var = tk.StringVar(value="2400.0")
         self.wall_z_max_entry = ttk.Entry(
-            wall_z_sweep_frame, textvariable=self.wall_z_max_var, width=10
+            wall_z_sweep_frame, textvariable=self.wall_z_max_var, width=8
         )
         self.wall_z_max_entry.pack(side="left", padx=2)
 
@@ -927,34 +994,30 @@ class OptimizationPlugin(ttk.Frame):
 
         # Cavity Spacing (for SWITCHING_WALL)
         ttk.Label(frame, text="Cavity Spacing:").grid(
-            row=6, column=0, sticky="w", pady=2
+            row=7, column=0, sticky="w", pady=2
         )
-        ttk.Label(frame, text="Cavity spacing (mm, SWITCHING_WALL only):").grid(
-            row=6, column=1, sticky="w", pady=2
+        ttk.Label(frame, text="SWITCHING_WALL only (mm):").grid(
+            row=7, column=1, sticky="w", pady=2
         )
         self.cavity_spacing_var = tk.StringVar(value="1e5")
         self.cavity_spacing_entry = ttk.Entry(
             frame, textvariable=self.cavity_spacing_var, width=10
         )
-        self.cavity_spacing_entry.grid(row=6, column=2, sticky="w", pady=2, padx=5)
+        self.cavity_spacing_entry.grid(row=7, column=2, sticky="w", pady=2, padx=5)
 
         # Timestep Auto-Calculation (always uses auto_distance strategy)
-        ttk.Label(frame, text="Timestep Calculation:").grid(
-            row=7, column=0, sticky="w", pady=2
-        )
+        timestep_label = ttk.Label(frame, text="Timestep Calculation:")
+        timestep_label.grid(row=8, column=0, sticky="w", pady=2)
 
-        # Add explanatory note
-        note_label = ttk.Label(
-            frame,
-            text="All runs travel to wall_z + target distance\nregardless of energy",
-            font=("TkDefaultFont", 8, "italic"),
-            foreground="gray50",
-            justify="left",
+        # Add tooltip for explanatory note
+        self._add_tooltip(
+            timestep_label,
+            "All runs travel to wall_z + target distance regardless of energy.\n"
+            "This ensures consistent trajectory length across different energies.",
         )
-        note_label.grid(row=7, column=1, columnspan=3, sticky="w", pady=(0, 10))
 
         timestep_frame = ttk.Frame(frame)
-        timestep_frame.grid(row=7, column=2, columnspan=2, sticky="ew", pady=2)
+        timestep_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=2)
 
         self.timestep_mode_var = tk.StringVar(value="duration")
         ttk.Radiobutton(
@@ -989,10 +1052,10 @@ class OptimizationPlugin(ttk.Frame):
 
         # Distance target
         ttk.Label(frame, text="Distance Target:").grid(
-            row=8, column=0, sticky="w", pady=2
+            row=9, column=0, sticky="w", pady=2
         )
         distance_frame = ttk.Frame(frame)
-        distance_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=2)
+        distance_frame.grid(row=9, column=1, columnspan=3, sticky="ew", pady=2)
         ttk.Label(distance_frame, text="Target: wall +").pack(side="left", padx=(0, 2))
         self.auto_steps_distance_var = tk.StringVar(value="10.0")
         ttk.Entry(
@@ -1002,64 +1065,15 @@ class OptimizationPlugin(ttk.Frame):
             side="left", padx=2
         )
 
-        # Trajectory saving
-        ttk.Label(frame, text="Trajectory Saving:").grid(
-            row=9, column=0, sticky="w", pady=2
-        )
-        strategy_frame = ttk.Frame(frame)
-        strategy_frame.grid(row=9, column=1, columnspan=3, sticky="ew", pady=(10, 2))
-
-        self.save_trajectories_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            strategy_frame,
-            text="Save trajectories (stride:",
-            variable=self.save_trajectories_var,
-        ).pack(side="left", padx=(0, 2))
-
-        self.trajectory_stride_var = tk.StringVar(value="10")
-        ttk.Entry(
-            strategy_frame, textvariable=self.trajectory_stride_var, width=6
-        ).pack(side="left", padx=2)
-
-        ttk.Label(strategy_frame, text="points)").pack(side="left", padx=(0, 5))
-
-        # Add section label for optimization-specific options
-        opt_label = ttk.Label(
+        # Note about trajectory and output configuration
+        config_note = ttk.Label(
             frame,
-            text="Optimization/Sweep Data Export:",
-            font=("TkDefaultFont", 9, "bold"),
-        )
-        opt_label.grid(row=10, column=0, sticky="w", pady=(10, 2))
-
-        # Add options for saving all evaluation trajectories
-        eval_traj_frame = ttk.Frame(frame)
-        eval_traj_frame.grid(row=10, column=1, columnspan=3, sticky="ew", pady=(10, 2))
-
-        self.save_all_eval_traj_var = tk.BooleanVar(value=False)
-        save_all_cb = ttk.Checkbutton(
-            eval_traj_frame,
-            text="Save ALL evaluation trajectories (not just top N)",
-            variable=self.save_all_eval_traj_var,
-        )
-        save_all_cb.pack(side="left", padx=(0, 10))
-
-        self.export_eval_csv_var = tk.BooleanVar(value=False)
-        csv_cb = ttk.Checkbutton(
-            eval_traj_frame,
-            text="Export CSV of all evaluations",
-            variable=self.export_eval_csv_var,
-        )
-        csv_cb.pack(side="left")
-
-        # Add explanatory note about optimization/sweep data export
-        export_note = ttk.Label(
-            frame,
-            text="These options apply to optimization/sweep runs only.\nOptimization logs are always auto-saved to the results directory.\nFor single-run log saving, use the 'Save log file' option in the main GUI Output section.",
+            text="ℹ For trajectory saving and output options, see the 'Results & Output Configuration' section below",
             font=("TkDefaultFont", 8, "italic"),
-            foreground="gray50",
+            foreground="blue",
             justify="left",
         )
-        export_note.grid(row=11, column=1, columnspan=3, sticky="w", pady=(2, 10))
+        config_note.grid(row=10, column=0, columnspan=4, sticky="w", pady=(10, 10))
 
         frame.columnconfigure(2, weight=1)
 
@@ -1922,23 +1936,7 @@ class OptimizationPlugin(ttk.Frame):
             foreground="gray",
         ).pack(side="left", padx=5)
 
-        # Row 2: Results viewing
-        results_frame = ttk.Frame(frame)
-        results_frame.pack(fill="x", pady=(10, 2))
-
-        ttk.Label(results_frame, text="Results:").pack(side="left", padx=(5, 10))
-
-        ttk.Button(
-            results_frame, text="View Results", command=self._on_view_results
-        ).pack(side="left", padx=5)
-
-        ttk.Button(
-            results_frame,
-            text="Plot Trajectories",
-            command=self._on_plot_trajectories,
-        ).pack(side="left", padx=5)
-
-        # Row 3: Robustness options
+        # Robustness options
         robustness_frame = ttk.Frame(frame)
         robustness_frame.pack(fill="x", pady=(10, 2))
 
@@ -1964,7 +1962,6 @@ class OptimizationPlugin(ttk.Frame):
             frame, text="Trajectory Stability Analysis", padding=8
         )
         smoothness_frame.pack(fill="x", pady=(5, 0))
-        smoothness_frame.columnconfigure(1, weight=1)
 
         self.smoothness_enabled_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -1978,22 +1975,22 @@ class OptimizationPlugin(ttk.Frame):
             row=1, column=0, sticky="w", padx=(20, 5), pady=2
         )
         self.smoothness_window_var = tk.StringVar(value="20")
-        ttk.Entry(
+        window_entry = ttk.Entry(
             smoothness_frame, textvariable=self.smoothness_window_var, width=8
-        ).grid(row=1, column=1, sticky="w", pady=2)
-        ttk.Label(smoothness_frame, text="(moving window for trend analysis)").grid(
-            row=1, column=2, sticky="w", padx=(5, 0), pady=2
         )
+        window_entry.grid(row=1, column=1, sticky="w", pady=2)
+        self._add_tooltip(window_entry, "Moving window size for trend analysis")
 
         ttk.Label(smoothness_frame, text="Oscillation threshold:").grid(
             row=2, column=0, sticky="w", padx=(20, 5), pady=2
         )
         self.smoothness_oscillation_var = tk.StringVar(value="0.5")
-        ttk.Entry(
+        oscillation_entry = ttk.Entry(
             smoothness_frame, textvariable=self.smoothness_oscillation_var, width=8
-        ).grid(row=2, column=1, sticky="w", pady=2)
-        ttk.Label(smoothness_frame, text="(sign-change rate, lower=stricter)").grid(
-            row=2, column=2, sticky="w", padx=(5, 0), pady=2
+        )
+        oscillation_entry.grid(row=2, column=1, sticky="w", pady=2)
+        self._add_tooltip(
+            oscillation_entry, "Sign-change rate threshold (lower = stricter)"
         )
 
         self.smoothness_reject_var = tk.BooleanVar(value=True)
@@ -2005,14 +2002,187 @@ class OptimizationPlugin(ttk.Frame):
 
         # Store widgets for enable/disable toggle
         self.smoothness_widgets = [
-            smoothness_frame.grid_slaves(row=1, column=0)[0],
-            smoothness_frame.grid_slaves(row=1, column=1)[0],
-            smoothness_frame.grid_slaves(row=1, column=2)[0],
-            smoothness_frame.grid_slaves(row=2, column=0)[0],
-            smoothness_frame.grid_slaves(row=2, column=1)[0],
-            smoothness_frame.grid_slaves(row=2, column=2)[0],
-            smoothness_frame.grid_slaves(row=3, column=0)[0],
+            smoothness_frame.grid_slaves(row=1, column=0)[0],  # Window size label
+            smoothness_frame.grid_slaves(row=1, column=1)[0],  # Window size entry
+            smoothness_frame.grid_slaves(row=2, column=0)[0],  # Oscillation label
+            smoothness_frame.grid_slaves(row=2, column=1)[0],  # Oscillation entry
+            smoothness_frame.grid_slaves(row=3, column=0)[0],  # Reject checkbox
         ]
+
+    def _build_results_output_section(self):
+        """Build results viewing and output configuration section."""
+        frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Results & Output Configuration", padding=10
+        )
+        frame.pack(fill="x", padx=10, pady=5)
+        frame.columnconfigure(1, weight=1)
+
+        # Results viewing buttons
+        results_frame = ttk.Frame(frame)
+        results_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 15))
+
+        ttk.Label(results_frame, text="View Results:").pack(side="left", padx=(0, 10))
+
+        ttk.Button(
+            results_frame, text="View Results", command=self._on_view_results
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            results_frame,
+            text="Plot Trajectories",
+            command=self._on_plot_trajectories,
+        ).pack(side="left", padx=5)
+
+        # Trajectory saving options
+        ttk.Label(frame, text="Trajectory Data:").grid(
+            row=1, column=0, sticky="nw", pady=(5, 2)
+        )
+
+        traj_frame = ttk.Frame(frame)
+        traj_frame.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(5, 2))
+
+        self.save_top_n_traj_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            traj_frame,
+            text="Top N trajectories (full detail)",
+            variable=self.save_top_n_traj_var,
+            command=self._on_top_n_traj_changed,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        self.save_all_traj_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            traj_frame,
+            text="All trajectories (with stride)",
+            variable=self.save_all_traj_var,
+            command=self._on_all_traj_changed,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 10))
+
+        self.save_failed_traj_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            traj_frame,
+            text="Failed only (full detail)",
+            variable=self.save_failed_traj_var,
+            command=self._on_failed_traj_changed,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 10))
+
+        self.trajectory_stride_label = ttk.Label(traj_frame, text="Stride:")
+        self.trajectory_stride_label.grid(row=0, column=3, sticky="w", padx=(10, 2))
+        self.trajectory_stride_var = tk.StringVar(value="1")
+        self.trajectory_stride_entry = ttk.Entry(
+            traj_frame, textvariable=self.trajectory_stride_var, width=6
+        )
+        self.trajectory_stride_entry.grid(row=0, column=4, sticky="w", padx=2)
+
+        # Initialize trajectory stride state
+        self._update_stride_state()
+
+        # Metrics export options
+        ttk.Label(frame, text="Metrics Export:").grid(
+            row=2, column=0, sticky="nw", pady=(10, 2)
+        )
+
+        metrics_frame = ttk.Frame(frame)
+        metrics_frame.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(10, 2))
+
+        self.export_full_metrics_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            metrics_frame,
+            text="Full metrics CSV (all parameters & results) — DEFAULT",
+            variable=self.export_full_metrics_var,
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        self.export_top_n_metrics_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            metrics_frame,
+            text="Top N metrics only",
+            variable=self.export_top_n_metrics_var,
+        ).grid(row=1, column=0, sticky="w", pady=2)
+
+        ttk.Label(
+            frame,
+            text="ℹ CSV is compact: swept parameters per run + optimization metrics",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        ).grid(row=3, column=1, columnspan=2, sticky="w", pady=(0, 10))
+
+        # Log saving options
+        ttk.Label(frame, text="Debug Logs:").grid(
+            row=4, column=0, sticky="nw", pady=(5, 2)
+        )
+
+        log_frame = ttk.Frame(frame)
+        log_frame.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(5, 2))
+
+        self.log_verbosity_var = tk.StringVar(value="truncated")
+
+        ttk.Radiobutton(
+            log_frame,
+            text="None (no debug logs saved)",
+            variable=self.log_verbosity_var,
+            value="none",
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            log_frame,
+            text="Truncated (1-2 lines/run: parameters + metrics + errors only) — DEFAULT",
+            variable=self.log_verbosity_var,
+            value="truncated",
+        ).grid(row=1, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            log_frame,
+            text="Full debug (all SC iterations, adaptive timestep details)",
+            variable=self.log_verbosity_var,
+            value="full",
+        ).grid(row=2, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            log_frame,
+            text="Top N only (logs only for best N trajectories)",
+            variable=self.log_verbosity_var,
+            value="top_n_only",
+        ).grid(row=3, column=0, sticky="w", pady=2)
+
+        ttk.Label(
+            frame,
+            text="ℹ 'Truncated' is recommended for large sweeps. 'Full debug' generates large log files.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="blue",
+        ).grid(row=5, column=1, columnspan=2, sticky="w", pady=(0, 5))
+
+    def _on_top_n_traj_changed(self):
+        """Handle Top N trajectory checkbox change."""
+        # Top N can be combined with All or Failed, no exclusivity needed
+        self._update_stride_state()
+
+    def _on_all_traj_changed(self):
+        """Handle All trajectories checkbox change."""
+        if self.save_all_traj_var.get():
+            # "All" was just checked - uncheck "Failed only"
+            self.save_failed_traj_var.set(False)
+        self._update_stride_state()
+
+    def _on_failed_traj_changed(self):
+        """Handle Failed only checkbox change."""
+        if self.save_failed_traj_var.get():
+            # "Failed only" was just checked - uncheck "All"
+            self.save_all_traj_var.set(False)
+        self._update_stride_state()
+
+    def _update_stride_state(self):
+        """Update stride field enabled/disabled state."""
+        if not hasattr(self, "trajectory_stride_entry"):
+            return  # Widgets not created yet
+
+        # Stride is ONLY enabled when "All trajectories" is selected
+        # (Top N and Failed only always save full detail with stride=1)
+        stride_enabled = self.save_all_traj_var.get()
+
+        widget_state = "normal" if stride_enabled else "disabled"
+        label_color = "black" if stride_enabled else "gray"
+
+        self.trajectory_stride_entry.configure(state=widget_state)
+        self.trajectory_stride_label.configure(foreground=label_color)
 
     def _build_progress_section(self):
         """Build progress monitoring section."""
@@ -2043,6 +2213,83 @@ class OptimizationPlugin(ttk.Frame):
         state = "normal" if self.smoothness_enabled_var.get() else "disabled"
         for widget in self.smoothness_widgets:
             widget.configure(state=state)
+
+    def _log_truncated_run(
+        self, run_num: int, params: dict, metrics: dict = None, error: str = None
+    ):
+        """Log a single run in truncated format (1-2 lines).
+
+        Parameters
+        ----------
+        run_num : int
+            Run number
+        params : dict
+            Parameter values for this run
+        metrics : dict, optional
+            Result metrics (energy gain, emittance, etc.)
+        error : str, optional
+            Error message if run failed
+        """
+        # Format parameters compactly
+        param_parts = []
+        for key, value in params.items():
+            if isinstance(value, float):
+                if abs(value) < 0.001 or abs(value) > 1000:
+                    param_parts.append(f"{key}={value:.3e}")
+                else:
+                    param_parts.append(f"{key}={value:.3g}")
+            else:
+                param_parts.append(f"{key}={value}")
+        param_str = " ".join(param_parts)
+
+        if error:
+            # Failed run
+            status = f"FAILED: {error}"
+            self._log_result(f"Run #{run_num:4d} | {param_str} | {status}")
+        elif metrics:
+            # Successful run - format metrics compactly
+            metric_parts = []
+            for key, value in metrics.items():
+                if isinstance(value, float):
+                    if abs(value) < 0.001 or abs(value) > 1000:
+                        metric_parts.append(f"{key}={value:.3e}")
+                    else:
+                        metric_parts.append(f"{key}={value:.3g}")
+                else:
+                    metric_parts.append(f"{key}={value}")
+            metric_str = " ".join(metric_parts)
+            self._log_result(
+                f"Run #{run_num:4d} | {param_str} | {metric_str} | SUCCESS"
+            )
+        else:
+            # No metrics or error - just params
+            self._log_result(f"Run #{run_num:4d} | {param_str} | RUNNING")
+
+    def _should_save_trajectory(self, run_result: dict, rank: int = None) -> bool:
+        """Determine if trajectory should be saved based on config.
+
+        Parameters
+        ----------
+        run_result : dict
+            Run result dictionary with 'failed' flag
+        rank : int, optional
+            Rank of this result (1 = best)
+
+        Returns
+        -------
+        bool
+            True if trajectory should be saved
+        """
+        if self.config.save_all_trajectories:
+            return True
+
+        if self.config.save_failed_trajectories:
+            return run_result.get("failed", False)
+
+        if self.config.save_top_n_trajectories and rank is not None:
+            return rank <= self.config.optimization_save_top_n
+
+        return False
 
     def _parse_list_field(self, value: str) -> List[float]:
         """Parse comma-separated list of floats."""
@@ -2215,10 +2462,16 @@ class OptimizationPlugin(ttk.Frame):
                 self.sweep_params["rider_charge_sign"]["fixed_var"].get()
             ),
             stripped_ions=float(self.rider_stripped_ions_var.get()),
-            save_trajectories=bool(self.save_trajectories_var.get()),
+            # Trajectory saving options
+            save_top_n_trajectories=bool(self.save_top_n_traj_var.get()),
+            save_all_trajectories=bool(self.save_all_traj_var.get()),
+            save_failed_trajectories=bool(self.save_failed_traj_var.get()),
             trajectory_stride=int(self.trajectory_stride_var.get()),
-            save_all_evaluation_trajectories=bool(self.save_all_eval_traj_var.get()),
-            export_evaluation_csv=bool(self.export_eval_csv_var.get()),
+            # Metrics export options
+            export_full_metrics_csv=bool(self.export_full_metrics_var.get()),
+            export_top_n_metrics_csv=bool(self.export_top_n_metrics_var.get()),
+            # Log verbosity
+            log_verbosity=str(self.log_verbosity_var.get()),
             # Stability checking options
             smoothness_enabled=self.smoothness_enabled_var.get(),
             smoothness_window_size=int(self.smoothness_window_var.get()),
@@ -2981,12 +3234,37 @@ class OptimizationPlugin(ttk.Frame):
             self.steps_var.set(str(data.get("steps", 2000)))
             self.objective_var.set(data.get("objective", "max_energy_gain"))
 
-            # Load trajectory options
-            self.save_trajectories_var.set(data.get("save_trajectories", False))
-            self.save_all_eval_traj_var.set(
-                data.get("save_all_evaluation_trajectories", False)
+            # Load trajectory options (with backward compatibility)
+            self.save_top_n_traj_var.set(
+                data.get(
+                    "save_top_n_trajectories", data.get("save_trajectories", False)
+                )
             )
-            self.export_eval_csv_var.set(data.get("export_evaluation_csv", False))
+            self.save_all_traj_var.set(
+                data.get(
+                    "save_all_trajectories",
+                    data.get("save_all_evaluation_trajectories", False),
+                )
+            )
+            self.save_failed_traj_var.set(data.get("save_failed_trajectories", False))
+            self.trajectory_stride_var.set(str(data.get("trajectory_stride", 10)))
+
+            # Load metrics export options (with backward compatibility)
+            # Load metrics export options (backward compatibility with old key names)
+            self.export_full_metrics_var.set(
+                data.get(
+                    "export_full_metrics_csv",
+                    data.get(
+                        "export_evaluation_csv", data.get("export_eval_csv", True)
+                    ),
+                )
+            )
+            self.export_top_n_metrics_var.set(
+                data.get("export_top_n_metrics_csv", False)
+            )
+
+            # Load log verbosity
+            self.log_verbosity_var.set(data.get("log_verbosity", "truncated"))
 
             # Load optimization parameters
             self.optimization_method_var.set(
@@ -3236,9 +3514,16 @@ class OptimizationPlugin(ttk.Frame):
                 "cavity_spacing": config.cavity_spacing,
                 "steps": config.steps,
                 "objective": config.objective,
-                "save_trajectories": config.save_trajectories,
-                "save_all_evaluation_trajectories": config.save_all_evaluation_trajectories,
-                "export_evaluation_csv": config.export_evaluation_csv,
+                # Trajectory saving options
+                "save_top_n_trajectories": config.save_top_n_trajectories,
+                "save_all_trajectories": config.save_all_trajectories,
+                "save_failed_trajectories": config.save_failed_trajectories,
+                "trajectory_stride": config.trajectory_stride,
+                # Metrics export options
+                "export_full_metrics_csv": config.export_full_metrics_csv,
+                "export_top_n_metrics_csv": config.export_top_n_metrics_csv,
+                # Log verbosity
+                "log_verbosity": config.log_verbosity,
                 # Optimization parameters
                 "optimization_method": config.optimization_method,
                 "optimization_maxiter": config.optimization_maxiter,
@@ -3288,7 +3573,6 @@ class OptimizationPlugin(ttk.Frame):
                 # UI-specific fields
                 "timestep_mode": self.timestep_mode_var.get(),
                 "auto_steps_distance": float(self.auto_steps_distance_var.get()),
-                "trajectory_stride": int(self.trajectory_stride_var.get()),
                 "rider_stripped_ions": float(self.rider_stripped_ions_var.get()),
                 "driver_stripped_ions": float(self.driver_stripped_ions_var.get()),
             }
@@ -5052,7 +5336,7 @@ class OptimizationPlugin(ttk.Frame):
         self._log_result(f"Results saved to: {results_file}")
 
         # Export all evaluations to CSV if requested
-        if self.config.export_evaluation_csv and all_evaluations:
+        if self.config.export_full_metrics_csv and all_evaluations:
             self._export_evaluations_csv(all_evaluations, param_names, opt_dir)
 
         # Save all evaluation trajectories if requested
@@ -5857,41 +6141,68 @@ class OptimizationPlugin(ttk.Frame):
             for values in param_grids.values():
                 total_runs *= len(values)
 
+            # Determine verbosity level from config
+            use_no_logging = self.config.log_verbosity == "none"
+            use_truncated_logging = self.config.log_verbosity == "truncated"
+            use_full_debug = self.config.log_verbosity == "full"
+
+            # Override config verbosity settings based on log mode
+            # Save original values to restore later
+            original_sc_verbosity = self.config.self_consistency_verbosity
+            original_adaptive_debug = self.config.adaptive_timestep_debug
+
+            if use_no_logging or use_truncated_logging:
+                # Suppress SC iteration output and adaptive timestep refinement output
+                self.config.self_consistency_verbosity = 0
+                self.config.adaptive_timestep_debug = False
+            else:  # full debug or top_n_only
+                # Show detailed SC convergence and adaptive timestep actions
+                self.config.self_consistency_verbosity = 2
+                self.config.adaptive_timestep_debug = True
+
             self._log_result(
                 f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs"
             )
-            self._log_result(
-                f"Trajectory saving: {'ENABLED' if self.config.save_trajectories else 'DISABLED'}"
-            )
+            self._log_result(f"Log verbosity: {self.config.log_verbosity}")
 
-            # Log parameter grid info
-            for param_name, values in param_grids.items():
-                if len(values) > 1:
-                    self._log_result(
-                        f"  {param_name}: {len(values)} points from {values[0]:.2e} to {values[-1]:.2e}"
-                    )
-                else:
-                    if param_name == "wall_z":
-                        self._log_result(f"  {param_name}: {values[0]:.2f} mm (fixed)")
+            # Only log detailed config in full debug mode
+            if use_full_debug:
+                self._log_result(
+                    f"Trajectory saving: Top N={self.config.save_top_n_trajectories}, All={self.config.save_all_trajectories}, Failed={self.config.save_failed_trajectories}"
+                )
+
+                # Log parameter grid info
+                for param_name, values in param_grids.items():
+                    if len(values) > 1:
+                        self._log_result(
+                            f"  {param_name}: {len(values)} points from {values[0]:.2e} to {values[-1]:.2e}"
+                        )
                     else:
-                        self._log_result(f"  {param_name}: {values[0]:.2e} (fixed)")
-            self._log_result(f"  Timestep strategy: {self.config.timestep_strategy}")
-            if self.config.timestep_strategy == "energy_scaled":
+                        if param_name == "wall_z":
+                            self._log_result(
+                                f"  {param_name}: {values[0]:.2f} mm (fixed)"
+                            )
+                        else:
+                            self._log_result(f"  {param_name}: {values[0]:.2e} (fixed)")
                 self._log_result(
-                    f"    Energy scale exponent: {self.config.energy_scale_exponent} (h ∝ γ^-α)"
+                    f"  Timestep strategy: {self.config.timestep_strategy}"
                 )
-            elif self.config.timestep_strategy == "auto_distance":
-                self._log_result(
-                    f"    Target distance: {self.config.target_distance_mm:.1f} mm (wall_z + target)"
-                )
-                self._log_result(
-                    f"    All particles will travel to consistent z regardless of energy"
-                )
-            elif self.config.auto_steps:
-                self._log_result(
-                    f"    Legacy auto_steps: wall_z + {self.config.auto_steps_distance_past_wall:.1f} mm"
-                )
-            self._log_result(f"  z_cutoff_mode: {self.config.z_cutoff_mode}")
+                if self.config.timestep_strategy == "energy_scaled":
+                    self._log_result(
+                        f"    Energy scale exponent: {self.config.energy_scale_exponent} (h ∝ γ^-α)"
+                    )
+                elif self.config.timestep_strategy == "auto_distance":
+                    self._log_result(
+                        f"    Target distance: {self.config.target_distance_mm:.1f} mm (wall_z + target)"
+                    )
+                    self._log_result(
+                        f"    All particles will travel to consistent z regardless of energy"
+                    )
+                elif self.config.auto_steps:
+                    self._log_result(
+                        f"    Legacy auto_steps: wall_z + {self.config.auto_steps_distance_past_wall:.1f} mm"
+                    )
+                self._log_result(f"  z_cutoff_mode: {self.config.z_cutoff_mode}")
 
             self._log_result("")
 
@@ -5973,32 +6284,38 @@ class OptimizationPlugin(ttk.Frame):
                     self.config.macroparticle_sigma_multiplier,
                 )
 
-                # Log ALL swept parameter values for this run
-                self._log_result(
-                    f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:"
-                )
-                self._log_result(f"    aperture: {aperture:.4e} mm")
-                self._log_result(f"    energy: {energy:.4f} GeV")
-                self._log_result(f"    start_z: {start_z:.4f} mm")
-                self._log_result(f"    transv_offset_frac: {offset_frac:.4f}")
-                self._log_result(f"    rider_m_particle: {rider_m_particle:.4e} amu")
-                self._log_result(f"    rider_charge_sign: {rider_charge_sign:.1f}")
-                self._log_result(f"    rider_pcount: {rider_pcount}")
-                self._log_result(
-                    f"    rider_transv_mom: {rider_transv_mom:.4e} amu·mm/ns"
-                )
-                self._log_result(f"    rider_transv_dist: {rider_transv_dist:.4e} mm")
-                if self.config.macroparticle_enabled:
-                    self._log_result(f"    macroparticle_enabled: True")
+                # Log parameter values based on verbosity
+                if use_full_debug:
+                    # Log ALL swept parameter values for this run
                     self._log_result(
-                        f"    macroparticle_charge_multiplier: {macroparticle_charge_multiplier:.4f}"
+                        f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:"
+                    )
+                    self._log_result(f"    aperture: {aperture:.4e} mm")
+                    self._log_result(f"    energy: {energy:.4f} GeV")
+                    self._log_result(f"    start_z: {start_z:.4f} mm")
+                    self._log_result(f"    transv_offset_frac: {offset_frac:.4f}")
+                    self._log_result(
+                        f"    rider_m_particle: {rider_m_particle:.4e} amu"
+                    )
+                    self._log_result(f"    rider_charge_sign: {rider_charge_sign:.1f}")
+                    self._log_result(f"    rider_pcount: {rider_pcount}")
+                    self._log_result(
+                        f"    rider_transv_mom: {rider_transv_mom:.4e} amu·mm/ns"
                     )
                     self._log_result(
-                        f"    macroparticle_sigma_multiplier: {macroparticle_sigma_multiplier:.4f}"
+                        f"    rider_transv_dist: {rider_transv_dist:.4e} mm"
                     )
-                    self._log_result(
-                        f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
-                    )
+                    if self.config.macroparticle_enabled:
+                        self._log_result(f"    macroparticle_enabled: True")
+                        self._log_result(
+                            f"    macroparticle_charge_multiplier: {macroparticle_charge_multiplier:.4f}"
+                        )
+                        self._log_result(
+                            f"    macroparticle_sigma_multiplier: {macroparticle_sigma_multiplier:.4f}"
+                        )
+                        self._log_result(
+                            f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
+                        )
 
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
@@ -6042,35 +6359,36 @@ class OptimizationPlugin(ttk.Frame):
                     distance_per_step = beta * gamma * C_MMNS * timestep
                     expected_distance = distance_per_step * steps
 
-                    self._log_result(
-                        f"  [TIMESTEP] Run {run_num} strategy '{self.config.timestep_strategy}':"
-                    )
-                    self._log_result(
-                        f"    E={energy:.4f} GeV, m={rider_m_particle:.4e} amu"
-                    )
-                    self._log_result(f"    gamma={gamma:.2f}, beta={beta:.8f}")
-                    self._log_result(
-                        f"    timestep h={timestep:.4e} ns (proper time = dt/gamma)"
-                    )
-                    self._log_result(f"    steps={steps}")
-                    self._log_result(
-                        f"    distance_per_step = β·γ·c·h = {distance_per_step:.4f} mm"
-                    )
-                    self._log_result(
-                        f"    expected_total_distance = {expected_distance:.2f} mm"
-                    )
-                    # Use wall_z from grid if available, otherwise use config default
-                    current_wall_z = params_dict.get("wall_z", self.config.wall_z)
-                    self._log_result(
-                        f"    wall_z={current_wall_z:.2f} mm, start_z={start_z:.2f} mm"
-                    )
-                    self._log_result(
-                        f"    distance_to_wall = {abs(current_wall_z - start_z):.2f} mm"
-                    )
-                    if self.config.timestep_strategy == "auto_distance":
+                    if use_full_debug:
                         self._log_result(
-                            f"    target_distance={self.config.target_distance_mm:.2f} mm"
+                            f"  [TIMESTEP] Run {run_num} strategy '{self.config.timestep_strategy}':"
                         )
+                        self._log_result(
+                            f"    E={energy:.4f} GeV, m={rider_m_particle:.4e} amu"
+                        )
+                        self._log_result(f"    gamma={gamma:.2f}, beta={beta:.8f}")
+                        self._log_result(
+                            f"    timestep h={timestep:.4e} ns (proper time = dt/gamma)"
+                        )
+                        self._log_result(f"    steps={steps}")
+                        self._log_result(
+                            f"    distance_per_step = β·γ·c·h = {distance_per_step:.4f} mm"
+                        )
+                        self._log_result(
+                            f"    expected_total_distance = {expected_distance:.2f} mm"
+                        )
+                        # Use wall_z from grid if available, otherwise use config default
+                        current_wall_z = params_dict.get("wall_z", self.config.wall_z)
+                        self._log_result(
+                            f"    wall_z={current_wall_z:.2f} mm, start_z={start_z:.2f} mm"
+                        )
+                        self._log_result(
+                            f"    distance_to_wall = {abs(current_wall_z - start_z):.2f} mm"
+                        )
+                        if self.config.timestep_strategy == "auto_distance":
+                            self._log_result(
+                                f"    target_distance={self.config.target_distance_mm:.2f} mm"
+                            )
                 elif self.config.auto_steps:
                     # Legacy auto_steps mode (deprecated, but keep for compatibility)
                     current_wall_z = params_dict.get("wall_z", self.config.wall_z)
@@ -6102,17 +6420,19 @@ class OptimizationPlugin(ttk.Frame):
                 # Enforce minimum of 5% of requested steps (absolute floor of 20)
                 min_steps = max(20, int(self.config.steps * 0.05))
                 if steps < min_steps:
-                    self._log_result(
-                        f"  [WARNING] Steps adjusted from {steps} to {min_steps} (minimum floor)"
-                    )
+                    if use_full_debug:
+                        self._log_result(
+                            f"  [WARNING] Steps adjusted from {steps} to {min_steps} (minimum floor)"
+                        )
                     steps = min_steps
 
-                # Log run start summary
-                self._log_result(
-                    f"  [START] Run {run_num}/{total_runs}: "
-                    f"a={aperture:.4e}mm, E={energy:.4f}GeV, z={start_z:.2f}mm, "
-                    f"h={timestep:.4e}ns, N={steps}"
-                )
+                # Log run start summary (only in full debug mode - truncated mode logs after completion)
+                if use_full_debug:
+                    self._log_result(
+                        f"  [START] Run {run_num}/{total_runs}: "
+                        f"a={aperture:.4e}mm, E={energy:.4f}GeV, z={start_z:.2f}mm, "
+                        f"h={timestep:.4e}ns, N={steps}"
+                    )
 
                 # Run integration with timeout
                 result = None
@@ -6226,30 +6546,13 @@ class OptimizationPlugin(ttk.Frame):
                             cancel_flag=None,
                         )
 
-                    if result is not None:
+                    if result is not None and use_full_debug:
                         self._log_result(
                             f"  [DEBUG] Run {run_num} integration completed"
                         )
 
                     if not run_timed_out and result is not None:
-                        # Extract actual trajectory distance for diagnostics
-                        actual_distance = 0.0
-                        if "_distance_info" in result:
-                            dist_info = result["_distance_info"]
-                            actual_distance = abs(
-                                dist_info["z_end"] - dist_info["z_start"]
-                            )
-                        elif "trajectory" in result and result["trajectory"]:
-                            # Fallback: try to extract from full trajectory if present
-                            traj = result["trajectory"]
-                            z_vals = traj.get("z", [])
-                            if len(z_vals) > 1:
-                                # Safely handle both lists and numpy arrays
-                                z_start = float(np.asarray(z_vals[0]).flat[0])
-                                z_end = float(np.asarray(z_vals[-1]).flat[0])
-                                actual_distance = abs(z_end - z_start)
-
-                        # Always log distance traveled for debugging
+                        # Extract metrics
                         delta_e = result.get("metrics", {}).get(
                             "rider_delta_e_mev", 0.0
                         )
@@ -6263,18 +6566,59 @@ class OptimizationPlugin(ttk.Frame):
                             "rider_gamma_final", 0.0
                         )
 
-                        self._log_result(f"  [RESULT] Run {run_num}/{total_runs}:")
-                        self._log_result(
-                            f"    Distance: expected={expected_distance:.2f}mm, actual={actual_distance:.2f}mm"
-                        )
-                        self._log_result(
-                            f"    Gamma: initial={gamma_initial:.6f}, final={gamma_final:.6f}, delta={delta_gamma:.6e}"
-                        )
-                        self._log_result(f"    Energy: ΔE={delta_e:.6f}MeV")
-                        if actual_distance < 0.1:
-                            self._log_result(
-                                f"  [WARNING] Particle barely moved! Check timestep calculation."
+                        # Log based on verbosity mode
+                        if use_no_logging:
+                            # No logging mode: skip all run-level logs
+                            pass
+                        elif use_truncated_logging:
+                            # Truncated mode: 1-2 lines with key info
+                            self._log_truncated_run(
+                                run_num,
+                                params={
+                                    "aperture": aperture,
+                                    "energy": energy,
+                                    "wall_z": params_dict.get(
+                                        "wall_z", self.config.wall_z
+                                    ),
+                                },
+                                metrics={
+                                    "ΔE": delta_e,
+                                    "Δγ": delta_gamma,
+                                    "γ_i": gamma_initial,
+                                    "γ_f": gamma_final,
+                                },
                             )
+                        elif use_full_debug:
+                            # Full debug mode: all details
+                            # Extract actual trajectory distance for diagnostics
+                            actual_distance = 0.0
+                            if "_distance_info" in result:
+                                dist_info = result["_distance_info"]
+                                actual_distance = abs(
+                                    dist_info["z_end"] - dist_info["z_start"]
+                                )
+                            elif "trajectory" in result and result["trajectory"]:
+                                # Fallback: try to extract from full trajectory if present
+                                traj = result["trajectory"]
+                                z_vals = traj.get("z", [])
+                                if len(z_vals) > 1:
+                                    # Safely handle both lists and numpy arrays
+                                    z_start = float(np.asarray(z_vals[0]).flat[0])
+                                    z_end = float(np.asarray(z_vals[-1]).flat[0])
+                                    actual_distance = abs(z_end - z_start)
+
+                            self._log_result(f"  [RESULT] Run {run_num}/{total_runs}:")
+                            self._log_result(
+                                f"    Distance: expected={expected_distance:.2f}mm, actual={actual_distance:.2f}mm"
+                            )
+                            self._log_result(
+                                f"    Gamma: initial={gamma_initial:.6f}, final={gamma_final:.6f}, delta={delta_gamma:.6e}"
+                            )
+                            self._log_result(f"    Energy: ΔE={delta_e:.6f}MeV")
+                            if actual_distance < 0.1:
+                                self._log_result(
+                                    f"  [WARNING] Particle barely moved! Check timestep calculation."
+                                )
 
                             # Store result with all parameters
                             run_data = {
@@ -6417,6 +6761,12 @@ class OptimizationPlugin(ttk.Frame):
 
             self._log_result(traceback.format_exc())
         finally:
+            # Restore original verbosity settings
+            if "original_sc_verbosity" in locals():
+                self.config.self_consistency_verbosity = original_sc_verbosity
+            if "original_adaptive_debug" in locals():
+                self.config.adaptive_timestep_debug = original_adaptive_debug
+
             self.running = False
             # Ensure log file is closed
             if self._log_file is not None:

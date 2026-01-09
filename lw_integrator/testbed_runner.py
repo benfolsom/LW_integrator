@@ -234,7 +234,7 @@ class SimulationOptions:
     zposition_display: bool = False
     zposition_save: bool = False
     trajectory_save: bool = False
-    trajectory_interval: int = 10
+    trajectory_interval: int = 1
     plot_dpi: int = DEFAULT_PLOT_DPI
     output_dir: Path = Path("test_outputs/testbed_runs")
     config_dir: Path = Path("configs/testbed_runs")
@@ -277,7 +277,7 @@ class SimulationOptions:
         0.7  # Relaxation weight for Pt correction (0.0-1.0, default 0.7)
     )
     self_consistency_verbosity: int = (
-        0  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
+        2  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
     )
     self_consistency_chrono_interpolate: bool = (
         False  # Enable chrono-match interpolation for retarded fields
@@ -2800,6 +2800,63 @@ def run_testbed(
                 axes_gamma[1].set_title("Driver Lorentz Factor γ", pad=10)
                 axes_gamma[1].legend()
                 axes_gamma[1].grid(True, alpha=0.3)
+
+            # Apply intelligent y-axis scaling for gamma to show small fluctuations
+            for i, ax in enumerate(axes_gamma):
+                try:
+                    # Collect all gamma values for this subplot
+                    all_gamma = []
+                    if i == 0:  # Rider axis
+                        if len(core_r_gamma) > 0:
+                            all_gamma.extend(core_r_gamma)
+                        if (
+                            driver_allowed
+                            and core_d_gamma is not None
+                            and len(core_d_gamma) > 0
+                        ):
+                            all_gamma.extend(core_d_gamma)
+                        if (
+                            legacy_enabled
+                            and legacy_r_gamma is not None
+                            and len(legacy_r_gamma) > 0
+                        ):
+                            all_gamma.extend(legacy_r_gamma)
+                    elif i == 1 and driver_allowed:  # Driver axis
+                        if core_d_gamma is not None and len(core_d_gamma) > 0:
+                            all_gamma.extend(core_d_gamma)
+                        if (
+                            legacy_enabled
+                            and legacy_d_gamma is not None
+                            and len(legacy_d_gamma) > 0
+                        ):
+                            all_gamma.extend(legacy_d_gamma)
+
+                    if len(all_gamma) > 0:
+                        gamma_array = np.array(all_gamma)
+                        gamma_min = np.min(gamma_array)
+                        gamma_max = np.max(gamma_array)
+                        gamma_mean = np.mean(gamma_array)
+                        gamma_range = gamma_max - gamma_min
+
+                        # Check if variation is small relative to mean (< 5% is considered small)
+                        relative_variation = (
+                            gamma_range / gamma_mean if gamma_mean > 0 else 0
+                        )
+
+                        if relative_variation < 0.05 and gamma_range > 0:
+                            # Small variation: zoom in with 10% buffer around actual range
+                            buffer = (
+                                gamma_range * 0.1
+                                if gamma_range > 0
+                                else gamma_mean * 0.001
+                            )
+                            ax.set_ylim(gamma_min - buffer, gamma_max + buffer)
+                            _log(
+                                f"Applied y-axis scaling for gamma subplot {i + 1} (Δγ/γ = {relative_variation * 100:.3f}%)"
+                            )
+                except Exception as e:
+                    # Silently ignore errors in y-axis scaling
+                    pass
 
             # Attach metadata for interactive replotting
             fig_gamma._lw_plot_data = {
