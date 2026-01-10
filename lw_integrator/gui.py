@@ -2026,7 +2026,7 @@ class IntegratorGUI:
 
         ttk.Checkbutton(
             output_frame,
-            text="Save trajectory data (NPZ format)",
+            text="Save trajectory data (NPZ + JSON formats)",
             variable=self.trajectory_save_var,
             command=self._on_trajectory_save_toggled,
         ).grid(row=20, column=0, columnspan=2, sticky="w", pady=(0, 2))

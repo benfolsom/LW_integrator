@@ -3061,13 +3061,52 @@ def run_testbed(
                 traj_data["legacy"] = legacy_payload
 
             label_prefix = config_label if config_label else "trajectory"
-            traj_path = (
+
+            # Save as JSON (legacy format for backwards compatibility)
+            traj_path_json = (
                 output_dir / f"{label_prefix}_trajectory_data_{timestamp_token}.json"
             )
-            with traj_path.open("w", encoding="utf-8") as handle:
+            with traj_path_json.open("w", encoding="utf-8") as handle:
                 json.dump(traj_data, handle, indent=2)
-            saved_paths["trajectory"] = traj_path
-            _log(f"Saved trajectories to: {traj_path} (interval={interval})")
+            saved_paths["trajectory_json"] = traj_path_json
+            _log(f"Saved trajectory JSON to: {traj_path_json} (interval={interval})")
+
+            # Also save as NPZ (standard format matching sweep/optimization)
+            # This allows trajectory files to be loaded by the optimization plugin viewer
+            traj_path_npz = (
+                output_dir / f"{label_prefix}_trajectory_data_{timestamp_token}.npz"
+            )
+
+            # Extract core rider trajectory data in NPZ format
+            rider_data = core_payload.get("rider", {})
+            positions = rider_data.get("positions_mm", {})
+            momenta = rider_data.get("conjugate_momenta", {})
+
+            # Calculate r and pr from x, y components
+            x_arr = np.array(positions.get("x", []))
+            y_arr = np.array(positions.get("y", []))
+            z_arr = np.array(positions.get("z", []))
+            px_arr = np.array(momenta.get("Px", []))
+            py_arr = np.array(momenta.get("Py", []))
+            pz_arr = np.array(momenta.get("Pz", []))
+            gamma_arr = np.array(rider_data.get("gamma_hist", []))
+            t_arr = np.array(rider_data.get("time_ns", []))
+
+            r_arr = np.sqrt(x_arr**2 + y_arr**2)
+            pr_arr = np.sqrt(px_arr**2 + py_arr**2)
+
+            # Save NPZ with standard format (z, r, pz, pr, t, gamma)
+            np.savez(
+                traj_path_npz,
+                z=z_arr,
+                r=r_arr,
+                pz=pz_arr,
+                pr=pr_arr,
+                t=t_arr,
+                gamma=gamma_arr,
+            )
+            saved_paths["trajectory_npz"] = traj_path_npz
+            _log(f"Saved trajectory NPZ to: {traj_path_npz} (interval={interval})")
 
     duration = time.perf_counter() - start
     _log("")

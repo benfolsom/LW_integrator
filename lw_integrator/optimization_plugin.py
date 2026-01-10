@@ -3877,14 +3877,8 @@ class OptimizationPlugin(ttk.Frame):
     def _load_and_plot_results(self, file_path: str):
         """Load results file and display trajectory viewer with plots."""
         try:
-            # Determine if this is a CSV file or JSON file
-            if file_path.endswith('.csv'):
-                # CSV-only export - show directory browser for NPZ files
-                import os
-                results_dir = os.path.dirname(file_path)
-                self._view_npz_trajectories(results_dir)
-                return
-
+            # Only JSON files contain trajectory data
+            # CSV files (all_evaluations.csv) only contain metrics
             with open(file_path, "r") as f:
                 data = json.load(f)
 
@@ -3945,27 +3939,43 @@ class OptimizationPlugin(ttk.Frame):
     def _on_plot_trajectories(self):
         """Open trajectory plotting dialog to visualize saved results."""
         # Default to optimization_results directory
+        import glob
         import os
 
         # Use sweep output directory from GUI preferences, then fall back to legacy
         legacy_results_dir = "optimization_results"
 
+        # Start with base directory
         if os.path.exists(self.sweep_output_dir) and os.listdir(self.sweep_output_dir):
-            initial_dir = self.sweep_output_dir
+            base_dir = self.sweep_output_dir
         elif os.path.exists(legacy_results_dir):
-            initial_dir = legacy_results_dir
+            base_dir = legacy_results_dir
         else:
-            initial_dir = self.config.output_dir
+            base_dir = self.config.output_dir
+
+        # Find most recent timestamped subdirectory if any exist
+        initial_dir = base_dir
+        if os.path.exists(base_dir):
+            result_dirs = [
+                d for d in glob.glob(os.path.join(base_dir, "*"))
+                if os.path.isdir(d)
+            ]
+            if result_dirs:
+                # Sort by modification time, most recent first
+                result_dirs.sort(key=os.path.getmtime, reverse=True)
+                initial_dir = result_dirs[0]
 
         # Ask user to select results file or directory
-        # Support JSON files, CSV files, or NPZ directories
+        # Support JSON files (sweep_results.json or optimization_results.json)
+        # CSV files only contain metrics, not trajectories
+        # Show directory name in title for clarity
+        import os
+        dir_name = os.path.basename(initial_dir) if initial_dir else "results"
         file_path = filedialog.askopenfilename(
-            title="Select Results File (JSON/CSV) or Cancel to Choose Directory",
+            title=f"Select Results File (JSON) - Starting in: {dir_name}",
             initialdir=initial_dir,
             filetypes=[
-                ("Results files", "*.json;*.csv"),
                 ("JSON files", "*.json"),
-                ("CSV files", "*.csv"),
                 ("All files", "*.*")
             ],
         )
@@ -4008,13 +4018,16 @@ class OptimizationPlugin(ttk.Frame):
                         self,
                         "No Trajectories",
                         "No trajectory data found in results.\n\n"
-                        "Make sure 'Save trajectories' was enabled during the sweep.",
+                        "Make sure 'Save trajectories' was enabled during the sweep.\n\n"
+                        "Note: all_evaluations.csv only contains metrics, not trajectories.\n"
+                        "For optimizations, trajectory data is in NPZ files.",
                     )
                     return
 
             elif "all_evaluations" in data or "best_parameters" in data:
                 # Optimization format: optimization_results.json
-                # Load NPZ files from the same directory
+                # This file contains metrics only, not trajectories
+                # Load NPZ trajectory files from the same directory
                 import os
                 results_dir = os.path.dirname(file_path)
                 self._view_npz_trajectories(results_dir)
@@ -4032,7 +4045,8 @@ class OptimizationPlugin(ttk.Frame):
                     "Expected either:\n"
                     "- sweep_results.json with 'results' array\n"
                     "- optimization_results.json with 'all_evaluations'\n"
-                    "- Legacy trajectory file with 'core'/'rider' structure",
+                    "- Legacy trajectory file with 'core'/'rider' structure\n\n"
+                    "Note: CSV files only contain metrics, not trajectory data.",
                 )
                 return
 
