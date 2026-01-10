@@ -313,8 +313,8 @@ class OptimizationConfig:
     )
 
     # Metrics export options
-    export_full_metrics_csv: bool = True  # Export all parameters & results (DEFAULT)
-    export_top_n_metrics_csv: bool = False  # Export only top N metrics
+    metrics_export_format: str = "both"  # Options: "json", "csv", "both", "none"
+    metrics_export_scope: str = "all"  # Options: "all", "top_n"
 
     # Log saving options
     log_verbosity: str = "truncated"  # "none", "truncated", "full", "top_n_only"
@@ -2084,23 +2084,50 @@ class OptimizationPlugin(ttk.Frame):
         metrics_frame = ttk.Frame(frame)
         metrics_frame.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(10, 2))
 
-        self.export_full_metrics_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            metrics_frame,
-            text="Full metrics CSV (all parameters & results) — DEFAULT",
-            variable=self.export_full_metrics_var,
-        ).grid(row=0, column=0, sticky="w", pady=2)
+        # Format selection
+        format_frame = ttk.Frame(metrics_frame)
+        format_frame.grid(row=0, column=0, sticky="w", pady=2)
 
-        self.export_top_n_metrics_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            metrics_frame,
-            text="Top N metrics only",
-            variable=self.export_top_n_metrics_var,
-        ).grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Label(format_frame, text="Format:").pack(side="left", padx=(0, 5))
+
+        self.metrics_format_var = tk.StringVar(value="both")
+        format_options = [
+            ("JSON + CSV", "both"),
+            ("JSON only", "json"),
+            ("CSV only", "csv"),
+            ("None", "none"),
+        ]
+        for text, value in format_options:
+            ttk.Radiobutton(
+                format_frame,
+                text=text,
+                variable=self.metrics_format_var,
+                value=value,
+            ).pack(side="left", padx=5)
+
+        # Scope selection
+        scope_frame = ttk.Frame(metrics_frame)
+        scope_frame.grid(row=1, column=0, sticky="w", pady=2)
+
+        ttk.Label(scope_frame, text="Scope:").pack(side="left", padx=(0, 5))
+
+        self.metrics_scope_var = tk.StringVar(value="all")
+        ttk.Radiobutton(
+            scope_frame,
+            text="All evaluations",
+            variable=self.metrics_scope_var,
+            value="all",
+        ).pack(side="left", padx=5)
+        ttk.Radiobutton(
+            scope_frame,
+            text="Top N only",
+            variable=self.metrics_scope_var,
+            value="top_n",
+        ).pack(side="left", padx=5)
 
         ttk.Label(
             frame,
-            text="ℹ CSV is compact: swept parameters per run + optimization metrics",
+            text="ℹ JSON contains metadata & structure; CSV is tabular with all parameters & metrics",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray50",
         ).grid(row=3, column=1, columnspan=2, sticky="w", pady=(0, 10))
@@ -2468,8 +2495,8 @@ class OptimizationPlugin(ttk.Frame):
             save_failed_trajectories=bool(self.save_failed_traj_var.get()),
             trajectory_stride=int(self.trajectory_stride_var.get()),
             # Metrics export options
-            export_full_metrics_csv=bool(self.export_full_metrics_var.get()),
-            export_top_n_metrics_csv=bool(self.export_top_n_metrics_var.get()),
+            metrics_export_format=str(self.metrics_format_var.get()),
+            metrics_export_scope=str(self.metrics_scope_var.get()),
             # Log verbosity
             log_verbosity=str(self.log_verbosity_var.get()),
             # Stability checking options
@@ -3250,18 +3277,24 @@ class OptimizationPlugin(ttk.Frame):
             self.trajectory_stride_var.set(str(data.get("trajectory_stride", 10)))
 
             # Load metrics export options (with backward compatibility)
-            # Load metrics export options (backward compatibility with old key names)
-            self.export_full_metrics_var.set(
-                data.get(
-                    "export_full_metrics_csv",
-                    data.get(
-                        "export_evaluation_csv", data.get("export_eval_csv", True)
-                    ),
-                )
-            )
-            self.export_top_n_metrics_var.set(
-                data.get("export_top_n_metrics_csv", False)
-            )
+            # Map old boolean settings to new format/scope settings
+            if "metrics_export_format" in data:
+                self.metrics_format_var.set(data.get("metrics_export_format", "both"))
+            else:
+                # Backward compatibility: convert old CSV checkboxes to new format
+                export_full = data.get("export_full_metrics_csv",
+                    data.get("export_evaluation_csv", data.get("export_eval_csv", True)))
+                if export_full:
+                    self.metrics_format_var.set("both")  # Default to both for backward compat
+                else:
+                    self.metrics_format_var.set("none")
+
+            if "metrics_export_scope" in data:
+                self.metrics_scope_var.set(data.get("metrics_export_scope", "all"))
+            else:
+                # Backward compatibility: check old top_n setting
+                export_top_n = data.get("export_top_n_metrics_csv", False)
+                self.metrics_scope_var.set("top_n" if export_top_n else "all")
 
             # Load log verbosity
             self.log_verbosity_var.set(data.get("log_verbosity", "truncated"))
@@ -3520,8 +3553,8 @@ class OptimizationPlugin(ttk.Frame):
                 "save_failed_trajectories": config.save_failed_trajectories,
                 "trajectory_stride": config.trajectory_stride,
                 # Metrics export options
-                "export_full_metrics_csv": config.export_full_metrics_csv,
-                "export_top_n_metrics_csv": config.export_top_n_metrics_csv,
+                "metrics_export_format": config.metrics_export_format,
+                "metrics_export_scope": config.metrics_export_scope,
                 # Log verbosity
                 "log_verbosity": config.log_verbosity,
                 # Optimization parameters
@@ -3647,111 +3680,211 @@ class OptimizationPlugin(ttk.Frame):
             self.gui_controller._refresh_sweep_config_list(selected=config_name)
 
     def _on_view_results(self):
-        """Open results viewer and automatically load latest results."""
+        """Display pre-generated summary plots from the latest sweep/optimization run."""
         import glob
         import os
+        from pathlib import Path
 
         # Use sweep output directory from GUI preferences
         default_results_dir = self.sweep_output_dir
 
-        # Look for most recent sweep results in the actual output locations
-        # Results are saved to timestamped subdirectories: {sweep_output_dir}/{timestamp}_{config_name}/sweep_results.json
-        search_patterns = [
-            os.path.join(default_results_dir, "*", "sweep_results.json"),  # Current location
-            os.path.join(default_results_dir, "sweep_results.json"),  # Direct in output dir (edge case)
-            os.path.join("optimization_results", "*", "sweep_results.json"),  # Legacy location (timestamped)
-            os.path.join("optimization_results", "sweep_*", "sweep_results.json"),  # Legacy location (old naming)
-            os.path.join(self.config.output_dir, "*", "sweep_results.json"),  # Config output dir with subdirs
-            os.path.join(self.config.output_dir, "sweep_results.json"),  # Config output dir direct
-        ]
-
-        result_files = []
-        for pattern in search_patterns:
-            result_files.extend(glob.glob(pattern))
-
-        if result_files:
-            # Sort by modification time, most recent first
-            result_files.sort(key=os.path.getmtime, reverse=True)
-            latest_file = result_files[0]
-
-            # Ask user if they want to view the latest results or choose a different file
-            dialog = tk.Toplevel(self)
-            dialog.title("View Results")
-            dialog.geometry("500x300")
-            dialog.transient(self)
-            dialog.grab_set()
-
-            msg_frame = ttk.Frame(dialog, padding=20)
-            msg_frame.pack(fill="both", expand=True)
-
-            ttk.Label(
-                msg_frame,
-                text="Results Found",
-                font=("TkDefaultFont", 12, "bold"),
-            ).pack(anchor="w", pady=(0, 10))
-
-            # Show the timestamped directory name if available
-            latest_dir = os.path.dirname(latest_file)
-            dir_name = os.path.basename(latest_dir)
-
-            info = ttk.Label(
-                msg_frame,
-                text=f"Most recent results file found:\n\n{dir_name}",
-                wraplength=450,
-            )
-            info.pack(anchor="w", pady=(0, 20))
-
-            btn_frame = ttk.Frame(msg_frame)
-            btn_frame.pack(fill="x", pady=10)
-
-            def load_latest():
-                dialog.destroy()
-                self._load_and_plot_results(latest_file)
-
-            def choose_file():
-                dialog.destroy()
-                self._on_plot_trajectories()
-
-            ttk.Button(
-                btn_frame,
-                text="View Latest Results",
-                command=load_latest,
-                style="Accent.TButton",
-            ).pack(side="left", padx=5, expand=True, fill="x")
-
-            ttk.Button(
-                btn_frame,
-                text="Choose Different File...",
-                command=choose_file,
-            ).pack(side="left", padx=5, expand=True, fill="x")
-
-            ttk.Button(
-                msg_frame,
-                text="Cancel",
-                command=dialog.destroy,
-            ).pack(pady=(10, 0))
-
-            # Center on parent
-            dialog.update_idletasks()
-            x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
-            y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
-            dialog.geometry(f"+{x}+{y}")
-
+        # Find all timestamped result directories
+        if os.path.exists(default_results_dir):
+            result_dirs = [
+                d for d in glob.glob(os.path.join(default_results_dir, "*"))
+                if os.path.isdir(d)
+            ]
         else:
-            # No results found, offer to browse
+            result_dirs = []
+
+        # Also check legacy location
+        legacy_dir = "optimization_results"
+        if os.path.exists(legacy_dir):
+            result_dirs.extend([
+                d for d in glob.glob(os.path.join(legacy_dir, "*"))
+                if os.path.isdir(d)
+            ])
+
+        if result_dirs:
+            # Sort by modification time, most recent first
+            result_dirs.sort(key=os.path.getmtime, reverse=True)
+            latest_dir = result_dirs[0]
+
+            # Find PNG plots in the directory
+            png_files = sorted(glob.glob(os.path.join(latest_dir, "*.png")))
+
+            if png_files:
+                self._display_summary_plots(latest_dir, png_files)
+            else:
+                # No plots found, offer to browse
+                response = messagebox.askyesno(
+                    "No Plots Found",
+                    f"No summary plots found in:\n{os.path.basename(latest_dir)}\n\n"
+                    "Would you like to browse for a different results directory?",
+                    parent=self,
+                )
+                if response:
+                    dir_path = filedialog.askdirectory(
+                        title="Select Results Directory",
+                        initialdir=default_results_dir,
+                    )
+                    if dir_path:
+                        png_files = sorted(glob.glob(os.path.join(dir_path, "*.png")))
+                        if png_files:
+                            self._display_summary_plots(dir_path, png_files)
+                        else:
+                            _show_info_dialog(
+                                self,
+                                "No Plots Found",
+                                f"No PNG plot files found in:\n{dir_path}",
+                            )
+        else:
+            # No result directories found, offer to browse
             response = messagebox.askyesno(
                 "No Results Found",
-                "No recent sweep results found in the default directory.\n\n"
+                "No result directories found in the default location.\n\n"
                 f"Default location: {default_results_dir}\n\n"
-                "Would you like to browse for a results file?",
+                "Would you like to browse for a results directory?",
                 parent=self,
             )
             if response:
-                self._on_plot_trajectories()
+                dir_path = filedialog.askdirectory(
+                    title="Select Results Directory",
+                    initialdir=default_results_dir if os.path.exists(default_results_dir) else ".",
+                )
+                if dir_path:
+                    png_files = sorted(glob.glob(os.path.join(dir_path, "*.png")))
+                    if png_files:
+                        self._display_summary_plots(dir_path, png_files)
+                    else:
+                        _show_info_dialog(
+                            self,
+                            "No Plots Found",
+                            f"No PNG plot files found in:\n{dir_path}",
+                        )
+
+    def _display_summary_plots(self, results_dir, png_files):
+        """Display summary plots in a scrollable window.
+
+        Parameters
+        ----------
+        results_dir : str
+            Path to results directory
+        png_files : list
+            List of PNG file paths
+        """
+        from pathlib import Path
+        from PIL import Image, ImageTk
+
+        dir_name = os.path.basename(results_dir)
+
+        # Create window
+        plot_window = tk.Toplevel(self)
+        plot_window.title(f"Summary Plots: {dir_name}")
+        plot_window.geometry("1000x800")
+
+        # Main frame
+        main_frame = ttk.Frame(plot_window)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Title
+        ttk.Label(
+            main_frame,
+            text=f"Summary Plots: {dir_name}",
+            font=("TkDefaultFont", 12, "bold"),
+        ).pack(pady=(0, 10))
+
+        # Create canvas with scrollbar for plots
+        canvas = tk.Canvas(main_frame, bg="white")
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Load and display each PNG
+        photo_images = []  # Keep references to prevent garbage collection
+
+        for png_file in png_files:
+            try:
+                # Load image
+                img = Image.open(png_file)
+
+                # Resize if too large (maintain aspect ratio)
+                max_width = 950
+                if img.width > max_width:
+                    ratio = max_width / img.width
+                    new_height = int(img.height * ratio)
+                    img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
+                # Convert to PhotoImage
+                photo = ImageTk.PhotoImage(img)
+                photo_images.append(photo)
+
+                # Plot name label
+                plot_name = Path(png_file).stem.replace('_', ' ').title()
+                ttk.Label(
+                    scrollable_frame,
+                    text=plot_name,
+                    font=("TkDefaultFont", 10, "bold"),
+                ).pack(pady=(10, 5))
+
+                # Image label
+                img_label = tk.Label(scrollable_frame, image=photo, bg="white")
+                img_label.pack(pady=(0, 20))
+
+            except Exception as e:
+                # If image loading fails, show error
+                error_label = ttk.Label(
+                    scrollable_frame,
+                    text=f"Error loading {Path(png_file).name}: {e}",
+                    foreground="red",
+                )
+                error_label.pack(pady=5)
+
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=(10, 0))
+
+        ttk.Button(
+            button_frame,
+            text="Close",
+            command=plot_window.destroy,
+        ).pack()
+
+        # Bind mouse wheel to scroll
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        # Cleanup binding when window closes
+        def on_close():
+            canvas.unbind_all("<MouseWheel>")
+            plot_window.destroy()
+
+        plot_window.protocol("WM_DELETE_WINDOW", on_close)
 
     def _load_and_plot_results(self, file_path: str):
         """Load results file and display trajectory viewer with plots."""
         try:
+            # Determine if this is a CSV file or JSON file
+            if file_path.endswith('.csv'):
+                # CSV-only export - show directory browser for NPZ files
+                import os
+                results_dir = os.path.dirname(file_path)
+                self._view_npz_trajectories(results_dir)
+                return
+
             with open(file_path, "r") as f:
                 data = json.load(f)
 
@@ -3759,7 +3892,7 @@ class OptimizationPlugin(ttk.Frame):
             results = None
 
             if "results" in data:
-                # New format: sweep_results.json
+                # Sweep format: sweep_results.json
                 results = data.get("results", [])
                 if not results:
                     _show_info_dialog(self, "No Results", "No results found in file.")
@@ -3773,6 +3906,14 @@ class OptimizationPlugin(ttk.Frame):
                     self._show_results_summary(results, file_path)
                     return
 
+            elif "all_evaluations" in data or "best_parameters" in data:
+                # Optimization format: optimization_results.json
+                # Check for NPZ trajectory files in the same directory
+                import os
+                results_dir = os.path.dirname(file_path)
+                self._view_npz_trajectories(results_dir)
+                return
+
             elif "core" in data and "rider" in data["core"]:
                 # Legacy format: single trajectory file
                 results_with_traj = [self._convert_legacy_trajectory(data)]
@@ -3784,6 +3925,7 @@ class OptimizationPlugin(ttk.Frame):
                     "Cannot parse this file format.\n\n"
                     "Expected either:\n"
                     "- sweep_results.json with 'results' array\n"
+                    "- optimization_results.json with 'all_evaluations'\n"
                     "- Legacy trajectory file with 'core'/'rider' structure",
                 )
                 return
@@ -3815,14 +3957,33 @@ class OptimizationPlugin(ttk.Frame):
         else:
             initial_dir = self.config.output_dir
 
-        # Ask user to select results file
+        # Ask user to select results file or directory
+        # Support JSON files, CSV files, or NPZ directories
         file_path = filedialog.askopenfilename(
-            title="Select Results JSON File",
+            title="Select Results File (JSON/CSV) or Cancel to Choose Directory",
             initialdir=initial_dir,
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            filetypes=[
+                ("Results files", "*.json;*.csv"),
+                ("JSON files", "*.json"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ],
         )
 
+        # If no file selected, offer to browse for NPZ directory
         if not file_path:
+            response = messagebox.askyesno(
+                "Browse for NPZ Trajectories?",
+                "No file selected. Would you like to browse for a directory containing NPZ trajectory files?",
+                parent=self,
+            )
+            if response:
+                dir_path = filedialog.askdirectory(
+                    title="Select Directory with NPZ Trajectory Files",
+                    initialdir=initial_dir,
+                )
+                if dir_path:
+                    self._view_npz_trajectories(dir_path)
             return
 
         try:
@@ -3830,12 +3991,10 @@ class OptimizationPlugin(ttk.Frame):
                 data = json.load(f)
 
             # Try to detect file format
-            # Format 1: sweep_results.json with "results" array
-            # Format 2: Legacy trajectory file with "core" -> "rider" structure
             results = None
 
             if "results" in data:
-                # New format: sweep_results.json
+                # Sweep format: sweep_results.json with "results" array
                 results = data.get("results", [])
                 if not results:
                     _show_info_dialog(self, "No Results", "No results found in file.")
@@ -3853,6 +4012,14 @@ class OptimizationPlugin(ttk.Frame):
                     )
                     return
 
+            elif "all_evaluations" in data or "best_parameters" in data:
+                # Optimization format: optimization_results.json
+                # Load NPZ files from the same directory
+                import os
+                results_dir = os.path.dirname(file_path)
+                self._view_npz_trajectories(results_dir)
+                return
+
             elif "core" in data and "rider" in data["core"]:
                 # Legacy format: single trajectory file
                 results_with_traj = [self._convert_legacy_trajectory(data)]
@@ -3864,6 +4031,7 @@ class OptimizationPlugin(ttk.Frame):
                     "Cannot parse this file format.\n\n"
                     "Expected either:\n"
                     "- sweep_results.json with 'results' array\n"
+                    "- optimization_results.json with 'all_evaluations'\n"
                     "- Legacy trajectory file with 'core'/'rider' structure",
                 )
                 return
@@ -5334,16 +5502,45 @@ class OptimizationPlugin(ttk.Frame):
             results_dict["all_evaluations"] = all_evaluations_for_json
             results_dict["total_evaluations"] = len(all_evaluations)
 
-        # Save to JSON
-        results_file = opt_dir / "optimization_results.json"
-        with open(results_file, "w") as f:
-            json.dump(results_dict, f, indent=2)
+        # Determine what to export based on format and scope settings
+        export_format = self.config.metrics_export_format
+        export_scope = self.config.metrics_export_scope
 
-        self._log_result(f"Results saved to: {results_file}")
+        # Filter evaluations based on scope
+        evaluations_to_export = None
+        if all_evaluations and export_scope == "top_n":
+            # Export only top N
+            top_n = max(1, int(self.config.optimization_save_top_n))
+            sorted_evals = sorted(all_evaluations,
+                                 key=lambda e: e.get("objective_value", float('inf')))
+            evaluations_to_export = sorted_evals[:top_n]
+            scope_desc = f"top {len(evaluations_to_export)}"
+        elif all_evaluations:
+            # Export all
+            evaluations_to_export = all_evaluations
+            scope_desc = "all"
 
-        # Export all evaluations to CSV if requested
-        if self.config.export_full_metrics_csv and all_evaluations:
-            self._export_evaluations_csv(all_evaluations, param_names, opt_dir)
+        # Save to JSON if requested
+        if export_format in ["json", "both"]:
+            # For top_n scope, only include top N in the JSON
+            if export_scope == "top_n" and evaluations_to_export:
+                results_dict["all_evaluations"] = [
+                    {k: v for k, v in e.items() if k != "trajectory"}
+                    for e in evaluations_to_export
+                ]
+                results_dict["total_evaluations"] = len(evaluations_to_export)
+                results_dict["export_scope"] = "top_n"
+
+            results_file = opt_dir / "optimization_results.json"
+            with open(results_file, "w") as f:
+                json.dump(results_dict, f, indent=2)
+
+            self._log_result(f"Results saved to JSON ({scope_desc} evaluations): {results_file}")
+
+        # Export to CSV if requested
+        if export_format in ["csv", "both"] and evaluations_to_export:
+            self._export_evaluations_csv(evaluations_to_export, param_names, opt_dir)
+            self._log_result(f"Metrics exported to CSV ({scope_desc} evaluations)")
 
         # Save all evaluation trajectories if requested
         if self.config.save_all_trajectories and all_evaluations:
@@ -7619,6 +7816,240 @@ class OptimizationPlugin(ttk.Frame):
 
         except Exception as e:
             self._log_result(f"[WARNING] Failed to export evaluations CSV: {e}")
+
+    def _view_npz_trajectories(self, results_dir):
+        """View NPZ trajectory files from an optimization run.
+
+        Parameters
+        ----------
+        results_dir : str or Path
+            Directory containing NPZ trajectory files
+        """
+        import glob
+        import os
+        from pathlib import Path
+
+        try:
+            results_path = Path(results_dir)
+
+            # Find all NPZ trajectory files
+            npz_pattern = str(results_path / "trajectory_rank*.npz")
+            npz_files = sorted(glob.glob(npz_pattern))
+
+            if not npz_files:
+                # Try alternative pattern for evaluation trajectories
+                npz_pattern = str(results_path / "evaluation_*_trajectory.npz")
+                npz_files = sorted(glob.glob(npz_pattern))
+
+            if not npz_files:
+                _show_info_dialog(
+                    self,
+                    "No Trajectories Found",
+                    f"No NPZ trajectory files found in:\n{results_dir}\n\n"
+                    "Expected files like:\n"
+                    "- trajectory_rank1_best.npz\n"
+                    "- trajectory_rank2.npz\n"
+                    "- evaluation_0001_trajectory.npz",
+                )
+                return
+
+            # Create dialog to select and plot trajectories
+            dialog = tk.Toplevel(self)
+            dialog.title(f"NPZ Trajectories: {results_path.name}")
+            dialog.geometry("600x500")
+            dialog.transient(self)
+
+            # Info label
+            ttk.Label(
+                dialog,
+                text=f"Found {len(npz_files)} trajectory files",
+                font=("TkDefaultFont", 10, "bold"),
+            ).pack(pady=(10, 5))
+
+            # Listbox with scrollbar
+            list_frame = ttk.Frame(dialog)
+            list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+            scrollbar = ttk.Scrollbar(list_frame)
+            scrollbar.pack(side="right", fill="y")
+
+            listbox = tk.Listbox(
+                list_frame,
+                selectmode="extended",
+                yscrollcommand=scrollbar.set,
+                height=15,
+            )
+            listbox.pack(side="left", fill="both", expand=True)
+            scrollbar.config(command=listbox.yview)
+
+            # Populate listbox
+            for npz_file in npz_files:
+                filename = os.path.basename(npz_file)
+                listbox.insert("end", filename)
+
+            # Select first item by default
+            if npz_files:
+                listbox.selection_set(0)
+
+            # Buttons
+            btn_frame = ttk.Frame(dialog)
+            btn_frame.pack(pady=10)
+
+            def plot_selected():
+                selection = listbox.curselection()
+                if not selection:
+                    _show_info_dialog(dialog, "No Selection", "Please select one or more trajectories to plot.")
+                    return
+
+                selected_files = [npz_files[i] for i in selection]
+                self._plot_npz_trajectories(selected_files, results_path)
+
+            ttk.Button(
+                btn_frame,
+                text="Plot Selected",
+                command=plot_selected,
+                style="Accent.TButton",
+            ).pack(side="left", padx=5)
+
+            ttk.Button(
+                btn_frame,
+                text="Close",
+                command=dialog.destroy,
+            ).pack(side="left", padx=5)
+
+        except Exception as e:
+            import traceback
+            _show_error_dialog(
+                self,
+                "Error Viewing NPZ Trajectories",
+                f"Failed to view NPZ trajectories:\n{e}\n\n{traceback.format_exc()}",
+            )
+
+    def _plot_npz_trajectories(self, npz_files, results_dir):
+        """Plot NPZ trajectory files.
+
+        Parameters
+        ----------
+        npz_files : list
+            List of NPZ file paths
+        results_dir : Path
+            Results directory
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            from pathlib import Path
+            from matplotlib.backends.backend_tkagg import (
+                FigureCanvasTkAgg,
+                NavigationToolbar2Tk,
+            )
+
+            fig = plt.figure(figsize=(14, 10))
+            gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+
+            ax_r = fig.add_subplot(gs[0, 0])
+            ax_pz = fig.add_subplot(gs[0, 1])
+            ax_pr = fig.add_subplot(gs[1, 0])
+            ax_gamma = fig.add_subplot(gs[1, 1])
+            ax_energy = fig.add_subplot(gs[2, :])
+
+            # Color cycle
+            colors = plt.cm.tab10(np.linspace(0, 1, len(npz_files)))
+
+            for idx, npz_file in enumerate(npz_files):
+                # Load NPZ
+                data = np.load(npz_file)
+                z = data['z']
+                r = data['r']
+                pz = data['pz']
+                pr = data['pr']
+                gamma = data['gamma']
+
+                # Get label from filename
+                label = Path(npz_file).stem.replace('trajectory_', '').replace('_', ' ')
+
+                # Plot
+                ax_r.plot(z, r * 1e3, label=label, color=colors[idx], alpha=0.7)
+                ax_pz.plot(z, pz, color=colors[idx], alpha=0.7)
+                ax_pr.plot(z, pr, color=colors[idx], alpha=0.7)
+                ax_gamma.plot(z, gamma, color=colors[idx], alpha=0.7)
+
+                # Energy in MeV (for electrons: E = (γ - 1) * 0.511 MeV)
+                energy_mev = (gamma - 1) * 0.511
+                ax_energy.plot(z, energy_mev, color=colors[idx], alpha=0.7, label=label)
+
+            # Formatting
+            ax_r.set_xlabel("z (mm)")
+            ax_r.set_ylabel("r (μm)")
+            ax_r.set_title("Transverse Position")
+            ax_r.grid(True, alpha=0.3)
+            ax_r.legend()
+
+            ax_pz.set_xlabel("z (mm)")
+            ax_pz.set_ylabel("Pz")
+            ax_pz.set_title("Longitudinal Momentum")
+            ax_pz.grid(True, alpha=0.3)
+
+            ax_pr.set_xlabel("z (mm)")
+            ax_pr.set_ylabel("Pr")
+            ax_pr.set_title("Transverse Momentum")
+            ax_pr.grid(True, alpha=0.3)
+
+            ax_gamma.set_xlabel("z (mm)")
+            ax_gamma.set_ylabel("γ")
+            ax_gamma.set_title("Lorentz Factor")
+            ax_gamma.grid(True, alpha=0.3)
+
+            ax_energy.set_xlabel("z (mm)")
+            ax_energy.set_ylabel("Energy (MeV)")
+            ax_energy.set_title("Particle Energy")
+            ax_energy.grid(True, alpha=0.3)
+            ax_energy.legend()
+
+            fig.suptitle(
+                f"Optimization Trajectories: {results_dir.name}",
+                fontsize=14,
+                fontweight="bold",
+            )
+
+            plt.tight_layout()
+
+            # Embed in Tkinter window instead of plt.show()
+            plot_window = tk.Toplevel(self)
+            plot_window.title(f"NPZ Trajectories: {results_dir.name}")
+            plot_window.geometry("1200x900")
+
+            # Create main container frame
+            main_frame = ttk.Frame(plot_window)
+            main_frame.pack(fill="both", expand=True)
+
+            # Create canvas for the figure
+            canvas = FigureCanvasTkAgg(fig, master=main_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+
+            # Add matplotlib navigation toolbar
+            toolbar_frame = ttk.Frame(main_frame)
+            toolbar_frame.pack(side="top", fill="x")
+            toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
+            toolbar.update()
+
+            # Close button
+            button_frame = ttk.Frame(main_frame, padding=5)
+            button_frame.pack(side="top", fill="x")
+            ttk.Button(
+                button_frame,
+                text="Close",
+                command=plot_window.destroy,
+            ).pack(side="right", padx=5)
+
+        except Exception as e:
+            import traceback
+            _show_error_dialog(
+                self,
+                "Plotting Error",
+                f"Failed to plot NPZ trajectories:\n{e}\n\n{traceback.format_exc()}",
+            )
 
     def _save_evaluation_trajectory(self, eval_num, trajectory_data, output_dir):
         """Save a single evaluation trajectory to NPZ file.
