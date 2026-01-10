@@ -3654,13 +3654,15 @@ class OptimizationPlugin(ttk.Frame):
         # Use sweep output directory from GUI preferences
         default_results_dir = self.sweep_output_dir
 
-        # Look for most recent sweep results
+        # Look for most recent sweep results in the actual output locations
+        # Results are saved to timestamped subdirectories: {sweep_output_dir}/{timestamp}_{config_name}/sweep_results.json
         search_patterns = [
-            os.path.join(default_results_dir, "*", "sweep_results.json"),
-            os.path.join(
-                "optimization_results", "sweep_*", "sweep_results.json"
-            ),  # Legacy location
-            os.path.join(self.config.output_dir, "sweep_results.json"),
+            os.path.join(default_results_dir, "*", "sweep_results.json"),  # Current location
+            os.path.join(default_results_dir, "sweep_results.json"),  # Direct in output dir (edge case)
+            os.path.join("optimization_results", "*", "sweep_results.json"),  # Legacy location (timestamped)
+            os.path.join("optimization_results", "sweep_*", "sweep_results.json"),  # Legacy location (old naming)
+            os.path.join(self.config.output_dir, "*", "sweep_results.json"),  # Config output dir with subdirs
+            os.path.join(self.config.output_dir, "sweep_results.json"),  # Config output dir direct
         ]
 
         result_files = []
@@ -3688,9 +3690,13 @@ class OptimizationPlugin(ttk.Frame):
                 font=("TkDefaultFont", 12, "bold"),
             ).pack(anchor="w", pady=(0, 10))
 
+            # Show the timestamped directory name if available
+            latest_dir = os.path.dirname(latest_file)
+            dir_name = os.path.basename(latest_dir)
+
             info = ttk.Label(
                 msg_frame,
-                text=f"Most recent results file found:\n\n{os.path.basename(os.path.dirname(latest_file)) if 'sweep_' in latest_file else os.path.basename(latest_file)}",
+                text=f"Most recent results file found:\n\n{dir_name}",
                 wraplength=450,
             )
             info.pack(anchor="w", pady=(0, 20))
@@ -5037,7 +5043,7 @@ class OptimizationPlugin(ttk.Frame):
 
                     # Save trajectory if requested and available
                     if (
-                        self.config.save_all_evaluation_trajectories
+                        self.config.save_all_trajectories
                         and "trajectory" in result
                     ):
                         # We'll save these after optimization dir is created
@@ -5340,7 +5346,7 @@ class OptimizationPlugin(ttk.Frame):
             self._export_evaluations_csv(all_evaluations, param_names, opt_dir)
 
         # Save all evaluation trajectories if requested
-        if self.config.save_all_evaluation_trajectories and all_evaluations:
+        if self.config.save_all_trajectories and all_evaluations:
             self._log_result("")
             self._log_result("Saving all evaluation trajectories...")
             saved_count = 0
@@ -5543,8 +5549,17 @@ class OptimizationPlugin(ttk.Frame):
             # Determine if maximizing or minimizing
             maximize = "max" in self.config.objective.lower()
 
+            # Only generate heatmaps for 1D or 2D parameter spaces
+            # For 3+ parameters, skip heatmap generation by default (too many dimensions)
+            if len(param_names) > 2:
+                self._log_result(
+                    f"[INFO] Skipping heatmap generation for {len(param_names)}-parameter optimization "
+                    f"(heatmaps only generated for 1-2 parameter optimizations)"
+                )
+                return
+
             # For 2D parameter space, create traditional heatmap
-            if len(param_names) == 2:
+            elif len(param_names) == 2:
                 self._log_result(
                     f"[INFO] Generating 2D optimization heatmap for {param_names[0]} vs {param_names[1]}"
                 )
@@ -5641,99 +5656,9 @@ class OptimizationPlugin(ttk.Frame):
                 heatmap_file = output_dir / "optimization_heatmap_2d.png"
                 plt.savefig(heatmap_file, dpi=150, bbox_inches="tight")
                 plt.close(fig)
-                self._log_result(f"2D optimization heatmap saved to: {heatmap_file}")
+                self._log_result(f"[OK] 2D optimization heatmap saved to: {heatmap_file}")
 
-            # For higher dimensions, create pairwise heatmaps
-            elif len(param_names) > 2:
-                self._log_result(
-                    f"[INFO] Generating pairwise optimization heatmaps for {len(param_names)} parameters"
-                )
-
-                # Create pairwise combinations for first few parameters
-                import itertools
-
-                pairs = list(itertools.combinations(range(min(4, len(param_names))), 2))
-
-                if len(pairs) > 6:
-                    pairs = pairs[:6]  # Limit to 6 pairs
-
-                n_pairs = len(pairs)
-                n_cols = min(3, n_pairs)
-                n_rows = (n_pairs + n_cols - 1) // n_cols
-
-                fig, axes = plt.subplots(
-                    n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows)
-                )
-                if n_pairs == 1:
-                    axes = [axes]
-                else:
-                    axes = axes.flatten() if n_rows > 1 else axes
-
-                for idx, (i, j) in enumerate(pairs):
-                    ax = axes[idx]
-
-                    x_vals = [e["parameters"][param_names[i]] for e in successful_evals]
-                    y_vals = [e["parameters"][param_names[j]] for e in successful_evals]
-                    z_vals = [e["objective_value"] for e in successful_evals]
-
-                    # Scatter plot with color
-                    scatter = ax.scatter(
-                        x_vals,
-                        y_vals,
-                        c=z_vals,
-                        s=50,
-                        cmap="RdYlGn" if maximize else "RdYlGn_r",
-                        edgecolors="black",
-                        linewidth=0.5,
-                        alpha=0.7,
-                    )
-
-                    # Mark best
-                    best_idx = np.argmax(z_vals) if maximize else np.argmin(z_vals)
-                    ax.scatter(
-                        x_vals[best_idx],
-                        y_vals[best_idx],
-                        c="red",
-                        s=300,
-                        marker="*",
-                        edgecolors="black",
-                        linewidth=2,
-                        zorder=10,
-                    )
-
-                    ax.set_xlabel(param_names[i])
-                    ax.set_ylabel(param_names[j])
-                    ax.set_title(f"{param_names[i]} vs {param_names[j]}")
-                    ax.grid(True, alpha=0.3)
-
-                    # Use log scale if parameter ranges span multiple orders of magnitude
-                    x_range = max(x_vals) - min(x_vals)
-                    y_range = max(y_vals) - min(y_vals)
-                    if max(x_vals) / (min(x_vals) + 1e-10) > 100:
-                        ax.set_xscale("log")
-                    if max(y_vals) / (min(y_vals) + 1e-10) > 100:
-                        ax.set_yscale("log")
-
-                    plt.colorbar(scatter, ax=ax, label=self.config.objective)
-
-                # Hide unused subplots
-                for idx in range(n_pairs, len(axes)):
-                    axes[idx].axis("off")
-
-                plt.suptitle(
-                    f"Pairwise Parameter Exploration ({len(successful_evals)} evaluations)",
-                    fontsize=14,
-                    y=1.0,
-                )
-                plt.tight_layout()
-
-                heatmap_file = output_dir / "optimization_heatmap_pairwise.png"
-                plt.savefig(heatmap_file, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-                self._log_result(
-                    f"Pairwise optimization heatmaps saved to: {heatmap_file}"
-                )
-
+            # For 1D parameter space, create line plot
             else:
                 self._log_result(
                     "[INFO] Single parameter optimization - no heatmap needed"
@@ -5883,8 +5808,8 @@ class OptimizationPlugin(ttk.Frame):
             transv_offset = offset_frac * aperture
 
             # Temporarily enable trajectory saving
-            save_traj_backup = self.config.save_trajectories
-            self.config.save_trajectories = True
+            save_all_backup = self.config.save_all_trajectories
+            self.config.save_all_trajectories = True
 
             # Run integration
             result_data = self._run_single_integration(
@@ -5904,7 +5829,7 @@ class OptimizationPlugin(ttk.Frame):
             )
 
             # Restore trajectory setting
-            self.config.save_trajectories = save_traj_backup
+            self.config.save_all_trajectories = save_all_backup
 
             if result_data and "trajectory" in result_data:
                 # Use the timestamped directory from _save_optimization_results
@@ -6566,6 +6491,32 @@ class OptimizationPlugin(ttk.Frame):
                             "rider_gamma_final", 0.0
                         )
 
+                        # Create run_data structure (used regardless of logging mode)
+                        run_data = {
+                            "run_number": run_num,
+                            "parameters": {
+                                "aperture_radius": aperture,
+                                "particle_energy_gev": energy,
+                                "start_z": start_z,
+                                "transverse_offset": transv_offset,
+                                "transverse_offset_fraction": offset_frac,
+                                "timestep": timestep,
+                                "steps": steps,
+                                "wall_z": params_dict.get(
+                                    "wall_z", self.config.wall_z
+                                ),
+                                "rider_m_particle": rider_m_particle,
+                                "rider_charge_sign": rider_charge_sign,
+                                "rider_pcount": int(rider_pcount),
+                                "rider_transv_mom": rider_transv_mom,
+                                "rider_transv_dist": rider_transv_dist,
+                                "macroparticle_charge_multiplier": macroparticle_charge_multiplier,
+                                "macroparticle_sigma_multiplier": macroparticle_sigma_multiplier,
+                                "simulation_type": self.config.simulation_type.name,
+                            },
+                            "metrics": result.get("metrics", {}),
+                        }
+
                         # Log based on verbosity mode
                         if use_no_logging:
                             # No logging mode: skip all run-level logs
@@ -6620,34 +6571,13 @@ class OptimizationPlugin(ttk.Frame):
                                     f"  [WARNING] Particle barely moved! Check timestep calculation."
                                 )
 
-                            # Store result with all parameters
-                            run_data = {
-                                "run_number": run_num,
-                                "parameters": {
-                                    "aperture_radius": aperture,
-                                    "particle_energy_gev": energy,
-                                    "start_z": start_z,
-                                    "transverse_offset": transv_offset,
-                                    "transverse_offset_fraction": offset_frac,
-                                    "timestep": timestep,
-                                    "steps": steps,
-                                    "wall_z": params_dict.get(
-                                        "wall_z", self.config.wall_z
-                                    ),
-                                    "rider_m_particle": rider_m_particle,
-                                    "rider_charge_sign": rider_charge_sign,
-                                    "rider_pcount": int(rider_pcount),
-                                    "rider_transv_mom": rider_transv_mom,
-                                    "rider_transv_dist": rider_transv_dist,
-                                    "macroparticle_charge_multiplier": macroparticle_charge_multiplier,
-                                    "macroparticle_sigma_multiplier": macroparticle_sigma_multiplier,
-                                    "simulation_type": self.config.simulation_type.name,
-                                },
-                                "metrics": result.get("metrics", {}),
-                            }
-
-                        # Add trajectory if requested
-                        if self.config.save_trajectories and "trajectory" in result:
+                        # Add trajectory if requested (check if any trajectory saving is enabled)
+                        save_traj = (
+                            self.config.save_all_trajectories
+                            or self.config.save_top_n_trajectories
+                            or self.config.save_failed_trajectories
+                        )
+                        if save_traj and "trajectory" in result:
                             run_data["trajectory"] = result["trajectory"]
 
                         # Add driver params to stored results if applicable
@@ -7304,11 +7234,13 @@ class OptimizationPlugin(ttk.Frame):
                     )
 
             # Only save full trajectory arrays if explicitly requested
-            # OR if we're saving all evaluation trajectories during optimization
-            if (
-                self.config.save_trajectories
-                or self.config.save_all_evaluation_trajectories
-            ):
+            # Check if any trajectory saving option is enabled
+            save_traj = (
+                self.config.save_all_trajectories
+                or self.config.save_top_n_trajectories
+                or self.config.save_failed_trajectories
+            )
+            if save_traj:
                 # Downsample trajectory
                 stride = self.config.trajectory_stride
                 try:
@@ -7431,53 +7363,80 @@ class OptimizationPlugin(ttk.Frame):
                 self._log_result("[INFO] No results with metrics to plot")
                 return
 
-            # Create heatmap
-            fig, ax = plt.subplots(figsize=(10, 8))
+            # Count how many parameters were actually swept
+            # (have more than 1 unique value across all results)
+            # Collect all unique parameter values across all results
+            all_param_values = {}
+            for result in results:
+                params = result.get("parameters", {})
+                for key, value in params.items():
+                    # Skip non-numeric parameters and internal bookkeeping
+                    if key in ["simulation_type", "run_number", "timestep", "steps"]:
+                        continue
+                    if key not in all_param_values:
+                        all_param_values[key] = []
+                    all_param_values[key].append(value)
 
-            scatter = ax.scatter(
-                energies,
-                [a * 1e3 for a in apertures],  # Convert mm to microns
-                c=delta_es,
-                cmap="viridis",
-                s=150,
-                alpha=0.8,
-                edgecolors="black",
-                linewidth=1,
-            )
+            # Count parameters with more than one unique value
+            num_swept_params = 0
+            for param_name, values in all_param_values.items():
+                unique_values = set(v for v in values if v is not None)
+                if len(unique_values) > 1:
+                    num_swept_params += 1
 
-            cbar = plt.colorbar(scatter, ax=ax)
-            cbar.set_label("Energy Gain ΔE (MeV)", fontsize=12)
+            # Only generate heatmap if exactly 2 parameters were swept
+            if num_swept_params == 2:
+                # Create heatmap
+                fig, ax = plt.subplots(figsize=(10, 8))
 
-            ax.set_xlabel("Particle Energy (GeV)", fontsize=12)
-            ax.set_ylabel("Aperture Radius (μm)", fontsize=12)
-            ax.set_title(
-                "Parameter Space Exploration: Energy Gain",
-                fontsize=14,
-                fontweight="bold",
-            )
-            ax.grid(True, alpha=0.3)
+                scatter = ax.scatter(
+                    energies,
+                    [a * 1e3 for a in apertures],  # Convert mm to microns
+                    c=delta_es,
+                    cmap="viridis",
+                    s=150,
+                    alpha=0.8,
+                    edgecolors="black",
+                    linewidth=1,
+                )
 
-            # Use log scale if range is large
-            if (
-                len(energies) > 0 and max(energies) / min(energies) > 10
-                if min(energies) > 0
-                else False
-            ):
-                ax.set_xscale("log")
-            if (
-                len(apertures) > 0 and max(apertures) / min(apertures) > 10
-                if min(apertures) > 0
-                else False
-            ):
-                ax.set_yscale("log")
+                cbar = plt.colorbar(scatter, ax=ax)
+                cbar.set_label("Energy Gain ΔE (MeV)", fontsize=12)
 
-            plt.tight_layout()
+                ax.set_xlabel("Particle Energy (GeV)", fontsize=12)
+                ax.set_ylabel("Aperture Radius (μm)", fontsize=12)
+                ax.set_title(
+                    "Parameter Space Exploration: Energy Gain",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+                ax.grid(True, alpha=0.3)
 
-            heatmap_file = output_dir / "sweep_heatmap.png"
-            plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
-            plt.close(fig)
+                # Use log scale if range is large
+                if (
+                    len(energies) > 0 and max(energies) / min(energies) > 10
+                    if min(energies) > 0
+                    else False
+                ):
+                    ax.set_xscale("log")
+                if (
+                    len(apertures) > 0 and max(apertures) / min(apertures) > 10
+                    if min(apertures) > 0
+                    else False
+                ):
+                    ax.set_yscale("log")
 
-            self._log_result(f"[OK] Heatmap saved to: {heatmap_file}")
+                plt.tight_layout()
+
+                heatmap_file = output_dir / "sweep_heatmap.png"
+                plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
+                plt.close(fig)
+
+                self._log_result(f"[OK] Heatmap saved to: {heatmap_file}")
+            else:
+                self._log_result(
+                    f"[INFO] Skipping heatmap generation ({num_swept_params} parameters swept; heatmap only generated for 2-parameter sweeps)"
+                )
 
             # Plot best trajectory (only if trajectories were saved)
             results_with_traj = [
