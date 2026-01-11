@@ -1812,9 +1812,10 @@ class OptimizationPlugin(ttk.Frame):
             row=0, column=0, sticky="w", pady=2, padx=(0, 5)
         )
         self.optimization_save_top_n_var = tk.StringVar(value="3")
-        ttk.Entry(
+        self.optimization_save_top_n_entry = ttk.Entry(
             output_frame, textvariable=self.optimization_save_top_n_var, width=8
-        ).grid(row=0, column=1, sticky="w", pady=2)
+        )
+        self.optimization_save_top_n_entry.grid(row=0, column=1, sticky="w", pady=2)
 
         ttk.Label(
             output_frame,
@@ -1866,12 +1867,75 @@ class OptimizationPlugin(ttk.Frame):
         if mode == "blind_sweep":
             # Hide optimization settings
             self.optimization_frame.pack_forget()
+            # Grey out Top N controls (only relevant for optimization)
+            self._set_top_n_controls_state("disabled")
         else:  # optimization
             # Show optimization settings
             self.optimization_frame.pack(fill="x", padx=10, pady=5)
+            # Enable Top N controls
+            self._set_top_n_controls_state("normal")
 
         # Update parameter visibility based on simulation type
         self._update_parameter_visibility()
+
+    def _set_top_n_controls_state(self, state):
+        """Enable or disable Top N related controls.
+
+        Parameters
+        ----------
+        state : str
+            "normal" or "disabled"
+        """
+        if not hasattr(self, "save_top_n_traj_var"):
+            return  # Widgets not created yet
+
+        # Optimization section: "Save top N trajectories" entry
+        if hasattr(self, "optimization_save_top_n_entry"):
+            self.optimization_save_top_n_entry.configure(state=state)
+
+        # Top N trajectory checkbox
+        for widget in self.results_output_frame.winfo_children():
+            if isinstance(widget, ttk.LabelFrame):
+                for child in widget.winfo_children():
+                    if isinstance(child, ttk.Checkbutton):
+                        # Find the "Top N trajectories" checkbox
+                        if "top_n_traj_var" in str(child.cget("variable")):
+                            child.configure(state=state)
+
+        # Metrics scope "Top N only" radio button
+        if hasattr(self, "metrics_scope_var"):
+            for widget in self.results_output_frame.winfo_children():
+                if isinstance(widget, ttk.LabelFrame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, ttk.Frame):
+                            for radio in child.winfo_children():
+                                if isinstance(radio, ttk.Radiobutton):
+                                    if radio.cget("value") == "top_n":
+                                        radio.configure(state=state)
+
+        # Log verbosity "Top N only" radio button
+        if hasattr(self, "log_verbosity_var"):
+            for widget in self.results_output_frame.winfo_children():
+                if isinstance(widget, ttk.LabelFrame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, ttk.Radiobutton):
+                            if child.cget("value") == "top_n_only":
+                                child.configure(state=state)
+
+        # If disabling and Top N is selected, switch to default
+        if state == "disabled":
+            if hasattr(self, "save_top_n_traj_var") and self.save_top_n_traj_var.get():
+                self.save_top_n_traj_var.set(False)
+            if (
+                hasattr(self, "metrics_scope_var")
+                and self.metrics_scope_var.get() == "top_n"
+            ):
+                self.metrics_scope_var.set("all")
+            if (
+                hasattr(self, "log_verbosity_var")
+                and self.log_verbosity_var.get() == "top_n_only"
+            ):
+                self.log_verbosity_var.set("truncated")
 
     def _update_optimization_controls(self, event=None):
         """Update visibility of optimization controls based on selected method."""
