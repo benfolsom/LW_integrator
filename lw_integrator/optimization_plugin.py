@@ -1888,6 +1888,8 @@ class OptimizationPlugin(ttk.Frame):
         """
         if not hasattr(self, "save_top_n_traj_var"):
             return  # Widgets not created yet
+        if not hasattr(self, "results_output_frame"):
+            return  # Results output frame not created yet
 
         # Optimization section: "Save top N trajectories" entry
         if hasattr(self, "optimization_save_top_n_entry"):
