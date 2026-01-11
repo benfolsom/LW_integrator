@@ -3282,10 +3282,16 @@ class OptimizationPlugin(ttk.Frame):
                 self.metrics_format_var.set(data.get("metrics_export_format", "both"))
             else:
                 # Backward compatibility: convert old CSV checkboxes to new format
-                export_full = data.get("export_full_metrics_csv",
-                    data.get("export_evaluation_csv", data.get("export_eval_csv", True)))
+                export_full = data.get(
+                    "export_full_metrics_csv",
+                    data.get(
+                        "export_evaluation_csv", data.get("export_eval_csv", True)
+                    ),
+                )
                 if export_full:
-                    self.metrics_format_var.set("both")  # Default to both for backward compat
+                    self.metrics_format_var.set(
+                        "both"
+                    )  # Default to both for backward compat
                 else:
                     self.metrics_format_var.set("none")
 
@@ -3691,7 +3697,8 @@ class OptimizationPlugin(ttk.Frame):
         # Find all timestamped result directories
         if os.path.exists(default_results_dir):
             result_dirs = [
-                d for d in glob.glob(os.path.join(default_results_dir, "*"))
+                d
+                for d in glob.glob(os.path.join(default_results_dir, "*"))
                 if os.path.isdir(d)
             ]
         else:
@@ -3700,10 +3707,13 @@ class OptimizationPlugin(ttk.Frame):
         # Also check legacy location
         legacy_dir = "optimization_results"
         if os.path.exists(legacy_dir):
-            result_dirs.extend([
-                d for d in glob.glob(os.path.join(legacy_dir, "*"))
-                if os.path.isdir(d)
-            ])
+            result_dirs.extend(
+                [
+                    d
+                    for d in glob.glob(os.path.join(legacy_dir, "*"))
+                    if os.path.isdir(d)
+                ]
+            )
 
         if result_dirs:
             # Sort by modification time, most recent first
@@ -3750,7 +3760,9 @@ class OptimizationPlugin(ttk.Frame):
             if response:
                 dir_path = filedialog.askdirectory(
                     title="Select Results Directory",
-                    initialdir=default_results_dir if os.path.exists(default_results_dir) else ".",
+                    initialdir=default_results_dir
+                    if os.path.exists(default_results_dir)
+                    else ".",
                 )
                 if dir_path:
                     png_files = sorted(glob.glob(os.path.join(dir_path, "*.png")))
@@ -3774,9 +3786,23 @@ class OptimizationPlugin(ttk.Frame):
             List of PNG file paths
         """
         from pathlib import Path
-        from PIL import Image, ImageTk
+
+        try:
+            from PIL import Image, ImageTk
+        except ImportError as e:
+            _show_error_dialog(
+                self,
+                "PIL/Pillow Not Installed",
+                f"Cannot display images: PIL/Pillow is not installed.\n\n{e}\n\n"
+                "Install with: pip install Pillow",
+            )
+            return
 
         dir_name = os.path.basename(results_dir)
+
+        # Debug: Log what we're trying to load
+        self._log_result(f"[INFO] Loading summary plots from: {results_dir}")
+        self._log_result(f"[INFO] Found {len(png_files)} PNG files")
 
         # Create window
         plot_window = tk.Toplevel(self)
@@ -3800,8 +3826,7 @@ class OptimizationPlugin(ttk.Frame):
         scrollable_frame = ttk.Frame(canvas)
 
         scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
@@ -3812,12 +3837,21 @@ class OptimizationPlugin(ttk.Frame):
         scrollbar.pack(side="right", fill="y")
 
         # Load and display each PNG
-        photo_images = []  # Keep references to prevent garbage collection
+        # Store as window attribute to prevent garbage collection
+        plot_window.photo_images = []
 
         for png_file in png_files:
             try:
+                # Debug: Log each file
+                self._log_result(f"[INFO] Loading: {Path(png_file).name}")
+
                 # Load image
                 img = Image.open(png_file)
+
+                # Debug: Log image info
+                self._log_result(
+                    f"[INFO] Image size: {img.width}x{img.height}, mode: {img.mode}"
+                )
 
                 # Resize if too large (maintain aspect ratio)
                 max_width = 950
@@ -3825,13 +3859,14 @@ class OptimizationPlugin(ttk.Frame):
                     ratio = max_width / img.width
                     new_height = int(img.height * ratio)
                     img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+                    self._log_result(f"[INFO] Resized to: {img.width}x{img.height}")
 
                 # Convert to PhotoImage
                 photo = ImageTk.PhotoImage(img)
-                photo_images.append(photo)
+                plot_window.photo_images.append(photo)
 
                 # Plot name label
-                plot_name = Path(png_file).stem.replace('_', ' ').title()
+                plot_name = Path(png_file).stem.replace("_", " ").title()
                 ttk.Label(
                     scrollable_frame,
                     text=plot_name,
@@ -3842,14 +3877,29 @@ class OptimizationPlugin(ttk.Frame):
                 img_label = tk.Label(scrollable_frame, image=photo, bg="white")
                 img_label.pack(pady=(0, 20))
 
+                self._log_result(
+                    f"[INFO] Successfully displayed: {Path(png_file).name}"
+                )
+
             except Exception as e:
-                # If image loading fails, show error
+                # If image loading fails, show error in both GUI and log
+                import traceback
+
+                error_msg = f"Error loading {Path(png_file).name}: {e}"
+                self._log_result(f"[ERROR] {error_msg}")
+                self._log_result(f"[ERROR] Traceback: {traceback.format_exc()}")
+
                 error_label = ttk.Label(
                     scrollable_frame,
-                    text=f"Error loading {Path(png_file).name}: {e}",
+                    text=error_msg,
                     foreground="red",
                 )
                 error_label.pack(pady=5)
+
+        # Debug: Final summary
+        self._log_result(
+            f"[INFO] Finished loading {len(plot_window.photo_images)} images successfully"
+        )
 
         # Button frame
         button_frame = ttk.Frame(main_frame)
@@ -3904,6 +3954,7 @@ class OptimizationPlugin(ttk.Frame):
                 # Optimization format: optimization_results.json
                 # Check for NPZ trajectory files in the same directory
                 import os
+
                 results_dir = os.path.dirname(file_path)
                 self._view_npz_trajectories(results_dir)
                 return
@@ -3957,8 +4008,7 @@ class OptimizationPlugin(ttk.Frame):
         initial_dir = base_dir
         if os.path.exists(base_dir):
             result_dirs = [
-                d for d in glob.glob(os.path.join(base_dir, "*"))
-                if os.path.isdir(d)
+                d for d in glob.glob(os.path.join(base_dir, "*")) if os.path.isdir(d)
             ]
             if result_dirs:
                 # Sort by modification time, most recent first
@@ -3970,14 +4020,12 @@ class OptimizationPlugin(ttk.Frame):
         # CSV files only contain metrics, not trajectories
         # Show directory name in title for clarity
         import os
+
         dir_name = os.path.basename(initial_dir) if initial_dir else "results"
         file_path = filedialog.askopenfilename(
             title=f"Select Results File (JSON) - Starting in: {dir_name}",
             initialdir=initial_dir,
-            filetypes=[
-                ("JSON files", "*.json"),
-                ("All files", "*.*")
-            ],
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
         )
 
         # If no file selected, offer to browse for NPZ directory
@@ -4029,6 +4077,7 @@ class OptimizationPlugin(ttk.Frame):
                 # This file contains metrics only, not trajectories
                 # Load NPZ trajectory files from the same directory
                 import os
+
                 results_dir = os.path.dirname(file_path)
                 self._view_npz_trajectories(results_dir)
                 return
@@ -5224,10 +5273,7 @@ class OptimizationPlugin(ttk.Frame):
                     }
 
                     # Save trajectory if requested and available
-                    if (
-                        self.config.save_all_trajectories
-                        and "trajectory" in result
-                    ):
+                    if self.config.save_all_trajectories and "trajectory" in result:
                         # We'll save these after optimization dir is created
                         eval_record["trajectory"] = result["trajectory"]
 
@@ -5525,8 +5571,9 @@ class OptimizationPlugin(ttk.Frame):
         if all_evaluations and export_scope == "top_n":
             # Export only top N
             top_n = max(1, int(self.config.optimization_save_top_n))
-            sorted_evals = sorted(all_evaluations,
-                                 key=lambda e: e.get("objective_value", float('inf')))
+            sorted_evals = sorted(
+                all_evaluations, key=lambda e: e.get("objective_value", float("inf"))
+            )
             evaluations_to_export = sorted_evals[:top_n]
             scope_desc = f"top {len(evaluations_to_export)}"
         elif all_evaluations:
@@ -5549,7 +5596,9 @@ class OptimizationPlugin(ttk.Frame):
             with open(results_file, "w") as f:
                 json.dump(results_dict, f, indent=2)
 
-            self._log_result(f"Results saved to JSON ({scope_desc} evaluations): {results_file}")
+            self._log_result(
+                f"Results saved to JSON ({scope_desc} evaluations): {results_file}"
+            )
 
         # Export to CSV if requested
         if export_format in ["csv", "both"] and evaluations_to_export:
@@ -5867,7 +5916,9 @@ class OptimizationPlugin(ttk.Frame):
                 heatmap_file = output_dir / "optimization_heatmap_2d.png"
                 plt.savefig(heatmap_file, dpi=150, bbox_inches="tight")
                 plt.close(fig)
-                self._log_result(f"[OK] 2D optimization heatmap saved to: {heatmap_file}")
+                self._log_result(
+                    f"[OK] 2D optimization heatmap saved to: {heatmap_file}"
+                )
 
             # For 1D parameter space, create line plot
             else:
@@ -6149,7 +6200,7 @@ class OptimizationPlugin(ttk.Frame):
                 self, "_last_optimization_dir", Path(self.config.output_dir)
             )
 
-            # Create figure with 4 subplots
+            # Create figure with 4 subplots (matching individual trajectory format)
             fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
             # Define colors for different ranks
@@ -6161,11 +6212,12 @@ class OptimizationPlugin(ttk.Frame):
                 fitness = item["fitness"]
                 color = colors[i]
 
+                # Use radial components (r, pr) to match individual trajectory plots
                 z = np.array(traj.get("z", []))
                 t = np.array(traj.get("t", []))
-                x = np.array(traj.get("x", []))
+                r = np.array(traj.get("r", []))
                 gamma = np.array(traj.get("gamma", []))
-                px = np.array(traj.get("Px", []))
+                pr = np.array(traj.get("pr", []))
 
                 if len(z) == 0:
                     continue
@@ -6178,10 +6230,10 @@ class OptimizationPlugin(ttk.Frame):
                         t, z, color=color, linewidth=2, label=label, alpha=0.8
                     )
 
-                # Plot 2: x vs z
-                if len(x) > 0 and len(z) > 0:
+                # Plot 2: r vs z (radial transverse position)
+                if len(r) > 0 and len(z) > 0:
                     axes[0, 1].plot(
-                        z, x, color=color, linewidth=2, label=label, alpha=0.8
+                        z, r * 1e3, color=color, linewidth=2, label=label, alpha=0.8
                     )
 
                 # Plot 3: gamma vs z
@@ -6190,10 +6242,10 @@ class OptimizationPlugin(ttk.Frame):
                         z, gamma, color=color, linewidth=2, label=label, alpha=0.8
                     )
 
-                # Plot 4: Px vs z
-                if len(px) > 0 and len(z) > 0:
+                # Plot 4: pr vs z (radial transverse momentum)
+                if len(pr) > 0 and len(z) > 0:
                     axes[1, 1].plot(
-                        z, px, color=color, linewidth=2, label=label, alpha=0.8
+                        z, pr, color=color, linewidth=2, label=label, alpha=0.8
                     )
 
             # Configure subplot 1: z vs t
@@ -6205,10 +6257,12 @@ class OptimizationPlugin(ttk.Frame):
             axes[0, 0].grid(True, alpha=0.3)
             axes[0, 0].legend(fontsize=9, loc="best")
 
-            # Configure subplot 2: x vs z
+            # Configure subplot 2: r vs z (radial)
             axes[0, 1].set_xlabel("z (mm)", fontsize=10)
-            axes[0, 1].set_ylabel("x (mm)", fontsize=10)
-            axes[0, 1].set_title("Transverse Position", fontsize=11, fontweight="bold")
+            axes[0, 1].set_ylabel("r (μm)", fontsize=10)
+            axes[0, 1].set_title(
+                "Transverse Position (Radial)", fontsize=11, fontweight="bold"
+            )
             axes[0, 1].grid(True, alpha=0.3)
             axes[0, 1].legend(fontsize=9, loc="best")
 
@@ -6219,10 +6273,12 @@ class OptimizationPlugin(ttk.Frame):
             axes[1, 0].grid(True, alpha=0.3)
             axes[1, 0].legend(fontsize=9, loc="best")
 
-            # Configure subplot 4: Px vs z
+            # Configure subplot 4: pr vs z (radial)
             axes[1, 1].set_xlabel("z (mm)", fontsize=10)
-            axes[1, 1].set_ylabel("Px (amu·mm/ns)", fontsize=10)
-            axes[1, 1].set_title("Transverse Momentum", fontsize=11, fontweight="bold")
+            axes[1, 1].set_ylabel("pr", fontsize=10)
+            axes[1, 1].set_title(
+                "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
+            )
             axes[1, 1].grid(True, alpha=0.3)
             axes[1, 1].legend(fontsize=9, loc="best")
 
@@ -6713,9 +6769,7 @@ class OptimizationPlugin(ttk.Frame):
                                 "transverse_offset_fraction": offset_frac,
                                 "timestep": timestep,
                                 "steps": steps,
-                                "wall_z": params_dict.get(
-                                    "wall_z", self.config.wall_z
-                                ),
+                                "wall_z": params_dict.get("wall_z", self.config.wall_z),
                                 "rider_m_particle": rider_m_particle,
                                 "rider_charge_sign": rider_charge_sign,
                                 "rider_pcount": int(rider_pcount),
@@ -7912,7 +7966,11 @@ class OptimizationPlugin(ttk.Frame):
             def plot_selected():
                 selection = listbox.curselection()
                 if not selection:
-                    _show_info_dialog(dialog, "No Selection", "Please select one or more trajectories to plot.")
+                    _show_info_dialog(
+                        dialog,
+                        "No Selection",
+                        "Please select one or more trajectories to plot.",
+                    )
                     return
 
                 selected_files = [npz_files[i] for i in selection]
@@ -7933,6 +7991,7 @@ class OptimizationPlugin(ttk.Frame):
 
         except Exception as e:
             import traceback
+
             _show_error_dialog(
                 self,
                 "Error Viewing NPZ Trajectories",
@@ -7950,9 +8009,10 @@ class OptimizationPlugin(ttk.Frame):
             Results directory
         """
         try:
+            from pathlib import Path
+
             import matplotlib.pyplot as plt
             import numpy as np
-            from pathlib import Path
             from matplotlib.backends.backend_tkagg import (
                 FigureCanvasTkAgg,
                 NavigationToolbar2Tk,
@@ -7973,14 +8033,14 @@ class OptimizationPlugin(ttk.Frame):
             for idx, npz_file in enumerate(npz_files):
                 # Load NPZ
                 data = np.load(npz_file)
-                z = data['z']
-                r = data['r']
-                pz = data['pz']
-                pr = data['pr']
-                gamma = data['gamma']
+                z = data["z"]
+                r = data["r"]
+                pz = data["pz"]
+                pr = data["pr"]
+                gamma = data["gamma"]
 
                 # Get label from filename
-                label = Path(npz_file).stem.replace('trajectory_', '').replace('_', ' ')
+                label = Path(npz_file).stem.replace("trajectory_", "").replace("_", " ")
 
                 # Plot
                 ax_r.plot(z, r * 1e3, label=label, color=colors[idx], alpha=0.7)
@@ -8059,6 +8119,7 @@ class OptimizationPlugin(ttk.Frame):
 
         except Exception as e:
             import traceback
+
             _show_error_dialog(
                 self,
                 "Plotting Error",
