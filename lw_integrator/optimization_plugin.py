@@ -3521,6 +3521,46 @@ class OptimizationPlugin(ttk.Frame):
         if self.gui_controller and hasattr(self.gui_controller, "_cancel_requested"):
             self.gui_controller._cancel_requested = True
 
+    def _compute_soft_penalty(
+        self,
+        *,
+        aperture_radius: float,
+        macroparticle_charge_multiplier: float,
+        initial_energy_gev: float,
+    ) -> float:
+        """Estimate a soft penalty for risky parameter combinations.
+
+        Small apertures combined with very high charge multipliers and beam energies
+        almost always trigger gamma blow-ups. Rather than rejecting those points
+        outright, apply a tunable penalty so the optimizer learns to avoid them
+        while keeping the search numerically stable.
+        """
+
+        penalty = 0.0
+
+        aperture_threshold_mm = 0.01  # 10 microns
+        charge_threshold = 800.0
+        energy_threshold = 120.0
+        penalty_scale = 1.0e-3  # keeps penalty on the same order as metrics
+
+        small_aperture_factor = max(
+            0.0, (aperture_threshold_mm - aperture_radius) / aperture_threshold_mm
+        )
+        high_charge_factor = max(
+            0.0,
+            (macroparticle_charge_multiplier - charge_threshold) / charge_threshold,
+        )
+
+        if small_aperture_factor > 0 and high_charge_factor > 0:
+            penalty += small_aperture_factor * high_charge_factor
+
+        if high_charge_factor > 0 and initial_energy_gev > energy_threshold:
+            energy_factor = (initial_energy_gev - energy_threshold) / energy_threshold
+            tight_aperture_factor = max(0.0, (0.1 - aperture_radius) / 0.1)
+            penalty += 0.5 * energy_factor * high_charge_factor * tight_aperture_factor
+
+        return max(0.0, penalty * penalty_scale)
+
     def _load_config_from_path(self, filepath: str) -> None:
         """Load configuration from a specific file path.
 
@@ -5849,14 +5889,33 @@ class OptimizationPlugin(ttk.Frame):
                         all_evaluations.append(eval_record)
                         return np.inf
 
+                    penalty = self._compute_soft_penalty(
+                        aperture_radius=aperture,
+                        macroparticle_charge_multiplier=macroparticle_charge_mult,
+                        initial_energy_gev=energy,
+                    )
+
+                    adjusted_value = value
+                    if penalty > 0:
+                        if maximize:
+                            adjusted_value = value - penalty
+                        else:
+                            adjusted_value = value + penalty
+                        self._log_result(
+                            "[INFO] Applied soft penalty of "
+                            f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
+                        )
+
                     # Return value to minimize (negate if maximizing)
-                    result_value = -value if maximize else value
+                    result_value = -adjusted_value if maximize else adjusted_value
 
                     # Store successful evaluation
                     eval_record = {
                         "evaluation": eval_num,
                         "parameters": dict(zip(param_names, x)),
-                        "objective_value": value,  # Store original value
+                        "objective_value": adjusted_value,
+                        "raw_objective_value": value,
+                        "soft_penalty": penalty,
                         "fitness": result_value,  # Store fitness (for minimization)
                         "failed": False,
                         "halted_early": False,
