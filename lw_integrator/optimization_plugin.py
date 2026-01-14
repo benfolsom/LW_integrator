@@ -700,6 +700,9 @@ class OptimizationPlugin(ttk.Frame):
         self._log_file = None
         self._log_file_path = None
 
+        # Clean up any orphaned temp directories from previous runs
+        self._cleanup_orphaned_temp_dirs()
+
         self._build_ui()
 
     def _build_ui(self):
@@ -7904,7 +7907,9 @@ class OptimizationPlugin(ttk.Frame):
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
-        options = SimulationOptions(
+        # Use try-finally to ensure temp directory is always cleaned up
+        try:
+            options = SimulationOptions(
             steps=steps,
             seed=self.config.seed,
             simulation_type=self.config.simulation_type,
@@ -8102,17 +8107,6 @@ class OptimizationPlugin(ttk.Frame):
                     self._log_result(f"    Closed unexpected figure: {fig_name}")
                 except Exception as e:
                     self._log_result(f"    Error closing figure {fig_name}: {e}")
-
-        # Clean up temporary run directory
-        import shutil
-
-        self._log_result(f"  [DEBUG] Cleaning up temp directory...")
-        try:
-            if run_output_dir.exists():
-                shutil.rmtree(run_output_dir)
-        except Exception:
-            pass  # Ignore cleanup errors
-        self._log_result(f"  [DEBUG] Temp directory cleaned")
 
         # Check if run was halted early - if so, skip metrics calculation
         if result.halted_early:
@@ -8404,7 +8398,47 @@ class OptimizationPlugin(ttk.Frame):
         self._log_result(
             f"  [DEBUG] _run_single_integration returning for Run {run_num}"
         )
-        return output
+            return output
+
+        finally:
+            # Clean up temporary run directory (always runs, even on exception)
+            import shutil
+
+            self._log_result(f"  [DEBUG] Cleaning up temp directory...")
+            try:
+                if run_output_dir.exists():
+                    shutil.rmtree(run_output_dir)
+                    self._log_result(f"  [DEBUG] Temp directory cleaned: {run_output_dir.name}")
+            except Exception as e:
+                self._log_result(f"  [WARNING] Failed to cleanup temp directory: {e}")
+
+    def _cleanup_orphaned_temp_dirs(self):
+        """Clean up any orphaned _temp_run directories from previous runs.
+
+        This is called on plugin initialization to remove temp directories
+        that weren't cleaned up due to crashes or interruptions.
+        """
+        import shutil
+        from pathlib import Path
+
+        try:
+            output_dir = Path(self.sweep_output_dir)
+            if not output_dir.exists():
+                return
+
+            # Find all _temp_run directories
+            temp_dirs = list(output_dir.glob("_temp_run_*"))
+
+            if temp_dirs:
+                print(f"[CLEANUP] Found {len(temp_dirs)} orphaned temp directories, removing...")
+                for temp_dir in temp_dirs:
+                    try:
+                        shutil.rmtree(temp_dir)
+                        print(f"[CLEANUP] Removed: {temp_dir.name}")
+                    except Exception as e:
+                        print(f"[WARNING] Failed to remove {temp_dir.name}: {e}")
+        except Exception as e:
+            print(f"[WARNING] Error during temp directory cleanup: {e}")
 
     def _save_sweep_results(
         self, results: List[Dict[str, Any]], failed_runs: List[Dict[str, Any]] = None
