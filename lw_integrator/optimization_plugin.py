@@ -6014,8 +6014,14 @@ class OptimizationPlugin(ttk.Frame):
             # Save results (this sets self._last_optimization_dir)
             self._save_optimization_results(result, param_names)
 
-            # Re-run top N parameters to generate and save trajectories
-            self._save_top_n_optimization_trajectories(result, param_names)
+            # Re-run top N parameters to generate and save trajectories (only if enabled)
+            if self.config.save_top_n_trajectories:
+                self._save_top_n_optimization_trajectories(result, param_names)
+            else:
+                self._log_result("")
+                self._log_result(
+                    "[INFO] Top N trajectory saving disabled (save_top_n_trajectories=False)"
+                )
 
             # Cache all evaluations for saving and generate heatmap
             if len(all_evaluations) > 0:
@@ -7578,9 +7584,9 @@ class OptimizationPlugin(ttk.Frame):
                                 )
 
                         # Add trajectory if requested (check if any trajectory saving is enabled)
+                        # Note: save_top_n_trajectories only applies to optimization mode, not sweeps
                         save_traj = (
                             self.config.save_all_trajectories
-                            or self.config.save_top_n_trajectories
                             or self.config.save_failed_trajectories
                         )
                         if save_traj and "trajectory" in result:
@@ -8346,9 +8352,9 @@ class OptimizationPlugin(ttk.Frame):
 
             # Only save full trajectory arrays if explicitly requested
             # Check if any trajectory saving option is enabled
+            # Note: save_top_n_trajectories is handled separately by re-running top N after optimization
             save_traj = (
                 self.config.save_all_trajectories
-                or self.config.save_top_n_trajectories
                 or self.config.save_failed_trajectories
             )
             if save_traj:

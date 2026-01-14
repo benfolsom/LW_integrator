@@ -104,6 +104,23 @@ def _compute_total_energy(state: ParticleState) -> float:
     return float(np.sum(gamma * mass * C_MMNS * C_MMNS))
 
 
+def _calculate_gamma(state: ParticleState) -> float:
+    """Calculate the maximum gamma (Lorentz factor) from a particle state.
+
+    Parameters
+    ----------
+    state:
+        Particle state containing gamma array.
+
+    Returns
+    -------
+    float
+        Maximum gamma value among all particles in the state.
+    """
+    gamma = np.asarray(state["gamma"])
+    return float(np.max(gamma))
+
+
 def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     if state is None:
         return
@@ -573,6 +590,29 @@ def retarded_integrator(
             # Accept the final sub-step state as the step result
             trajectory[i] = temp_trajectory[-1]
             _ensure_startup_metadata(trajectory[i])
+
+            # Check for gamma blowup flag set during self-consistency iterations
+            if trajectory[i].get("_gamma_blowup", False):
+                gamma_blowup_value = trajectory[i].get("_gamma_blowup_value", np.nan)
+                gamma_blowup_particle = trajectory[i].get("_gamma_blowup_particle", 0)
+                if adaptive_timestep is not None and adaptive_timestep.debug:
+                    print(
+                        f"[CRITICAL] Step {i}: Gamma blowup detected during self-consistency "
+                        f"(particle {gamma_blowup_particle}, γ={gamma_blowup_value:.2e}). "
+                        f"Numerical breakdown - halting integration."
+                    )
+                # Truncate trajectory and mark as halted
+                trajectory = trajectory[: i + 1]
+                trajectory_drv = trajectory_drv[: i + 1]
+                # Store halt information in the last particle's metadata
+                trajectory[-1]["_halted_early"] = True
+                trajectory[-1]["_halt_reason"] = (
+                    f"gamma_blowup (γ={gamma_blowup_value:.2e} at step {i}/{steps}, "
+                    f"particle {gamma_blowup_particle} during self-consistency)"
+                )
+                trajectory[-1]["_halt_step"] = i
+                trajectory[-1]["_requested_steps"] = steps
+                return trajectory, trajectory_drv
 
             # Check for gamma blowup (numerical breakdown)
             # Gamma > 1e8 is physically unrealistic and indicates severe numerical issues

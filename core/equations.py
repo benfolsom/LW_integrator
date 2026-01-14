@@ -1498,6 +1498,27 @@ def retarded_equations_of_motion(
             working_y = result["y"][particle_idx]
             working_z = result["z"][particle_idx]
 
+            # Check for gamma blowup during self-consistency iterations
+            # Gamma > 1e8 indicates severe numerical breakdown
+            if sc_enabled and (
+                working_gamma > 1e8
+                or np.isnan(working_gamma)
+                or np.isinf(working_gamma)
+            ):
+                if sc_verbosity > 0:
+                    print(
+                        f"    [CRITICAL] Step {step_idx if step_idx is not None else '?'}, "
+                        f"Particle {particle_idx}, Iteration {sc_iteration}: "
+                        f"Gamma blowup detected (γ={working_gamma:.2e})"
+                    )
+                    print(f"      Numerical breakdown - aborting self-consistency loop")
+                # Set a flag in result to signal that this step should halt integration
+                # The integration_runner will check for this and halt the run
+                result["_gamma_blowup"] = True
+                result["_gamma_blowup_value"] = float(working_gamma)
+                result["_gamma_blowup_particle"] = particle_idx
+                break  # Exit self-consistency loop immediately
+
         # ================================================================
         # AFTER self-consistency loop: Apply mass-shell projection if needed
         # ================================================================
