@@ -80,6 +80,12 @@ DEFAULT_DRIVER_PARAMS: Dict[str, float | int] = {
 def _normalize_state(state: ParticleState) -> ParticleState:
     normalized: ParticleState = {}
     for key, value in state.items():
+        # Skip metadata fields (those starting with underscore)
+        # These include _halt_reason, _halted_early, _gamma_blowup, etc.
+        if key.startswith("_"):
+            normalized[key] = value
+            continue
+
         if isinstance(value, np.ndarray):
             normalized[key] = value
         elif np.isscalar(value):

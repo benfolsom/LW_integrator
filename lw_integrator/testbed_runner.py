@@ -32,6 +32,7 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from core.constants import C_MMNS
+from core.debug_logger import get_current_log_path, initialize_debug_logging
 from core.particle_config import (
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
@@ -710,6 +711,11 @@ class RunResult:
     rider_norm_emittance_y_mm_mrad: Optional[float] = None
     rider_beta_x_m: Optional[float] = None
     rider_beta_y_m: Optional[float] = None
+    # Early termination tracking
+    halted_early: bool = False  # True if integration was halted before completion
+    halt_reason: Optional[str] = (
+        None  # Reason for early halt (e.g., "gamma_blowup", "distance_reached")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1047,6 +1053,12 @@ def run_testbed(
     cancel_callback:
         Optional predicate that returns True if cancellation is requested.
     """
+
+    # Initialize debug logging if not already active (for API/testbed usage)
+    current_log = get_current_log_path()
+    if current_log is None:
+        initialize_debug_logging(context="testbed")
+        print("[LOGCACHE] Debug logging initialized in logcache/")
 
     start = time.perf_counter()
     logs: List[str] = []
@@ -1492,6 +1504,17 @@ def run_testbed(
                         [float(np.asarray(s.get("t", 0)).flat[0]) for s in rider_states]
                     ),
                 }
+
+                # Check for early halt metadata in the last trajectory state
+                halted_early = False
+                halt_reason = None
+                if len(rider_states) > 0:
+                    last_state = rider_states[-1]
+                    if "_halted_early" in last_state:
+                        halted_early = bool(last_state["_halted_early"])
+                    if "_halt_reason" in last_state:
+                        halt_reason = str(last_state["_halt_reason"])
+                        _log(f"[INFO] Integration halted early: {halt_reason}")
 
         except Exception as exc:  # pragma: no cover - defensive guard
             _log(f"Failed to compute rider energy series: {exc}")
@@ -3158,6 +3181,8 @@ def run_testbed(
         rider_norm_emittance_y_mm_mrad=rider_norm_emittance_y,
         rider_beta_x_m=rider_beta_x,
         rider_beta_y_m=rider_beta_y,
+        halted_early=halted_early if "halted_early" in locals() else False,
+        halt_reason=halt_reason if "halt_reason" in locals() else None,
     )
 
 

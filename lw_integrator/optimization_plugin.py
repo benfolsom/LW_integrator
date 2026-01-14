@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
+from core.debug_logger import set_logging_context  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
     analyze_trajectory_smoothness,
@@ -33,6 +34,16 @@ from lw_integrator.testbed_runner import (  # type: ignore[import]
     RunResult,
     SimulationOptions,
     run_testbed,
+)
+from optimization.config import OptimizationConfig
+from optimization.result_io import (
+    generate_optimization_heatmap,
+    generate_optimization_plots,
+    generate_trajectory_comparison_plot,
+    save_optimization_results,
+    save_partial_optimization_results,
+    save_top_n_optimization_trajectories,
+    save_top_trajectories_summary_table,
 )
 
 
@@ -119,121 +130,6 @@ def _show_info_dialog(parent: tk.Widget, title: str, message: str) -> None:
     """Show an info dialog with selectable text."""
     # Log to console/terminal
     print(f"INFO: {title}: {message}", flush=True)
-
-    # Log to results text if parent is OptimizationPlugin
-    if hasattr(parent, "_log_result"):
-        parent._log_result(f"[INFO] {title}: {message}")
-
-    dialog = tk.Toplevel(parent)
-    dialog.title(title)
-    dialog.transient(parent)
-    dialog.grab_set()
-
-    frame = ttk.Frame(dialog, padding=10)
-    frame.pack(fill="both", expand=True)
-
-    text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
-    text.insert("1.0", message)
-    # Use system default background color instead of querying frame
-    text.configure(state="disabled")
-    text.pack(side="top", fill="both", expand=True, pady=(0, 10))
-
-    button_frame = ttk.Frame(frame)
-    button_frame.pack(side="bottom")
-    ok_button = ttk.Button(button_frame, text="OK", command=dialog.destroy, width=10)
-    ok_button.pack()
-    ok_button.focus_set()
-
-    dialog.update_idletasks()
-    width = dialog.winfo_width()
-    height = dialog.winfo_height()
-    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-    y = (dialog.winfo_screenheight() // 2) - (height // 2)
-    dialog.geometry(f"+{x}+{y}")
-
-    dialog.bind("<Return>", lambda e: dialog.destroy())
-    dialog.bind("<Escape>", lambda e: dialog.destroy())
-
-
-def _show_warning_dialog(parent: tk.Widget, title: str, message: str) -> None:
-    """Show a warning dialog with selectable text."""
-    # Log to console/terminal
-    print(f"WARNING: {title}: {message}", flush=True)
-
-    # Log to results text if parent is OptimizationPlugin
-    if hasattr(parent, "_log_result"):
-        parent._log_result(f"[WARNING] {title}: {message}")
-
-    dialog = tk.Toplevel(parent)
-    dialog.title(title)
-    dialog.transient(parent)
-    dialog.grab_set()
-
-    frame = ttk.Frame(dialog, padding=10)
-    frame.pack(fill="both", expand=True)
-
-    text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
-    text.insert("1.0", message)
-    text.configure(state="disabled", bg=frame.cget("background"))
-    text.pack(side="top", fill="both", expand=True, pady=(0, 10))
-
-    button_frame = ttk.Frame(frame)
-    button_frame.pack(side="bottom")
-    ok_button = ttk.Button(button_frame, text="OK", command=dialog.destroy, width=10)
-    ok_button.pack()
-    ok_button.focus_set()
-
-    dialog.update_idletasks()
-    width = dialog.winfo_width()
-    height = dialog.winfo_height()
-    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-    y = (dialog.winfo_screenheight() // 2) - (height // 2)
-    dialog.geometry(f"+{x}+{y}")
-
-    dialog.bind("<Return>", lambda e: dialog.destroy())
-    dialog.bind("<Escape>", lambda e: dialog.destroy())
-
-
-@dataclass
-class OptimizationConfig:
-    """Configuration for parameter sweep or optimization run."""
-
-    # Simulation type
-    simulation_type: SimulationType = SimulationType.CONDUCTING_WALL
-
-    # Mode selection
-    mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
-
-    # Optimization settings (only used when mode="optimization")
-    optimization_method: str = "genetic_algorithm"  # "genetic_algorithm", "differential_evolution", "nelder_mead", "multi_start", "adaptive_grid"
-    optimization_maxiter: int = 50  # Max iterations/generations
-    optimization_population_size: int = (
-        20  # For genetic algorithm and differential evolution
-    )
-    optimization_mutation_rate: float = 0.1  # For genetic algorithm
-    optimization_crossover_rate: float = 0.7  # For genetic algorithm
-    optimization_n_starts: int = 5  # For multi_start method
-    optimization_save_top_n: int = 3  # Save trajectories from top N results
-    optimization_convergence_tol: float = 1e-6  # Convergence tolerance (relative)
-    optimization_convergence_patience: int = 10  # Generations for plateau detection
-
-    # Parameter ranges
-    aperture_range: Tuple[float, float] = (1e-5, 1e-3)  # mm (10 μm to 1 mm)
-    aperture_points: int = 10
-    aperture_log_scale: bool = True
-
-    energy_range: Tuple[float, float] = (1.0, 1000.0)  # GeV
-    energy_points: int = 10
-    energy_log_scale: bool = True
-
-    transverse_offset_fractions: List[float] = None  # Fraction of aperture radius
-    starting_z_positions: List[float] = None  # mm (particle starting z-coordinates)
-
-    # Sweepable parameters (can be added to grid)
-    transverse_momentum_range: Optional[Tuple[float, float]] = None  # amu·mm/ns
-    transverse_momentum_points: int = 1
-    transverse_spread_range: Optional[Tuple[float, float]] = None  # mm (transv_dist)
-    transverse_spread_points: int = 1
     timestep_range: Optional[Tuple[float, float]] = None  # ns (proper time)
     timestep_points: int = 1
     starting_z_range: Optional[Tuple[float, float]] = None  # mm
@@ -327,7 +223,11 @@ class OptimizationConfig:
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = 1e-4
     self_consistency_max_iterations: int = 5
-    self_consistency_verbosity: int = 2  # 0=silent, 1=basic, 2=detailed
+    self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
+    self_consistency_chrono_interpolate: bool = False
+    self_consistency_chrono_tolerance: float = 1e-3  # ns
+    self_consistency_chrono_high_precision: bool = False
+    self_consistency_chrono_adaptive_tolerance: bool = False
 
     # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
@@ -463,6 +363,18 @@ class OptimizationConfig:
             self_consistency_tolerance=options.self_consistency_tolerance,
             self_consistency_max_iterations=options.self_consistency_max_iterations,
             self_consistency_verbosity=options.self_consistency_verbosity,
+            self_consistency_chrono_interpolate=getattr(
+                options, "self_consistency_chrono_interpolate", False
+            ),
+            self_consistency_chrono_tolerance=getattr(
+                options, "self_consistency_chrono_tolerance", 1e-3
+            ),
+            self_consistency_chrono_high_precision=getattr(
+                options, "self_consistency_chrono_high_precision", False
+            ),
+            self_consistency_chrono_adaptive_tolerance=getattr(
+                options, "self_consistency_chrono_adaptive_tolerance", False
+            ),
             energy_monitor_enabled=False,  # Removed - integrated into adaptive timestep
             energy_monitor_threshold=2.0,
             energy_monitor_check_interval=10,
@@ -674,6 +586,7 @@ class OptimizationPlugin(ttk.Frame):
         self.running = False
         self.progress_value = 0.0
         self.progress_text = ""
+        self._was_cancelled = False
 
         # Store sweep directories
         self.sweep_config_dir = sweep_config_dir or "configs/sweep_configs"
@@ -682,6 +595,9 @@ class OptimizationPlugin(ttk.Frame):
         # Log file tracking
         self._log_file = None
         self._log_file_path = None
+
+        # Clean up any orphaned temp directories from previous runs
+        self._cleanup_orphaned_temp_dirs()
 
         self._build_ui()
 
@@ -2224,7 +2140,7 @@ class OptimizationPlugin(ttk.Frame):
 
         ttk.Radiobutton(
             log_frame,
-            text="Full debug (all SC iterations, adaptive timestep details)",
+            text="Full debug (inherits SC verbosity & adaptive timestep debug from Stability tab)",
             variable=self.log_verbosity_var,
             value="full",
         ).grid(row=2, column=0, sticky="w", pady=2)
@@ -2238,9 +2154,10 @@ class OptimizationPlugin(ttk.Frame):
 
         ttk.Label(
             frame,
-            text="ℹ 'Truncated' is recommended for large sweeps. 'Full debug' generates large log files.",
+            text="ℹ 'Truncated' is recommended for large sweeps.\n'Full debug' inherits verbosity settings from Stability tab and generates large log files.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="blue",
+            justify="left",
         ).grid(row=5, column=1, columnspan=2, sticky="w", pady=(0, 5))
 
     def _on_top_n_traj_changed(self):
@@ -2355,8 +2272,110 @@ class OptimizationPlugin(ttk.Frame):
                 f"Run #{run_num:4d} | {param_str} | {metric_str} | SUCCESS"
             )
         else:
-            # No metrics or error - just params
             self._log_result(f"Run #{run_num:4d} | {param_str} | RUNNING")
+
+    def _sync_stability_to_main_gui(self, config):
+        """Sync stability settings from config to main GUI's stability tab.
+
+        Parameters
+        ----------
+        config : OptimizationConfig
+            Config with stability settings to sync
+        """
+        if not self.gui_controller:
+            return
+
+        try:
+            # Self-consistency settings
+            if hasattr(self.gui_controller, "self_consistency_enabled_var"):
+                self.gui_controller.self_consistency_enabled_var.set(
+                    config.self_consistency_enabled
+                )
+            if hasattr(self.gui_controller, "self_consistency_target_ms_tolerance_var"):
+                self.gui_controller.self_consistency_target_ms_tolerance_var.set(
+                    f"{config.self_consistency_tolerance:.1e}"
+                )
+            if hasattr(self.gui_controller, "self_consistency_max_iterations_var"):
+                self.gui_controller.self_consistency_max_iterations_var.set(
+                    str(config.self_consistency_max_iterations)
+                )
+            if hasattr(self.gui_controller, "self_consistency_verbosity_var"):
+                self.gui_controller.self_consistency_verbosity_var.set(
+                    str(config.self_consistency_verbosity)
+                )
+            if hasattr(self.gui_controller, "self_consistency_chrono_interpolate_var"):
+                self.gui_controller.self_consistency_chrono_interpolate_var.set(
+                    config.self_consistency_chrono_interpolate
+                )
+            if hasattr(self.gui_controller, "self_consistency_chrono_tolerance_var"):
+                self.gui_controller.self_consistency_chrono_tolerance_var.set(
+                    f"{config.self_consistency_chrono_tolerance:.1e}"
+                )
+            if hasattr(
+                self.gui_controller, "self_consistency_chrono_high_precision_var"
+            ):
+                self.gui_controller.self_consistency_chrono_high_precision_var.set(
+                    config.self_consistency_chrono_high_precision
+                )
+            if hasattr(
+                self.gui_controller, "self_consistency_chrono_adaptive_tolerance_var"
+            ):
+                self.gui_controller.self_consistency_chrono_adaptive_tolerance_var.set(
+                    config.self_consistency_chrono_adaptive_tolerance
+                )
+
+            # Adaptive timestep settings
+            if hasattr(self.gui_controller, "adaptive_timestep_enabled_var"):
+                self.gui_controller.adaptive_timestep_enabled_var.set(
+                    config.adaptive_timestep_enabled
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_threshold_var"):
+                self.gui_controller.adaptive_timestep_threshold_var.set(
+                    f"{config.adaptive_timestep_threshold:.2f}"
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_reduction_factor_var"):
+                self.gui_controller.adaptive_timestep_reduction_factor_var.set(
+                    str(config.adaptive_timestep_reduction_factor)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_max_attempts_var"):
+                self.gui_controller.adaptive_timestep_max_attempts_var.set(
+                    str(config.adaptive_timestep_max_attempts)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_min_factor_var"):
+                self.gui_controller.adaptive_timestep_min_factor_var.set(
+                    f"{config.adaptive_timestep_min_factor:.1e}"
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_cooldown_steps_var"):
+                self.gui_controller.adaptive_timestep_cooldown_steps_var.set(
+                    str(config.adaptive_timestep_cooldown_steps)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_probe_threshold_var"):
+                self.gui_controller.adaptive_timestep_probe_threshold_var.set(
+                    f"{config.adaptive_timestep_probe_threshold:.2f}"
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_max_probe_steps_var"):
+                self.gui_controller.adaptive_timestep_max_probe_steps_var.set(
+                    str(config.adaptive_timestep_max_probe_steps)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_debug_var"):
+                self.gui_controller.adaptive_timestep_debug_var.set(
+                    config.adaptive_timestep_debug
+                )
+
+            # Toggle controls to match loaded state
+            if hasattr(self.gui_controller, "_toggle_self_consistency_controls"):
+                self.gui_controller._toggle_self_consistency_controls()
+            if hasattr(self.gui_controller, "_toggle_adaptive_timestep_controls"):
+                self.gui_controller._toggle_adaptive_timestep_controls()
+
+            self._log_result(
+                "[OK] Stability settings synced to main GUI's Stability tab"
+            )
+
+        except Exception as e:
+            self._log_result(
+                f"[WARNING] Failed to sync some stability settings to main GUI: {e}"
+            )
 
     def _should_save_trajectory(self, run_result: dict, rank: int = None) -> bool:
         """Determine if trajectory should be saved based on config.
@@ -2364,9 +2383,9 @@ class OptimizationPlugin(ttk.Frame):
         Parameters
         ----------
         run_result : dict
-            Run result dictionary with 'failed' flag
+            Result dictionary from integration run
         rank : int, optional
-            Rank of this result (1 = best)
+            Rank of this result (1=best, 2=second best, etc.)
 
         Returns
         -------
@@ -2377,7 +2396,10 @@ class OptimizationPlugin(ttk.Frame):
             return True
 
         if self.config.save_failed_trajectories:
-            return run_result.get("failed", False)
+            # Save failed runs AND halted runs
+            return run_result.get("failed", False) or run_result.get(
+                "halted_early", False
+            )
 
         if self.config.save_top_n_trajectories and rank is not None:
             return rank <= self.config.optimization_save_top_n
@@ -2474,11 +2496,75 @@ class OptimizationPlugin(ttk.Frame):
         except ValueError as e:
             return f"Invalid input: {e}"
 
+    def _get_gui_stability_setting(self, var_name: str, default_value):
+        """Get stability setting from main GUI if available, otherwise use default.
+
+        Parameters
+        ----------
+        var_name : str
+            Name of the GUI variable to read (e.g., 'self_consistency_enabled_var')
+        default_value : any
+            Default value if GUI is not available
+
+        Returns
+        -------
+        any
+            Value from GUI or default
+        """
+        if self.gui_controller and hasattr(self.gui_controller, var_name):
+            var = getattr(self.gui_controller, var_name)
+            value = var.get()
+            # Convert string to appropriate types
+            if isinstance(value, str):
+                # Tolerance and numeric values
+                if (
+                    "tolerance" in var_name
+                    or "threshold" in var_name
+                    or "factor" in var_name
+                ):
+                    try:
+                        return float(value)
+                    except ValueError:
+                        return default_value
+                # Integer values
+                elif (
+                    "iterations" in var_name
+                    or "verbosity" in var_name
+                    or "attempts" in var_name
+                    or "steps" in var_name
+                ):
+                    try:
+                        return int(value)
+                    except ValueError:
+                        return default_value
+            return value
+        return default_value
+
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
-        # Preserve stability and timestep settings from existing config if available
-        # (these are set via stability dialog, not UI fields)
+        # Stability settings are read from main GUI if available, otherwise from existing config
         existing_config = getattr(self, "config", None)
+
+        # Debug logging
+        has_gui = self.gui_controller is not None
+        print(f"[DEBUG] _gather_config: Main GUI available: {has_gui}")
+        if existing_config:
+            print(
+                f"[DEBUG] _gather_config: Existing config available (will be used as fallback)"
+            )
+        else:
+            print(
+                f"[DEBUG] _gather_config: No existing config, using defaults as fallback"
+            )
+
+        if has_gui:
+            print(
+                f"[DEBUG] _gather_config: Reading stability settings from main GUI Stability tab"
+            )
+        else:
+            print(
+                f"[DEBUG] _gather_config: No GUI available, using existing config or defaults"
+            )
 
         config_obj = OptimizationConfig(
             simulation_type=SimulationType[self.sim_type_var.get()],
@@ -2575,49 +2661,105 @@ class OptimizationPlugin(ttk.Frame):
             # Sweep robustness options
             per_run_timeout=float(self.per_run_timeout_var.get()),
             skip_failed_runs=self.skip_failed_runs_var.get(),
-            # Stability options - preserve from existing config if available
-            self_consistency_enabled=existing_config.self_consistency_enabled
-            if existing_config
-            else True,
-            self_consistency_tolerance=existing_config.self_consistency_tolerance
-            if existing_config
-            else 1e-4,
-            self_consistency_max_iterations=existing_config.self_consistency_max_iterations
-            if existing_config
-            else 5,
-            self_consistency_verbosity=existing_config.self_consistency_verbosity
-            if existing_config
-            else 0,
-            energy_monitor_halt_on_jump=existing_config.energy_monitor_halt_on_jump
-            if existing_config
-            else False,
-            adaptive_timestep_enabled=existing_config.adaptive_timestep_enabled
-            if existing_config
-            else True,
-            adaptive_timestep_threshold=existing_config.adaptive_timestep_threshold
-            if existing_config
-            else 0.10,
-            adaptive_timestep_reduction_factor=existing_config.adaptive_timestep_reduction_factor
-            if existing_config
-            else 10,
-            adaptive_timestep_max_attempts=existing_config.adaptive_timestep_max_attempts
-            if existing_config
-            else 5,
-            adaptive_timestep_min_factor=existing_config.adaptive_timestep_min_factor
-            if existing_config
-            else 1e-4,
-            adaptive_timestep_cooldown_steps=existing_config.adaptive_timestep_cooldown_steps
-            if existing_config
-            else 10,
-            adaptive_timestep_probe_threshold=existing_config.adaptive_timestep_probe_threshold
-            if existing_config
-            else 0.01,
-            adaptive_timestep_max_probe_steps=existing_config.adaptive_timestep_max_probe_steps
-            if existing_config
-            else 3,
-            adaptive_timestep_debug=existing_config.adaptive_timestep_debug
-            if existing_config
-            else False,
+            # Stability options - read from main GUI if available, otherwise use existing config or defaults
+            self_consistency_enabled=self._get_gui_stability_setting(
+                "self_consistency_enabled_var",
+                existing_config.self_consistency_enabled if existing_config else True,
+            ),
+            self_consistency_tolerance=self._get_gui_stability_setting(
+                "self_consistency_target_ms_tolerance_var",
+                existing_config.self_consistency_tolerance if existing_config else 1e-4,
+            ),
+            self_consistency_max_iterations=self._get_gui_stability_setting(
+                "self_consistency_max_iterations_var",
+                existing_config.self_consistency_max_iterations
+                if existing_config
+                else 5,
+            ),
+            self_consistency_verbosity=self._get_gui_stability_setting(
+                "self_consistency_verbosity_var",
+                existing_config.self_consistency_verbosity if existing_config else 0,
+            ),
+            self_consistency_chrono_interpolate=self._get_gui_stability_setting(
+                "self_consistency_chrono_interpolate_var",
+                existing_config.self_consistency_chrono_interpolate
+                if existing_config
+                else False,
+            ),
+            self_consistency_chrono_tolerance=self._get_gui_stability_setting(
+                "self_consistency_chrono_tolerance_var",
+                existing_config.self_consistency_chrono_tolerance
+                if existing_config
+                else 1e-3,
+            ),
+            self_consistency_chrono_high_precision=self._get_gui_stability_setting(
+                "self_consistency_chrono_high_precision_var",
+                existing_config.self_consistency_chrono_high_precision
+                if existing_config
+                else False,
+            ),
+            self_consistency_chrono_adaptive_tolerance=self._get_gui_stability_setting(
+                "self_consistency_chrono_adaptive_tolerance_var",
+                existing_config.self_consistency_chrono_adaptive_tolerance
+                if existing_config
+                else False,
+            ),
+            energy_monitor_halt_on_jump=self._get_gui_stability_setting(
+                "adaptive_timestep_halt_on_jump_var",
+                existing_config.energy_monitor_halt_on_jump
+                if existing_config
+                else False,
+            ),
+            adaptive_timestep_enabled=self._get_gui_stability_setting(
+                "adaptive_timestep_enabled_var",
+                existing_config.adaptive_timestep_enabled if existing_config else True,
+            ),
+            adaptive_timestep_threshold=self._get_gui_stability_setting(
+                "adaptive_timestep_threshold_var",
+                existing_config.adaptive_timestep_threshold
+                if existing_config
+                else 0.10,
+            ),
+            adaptive_timestep_reduction_factor=self._get_gui_stability_setting(
+                "adaptive_timestep_reduction_factor_var",
+                existing_config.adaptive_timestep_reduction_factor
+                if existing_config
+                else 10,
+            ),
+            adaptive_timestep_max_attempts=self._get_gui_stability_setting(
+                "adaptive_timestep_max_attempts_var",
+                existing_config.adaptive_timestep_max_attempts
+                if existing_config
+                else 5,
+            ),
+            adaptive_timestep_min_factor=self._get_gui_stability_setting(
+                "adaptive_timestep_min_factor_var",
+                existing_config.adaptive_timestep_min_factor
+                if existing_config
+                else 1e-4,
+            ),
+            adaptive_timestep_cooldown_steps=self._get_gui_stability_setting(
+                "adaptive_timestep_cooldown_steps_var",
+                existing_config.adaptive_timestep_cooldown_steps
+                if existing_config
+                else 10,
+            ),
+            adaptive_timestep_probe_threshold=self._get_gui_stability_setting(
+                "adaptive_timestep_probe_threshold_var",
+                existing_config.adaptive_timestep_probe_threshold
+                if existing_config
+                else 0.01,
+            ),
+            adaptive_timestep_max_probe_steps=self._get_gui_stability_setting(
+                "adaptive_timestep_max_probe_steps_var",
+                existing_config.adaptive_timestep_max_probe_steps
+                if existing_config
+                else 3,
+            ),
+            adaptive_timestep_debug=self._get_gui_stability_setting(
+                "adaptive_timestep_debug_var",
+                existing_config.adaptive_timestep_debug if existing_config else False,
+            ),
             smoothness_trend_threshold=existing_config.smoothness_trend_threshold
             if existing_config
             else 0.30,
@@ -2879,9 +3021,15 @@ class OptimizationPlugin(ttk.Frame):
         sc_iter_entry.pack(anchor="w")
         all_widgets.append(sc_iter_entry)
 
-        ttk.Label(sc_frame, text="Verbosity (0=silent, 1=basic, 2=detailed):").pack(
-            anchor="w", pady=(5, 0)
-        )
+        ttk.Label(
+            sc_frame, text="Verbosity (0=silent, 1=summary, 2=failures, 3=full):"
+        ).pack(anchor="w", pady=(5, 0))
+        ttk.Label(
+            sc_frame,
+            text="  Note: Sweep/Optim override this via Log verbosity setting",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        ).pack(anchor="w")
         sc_verb_var = tk.StringVar(
             value=str(max(self.config.self_consistency_verbosity, 1))
         )
@@ -2934,7 +3082,7 @@ class OptimizationPlugin(ttk.Frame):
         at_debug_var = tk.BooleanVar(value=self.config.adaptive_timestep_debug or True)
         at_debug_cb = ttk.Checkbutton(
             at_frame,
-            text="Debug logging (recommended for sweeps)",
+            text="Debug logging (single run only; sweep/optim uses Log verbosity)",
             variable=at_debug_var,
         )
         at_debug_cb.pack(anchor="w", pady=(5, 0))
@@ -3238,6 +3386,7 @@ class OptimizationPlugin(ttk.Frame):
             return
 
         # Update UI state
+        self._was_cancelled = False
         self.running = True
         self._update_progress(0, "Initializing sweep...")
 
@@ -3260,11 +3409,52 @@ class OptimizationPlugin(ttk.Frame):
     def _on_stop(self):
         """Handle stop button click."""
         self.running = False
+        self._was_cancelled = True
         self._update_progress_text("Stopping...")
 
         # Signal main GUI cancellation
         if self.gui_controller and hasattr(self.gui_controller, "_cancel_requested"):
             self.gui_controller._cancel_requested = True
+
+    def _compute_soft_penalty(
+        self,
+        *,
+        aperture_radius: float,
+        macroparticle_charge_multiplier: float,
+        initial_energy_gev: float,
+    ) -> float:
+        """Estimate a soft penalty for risky parameter combinations.
+
+        Small apertures combined with very high charge multipliers and beam energies
+        almost always trigger gamma blow-ups. Rather than rejecting those points
+        outright, apply a tunable penalty so the optimizer learns to avoid them
+        while keeping the search numerically stable.
+        """
+
+        penalty = 0.0
+
+        aperture_threshold_mm = 0.01  # 10 microns
+        charge_threshold = 800.0
+        energy_threshold = 120.0
+        penalty_scale = 1.0e-3  # keeps penalty on the same order as metrics
+
+        small_aperture_factor = max(
+            0.0, (aperture_threshold_mm - aperture_radius) / aperture_threshold_mm
+        )
+        high_charge_factor = max(
+            0.0,
+            (macroparticle_charge_multiplier - charge_threshold) / charge_threshold,
+        )
+
+        if small_aperture_factor > 0 and high_charge_factor > 0:
+            penalty += small_aperture_factor * high_charge_factor
+
+        if high_charge_factor > 0 and initial_energy_gev > energy_threshold:
+            energy_factor = (initial_energy_gev - energy_threshold) / energy_threshold
+            tight_aperture_factor = max(0.0, (0.1 - aperture_radius) / 0.1)
+            penalty += 0.5 * energy_factor * high_charge_factor * tight_aperture_factor
+
+        return max(0.0, penalty * penalty_scale)
 
     def _load_config_from_path(self, filepath: str) -> None:
         """Load configuration from a specific file path.
@@ -3400,8 +3590,11 @@ class OptimizationPlugin(ttk.Frame):
             self._update_mode_visibility()
             self._update_optimization_controls()
 
-            # Load stability options (with defaults from SimulationOptions)
+            # Load stability options - create temp config with file values only
+            # Don't use _gather_config() here because it copies from existing self.config
             loaded_config = self._gather_config()
+
+            # Override ALL stability settings from file (don't use existing config)
             loaded_config.self_consistency_enabled = data.get(
                 "self_consistency_enabled", True
             )
@@ -3413,6 +3606,18 @@ class OptimizationPlugin(ttk.Frame):
             )
             loaded_config.self_consistency_verbosity = data.get(
                 "self_consistency_verbosity", 0
+            )
+            loaded_config.self_consistency_chrono_interpolate = data.get(
+                "self_consistency_chrono_interpolate", False
+            )
+            loaded_config.self_consistency_chrono_tolerance = data.get(
+                "self_consistency_chrono_tolerance", 1e-3
+            )
+            loaded_config.self_consistency_chrono_high_precision = data.get(
+                "self_consistency_chrono_high_precision", False
+            )
+            loaded_config.self_consistency_chrono_adaptive_tolerance = data.get(
+                "self_consistency_chrono_adaptive_tolerance", False
             )
             # Energy monitoring removed - functionality in adaptive timestep
             loaded_config.energy_monitor_enabled = False
@@ -3492,6 +3697,13 @@ class OptimizationPlugin(ttk.Frame):
             loaded_config.timestep = data.get("timestep", 3e-7)
             loaded_config.energy_scale_exponent = data.get("energy_scale_exponent", 1.0)
 
+            print(
+                f"[DEBUG] _load_config_from_path: Assigning loaded_config to self.config"
+            )
+            print(f"  SC enabled: {loaded_config.self_consistency_enabled}")
+            print(f"  SC tolerance: {loaded_config.self_consistency_tolerance}")
+            print(f"  AT enabled: {loaded_config.adaptive_timestep_enabled}")
+            print(f"  AT debug: {loaded_config.adaptive_timestep_debug}")
             self.config = loaded_config
 
             # Update UI controls
@@ -3508,7 +3720,7 @@ class OptimizationPlugin(ttk.Frame):
             )
             self._toggle_timestep_mode()
 
-            # Update stability controls
+            # Update stability controls (smoothness has UI variables)
             self.smoothness_enabled_var.set(loaded_config.smoothness_enabled)
             self.smoothness_window_var.set(str(loaded_config.smoothness_window_size))
             self.smoothness_oscillation_var.set(
@@ -3516,6 +3728,54 @@ class OptimizationPlugin(ttk.Frame):
             )
             self.smoothness_reject_var.set(loaded_config.smoothness_reject_on_violation)
             self._toggle_smoothness_controls()
+
+            # Update main GUI stability tab if available
+            if self.gui_controller:
+                self._sync_stability_to_main_gui(loaded_config)
+
+            self._log_result("[INFO] Additional stability settings loaded:")
+            self._log_result(
+                f"  Self-consistency max_iterations: {loaded_config.self_consistency_max_iterations}"
+            )
+            self._log_result(
+                f"  Self-consistency verbosity: {loaded_config.self_consistency_verbosity}"
+            )
+            self._log_result(
+                f"  Self-consistency chrono_interpolate: {loaded_config.self_consistency_chrono_interpolate}"
+            )
+            self._log_result(
+                f"  Self-consistency chrono_tolerance: {loaded_config.self_consistency_chrono_tolerance:.1e} ns"
+            )
+            self._log_result(
+                f"  Self-consistency chrono_high_precision: {loaded_config.self_consistency_chrono_high_precision}"
+            )
+            self._log_result(
+                f"  Self-consistency chrono_adaptive_tolerance: {loaded_config.self_consistency_chrono_adaptive_tolerance}"
+            )
+            self._log_result(
+                f"  Adaptive timestep reduction_factor: {loaded_config.adaptive_timestep_reduction_factor}"
+            )
+            self._log_result(
+                f"  Adaptive timestep max_attempts: {loaded_config.adaptive_timestep_max_attempts}"
+            )
+            self._log_result(
+                f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
+            )
+            self._log_result(
+                f"  Adaptive timestep cooldown_steps: {loaded_config.adaptive_timestep_cooldown_steps}"
+            )
+            self._log_result(
+                f"  Adaptive timestep probe_threshold: {loaded_config.adaptive_timestep_probe_threshold}"
+            )
+            self._log_result(
+                f"  Adaptive timestep max_probe_steps: {loaded_config.adaptive_timestep_max_probe_steps}"
+            )
+            self._log_result(
+                f"  Smoothness trend_threshold: {loaded_config.smoothness_trend_threshold}"
+            )
+            self._log_result(
+                f"  Smoothness max_violations: {loaded_config.smoothness_max_violations}"
+            )
 
             # Update macroparticle controls
             self.macroparticle_enabled_var.set(loaded_config.macroparticle_enabled)
@@ -3550,15 +3810,94 @@ class OptimizationPlugin(ttk.Frame):
                         controls["fixed_var"].set(str(fixed_val))
                         self._toggle_sweep_controls(param_name)
 
-            self._log_result("[OK] Configuration loaded successfully")
-            self._log_result("[INFO] Stability options:")
+            self._log_result("[OK] Configuration loaded and synced to main GUI")
+            self._log_result("")
+            self._log_result("=" * 60)
+            self._log_result("LOADED STABILITY OPTIONS SUMMARY")
+            self._log_result("=" * 60)
+            self._log_result("[Self-Consistency]")
+            self._log_result(f"  Enabled: {self.config.self_consistency_enabled}")
             self._log_result(
-                f"  Self-consistency: {self.config.self_consistency_enabled} (tol={self.config.self_consistency_tolerance:.1e})"
+                f"  Tolerance: {self.config.self_consistency_tolerance:.1e}"
             )
-            # Energy monitoring removed - functionality in adaptive timestep
             self._log_result(
-                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%)"
+                f"  Max iterations: {self.config.self_consistency_max_iterations}"
             )
+            self._log_result(f"  Verbosity: {self.config.self_consistency_verbosity}")
+            self._log_result(
+                f"  Chrono interpolate: {self.config.self_consistency_chrono_interpolate}"
+            )
+            self._log_result(
+                f"  Chrono tolerance: {self.config.self_consistency_chrono_tolerance:.1e} ns"
+            )
+            self._log_result(
+                f"  Chrono high precision: {self.config.self_consistency_chrono_high_precision}"
+            )
+            self._log_result(
+                f"  Chrono adaptive tolerance: {self.config.self_consistency_chrono_adaptive_tolerance}"
+            )
+            self._log_result("")
+            self._log_result("[Adaptive Timestep]")
+            self._log_result(f"  Enabled: {self.config.adaptive_timestep_enabled}")
+            self._log_result(
+                f"  Threshold: {self.config.adaptive_timestep_threshold * 100:.0f}%"
+            )
+            self._log_result(
+                f"  Reduction factor: {self.config.adaptive_timestep_reduction_factor}x"
+            )
+            self._log_result(
+                f"  Max attempts: {self.config.adaptive_timestep_max_attempts}"
+            )
+            self._log_result(
+                f"  Min factor: {self.config.adaptive_timestep_min_factor}"
+            )
+            self._log_result(
+                f"  Cooldown steps: {self.config.adaptive_timestep_cooldown_steps}"
+            )
+            self._log_result(
+                f"  Probe threshold: {self.config.adaptive_timestep_probe_threshold}"
+            )
+            self._log_result(
+                f"  Max probe steps: {self.config.adaptive_timestep_max_probe_steps}"
+            )
+            self._log_result(f"  Debug: {self.config.adaptive_timestep_debug}")
+            self._log_result("")
+            self._log_result("[Trajectory Smoothness Analysis]")
+            self._log_result(f"  Enabled: {self.config.smoothness_enabled}")
+            self._log_result(f"  Window size: {self.config.smoothness_window_size}")
+            self._log_result(
+                f"  Oscillation threshold: {self.config.smoothness_oscillation_threshold}"
+            )
+            self._log_result(
+                f"  Trend threshold: {self.config.smoothness_trend_threshold}"
+            )
+            self._log_result(
+                f"  Reject on violation: {self.config.smoothness_reject_on_violation}"
+            )
+            self._log_result(
+                f"  Max violations: {self.config.smoothness_max_violations}"
+            )
+            self._log_result("")
+            self._log_result("=" * 60)
+            self._log_result("")
+            self._log_result(
+                "NOTE: Stability settings are synced to main GUI's Stability tab"
+            )
+            self._log_result("      View/edit them in the main GUI's Stability tab")
+            self._log_result(
+                "      Log verbosity setting will override debug flags during run"
+            )
+            self._log_result("")
+
+            # Auto-switch to sweep mode when loading a sweep/optimization config
+            if self.gui_controller and hasattr(self.gui_controller, "run_mode_var"):
+                self.gui_controller.run_mode_var.set("sweep")
+                if hasattr(self.gui_controller, "_on_run_mode_changed"):
+                    self.gui_controller._on_run_mode_changed()
+                self._log_result(
+                    "[INFO] Auto-switched main GUI to Sweep/Optim run mode"
+                )
+
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
 
@@ -3599,7 +3938,23 @@ class OptimizationPlugin(ttk.Frame):
             return False
 
         try:
+            print(f"[DEBUG] _save_config_to_path: Gathering config for save")
             config = self._gather_config()
+            print(f"[DEBUG] After _gather_config:")
+            print(f"  SC enabled: {config.self_consistency_enabled}")
+            print(f"  SC tolerance: {config.self_consistency_tolerance}")
+            print(
+                f"  SC chrono interpolate: {config.self_consistency_chrono_interpolate}"
+            )
+            print(f"  SC chrono tolerance: {config.self_consistency_chrono_tolerance}")
+            print(
+                f"  SC chrono high precision: {config.self_consistency_chrono_high_precision}"
+            )
+            print(
+                f"  SC chrono adaptive tolerance: {config.self_consistency_chrono_adaptive_tolerance}"
+            )
+            print(f"  AT enabled: {config.adaptive_timestep_enabled}")
+            print(f"  AT debug: {config.adaptive_timestep_debug}")
             data = {
                 "simulation_type": config.simulation_type.name,
                 "mode": config.mode,
@@ -3644,6 +3999,10 @@ class OptimizationPlugin(ttk.Frame):
                 "self_consistency_tolerance": config.self_consistency_tolerance,
                 "self_consistency_max_iterations": config.self_consistency_max_iterations,
                 "self_consistency_verbosity": config.self_consistency_verbosity,
+                "self_consistency_chrono_interpolate": config.self_consistency_chrono_interpolate,
+                "self_consistency_chrono_tolerance": config.self_consistency_chrono_tolerance,
+                "self_consistency_chrono_high_precision": config.self_consistency_chrono_high_precision,
+                "self_consistency_chrono_adaptive_tolerance": config.self_consistency_chrono_adaptive_tolerance,
                 # Energy monitoring removed - halt option in adaptive timestep
                 "energy_monitor_halt_on_jump": config.energy_monitor_halt_on_jump,
                 "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
@@ -3707,6 +4066,15 @@ class OptimizationPlugin(ttk.Frame):
             self.last_loaded_config = filepath
 
             self._log_result(f"[OK] Configuration saved to {filepath}")
+            print(f"[DEBUG] Chrono settings saved to config:")
+            print(f"  chrono_interpolate: {config.self_consistency_chrono_interpolate}")
+            print(f"  chrono_tolerance: {config.self_consistency_chrono_tolerance}")
+            print(
+                f"  chrono_high_precision: {config.self_consistency_chrono_high_precision}"
+            )
+            print(
+                f"  chrono_adaptive_tolerance: {config.self_consistency_chrono_adaptive_tolerance}"
+            )
             return True
         except Exception as e:
             _show_error_dialog(self, "Save Error", f"Failed to save config: {e}")
@@ -4997,6 +5365,10 @@ class OptimizationPlugin(ttk.Frame):
 
     def _run_optimization_background(self):
         """Run optimization in background using selected algorithm."""
+        # Set logging context for this optimization run
+        method = self.config.optimization_method
+        set_logging_context(f"optimization_{method}")
+
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
         import time
@@ -5017,6 +5389,58 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result("=" * 80)
             self._log_result(f"OPTIMIZATION MODE: {self.config.optimization_method}")
             self._log_result("=" * 80)
+            self._log_result("")
+
+            # Apply log verbosity settings (same as sweep mode)
+            # Save original values to restore later
+            original_sc_verbosity = self.config.self_consistency_verbosity
+            original_adaptive_debug = self.config.adaptive_timestep_debug
+
+            use_no_logging = self.config.log_verbosity == "none"
+            use_truncated_logging = self.config.log_verbosity == "truncated"
+            use_full_logging = self.config.log_verbosity == "full"
+
+            # Apply log verbosity settings - control what gets logged
+            # "full" mode INHERITS stability settings from config/GUI
+            # Other modes override to reduce output
+            if use_full_logging:
+                # INHERIT stability verbosity settings from config (don't override)
+                # Use whatever was set in Stability tab or loaded from config
+                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+                self._log_result(
+                    "  Full debug logging enabled (inherits Stability tab settings)"
+                )
+                self._log_result(
+                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
+                )
+                self._log_result(
+                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
+                )
+            elif use_truncated_logging:
+                # Disable verbose logging for optimizations with many evaluations
+                self.config.self_consistency_verbosity = 0
+                self.config.adaptive_timestep_debug = False
+                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+                self._log_result(
+                    "  Truncated logging (parameters + metrics + errors only)"
+                )
+            elif use_no_logging:
+                # Completely disable all debug logging
+                self.config.self_consistency_verbosity = 0
+                self.config.adaptive_timestep_debug = False
+                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+                self._log_result("  Debug logging disabled")
+            else:
+                # Unknown log verbosity - use config file values
+                self._log_result(
+                    f"Log verbosity: {self.config.log_verbosity} (unknown, using config values)"
+                )
+                self._log_result(
+                    f"  adaptive_timestep_debug: {self.config.adaptive_timestep_debug}"
+                )
+                self._log_result(
+                    f"  self_consistency_verbosity: {self.config.self_consistency_verbosity}"
+                )
             self._log_result("")
 
             # Build parameter names and bounds from config
@@ -5140,14 +5564,14 @@ class OptimizationPlugin(ttk.Frame):
                 # Check for cancellation
                 if not self.running:
                     self._log_result("[CANCELLED] Optimization cancelled by user")
-                    return np.inf if not maximize else -np.inf
+                    return np.inf
 
                 if self.gui_controller and hasattr(
                     self.gui_controller, "_cancel_requested"
                 ):
                     if self.gui_controller._cancel_requested:
                         self._log_result("[CANCELLED] Optimization cancelled by user")
-                        return np.inf if not maximize else -np.inf
+                        return np.inf
 
                 try:
                     # Map parameters
@@ -5258,7 +5682,7 @@ class OptimizationPlugin(ttk.Frame):
                             )
                             # Give it a brief moment to respond
                             thread.join(timeout=2.0)
-                            return np.inf if not maximize else -np.inf
+                            return np.inf
                         elif error_container[0] is not None:
                             raise error_container[0]
                         else:
@@ -5291,10 +5715,36 @@ class OptimizationPlugin(ttk.Frame):
                             "evaluation": eval_num,
                             "parameters": dict(zip(param_names, x)),
                             "failed": True,
-                            "objective_value": np.inf if not maximize else -np.inf,
+                            "halted_early": result.get("halted_early", False)
+                            if result
+                            else False,
+                            "halt_reason": result.get("halt_reason", None)
+                            if result
+                            else None,
+                            "objective_value": float("inf"),
                         }
                         all_evaluations.append(eval_record)
-                        return np.inf if not maximize else -np.inf
+                        return np.inf
+
+                    # Check if run was halted early
+                    if result.get("halted_early", False):
+                        self._log_result(
+                            f"[INFO] Evaluation {eval_num} halted early: {result.get('halt_reason', 'unknown')}"
+                        )
+                        self._log_result(
+                            f"[INFO] Returning inf (rejecting halted evaluation)"
+                        )
+                        # Store halted evaluation
+                        eval_record = {
+                            "evaluation": eval_num,
+                            "parameters": dict(zip(param_names, x)),
+                            "failed": False,
+                            "halted_early": True,
+                            "halt_reason": result.get("halt_reason"),
+                            "objective_value": float("inf"),
+                        }
+                        all_evaluations.append(eval_record)
+                        return np.inf
 
                     # Extract metric value
                     metrics = result["metrics"]
@@ -5312,29 +5762,49 @@ class OptimizationPlugin(ttk.Frame):
                             for k, v in metrics.items():
                                 self._log_result(f"  {k}: {v}")
                         self._log_result(
-                            f"[WARNING] Returning -inf (rejecting this evaluation)"
+                            f"[WARNING] Returning inf (rejecting this evaluation)"
                         )
                         # Store failed evaluation
                         eval_record = {
                             "evaluation": eval_num,
                             "parameters": dict(zip(param_names, x)),
                             "failed": True,
-                            "objective_value": np.inf if not maximize else -np.inf,
+                            "objective_value": float("inf"),
                             "metrics": result.get("metrics", {}),
                         }
                         all_evaluations.append(eval_record)
-                        return np.inf if not maximize else -np.inf
+                        return np.inf
+
+                    penalty = self._compute_soft_penalty(
+                        aperture_radius=aperture,
+                        macroparticle_charge_multiplier=macroparticle_charge_mult,
+                        initial_energy_gev=energy,
+                    )
+
+                    adjusted_value = value
+                    if penalty > 0:
+                        if maximize:
+                            adjusted_value = value - penalty
+                        else:
+                            adjusted_value = value + penalty
+                        self._log_result(
+                            "[INFO] Applied soft penalty of "
+                            f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
+                        )
 
                     # Return value to minimize (negate if maximizing)
-                    result_value = -value if maximize else value
+                    result_value = -adjusted_value if maximize else adjusted_value
 
                     # Store successful evaluation
                     eval_record = {
                         "evaluation": eval_num,
                         "parameters": dict(zip(param_names, x)),
-                        "objective_value": value,  # Store original value
+                        "objective_value": adjusted_value,
+                        "raw_objective_value": value,
+                        "soft_penalty": penalty,
                         "fitness": result_value,  # Store fitness (for minimization)
                         "failed": False,
+                        "halted_early": False,
                         "metrics": result.get("metrics", {}),
                     }
 
@@ -5364,11 +5834,11 @@ class OptimizationPlugin(ttk.Frame):
                         "parameters": dict(zip(param_names, x)),
                         "failed": True,
                         "error": str(e),
-                        "objective_value": np.inf if not maximize else -np.inf,
+                        "objective_value": float("inf"),
                     }
                     all_evaluations.append(eval_record)
 
-                    return np.inf if not maximize else -np.inf
+                    return np.inf
 
             if method == "genetic_algorithm":
                 # Define progress callback for convergence monitoring
@@ -5381,10 +5851,17 @@ class OptimizationPlugin(ttk.Frame):
                     converged,
                 ):
                     """Log convergence progress after each generation."""
-                    self._log_result(
-                        f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
-                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
-                    )
+                    # Filter out inf values in logging
+                    if np.isfinite(best_value):
+                        self._log_result(
+                            f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
+                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                        )
+                    else:
+                        self._log_result(
+                            f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
+                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                        )
                     if generation >= self.config.optimization_convergence_patience:
                         if converged:
                             self._log_result(
@@ -5501,8 +5978,14 @@ class OptimizationPlugin(ttk.Frame):
             # Save results (this sets self._last_optimization_dir)
             self._save_optimization_results(result, param_names)
 
-            # Re-run top N parameters to generate and save trajectories
-            self._save_top_n_optimization_trajectories(result, param_names)
+            # Re-run top N parameters to generate and save trajectories (only if enabled)
+            if self.config.save_top_n_trajectories:
+                self._save_top_n_optimization_trajectories(result, param_names)
+            else:
+                self._log_result("")
+                self._log_result(
+                    "[INFO] Top N trajectory saving disabled (save_top_n_trajectories=False)"
+                )
 
             # Cache all evaluations for saving and generate heatmap
             if len(all_evaluations) > 0:
@@ -5528,12 +6011,48 @@ class OptimizationPlugin(ttk.Frame):
             else:
                 self._log_result(f"  Total time: {elapsed_time:.1f}s")
 
+        except KeyboardInterrupt:
+            self._log_result("")
+            self._log_result("[CANCELLED] Optimization cancelled by user")
+            self._log_result("")
+            # Try to save partial results if we have any evaluations
+            if "all_evaluations" in locals() and len(all_evaluations) > 0:
+                self._log_result(
+                    f"[INFO] Saving partial results ({len(all_evaluations)} evaluations completed)..."
+                )
+                try:
+                    self._save_partial_optimization_results(
+                        all_evaluations, param_names, "CANCELLED"
+                    )
+                except Exception as save_err:
+                    self._log_result(
+                        f"[WARNING] Failed to save partial results: {save_err}"
+                    )
         except Exception as e:
             import traceback
 
             error_msg = f"Optimization failed: {e}\n{traceback.format_exc()}"
             self._log_result(f"[ERROR] {error_msg}")
+            # Try to save partial results even on error
+            if "all_evaluations" in locals() and len(all_evaluations) > 0:
+                self._log_result(
+                    f"[INFO] Saving partial results ({len(all_evaluations)} evaluations completed)..."
+                )
+                try:
+                    self._save_partial_optimization_results(
+                        all_evaluations, param_names, "FAILED"
+                    )
+                except Exception as save_err:
+                    self._log_result(
+                        f"[WARNING] Failed to save partial results: {save_err}"
+                    )
         finally:
+            # Restore original verbosity settings
+            if "original_sc_verbosity" in locals():
+                self.config.self_consistency_verbosity = original_sc_verbosity
+            if "original_adaptive_debug" in locals():
+                self.config.adaptive_timestep_debug = original_adaptive_debug
+
             self.running = False
             self._update_progress(100, "Done")
             # Ensure log file is closed
@@ -5541,539 +6060,28 @@ class OptimizationPlugin(ttk.Frame):
                 self._close_log_file()
 
     def _save_optimization_results(self, result, param_names):
-        """Save optimization results to file in timestamped directory."""
-        import json
-        from datetime import datetime
-        from pathlib import Path
+        """Save optimization results to file via shared helper."""
+        return save_optimization_results(self, result, param_names)
 
-        # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # Close any open log file before creating new directory
-        # (we'll reopen in the new directory)
-        if self._log_file is not None:
-            self._close_log_file()
-
-        # Get config name if available (strip extension and path)
-        config_name = "optimization"
-        if hasattr(self, "last_loaded_config") and self.last_loaded_config:
-            config_name = Path(self.last_loaded_config).stem
-
-        # Create timestamped folder: YYYYMMDD_HHMMSS_configname_method
-        method_suffix = self.config.optimization_method.replace("_", "")
-        opt_dir = (
-            Path(self.sweep_output_dir) / f"{timestamp}_{config_name}_{method_suffix}"
+    def _save_top_trajectories_summary_table(self, result, param_names, output_dir):
+        """Generate and save top trajectories summary via helper."""
+        return save_top_trajectories_summary_table(
+            self, result, param_names, output_dir
         )
-        opt_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create results dictionary
-        results_dict = {
-            "optimization_method": self.config.optimization_method,
-            "objective": self.config.objective,
-            "best_parameters": result.best_params_dict,
-            "best_value": float(result.fun),
-            "function_evaluations": int(result.nfev)
-            if hasattr(result, "nfev")
-            else None,
-            "success": bool(result.success),
-            "message": str(result.message) if hasattr(result, "message") else None,
-            "timestamp": timestamp,
-        }
-
-        # Add top N summary table if available (for population-based methods)
-        if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
-            top_n = max(1, int(self.config.optimization_save_top_n))
-            sorted_indices = np.argsort(result.final_fitness)
-            n_available = min(top_n, len(sorted_indices))
-
-            top_n_summary = []
-            for i in range(n_available):
-                idx = sorted_indices[i]
-                params_array = result.final_population[idx]
-                params_dict = dict(zip(param_names, params_array))
-                fitness = result.final_fitness[idx]
-
-                # Convert fitness to actual metric value
-                maximize = "max" in self.config.objective.lower()
-                metric_value = -fitness if maximize else fitness
-
-                top_n_summary.append(
-                    {
-                        "rank": i + 1,
-                        "parameters": params_dict,
-                        "fitness": float(fitness),
-                        "metric_value": float(metric_value),
-                    }
-                )
-
-            results_dict["top_n_results"] = top_n_summary
-            results_dict["top_n_count"] = n_available
-
-        # Add convergence history if available
-        if hasattr(result, "convergence_history"):
-            results_dict["convergence_history"] = result.convergence_history
-
-        # Add all evaluations if available (from closure)
-        all_evaluations = None
-        if hasattr(self, "_all_evaluations_cache"):
-            all_evaluations = self._all_evaluations_cache
-            # Remove trajectory data from JSON (too large), save to separate files
-            all_evaluations_for_json = []
-            for eval_rec in all_evaluations:
-                eval_rec_copy = dict(eval_rec)
-                if "trajectory" in eval_rec_copy:
-                    del eval_rec_copy["trajectory"]
-                all_evaluations_for_json.append(eval_rec_copy)
-
-            results_dict["all_evaluations"] = all_evaluations_for_json
-            results_dict["total_evaluations"] = len(all_evaluations)
-
-        # Determine what to export based on format and scope settings
-        export_format = self.config.metrics_export_format
-        export_scope = self.config.metrics_export_scope
-
-        # Filter evaluations based on scope
-        evaluations_to_export = None
-        if all_evaluations and export_scope == "top_n":
-            # Export only top N
-            top_n = max(1, int(self.config.optimization_save_top_n))
-            sorted_evals = sorted(
-                all_evaluations, key=lambda e: e.get("objective_value", float("inf"))
-            )
-            evaluations_to_export = sorted_evals[:top_n]
-            scope_desc = f"top {len(evaluations_to_export)}"
-        elif all_evaluations:
-            # Export all
-            evaluations_to_export = all_evaluations
-            scope_desc = "all"
-
-        # Save to JSON if requested
-        if export_format in ["json", "both"]:
-            # For top_n scope, only include top N in the JSON
-            if export_scope == "top_n" and evaluations_to_export:
-                results_dict["all_evaluations"] = [
-                    {k: v for k, v in e.items() if k != "trajectory"}
-                    for e in evaluations_to_export
-                ]
-                results_dict["total_evaluations"] = len(evaluations_to_export)
-                results_dict["export_scope"] = "top_n"
-
-            results_file = opt_dir / "optimization_results.json"
-            with open(results_file, "w") as f:
-                json.dump(results_dict, f, indent=2)
-
-            self._log_result(
-                f"Results saved to JSON ({scope_desc} evaluations): {results_file}"
-            )
-
-        # Export to CSV if requested
-        if export_format in ["csv", "both"] and evaluations_to_export:
-            self._export_evaluations_csv(evaluations_to_export, param_names, opt_dir)
-            self._log_result(f"Metrics exported to CSV ({scope_desc} evaluations)")
-
-        # Save all evaluation trajectories if requested
-        if self.config.save_all_trajectories and all_evaluations:
-            self._log_result("")
-            self._log_result("Saving all evaluation trajectories...")
-            saved_count = 0
-            for eval_rec in all_evaluations:
-                if not eval_rec.get("failed", True) and "trajectory" in eval_rec:
-                    eval_num = eval_rec["evaluation"]
-                    traj_file = self._save_evaluation_trajectory(
-                        eval_num, eval_rec["trajectory"], opt_dir
-                    )
-                    if traj_file:
-                        saved_count += 1
-            self._log_result(f"  Saved {saved_count} evaluation trajectories")
-
-        # Generate plots
-        self._generate_optimization_plots(result, param_names, opt_dir)
-
-        # Store the output directory for trajectory saving
-        self._last_optimization_dir = opt_dir
-
-        # Reopen log file in the final output directory
-        self._open_log_file(opt_dir)
 
     def _generate_optimization_plots(self, result, param_names, output_dir):
-        """Generate optimization visualization plots."""
-        from pathlib import Path
-
-        import matplotlib.pyplot as plt
-        import numpy as np
-
-        try:
-            # Plot 1: Convergence history (if available)
-            if hasattr(result, "convergence_history") and result.convergence_history:
-                fig, axes = plt.subplots(2, 1, figsize=(10, 8))
-
-                history = result.convergence_history
-                generations = [h["generation"] for h in history]
-                best_fitness = [h["best_fitness"] for h in history]
-                mean_fitness = [h["mean_fitness"] for h in history]
-                std_fitness = [h["std_fitness"] for h in history]
-
-                # Determine if maximizing or minimizing
-                maximize = "max" in self.config.objective.lower()
-
-                # Convert fitness back to actual metric values
-                if maximize:
-                    best_values = [-f for f in best_fitness]
-                    mean_values = [-f for f in mean_fitness]
-                else:
-                    best_values = best_fitness
-                    mean_values = mean_fitness
-
-                # Best fitness over generations
-                axes[0].plot(generations, best_values, "b-", linewidth=2, label="Best")
-                axes[0].plot(
-                    generations, mean_values, "g--", linewidth=1.5, label="Mean"
-                )
-                axes[0].fill_between(
-                    generations,
-                    [m - s for m, s in zip(mean_values, std_fitness)],
-                    [m + s for m, s in zip(mean_values, std_fitness)],
-                    alpha=0.2,
-                    color="green",
-                    label="±1 std",
-                )
-                axes[0].set_xlabel("Generation")
-                axes[0].set_ylabel(f"{self.config.objective}")
-                axes[0].set_title("Optimization Convergence")
-                axes[0].legend()
-                axes[0].grid(True, alpha=0.3)
-
-                # Population diversity (std dev)
-                axes[1].plot(generations, std_fitness, "r-", linewidth=2)
-                axes[1].set_xlabel("Generation")
-                axes[1].set_ylabel("Population Std Dev")
-                axes[1].set_title("Population Diversity")
-                axes[1].grid(True, alpha=0.3)
-
-                plt.tight_layout()
-                convergence_plot = output_dir / "optimization_convergence.png"
-                plt.savefig(convergence_plot, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-                self._log_result(f"Convergence plot saved to: {convergence_plot}")
-
-            # Plot 2: Parameter exploration (if 2D parameter space)
-            if len(param_names) == 2 and hasattr(result, "final_population"):
-                fig, ax = plt.subplots(figsize=(8, 6))
-
-                population = result.final_population
-                fitness = result.final_fitness
-
-                # Determine if maximizing
-                maximize = "max" in self.config.objective.lower()
-                if maximize:
-                    plot_fitness = -fitness
-                else:
-                    plot_fitness = fitness
-
-                # Scatter plot of final population
-                scatter = ax.scatter(
-                    population[:, 0],
-                    population[:, 1],
-                    c=plot_fitness,
-                    cmap="viridis",
-                    s=50,
-                    alpha=0.6,
-                    edgecolors="black",
-                    linewidth=0.5,
-                )
-
-                # Mark best point
-                best_idx = np.argmin(fitness)
-                ax.scatter(
-                    population[best_idx, 0],
-                    population[best_idx, 1],
-                    c="red",
-                    s=200,
-                    marker="*",
-                    edgecolors="black",
-                    linewidth=1.5,
-                    label="Best",
-                    zorder=5,
-                )
-
-                ax.set_xlabel(param_names[0])
-                ax.set_ylabel(param_names[1])
-                ax.set_title("Parameter Space Exploration (Final Population)")
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-
-                cbar = plt.colorbar(scatter, ax=ax)
-                cbar.set_label(self.config.objective)
-
-                plt.tight_layout()
-                param_plot = output_dir / "parameter_exploration.png"
-                plt.savefig(param_plot, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-                self._log_result(f"Parameter exploration plot saved to: {param_plot}")
-
-            # Plot 3: Best parameter values (bar chart)
-            if hasattr(result, "best_params_dict"):
-                fig, ax = plt.subplots(figsize=(8, max(4, len(param_names) * 0.5)))
-
-                params = list(result.best_params_dict.keys())
-                values = list(result.best_params_dict.values())
-
-                ax.barh(params, values, color="steelblue", edgecolor="black")
-                ax.set_xlabel("Value")
-                ax.set_title("Best Parameters Found")
-                ax.grid(True, alpha=0.3, axis="x")
-
-                plt.tight_layout()
-                params_plot = output_dir / "best_parameters.png"
-                plt.savefig(params_plot, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-                self._log_result(f"Best parameters plot saved to: {params_plot}")
-
-        except Exception as e:
-            import traceback
-
-            self._log_result(f"[WARNING] Failed to generate optimization plots: {e}")
-            self._log_result(traceback.format_exc())
+        """Generate optimization plots via shared helper."""
+        return generate_optimization_plots(self, result, param_names, output_dir)
 
     def _generate_optimization_heatmap(self, all_evaluations, param_names, output_dir):
-        """Generate sparse heatmap from optimization evaluations.
-
-        Parameters
-        ----------
-        all_evaluations : list
-            List of evaluation dictionaries with parameters and objective values
-        param_names : list
-            List of parameter names
-        output_dir : Path
-            Output directory for saving plots
-        """
-        from pathlib import Path
-
-        import matplotlib.pyplot as plt
-        import numpy as np
-        from scipy.interpolate import griddata
-
-        try:
-            if len(all_evaluations) < 3:
-                self._log_result(
-                    "[INFO] Not enough evaluations for heatmap (need at least 3)"
-                )
-                return
-
-            # Filter out failed evaluations and non-finite values
-            successful_evals = [
-                e
-                for e in all_evaluations
-                if not e.get("failed", False)
-                and np.isfinite(e.get("objective_value", np.inf))
-            ]
-
-            if len(successful_evals) < 3:
-                self._log_result("[INFO] Not enough successful evaluations for heatmap")
-                return
-
-            # Determine if maximizing or minimizing
-            maximize = "max" in self.config.objective.lower()
-
-            # Only generate heatmaps for 1D or 2D parameter spaces
-            # For 3+ parameters, skip heatmap generation by default (too many dimensions)
-            if len(param_names) > 2:
-                self._log_result(
-                    f"[INFO] Skipping heatmap generation for {len(param_names)}-parameter optimization "
-                    f"(heatmaps only generated for 1-2 parameter optimizations)"
-                )
-                return
-
-            # For 2D parameter space, create traditional heatmap
-            elif len(param_names) == 2:
-                self._log_result(
-                    f"[INFO] Generating 2D optimization heatmap for {param_names[0]} vs {param_names[1]}"
-                )
-
-                fig, ax = plt.subplots(figsize=(10, 8))
-
-                # Extract data
-                x_vals = [e["parameters"][param_names[0]] for e in successful_evals]
-                y_vals = [e["parameters"][param_names[1]] for e in successful_evals]
-                z_vals = [e["objective_value"] for e in successful_evals]
-
-                # Create interpolated grid
-                x_min, x_max = min(x_vals), max(x_vals)
-                y_min, y_max = min(y_vals), max(y_vals)
-
-                # Add 5% margin
-                x_range = x_max - x_min
-                y_range = y_max - y_min
-                x_min -= x_range * 0.05
-                x_max += x_range * 0.05
-                y_min -= y_range * 0.05
-                y_max += y_range * 0.05
-
-                # Create grid for interpolation
-                grid_x, grid_y = np.meshgrid(
-                    np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100)
-                )
-
-                # Interpolate
-                grid_z = griddata(
-                    (x_vals, y_vals),
-                    z_vals,
-                    (grid_x, grid_y),
-                    method="linear",
-                    fill_value=np.nan,
-                )
-
-                # Plot heatmap
-                im = ax.contourf(
-                    grid_x,
-                    grid_y,
-                    grid_z,
-                    levels=20,
-                    cmap="RdYlGn" if maximize else "RdYlGn_r",
-                    extend="both",
-                )
-
-                # Overlay evaluation points
-                scatter = ax.scatter(
-                    x_vals,
-                    y_vals,
-                    c=z_vals,
-                    s=30,
-                    edgecolors="black",
-                    linewidth=0.5,
-                    cmap="RdYlGn" if maximize else "RdYlGn_r",
-                    zorder=5,
-                    alpha=0.7,
-                )
-
-                # Mark best point
-                best_idx = np.argmax(z_vals) if maximize else np.argmin(z_vals)
-                ax.scatter(
-                    x_vals[best_idx],
-                    y_vals[best_idx],
-                    c="red",
-                    s=300,
-                    marker="*",
-                    edgecolors="black",
-                    linewidth=2,
-                    label="Best",
-                    zorder=10,
-                )
-
-                ax.set_xlabel(param_names[0])
-                ax.set_ylabel(param_names[1])
-                ax.set_title(
-                    f"Optimization Landscape: {self.config.objective}\n({len(successful_evals)} evaluations)"
-                )
-                ax.legend()
-
-                # Use log scale if parameter ranges span multiple orders of magnitude
-                x_range = x_max - x_min
-                y_range = y_max - y_min
-                if x_max / (x_min + 1e-10) > 100:  # Avoid division by zero
-                    ax.set_xscale("log")
-                if y_max / (y_min + 1e-10) > 100:
-                    ax.set_yscale("log")
-
-                cbar = plt.colorbar(im, ax=ax)
-                cbar.set_label(self.config.objective)
-
-                plt.tight_layout()
-                heatmap_file = output_dir / "optimization_heatmap_2d.png"
-                plt.savefig(heatmap_file, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-                self._log_result(
-                    f"[OK] 2D optimization heatmap saved to: {heatmap_file}"
-                )
-
-            # For 1D parameter space, create line plot
-            else:
-                self._log_result(
-                    "[INFO] Single parameter optimization - no heatmap needed"
-                )
-
-        except Exception as e:
-            import traceback
-
-            self._log_result(f"[WARNING] Failed to generate optimization plots: {e}")
-            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
+        """Generate optimization heatmap via shared helper."""
+        return generate_optimization_heatmap(
+            self, all_evaluations, param_names, output_dir
+        )
 
     def _save_top_n_optimization_trajectories(self, result, param_names):
-        """Re-run top N parameter sets and save trajectories to timestamped directory.
-
-        For population-based methods (genetic algorithm, differential evolution),
-        saves the top N individuals. For other methods, saves only the best.
-        """
-        from pathlib import Path
-
-        try:
-            # Determine how many trajectories to save
-            top_n = max(1, int(self.config.optimization_save_top_n))
-
-            # Extract top parameter sets based on optimization method
-            top_params_list = []
-
-            if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
-                # Population-based method (genetic algorithm, differential evolution)
-                # Sort by fitness (already sorted, but just to be safe)
-                sorted_indices = np.argsort(result.final_fitness)
-                n_available = min(top_n, len(sorted_indices))
-
-                self._log_result("")
-                self._log_result(
-                    f"Generating top {n_available} trajectories from population..."
-                )
-
-                for i in range(n_available):
-                    idx = sorted_indices[i]
-                    params_array = result.final_population[idx]
-                    params_dict = dict(zip(param_names, params_array))
-                    fitness = result.final_fitness[idx]
-                    top_params_list.append(
-                        {"params": params_dict, "fitness": fitness, "rank": i + 1}
-                    )
-            else:
-                # Single-solution method (Nelder-Mead, multi_start, etc.)
-                # Only save the best
-                self._log_result("")
-                self._log_result("Generating best trajectory...")
-
-                top_params_list.append(
-                    {
-                        "params": result.best_params_dict,
-                        "fitness": result.fun,
-                        "rank": 1,
-                    }
-                )
-
-            # Generate and save trajectory for each top parameter set
-            trajectory_data_list = []
-            for item in top_params_list:
-                traj_data = self._save_single_optimization_trajectory(
-                    params_dict=item["params"],
-                    param_names=param_names,
-                    rank=item["rank"],
-                    fitness=item["fitness"],
-                )
-                if traj_data:
-                    trajectory_data_list.append(
-                        {
-                            "rank": item["rank"],
-                            "params": item["params"],
-                            "fitness": item["fitness"],
-                            "trajectory": traj_data,
-                        }
-                    )
-
-            # Generate comparison plot if we have multiple trajectories
-            if len(trajectory_data_list) > 1:
-                self._generate_trajectory_comparison_plot(trajectory_data_list)
-
-        except Exception as e:
-            import traceback
-
-            self._log_result(f"[WARNING] Failed to save top N trajectories: {e}")
-            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
+        """Re-run top N parameter sets and save trajectories via helper."""
+        return save_top_n_optimization_trajectories(self, result, param_names)
 
     def _save_single_optimization_trajectory(
         self, params_dict, param_names, rank, fitness
@@ -6170,46 +6178,103 @@ class OptimizationPlugin(ttk.Frame):
                 import matplotlib.pyplot as plt
 
                 traj = result_data["trajectory"]
+                metrics = result_data.get("metrics", {})
 
-                fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+                fig, axes = plt.subplots(3, 2, figsize=(14, 14))
 
-                # z vs t
-                axes[0, 0].plot(traj["t"], traj["z"], "b-", linewidth=1.5)
-                axes[0, 0].set_xlabel("Time (ns)")
-                axes[0, 0].set_ylabel("z (mm)")
-                axes[0, 0].set_title("Longitudinal Position")
+                # Extract trajectory arrays
+                z = np.array(traj["z"])
+                t = np.array(traj["t"])
+                r = np.array(traj["r"])
+                gamma_arr = np.array(traj.get("gamma", []))
+                pr = np.array(traj.get("pr", []))
+
+                # Calculate delta_e and percent_delta_e from gamma
+                if len(gamma_arr) > 0:
+                    gamma_initial = gamma_arr[0]
+                    delta_gamma = gamma_arr - gamma_initial
+                    # Energy in MeV for electrons
+                    delta_e_mev = delta_gamma * 0.511
+                    percent_delta_e = (delta_gamma / gamma_initial) * 100.0
+                else:
+                    delta_e_mev = np.zeros_like(z)
+                    percent_delta_e = np.zeros_like(z)
+
+                # Row 1, Col 1: z vs t
+                axes[0, 0].plot(t, z, "b-", linewidth=1.5)
+                axes[0, 0].set_xlabel("Time (ns)", fontsize=10)
+                axes[0, 0].set_ylabel("z (mm)", fontsize=10)
+                axes[0, 0].set_title(
+                    "Longitudinal Position", fontsize=11, fontweight="bold"
+                )
                 axes[0, 0].grid(True, alpha=0.3)
 
-                # r vs z
-                axes[0, 1].plot(traj["z"], traj["r"], "r-", linewidth=1.5)
-                axes[0, 1].set_xlabel("z (mm)")
-                axes[0, 1].set_ylabel("r (mm)")
-                axes[0, 1].set_title("Transverse Position (Radial)")
+                # Row 1, Col 2: r vs z
+                axes[0, 1].plot(z, r * 1e3, "r-", linewidth=1.5)
+                axes[0, 1].set_xlabel("z (mm)", fontsize=10)
+                axes[0, 1].set_ylabel("r (μm)", fontsize=10)
+                axes[0, 1].set_title(
+                    "Transverse Position (Radial)", fontsize=11, fontweight="bold"
+                )
                 axes[0, 1].grid(True, alpha=0.3)
 
-                # gamma vs z
-                if "gamma" in traj:
-                    axes[1, 0].plot(traj["z"], traj["gamma"], "g-", linewidth=1.5)
-                    axes[1, 0].set_xlabel("z (mm)")
-                    axes[1, 0].set_ylabel("γ")
-                    axes[1, 0].set_title("Lorentz Factor")
+                # Row 2, Col 1: gamma vs z (with adaptive scaling)
+                if len(gamma_arr) > 0:
+                    axes[1, 0].plot(z, gamma_arr, "g-", linewidth=1.5)
+                    axes[1, 0].set_xlabel("z (mm)", fontsize=10)
+                    axes[1, 0].set_ylabel("γ", fontsize=10)
+                    axes[1, 0].set_title(
+                        "Lorentz Factor", fontsize=11, fontweight="bold"
+                    )
                     axes[1, 0].grid(True, alpha=0.3)
+                    # Auto-scale y-axis to show variations
+                    gamma_mean = np.mean(gamma_arr)
+                    gamma_range = np.max(gamma_arr) - np.min(gamma_arr)
+                    if gamma_range > 0:
+                        margin = max(gamma_range * 0.1, gamma_mean * 0.001)
+                        axes[1, 0].set_ylim(
+                            [np.min(gamma_arr) - margin, np.max(gamma_arr) + margin]
+                        )
 
-                # pr vs z
-                if "pr" in traj:
-                    axes[1, 1].plot(traj["z"], traj["pr"], "m-", linewidth=1.5)
-                    axes[1, 1].set_xlabel("z (mm)")
-                    axes[1, 1].set_ylabel("pr (amu·mm/ns)")
-                    axes[1, 1].set_title("Transverse Momentum (Radial)")
-                    axes[1, 1].grid(True, alpha=0.3)
-
-                # Create title with rank and fitness
-                rank_str = f"Rank #{rank}" if rank > 1 else "Best"
-                param_str = ", ".join([f"{k}={v:.4g}" for k, v in params_dict.items()])
-                plt.suptitle(
-                    f"{rank_str} Trajectory (fitness={fitness:.6e}): {param_str}",
-                    fontsize=11,
+                # Row 2, Col 2: Delta E (MeV) vs z
+                axes[1, 1].plot(z, delta_e_mev, "orange", linewidth=1.5)
+                axes[1, 1].set_xlabel("z (mm)", fontsize=10)
+                axes[1, 1].set_ylabel("ΔE (MeV)", fontsize=10)
+                axes[1, 1].set_title("Energy Change", fontsize=11, fontweight="bold")
+                axes[1, 1].grid(True, alpha=0.3)
+                axes[1, 1].axhline(
+                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
                 )
+
+                # Row 3, Col 1: Percent Delta E vs z
+                axes[2, 0].plot(z, percent_delta_e, "purple", linewidth=1.5)
+                axes[2, 0].set_xlabel("z (mm)", fontsize=10)
+                axes[2, 0].set_ylabel("ΔE/E (%)", fontsize=10)
+                axes[2, 0].set_title(
+                    "Percent Energy Change", fontsize=11, fontweight="bold"
+                )
+                axes[2, 0].grid(True, alpha=0.3)
+                axes[2, 0].axhline(
+                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
+                )
+
+                # Row 3, Col 2: pr vs z
+                if len(pr) > 0:
+                    axes[2, 1].plot(z, pr, "m-", linewidth=1.5)
+                    axes[2, 1].set_xlabel("z (mm)", fontsize=10)
+                    axes[2, 1].set_ylabel("pr (amu·mm/ns)", fontsize=10)
+                    axes[2, 1].set_title(
+                        "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
+                    )
+                    axes[2, 1].grid(True, alpha=0.3)
+
+                # Create title with rank, fitness, and key metrics
+                rank_str = f"Rank #{rank}" if rank > 1 else "Best"
+                delta_e_final = delta_e_mev[-1] if len(delta_e_mev) > 0 else 0
+                percent_final = percent_delta_e[-1] if len(percent_delta_e) > 0 else 0
+                title = f"{rank_str} Trajectory (fitness={fitness:.6e})\n"
+                title += f"ΔE={delta_e_final:.6f} MeV, ΔE/E={percent_final:.6f}%"
+                plt.suptitle(title, fontsize=12, fontweight="bold")
                 plt.tight_layout()
 
                 # Save with rank in filename
@@ -6250,124 +6315,125 @@ class OptimizationPlugin(ttk.Frame):
             return None
 
     def _generate_trajectory_comparison_plot(self, trajectory_data_list):
-        """Generate comparison plot showing all top N trajectories overlaid.
+        """Generate comparison plot for top trajectories via helper."""
+        return generate_trajectory_comparison_plot(self, trajectory_data_list)
+
+    def _save_partial_optimization_results(
+        self, all_evaluations, param_names, status="PARTIAL"
+    ):
+        """Save partial optimization results when cancelled or failed.
 
         Parameters
         ----------
-        trajectory_data_list : list of dict
-            List of trajectory data with keys: rank, params, fitness, trajectory
+        all_evaluations : list
+            List of completed evaluations
+        param_names : list
+            Parameter names
+        status : str
+            Status string ("CANCELLED", "FAILED", "PARTIAL")
         """
+        import json
+        from datetime import datetime
         from pathlib import Path
 
-        import matplotlib.pyplot as plt
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        try:
-            output_dir = getattr(
-                self, "_last_optimization_dir", Path(self.config.output_dir)
+        # Create results directory
+        if self.config.mode == "optimization":
+            method = self.config.optimization_method
+            output_dir = (
+                Path(self.config.output_dir)
+                / "optimizations"
+                / f"{timestamp}_{method}_{status}"
             )
+        else:
+            output_dir = Path(self.config.output_dir) / f"{timestamp}_{status}"
 
-            # Create figure with 4 subplots (matching individual trajectory format)
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Define colors for different ranks
-            colors = plt.cm.tab10(np.linspace(0, 1, len(trajectory_data_list)))
+        # Save evaluations to CSV
+        csv_path = output_dir / "all_evaluations.csv"
+        successful_evals = [
+            e
+            for e in all_evaluations
+            if not e.get("failed", False) and not e.get("halted_early", False)
+        ]
+        halted_evals = [e for e in all_evaluations if e.get("halted_early", False)]
 
-            for i, item in enumerate(trajectory_data_list):
-                rank = item["rank"]
-                traj = item["trajectory"]
-                fitness = item["fitness"]
-                color = colors[i]
+        if len(all_evaluations) > 0:
+            import csv
 
-                # Use radial components (r, pr) to match individual trajectory plots
-                z = np.array(traj.get("z", []))
-                t = np.array(traj.get("t", []))
-                r = np.array(traj.get("r", []))
-                gamma = np.array(traj.get("gamma", []))
-                pr = np.array(traj.get("pr", []))
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=["evaluation"]
+                    + param_names
+                    + ["objective_value", "failed", "halted_early", "halt_reason"],
+                )
+                writer.writeheader()
+                for e in all_evaluations:
+                    row = {
+                        "evaluation": e["evaluation"],
+                        "failed": e.get("failed", False),
+                        "halted_early": e.get("halted_early", False),
+                        "halt_reason": e.get("halt_reason", ""),
+                    }
+                    row.update(e["parameters"])
+                    row["objective_value"] = e.get("objective_value", float("nan"))
+                    writer.writerow(row)
+            self._log_result(f"[OK] Partial results saved to: {csv_path}")
 
-                if len(z) == 0:
-                    continue
+        # Save JSON summary
+        summary = {
+            "status": status,
+            "timestamp": timestamp,
+            "total_evaluations": len(all_evaluations),
+            "successful_evaluations": len(successful_evals),
+            "halted_evaluations": len(halted_evals),
+            "failed_evaluations": len(all_evaluations)
+            - len(successful_evals)
+            - len(halted_evals),
+            "parameters": param_names,
+            "objective": self.config.objective,
+        }
 
-                label = f"Rank #{rank}" if rank > 1 else "Best"
+        if len(successful_evals) > 0:
+            # Find best (filter out inf values)
+            maximize = "max" in self.config.objective.lower()
+            finite_evals = [
+                e
+                for e in successful_evals
+                if np.isfinite(e.get("objective_value", np.inf))
+            ]
 
-                # Plot 1: z vs t
-                if len(t) > 0 and len(z) > 0:
-                    axes[0, 0].plot(
-                        t, z, color=color, linewidth=2, label=label, alpha=0.8
+            if len(finite_evals) > 0:
+                if maximize:
+                    best = max(
+                        finite_evals,
+                        key=lambda x: x.get("objective_value", -float("inf")),
                     )
-
-                # Plot 2: r vs z (radial transverse position)
-                if len(r) > 0 and len(z) > 0:
-                    axes[0, 1].plot(
-                        z, r * 1e3, color=color, linewidth=2, label=label, alpha=0.8
+                else:
+                    best = min(
+                        finite_evals,
+                        key=lambda x: x.get("objective_value", float("inf")),
                     )
+                summary["best_parameters"] = best["parameters"]
+                summary["best_value"] = best["objective_value"]
+            else:
+                summary["note"] = "No finite objective values found"
 
-                # Plot 3: gamma vs z
-                if len(gamma) > 0 and len(z) > 0:
-                    axes[1, 0].plot(
-                        z, gamma, color=color, linewidth=2, label=label, alpha=0.8
-                    )
+        summary_path = output_dir / "partial_summary.json"
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        self._log_result(f"[OK] Summary saved to: {summary_path}")
 
-                # Plot 4: pr vs z (radial transverse momentum)
-                if len(pr) > 0 and len(z) > 0:
-                    axes[1, 1].plot(
-                        z, pr, color=color, linewidth=2, label=label, alpha=0.8
-                    )
+        # Move log file to results directory
+        if self._log_file_path is not None and self._log_file_path.exists():
+            import shutil
 
-            # Configure subplot 1: z vs t
-            axes[0, 0].set_xlabel("Time (ns)", fontsize=10)
-            axes[0, 0].set_ylabel("z (mm)", fontsize=10)
-            axes[0, 0].set_title(
-                "Longitudinal Position", fontsize=11, fontweight="bold"
-            )
-            axes[0, 0].grid(True, alpha=0.3)
-            axes[0, 0].legend(fontsize=9, loc="best")
-
-            # Configure subplot 2: r vs z (radial)
-            axes[0, 1].set_xlabel("z (mm)", fontsize=10)
-            axes[0, 1].set_ylabel("r (μm)", fontsize=10)
-            axes[0, 1].set_title(
-                "Transverse Position (Radial)", fontsize=11, fontweight="bold"
-            )
-            axes[0, 1].grid(True, alpha=0.3)
-            axes[0, 1].legend(fontsize=9, loc="best")
-
-            # Configure subplot 3: gamma vs z
-            axes[1, 0].set_xlabel("z (mm)", fontsize=10)
-            axes[1, 0].set_ylabel("γ", fontsize=10)
-            axes[1, 0].set_title("Lorentz Factor", fontsize=11, fontweight="bold")
-            axes[1, 0].grid(True, alpha=0.3)
-            axes[1, 0].legend(fontsize=9, loc="best")
-
-            # Configure subplot 4: pr vs z (radial)
-            axes[1, 1].set_xlabel("z (mm)", fontsize=10)
-            axes[1, 1].set_ylabel("pr", fontsize=10)
-            axes[1, 1].set_title(
-                "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
-            )
-            axes[1, 1].grid(True, alpha=0.3)
-            axes[1, 1].legend(fontsize=9, loc="best")
-
-            plt.suptitle(
-                f"Top {len(trajectory_data_list)} Trajectory Comparison",
-                fontsize=13,
-                fontweight="bold",
-            )
-            plt.tight_layout()
-
-            comparison_plot = output_dir / "trajectory_comparison.png"
-            plt.savefig(comparison_plot, dpi=150, bbox_inches="tight")
-            plt.close(fig)
-
-            self._log_result(
-                f"[OK] Trajectory comparison plot saved to: {comparison_plot}"
-            )
-
-        except Exception as e:
-            import traceback
-
-            self._log_result(f"[WARNING] Failed to generate comparison plot: {e}")
-            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
+            dest_log = output_dir / self._log_file_path.name
+            shutil.copy2(self._log_file_path, dest_log)
+            self._log_result(f"[OK] Log file saved to: {dest_log}")
 
     def _run_sweep_background(self, is_finetune=False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
@@ -6376,6 +6442,10 @@ class OptimizationPlugin(ttk.Frame):
             is_finetune: If True, this is a fine-tuning sweep
             finetune_regions: List of parameter regions for fine-tuning
         """
+        # Set logging context for this sweep run
+        context = "sweep_finetune" if is_finetune else "sweep"
+        set_logging_context(context)
+
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
         import time
@@ -6413,15 +6483,24 @@ class OptimizationPlugin(ttk.Frame):
                 # Suppress SC iteration output and adaptive timestep refinement output
                 self.config.self_consistency_verbosity = 0
                 self.config.adaptive_timestep_debug = False
-            else:  # full debug or top_n_only
-                # Show detailed SC convergence and adaptive timestep actions
-                self.config.self_consistency_verbosity = 2
-                self.config.adaptive_timestep_debug = True
+            # else: full debug mode - INHERIT stability settings from config/GUI (don't override)
 
             self._log_result(
                 f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs"
             )
             self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+
+            # Log inherited stability settings in full debug mode
+            if use_full_debug:
+                self._log_result(
+                    "  Full debug logging enabled (inherits Stability tab settings)"
+                )
+                self._log_result(
+                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
+                )
+                self._log_result(
+                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
+                )
 
             # Only log detailed config in full debug mode
             if use_full_debug:
@@ -6903,9 +6982,9 @@ class OptimizationPlugin(ttk.Frame):
                                 )
 
                         # Add trajectory if requested (check if any trajectory saving is enabled)
+                        # Note: save_top_n_trajectories only applies to optimization mode, not sweeps
                         save_traj = (
                             self.config.save_all_trajectories
-                            or self.config.save_top_n_trajectories
                             or self.config.save_failed_trajectories
                         )
                         if save_traj and "trajectory" in result:
@@ -7123,6 +7202,17 @@ class OptimizationPlugin(ttk.Frame):
         cancel_flag: Optional[List[bool]] = None,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
+        # Log stability analysis configuration for debugging
+        self._log_result(f"  [CONFIG] Run {run_num} stability settings:")
+        self._log_result(f"    smoothness_enabled: {self.config.smoothness_enabled}")
+        if self.config.smoothness_enabled:
+            self._log_result(
+                f"    smoothness_window_size: {self.config.smoothness_window_size}"
+            )
+            self._log_result(
+                f"    smoothness_reject_on_violation: {self.config.smoothness_reject_on_violation}"
+            )
+
         # Use provided rider values or fall back to config defaults
         rider_m_particle = (
             rider_m_particle if rider_m_particle is not None else self.config.m_particle
@@ -7198,8 +7288,12 @@ class OptimizationPlugin(ttk.Frame):
         from datetime import datetime
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
+        # Create a temporary subdirectory for this run's outputs (will be cleaned up)
+        # IMPORTANT: This must live under the same base directory that the orphan-cleanup
+        # routine scans (self.sweep_output_dir), otherwise temp dirs will only be cleaned
+        # up when the GUI starts (or never, if output_dir differs).
         run_output_dir = (
-            Path(self.config.output_dir) / f"_temp_run_{run_num}_{timestamp}"
+            Path(self.sweep_output_dir) / f"_temp_run_{run_num}_{timestamp}"
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -7272,327 +7366,492 @@ class OptimizationPlugin(ttk.Frame):
                 )
 
         # Run the integration with progress tracking
-        # Log diagnostic info for potentially problematic configurations
-        if aperture < 0.1:
-            self._log_result(
-                f"  [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)"
-            )
-        if macroparticle_charge_multiplier > 1000:
-            self._log_result(
-                f"  [DIAGNOSTIC] Run {run_num}: Large charge multiplier ({macroparticle_charge_multiplier:.0f})"
-            )
-            self._log_result(
-                f"    Note: This may significantly slow integration due to strong image forces"
-            )
-
-        self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
-
-        # Create cancel callback if cancel_flag is provided
-        cancel_callback = None
-        if cancel_flag is not None:
-
-            def check_cancel():
-                if cancel_flag[0]:
-                    self._log_result(
-                        f"  [CANCEL] Run {run_num}: Cancellation requested"
-                    )
-                return cancel_flag[0] if cancel_flag else False
-
-            cancel_callback = check_cancel
-
-        result = run_testbed(
-            options,
-            progress_callback=progress_callback,
-            cancel_callback=cancel_callback,
-        )
-        self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
-
-        # Sanity check: Verify final z position doesn't exceed expected distance
-        if (
-            result.rider_trajectory is not None
-            and self.config.timestep_strategy == "auto_distance"
-        ):
-            try:
-                traj = result.rider_trajectory
-                z_array = np.asarray(traj.get("z", []))
-                if len(z_array) > 0:
-                    final_z = float(z_array[-1])
-                    expected_max_z = wall_z + self.config.target_distance_mm
-
-                    if final_z > expected_max_z:
-                        excess = final_z - expected_max_z
-                        self._log_result(
-                            f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!"
-                        )
-                        self._log_result(f"    Final z: {final_z:.2f} mm")
-                        self._log_result(
-                            f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
-                        )
-                        self._log_result(
-                            f"    Exceeded by: {excess:.2f} mm ({excess / expected_max_z * 100:.1f}%)"
-                        )
-                    else:
-                        under = expected_max_z - final_z
-                        self._log_result(f"  [DEBUG] Run {run_num}: Final z check OK")
-                        self._log_result(
-                            f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)"
-                        )
-            except Exception as e:
-                self._log_result(
-                    f"  [WARNING] Run {run_num}: Failed to check final z position: {e}"
-                )
-
-        # No figures should be generated during sweeps (all display/save flags set to False)
-        # If any figures were created (shouldn't happen), close them as a safety measure
-        if result.figures:
-            self._log_result(
-                f"  [WARNING] Run {run_num}: Unexpected figures generated ({len(result.figures)}), closing them"
-            )
-            import matplotlib.pyplot as plt
-
-            for fig_name, fig in result.figures.items():
-                try:
-                    plt.close(fig)
-                    self._log_result(f"    Closed unexpected figure: {fig_name}")
-                except Exception as e:
-                    self._log_result(f"    Error closing figure {fig_name}: {e}")
-
-        # Clean up temporary run directory
-        import shutil
-
-        self._log_result(f"  [DEBUG] Cleaning up temp directory...")
+        #
+        # NOTE: We must always clean up the per-run temp directory, even when returning
+        # early (halted runs) or raising exceptions. We do that by wrapping the entire
+        # run/analysis section in a try/finally.
         try:
-            if run_output_dir.exists():
-                shutil.rmtree(run_output_dir)
-        except Exception:
-            pass  # Ignore cleanup errors
-        self._log_result(f"  [DEBUG] Temp directory cleaned")
-
-        # Extract metrics
-        self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
-        metrics = {}
-        if result.rider_delta_e is not None:
-            metrics["rider_delta_e_mev"] = result.rider_delta_e
-        if result.rider_gamma_initial is not None:
-            metrics["rider_gamma_initial"] = result.rider_gamma_initial
-        if result.rider_gamma_final is not None:
-            metrics["rider_gamma_final"] = result.rider_gamma_final
-
-        # Calculate max_percent_energy_gain from gamma values
-        gamma_initial = result.rider_gamma_initial
-        gamma_final = result.rider_gamma_final
-
-        # Diagnostic logging
-        self._log_result(f"  [RESULT] Run {run_num} metrics:")
-        self._log_result(f"    rider_gamma_initial: {gamma_initial}")
-        self._log_result(f"    rider_gamma_final: {gamma_final}")
-
-        # Try to calculate from available gamma values
-        if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
-            delta_gamma = gamma_final - gamma_initial
-            energy_gain_percent = delta_gamma / gamma_initial * 100.0
-            energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
-
-            metrics["max_percent_energy_gain"] = energy_gain_percent
-            metrics["delta_gamma"] = delta_gamma
-            metrics["energy_gain_ppm"] = energy_gain_ppm
-
-            self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
-            self._log_result(
-                f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+            # Log diagnostic info for potentially problematic configurations
+            if aperture < 0.1:
+                self._log_result(
+                    f"  [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)"
+                )
+            if macroparticle_charge_multiplier > 1000:
+                self._log_result(
+                    f"  [DIAGNOSTIC] Run {run_num}: Large charge multiplier ({macroparticle_charge_multiplier:.0f})"
+                )
+                self._log_result(
+                    f"    Note: This may significantly slow integration due to strong image forces"
+                )
+    
+            self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
+    
+            # Create cancel callback if cancel_flag is provided
+            cancel_callback = None
+            if cancel_flag is not None:
+    
+                def check_cancel():
+                    if cancel_flag[0]:
+                        self._log_result(
+                            f"  [CANCEL] Run {run_num}: Cancellation requested"
+                        )
+                    return cancel_flag[0] if cancel_flag else False
+    
+                cancel_callback = check_cancel
+    
+            # Create log callback to stream verbose SC/adaptive timestep output to GUI
+            # This ensures logs are visible in real-time even when not saved to file
+            log_callback = None
+            if (
+                self.config.self_consistency_verbosity > 0
+                or self.config.adaptive_timestep_debug
+            ):
+                # Create callback that forwards verbose logs to GUI
+                def verbose_log(message: str):
+                    # Filter for SC and adaptive timestep related messages
+                    if any(
+                        keyword in message
+                        for keyword in [
+                            "Particle",  # SC convergence output
+                            "converged",  # SC convergence status
+                            "Mass-shell error",  # SC error metrics
+                            "γ_velocity",  # SC gamma diagnostics
+                            "γ_energy",  # SC gamma diagnostics
+                            "γ_mass_shell",  # SC gamma diagnostics
+                            "Energy jump detected",  # Adaptive timestep trigger
+                            "Reducing timestep",  # Adaptive timestep action
+                            "Proximity refinement",  # Adaptive timestep near walls
+                            "Cooldown mode",  # Adaptive timestep state
+                            "Probing stability",  # Adaptive timestep recovery
+                            "Returning to normal timestep",  # Adaptive timestep recovery
+                            "Stable",  # Adaptive timestep status
+                            "Unstable",  # Adaptive timestep status
+                            "Minimum timestep reached",  # Adaptive timestep limit
+                            "Max refinement attempts",  # Adaptive timestep limit
+                        ]
+                    ):
+                        self._log_result(f"    [VERBOSE] {message}")
+    
+                log_callback = verbose_log
+    
+            result = run_testbed(
+                options,
+                log=log_callback,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
             )
-            self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
-
-            # For optimization runs, show what the optimizer sees
-            if hasattr(self, "config") and hasattr(self.config, "mode"):
-                if self.config.mode == "optimization":
-                    # Optimizer minimizes, so negate for maximization objectives
-                    optimizer_value = -energy_gain_percent  # We maximize percent gain
-                    self._log_result(f"    optimizer_objective: {optimizer_value:.12e}")
-        else:
-            # Fallback: Try to calculate from trajectory if gamma values are missing
-            self._log_result(
-                f"  [WARNING] Gamma values missing, attempting trajectory fallback..."
-            )
-            if result.rider_trajectory is not None:
+            self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
+    
+            # Check if integration was halted early
+            if result.halted_early:
+                self._log_result(
+                    f"  [WARNING] Run {run_num} halted early: {result.halt_reason}"
+                )
+                self._log_result(
+                    f"    Trajectory contains partial data and will still be analyzed"
+                )
+    
+            # Sanity check: Verify final z position doesn't exceed expected distance
+            if (
+                result.rider_trajectory is not None
+                and self.config.timestep_strategy == "auto_distance"
+            ):
                 try:
                     traj = result.rider_trajectory
-                    gamma_array = np.asarray(traj.get("gamma", []))
-                    if len(gamma_array) > 0:
-                        gamma_initial_fallback = float(gamma_array[0])
-                        gamma_final_fallback = float(gamma_array[-1])
-                        if gamma_initial_fallback > 0:
-                            delta_gamma_fallback = (
-                                gamma_final_fallback - gamma_initial_fallback
-                            )
-                            energy_gain_percent = (
-                                delta_gamma_fallback / gamma_initial_fallback * 100.0
-                            )
-                            energy_gain_ppm = (
-                                delta_gamma_fallback / gamma_initial_fallback * 1e6
-                            )
-
-                            metrics["max_percent_energy_gain"] = energy_gain_percent
-                            metrics["delta_gamma"] = delta_gamma_fallback
-                            metrics["energy_gain_ppm"] = energy_gain_ppm
-
-                            self._log_result(f"  [OK] Fallback calculation successful:")
+                    z_array = np.asarray(traj.get("z", []))
+                    if len(z_array) > 0:
+                        final_z = float(z_array[-1])
+                        expected_max_z = wall_z + self.config.target_distance_mm
+    
+                        if final_z > expected_max_z:
+                            excess = final_z - expected_max_z
                             self._log_result(
-                                f"    gamma_initial (from traj): {gamma_initial_fallback:.12e}"
+                                f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!"
+                            )
+                            self._log_result(f"    Final z: {final_z:.2f} mm")
+                            self._log_result(
+                                f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
                             )
                             self._log_result(
-                                f"    gamma_final (from traj): {gamma_final_fallback:.12e}"
-                            )
-                            self._log_result(
-                                f"    delta_gamma: {delta_gamma_fallback:.12e}"
-                            )
-                            self._log_result(
-                                f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
-                            )
-                            self._log_result(
-                                f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
+                                f"    Exceeded by: {excess:.2f} mm ({excess / expected_max_z * 100:.1f}%)"
                             )
                         else:
-                            self._log_result(f"  [ERROR] Fallback gamma_initial <= 0")
-                    else:
-                        self._log_result(f"  [ERROR] Trajectory gamma array is empty")
+                            under = expected_max_z - final_z
+                            self._log_result(f"  [DEBUG] Run {run_num}: Final z check OK")
+                            self._log_result(
+                                f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)"
+                            )
                 except Exception as e:
-                    self._log_result(f"  [ERROR] Fallback calculation failed: {e}")
-            else:
-                self._log_result(f"  [ERROR] No trajectory data available for fallback")
-
-            # If still no metric calculated, warn explicitly
-            if "max_percent_energy_gain" not in metrics:
+                    self._log_result(
+                        f"  [WARNING] Run {run_num}: Failed to check final z position: {e}"
+                    )
+    
+            # No figures should be generated during sweeps (all display/save flags set to False)
+            # If any figures were created (shouldn't happen), close them as a safety measure
+            if result.figures:
                 self._log_result(
-                    f"  [CRITICAL] max_percent_energy_gain could not be calculated for Run {run_num}"
+                    f"  [WARNING] Run {run_num}: Unexpected figures generated ({len(result.figures)}), closing them"
                 )
+                import matplotlib.pyplot as plt
+    
+                for fig_name, fig in result.figures.items():
+                    try:
+                        plt.close(fig)
+                        self._log_result(f"    Closed unexpected figure: {fig_name}")
+                    except Exception as e:
+                        self._log_result(f"    Error closing figure {fig_name}: {e}")
+    
+            # Check if run was halted early - if so, skip metrics calculation
+            if result.halted_early:
                 self._log_result(
-                    f"  [CRITICAL] This will result in NaN/inf for optimization objective"
+                    f"  [INFO] Run {run_num} was halted early - skipping metrics calculation"
                 )
-
-        # Add beam optics metrics if available
-        if result.rider_emittance_x_mm_mrad is not None:
-            metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
-        if result.rider_emittance_y_mm_mrad is not None:
-            metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
-        if result.rider_norm_emittance_x_mm_mrad is not None:
-            metrics["rider_norm_emittance_x_mm_mrad"] = (
-                result.rider_norm_emittance_x_mm_mrad
-            )
-        if result.rider_norm_emittance_y_mm_mrad is not None:
-            metrics["rider_norm_emittance_y_mm_mrad"] = (
-                result.rider_norm_emittance_y_mm_mrad
-            )
-        if result.rider_beta_x_m is not None:
-            metrics["rider_beta_x_m"] = result.rider_beta_x_m
-        if result.rider_beta_y_m is not None:
-            metrics["rider_beta_y_m"] = result.rider_beta_y_m
-
-        output = {"metrics": metrics}
-
-        self._log_result(f"  [DEBUG] Processing trajectory data for Run {run_num}...")
-        # Add trajectory data for distance calculation even if not saving full arrays
-        # (needed for diagnostics and basic metrics)
-        if result.rider_trajectory is not None:
-            traj = result.rider_trajectory
-
-            # Always include minimal trajectory info for distance calculation
-            try:
-                z_array = np.asarray(traj["z"])
-                if len(z_array) > 0:
-                    output["_distance_info"] = {
-                        "z_start": float(z_array[0]),
-                        "z_end": float(z_array[-1]),
-                        "num_steps": len(z_array),
-                    }
-            except Exception as e:
-                print(f"[DEBUG] Failed to extract distance info: {e}")
-
-            # Perform stability analysis if enabled
-            if self.config.smoothness_enabled:
-                self._log_result(
-                    f"  [DEBUG] Performing stability analysis for Run {run_num}..."
-                )
-
-                # Create stability config from optimization config
-                smoothness_config = SmoothnessConfig(
-                    enabled=True,
-                    window_size=self.config.smoothness_window_size,
-                    oscillation_threshold=self.config.smoothness_oscillation_threshold,
-                    trend_smoothness_threshold=self.config.smoothness_trend_threshold,
-                    reject_on_violation=self.config.smoothness_reject_on_violation,
-                    max_allowed_violations=self.config.smoothness_max_violations,
-                )
-
-                # Analyze trajectory stability
-                smoothness_result = analyze_trajectory_smoothness(
-                    traj, smoothness_config, particle_mass_amu=rider_m_particle
-                )
-
-                # Store stability analysis in output
-                output["stability_analysis"] = {
-                    "passed": smoothness_result.passed,
-                    "num_violations": len(smoothness_result.violations),
-                    "oscillation_score": smoothness_result.oscillation_score,
-                    "trend_smoothness_score": smoothness_result.trend_smoothness_score,
-                    "quality": smoothness_result.quality_summary,
+                self._log_result(f"    Only trajectory and logs will be saved (if enabled)")
+                # Return minimal output with halt information
+                output = {
+                    "metrics": {},  # Empty metrics
+                    "halted_early": True,
+                    "halt_reason": result.halt_reason,
                 }
-
-                if not smoothness_result.passed:
-                    self._log_result(
-                        f"  [WARNING] Stability check FAILED for Run {run_num}"
+    
+                # Add trajectory if available and saving is enabled
+                if result.rider_trajectory is not None:
+                    save_traj = (
+                        self.config.save_all_trajectories
+                        or self.config.save_failed_trajectories
                     )
-                    self._log_result(
-                        f"    Quality: {smoothness_result.quality_summary}"
-                    )
-                    if len(smoothness_result.violations) > 0:
-                        self._log_result(
-                            f"    Violations: {len(smoothness_result.violations)}"
-                        )
-                        for v in smoothness_result.violations[:2]:  # Show first 2
-                            self._log_result(f"      - {v.description}")
-
-                    if self.config.smoothness_reject_on_violation:
-                        self._log_result(
-                            f"  [REJECT] Run {run_num} rejected due to numerical instability"
-                        )
-                        # Mark metrics as invalid to trigger rejection in optimizer
-                        output["metrics"]["max_percent_energy_gain"] = np.nan
-                        output["stability_rejected"] = True
+                    if save_traj:
+                        traj = result.rider_trajectory
+                        stride = self.config.trajectory_stride
+                        try:
+                            output["trajectory"] = {
+                                "z": np.asarray(traj["z"])[::stride].tolist(),
+                                "r": np.asarray(traj["r"])[::stride].tolist(),
+                                "pz": np.asarray(traj["pz"])[::stride].tolist(),
+                                "pr": np.asarray(traj["pr"])[::stride].tolist(),
+                                "t": np.asarray(traj["t"])[::stride].tolist(),
+                                "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
+                            }
+                            self._log_result(
+                                f"    Halted trajectory saved ({len(traj['z'])} points, stride={stride})"
+                            )
+                        except Exception as e:
+                            self._log_result(
+                                f"    [WARNING] Failed to save halted trajectory: {e}"
+                            )
+    
+                self._log_result(
+                    f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
+                )
+                return output
+    
+            # Extract metrics (only for non-halted runs)
+            self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
+            metrics = {}
+            if result.rider_delta_e is not None:
+                metrics["rider_delta_e_mev"] = result.rider_delta_e
+            if result.rider_gamma_initial is not None:
+                metrics["rider_gamma_initial"] = result.rider_gamma_initial
+            if result.rider_gamma_final is not None:
+                metrics["rider_gamma_final"] = result.rider_gamma_final
+    
+            # Calculate max_percent_energy_gain from gamma values
+            gamma_initial = result.rider_gamma_initial
+            gamma_final = result.rider_gamma_final
+    
+            # Diagnostic logging
+            self._log_result(f"  [RESULT] Run {run_num} metrics:")
+            self._log_result(f"    rider_gamma_initial: {gamma_initial}")
+            self._log_result(f"    rider_gamma_final: {gamma_final}")
+    
+            # Try to calculate from available gamma values
+            if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
+                delta_gamma = gamma_final - gamma_initial
+                energy_gain_percent = delta_gamma / gamma_initial * 100.0
+                energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
+                # Calculate delta_e in MeV (for electrons: ΔE = Δγ * m_e*c^2 = Δγ * 0.511 MeV)
+                delta_e_mev = delta_gamma * 0.511
+    
+                metrics["max_percent_energy_gain"] = energy_gain_percent
+                metrics["percent_delta_e"] = energy_gain_percent
+                metrics["delta_gamma"] = delta_gamma
+                metrics["delta_e_mev"] = delta_e_mev
+                metrics["energy_gain_ppm"] = energy_gain_ppm
+    
+                self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
+                self._log_result(f"    delta_e_mev: {delta_e_mev:.12e} MeV")
+                self._log_result(
+                    f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+                )
+                self._log_result(f"    percent_delta_e: {energy_gain_percent:.12e}%")
+                self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
+    
+                # For optimization runs, show what the optimizer sees
+                if hasattr(self, "config") and hasattr(self.config, "mode"):
+                    if self.config.mode == "optimization":
+                        # Optimizer minimizes, so negate for maximization objectives
+                        optimizer_value = -energy_gain_percent  # We maximize percent gain
+                        self._log_result(f"    optimizer_objective: {optimizer_value:.12e}")
+            else:
+                # Fallback: Try to calculate from trajectory if gamma values are missing
+                self._log_result(
+                    f"  [WARNING] Gamma values missing, attempting trajectory fallback..."
+                )
+                if result.rider_trajectory is not None:
+                    try:
+                        traj = result.rider_trajectory
+                        gamma_array = np.asarray(traj.get("gamma", []))
+                        if len(gamma_array) > 0:
+                            gamma_initial_fallback = float(gamma_array[0])
+                            gamma_final_fallback = float(gamma_array[-1])
+                            if gamma_initial_fallback > 0:
+                                delta_gamma_fallback = (
+                                    gamma_final_fallback - gamma_initial_fallback
+                                )
+                                energy_gain_percent = (
+                                    delta_gamma_fallback / gamma_initial_fallback * 100.0
+                                )
+                                energy_gain_ppm = (
+                                    delta_gamma_fallback / gamma_initial_fallback * 1e6
+                                )
+                                delta_e_mev_fallback = delta_gamma_fallback * 0.511
+    
+                                metrics["max_percent_energy_gain"] = energy_gain_percent
+                                metrics["percent_delta_e"] = energy_gain_percent
+                                metrics["delta_gamma"] = delta_gamma_fallback
+                                metrics["delta_e_mev"] = delta_e_mev_fallback
+                                metrics["energy_gain_ppm"] = energy_gain_ppm
+    
+                                self._log_result(f"  [OK] Fallback calculation successful:")
+                                self._log_result(
+                                    f"    gamma_initial (from traj): {gamma_initial_fallback:.12e}"
+                                )
+                                self._log_result(
+                                    f"    gamma_final (from traj): {gamma_final_fallback:.12e}"
+                                )
+                                self._log_result(
+                                    f"    delta_gamma: {delta_gamma_fallback:.12e}"
+                                )
+                                self._log_result(
+                                    f"    delta_e_mev: {delta_e_mev_fallback:.12e} MeV"
+                                )
+                                self._log_result(
+                                    f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+                                )
+                                self._log_result(
+                                    f"    percent_delta_e: {energy_gain_percent:.12e}%"
+                                )
+                                self._log_result(
+                                    f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
+                                )
+                            else:
+                                self._log_result(f"  [ERROR] Fallback gamma_initial <= 0")
+                        else:
+                            self._log_result(f"  [ERROR] Trajectory gamma array is empty")
+                    except Exception as e:
+                        self._log_result(f"  [ERROR] Fallback calculation failed: {e}")
                 else:
+                    self._log_result(f"  [ERROR] No trajectory data available for fallback")
+    
+                # If still no metric calculated, warn explicitly
+                if "max_percent_energy_gain" not in metrics:
                     self._log_result(
-                        f"  [OK] Stability check PASSED for Run {run_num}: {smoothness_result.quality_summary}"
+                        f"  [CRITICAL] max_percent_energy_gain could not be calculated for Run {run_num}"
                     )
-
-            # Only save full trajectory arrays if explicitly requested
-            # Check if any trajectory saving option is enabled
-            save_traj = (
-                self.config.save_all_trajectories
-                or self.config.save_top_n_trajectories
-                or self.config.save_failed_trajectories
-            )
-            if save_traj:
-                # Downsample trajectory
-                stride = self.config.trajectory_stride
+                    self._log_result(
+                        f"  [CRITICAL] This will result in NaN/inf for optimization objective"
+                    )
+    
+            # Add beam optics metrics if available
+            if result.rider_emittance_x_mm_mrad is not None:
+                metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
+            if result.rider_emittance_y_mm_mrad is not None:
+                metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
+            if result.rider_norm_emittance_x_mm_mrad is not None:
+                metrics["rider_norm_emittance_x_mm_mrad"] = (
+                    result.rider_norm_emittance_x_mm_mrad
+                )
+            if result.rider_norm_emittance_y_mm_mrad is not None:
+                metrics["rider_norm_emittance_y_mm_mrad"] = (
+                    result.rider_norm_emittance_y_mm_mrad
+                )
+            if result.rider_beta_x_m is not None:
+                metrics["rider_beta_x_m"] = result.rider_beta_x_m
+            if result.rider_beta_y_m is not None:
+                metrics["rider_beta_y_m"] = result.rider_beta_y_m
+    
+            output = {"metrics": metrics}
+    
+            self._log_result(f"  [DEBUG] Processing trajectory data for Run {run_num}...")
+            # Add trajectory data for distance calculation even if not saving full arrays
+            # (needed for diagnostics and basic metrics)
+            if result.rider_trajectory is not None:
+                traj = result.rider_trajectory
+    
+                # Always include minimal trajectory info for distance calculation
                 try:
-                    # Ensure we convert numpy arrays to flat lists
-                    output["trajectory"] = {
-                        "z": np.asarray(traj["z"])[::stride].tolist(),
-                        "r": np.asarray(traj["r"])[::stride].tolist(),
-                        "pz": np.asarray(traj["pz"])[::stride].tolist(),
-                        "pr": np.asarray(traj["pr"])[::stride].tolist(),
-                        "t": np.asarray(traj["t"])[::stride].tolist(),
-                        "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
-                    }
+                    z_array = np.asarray(traj["z"])
+                    if len(z_array) > 0:
+                        output["_distance_info"] = {
+                            "z_start": float(z_array[0]),
+                            "z_end": float(z_array[-1]),
+                            "num_steps": len(z_array),
+                        }
                 except Exception as e:
+                    print(f"[DEBUG] Failed to extract distance info: {e}")
+    
+                # Perform stability analysis if enabled
+                if self.config.smoothness_enabled:
                     self._log_result(
-                        f"    [WARNING] Failed to save trajectory arrays: {e}"
+                        f"  [DEBUG] Performing stability analysis for Run {run_num}..."
                     )
+    
+                    # Create stability config from optimization config
+                    smoothness_config = SmoothnessConfig(
+                        enabled=True,
+                        window_size=self.config.smoothness_window_size,
+                        oscillation_threshold=self.config.smoothness_oscillation_threshold,
+                        trend_smoothness_threshold=self.config.smoothness_trend_threshold,
+                        reject_on_violation=self.config.smoothness_reject_on_violation,
+                        max_allowed_violations=self.config.smoothness_max_violations,
+                    )
+    
+                    # Analyze trajectory stability
+                    smoothness_result = analyze_trajectory_smoothness(
+                        traj, smoothness_config, particle_mass_amu=rider_m_particle
+                    )
+    
+                    # Store stability analysis in output
+                    output["stability_analysis"] = {
+                        "passed": smoothness_result.passed,
+                        "num_violations": len(smoothness_result.violations),
+                        "oscillation_score": smoothness_result.oscillation_score,
+                        "trend_smoothness_score": smoothness_result.trend_smoothness_score,
+                        "quality": smoothness_result.quality_summary,
+                    }
+    
+                    if not smoothness_result.passed:
+                        self._log_result(
+                            f"  [WARNING] Stability check FAILED for Run {run_num}"
+                        )
+                        self._log_result(
+                            f"    Quality: {smoothness_result.quality_summary}"
+                        )
+                        if len(smoothness_result.violations) > 0:
+                            self._log_result(
+                                f"    Violations: {len(smoothness_result.violations)}"
+                            )
+                            for v in smoothness_result.violations[:2]:  # Show first 2
+                                self._log_result(f"      - {v.description}")
+    
+                        if self.config.smoothness_reject_on_violation:
+                            self._log_result(
+                                f"  [REJECT] Run {run_num} rejected due to numerical instability"
+                            )
+                            # Mark metrics as invalid to trigger rejection in optimizer
+                            output["metrics"]["max_percent_energy_gain"] = np.nan
+                            output["stability_rejected"] = True
+                    else:
+                        self._log_result(
+                            f"  [OK] Stability check PASSED for Run {run_num}: {smoothness_result.quality_summary}"
+                        )
+                else:
+                    # Smoothness checking is disabled
+                    self._log_result(
+                        f"  [INFO] Stability analysis DISABLED for Run {run_num} (smoothness_enabled=False)"
+                    )
+    
+                # Only save full trajectory arrays if explicitly requested
+                # Check if any trajectory saving option is enabled
+                # Note: save_top_n_trajectories is handled separately by re-running top N after optimization
+                save_traj = (
+                    self.config.save_all_trajectories
+                    or self.config.save_failed_trajectories
+                )
+                if save_traj:
+                    # Downsample trajectory
+                    stride = self.config.trajectory_stride
+                    try:
+                        # Ensure we convert numpy arrays to flat lists
+                        output["trajectory"] = {
+                            "z": np.asarray(traj["z"])[::stride].tolist(),
+                            "r": np.asarray(traj["r"])[::stride].tolist(),
+                            "pz": np.asarray(traj["pz"])[::stride].tolist(),
+                            "pr": np.asarray(traj["pr"])[::stride].tolist(),
+                            "t": np.asarray(traj["t"])[::stride].tolist(),
+                            "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
+                        }
+                    except Exception as e:
+                        self._log_result(
+                            f"    [WARNING] Failed to save trajectory arrays: {e}"
+                        )
+    
+                # Add halt information to output if present
+                if result.halted_early:
+                    output["halted_early"] = True
+                    output["halt_reason"] = result.halt_reason
+            else:
+                # No trajectory data available - stability analysis cannot run
+                self._log_result(
+                    f"  [WARNING] No trajectory data available for Run {run_num}"
+                )
+                if self.config.smoothness_enabled:
+                    self._log_result(
+                        f"  [WARNING] Stability analysis SKIPPED - no trajectory data returned from integration"
+                    )
+                    self._log_result(
+                        f"    Check that transverse_save=True in SimulationOptions"
+                    )
+    
+            self._log_result(
+                f"  [DEBUG] _run_single_integration returning for Run {run_num}"
+            )
+    
+            return output
+        finally:
+            # Always clean up temporary run directory (success, halt, exception, cancel)
+            try:
+                import shutil
 
-        self._log_result(
-            f"  [DEBUG] _run_single_integration returning for Run {run_num}"
-        )
-        return output
+                if run_output_dir.exists():
+                    shutil.rmtree(run_output_dir)
+                    self._log_result(
+                        f"  [DEBUG] Cleaned up temp directory: {run_output_dir.name}"
+                    )
+            except Exception as e:
+                self._log_result(
+                    f"  [WARNING] Failed to clean up temp directory {run_output_dir.name}: {e}"
+                )
+
+    def _cleanup_orphaned_temp_dirs(self):
+        """Clean up any orphaned _temp_run directories from previous runs.
+
+        This is called on plugin initialization to remove temp directories
+        that weren't cleaned up due to crashes or interruptions.
+        """
+        import shutil
+        from pathlib import Path
+
+        try:
+            output_dir = Path(self.sweep_output_dir)
+            if not output_dir.exists():
+                return
+
+            # Find all _temp_run directories
+            temp_dirs = list(output_dir.glob("_temp_run_*"))
+
+            if temp_dirs:
+                print(
+                    f"[CLEANUP] Found {len(temp_dirs)} orphaned temp directories, removing..."
+                )
+                for temp_dir in temp_dirs:
+                    try:
+                        shutil.rmtree(temp_dir)
+                        print(f"[CLEANUP] Removed: {temp_dir.name}")
+                    except Exception as e:
+                        print(f"[WARNING] Failed to remove {temp_dir.name}: {e}")
+        except Exception as e:
+            print(f"[WARNING] Error during temp directory cleanup: {e}")
 
     def _save_sweep_results(
         self, results: List[Dict[str, Any]], failed_runs: List[Dict[str, Any]] = None
@@ -7916,7 +8175,7 @@ class OptimizationPlugin(ttk.Frame):
 
                 # Create header
                 header = (
-                    ["evaluation", "failed"]
+                    ["evaluation", "failed", "halted_early", "halt_reason"]
                     + param_names
                     + metric_names
                     + ["objective_value", "fitness"]
@@ -7929,6 +8188,8 @@ class OptimizationPlugin(ttk.Frame):
                     row = {
                         "evaluation": eval_rec["evaluation"],
                         "failed": eval_rec.get("failed", True),
+                        "halted_early": eval_rec.get("halted_early", False),
+                        "halt_reason": eval_rec.get("halt_reason", ""),
                         "objective_value": eval_rec.get("objective_value", ""),
                         "fitness": eval_rec.get("fitness", ""),
                     }

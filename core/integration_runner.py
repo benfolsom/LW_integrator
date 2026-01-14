@@ -104,6 +104,23 @@ def _compute_total_energy(state: ParticleState) -> float:
     return float(np.sum(gamma * mass * C_MMNS * C_MMNS))
 
 
+def _calculate_gamma(state: ParticleState) -> float:
+    """Calculate the maximum gamma (Lorentz factor) from a particle state.
+
+    Parameters
+    ----------
+    state:
+        Particle state containing gamma array.
+
+    Returns
+    -------
+    float
+        Maximum gamma value among all particles in the state.
+    """
+    gamma = np.asarray(state["gamma"])
+    return float(np.max(gamma))
+
+
 def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     if state is None:
         return
@@ -419,6 +436,29 @@ def retarded_integrator(
                         step_idx=i,  # Pass main step index for error messages
                     )
 
+                    # Check for gamma blowup flag immediately after computing trial_state
+                    if trial_state.get("_gamma_blowup", False):
+                        gamma_blowup_value = trial_state.get(
+                            "_gamma_blowup_value", np.nan
+                        )
+                        gamma_blowup_particle = trial_state.get(
+                            "_gamma_blowup_particle", 0
+                        )
+                        if adaptive_timestep is not None and adaptive_timestep.debug:
+                            print(
+                                f"[CRITICAL] Step {i}, substep {substep_idx}: Gamma blowup detected during self-consistency "
+                                f"(particle {gamma_blowup_particle}, γ={gamma_blowup_value:.2e}). "
+                                f"Numerical breakdown - halting integration."
+                            )
+                        # Store trial_state with blowup flag in temp_trajectory so it can be accessed later
+                        temp_trajectory.append(trial_state)
+                        # Use previous driver state as placeholder (integration will halt anyway)
+                        temp_driver.append(temp_driver[-1])
+                        # Mark step as accepted to exit the retry loop
+                        step_accepted = True
+                        # Break out of substep loop - will be caught by main check below
+                        break
+
                     # Update driver state for this substep
                     if sim_type == SimulationType.SWITCHING_WALL:
                         trial_driver = generate_switching_image(
@@ -574,6 +614,50 @@ def retarded_integrator(
             trajectory[i] = temp_trajectory[-1]
             _ensure_startup_metadata(trajectory[i])
 
+            # Check for gamma blowup flag set during self-consistency iterations
+            if trajectory[i].get("_gamma_blowup", False):
+                gamma_blowup_value = trajectory[i].get("_gamma_blowup_value", np.nan)
+                gamma_blowup_particle = trajectory[i].get("_gamma_blowup_particle", 0)
+                if adaptive_timestep is not None and adaptive_timestep.debug:
+                    print(
+                        f"[CRITICAL] Step {i}: Gamma blowup detected during self-consistency "
+                        f"(particle {gamma_blowup_particle}, γ={gamma_blowup_value:.2e}). "
+                        f"Numerical breakdown - halting integration."
+                    )
+                # Truncate trajectory and mark as halted
+                trajectory = trajectory[: i + 1]
+                trajectory_drv = trajectory_drv[: i + 1]
+                # Store halt information in the last particle's metadata
+                trajectory[-1]["_halted_early"] = True
+                trajectory[-1]["_halt_reason"] = (
+                    f"gamma_blowup (γ={gamma_blowup_value:.2e} at step {i}/{steps}, "
+                    f"particle {gamma_blowup_particle} during self-consistency)"
+                )
+                trajectory[-1]["_halt_step"] = i
+                trajectory[-1]["_requested_steps"] = steps
+                return trajectory, trajectory_drv
+
+            # Check for gamma blowup (numerical breakdown)
+            # Gamma > 1e8 is physically unrealistic and indicates severe numerical issues
+            gamma_check = _calculate_gamma(trajectory[i])
+            if gamma_check > 1e8 or np.isnan(gamma_check) or np.isinf(gamma_check):
+                if adaptive_timestep is not None and adaptive_timestep.debug:
+                    print(
+                        f"[CRITICAL] Step {i}: Gamma blowup detected (γ={gamma_check:.2e}). "
+                        f"Numerical breakdown - halting integration."
+                    )
+                # Truncate trajectory and mark as halted
+                trajectory = trajectory[: i + 1]
+                trajectory_drv = trajectory_drv[: i + 1]
+                # Store halt information in the last particle's metadata
+                trajectory[-1]["_halted_early"] = True
+                trajectory[-1]["_halt_reason"] = (
+                    f"gamma_blowup (γ={gamma_check:.2e} at step {i}/{steps})"
+                )
+                trajectory[-1]["_halt_step"] = i
+                trajectory[-1]["_requested_steps"] = steps
+                return trajectory, trajectory_drv
+
             if sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
                     trajectory[i], wall_z, aperture_radius, z_cutoff
@@ -626,14 +710,23 @@ def retarded_integrator(
             z_current = float(np.mean(trajectory[i]["z"]))
             distance_traveled = abs(z_current - z_initial)
             if distance_traveled > z_cutoff:
-                # Truncate trajectory and return early
+                # Truncate trajectory and mark as halted
                 if adaptive_timestep is not None and adaptive_timestep.debug:
                     print(
                         f"Step {i}: BUNCH_TO_BUNCH relative cutoff reached. "
                         f"Traveled {distance_traveled:.2f} mm > {z_cutoff:.2f} mm cutoff. "
                         f"Stopping integration early."
                     )
-                return trajectory[: i + 1], trajectory_drv[: i + 1]
+                trajectory_truncated = trajectory[: i + 1]
+                trajectory_drv_truncated = trajectory_drv[: i + 1]
+                # Store halt information in the last particle's metadata
+                trajectory_truncated[-1]["_halted_early"] = True
+                trajectory_truncated[-1]["_halt_reason"] = (
+                    f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})"
+                )
+                trajectory_truncated[-1]["_halt_step"] = i
+                trajectory_truncated[-1]["_requested_steps"] = steps
+                return trajectory_truncated, trajectory_drv_truncated
 
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
         if (

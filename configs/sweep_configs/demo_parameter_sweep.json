@@ -1,53 +1,151 @@
 {
-    "name": "demo_parameter_sweep",
-    "description": "Demonstration parameter sweep exploring aperture size vs initial energy",
-    "simulation_type": "CONDUCTING_WALL",
-    "mode": "sweep",
-    "aperture_min": 0.1,
-    "aperture_max": 1.0,
-    "aperture_points": 5,
-    "aperture_log_scale": false,
-    "energy_min": 1.0,
-    "energy_max": 20.0,
-    "energy_points": 5,
-    "energy_log_scale": false,
-    "transverse_offset_fractions": [0.0, 0.2, 0.5],
-    "starting_z_positions": [0.0],
-    "wall_z": 100.0,
-    "cavity_spacing": 100000.0,
-    "steps": 1000,
-    "timestep": 3e-7,
-    "timestep_strategy": "auto_distance",
-    "target_distance_mm": 120.0,
-    "pcount": 1,
-    "objective": "max_percent_energy_gain",
-    "save_trajectories": false,
-    "trajectory_stride": 10,
-    "self_consistency_enabled": true,
-    "self_consistency_tolerance": 0.0001,
-    "self_consistency_max_iterations": 5,
-    "self_consistency_verbosity": 0,
-    "energy_monitor_halt_on_jump": false,
-    "adaptive_timestep_enabled": true,
-    "adaptive_timestep_threshold": 0.1,
-    "adaptive_timestep_reduction_factor": 10,
-    "adaptive_timestep_max_attempts": 5,
-    "adaptive_timestep_min_factor": 0.0001,
-    "adaptive_timestep_cooldown_steps": 10,
-    "adaptive_timestep_probe_threshold": 0.01,
-    "adaptive_timestep_max_probe_steps": 3,
-    "adaptive_timestep_debug": false,
-    "smoothness_analysis_enabled": true,
-    "smoothness_window_size": 20,
-    "smoothness_oscillation_threshold": 0.5,
-    "smoothness_trend_threshold": 0.3,
-    "smoothness_reject_on_violation": true,
-    "smoothness_max_allowed_violations": 3,
-    "per_run_timeout": 120.0,
-    "skip_failed_runs": true,
-    "parallel_workers": 1,
-    "seed": 42,
-    "output_dir": "results/demo_sweeps",
-    "save_summary_plots": true,
-    "save_individual_trajectories": false
+  "simulation_type": "CONDUCTING_WALL",
+  "mode": "optimization",
+  "aperture_min": 1e-05,
+  "aperture_max": 0.5,
+  "aperture_points": 100,
+  "aperture_log_scale": true,
+  "energy_min": 0.01,
+  "energy_max": 200.0,
+  "energy_points": 100,
+  "energy_log_scale": true,
+  "transverse_offset_fractions": [
+    0.0
+  ],
+  "starting_z_positions": [
+    0.0
+  ],
+  "wall_z": 1000.0,
+  "wall_z_range": [
+    500.0,
+    1200.0
+  ],
+  "wall_z_points": 100,
+  "cavity_spacing": 100000.0,
+  "steps": 1000,
+  "objective": "max_percent_energy_gain",
+  "save_top_n_trajectories": true,
+  "save_all_trajectories": false,
+  "save_failed_trajectories": false,
+  "trajectory_stride": 10,
+  "metrics_export_format": "json",
+  "metrics_export_scope": "all",
+  "log_verbosity": "full",
+  "optimization_method": "genetic_algorithm",
+  "optimization_maxiter": 50,
+  "optimization_population_size": 20,
+  "optimization_mutation_rate": 0.1,
+  "optimization_crossover_rate": 0.7,
+  "optimization_n_starts": 5,
+  "optimization_save_top_n": 100,
+  "optimization_convergence_tol": 1e-06,
+  "optimization_convergence_patience": 10,
+  "self_consistency_enabled": true,
+  "self_consistency_tolerance": 0.0001,
+  "self_consistency_max_iterations": 5,
+  "self_consistency_verbosity": 0,
+  "self_consistency_chrono_interpolate": false,
+  "self_consistency_chrono_tolerance": 0.001,
+  "self_consistency_chrono_high_precision": false,
+  "self_consistency_chrono_adaptive_tolerance": false,
+  "energy_monitor_halt_on_jump": false,
+  "adaptive_timestep_enabled": true,
+  "adaptive_timestep_threshold": 0.1,
+  "adaptive_timestep_reduction_factor": 10,
+  "adaptive_timestep_max_attempts": 5,
+  "adaptive_timestep_min_factor": 0.0001,
+  "adaptive_timestep_cooldown_steps": 10,
+  "adaptive_timestep_probe_threshold": 0.01,
+  "adaptive_timestep_max_probe_steps": 3,
+  "adaptive_timestep_debug": false,
+  "per_run_timeout": 60.0,
+  "skip_failed_runs": true,
+  "smoothness_enabled": true,
+  "smoothness_window_size": 20,
+  "smoothness_oscillation_threshold": 0.5,
+  "smoothness_trend_threshold": 0.3,
+  "smoothness_reject_on_violation": false,
+  "smoothness_max_violations": 3,
+  "macroparticle_enabled": true,
+  "macroparticle_charge_multiplier": 1.0,
+  "macroparticle_sigma_multiplier": 1.0,
+  "macroparticle_use_momentum_errors": true,
+  "timestep_strategy": "auto_distance",
+  "target_distance_mm": 100.0,
+  "timestep": 3e-07,
+  "energy_scale_exponent": 1.0,
+  "timestep_mode": "duration",
+  "auto_steps_distance": 200.0,
+  "rider_stripped_ions": 1.0,
+  "driver_stripped_ions": 54.0,
+  "sweep_parameters": {
+    "rider_m_particle": {
+      "enabled": false,
+      "fixed_value": "0.00054857990907"
+    },
+    "rider_charge_sign": {
+      "enabled": false,
+      "fixed_value": "-1.0"
+    },
+    "rider_pcount": {
+      "enabled": false,
+      "fixed_value": "1"
+    },
+    "rider_transv_mom": {
+      "enabled": true,
+      "min": "1.2e-09",
+      "max": "1.2e-02",
+      "points": "100",
+      "log": false
+    },
+    "rider_transv_dist": {
+      "enabled": true,
+      "min": "2e-10",
+      "max": "2e-01",
+      "points": "100",
+      "log": false
+    },
+    "macroparticle_charge_multiplier": {
+      "enabled": true,
+      "min": "1.0",
+      "max": "8000",
+      "points": "100",
+      "log": false
+    },
+    "macroparticle_sigma_multiplier": {
+      "enabled": true,
+      "min": "1.0",
+      "max": "12",
+      "points": "100",
+      "log": false
+    },
+    "driver_m_particle": {
+      "enabled": false,
+      "fixed_value": "207.2"
+    },
+    "driver_charge_sign": {
+      "enabled": false,
+      "fixed_value": "1.0"
+    },
+    "driver_pcount": {
+      "enabled": false,
+      "fixed_value": "5"
+    },
+    "driver_transv_mom": {
+      "enabled": false,
+      "fixed_value": "0.0"
+    },
+    "driver_transv_dist": {
+      "enabled": false,
+      "fixed_value": "-0.07998"
+    },
+    "driver_starting_distance": {
+      "enabled": false,
+      "fixed_value": "1000.0"
+    },
+    "driver_starting_Pz": {
+      "enabled": false,
+      "fixed_value": "-4925.0"
+    }
+  }
 }
