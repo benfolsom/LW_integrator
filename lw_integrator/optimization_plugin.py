@@ -327,7 +327,7 @@ class OptimizationConfig:
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = 1e-4
     self_consistency_max_iterations: int = 5
-    self_consistency_verbosity: int = 2  # 0=silent, 1=basic, 2=detailed
+    self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
 
     # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
@@ -2355,8 +2355,90 @@ class OptimizationPlugin(ttk.Frame):
                 f"Run #{run_num:4d} | {param_str} | {metric_str} | SUCCESS"
             )
         else:
-            # No metrics or error - just params
             self._log_result(f"Run #{run_num:4d} | {param_str} | RUNNING")
+
+    def _sync_stability_to_main_gui(self, config):
+        """Sync stability settings from config to main GUI's stability tab.
+
+        Parameters
+        ----------
+        config : OptimizationConfig
+            Config with stability settings to sync
+        """
+        if not self.gui_controller:
+            return
+
+        try:
+            # Self-consistency settings
+            if hasattr(self.gui_controller, "self_consistency_enabled_var"):
+                self.gui_controller.self_consistency_enabled_var.set(
+                    config.self_consistency_enabled
+                )
+            if hasattr(self.gui_controller, "self_consistency_target_ms_tolerance_var"):
+                self.gui_controller.self_consistency_target_ms_tolerance_var.set(
+                    f"{config.self_consistency_tolerance:.1e}"
+                )
+            if hasattr(self.gui_controller, "self_consistency_max_iterations_var"):
+                self.gui_controller.self_consistency_max_iterations_var.set(
+                    str(config.self_consistency_max_iterations)
+                )
+            if hasattr(self.gui_controller, "self_consistency_verbosity_var"):
+                self.gui_controller.self_consistency_verbosity_var.set(
+                    str(config.self_consistency_verbosity)
+                )
+
+            # Adaptive timestep settings
+            if hasattr(self.gui_controller, "adaptive_timestep_enabled_var"):
+                self.gui_controller.adaptive_timestep_enabled_var.set(
+                    config.adaptive_timestep_enabled
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_threshold_var"):
+                self.gui_controller.adaptive_timestep_threshold_var.set(
+                    f"{config.adaptive_timestep_threshold:.2f}"
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_reduction_factor_var"):
+                self.gui_controller.adaptive_timestep_reduction_factor_var.set(
+                    str(config.adaptive_timestep_reduction_factor)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_max_attempts_var"):
+                self.gui_controller.adaptive_timestep_max_attempts_var.set(
+                    str(config.adaptive_timestep_max_attempts)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_min_factor_var"):
+                self.gui_controller.adaptive_timestep_min_factor_var.set(
+                    f"{config.adaptive_timestep_min_factor:.1e}"
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_cooldown_steps_var"):
+                self.gui_controller.adaptive_timestep_cooldown_steps_var.set(
+                    str(config.adaptive_timestep_cooldown_steps)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_probe_threshold_var"):
+                self.gui_controller.adaptive_timestep_probe_threshold_var.set(
+                    f"{config.adaptive_timestep_probe_threshold:.2f}"
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_max_probe_steps_var"):
+                self.gui_controller.adaptive_timestep_max_probe_steps_var.set(
+                    str(config.adaptive_timestep_max_probe_steps)
+                )
+            if hasattr(self.gui_controller, "adaptive_timestep_debug_var"):
+                self.gui_controller.adaptive_timestep_debug_var.set(
+                    config.adaptive_timestep_debug
+                )
+
+            # Toggle controls to match loaded state
+            if hasattr(self.gui_controller, "_toggle_self_consistency_controls"):
+                self.gui_controller._toggle_self_consistency_controls()
+            if hasattr(self.gui_controller, "_toggle_adaptive_timestep_controls"):
+                self.gui_controller._toggle_adaptive_timestep_controls()
+
+            self._log_result(
+                "[OK] Stability settings synced to main GUI's Stability tab"
+            )
+
+        except Exception as e:
+            self._log_result(
+                f"[WARNING] Failed to sync some stability settings to main GUI: {e}"
+            )
 
     def _should_save_trajectory(self, run_result: dict, rank: int = None) -> bool:
         """Determine if trajectory should be saved based on config.
@@ -2364,9 +2446,9 @@ class OptimizationPlugin(ttk.Frame):
         Parameters
         ----------
         run_result : dict
-            Run result dictionary with 'failed' flag
+            Result dictionary from integration run
         rank : int, optional
-            Rank of this result (1 = best)
+            Rank of this result (1=best, 2=second best, etc.)
 
         Returns
         -------
@@ -2377,7 +2459,10 @@ class OptimizationPlugin(ttk.Frame):
             return True
 
         if self.config.save_failed_trajectories:
-            return run_result.get("failed", False)
+            # Save failed runs AND halted runs
+            return run_result.get("failed", False) or run_result.get(
+                "halted_early", False
+            )
 
         if self.config.save_top_n_trajectories and rank is not None:
             return rank <= self.config.optimization_save_top_n
@@ -2479,6 +2564,19 @@ class OptimizationPlugin(ttk.Frame):
         # Preserve stability and timestep settings from existing config if available
         # (these are set via stability dialog, not UI fields)
         existing_config = getattr(self, "config", None)
+
+        # Debug logging
+        if existing_config:
+            print(
+                f"[DEBUG] _gather_config: Using existing config for stability settings"
+            )
+            print(f"  SC enabled: {existing_config.self_consistency_enabled}")
+            print(f"  SC tolerance: {existing_config.self_consistency_tolerance}")
+            print(f"  AT enabled: {existing_config.adaptive_timestep_enabled}")
+            print(f"  AT debug: {existing_config.adaptive_timestep_debug}")
+            print(f"  Smoothness enabled: {existing_config.smoothness_enabled}")
+        else:
+            print(f"[DEBUG] _gather_config: No existing config, using defaults")
 
         config_obj = OptimizationConfig(
             simulation_type=SimulationType[self.sim_type_var.get()],
@@ -2879,9 +2977,15 @@ class OptimizationPlugin(ttk.Frame):
         sc_iter_entry.pack(anchor="w")
         all_widgets.append(sc_iter_entry)
 
-        ttk.Label(sc_frame, text="Verbosity (0=silent, 1=basic, 2=detailed):").pack(
-            anchor="w", pady=(5, 0)
-        )
+        ttk.Label(
+            sc_frame, text="Verbosity (0=silent, 1=summary, 2=failures, 3=full):"
+        ).pack(anchor="w", pady=(5, 0))
+        ttk.Label(
+            sc_frame,
+            text="  Note: Sweep/Optim override this via Log verbosity setting",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        ).pack(anchor="w")
         sc_verb_var = tk.StringVar(
             value=str(max(self.config.self_consistency_verbosity, 1))
         )
@@ -2934,7 +3038,7 @@ class OptimizationPlugin(ttk.Frame):
         at_debug_var = tk.BooleanVar(value=self.config.adaptive_timestep_debug or True)
         at_debug_cb = ttk.Checkbutton(
             at_frame,
-            text="Debug logging (recommended for sweeps)",
+            text="Debug logging (single run only; sweep/optim uses Log verbosity)",
             variable=at_debug_var,
         )
         at_debug_cb.pack(anchor="w", pady=(5, 0))
@@ -3400,8 +3504,11 @@ class OptimizationPlugin(ttk.Frame):
             self._update_mode_visibility()
             self._update_optimization_controls()
 
-            # Load stability options (with defaults from SimulationOptions)
+            # Load stability options - create temp config with file values only
+            # Don't use _gather_config() here because it copies from existing self.config
             loaded_config = self._gather_config()
+
+            # Override ALL stability settings from file (don't use existing config)
             loaded_config.self_consistency_enabled = data.get(
                 "self_consistency_enabled", True
             )
@@ -3492,6 +3599,13 @@ class OptimizationPlugin(ttk.Frame):
             loaded_config.timestep = data.get("timestep", 3e-7)
             loaded_config.energy_scale_exponent = data.get("energy_scale_exponent", 1.0)
 
+            print(
+                f"[DEBUG] _load_config_from_path: Assigning loaded_config to self.config"
+            )
+            print(f"  SC enabled: {loaded_config.self_consistency_enabled}")
+            print(f"  SC tolerance: {loaded_config.self_consistency_tolerance}")
+            print(f"  AT enabled: {loaded_config.adaptive_timestep_enabled}")
+            print(f"  AT debug: {loaded_config.adaptive_timestep_debug}")
             self.config = loaded_config
 
             # Update UI controls
@@ -3508,7 +3622,7 @@ class OptimizationPlugin(ttk.Frame):
             )
             self._toggle_timestep_mode()
 
-            # Update stability controls
+            # Update stability controls (smoothness has UI variables)
             self.smoothness_enabled_var.set(loaded_config.smoothness_enabled)
             self.smoothness_window_var.set(str(loaded_config.smoothness_window_size))
             self.smoothness_oscillation_var.set(
@@ -3516,6 +3630,42 @@ class OptimizationPlugin(ttk.Frame):
             )
             self.smoothness_reject_var.set(loaded_config.smoothness_reject_on_violation)
             self._toggle_smoothness_controls()
+
+            # Update main GUI stability tab if available
+            if self.gui_controller:
+                self._sync_stability_to_main_gui(loaded_config)
+
+            self._log_result("[INFO] Additional stability settings loaded:")
+            self._log_result(
+                f"  Self-consistency max_iterations: {loaded_config.self_consistency_max_iterations}"
+            )
+            self._log_result(
+                f"  Self-consistency verbosity: {loaded_config.self_consistency_verbosity}"
+            )
+            self._log_result(
+                f"  Adaptive timestep reduction_factor: {loaded_config.adaptive_timestep_reduction_factor}"
+            )
+            self._log_result(
+                f"  Adaptive timestep max_attempts: {loaded_config.adaptive_timestep_max_attempts}"
+            )
+            self._log_result(
+                f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
+            )
+            self._log_result(
+                f"  Adaptive timestep cooldown_steps: {loaded_config.adaptive_timestep_cooldown_steps}"
+            )
+            self._log_result(
+                f"  Adaptive timestep probe_threshold: {loaded_config.adaptive_timestep_probe_threshold}"
+            )
+            self._log_result(
+                f"  Adaptive timestep max_probe_steps: {loaded_config.adaptive_timestep_max_probe_steps}"
+            )
+            self._log_result(
+                f"  Smoothness trend_threshold: {loaded_config.smoothness_trend_threshold}"
+            )
+            self._log_result(
+                f"  Smoothness max_violations: {loaded_config.smoothness_max_violations}"
+            )
 
             # Update macroparticle controls
             self.macroparticle_enabled_var.set(loaded_config.macroparticle_enabled)
@@ -3550,15 +3700,73 @@ class OptimizationPlugin(ttk.Frame):
                         controls["fixed_var"].set(str(fixed_val))
                         self._toggle_sweep_controls(param_name)
 
-            self._log_result("[OK] Configuration loaded successfully")
-            self._log_result("[INFO] Stability options:")
+            self._log_result("[OK] Configuration loaded and synced to main GUI")
+            self._log_result("")
+            self._log_result("=" * 60)
+            self._log_result("LOADED STABILITY OPTIONS SUMMARY")
+            self._log_result("=" * 60)
+            self._log_result("")
+            self._log_result("[Self-Consistency]")
+            self._log_result(f"  Enabled: {self.config.self_consistency_enabled}")
             self._log_result(
-                f"  Self-consistency: {self.config.self_consistency_enabled} (tol={self.config.self_consistency_tolerance:.1e})"
+                f"  Tolerance: {self.config.self_consistency_tolerance:.1e}"
             )
-            # Energy monitoring removed - functionality in adaptive timestep
             self._log_result(
-                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%)"
+                f"  Max iterations: {self.config.self_consistency_max_iterations}"
             )
+            self._log_result(f"  Verbosity: {self.config.self_consistency_verbosity}")
+            self._log_result("")
+            self._log_result("[Adaptive Timestep]")
+            self._log_result(f"  Enabled: {self.config.adaptive_timestep_enabled}")
+            self._log_result(
+                f"  Threshold: {self.config.adaptive_timestep_threshold * 100:.0f}%"
+            )
+            self._log_result(
+                f"  Reduction factor: {self.config.adaptive_timestep_reduction_factor}x"
+            )
+            self._log_result(
+                f"  Max attempts: {self.config.adaptive_timestep_max_attempts}"
+            )
+            self._log_result(
+                f"  Min factor: {self.config.adaptive_timestep_min_factor}"
+            )
+            self._log_result(
+                f"  Cooldown steps: {self.config.adaptive_timestep_cooldown_steps}"
+            )
+            self._log_result(
+                f"  Probe threshold: {self.config.adaptive_timestep_probe_threshold}"
+            )
+            self._log_result(
+                f"  Max probe steps: {self.config.adaptive_timestep_max_probe_steps}"
+            )
+            self._log_result(f"  Debug: {self.config.adaptive_timestep_debug}")
+            self._log_result("")
+            self._log_result("[Trajectory Smoothness Analysis]")
+            self._log_result(f"  Enabled: {self.config.smoothness_enabled}")
+            self._log_result(f"  Window size: {self.config.smoothness_window_size}")
+            self._log_result(
+                f"  Oscillation threshold: {self.config.smoothness_oscillation_threshold}"
+            )
+            self._log_result(
+                f"  Trend threshold: {self.config.smoothness_trend_threshold}"
+            )
+            self._log_result(
+                f"  Reject on violation: {self.config.smoothness_reject_on_violation}"
+            )
+            self._log_result(
+                f"  Max violations: {self.config.smoothness_max_violations}"
+            )
+            self._log_result("")
+            self._log_result("=" * 60)
+            self._log_result("")
+            self._log_result(
+                "NOTE: Stability settings are synced to main GUI's Stability tab"
+            )
+            self._log_result("      View/edit them in the main GUI's Stability tab")
+            self._log_result(
+                "      Log verbosity setting will override debug flags during run"
+            )
+            self._log_result("")
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
 
@@ -3599,7 +3807,13 @@ class OptimizationPlugin(ttk.Frame):
             return False
 
         try:
+            print(f"[DEBUG] _save_config_to_path: Gathering config for save")
             config = self._gather_config()
+            print(f"[DEBUG] After _gather_config:")
+            print(f"  SC enabled: {config.self_consistency_enabled}")
+            print(f"  SC tolerance: {config.self_consistency_tolerance}")
+            print(f"  AT enabled: {config.adaptive_timestep_enabled}")
+            print(f"  AT debug: {config.adaptive_timestep_debug}")
             data = {
                 "simulation_type": config.simulation_type.name,
                 "mode": config.mode,
@@ -5019,6 +5233,51 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result("=" * 80)
             self._log_result("")
 
+            # Apply log verbosity settings (same as sweep mode)
+            # Save original values to restore later
+            original_sc_verbosity = self.config.self_consistency_verbosity
+            original_adaptive_debug = self.config.adaptive_timestep_debug
+
+            use_no_logging = self.config.log_verbosity == "none"
+            use_truncated_logging = self.config.log_verbosity == "truncated"
+            use_full_logging = self.config.log_verbosity == "full"
+
+            # Override config file settings based on log verbosity
+            if use_full_logging:
+                # Enable full debug output (override config file)
+                self.config.self_consistency_verbosity = 2
+                self.config.adaptive_timestep_debug = True
+                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+                self._log_result(
+                    "  Full debug logging enabled (SC iterations, adaptive timestep details)"
+                )
+            elif use_truncated_logging:
+                # Disable verbose logging for optimizations with many evaluations
+                self.config.self_consistency_verbosity = 0
+                self.config.adaptive_timestep_debug = False
+                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+                self._log_result(
+                    "  Truncated logging (parameters + metrics + errors only)"
+                )
+            elif use_no_logging:
+                # Completely disable all debug logging
+                self.config.self_consistency_verbosity = 0
+                self.config.adaptive_timestep_debug = False
+                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+                self._log_result("  Debug logging disabled")
+            else:
+                # Unknown log verbosity - use config file values
+                self._log_result(
+                    f"Log verbosity: {self.config.log_verbosity} (unknown, using config values)"
+                )
+                self._log_result(
+                    f"  adaptive_timestep_debug: {self.config.adaptive_timestep_debug}"
+                )
+                self._log_result(
+                    f"  self_consistency_verbosity: {self.config.self_consistency_verbosity}"
+                )
+            self._log_result("")
+
             # Build parameter names and bounds from config
             param_names = []
             param_bounds = []
@@ -5291,6 +5550,32 @@ class OptimizationPlugin(ttk.Frame):
                             "evaluation": eval_num,
                             "parameters": dict(zip(param_names, x)),
                             "failed": True,
+                            "halted_early": result.get("halted_early", False)
+                            if result
+                            else False,
+                            "halt_reason": result.get("halt_reason", None)
+                            if result
+                            else None,
+                            "objective_value": np.inf if not maximize else -np.inf,
+                        }
+                        all_evaluations.append(eval_record)
+                        return np.inf if not maximize else -np.inf
+
+                    # Check if run was halted early
+                    if result.get("halted_early", False):
+                        self._log_result(
+                            f"[INFO] Evaluation {eval_num} halted early: {result.get('halt_reason', 'unknown')}"
+                        )
+                        self._log_result(
+                            f"[INFO] Returning inf (rejecting halted evaluation)"
+                        )
+                        # Store halted evaluation
+                        eval_record = {
+                            "evaluation": eval_num,
+                            "parameters": dict(zip(param_names, x)),
+                            "failed": False,
+                            "halted_early": True,
+                            "halt_reason": result.get("halt_reason"),
                             "objective_value": np.inf if not maximize else -np.inf,
                         }
                         all_evaluations.append(eval_record)
@@ -5335,6 +5620,7 @@ class OptimizationPlugin(ttk.Frame):
                         "objective_value": value,  # Store original value
                         "fitness": result_value,  # Store fitness (for minimization)
                         "failed": False,
+                        "halted_early": False,
                         "metrics": result.get("metrics", {}),
                     }
 
@@ -5381,10 +5667,17 @@ class OptimizationPlugin(ttk.Frame):
                     converged,
                 ):
                     """Log convergence progress after each generation."""
-                    self._log_result(
-                        f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
-                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
-                    )
+                    # Filter out inf values in logging
+                    if np.isfinite(best_value):
+                        self._log_result(
+                            f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
+                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                        )
+                    else:
+                        self._log_result(
+                            f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
+                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                        )
                     if generation >= self.config.optimization_convergence_patience:
                         if converged:
                             self._log_result(
@@ -5528,12 +5821,48 @@ class OptimizationPlugin(ttk.Frame):
             else:
                 self._log_result(f"  Total time: {elapsed_time:.1f}s")
 
+        except KeyboardInterrupt:
+            self._log_result("")
+            self._log_result("[CANCELLED] Optimization cancelled by user")
+            self._log_result("")
+            # Try to save partial results if we have any evaluations
+            if "all_evaluations" in locals() and len(all_evaluations) > 0:
+                self._log_result(
+                    f"[INFO] Saving partial results ({len(all_evaluations)} evaluations completed)..."
+                )
+                try:
+                    self._save_partial_optimization_results(
+                        all_evaluations, param_names, "CANCELLED"
+                    )
+                except Exception as save_err:
+                    self._log_result(
+                        f"[WARNING] Failed to save partial results: {save_err}"
+                    )
         except Exception as e:
             import traceback
 
             error_msg = f"Optimization failed: {e}\n{traceback.format_exc()}"
             self._log_result(f"[ERROR] {error_msg}")
+            # Try to save partial results even on error
+            if "all_evaluations" in locals() and len(all_evaluations) > 0:
+                self._log_result(
+                    f"[INFO] Saving partial results ({len(all_evaluations)} evaluations completed)..."
+                )
+                try:
+                    self._save_partial_optimization_results(
+                        all_evaluations, param_names, "FAILED"
+                    )
+                except Exception as save_err:
+                    self._log_result(
+                        f"[WARNING] Failed to save partial results: {save_err}"
+                    )
         finally:
+            # Restore original verbosity settings
+            if "original_sc_verbosity" in locals():
+                self.config.self_consistency_verbosity = original_sc_verbosity
+            if "original_adaptive_debug" in locals():
+                self.config.adaptive_timestep_debug = original_adaptive_debug
+
             self.running = False
             self._update_progress(100, "Done")
             # Ensure log file is closed
@@ -6369,6 +6698,123 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result(f"[WARNING] Failed to generate comparison plot: {e}")
             self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
+    def _save_partial_optimization_results(
+        self, all_evaluations, param_names, status="PARTIAL"
+    ):
+        """Save partial optimization results when cancelled or failed.
+
+        Parameters
+        ----------
+        all_evaluations : list
+            List of completed evaluations
+        param_names : list
+            Parameter names
+        status : str
+            Status string ("CANCELLED", "FAILED", "PARTIAL")
+        """
+        import json
+        from datetime import datetime
+        from pathlib import Path
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Create results directory
+        if self.config.mode == "optimization":
+            method = self.config.optimization_method
+            output_dir = (
+                Path(self.config.output_dir)
+                / "optimizations"
+                / f"{timestamp}_{method}_{status}"
+            )
+        else:
+            output_dir = Path(self.config.output_dir) / f"{timestamp}_{status}"
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save evaluations to CSV
+        csv_path = output_dir / "all_evaluations.csv"
+        successful_evals = [
+            e
+            for e in all_evaluations
+            if not e.get("failed", False) and not e.get("halted_early", False)
+        ]
+        halted_evals = [e for e in all_evaluations if e.get("halted_early", False)]
+
+        if len(all_evaluations) > 0:
+            import csv
+
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=["evaluation"]
+                    + param_names
+                    + ["objective_value", "failed", "halted_early", "halt_reason"],
+                )
+                writer.writeheader()
+                for e in all_evaluations:
+                    row = {
+                        "evaluation": e["evaluation"],
+                        "failed": e.get("failed", False),
+                        "halted_early": e.get("halted_early", False),
+                        "halt_reason": e.get("halt_reason", ""),
+                    }
+                    row.update(e["parameters"])
+                    row["objective_value"] = e.get("objective_value", float("nan"))
+                    writer.writerow(row)
+            self._log_result(f"[OK] Partial results saved to: {csv_path}")
+
+        # Save JSON summary
+        summary = {
+            "status": status,
+            "timestamp": timestamp,
+            "total_evaluations": len(all_evaluations),
+            "successful_evaluations": len(successful_evals),
+            "halted_evaluations": len(halted_evals),
+            "failed_evaluations": len(all_evaluations)
+            - len(successful_evals)
+            - len(halted_evals),
+            "parameters": param_names,
+            "objective": self.config.objective,
+        }
+
+        if len(successful_evals) > 0:
+            # Find best (filter out inf values)
+            maximize = "max" in self.config.objective.lower()
+            finite_evals = [
+                e
+                for e in successful_evals
+                if np.isfinite(e.get("objective_value", np.inf))
+            ]
+
+            if len(finite_evals) > 0:
+                if maximize:
+                    best = max(
+                        finite_evals,
+                        key=lambda x: x.get("objective_value", -float("inf")),
+                    )
+                else:
+                    best = min(
+                        finite_evals,
+                        key=lambda x: x.get("objective_value", float("inf")),
+                    )
+                summary["best_parameters"] = best["parameters"]
+                summary["best_value"] = best["objective_value"]
+            else:
+                summary["note"] = "No finite objective values found"
+
+        summary_path = output_dir / "partial_summary.json"
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        self._log_result(f"[OK] Summary saved to: {summary_path}")
+
+        # Move log file to results directory
+        if self._log_file_path is not None and self._log_file_path.exists():
+            import shutil
+
+            dest_log = output_dir / self._log_file_path.name
+            shutil.copy2(self._log_file_path, dest_log)
+            self._log_result(f"[OK] Log file saved to: {dest_log}")
+
     def _run_sweep_background(self, is_finetune=False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
 
@@ -7123,6 +7569,17 @@ class OptimizationPlugin(ttk.Frame):
         cancel_flag: Optional[List[bool]] = None,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
+        # Log stability analysis configuration for debugging
+        self._log_result(f"  [CONFIG] Run {run_num} stability settings:")
+        self._log_result(f"    smoothness_enabled: {self.config.smoothness_enabled}")
+        if self.config.smoothness_enabled:
+            self._log_result(
+                f"    smoothness_window_size: {self.config.smoothness_window_size}"
+            )
+            self._log_result(
+                f"    smoothness_reject_on_violation: {self.config.smoothness_reject_on_violation}"
+            )
+
         # Use provided rider values or fall back to config defaults
         rider_m_particle = (
             rider_m_particle if rider_m_particle is not None else self.config.m_particle
@@ -7300,12 +7757,57 @@ class OptimizationPlugin(ttk.Frame):
 
             cancel_callback = check_cancel
 
+        # Create log callback to stream verbose SC/adaptive timestep output to GUI
+        # This ensures logs are visible in real-time even when not saved to file
+        log_callback = None
+        if (
+            self.config.self_consistency_verbosity > 0
+            or self.config.adaptive_timestep_debug
+        ):
+            # Create callback that forwards verbose logs to GUI
+            def verbose_log(message: str):
+                # Filter for SC and adaptive timestep related messages
+                if any(
+                    keyword in message
+                    for keyword in [
+                        "Particle",  # SC convergence output
+                        "converged",  # SC convergence status
+                        "Mass-shell error",  # SC error metrics
+                        "γ_velocity",  # SC gamma diagnostics
+                        "γ_energy",  # SC gamma diagnostics
+                        "γ_mass_shell",  # SC gamma diagnostics
+                        "Energy jump detected",  # Adaptive timestep trigger
+                        "Reducing timestep",  # Adaptive timestep action
+                        "Proximity refinement",  # Adaptive timestep near walls
+                        "Cooldown mode",  # Adaptive timestep state
+                        "Probing stability",  # Adaptive timestep recovery
+                        "Returning to normal timestep",  # Adaptive timestep recovery
+                        "Stable",  # Adaptive timestep status
+                        "Unstable",  # Adaptive timestep status
+                        "Minimum timestep reached",  # Adaptive timestep limit
+                        "Max refinement attempts",  # Adaptive timestep limit
+                    ]
+                ):
+                    self._log_result(f"    [VERBOSE] {message}")
+
+            log_callback = verbose_log
+
         result = run_testbed(
             options,
+            log=log_callback,
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
         )
         self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
+
+        # Check if integration was halted early
+        if result.halted_early:
+            self._log_result(
+                f"  [WARNING] Run {run_num} halted early: {result.halt_reason}"
+            )
+            self._log_result(
+                f"    Trajectory contains partial data and will still be analyzed"
+            )
 
         # Sanity check: Verify final z position doesn't exceed expected distance
         if (
@@ -7368,7 +7870,51 @@ class OptimizationPlugin(ttk.Frame):
             pass  # Ignore cleanup errors
         self._log_result(f"  [DEBUG] Temp directory cleaned")
 
-        # Extract metrics
+        # Check if run was halted early - if so, skip metrics calculation
+        if result.halted_early:
+            self._log_result(
+                f"  [INFO] Run {run_num} was halted early - skipping metrics calculation"
+            )
+            self._log_result(f"    Only trajectory and logs will be saved (if enabled)")
+            # Return minimal output with halt information
+            output = {
+                "metrics": {},  # Empty metrics
+                "halted_early": True,
+                "halt_reason": result.halt_reason,
+            }
+
+            # Add trajectory if available and saving is enabled
+            if result.rider_trajectory is not None:
+                save_traj = (
+                    self.config.save_all_trajectories
+                    or self.config.save_failed_trajectories
+                )
+                if save_traj:
+                    traj = result.rider_trajectory
+                    stride = self.config.trajectory_stride
+                    try:
+                        output["trajectory"] = {
+                            "z": np.asarray(traj["z"])[::stride].tolist(),
+                            "r": np.asarray(traj["r"])[::stride].tolist(),
+                            "pz": np.asarray(traj["pz"])[::stride].tolist(),
+                            "pr": np.asarray(traj["pr"])[::stride].tolist(),
+                            "t": np.asarray(traj["t"])[::stride].tolist(),
+                            "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
+                        }
+                        self._log_result(
+                            f"    Halted trajectory saved ({len(traj['z'])} points, stride={stride})"
+                        )
+                    except Exception as e:
+                        self._log_result(
+                            f"    [WARNING] Failed to save halted trajectory: {e}"
+                        )
+
+            self._log_result(
+                f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
+            )
+            return output
+
+        # Extract metrics (only for non-halted runs)
         self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
         metrics = {}
         if result.rider_delta_e is not None:
@@ -7563,6 +8109,11 @@ class OptimizationPlugin(ttk.Frame):
                     self._log_result(
                         f"  [OK] Stability check PASSED for Run {run_num}: {smoothness_result.quality_summary}"
                     )
+            else:
+                # Smoothness checking is disabled
+                self._log_result(
+                    f"  [INFO] Stability analysis DISABLED for Run {run_num} (smoothness_enabled=False)"
+                )
 
             # Only save full trajectory arrays if explicitly requested
             # Check if any trajectory saving option is enabled
@@ -7588,6 +8139,23 @@ class OptimizationPlugin(ttk.Frame):
                     self._log_result(
                         f"    [WARNING] Failed to save trajectory arrays: {e}"
                     )
+
+            # Add halt information to output if present
+            if result.halted_early:
+                output["halted_early"] = True
+                output["halt_reason"] = result.halt_reason
+        else:
+            # No trajectory data available - stability analysis cannot run
+            self._log_result(
+                f"  [WARNING] No trajectory data available for Run {run_num}"
+            )
+            if self.config.smoothness_enabled:
+                self._log_result(
+                    f"  [WARNING] Stability analysis SKIPPED - no trajectory data returned from integration"
+                )
+                self._log_result(
+                    f"    Check that transverse_save=True in SimulationOptions"
+                )
 
         self._log_result(
             f"  [DEBUG] _run_single_integration returning for Run {run_num}"
@@ -7916,7 +8484,7 @@ class OptimizationPlugin(ttk.Frame):
 
                 # Create header
                 header = (
-                    ["evaluation", "failed"]
+                    ["evaluation", "failed", "halted_early", "halt_reason"]
                     + param_names
                     + metric_names
                     + ["objective_value", "fitness"]
@@ -7929,6 +8497,8 @@ class OptimizationPlugin(ttk.Frame):
                     row = {
                         "evaluation": eval_rec["evaluation"],
                         "failed": eval_rec.get("failed", True),
+                        "halted_early": eval_rec.get("halted_early", False),
+                        "halt_reason": eval_rec.get("halt_reason", ""),
                         "objective_value": eval_rec.get("objective_value", ""),
                         "fitness": eval_rec.get("fitness", ""),
                     }

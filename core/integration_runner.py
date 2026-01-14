@@ -574,6 +574,27 @@ def retarded_integrator(
             trajectory[i] = temp_trajectory[-1]
             _ensure_startup_metadata(trajectory[i])
 
+            # Check for gamma blowup (numerical breakdown)
+            # Gamma > 1e8 is physically unrealistic and indicates severe numerical issues
+            gamma_check = _calculate_gamma(trajectory[i])
+            if gamma_check > 1e8 or np.isnan(gamma_check) or np.isinf(gamma_check):
+                if adaptive_timestep is not None and adaptive_timestep.debug:
+                    print(
+                        f"[CRITICAL] Step {i}: Gamma blowup detected (γ={gamma_check:.2e}). "
+                        f"Numerical breakdown - halting integration."
+                    )
+                # Truncate trajectory and mark as halted
+                trajectory = trajectory[: i + 1]
+                trajectory_drv = trajectory_drv[: i + 1]
+                # Store halt information in the last particle's metadata
+                trajectory[-1]["_halted_early"] = True
+                trajectory[-1]["_halt_reason"] = (
+                    f"gamma_blowup (γ={gamma_check:.2e} at step {i}/{steps})"
+                )
+                trajectory[-1]["_halt_step"] = i
+                trajectory[-1]["_requested_steps"] = steps
+                return trajectory, trajectory_drv
+
             if sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
                     trajectory[i], wall_z, aperture_radius, z_cutoff
@@ -626,14 +647,23 @@ def retarded_integrator(
             z_current = float(np.mean(trajectory[i]["z"]))
             distance_traveled = abs(z_current - z_initial)
             if distance_traveled > z_cutoff:
-                # Truncate trajectory and return early
+                # Truncate trajectory and mark as halted
                 if adaptive_timestep is not None and adaptive_timestep.debug:
                     print(
                         f"Step {i}: BUNCH_TO_BUNCH relative cutoff reached. "
                         f"Traveled {distance_traveled:.2f} mm > {z_cutoff:.2f} mm cutoff. "
                         f"Stopping integration early."
                     )
-                return trajectory[: i + 1], trajectory_drv[: i + 1]
+                trajectory_truncated = trajectory[: i + 1]
+                trajectory_drv_truncated = trajectory_drv[: i + 1]
+                # Store halt information in the last particle's metadata
+                trajectory_truncated[-1]["_halted_early"] = True
+                trajectory_truncated[-1]["_halt_reason"] = (
+                    f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})"
+                )
+                trajectory_truncated[-1]["_halt_step"] = i
+                trajectory_truncated[-1]["_requested_steps"] = steps
+                return trajectory_truncated, trajectory_drv_truncated
 
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
         if (

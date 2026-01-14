@@ -1,5 +1,34 @@
 # LW Integrator
 
+## Recent Updates
+
+### Verbose Logging in Sweep/Optimization (v0.4.2+)
+
+When running sweeps or optimizations, verbose diagnostic logs (SC iterations, adaptive timestep refinements) are now streamed to the GUI in real-time when verbosity settings are enabled:
+
+- **Self-Consistency Verbosity** (`self_consistency_verbosity > 0`): SC convergence diagnostics are displayed in the GUI log window during runs
+- **Adaptive Timestep Debug** (`adaptive_timestep_debug = True`): Timestep refinement actions are displayed in the GUI log window during runs
+
+**Key behaviors:**
+1. These logs appear in **real-time** during sweep/optimization execution
+2. Logs are visible in the GUI's **Detailed** log view (toggle Summary/Detailed in the log controls)
+3. Verbose output appears **even when not saved to file** (controlled separately by `log_verbosity` setting)
+4. The `log_verbosity` setting controls what gets saved to disk:
+   - `"none"`: No logs saved, SC/adaptive verbosity disabled
+   - `"truncated"`: Brief logs only, SC/adaptive verbosity disabled
+   - `"full"`: Complete debug logs saved, SC/adaptive verbosity enabled
+   - `"top_n_only"`: Logs saved only for top N trajectories, SC/adaptive verbosity enabled
+
+**Example:** If you set `log_verbosity="full"` and `self_consistency_verbosity=2`, you'll see detailed SC convergence messages like:
+```
+[VERBOSE] Particle 0: converged in 3 iter, E_ms=1.234e-08
+[VERBOSE] Particle 1: converged in 2 iter, E_ms=5.678e-09
+```
+
+This ensures that diagnostic information is always visible during runs when requested, independent of file-saving preferences.
+
+---
+
 The LW Integrator is a covariant charged-particle tracking code that evaluates
 retarded Liénard–Wiechert potentials to obtain first-principles beam dynamics.
 The repository contains a modernised ``core`` implementation that mirrors the
