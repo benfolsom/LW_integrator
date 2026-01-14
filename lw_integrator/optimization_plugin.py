@@ -691,6 +691,7 @@ class OptimizationPlugin(ttk.Frame):
         self.running = False
         self.progress_value = 0.0
         self.progress_text = ""
+        self._was_cancelled = False
 
         # Store sweep directories
         self.sweep_config_dir = sweep_config_dir or "configs/sweep_configs"
@@ -3490,6 +3491,7 @@ class OptimizationPlugin(ttk.Frame):
             return
 
         # Update UI state
+        self._was_cancelled = False
         self.running = True
         self._update_progress(0, "Initializing sweep...")
 
@@ -3512,6 +3514,7 @@ class OptimizationPlugin(ttk.Frame):
     def _on_stop(self):
         """Handle stop button click."""
         self.running = False
+        self._was_cancelled = True
         self._update_progress_text("Stopping...")
 
         # Signal main GUI cancellation
@@ -3877,7 +3880,15 @@ class OptimizationPlugin(ttk.Frame):
             self._log_result("=" * 60)
             self._log_result("LOADED STABILITY OPTIONS SUMMARY")
             self._log_result("=" * 60)
-            self._log_result("")
+            best_metric_value = -result.fun if maximize else result.fun
+            if np.isfinite(best_metric_value):
+                self._log_result(
+                    f"Best {metric_name}: {best_metric_value:.12e}"
+                )
+            else:
+                self._log_result(
+                    f"Best {metric_name}: no finite result (optimizer returned {result.fun:.12e})"
+                )
             self._log_result("[Self-Consistency]")
             self._log_result(f"  Enabled: {self.config.self_consistency_enabled}")
             self._log_result(
@@ -5627,14 +5638,14 @@ class OptimizationPlugin(ttk.Frame):
                 # Check for cancellation
                 if not self.running:
                     self._log_result("[CANCELLED] Optimization cancelled by user")
-                    return np.inf if not maximize else -np.inf
+                    return np.inf
 
                 if self.gui_controller and hasattr(
                     self.gui_controller, "_cancel_requested"
                 ):
                     if self.gui_controller._cancel_requested:
                         self._log_result("[CANCELLED] Optimization cancelled by user")
-                        return np.inf if not maximize else -np.inf
+                        return np.inf
 
                 try:
                     # Map parameters
@@ -5745,7 +5756,7 @@ class OptimizationPlugin(ttk.Frame):
                             )
                             # Give it a brief moment to respond
                             thread.join(timeout=2.0)
-                            return np.inf if not maximize else -np.inf
+                            return np.inf
                         elif error_container[0] is not None:
                             raise error_container[0]
                         else:
@@ -5784,10 +5795,10 @@ class OptimizationPlugin(ttk.Frame):
                             "halt_reason": result.get("halt_reason", None)
                             if result
                             else None,
-                            "objective_value": np.inf if not maximize else -np.inf,
+                            "objective_value": float("inf"),
                         }
                         all_evaluations.append(eval_record)
-                        return np.inf if not maximize else -np.inf
+                        return np.inf
 
                     # Check if run was halted early
                     if result.get("halted_early", False):
@@ -5804,10 +5815,10 @@ class OptimizationPlugin(ttk.Frame):
                             "failed": False,
                             "halted_early": True,
                             "halt_reason": result.get("halt_reason"),
-                            "objective_value": np.inf if not maximize else -np.inf,
+                            "objective_value": float("inf"),
                         }
                         all_evaluations.append(eval_record)
-                        return np.inf if not maximize else -np.inf
+                        return np.inf
 
                     # Extract metric value
                     metrics = result["metrics"]
@@ -5825,18 +5836,18 @@ class OptimizationPlugin(ttk.Frame):
                             for k, v in metrics.items():
                                 self._log_result(f"  {k}: {v}")
                         self._log_result(
-                            f"[WARNING] Returning -inf (rejecting this evaluation)"
+                            f"[WARNING] Returning inf (rejecting this evaluation)"
                         )
                         # Store failed evaluation
                         eval_record = {
                             "evaluation": eval_num,
                             "parameters": dict(zip(param_names, x)),
                             "failed": True,
-                            "objective_value": np.inf if not maximize else -np.inf,
+                            "objective_value": float("inf"),
                             "metrics": result.get("metrics", {}),
                         }
                         all_evaluations.append(eval_record)
-                        return np.inf if not maximize else -np.inf
+                        return np.inf
 
                     # Return value to minimize (negate if maximizing)
                     result_value = -value if maximize else value
@@ -5878,11 +5889,11 @@ class OptimizationPlugin(ttk.Frame):
                         "parameters": dict(zip(param_names, x)),
                         "failed": True,
                         "error": str(e),
-                        "objective_value": np.inf if not maximize else -np.inf,
+                        "objective_value": float("inf"),
                     }
                     all_evaluations.append(eval_record)
 
-                    return np.inf if not maximize else -np.inf
+                    return np.inf
 
             if method == "genetic_algorithm":
                 # Define progress callback for convergence monitoring
@@ -6117,6 +6128,12 @@ class OptimizationPlugin(ttk.Frame):
         if self._log_file is not None:
             self._close_log_file()
 
+        maximize = "max" in self.config.objective.lower()
+        best_metric_value = -result.fun if maximize else result.fun
+        best_metric_serializable = (
+            float(best_metric_value) if np.isfinite(best_metric_value) else None
+        )
+
         # Get config name if available (strip extension and path)
         config_name = "optimization"
         if hasattr(self, "last_loaded_config") and self.last_loaded_config:
@@ -6134,7 +6151,7 @@ class OptimizationPlugin(ttk.Frame):
             "optimization_method": self.config.optimization_method,
             "objective": self.config.objective,
             "best_parameters": result.best_params_dict,
-            "best_value": float(result.fun),
+            "best_value": best_metric_serializable,
             "function_evaluations": int(result.nfev)
             if hasattr(result, "nfev")
             else None,
@@ -6145,32 +6162,42 @@ class OptimizationPlugin(ttk.Frame):
 
         # Add top N summary table if available (for population-based methods)
         if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
-            top_n = max(1, int(self.config.optimization_save_top_n))
-            sorted_indices = np.argsort(result.final_fitness)
-            n_available = min(top_n, len(sorted_indices))
-
-            top_n_summary = []
-            for i in range(n_available):
-                idx = sorted_indices[i]
-                params_array = result.final_population[idx]
-                params_dict = dict(zip(param_names, params_array))
-                fitness = result.final_fitness[idx]
-
-                # Convert fitness to actual metric value
-                maximize = "max" in self.config.objective.lower()
-                metric_value = -fitness if maximize else fitness
-
-                top_n_summary.append(
-                    {
-                        "rank": i + 1,
-                        "parameters": params_dict,
-                        "fitness": float(fitness),
-                        "metric_value": float(metric_value),
-                    }
+            fitness_array = np.asarray(result.final_fitness, dtype=float)
+            finite_indices = np.where(np.isfinite(fitness_array))[0]
+            if finite_indices.size == 0:
+                self._log_result(
+                    "[INFO] Skipping top-N summary (no finite fitness values)."
                 )
+                results_dict["top_n_results"] = []
+                results_dict["top_n_count"] = 0
+            else:
+                top_n = max(1, int(self.config.optimization_save_top_n))
+                sorted_finite = np.argsort(fitness_array[finite_indices])
+                sorted_indices = finite_indices[sorted_finite]
+                n_available = min(top_n, len(sorted_indices))
 
-            results_dict["top_n_results"] = top_n_summary
-            results_dict["top_n_count"] = n_available
+                top_n_summary = []
+                maximize = "max" in self.config.objective.lower()
+                for i in range(n_available):
+                    idx = sorted_indices[i]
+                    params_array = result.final_population[idx]
+                    params_dict = dict(zip(param_names, params_array))
+                    fitness = fitness_array[idx]
+
+                    # Convert fitness to actual metric value
+                    metric_value = -fitness if maximize else fitness
+
+                    top_n_summary.append(
+                        {
+                            "rank": i + 1,
+                            "parameters": params_dict,
+                            "fitness": float(fitness),
+                            "metric_value": float(metric_value),
+                        }
+                    )
+
+                results_dict["top_n_results"] = top_n_summary
+                results_dict["top_n_count"] = n_available
 
         # Add convergence history if available
         if hasattr(result, "convergence_history"):
@@ -6197,16 +6224,29 @@ class OptimizationPlugin(ttk.Frame):
 
         # Filter evaluations based on scope
         evaluations_to_export = None
-        if all_evaluations and export_scope == "top_n":
-            # Export only top N
+        scope_desc = "0"
+        finite_evals = (
+            [
+                e
+                for e in all_evaluations
+                if np.isfinite(e.get("objective_value", float("inf")))
+            ]
+            if all_evaluations
+            else []
+        )
+
+        if export_scope == "top_n" and finite_evals:
             top_n = max(1, int(self.config.optimization_save_top_n))
             sorted_evals = sorted(
-                all_evaluations, key=lambda e: e.get("objective_value", float("inf"))
+                finite_evals, key=lambda e: e.get("objective_value", float("inf"))
             )
             evaluations_to_export = sorted_evals[:top_n]
             scope_desc = f"top {len(evaluations_to_export)}"
+        elif export_scope == "top_n" and not finite_evals and all_evaluations:
+            self._log_result(
+                "[INFO] Skipping top-N export (no finite evaluation metrics)."
+            )
         elif all_evaluations:
-            # Export all
             evaluations_to_export = all_evaluations
             scope_desc = "all"
 
@@ -6274,11 +6314,18 @@ class OptimizationPlugin(ttk.Frame):
         output_dir : Path
             Output directory for saving the table
         """
-        from pathlib import Path
-
         try:
+            fitness_array = np.asarray(result.final_fitness, dtype=float)
+            finite_indices = np.where(np.isfinite(fitness_array))[0]
+            if finite_indices.size == 0:
+                self._log_result(
+                    "[INFO] Skipping top-N trajectory table (no finite fitness values)."
+                )
+                return
+
             top_n = max(1, int(self.config.optimization_save_top_n))
-            sorted_indices = np.argsort(result.final_fitness)
+            sorted_finite = np.argsort(fitness_array[finite_indices])
+            sorted_indices = finite_indices[sorted_finite]
             n_available = min(top_n, len(sorted_indices))
 
             # Determine if maximizing
@@ -6301,7 +6348,7 @@ class OptimizationPlugin(ttk.Frame):
                 idx = sorted_indices[i]
                 params_array = result.final_population[idx]
                 params_dict = dict(zip(param_names, params_array))
-                fitness = result.final_fitness[idx]
+                fitness = fitness_array[idx]
 
                 # Convert fitness to actual metric value
                 metric_value = -fitness if maximize else fitness
@@ -6313,17 +6360,22 @@ class OptimizationPlugin(ttk.Frame):
                     # Estimate delta_e from percent (approximate for display)
                     # Use initial energy if available
                     initial_energy_gev = params_dict.get("initial_energy_gev", 100.0)
-                    gamma_initial = initial_energy_gev * 1e3 / 0.511  # Approximate for electrons
+                    gamma_initial = (
+                        initial_energy_gev * 1e3 / 0.511
+                    )  # Approximate for electrons
                     delta_e_mev = (percent_delta_e / 100.0) * gamma_initial * 0.511
-                elif "energy_gain" in self.config.objective.lower() or "delta_e" in self.config.objective.lower():
+                elif (
+                    "energy_gain" in self.config.objective.lower()
+                    or "delta_e" in self.config.objective.lower()
+                ):
                     delta_e_mev = metric_value
                     # Estimate percent from delta_e
                     initial_energy_gev = params_dict.get("initial_energy_gev", 100.0)
                     gamma_initial = initial_energy_gev * 1e3 / 0.511
                     percent_delta_e = (delta_e_mev / (gamma_initial * 0.511)) * 100.0
                 else:
-                    delta_e_mev = float('nan')
-                    percent_delta_e = float('nan')
+                    delta_e_mev = float("nan")
+                    percent_delta_e = float("nan")
 
                 # Format parameters compactly
                 param_str = ", ".join([f"{k}={v:.4g}" for k, v in params_dict.items()])
@@ -6331,13 +6383,15 @@ class OptimizationPlugin(ttk.Frame):
                     param_str = param_str[:47] + "..."
 
                 # Format row
-                row = f"{i+1:<6} {fitness:<15.6e} {metric_value:<15.6e} {delta_e_mev:<15.6f} {percent_delta_e:<15.6e} {param_str}"
+                row = f"{i + 1:<6} {fitness:<15.6e} {metric_value:<15.6e} {delta_e_mev:<15.6f} {percent_delta_e:<15.6e} {param_str}"
                 table_lines.append(row)
 
             table_lines.append("=" * 120)
             table_lines.append("")
             table_lines.append("Notes:")
-            table_lines.append("  - Fitness: Internal optimizer value (lower is better)")
+            table_lines.append(
+                "  - Fitness: Internal optimizer value (lower is better)"
+            )
             table_lines.append("  - Metric Value: Actual objective value")
             table_lines.append("  - ΔE: Energy change in MeV")
             table_lines.append("  - ΔE/E: Percent energy change")
@@ -6358,6 +6412,11 @@ class OptimizationPlugin(ttk.Frame):
                 self._log_result("... (see full table in top_trajectories_summary.txt)")
 
             self._log_result(f"")
+
+        except Exception as e:
+            self._log_result(
+                f"[WARNING] Failed to write top trajectories summary table: {e}"
+            )
 
     def _generate_optimization_plots(self, result, param_names, output_dir):
         """Generate optimization visualization plots."""
@@ -6424,8 +6483,18 @@ class OptimizationPlugin(ttk.Frame):
             if len(param_names) == 2 and hasattr(result, "final_population"):
                 fig, ax = plt.subplots(figsize=(8, 6))
 
-                population = result.final_population
-                fitness = result.final_fitness
+                population = np.asarray(result.final_population)
+                fitness = np.asarray(result.final_fitness, dtype=float)
+                finite_mask = np.isfinite(fitness)
+                if not np.any(finite_mask):
+                    self._log_result(
+                        "[INFO] Skipping parameter exploration plot (no finite final population)."
+                    )
+                    plt.close(fig)
+                    return
+
+                population = population[finite_mask]
+                fitness = fitness[finite_mask]
 
                 # Determine if maximizing
                 maximize = "max" in self.config.objective.lower()
@@ -6670,6 +6739,13 @@ class OptimizationPlugin(ttk.Frame):
         """
         from pathlib import Path
 
+        if getattr(self, "_was_cancelled", False):
+            self._log_result("")
+            self._log_result(
+                "[INFO] Skipping top-N trajectory regeneration (optimization cancelled)."
+            )
+            return
+
         try:
             # Determine how many trajectories to save
             top_n = max(1, int(self.config.optimization_save_top_n))
@@ -6679,8 +6755,16 @@ class OptimizationPlugin(ttk.Frame):
 
             if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
                 # Population-based method (genetic algorithm, differential evolution)
-                # Sort by fitness (already sorted, but just to be safe)
-                sorted_indices = np.argsort(result.final_fitness)
+                fitness_array = np.asarray(result.final_fitness, dtype=float)
+                finite_indices = np.where(np.isfinite(fitness_array))[0]
+                if finite_indices.size == 0:
+                    self._log_result(
+                        "[INFO] No finite fitness values available; skipping top-N trajectory generation."
+                    )
+                    return
+
+                sorted_finite = np.argsort(fitness_array[finite_indices])
+                sorted_indices = finite_indices[sorted_finite]
                 n_available = min(top_n, len(sorted_indices))
 
                 self._log_result("")
@@ -6692,7 +6776,7 @@ class OptimizationPlugin(ttk.Frame):
                     idx = sorted_indices[i]
                     params_array = result.final_population[idx]
                     params_dict = dict(zip(param_names, params_array))
-                    fitness = result.final_fitness[idx]
+                    fitness = fitness_array[idx]
                     top_params_list.append(
                         {"params": params_dict, "fitness": fitness, "rank": i + 1}
                     )
@@ -8118,8 +8202,12 @@ class OptimizationPlugin(ttk.Frame):
         from datetime import datetime
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
+        # Create a temporary subdirectory for this run's outputs (will be cleaned up)
+        # IMPORTANT: This must live under the same base directory that the orphan-cleanup
+        # routine scans (self.sweep_output_dir), otherwise temp dirs will only be cleaned
+        # up when the GUI starts (or never, if output_dir differs).
         run_output_dir = (
-            Path(self.config.output_dir) / f"_temp_run_{run_num}_{timestamp}"
+            Path(self.sweep_output_dir) / f"_temp_run_{run_num}_{timestamp}"
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -8192,159 +8280,413 @@ class OptimizationPlugin(ttk.Frame):
                 )
 
         # Run the integration with progress tracking
-        # Log diagnostic info for potentially problematic configurations
-        if aperture < 0.1:
-            self._log_result(
-                f"  [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)"
-            )
-        if macroparticle_charge_multiplier > 1000:
-            self._log_result(
-                f"  [DIAGNOSTIC] Run {run_num}: Large charge multiplier ({macroparticle_charge_multiplier:.0f})"
-            )
-            self._log_result(
-                f"    Note: This may significantly slow integration due to strong image forces"
-            )
-
-        self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
-
-        # Create cancel callback if cancel_flag is provided
-        cancel_callback = None
-        if cancel_flag is not None:
-
-            def check_cancel():
-                if cancel_flag[0]:
-                    self._log_result(
-                        f"  [CANCEL] Run {run_num}: Cancellation requested"
-                    )
-                return cancel_flag[0] if cancel_flag else False
-
-            cancel_callback = check_cancel
-
-        # Create log callback to stream verbose SC/adaptive timestep output to GUI
-        # This ensures logs are visible in real-time even when not saved to file
-        log_callback = None
-        if (
-            self.config.self_consistency_verbosity > 0
-            or self.config.adaptive_timestep_debug
-        ):
-            # Create callback that forwards verbose logs to GUI
-            def verbose_log(message: str):
-                # Filter for SC and adaptive timestep related messages
-                if any(
-                    keyword in message
-                    for keyword in [
-                        "Particle",  # SC convergence output
-                        "converged",  # SC convergence status
-                        "Mass-shell error",  # SC error metrics
-                        "γ_velocity",  # SC gamma diagnostics
-                        "γ_energy",  # SC gamma diagnostics
-                        "γ_mass_shell",  # SC gamma diagnostics
-                        "Energy jump detected",  # Adaptive timestep trigger
-                        "Reducing timestep",  # Adaptive timestep action
-                        "Proximity refinement",  # Adaptive timestep near walls
-                        "Cooldown mode",  # Adaptive timestep state
-                        "Probing stability",  # Adaptive timestep recovery
-                        "Returning to normal timestep",  # Adaptive timestep recovery
-                        "Stable",  # Adaptive timestep status
-                        "Unstable",  # Adaptive timestep status
-                        "Minimum timestep reached",  # Adaptive timestep limit
-                        "Max refinement attempts",  # Adaptive timestep limit
-                    ]
-                ):
-                    self._log_result(f"    [VERBOSE] {message}")
-
-            log_callback = verbose_log
-
-        result = run_testbed(
-            options,
-            log=log_callback,
-            progress_callback=progress_callback,
-            cancel_callback=cancel_callback,
-        )
-        self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
-
-        # Check if integration was halted early
-        if result.halted_early:
-            self._log_result(
-                f"  [WARNING] Run {run_num} halted early: {result.halt_reason}"
-            )
-            self._log_result(
-                f"    Trajectory contains partial data and will still be analyzed"
-            )
-
-        # Sanity check: Verify final z position doesn't exceed expected distance
-        if (
-            result.rider_trajectory is not None
-            and self.config.timestep_strategy == "auto_distance"
-        ):
-            try:
-                traj = result.rider_trajectory
-                z_array = np.asarray(traj.get("z", []))
-                if len(z_array) > 0:
-                    final_z = float(z_array[-1])
-                    expected_max_z = wall_z + self.config.target_distance_mm
-
-                    if final_z > expected_max_z:
-                        excess = final_z - expected_max_z
-                        self._log_result(
-                            f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!"
-                        )
-                        self._log_result(f"    Final z: {final_z:.2f} mm")
-                        self._log_result(
-                            f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
-                        )
-                        self._log_result(
-                            f"    Exceeded by: {excess:.2f} mm ({excess / expected_max_z * 100:.1f}%)"
-                        )
-                    else:
-                        under = expected_max_z - final_z
-                        self._log_result(f"  [DEBUG] Run {run_num}: Final z check OK")
-                        self._log_result(
-                            f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)"
-                        )
-            except Exception as e:
+        #
+        # NOTE: We must always clean up the per-run temp directory, even when returning
+        # early (halted runs) or raising exceptions. We do that by wrapping the entire
+        # run/analysis section in a try/finally.
+        try:
+            # Log diagnostic info for potentially problematic configurations
+            if aperture < 0.1:
                 self._log_result(
-                    f"  [WARNING] Run {run_num}: Failed to check final z position: {e}"
+                    f"  [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)"
                 )
-
-        # No figures should be generated during sweeps (all display/save flags set to False)
-        # If any figures were created (shouldn't happen), close them as a safety measure
-        if result.figures:
-            self._log_result(
-                f"  [WARNING] Run {run_num}: Unexpected figures generated ({len(result.figures)}), closing them"
+            if macroparticle_charge_multiplier > 1000:
+                self._log_result(
+                    f"  [DIAGNOSTIC] Run {run_num}: Large charge multiplier ({macroparticle_charge_multiplier:.0f})"
+                )
+                self._log_result(
+                    f"    Note: This may significantly slow integration due to strong image forces"
+                )
+    
+            self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
+    
+            # Create cancel callback if cancel_flag is provided
+            cancel_callback = None
+            if cancel_flag is not None:
+    
+                def check_cancel():
+                    if cancel_flag[0]:
+                        self._log_result(
+                            f"  [CANCEL] Run {run_num}: Cancellation requested"
+                        )
+                    return cancel_flag[0] if cancel_flag else False
+    
+                cancel_callback = check_cancel
+    
+            # Create log callback to stream verbose SC/adaptive timestep output to GUI
+            # This ensures logs are visible in real-time even when not saved to file
+            log_callback = None
+            if (
+                self.config.self_consistency_verbosity > 0
+                or self.config.adaptive_timestep_debug
+            ):
+                # Create callback that forwards verbose logs to GUI
+                def verbose_log(message: str):
+                    # Filter for SC and adaptive timestep related messages
+                    if any(
+                        keyword in message
+                        for keyword in [
+                            "Particle",  # SC convergence output
+                            "converged",  # SC convergence status
+                            "Mass-shell error",  # SC error metrics
+                            "γ_velocity",  # SC gamma diagnostics
+                            "γ_energy",  # SC gamma diagnostics
+                            "γ_mass_shell",  # SC gamma diagnostics
+                            "Energy jump detected",  # Adaptive timestep trigger
+                            "Reducing timestep",  # Adaptive timestep action
+                            "Proximity refinement",  # Adaptive timestep near walls
+                            "Cooldown mode",  # Adaptive timestep state
+                            "Probing stability",  # Adaptive timestep recovery
+                            "Returning to normal timestep",  # Adaptive timestep recovery
+                            "Stable",  # Adaptive timestep status
+                            "Unstable",  # Adaptive timestep status
+                            "Minimum timestep reached",  # Adaptive timestep limit
+                            "Max refinement attempts",  # Adaptive timestep limit
+                        ]
+                    ):
+                        self._log_result(f"    [VERBOSE] {message}")
+    
+                log_callback = verbose_log
+    
+            result = run_testbed(
+                options,
+                log=log_callback,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
             )
-            import matplotlib.pyplot as plt
-
-            for fig_name, fig in result.figures.items():
+            self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
+    
+            # Check if integration was halted early
+            if result.halted_early:
+                self._log_result(
+                    f"  [WARNING] Run {run_num} halted early: {result.halt_reason}"
+                )
+                self._log_result(
+                    f"    Trajectory contains partial data and will still be analyzed"
+                )
+    
+            # Sanity check: Verify final z position doesn't exceed expected distance
+            if (
+                result.rider_trajectory is not None
+                and self.config.timestep_strategy == "auto_distance"
+            ):
                 try:
-                    plt.close(fig)
-                    self._log_result(f"    Closed unexpected figure: {fig_name}")
+                    traj = result.rider_trajectory
+                    z_array = np.asarray(traj.get("z", []))
+                    if len(z_array) > 0:
+                        final_z = float(z_array[-1])
+                        expected_max_z = wall_z + self.config.target_distance_mm
+    
+                        if final_z > expected_max_z:
+                            excess = final_z - expected_max_z
+                            self._log_result(
+                                f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!"
+                            )
+                            self._log_result(f"    Final z: {final_z:.2f} mm")
+                            self._log_result(
+                                f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
+                            )
+                            self._log_result(
+                                f"    Exceeded by: {excess:.2f} mm ({excess / expected_max_z * 100:.1f}%)"
+                            )
+                        else:
+                            under = expected_max_z - final_z
+                            self._log_result(f"  [DEBUG] Run {run_num}: Final z check OK")
+                            self._log_result(
+                                f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)"
+                            )
                 except Exception as e:
-                    self._log_result(f"    Error closing figure {fig_name}: {e}")
-
-        # Check if run was halted early - if so, skip metrics calculation
-        if result.halted_early:
-            self._log_result(
-                f"  [INFO] Run {run_num} was halted early - skipping metrics calculation"
-            )
-            self._log_result(f"    Only trajectory and logs will be saved (if enabled)")
-            # Return minimal output with halt information
-            output = {
-                "metrics": {},  # Empty metrics
-                "halted_early": True,
-                "halt_reason": result.halt_reason,
-            }
-
-            # Add trajectory if available and saving is enabled
+                    self._log_result(
+                        f"  [WARNING] Run {run_num}: Failed to check final z position: {e}"
+                    )
+    
+            # No figures should be generated during sweeps (all display/save flags set to False)
+            # If any figures were created (shouldn't happen), close them as a safety measure
+            if result.figures:
+                self._log_result(
+                    f"  [WARNING] Run {run_num}: Unexpected figures generated ({len(result.figures)}), closing them"
+                )
+                import matplotlib.pyplot as plt
+    
+                for fig_name, fig in result.figures.items():
+                    try:
+                        plt.close(fig)
+                        self._log_result(f"    Closed unexpected figure: {fig_name}")
+                    except Exception as e:
+                        self._log_result(f"    Error closing figure {fig_name}: {e}")
+    
+            # Check if run was halted early - if so, skip metrics calculation
+            if result.halted_early:
+                self._log_result(
+                    f"  [INFO] Run {run_num} was halted early - skipping metrics calculation"
+                )
+                self._log_result(f"    Only trajectory and logs will be saved (if enabled)")
+                # Return minimal output with halt information
+                output = {
+                    "metrics": {},  # Empty metrics
+                    "halted_early": True,
+                    "halt_reason": result.halt_reason,
+                }
+    
+                # Add trajectory if available and saving is enabled
+                if result.rider_trajectory is not None:
+                    save_traj = (
+                        self.config.save_all_trajectories
+                        or self.config.save_failed_trajectories
+                    )
+                    if save_traj:
+                        traj = result.rider_trajectory
+                        stride = self.config.trajectory_stride
+                        try:
+                            output["trajectory"] = {
+                                "z": np.asarray(traj["z"])[::stride].tolist(),
+                                "r": np.asarray(traj["r"])[::stride].tolist(),
+                                "pz": np.asarray(traj["pz"])[::stride].tolist(),
+                                "pr": np.asarray(traj["pr"])[::stride].tolist(),
+                                "t": np.asarray(traj["t"])[::stride].tolist(),
+                                "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
+                            }
+                            self._log_result(
+                                f"    Halted trajectory saved ({len(traj['z'])} points, stride={stride})"
+                            )
+                        except Exception as e:
+                            self._log_result(
+                                f"    [WARNING] Failed to save halted trajectory: {e}"
+                            )
+    
+                self._log_result(
+                    f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
+                )
+                return output
+    
+            # Extract metrics (only for non-halted runs)
+            self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
+            metrics = {}
+            if result.rider_delta_e is not None:
+                metrics["rider_delta_e_mev"] = result.rider_delta_e
+            if result.rider_gamma_initial is not None:
+                metrics["rider_gamma_initial"] = result.rider_gamma_initial
+            if result.rider_gamma_final is not None:
+                metrics["rider_gamma_final"] = result.rider_gamma_final
+    
+            # Calculate max_percent_energy_gain from gamma values
+            gamma_initial = result.rider_gamma_initial
+            gamma_final = result.rider_gamma_final
+    
+            # Diagnostic logging
+            self._log_result(f"  [RESULT] Run {run_num} metrics:")
+            self._log_result(f"    rider_gamma_initial: {gamma_initial}")
+            self._log_result(f"    rider_gamma_final: {gamma_final}")
+    
+            # Try to calculate from available gamma values
+            if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
+                delta_gamma = gamma_final - gamma_initial
+                energy_gain_percent = delta_gamma / gamma_initial * 100.0
+                energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
+                # Calculate delta_e in MeV (for electrons: ΔE = Δγ * m_e*c^2 = Δγ * 0.511 MeV)
+                delta_e_mev = delta_gamma * 0.511
+    
+                metrics["max_percent_energy_gain"] = energy_gain_percent
+                metrics["percent_delta_e"] = energy_gain_percent
+                metrics["delta_gamma"] = delta_gamma
+                metrics["delta_e_mev"] = delta_e_mev
+                metrics["energy_gain_ppm"] = energy_gain_ppm
+    
+                self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
+                self._log_result(f"    delta_e_mev: {delta_e_mev:.12e} MeV")
+                self._log_result(
+                    f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+                )
+                self._log_result(f"    percent_delta_e: {energy_gain_percent:.12e}%")
+                self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
+    
+                # For optimization runs, show what the optimizer sees
+                if hasattr(self, "config") and hasattr(self.config, "mode"):
+                    if self.config.mode == "optimization":
+                        # Optimizer minimizes, so negate for maximization objectives
+                        optimizer_value = -energy_gain_percent  # We maximize percent gain
+                        self._log_result(f"    optimizer_objective: {optimizer_value:.12e}")
+            else:
+                # Fallback: Try to calculate from trajectory if gamma values are missing
+                self._log_result(
+                    f"  [WARNING] Gamma values missing, attempting trajectory fallback..."
+                )
+                if result.rider_trajectory is not None:
+                    try:
+                        traj = result.rider_trajectory
+                        gamma_array = np.asarray(traj.get("gamma", []))
+                        if len(gamma_array) > 0:
+                            gamma_initial_fallback = float(gamma_array[0])
+                            gamma_final_fallback = float(gamma_array[-1])
+                            if gamma_initial_fallback > 0:
+                                delta_gamma_fallback = (
+                                    gamma_final_fallback - gamma_initial_fallback
+                                )
+                                energy_gain_percent = (
+                                    delta_gamma_fallback / gamma_initial_fallback * 100.0
+                                )
+                                energy_gain_ppm = (
+                                    delta_gamma_fallback / gamma_initial_fallback * 1e6
+                                )
+                                delta_e_mev_fallback = delta_gamma_fallback * 0.511
+    
+                                metrics["max_percent_energy_gain"] = energy_gain_percent
+                                metrics["percent_delta_e"] = energy_gain_percent
+                                metrics["delta_gamma"] = delta_gamma_fallback
+                                metrics["delta_e_mev"] = delta_e_mev_fallback
+                                metrics["energy_gain_ppm"] = energy_gain_ppm
+    
+                                self._log_result(f"  [OK] Fallback calculation successful:")
+                                self._log_result(
+                                    f"    gamma_initial (from traj): {gamma_initial_fallback:.12e}"
+                                )
+                                self._log_result(
+                                    f"    gamma_final (from traj): {gamma_final_fallback:.12e}"
+                                )
+                                self._log_result(
+                                    f"    delta_gamma: {delta_gamma_fallback:.12e}"
+                                )
+                                self._log_result(
+                                    f"    delta_e_mev: {delta_e_mev_fallback:.12e} MeV"
+                                )
+                                self._log_result(
+                                    f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+                                )
+                                self._log_result(
+                                    f"    percent_delta_e: {energy_gain_percent:.12e}%"
+                                )
+                                self._log_result(
+                                    f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
+                                )
+                            else:
+                                self._log_result(f"  [ERROR] Fallback gamma_initial <= 0")
+                        else:
+                            self._log_result(f"  [ERROR] Trajectory gamma array is empty")
+                    except Exception as e:
+                        self._log_result(f"  [ERROR] Fallback calculation failed: {e}")
+                else:
+                    self._log_result(f"  [ERROR] No trajectory data available for fallback")
+    
+                # If still no metric calculated, warn explicitly
+                if "max_percent_energy_gain" not in metrics:
+                    self._log_result(
+                        f"  [CRITICAL] max_percent_energy_gain could not be calculated for Run {run_num}"
+                    )
+                    self._log_result(
+                        f"  [CRITICAL] This will result in NaN/inf for optimization objective"
+                    )
+    
+            # Add beam optics metrics if available
+            if result.rider_emittance_x_mm_mrad is not None:
+                metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
+            if result.rider_emittance_y_mm_mrad is not None:
+                metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
+            if result.rider_norm_emittance_x_mm_mrad is not None:
+                metrics["rider_norm_emittance_x_mm_mrad"] = (
+                    result.rider_norm_emittance_x_mm_mrad
+                )
+            if result.rider_norm_emittance_y_mm_mrad is not None:
+                metrics["rider_norm_emittance_y_mm_mrad"] = (
+                    result.rider_norm_emittance_y_mm_mrad
+                )
+            if result.rider_beta_x_m is not None:
+                metrics["rider_beta_x_m"] = result.rider_beta_x_m
+            if result.rider_beta_y_m is not None:
+                metrics["rider_beta_y_m"] = result.rider_beta_y_m
+    
+            output = {"metrics": metrics}
+    
+            self._log_result(f"  [DEBUG] Processing trajectory data for Run {run_num}...")
+            # Add trajectory data for distance calculation even if not saving full arrays
+            # (needed for diagnostics and basic metrics)
             if result.rider_trajectory is not None:
+                traj = result.rider_trajectory
+    
+                # Always include minimal trajectory info for distance calculation
+                try:
+                    z_array = np.asarray(traj["z"])
+                    if len(z_array) > 0:
+                        output["_distance_info"] = {
+                            "z_start": float(z_array[0]),
+                            "z_end": float(z_array[-1]),
+                            "num_steps": len(z_array),
+                        }
+                except Exception as e:
+                    print(f"[DEBUG] Failed to extract distance info: {e}")
+    
+                # Perform stability analysis if enabled
+                if self.config.smoothness_enabled:
+                    self._log_result(
+                        f"  [DEBUG] Performing stability analysis for Run {run_num}..."
+                    )
+    
+                    # Create stability config from optimization config
+                    smoothness_config = SmoothnessConfig(
+                        enabled=True,
+                        window_size=self.config.smoothness_window_size,
+                        oscillation_threshold=self.config.smoothness_oscillation_threshold,
+                        trend_smoothness_threshold=self.config.smoothness_trend_threshold,
+                        reject_on_violation=self.config.smoothness_reject_on_violation,
+                        max_allowed_violations=self.config.smoothness_max_violations,
+                    )
+    
+                    # Analyze trajectory stability
+                    smoothness_result = analyze_trajectory_smoothness(
+                        traj, smoothness_config, particle_mass_amu=rider_m_particle
+                    )
+    
+                    # Store stability analysis in output
+                    output["stability_analysis"] = {
+                        "passed": smoothness_result.passed,
+                        "num_violations": len(smoothness_result.violations),
+                        "oscillation_score": smoothness_result.oscillation_score,
+                        "trend_smoothness_score": smoothness_result.trend_smoothness_score,
+                        "quality": smoothness_result.quality_summary,
+                    }
+    
+                    if not smoothness_result.passed:
+                        self._log_result(
+                            f"  [WARNING] Stability check FAILED for Run {run_num}"
+                        )
+                        self._log_result(
+                            f"    Quality: {smoothness_result.quality_summary}"
+                        )
+                        if len(smoothness_result.violations) > 0:
+                            self._log_result(
+                                f"    Violations: {len(smoothness_result.violations)}"
+                            )
+                            for v in smoothness_result.violations[:2]:  # Show first 2
+                                self._log_result(f"      - {v.description}")
+    
+                        if self.config.smoothness_reject_on_violation:
+                            self._log_result(
+                                f"  [REJECT] Run {run_num} rejected due to numerical instability"
+                            )
+                            # Mark metrics as invalid to trigger rejection in optimizer
+                            output["metrics"]["max_percent_energy_gain"] = np.nan
+                            output["stability_rejected"] = True
+                    else:
+                        self._log_result(
+                            f"  [OK] Stability check PASSED for Run {run_num}: {smoothness_result.quality_summary}"
+                        )
+                else:
+                    # Smoothness checking is disabled
+                    self._log_result(
+                        f"  [INFO] Stability analysis DISABLED for Run {run_num} (smoothness_enabled=False)"
+                    )
+    
+                # Only save full trajectory arrays if explicitly requested
+                # Check if any trajectory saving option is enabled
+                # Note: save_top_n_trajectories is handled separately by re-running top N after optimization
                 save_traj = (
                     self.config.save_all_trajectories
                     or self.config.save_failed_trajectories
                 )
                 if save_traj:
-                    traj = result.rider_trajectory
+                    # Downsample trajectory
                     stride = self.config.trajectory_stride
                     try:
+                        # Ensure we convert numpy arrays to flat lists
                         output["trajectory"] = {
                             "z": np.asarray(traj["z"])[::stride].tolist(),
                             "r": np.asarray(traj["r"])[::stride].tolist(),
@@ -8353,296 +8695,47 @@ class OptimizationPlugin(ttk.Frame):
                             "t": np.asarray(traj["t"])[::stride].tolist(),
                             "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
                         }
-                        self._log_result(
-                            f"    Halted trajectory saved ({len(traj['z'])} points, stride={stride})"
-                        )
                     except Exception as e:
                         self._log_result(
-                            f"    [WARNING] Failed to save halted trajectory: {e}"
+                            f"    [WARNING] Failed to save trajectory arrays: {e}"
                         )
-
+    
+                # Add halt information to output if present
+                if result.halted_early:
+                    output["halted_early"] = True
+                    output["halt_reason"] = result.halt_reason
+            else:
+                # No trajectory data available - stability analysis cannot run
+                self._log_result(
+                    f"  [WARNING] No trajectory data available for Run {run_num}"
+                )
+                if self.config.smoothness_enabled:
+                    self._log_result(
+                        f"  [WARNING] Stability analysis SKIPPED - no trajectory data returned from integration"
+                    )
+                    self._log_result(
+                        f"    Check that transverse_save=True in SimulationOptions"
+                    )
+    
             self._log_result(
-                f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
+                f"  [DEBUG] _run_single_integration returning for Run {run_num}"
             )
+    
             return output
-
-        # Extract metrics (only for non-halted runs)
-        self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
-        metrics = {}
-        if result.rider_delta_e is not None:
-            metrics["rider_delta_e_mev"] = result.rider_delta_e
-        if result.rider_gamma_initial is not None:
-            metrics["rider_gamma_initial"] = result.rider_gamma_initial
-        if result.rider_gamma_final is not None:
-            metrics["rider_gamma_final"] = result.rider_gamma_final
-
-        # Calculate max_percent_energy_gain from gamma values
-        gamma_initial = result.rider_gamma_initial
-        gamma_final = result.rider_gamma_final
-
-        # Diagnostic logging
-        self._log_result(f"  [RESULT] Run {run_num} metrics:")
-        self._log_result(f"    rider_gamma_initial: {gamma_initial}")
-        self._log_result(f"    rider_gamma_final: {gamma_final}")
-
-        # Try to calculate from available gamma values
-        if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
-            delta_gamma = gamma_final - gamma_initial
-            energy_gain_percent = delta_gamma / gamma_initial * 100.0
-            energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
-            # Calculate delta_e in MeV (for electrons: ΔE = Δγ * m_e*c^2 = Δγ * 0.511 MeV)
-            delta_e_mev = delta_gamma * 0.511
-
-            metrics["max_percent_energy_gain"] = energy_gain_percent
-            metrics["percent_delta_e"] = energy_gain_percent
-            metrics["delta_gamma"] = delta_gamma
-            metrics["delta_e_mev"] = delta_e_mev
-            metrics["energy_gain_ppm"] = energy_gain_ppm
-
-            self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
-            self._log_result(f"    delta_e_mev: {delta_e_mev:.12e} MeV")
-            self._log_result(
-                f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
-            )
-            self._log_result(f"    percent_delta_e: {energy_gain_percent:.12e}%")
-            self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
-
-            # For optimization runs, show what the optimizer sees
-            if hasattr(self, "config") and hasattr(self.config, "mode"):
-                if self.config.mode == "optimization":
-                    # Optimizer minimizes, so negate for maximization objectives
-                    optimizer_value = -energy_gain_percent  # We maximize percent gain
-                    self._log_result(f"    optimizer_objective: {optimizer_value:.12e}")
-        else:
-            # Fallback: Try to calculate from trajectory if gamma values are missing
-            self._log_result(
-                f"  [WARNING] Gamma values missing, attempting trajectory fallback..."
-            )
-            if result.rider_trajectory is not None:
-                try:
-                    traj = result.rider_trajectory
-                    gamma_array = np.asarray(traj.get("gamma", []))
-                    if len(gamma_array) > 0:
-                        gamma_initial_fallback = float(gamma_array[0])
-                        gamma_final_fallback = float(gamma_array[-1])
-                        if gamma_initial_fallback > 0:
-                            delta_gamma_fallback = (
-                                gamma_final_fallback - gamma_initial_fallback
-                            )
-                            energy_gain_percent = (
-                                delta_gamma_fallback / gamma_initial_fallback * 100.0
-                            )
-                            energy_gain_ppm = (
-                                delta_gamma_fallback / gamma_initial_fallback * 1e6
-                            )
-                            delta_e_mev_fallback = delta_gamma_fallback * 0.511
-
-                            metrics["max_percent_energy_gain"] = energy_gain_percent
-                            metrics["percent_delta_e"] = energy_gain_percent
-                            metrics["delta_gamma"] = delta_gamma_fallback
-                            metrics["delta_e_mev"] = delta_e_mev_fallback
-                            metrics["energy_gain_ppm"] = energy_gain_ppm
-
-                            self._log_result(f"  [OK] Fallback calculation successful:")
-                            self._log_result(
-                                f"    gamma_initial (from traj): {gamma_initial_fallback:.12e}"
-                            )
-                            self._log_result(
-                                f"    gamma_final (from traj): {gamma_final_fallback:.12e}"
-                            )
-                            self._log_result(
-                                f"    delta_gamma: {delta_gamma_fallback:.12e}"
-                            )
-                            self._log_result(
-                                f"    delta_e_mev: {delta_e_mev_fallback:.12e} MeV"
-                            )
-                            self._log_result(
-                                f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
-                            )
-                            self._log_result(
-                                f"    percent_delta_e: {energy_gain_percent:.12e}%"
-                            )
-                            self._log_result(
-                                f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
-                            )
-                        else:
-                            self._log_result(f"  [ERROR] Fallback gamma_initial <= 0")
-                    else:
-                        self._log_result(f"  [ERROR] Trajectory gamma array is empty")
-                except Exception as e:
-                    self._log_result(f"  [ERROR] Fallback calculation failed: {e}")
-            else:
-                self._log_result(f"  [ERROR] No trajectory data available for fallback")
-
-            # If still no metric calculated, warn explicitly
-            if "max_percent_energy_gain" not in metrics:
-                self._log_result(
-                    f"  [CRITICAL] max_percent_energy_gain could not be calculated for Run {run_num}"
-                )
-                self._log_result(
-                    f"  [CRITICAL] This will result in NaN/inf for optimization objective"
-                )
-
-        # Add beam optics metrics if available
-        if result.rider_emittance_x_mm_mrad is not None:
-            metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
-        if result.rider_emittance_y_mm_mrad is not None:
-            metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
-        if result.rider_norm_emittance_x_mm_mrad is not None:
-            metrics["rider_norm_emittance_x_mm_mrad"] = (
-                result.rider_norm_emittance_x_mm_mrad
-            )
-        if result.rider_norm_emittance_y_mm_mrad is not None:
-            metrics["rider_norm_emittance_y_mm_mrad"] = (
-                result.rider_norm_emittance_y_mm_mrad
-            )
-        if result.rider_beta_x_m is not None:
-            metrics["rider_beta_x_m"] = result.rider_beta_x_m
-        if result.rider_beta_y_m is not None:
-            metrics["rider_beta_y_m"] = result.rider_beta_y_m
-
-        output = {"metrics": metrics}
-
-        self._log_result(f"  [DEBUG] Processing trajectory data for Run {run_num}...")
-        # Add trajectory data for distance calculation even if not saving full arrays
-        # (needed for diagnostics and basic metrics)
-        if result.rider_trajectory is not None:
-            traj = result.rider_trajectory
-
-            # Always include minimal trajectory info for distance calculation
+        finally:
+            # Always clean up temporary run directory (success, halt, exception, cancel)
             try:
-                z_array = np.asarray(traj["z"])
-                if len(z_array) > 0:
-                    output["_distance_info"] = {
-                        "z_start": float(z_array[0]),
-                        "z_end": float(z_array[-1]),
-                        "num_steps": len(z_array),
-                    }
+                import shutil
+
+                if run_output_dir.exists():
+                    shutil.rmtree(run_output_dir)
+                    self._log_result(
+                        f"  [DEBUG] Cleaned up temp directory: {run_output_dir.name}"
+                    )
             except Exception as e:
-                print(f"[DEBUG] Failed to extract distance info: {e}")
-
-            # Perform stability analysis if enabled
-            if self.config.smoothness_enabled:
                 self._log_result(
-                    f"  [DEBUG] Performing stability analysis for Run {run_num}..."
+                    f"  [WARNING] Failed to clean up temp directory {run_output_dir.name}: {e}"
                 )
-
-                # Create stability config from optimization config
-                smoothness_config = SmoothnessConfig(
-                    enabled=True,
-                    window_size=self.config.smoothness_window_size,
-                    oscillation_threshold=self.config.smoothness_oscillation_threshold,
-                    trend_smoothness_threshold=self.config.smoothness_trend_threshold,
-                    reject_on_violation=self.config.smoothness_reject_on_violation,
-                    max_allowed_violations=self.config.smoothness_max_violations,
-                )
-
-                # Analyze trajectory stability
-                smoothness_result = analyze_trajectory_smoothness(
-                    traj, smoothness_config, particle_mass_amu=rider_m_particle
-                )
-
-                # Store stability analysis in output
-                output["stability_analysis"] = {
-                    "passed": smoothness_result.passed,
-                    "num_violations": len(smoothness_result.violations),
-                    "oscillation_score": smoothness_result.oscillation_score,
-                    "trend_smoothness_score": smoothness_result.trend_smoothness_score,
-                    "quality": smoothness_result.quality_summary,
-                }
-
-                if not smoothness_result.passed:
-                    self._log_result(
-                        f"  [WARNING] Stability check FAILED for Run {run_num}"
-                    )
-                    self._log_result(
-                        f"    Quality: {smoothness_result.quality_summary}"
-                    )
-                    if len(smoothness_result.violations) > 0:
-                        self._log_result(
-                            f"    Violations: {len(smoothness_result.violations)}"
-                        )
-                        for v in smoothness_result.violations[:2]:  # Show first 2
-                            self._log_result(f"      - {v.description}")
-
-                    if self.config.smoothness_reject_on_violation:
-                        self._log_result(
-                            f"  [REJECT] Run {run_num} rejected due to numerical instability"
-                        )
-                        # Mark metrics as invalid to trigger rejection in optimizer
-                        output["metrics"]["max_percent_energy_gain"] = np.nan
-                        output["stability_rejected"] = True
-                else:
-                    self._log_result(
-                        f"  [OK] Stability check PASSED for Run {run_num}: {smoothness_result.quality_summary}"
-                    )
-            else:
-                # Smoothness checking is disabled
-                self._log_result(
-                    f"  [INFO] Stability analysis DISABLED for Run {run_num} (smoothness_enabled=False)"
-                )
-
-            # Only save full trajectory arrays if explicitly requested
-            # Check if any trajectory saving option is enabled
-            # Note: save_top_n_trajectories is handled separately by re-running top N after optimization
-            save_traj = (
-                self.config.save_all_trajectories
-                or self.config.save_failed_trajectories
-            )
-            if save_traj:
-                # Downsample trajectory
-                stride = self.config.trajectory_stride
-                try:
-                    # Ensure we convert numpy arrays to flat lists
-                    output["trajectory"] = {
-                        "z": np.asarray(traj["z"])[::stride].tolist(),
-                        "r": np.asarray(traj["r"])[::stride].tolist(),
-                        "pz": np.asarray(traj["pz"])[::stride].tolist(),
-                        "pr": np.asarray(traj["pr"])[::stride].tolist(),
-                        "t": np.asarray(traj["t"])[::stride].tolist(),
-                        "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
-                    }
-                except Exception as e:
-                    self._log_result(
-                        f"    [WARNING] Failed to save trajectory arrays: {e}"
-                    )
-
-            # Add halt information to output if present
-            if result.halted_early:
-                output["halted_early"] = True
-                output["halt_reason"] = result.halt_reason
-        else:
-            # No trajectory data available - stability analysis cannot run
-            self._log_result(
-                f"  [WARNING] No trajectory data available for Run {run_num}"
-            )
-            if self.config.smoothness_enabled:
-                self._log_result(
-                    f"  [WARNING] Stability analysis SKIPPED - no trajectory data returned from integration"
-                )
-                self._log_result(
-                    f"    Check that transverse_save=True in SimulationOptions"
-                )
-
-        self._log_result(
-            f"  [DEBUG] _run_single_integration returning for Run {run_num}"
-        )
-
-        # Clean up temporary run directory
-        try:
-            import shutil
-
-            if run_output_dir.exists():
-                shutil.rmtree(run_output_dir)
-                self._log_result(
-                    f"  [DEBUG] Cleaned up temp directory: {run_output_dir.name}"
-                )
-        except Exception as e:
-            self._log_result(
-                f"  [WARNING] Failed to clean up temp directory {run_output_dir.name}: {e}"
-            )
-
-        return output
 
     def _cleanup_orphaned_temp_dirs(self):
         """Clean up any orphaned _temp_run directories from previous runs.
