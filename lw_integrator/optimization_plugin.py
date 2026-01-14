@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
+from core.debug_logger import set_logging_context  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
     analyze_trajectory_smoothness,
@@ -5424,6 +5425,10 @@ class OptimizationPlugin(ttk.Frame):
 
     def _run_optimization_background(self):
         """Run optimization in background using selected algorithm."""
+        # Set logging context for this optimization run
+        method = self.config.optimization_method
+        set_logging_context(f"optimization_{method}")
+
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
         import time
@@ -7048,6 +7053,10 @@ class OptimizationPlugin(ttk.Frame):
             is_finetune: If True, this is a fine-tuning sweep
             finetune_regions: List of parameter regions for fine-tuning
         """
+        # Set logging context for this sweep run
+        context = "sweep_finetune" if is_finetune else "sweep"
+        set_logging_context(context)
+
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
         import time

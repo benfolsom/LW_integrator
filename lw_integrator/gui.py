@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
+from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
 from lw_integrator.testbed_runner import (
@@ -308,6 +309,10 @@ class IntegratorGUI:
         self.root.geometry("1800x1000")
         # Set minimum window size to prevent panels from becoming inaccessible
         self.root.minsize(CONTENT_PANEL_MIN_WIDTH + CONFIG_PANEL_MIN_WIDTH + 50, 600)
+
+        # Initialize debug logging system
+        initialize_debug_logging(context="gui")
+        print("[LOGCACHE] Debug logging initialized in logcache/")
 
         self.options = SimulationOptions()
         self._figure_windows: List[_FigureHandle] = []

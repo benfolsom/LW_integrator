@@ -32,6 +32,7 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from core.constants import C_MMNS
+from core.debug_logger import get_current_log_path, initialize_debug_logging
 from core.particle_config import (
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
@@ -1052,6 +1053,12 @@ def run_testbed(
     cancel_callback:
         Optional predicate that returns True if cancellation is requested.
     """
+
+    # Initialize debug logging if not already active (for API/testbed usage)
+    current_log = get_current_log_path()
+    if current_log is None:
+        initialize_debug_logging(context="testbed")
+        print("[LOGCACHE] Debug logging initialized in logcache/")
 
     start = time.perf_counter()
     logs: List[str] = []
