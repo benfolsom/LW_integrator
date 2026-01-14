@@ -436,6 +436,29 @@ def retarded_integrator(
                         step_idx=i,  # Pass main step index for error messages
                     )
 
+                    # Check for gamma blowup flag immediately after computing trial_state
+                    if trial_state.get("_gamma_blowup", False):
+                        gamma_blowup_value = trial_state.get(
+                            "_gamma_blowup_value", np.nan
+                        )
+                        gamma_blowup_particle = trial_state.get(
+                            "_gamma_blowup_particle", 0
+                        )
+                        if adaptive_timestep is not None and adaptive_timestep.debug:
+                            print(
+                                f"[CRITICAL] Step {i}, substep {substep_idx}: Gamma blowup detected during self-consistency "
+                                f"(particle {gamma_blowup_particle}, γ={gamma_blowup_value:.2e}). "
+                                f"Numerical breakdown - halting integration."
+                            )
+                        # Store trial_state with blowup flag in temp_trajectory so it can be accessed later
+                        temp_trajectory.append(trial_state)
+                        # Use previous driver state as placeholder (integration will halt anyway)
+                        temp_driver.append(temp_driver[-1])
+                        # Mark step as accepted to exit the retry loop
+                        step_accepted = True
+                        # Break out of substep loop - will be caught by main check below
+                        break
+
                     # Update driver state for this substep
                     if sim_type == SimulationType.SWITCHING_WALL:
                         trial_driver = generate_switching_image(
