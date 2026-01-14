@@ -2596,24 +2596,75 @@ class OptimizationPlugin(ttk.Frame):
         except ValueError as e:
             return f"Invalid input: {e}"
 
+    def _get_gui_stability_setting(self, var_name: str, default_value):
+        """Get stability setting from main GUI if available, otherwise use default.
+
+        Parameters
+        ----------
+        var_name : str
+            Name of the GUI variable to read (e.g., 'self_consistency_enabled_var')
+        default_value : any
+            Default value if GUI is not available
+
+        Returns
+        -------
+        any
+            Value from GUI or default
+        """
+        if self.gui_controller and hasattr(self.gui_controller, var_name):
+            var = getattr(self.gui_controller, var_name)
+            value = var.get()
+            # Convert string to appropriate types
+            if isinstance(value, str):
+                # Tolerance and numeric values
+                if (
+                    "tolerance" in var_name
+                    or "threshold" in var_name
+                    or "factor" in var_name
+                ):
+                    try:
+                        return float(value)
+                    except ValueError:
+                        return default_value
+                # Integer values
+                elif (
+                    "iterations" in var_name
+                    or "verbosity" in var_name
+                    or "attempts" in var_name
+                    or "steps" in var_name
+                ):
+                    try:
+                        return int(value)
+                    except ValueError:
+                        return default_value
+            return value
+        return default_value
+
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
-        # Preserve stability and timestep settings from existing config if available
-        # (these are set via stability dialog, not UI fields)
+        # Stability settings are read from main GUI if available, otherwise from existing config
         existing_config = getattr(self, "config", None)
 
         # Debug logging
+        has_gui = self.gui_controller is not None
+        print(f"[DEBUG] _gather_config: Main GUI available: {has_gui}")
         if existing_config:
             print(
-                f"[DEBUG] _gather_config: Using existing config for stability settings"
+                f"[DEBUG] _gather_config: Existing config available (will be used as fallback)"
             )
-            print(f"  SC enabled: {existing_config.self_consistency_enabled}")
-            print(f"  SC tolerance: {existing_config.self_consistency_tolerance}")
-            print(f"  AT enabled: {existing_config.adaptive_timestep_enabled}")
-            print(f"  AT debug: {existing_config.adaptive_timestep_debug}")
-            print(f"  Smoothness enabled: {existing_config.smoothness_enabled}")
         else:
-            print(f"[DEBUG] _gather_config: No existing config, using defaults")
+            print(
+                f"[DEBUG] _gather_config: No existing config, using defaults as fallback"
+            )
+
+        if has_gui:
+            print(
+                f"[DEBUG] _gather_config: Reading stability settings from main GUI Stability tab"
+            )
+        else:
+            print(
+                f"[DEBUG] _gather_config: No GUI available, using existing config or defaults"
+            )
 
         config_obj = OptimizationConfig(
             simulation_type=SimulationType[self.sim_type_var.get()],
@@ -2710,61 +2761,105 @@ class OptimizationPlugin(ttk.Frame):
             # Sweep robustness options
             per_run_timeout=float(self.per_run_timeout_var.get()),
             skip_failed_runs=self.skip_failed_runs_var.get(),
-            # Stability options - preserve from existing config if available
-            self_consistency_enabled=existing_config.self_consistency_enabled
-            if existing_config
-            else True,
-            self_consistency_tolerance=existing_config.self_consistency_tolerance
-            if existing_config
-            else 1e-4,
-            self_consistency_max_iterations=existing_config.self_consistency_max_iterations
-            if existing_config
-            else 5,
-            self_consistency_verbosity=existing_config.self_consistency_verbosity
-            if existing_config
-            else 0,
-            self_consistency_chrono_interpolate=existing_config.self_consistency_chrono_interpolate
-            if existing_config
-            else False,
-            self_consistency_chrono_tolerance=existing_config.self_consistency_chrono_tolerance
-            if existing_config
-            else 1e-3,
-            self_consistency_chrono_high_precision=existing_config.self_consistency_chrono_high_precision
-            if existing_config
-            else False,
-            self_consistency_chrono_adaptive_tolerance=existing_config.self_consistency_chrono_adaptive_tolerance
-            if existing_config
-            else False,
-            energy_monitor_halt_on_jump=existing_config.energy_monitor_halt_on_jump
-            if existing_config
-            else False,
-            adaptive_timestep_enabled=existing_config.adaptive_timestep_enabled
-            if existing_config
-            else True,
-            adaptive_timestep_threshold=existing_config.adaptive_timestep_threshold
-            if existing_config
-            else 0.10,
-            adaptive_timestep_reduction_factor=existing_config.adaptive_timestep_reduction_factor
-            if existing_config
-            else 10,
-            adaptive_timestep_max_attempts=existing_config.adaptive_timestep_max_attempts
-            if existing_config
-            else 5,
-            adaptive_timestep_min_factor=existing_config.adaptive_timestep_min_factor
-            if existing_config
-            else 1e-4,
-            adaptive_timestep_cooldown_steps=existing_config.adaptive_timestep_cooldown_steps
-            if existing_config
-            else 10,
-            adaptive_timestep_probe_threshold=existing_config.adaptive_timestep_probe_threshold
-            if existing_config
-            else 0.01,
-            adaptive_timestep_max_probe_steps=existing_config.adaptive_timestep_max_probe_steps
-            if existing_config
-            else 3,
-            adaptive_timestep_debug=existing_config.adaptive_timestep_debug
-            if existing_config
-            else False,
+            # Stability options - read from main GUI if available, otherwise use existing config or defaults
+            self_consistency_enabled=self._get_gui_stability_setting(
+                "self_consistency_enabled_var",
+                existing_config.self_consistency_enabled if existing_config else True,
+            ),
+            self_consistency_tolerance=self._get_gui_stability_setting(
+                "self_consistency_target_ms_tolerance_var",
+                existing_config.self_consistency_tolerance if existing_config else 1e-4,
+            ),
+            self_consistency_max_iterations=self._get_gui_stability_setting(
+                "self_consistency_max_iterations_var",
+                existing_config.self_consistency_max_iterations
+                if existing_config
+                else 5,
+            ),
+            self_consistency_verbosity=self._get_gui_stability_setting(
+                "self_consistency_verbosity_var",
+                existing_config.self_consistency_verbosity if existing_config else 0,
+            ),
+            self_consistency_chrono_interpolate=self._get_gui_stability_setting(
+                "self_consistency_chrono_interpolate_var",
+                existing_config.self_consistency_chrono_interpolate
+                if existing_config
+                else False,
+            ),
+            self_consistency_chrono_tolerance=self._get_gui_stability_setting(
+                "self_consistency_chrono_tolerance_var",
+                existing_config.self_consistency_chrono_tolerance
+                if existing_config
+                else 1e-3,
+            ),
+            self_consistency_chrono_high_precision=self._get_gui_stability_setting(
+                "self_consistency_chrono_high_precision_var",
+                existing_config.self_consistency_chrono_high_precision
+                if existing_config
+                else False,
+            ),
+            self_consistency_chrono_adaptive_tolerance=self._get_gui_stability_setting(
+                "self_consistency_chrono_adaptive_tolerance_var",
+                existing_config.self_consistency_chrono_adaptive_tolerance
+                if existing_config
+                else False,
+            ),
+            energy_monitor_halt_on_jump=self._get_gui_stability_setting(
+                "adaptive_timestep_halt_on_jump_var",
+                existing_config.energy_monitor_halt_on_jump
+                if existing_config
+                else False,
+            ),
+            adaptive_timestep_enabled=self._get_gui_stability_setting(
+                "adaptive_timestep_enabled_var",
+                existing_config.adaptive_timestep_enabled if existing_config else True,
+            ),
+            adaptive_timestep_threshold=self._get_gui_stability_setting(
+                "adaptive_timestep_threshold_var",
+                existing_config.adaptive_timestep_threshold
+                if existing_config
+                else 0.10,
+            ),
+            adaptive_timestep_reduction_factor=self._get_gui_stability_setting(
+                "adaptive_timestep_reduction_factor_var",
+                existing_config.adaptive_timestep_reduction_factor
+                if existing_config
+                else 10,
+            ),
+            adaptive_timestep_max_attempts=self._get_gui_stability_setting(
+                "adaptive_timestep_max_attempts_var",
+                existing_config.adaptive_timestep_max_attempts
+                if existing_config
+                else 5,
+            ),
+            adaptive_timestep_min_factor=self._get_gui_stability_setting(
+                "adaptive_timestep_min_factor_var",
+                existing_config.adaptive_timestep_min_factor
+                if existing_config
+                else 1e-4,
+            ),
+            adaptive_timestep_cooldown_steps=self._get_gui_stability_setting(
+                "adaptive_timestep_cooldown_steps_var",
+                existing_config.adaptive_timestep_cooldown_steps
+                if existing_config
+                else 10,
+            ),
+            adaptive_timestep_probe_threshold=self._get_gui_stability_setting(
+                "adaptive_timestep_probe_threshold_var",
+                existing_config.adaptive_timestep_probe_threshold
+                if existing_config
+                else 0.01,
+            ),
+            adaptive_timestep_max_probe_steps=self._get_gui_stability_setting(
+                "adaptive_timestep_max_probe_steps_var",
+                existing_config.adaptive_timestep_max_probe_steps
+                if existing_config
+                else 3,
+            ),
+            adaptive_timestep_debug=self._get_gui_stability_setting(
+                "adaptive_timestep_debug_var",
+                existing_config.adaptive_timestep_debug if existing_config else False,
+            ),
             smoothness_trend_threshold=existing_config.smoothness_trend_threshold
             if existing_config
             else 0.30,
@@ -3897,6 +3992,16 @@ class OptimizationPlugin(ttk.Frame):
             print(f"[DEBUG] After _gather_config:")
             print(f"  SC enabled: {config.self_consistency_enabled}")
             print(f"  SC tolerance: {config.self_consistency_tolerance}")
+            print(
+                f"  SC chrono interpolate: {config.self_consistency_chrono_interpolate}"
+            )
+            print(f"  SC chrono tolerance: {config.self_consistency_chrono_tolerance}")
+            print(
+                f"  SC chrono high precision: {config.self_consistency_chrono_high_precision}"
+            )
+            print(
+                f"  SC chrono adaptive tolerance: {config.self_consistency_chrono_adaptive_tolerance}"
+            )
             print(f"  AT enabled: {config.adaptive_timestep_enabled}")
             print(f"  AT debug: {config.adaptive_timestep_debug}")
             data = {
@@ -4010,6 +4115,15 @@ class OptimizationPlugin(ttk.Frame):
             self.last_loaded_config = filepath
 
             self._log_result(f"[OK] Configuration saved to {filepath}")
+            print(f"[DEBUG] Chrono settings saved to config:")
+            print(f"  chrono_interpolate: {config.self_consistency_chrono_interpolate}")
+            print(f"  chrono_tolerance: {config.self_consistency_chrono_tolerance}")
+            print(
+                f"  chrono_high_precision: {config.self_consistency_chrono_high_precision}"
+            )
+            print(
+                f"  chrono_adaptive_tolerance: {config.self_consistency_chrono_adaptive_tolerance}"
+            )
             return True
         except Exception as e:
             _show_error_dialog(self, "Save Error", f"Failed to save config: {e}")
