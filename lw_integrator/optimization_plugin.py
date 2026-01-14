@@ -2240,7 +2240,7 @@ class OptimizationPlugin(ttk.Frame):
 
         ttk.Radiobutton(
             log_frame,
-            text="Full debug (all SC iterations, adaptive timestep details)",
+            text="Full debug (inherits SC verbosity & adaptive timestep debug from Stability tab)",
             variable=self.log_verbosity_var,
             value="full",
         ).grid(row=2, column=0, sticky="w", pady=2)
@@ -2254,9 +2254,10 @@ class OptimizationPlugin(ttk.Frame):
 
         ttk.Label(
             frame,
-            text="ℹ 'Truncated' is recommended for large sweeps. 'Full debug' generates large log files.",
+            text="ℹ 'Truncated' is recommended for large sweeps.\n'Full debug' inherits verbosity settings from Stability tab and generates large log files.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="blue",
+            justify="left",
         ).grid(row=5, column=1, columnspan=2, sticky="w", pady=(0, 5))
 
     def _on_top_n_traj_changed(self):
@@ -5330,14 +5331,21 @@ class OptimizationPlugin(ttk.Frame):
             use_truncated_logging = self.config.log_verbosity == "truncated"
             use_full_logging = self.config.log_verbosity == "full"
 
-            # Override config file settings based on log verbosity
+            # Apply log verbosity settings - control what gets logged
+            # "full" mode INHERITS stability settings from config/GUI
+            # Other modes override to reduce output
             if use_full_logging:
-                # Enable full debug output (override config file)
-                self.config.self_consistency_verbosity = 2
-                self.config.adaptive_timestep_debug = True
+                # INHERIT stability verbosity settings from config (don't override)
+                # Use whatever was set in Stability tab or loaded from config
                 self._log_result(f"Log verbosity: {self.config.log_verbosity}")
                 self._log_result(
-                    "  Full debug logging enabled (SC iterations, adaptive timestep details)"
+                    "  Full debug logging enabled (inherits Stability tab settings)"
+                )
+                self._log_result(
+                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
+                )
+                self._log_result(
+                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
                 )
             elif use_truncated_logging:
                 # Disable verbose logging for optimizations with many evaluations
@@ -6947,15 +6955,24 @@ class OptimizationPlugin(ttk.Frame):
                 # Suppress SC iteration output and adaptive timestep refinement output
                 self.config.self_consistency_verbosity = 0
                 self.config.adaptive_timestep_debug = False
-            else:  # full debug or top_n_only
-                # Show detailed SC convergence and adaptive timestep actions
-                self.config.self_consistency_verbosity = 2
-                self.config.adaptive_timestep_debug = True
+            # else: full debug mode - INHERIT stability settings from config/GUI (don't override)
 
             self._log_result(
                 f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs"
             )
             self._log_result(f"Log verbosity: {self.config.log_verbosity}")
+
+            # Log inherited stability settings in full debug mode
+            if use_full_debug:
+                self._log_result(
+                    "  Full debug logging enabled (inherits Stability tab settings)"
+                )
+                self._log_result(
+                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
+                )
+                self._log_result(
+                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
+                )
 
             # Only log detailed config in full debug mode
             if use_full_debug:

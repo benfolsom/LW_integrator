@@ -1696,8 +1696,12 @@ class IntegratorGUI:
         Tooltip(
             verbosity_help,
             "Self-consistency convergence diagnostic output level.\n\n"
-            "⚠️ SINGLE RUN MODE ONLY\n"
-            "For Sweep/Optimization, use 'Log verbosity' setting in Results/Output tab.\n\n"
+            "⚠️ APPLIES TO ALL MODES: single runs AND sweeps/optimizations\n\n"
+            "For Sweep/Optimization:\n"
+            "  • This verbosity level is INHERITED when Log verbosity = 'full'\n"
+            "  • Set 'Log verbosity' in Sweep/Optim tab to control overall logging\n"
+            "  • 'full' mode: uses this verbosity level for SC diagnostics\n"
+            "  • 'truncated' mode: minimal output regardless of this setting\n\n"
             "Output is printed to BOTH:\n"
             "  • Console (real-time during run)\n"
             "  • Saved verbose log file (*_verbose.txt)\n\n"
@@ -2053,7 +2057,7 @@ class IntegratorGUI:
 
         self.adaptive_debug_check = ttk.Checkbutton(
             at_frame,
-            text="Verbose output (single run only; sweep/optim uses Log verbosity setting)",
+            text="Verbose output (inherited by sweep/optim when Log verbosity = 'full')",
             variable=self.adaptive_timestep_debug_var,
         )
         self.adaptive_debug_check.grid(
