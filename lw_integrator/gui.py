@@ -2786,6 +2786,12 @@ class IntegratorGUI:
         self._apply_options_to_ui(options, preserve_directories=True)
         self.config_name_var.set(filename)
         self.config_file_var.set(filename)
+
+        # Auto-switch to single run mode when loading a single run config
+        self.run_mode_var.set("single")
+        self._on_run_mode_changed()
+        print("[INFO] Auto-switched to Single Run mode")
+
         # Refresh config list to update highlighting
         self._refresh_config_list(selected=filename)
         self._refresh_initial_summary()

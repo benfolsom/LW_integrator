@@ -3947,6 +3947,16 @@ class OptimizationPlugin(ttk.Frame):
                 "      Log verbosity setting will override debug flags during run"
             )
             self._log_result("")
+
+            # Auto-switch to sweep mode when loading a sweep/optimization config
+            if self.gui_controller and hasattr(self.gui_controller, "run_mode_var"):
+                self.gui_controller.run_mode_var.set("sweep")
+                if hasattr(self.gui_controller, "_on_run_mode_changed"):
+                    self.gui_controller._on_run_mode_changed()
+                self._log_result(
+                    "[INFO] Auto-switched main GUI to Sweep/Optim run mode"
+                )
+
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
 
