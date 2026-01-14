@@ -6255,8 +6255,109 @@ class OptimizationPlugin(ttk.Frame):
         # Store the output directory for trajectory saving
         self._last_optimization_dir = opt_dir
 
+        # Generate and save top trajectories summary table
+        if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
+            self._save_top_trajectories_summary_table(result, param_names, opt_dir)
+
         # Reopen log file in the final output directory
         self._open_log_file(opt_dir)
+
+    def _save_top_trajectories_summary_table(self, result, param_names, output_dir):
+        """Generate and save a human-readable table of top trajectories with optimization metrics.
+
+        Parameters
+        ----------
+        result : optimization result object
+            Result from optimization algorithm
+        param_names : list
+            List of parameter names
+        output_dir : Path
+            Output directory for saving the table
+        """
+        from pathlib import Path
+
+        try:
+            top_n = max(1, int(self.config.optimization_save_top_n))
+            sorted_indices = np.argsort(result.final_fitness)
+            n_available = min(top_n, len(sorted_indices))
+
+            # Determine if maximizing
+            maximize = "max" in self.config.objective.lower()
+
+            # Prepare table data
+            table_lines = []
+            table_lines.append("=" * 120)
+            table_lines.append(f"TOP {n_available} OPTIMIZATION RESULTS")
+            table_lines.append(f"Objective: {self.config.objective}")
+            table_lines.append("=" * 120)
+            table_lines.append("")
+
+            # Header
+            header = f"{'Rank':<6} {'Fitness':<15} {'Metric Value':<15} {'ΔE (MeV)':<15} {'ΔE/E (%)':<15} {'Parameters'}"
+            table_lines.append(header)
+            table_lines.append("-" * 120)
+
+            for i in range(n_available):
+                idx = sorted_indices[i]
+                params_array = result.final_population[idx]
+                params_dict = dict(zip(param_names, params_array))
+                fitness = result.final_fitness[idx]
+
+                # Convert fitness to actual metric value
+                metric_value = -fitness if maximize else fitness
+
+                # Calculate delta_e and percent from metric_value if it's energy-related
+                # For max_percent_energy_gain, metric_value IS the percent
+                if "percent" in self.config.objective.lower():
+                    percent_delta_e = metric_value
+                    # Estimate delta_e from percent (approximate for display)
+                    # Use initial energy if available
+                    initial_energy_gev = params_dict.get("initial_energy_gev", 100.0)
+                    gamma_initial = initial_energy_gev * 1e3 / 0.511  # Approximate for electrons
+                    delta_e_mev = (percent_delta_e / 100.0) * gamma_initial * 0.511
+                elif "energy_gain" in self.config.objective.lower() or "delta_e" in self.config.objective.lower():
+                    delta_e_mev = metric_value
+                    # Estimate percent from delta_e
+                    initial_energy_gev = params_dict.get("initial_energy_gev", 100.0)
+                    gamma_initial = initial_energy_gev * 1e3 / 0.511
+                    percent_delta_e = (delta_e_mev / (gamma_initial * 0.511)) * 100.0
+                else:
+                    delta_e_mev = float('nan')
+                    percent_delta_e = float('nan')
+
+                # Format parameters compactly
+                param_str = ", ".join([f"{k}={v:.4g}" for k, v in params_dict.items()])
+                if len(param_str) > 50:
+                    param_str = param_str[:47] + "..."
+
+                # Format row
+                row = f"{i+1:<6} {fitness:<15.6e} {metric_value:<15.6e} {delta_e_mev:<15.6f} {percent_delta_e:<15.6e} {param_str}"
+                table_lines.append(row)
+
+            table_lines.append("=" * 120)
+            table_lines.append("")
+            table_lines.append("Notes:")
+            table_lines.append("  - Fitness: Internal optimizer value (lower is better)")
+            table_lines.append("  - Metric Value: Actual objective value")
+            table_lines.append("  - ΔE: Energy change in MeV")
+            table_lines.append("  - ΔE/E: Percent energy change")
+            table_lines.append("  - Inf/-Inf values indicate halted/failed runs")
+            table_lines.append("")
+
+            # Save to file
+            table_file = output_dir / "top_trajectories_summary.txt"
+            with open(table_file, "w") as f:
+                f.write("\n".join(table_lines))
+
+            # Also log to console
+            self._log_result("")
+            self._log_result("=" * 80)
+            for line in table_lines[:20]:  # Show first 20 lines in log
+                self._log_result(line)
+            if len(table_lines) > 20:
+                self._log_result("... (see full table in top_trajectories_summary.txt)")
+
+            self._log_result(f"")
 
     def _generate_optimization_plots(self, result, param_names, output_dir):
         """Generate optimization visualization plots."""
@@ -6733,46 +6834,103 @@ class OptimizationPlugin(ttk.Frame):
                 import matplotlib.pyplot as plt
 
                 traj = result_data["trajectory"]
+                metrics = result_data.get("metrics", {})
 
-                fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+                fig, axes = plt.subplots(3, 2, figsize=(14, 14))
 
-                # z vs t
-                axes[0, 0].plot(traj["t"], traj["z"], "b-", linewidth=1.5)
-                axes[0, 0].set_xlabel("Time (ns)")
-                axes[0, 0].set_ylabel("z (mm)")
-                axes[0, 0].set_title("Longitudinal Position")
+                # Extract trajectory arrays
+                z = np.array(traj["z"])
+                t = np.array(traj["t"])
+                r = np.array(traj["r"])
+                gamma_arr = np.array(traj.get("gamma", []))
+                pr = np.array(traj.get("pr", []))
+
+                # Calculate delta_e and percent_delta_e from gamma
+                if len(gamma_arr) > 0:
+                    gamma_initial = gamma_arr[0]
+                    delta_gamma = gamma_arr - gamma_initial
+                    # Energy in MeV for electrons
+                    delta_e_mev = delta_gamma * 0.511
+                    percent_delta_e = (delta_gamma / gamma_initial) * 100.0
+                else:
+                    delta_e_mev = np.zeros_like(z)
+                    percent_delta_e = np.zeros_like(z)
+
+                # Row 1, Col 1: z vs t
+                axes[0, 0].plot(t, z, "b-", linewidth=1.5)
+                axes[0, 0].set_xlabel("Time (ns)", fontsize=10)
+                axes[0, 0].set_ylabel("z (mm)", fontsize=10)
+                axes[0, 0].set_title(
+                    "Longitudinal Position", fontsize=11, fontweight="bold"
+                )
                 axes[0, 0].grid(True, alpha=0.3)
 
-                # r vs z
-                axes[0, 1].plot(traj["z"], traj["r"], "r-", linewidth=1.5)
-                axes[0, 1].set_xlabel("z (mm)")
-                axes[0, 1].set_ylabel("r (mm)")
-                axes[0, 1].set_title("Transverse Position (Radial)")
+                # Row 1, Col 2: r vs z
+                axes[0, 1].plot(z, r * 1e3, "r-", linewidth=1.5)
+                axes[0, 1].set_xlabel("z (mm)", fontsize=10)
+                axes[0, 1].set_ylabel("r (μm)", fontsize=10)
+                axes[0, 1].set_title(
+                    "Transverse Position (Radial)", fontsize=11, fontweight="bold"
+                )
                 axes[0, 1].grid(True, alpha=0.3)
 
-                # gamma vs z
-                if "gamma" in traj:
-                    axes[1, 0].plot(traj["z"], traj["gamma"], "g-", linewidth=1.5)
-                    axes[1, 0].set_xlabel("z (mm)")
-                    axes[1, 0].set_ylabel("γ")
-                    axes[1, 0].set_title("Lorentz Factor")
+                # Row 2, Col 1: gamma vs z (with adaptive scaling)
+                if len(gamma_arr) > 0:
+                    axes[1, 0].plot(z, gamma_arr, "g-", linewidth=1.5)
+                    axes[1, 0].set_xlabel("z (mm)", fontsize=10)
+                    axes[1, 0].set_ylabel("γ", fontsize=10)
+                    axes[1, 0].set_title(
+                        "Lorentz Factor", fontsize=11, fontweight="bold"
+                    )
                     axes[1, 0].grid(True, alpha=0.3)
+                    # Auto-scale y-axis to show variations
+                    gamma_mean = np.mean(gamma_arr)
+                    gamma_range = np.max(gamma_arr) - np.min(gamma_arr)
+                    if gamma_range > 0:
+                        margin = max(gamma_range * 0.1, gamma_mean * 0.001)
+                        axes[1, 0].set_ylim(
+                            [np.min(gamma_arr) - margin, np.max(gamma_arr) + margin]
+                        )
 
-                # pr vs z
-                if "pr" in traj:
-                    axes[1, 1].plot(traj["z"], traj["pr"], "m-", linewidth=1.5)
-                    axes[1, 1].set_xlabel("z (mm)")
-                    axes[1, 1].set_ylabel("pr (amu·mm/ns)")
-                    axes[1, 1].set_title("Transverse Momentum (Radial)")
-                    axes[1, 1].grid(True, alpha=0.3)
-
-                # Create title with rank and fitness
-                rank_str = f"Rank #{rank}" if rank > 1 else "Best"
-                param_str = ", ".join([f"{k}={v:.4g}" for k, v in params_dict.items()])
-                plt.suptitle(
-                    f"{rank_str} Trajectory (fitness={fitness:.6e}): {param_str}",
-                    fontsize=11,
+                # Row 2, Col 2: Delta E (MeV) vs z
+                axes[1, 1].plot(z, delta_e_mev, "orange", linewidth=1.5)
+                axes[1, 1].set_xlabel("z (mm)", fontsize=10)
+                axes[1, 1].set_ylabel("ΔE (MeV)", fontsize=10)
+                axes[1, 1].set_title("Energy Change", fontsize=11, fontweight="bold")
+                axes[1, 1].grid(True, alpha=0.3)
+                axes[1, 1].axhline(
+                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
                 )
+
+                # Row 3, Col 1: Percent Delta E vs z
+                axes[2, 0].plot(z, percent_delta_e, "purple", linewidth=1.5)
+                axes[2, 0].set_xlabel("z (mm)", fontsize=10)
+                axes[2, 0].set_ylabel("ΔE/E (%)", fontsize=10)
+                axes[2, 0].set_title(
+                    "Percent Energy Change", fontsize=11, fontweight="bold"
+                )
+                axes[2, 0].grid(True, alpha=0.3)
+                axes[2, 0].axhline(
+                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
+                )
+
+                # Row 3, Col 2: pr vs z
+                if len(pr) > 0:
+                    axes[2, 1].plot(z, pr, "m-", linewidth=1.5)
+                    axes[2, 1].set_xlabel("z (mm)", fontsize=10)
+                    axes[2, 1].set_ylabel("pr (amu·mm/ns)", fontsize=10)
+                    axes[2, 1].set_title(
+                        "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
+                    )
+                    axes[2, 1].grid(True, alpha=0.3)
+
+                # Create title with rank, fitness, and key metrics
+                rank_str = f"Rank #{rank}" if rank > 1 else "Best"
+                delta_e_final = delta_e_mev[-1] if len(delta_e_mev) > 0 else 0
+                percent_final = percent_delta_e[-1] if len(percent_delta_e) > 0 else 0
+                title = f"{rank_str} Trajectory (fitness={fitness:.6e})\n"
+                title += f"ΔE={delta_e_final:.6f} MeV, ΔE/E={percent_final:.6f}%"
+                plt.suptitle(title, fontsize=12, fontweight="bold")
                 plt.tight_layout()
 
                 # Save with rank in filename
@@ -6829,11 +6987,14 @@ class OptimizationPlugin(ttk.Frame):
                 self, "_last_optimization_dir", Path(self.config.output_dir)
             )
 
-            # Create figure with 4 subplots (matching individual trajectory format)
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+            # Create figure with 6 subplots (3x2 grid)
+            fig, axes = plt.subplots(3, 2, figsize=(14, 14))
 
             # Define colors for different ranks
             colors = plt.cm.tab10(np.linspace(0, 1, len(trajectory_data_list)))
+
+            # Track min/max for gamma auto-scaling
+            all_gamma_values = []
 
             for i, item in enumerate(trajectory_data_list):
                 rank = item["rank"]
@@ -6853,6 +7014,17 @@ class OptimizationPlugin(ttk.Frame):
 
                 label = f"Rank #{rank}" if rank > 1 else "Best"
 
+                # Calculate delta_e and percent_delta_e
+                if len(gamma) > 0:
+                    gamma_initial = gamma[0]
+                    delta_gamma = gamma - gamma_initial
+                    delta_e_mev = delta_gamma * 0.511  # For electrons
+                    percent_delta_e = (delta_gamma / gamma_initial) * 100.0
+                    all_gamma_values.extend(gamma.tolist())
+                else:
+                    delta_e_mev = np.zeros_like(z)
+                    percent_delta_e = np.zeros_like(z)
+
                 # Plot 1: z vs t
                 if len(t) > 0 and len(z) > 0:
                     axes[0, 0].plot(
@@ -6871,9 +7043,26 @@ class OptimizationPlugin(ttk.Frame):
                         z, gamma, color=color, linewidth=2, label=label, alpha=0.8
                     )
 
-                # Plot 4: pr vs z (radial transverse momentum)
-                if len(pr) > 0 and len(z) > 0:
+                # Plot 4: Delta E (MeV) vs z
+                if len(delta_e_mev) > 0 and len(z) > 0:
                     axes[1, 1].plot(
+                        z, delta_e_mev, color=color, linewidth=2, label=label, alpha=0.8
+                    )
+
+                # Plot 5: Percent Delta E vs z
+                if len(percent_delta_e) > 0 and len(z) > 0:
+                    axes[2, 0].plot(
+                        z,
+                        percent_delta_e,
+                        color=color,
+                        linewidth=2,
+                        label=label,
+                        alpha=0.8,
+                    )
+
+                # Plot 6: pr vs z (radial transverse momentum)
+                if len(pr) > 0 and len(z) > 0:
+                    axes[2, 1].plot(
                         z, pr, color=color, linewidth=2, label=label, alpha=0.8
                     )
 
@@ -6895,21 +7084,48 @@ class OptimizationPlugin(ttk.Frame):
             axes[0, 1].grid(True, alpha=0.3)
             axes[0, 1].legend(fontsize=9, loc="best")
 
-            # Configure subplot 3: gamma vs z
+            # Configure subplot 3: gamma vs z (with auto-scaling)
             axes[1, 0].set_xlabel("z (mm)", fontsize=10)
             axes[1, 0].set_ylabel("γ", fontsize=10)
             axes[1, 0].set_title("Lorentz Factor", fontsize=11, fontweight="bold")
             axes[1, 0].grid(True, alpha=0.3)
             axes[1, 0].legend(fontsize=9, loc="best")
+            # Auto-scale gamma to show variations
+            if len(all_gamma_values) > 0:
+                gamma_min = np.min(all_gamma_values)
+                gamma_max = np.max(all_gamma_values)
+                gamma_mean = np.mean(all_gamma_values)
+                gamma_range = gamma_max - gamma_min
+                if gamma_range > 0:
+                    margin = max(gamma_range * 0.1, gamma_mean * 0.001)
+                    axes[1, 0].set_ylim([gamma_min - margin, gamma_max + margin])
 
-            # Configure subplot 4: pr vs z (radial)
+            # Configure subplot 4: Delta E vs z
             axes[1, 1].set_xlabel("z (mm)", fontsize=10)
-            axes[1, 1].set_ylabel("pr", fontsize=10)
-            axes[1, 1].set_title(
-                "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
-            )
+            axes[1, 1].set_ylabel("ΔE (MeV)", fontsize=10)
+            axes[1, 1].set_title("Energy Change", fontsize=11, fontweight="bold")
             axes[1, 1].grid(True, alpha=0.3)
             axes[1, 1].legend(fontsize=9, loc="best")
+            axes[1, 1].axhline(y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5)
+
+            # Configure subplot 5: Percent Delta E vs z
+            axes[2, 0].set_xlabel("z (mm)", fontsize=10)
+            axes[2, 0].set_ylabel("ΔE/E (%)", fontsize=10)
+            axes[2, 0].set_title(
+                "Percent Energy Change", fontsize=11, fontweight="bold"
+            )
+            axes[2, 0].grid(True, alpha=0.3)
+            axes[2, 0].legend(fontsize=9, loc="best")
+            axes[2, 0].axhline(y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5)
+
+            # Configure subplot 6: pr vs z (radial)
+            axes[2, 1].set_xlabel("z (mm)", fontsize=10)
+            axes[2, 1].set_ylabel("pr", fontsize=10)
+            axes[2, 1].set_title(
+                "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
+            )
+            axes[2, 1].grid(True, alpha=0.3)
+            axes[2, 1].legend(fontsize=9, loc="best")
 
             plt.suptitle(
                 f"Top {len(trajectory_data_list)} Trajectory Comparison",
@@ -7907,9 +8123,7 @@ class OptimizationPlugin(ttk.Frame):
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use try-finally to ensure temp directory is always cleaned up
-        try:
-            options = SimulationOptions(
+        options = SimulationOptions(
             steps=steps,
             seed=self.config.seed,
             simulation_type=self.config.simulation_type,
@@ -8176,15 +8390,21 @@ class OptimizationPlugin(ttk.Frame):
             delta_gamma = gamma_final - gamma_initial
             energy_gain_percent = delta_gamma / gamma_initial * 100.0
             energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
+            # Calculate delta_e in MeV (for electrons: ΔE = Δγ * m_e*c^2 = Δγ * 0.511 MeV)
+            delta_e_mev = delta_gamma * 0.511
 
             metrics["max_percent_energy_gain"] = energy_gain_percent
+            metrics["percent_delta_e"] = energy_gain_percent
             metrics["delta_gamma"] = delta_gamma
+            metrics["delta_e_mev"] = delta_e_mev
             metrics["energy_gain_ppm"] = energy_gain_ppm
 
             self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
+            self._log_result(f"    delta_e_mev: {delta_e_mev:.12e} MeV")
             self._log_result(
                 f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
             )
+            self._log_result(f"    percent_delta_e: {energy_gain_percent:.12e}%")
             self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
 
             # For optimization runs, show what the optimizer sees
@@ -8215,9 +8435,12 @@ class OptimizationPlugin(ttk.Frame):
                             energy_gain_ppm = (
                                 delta_gamma_fallback / gamma_initial_fallback * 1e6
                             )
+                            delta_e_mev_fallback = delta_gamma_fallback * 0.511
 
                             metrics["max_percent_energy_gain"] = energy_gain_percent
+                            metrics["percent_delta_e"] = energy_gain_percent
                             metrics["delta_gamma"] = delta_gamma_fallback
+                            metrics["delta_e_mev"] = delta_e_mev_fallback
                             metrics["energy_gain_ppm"] = energy_gain_ppm
 
                             self._log_result(f"  [OK] Fallback calculation successful:")
@@ -8231,7 +8454,13 @@ class OptimizationPlugin(ttk.Frame):
                                 f"    delta_gamma: {delta_gamma_fallback:.12e}"
                             )
                             self._log_result(
+                                f"    delta_e_mev: {delta_e_mev_fallback:.12e} MeV"
+                            )
+                            self._log_result(
                                 f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
+                            )
+                            self._log_result(
+                                f"    percent_delta_e: {energy_gain_percent:.12e}%"
                             )
                             self._log_result(
                                 f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
@@ -8398,19 +8627,22 @@ class OptimizationPlugin(ttk.Frame):
         self._log_result(
             f"  [DEBUG] _run_single_integration returning for Run {run_num}"
         )
-            return output
 
-        finally:
-            # Clean up temporary run directory (always runs, even on exception)
+        # Clean up temporary run directory
+        try:
             import shutil
 
-            self._log_result(f"  [DEBUG] Cleaning up temp directory...")
-            try:
-                if run_output_dir.exists():
-                    shutil.rmtree(run_output_dir)
-                    self._log_result(f"  [DEBUG] Temp directory cleaned: {run_output_dir.name}")
-            except Exception as e:
-                self._log_result(f"  [WARNING] Failed to cleanup temp directory: {e}")
+            if run_output_dir.exists():
+                shutil.rmtree(run_output_dir)
+                self._log_result(
+                    f"  [DEBUG] Cleaned up temp directory: {run_output_dir.name}"
+                )
+        except Exception as e:
+            self._log_result(
+                f"  [WARNING] Failed to clean up temp directory {run_output_dir.name}: {e}"
+            )
+
+        return output
 
     def _cleanup_orphaned_temp_dirs(self):
         """Clean up any orphaned _temp_run directories from previous runs.
@@ -8430,7 +8662,9 @@ class OptimizationPlugin(ttk.Frame):
             temp_dirs = list(output_dir.glob("_temp_run_*"))
 
             if temp_dirs:
-                print(f"[CLEANUP] Found {len(temp_dirs)} orphaned temp directories, removing...")
+                print(
+                    f"[CLEANUP] Found {len(temp_dirs)} orphaned temp directories, removing..."
+                )
                 for temp_dir in temp_dirs:
                     try:
                         shutil.rmtree(temp_dir)
