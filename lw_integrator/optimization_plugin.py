@@ -328,6 +328,10 @@ class OptimizationConfig:
     self_consistency_tolerance: float = 1e-4
     self_consistency_max_iterations: int = 5
     self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
+    self_consistency_chrono_interpolate: bool = False
+    self_consistency_chrono_tolerance: float = 1e-3  # ns
+    self_consistency_chrono_high_precision: bool = False
+    self_consistency_chrono_adaptive_tolerance: bool = False
 
     # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
@@ -463,6 +467,18 @@ class OptimizationConfig:
             self_consistency_tolerance=options.self_consistency_tolerance,
             self_consistency_max_iterations=options.self_consistency_max_iterations,
             self_consistency_verbosity=options.self_consistency_verbosity,
+            self_consistency_chrono_interpolate=getattr(
+                options, "self_consistency_chrono_interpolate", False
+            ),
+            self_consistency_chrono_tolerance=getattr(
+                options, "self_consistency_chrono_tolerance", 1e-3
+            ),
+            self_consistency_chrono_high_precision=getattr(
+                options, "self_consistency_chrono_high_precision", False
+            ),
+            self_consistency_chrono_adaptive_tolerance=getattr(
+                options, "self_consistency_chrono_adaptive_tolerance", False
+            ),
             energy_monitor_enabled=False,  # Removed - integrated into adaptive timestep
             energy_monitor_threshold=2.0,
             energy_monitor_check_interval=10,
@@ -2386,6 +2402,26 @@ class OptimizationPlugin(ttk.Frame):
                 self.gui_controller.self_consistency_verbosity_var.set(
                     str(config.self_consistency_verbosity)
                 )
+            if hasattr(self.gui_controller, "self_consistency_chrono_interpolate_var"):
+                self.gui_controller.self_consistency_chrono_interpolate_var.set(
+                    config.self_consistency_chrono_interpolate
+                )
+            if hasattr(self.gui_controller, "self_consistency_chrono_tolerance_var"):
+                self.gui_controller.self_consistency_chrono_tolerance_var.set(
+                    f"{config.self_consistency_chrono_tolerance:.1e}"
+                )
+            if hasattr(
+                self.gui_controller, "self_consistency_chrono_high_precision_var"
+            ):
+                self.gui_controller.self_consistency_chrono_high_precision_var.set(
+                    config.self_consistency_chrono_high_precision
+                )
+            if hasattr(
+                self.gui_controller, "self_consistency_chrono_adaptive_tolerance_var"
+            ):
+                self.gui_controller.self_consistency_chrono_adaptive_tolerance_var.set(
+                    config.self_consistency_chrono_adaptive_tolerance
+                )
 
             # Adaptive timestep settings
             if hasattr(self.gui_controller, "adaptive_timestep_enabled_var"):
@@ -2686,6 +2722,18 @@ class OptimizationPlugin(ttk.Frame):
             self_consistency_verbosity=existing_config.self_consistency_verbosity
             if existing_config
             else 0,
+            self_consistency_chrono_interpolate=existing_config.self_consistency_chrono_interpolate
+            if existing_config
+            else False,
+            self_consistency_chrono_tolerance=existing_config.self_consistency_chrono_tolerance
+            if existing_config
+            else 1e-3,
+            self_consistency_chrono_high_precision=existing_config.self_consistency_chrono_high_precision
+            if existing_config
+            else False,
+            self_consistency_chrono_adaptive_tolerance=existing_config.self_consistency_chrono_adaptive_tolerance
+            if existing_config
+            else False,
             energy_monitor_halt_on_jump=existing_config.energy_monitor_halt_on_jump
             if existing_config
             else False,
@@ -3521,6 +3569,18 @@ class OptimizationPlugin(ttk.Frame):
             loaded_config.self_consistency_verbosity = data.get(
                 "self_consistency_verbosity", 0
             )
+            loaded_config.self_consistency_chrono_interpolate = data.get(
+                "self_consistency_chrono_interpolate", False
+            )
+            loaded_config.self_consistency_chrono_tolerance = data.get(
+                "self_consistency_chrono_tolerance", 1e-3
+            )
+            loaded_config.self_consistency_chrono_high_precision = data.get(
+                "self_consistency_chrono_high_precision", False
+            )
+            loaded_config.self_consistency_chrono_adaptive_tolerance = data.get(
+                "self_consistency_chrono_adaptive_tolerance", False
+            )
             # Energy monitoring removed - functionality in adaptive timestep
             loaded_config.energy_monitor_enabled = False
             loaded_config.energy_monitor_threshold = 2.0
@@ -3643,6 +3703,18 @@ class OptimizationPlugin(ttk.Frame):
                 f"  Self-consistency verbosity: {loaded_config.self_consistency_verbosity}"
             )
             self._log_result(
+                f"  Self-consistency chrono_interpolate: {loaded_config.self_consistency_chrono_interpolate}"
+            )
+            self._log_result(
+                f"  Self-consistency chrono_tolerance: {loaded_config.self_consistency_chrono_tolerance:.1e} ns"
+            )
+            self._log_result(
+                f"  Self-consistency chrono_high_precision: {loaded_config.self_consistency_chrono_high_precision}"
+            )
+            self._log_result(
+                f"  Self-consistency chrono_adaptive_tolerance: {loaded_config.self_consistency_chrono_adaptive_tolerance}"
+            )
+            self._log_result(
                 f"  Adaptive timestep reduction_factor: {loaded_config.adaptive_timestep_reduction_factor}"
             )
             self._log_result(
@@ -3715,6 +3787,18 @@ class OptimizationPlugin(ttk.Frame):
                 f"  Max iterations: {self.config.self_consistency_max_iterations}"
             )
             self._log_result(f"  Verbosity: {self.config.self_consistency_verbosity}")
+            self._log_result(
+                f"  Chrono interpolate: {self.config.self_consistency_chrono_interpolate}"
+            )
+            self._log_result(
+                f"  Chrono tolerance: {self.config.self_consistency_chrono_tolerance:.1e} ns"
+            )
+            self._log_result(
+                f"  Chrono high precision: {self.config.self_consistency_chrono_high_precision}"
+            )
+            self._log_result(
+                f"  Chrono adaptive tolerance: {self.config.self_consistency_chrono_adaptive_tolerance}"
+            )
             self._log_result("")
             self._log_result("[Adaptive Timestep]")
             self._log_result(f"  Enabled: {self.config.adaptive_timestep_enabled}")
@@ -3858,6 +3942,10 @@ class OptimizationPlugin(ttk.Frame):
                 "self_consistency_tolerance": config.self_consistency_tolerance,
                 "self_consistency_max_iterations": config.self_consistency_max_iterations,
                 "self_consistency_verbosity": config.self_consistency_verbosity,
+                "self_consistency_chrono_interpolate": config.self_consistency_chrono_interpolate,
+                "self_consistency_chrono_tolerance": config.self_consistency_chrono_tolerance,
+                "self_consistency_chrono_high_precision": config.self_consistency_chrono_high_precision,
+                "self_consistency_chrono_adaptive_tolerance": config.self_consistency_chrono_adaptive_tolerance,
                 # Energy monitoring removed - halt option in adaptive timestep
                 "energy_monitor_halt_on_jump": config.energy_monitor_halt_on_jump,
                 "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
