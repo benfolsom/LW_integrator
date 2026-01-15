@@ -1208,26 +1208,28 @@ class OptimizationRunMixin:
                         ] = macroparticle_sigma_multiplier
 
                     # Stability analysis only if trajectory is present
-                    if result.trajectory is not None:
-                        traj = result.trajectory
+                    if result.rider_trajectory is not None:
+                        traj = result.rider_trajectory
 
                         # Compute smoothness metrics
                         smoothness_config = SmoothnessConfig(
                             enabled=self.config.smoothness_enabled,
                             window_size=int(self.config.smoothness_window_size),
+                            oscillation_threshold=self.config.smoothness_oscillation_threshold,
+                            trend_smoothness_threshold=self.config.smoothness_trend_threshold,
                             reject_on_violation=self.config.smoothness_reject_on_violation,
-                            gamma_threshold=self.config.smoothness_gamma_threshold,
-                            radius_threshold=self.config.smoothness_radius_threshold,
+                            max_allowed_violations=int(
+                                self.config.smoothness_max_violations
+                            ),
                         )
 
                         smoothness_result = analyze_trajectory_smoothness(
                             trajectory=traj,
-                            smoothness_config=smoothness_config,
-                            enable_logging=True,
+                            config=smoothness_config,
                         )
 
                         # Filter stable trajectories if enabled
-                        if self.config.stability_filter_enabled:
+                        if getattr(self.config, "stability_filter_enabled", False):
                             stable = filter_stable_trajectories(
                                 trajectories=[traj],
                                 smoothness_config=smoothness_config,
@@ -1238,7 +1240,27 @@ class OptimizationRunMixin:
                             result_data["is_stable"] = True
 
                         # Store smoothness metrics
-                        result_data["smoothness_metrics"] = smoothness_result.to_dict()
+                        smoothness_metrics = {
+                            "passed": smoothness_result.passed,
+                            "num_steps_analyzed": smoothness_result.num_steps_analyzed,
+                            "oscillation_score": smoothness_result.oscillation_score,
+                            "trend_smoothness_score": smoothness_result.trend_smoothness_score,
+                            "multi_scale_consistency": smoothness_result.multi_scale_consistency,
+                            "quality_summary": smoothness_result.quality_summary,
+                            "violations": [
+                                {
+                                    "violation_type": v.violation_type.value,
+                                    "window_start": v.window_start,
+                                    "window_end": v.window_end,
+                                    "value": v.value,
+                                    "threshold": v.threshold,
+                                    "severity": v.severity,
+                                    "description": v.description,
+                                }
+                                for v in smoothness_result.violations
+                            ],
+                        }
+                        result_data["smoothness_metrics"] = smoothness_metrics
 
                         # Store trajectory with stride (for saving)
                         # Only save trajectory arrays if trajectory saving is enabled or stability enabled
@@ -1539,17 +1561,20 @@ class OptimizationRunMixin:
             overlay_save=False,
             difference_display=False,
             difference_save=False,
-            use_adaptive_timestep=self.config.use_adaptive_timestep,
-            adaptive_timestep_min=self.config.adaptive_timestep_min,
-            adaptive_timestep_max=self.config.adaptive_timestep_max,
-            adaptive_timestep_target=self.config.adaptive_timestep_target,
+            output_dir=run_output_dir,
+            adaptive_timestep_enabled=self.config.adaptive_timestep_enabled,
+            adaptive_timestep_threshold=self.config.adaptive_timestep_threshold,
+            adaptive_timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
+            adaptive_timestep_max_attempts=self.config.adaptive_timestep_max_attempts,
+            adaptive_timestep_min_factor=self.config.adaptive_timestep_min_factor,
+            adaptive_timestep_cooldown_steps=self.config.adaptive_timestep_cooldown_steps,
+            adaptive_timestep_probe_threshold=self.config.adaptive_timestep_probe_threshold,
+            adaptive_timestep_max_probe_steps=self.config.adaptive_timestep_max_probe_steps,
             adaptive_timestep_debug=self.config.adaptive_timestep_debug,
-            per_run_timeout=self.config.per_run_timeout,
-            cancel_flag=cancel_flag,
         )
 
         try:
-            result: RunResult = run_testbed(options=options, output_dir=run_output_dir)
+            result: RunResult = run_testbed(options=options)
             self._log_result(f"  [DEBUG] Integration complete for Run {run_num}")
 
             output = {
@@ -1567,8 +1592,8 @@ class OptimizationRunMixin:
             }
 
             # Attach trajectory if available
-            if result.trajectory is not None:
-                traj = result.trajectory
+            if result.rider_trajectory is not None:
+                traj = result.rider_trajectory
                 output["trajectory"] = traj
 
                 # Stability analysis (smoothness)
@@ -1576,19 +1601,21 @@ class OptimizationRunMixin:
                     smoothness_config = SmoothnessConfig(
                         enabled=self.config.smoothness_enabled,
                         window_size=int(self.config.smoothness_window_size),
+                        oscillation_threshold=self.config.smoothness_oscillation_threshold,
+                        trend_smoothness_threshold=self.config.smoothness_trend_threshold,
                         reject_on_violation=self.config.smoothness_reject_on_violation,
-                        gamma_threshold=self.config.smoothness_gamma_threshold,
-                        radius_threshold=self.config.smoothness_radius_threshold,
+                        max_allowed_violations=int(
+                            self.config.smoothness_max_violations
+                        ),
                     )
 
                     smoothness_result = analyze_trajectory_smoothness(
                         trajectory=traj,
-                        smoothness_config=smoothness_config,
-                        enable_logging=True,
+                        config=smoothness_config,
                     )
 
                     # Filter stable trajectories if enabled
-                    if self.config.stability_filter_enabled:
+                    if getattr(self.config, "stability_filter_enabled", False):
                         stable = filter_stable_trajectories(
                             trajectories=[traj],
                             smoothness_config=smoothness_config,
@@ -1599,7 +1626,27 @@ class OptimizationRunMixin:
                         output["is_stable"] = True
 
                     # Store smoothness metrics
-                    output["smoothness_metrics"] = smoothness_result.to_dict()
+                    smoothness_metrics = {
+                        "passed": smoothness_result.passed,
+                        "num_steps_analyzed": smoothness_result.num_steps_analyzed,
+                        "oscillation_score": smoothness_result.oscillation_score,
+                        "trend_smoothness_score": smoothness_result.trend_smoothness_score,
+                        "multi_scale_consistency": smoothness_result.multi_scale_consistency,
+                        "quality_summary": smoothness_result.quality_summary,
+                        "violations": [
+                            {
+                                "violation_type": v.violation_type.value,
+                                "window_start": v.window_start,
+                                "window_end": v.window_end,
+                                "value": v.value,
+                                "threshold": v.threshold,
+                                "severity": v.severity,
+                                "description": v.description,
+                            }
+                            for v in smoothness_result.violations
+                        ],
+                    }
+                    output["smoothness_metrics"] = smoothness_metrics
 
                 # Only save full trajectory arrays if explicitly requested
                 save_traj = (
