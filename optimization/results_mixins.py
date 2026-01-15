@@ -1,0 +1,879 @@
+"""Results/export helpers for OptimizationPlugin."""
+
+from __future__ import annotations
+
+import json
+import tkinter as tk
+from pathlib import Path
+from tkinter import ttk
+from typing import Any, Dict, List
+
+import numpy as np
+
+from optimization.result_io import (  # type: ignore[import]
+    generate_optimization_heatmap,
+    generate_optimization_plots,
+    generate_trajectory_comparison_plot,
+    save_optimization_results,
+    save_partial_optimization_results,
+    save_top_n_optimization_trajectories,
+    save_top_trajectories_summary_table,
+)
+from optimization.ui_helpers import (  # type: ignore[import]
+    show_error_dialog as _show_error_dialog,
+    show_info_dialog as _show_info_dialog,
+)
+
+
+class OptimizationResultsMixin:
+    """Encapsulates result export and plotting helpers."""
+
+    def _save_optimization_results(self, result, param_names):
+        """Save optimization results to file via shared helper."""
+        return save_optimization_results(self, result, param_names)
+
+    def _save_top_trajectories_summary_table(self, result, param_names, output_dir):
+        """Generate and save top trajectories summary via helper."""
+        return save_top_trajectories_summary_table(
+            self, result, param_names, output_dir
+        )
+
+    def _generate_optimization_plots(self, result, param_names, output_dir):
+        """Generate optimization plots via shared helper."""
+        return generate_optimization_plots(self, result, param_names, output_dir)
+
+    def _generate_optimization_heatmap(self, all_evaluations, param_names, output_dir):
+        """Generate optimization heatmap via shared helper."""
+        return generate_optimization_heatmap(
+            self, all_evaluations, param_names, output_dir
+        )
+
+    def _save_top_n_optimization_trajectories(self, result, param_names):
+        """Re-run top N parameter sets and save trajectories via helper."""
+        return save_top_n_optimization_trajectories(self, result, param_names)
+
+    def _save_single_optimization_trajectory(
+        self, params_dict, param_names, rank, fitness
+    ):
+        """Re-run a single parameter set and save its trajectory."""
+        from pathlib import Path
+
+        import numpy as np
+
+        try:
+            # Set up run parameters (similar to evaluate_params)
+            aperture = self.config.aperture_range[0]
+            energy = self.config.energy_range[0]
+            start_z = (
+                self.config.starting_z_positions[0]
+                if self.config.starting_z_positions
+                else 0.0
+            )
+            offset_frac = (
+                self.config.transverse_offset_fractions[0]
+                if self.config.transverse_offset_fractions
+                else 0.0
+            )
+            timestep = self.config.timestep
+            steps = self.config.steps
+            wall_z = self.config.wall_z
+
+            # Map parameters
+            for param_name, value in params_dict.items():
+                if param_name == "aperture_radius":
+                    aperture = value
+                elif param_name == "initial_energy_gev":
+                    energy = value
+                elif param_name == "start_z":
+                    start_z = value
+                elif param_name == "transverse_offset":
+                    offset_frac = value
+                elif param_name == "timestep":
+                    timestep = value
+                elif param_name == "wall_z":
+                    wall_z = value
+
+            transv_offset = offset_frac * aperture
+
+            # Temporarily enable trajectory saving
+            save_all_backup = self.config.save_all_trajectories
+            self.config.save_all_trajectories = True
+
+            # Run integration
+            result_data = self._run_single_integration(
+                aperture=aperture,
+                energy_gev=energy,
+                start_z=start_z,
+                transv_offset=transv_offset,
+                timestep=timestep,
+                steps=steps,
+                rider_m_particle=self.config.m_particle,
+                rider_charge_sign=self.config.charge_sign,
+                rider_pcount=int(self.config.pcount),
+                rider_transv_mom=self.config.transv_mom,
+                driver_params=None,
+                wall_z=wall_z,
+                run_num=9999 + rank,
+            )
+
+            # Restore trajectory setting
+            self.config.save_all_trajectories = save_all_backup
+
+            if result_data and "trajectory" in result_data:
+                output_dir = getattr(
+                    self, "_last_optimization_dir", Path(self.config.output_dir)
+                )
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                import matplotlib.pyplot as plt
+
+                traj = result_data["trajectory"]
+                metrics = result_data.get("metrics", {})
+
+                fig, axes = plt.subplots(3, 2, figsize=(14, 14))
+
+                z = np.array(traj["z"])
+                t = np.array(traj["t"])
+                r = np.array(traj["r"])
+                gamma_arr = np.array(traj.get("gamma", []))
+                pr = np.array(traj.get("pr", []))
+
+                if len(gamma_arr) > 0:
+                    gamma_initial = gamma_arr[0]
+                    delta_gamma = gamma_arr - gamma_initial
+                    delta_e_mev = delta_gamma * 0.511
+                    percent_delta_e = (delta_gamma / gamma_initial) * 100.0
+                else:
+                    delta_e_mev = np.zeros_like(z)
+                    percent_delta_e = np.zeros_like(z)
+
+                axes[0, 0].plot(t, z, "b-", linewidth=1.5)
+                axes[0, 0].set_xlabel("Time (ns)", fontsize=10)
+                axes[0, 0].set_ylabel("z (mm)", fontsize=10)
+                axes[0, 0].set_title(
+                    "Longitudinal Position", fontsize=11, fontweight="bold"
+                )
+                axes[0, 0].grid(True, alpha=0.3)
+
+                axes[0, 1].plot(z, r * 1e3, "r-", linewidth=1.5)
+                axes[0, 1].set_xlabel("z (mm)", fontsize=10)
+                axes[0, 1].set_ylabel("r (μm)", fontsize=10)
+                axes[0, 1].set_title(
+                    "Transverse Position (Radial)", fontsize=11, fontweight="bold"
+                )
+                axes[0, 1].grid(True, alpha=0.3)
+
+                if len(gamma_arr) > 0:
+                    axes[1, 0].plot(z, gamma_arr, "g-", linewidth=1.5)
+                    axes[1, 0].set_xlabel("z (mm)", fontsize=10)
+                    axes[1, 0].set_ylabel("γ", fontsize=10)
+                    axes[1, 0].set_title(
+                        "Lorentz Factor", fontsize=11, fontweight="bold"
+                    )
+                    axes[1, 0].grid(True, alpha=0.3)
+                    gamma_mean = np.mean(gamma_arr)
+                    gamma_range = np.max(gamma_arr) - np.min(gamma_arr)
+                    if gamma_range > 0:
+                        margin = max(gamma_range * 0.1, gamma_mean * 0.001)
+                        axes[1, 0].set_ylim(
+                            [np.min(gamma_arr) - margin, np.max(gamma_arr) + margin]
+                        )
+
+                axes[1, 1].plot(z, delta_e_mev, "orange", linewidth=1.5)
+                axes[1, 1].set_xlabel("z (mm)", fontsize=10)
+                axes[1, 1].set_ylabel("ΔE (MeV)", fontsize=10)
+                axes[1, 1].set_title("Energy Change", fontsize=11, fontweight="bold")
+                axes[1, 1].grid(True, alpha=0.3)
+                axes[1, 1].axhline(
+                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
+                )
+
+                axes[2, 0].plot(z, percent_delta_e, "purple", linewidth=1.5)
+                axes[2, 0].set_xlabel("z (mm)", fontsize=10)
+                axes[2, 0].set_ylabel("ΔE/E (%)", fontsize=10)
+                axes[2, 0].set_title(
+                    "Percent Energy Change", fontsize=11, fontweight="bold"
+                )
+                axes[2, 0].grid(True, alpha=0.3)
+                axes[2, 0].axhline(
+                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
+                )
+
+                if len(pr) > 0:
+                    axes[2, 1].plot(z, pr, "m-", linewidth=1.5)
+                    axes[2, 1].set_xlabel("z (mm)", fontsize=10)
+                    axes[2, 1].set_ylabel("pr (amu·mm/ns)", fontsize=10)
+                    axes[2, 1].set_title(
+                        "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
+                    )
+                    axes[2, 1].grid(True, alpha=0.3)
+
+                rank_str = f"Rank #{rank}" if rank > 1 else "Best"
+                delta_e_final = delta_e_mev[-1] if len(delta_e_mev) > 0 else 0
+                percent_final = percent_delta_e[-1] if len(percent_delta_e) > 0 else 0
+                title = f"{rank_str} Trajectory (fitness={fitness:.6e})\n"
+                title += f"ΔE={delta_e_final:.6f} MeV, ΔE/E={percent_final:.6f}%"
+                plt.suptitle(title, fontsize=12, fontweight="bold")
+                plt.tight_layout()
+
+                if rank == 1:
+                    traj_plot = output_dir / "trajectory_rank1_best.png"
+                    traj_data = output_dir / "trajectory_rank1_best.npz"
+                else:
+                    traj_plot = output_dir / f"trajectory_rank{rank}.png"
+                    traj_data = output_dir / f"trajectory_rank{rank}.npz"
+
+                plt.savefig(traj_plot, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+
+                self._log_result(
+                    f"  Rank #{rank} trajectory plot saved to: {traj_plot}"
+                )
+
+                np.savez(traj_data, **traj)
+                self._log_result(
+                    f"  Rank #{rank} trajectory data saved to: {traj_data}"
+                )
+
+            else:
+                self._log_result(
+                    f"[WARNING] Could not generate rank #{rank} trajectory (integration failed)"
+                )
+                return None
+
+            return result_data.get("trajectory")
+
+        except Exception as e:  # pragma: no cover - plotting path
+            import traceback
+
+            self._log_result(f"[WARNING] Failed to save trajectory: {e}")
+            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
+            return None
+
+    def _generate_trajectory_comparison_plot(self, trajectory_data_list):
+        """Generate comparison plot for top trajectories via helper."""
+        return generate_trajectory_comparison_plot(self, trajectory_data_list)
+
+    def _save_partial_optimization_results(
+        self, all_evaluations, param_names, status="PARTIAL"
+    ):
+        """Save partial optimization results when cancelled or failed."""
+        import csv
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if self.config.mode == "optimization":
+            method = self.config.optimization_method
+            output_dir = (
+                Path(self.config.output_dir)
+                / "optimizations"
+                / f"{timestamp}_{method}_{status}"
+            )
+        else:
+            output_dir = Path(self.config.output_dir) / f"{timestamp}_{status}"
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        csv_path = output_dir / "all_evaluations.csv"
+        successful_evals = [
+            e
+            for e in all_evaluations
+            if not e.get("failed", False) and not e.get("halted_early", False)
+        ]
+        halted_evals = [e for e in all_evaluations if e.get("halted_early", False)]
+
+        if len(all_evaluations) > 0:
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=["evaluation"]
+                    + param_names
+                    + ["objective_value", "failed", "halted_early", "halt_reason"],
+                )
+                writer.writeheader()
+                for e in all_evaluations:
+                    row = {
+                        "evaluation": e["evaluation"],
+                        "failed": e.get("failed", False),
+                        "halted_early": e.get("halted_early", False),
+                        "halt_reason": e.get("halt_reason", ""),
+                    }
+                    row.update(e["parameters"])
+                    row["objective_value"] = e.get("objective_value", float("nan"))
+                    writer.writerow(row)
+            self._log_result(f"[OK] Partial results saved to: {csv_path}")
+
+        summary = {
+            "status": status,
+            "timestamp": timestamp,
+            "total_evaluations": len(all_evaluations),
+            "successful_evaluations": len(successful_evals),
+            "halted_evaluations": len(halted_evals),
+            "failed_evaluations": len(all_evaluations)
+            - len(successful_evals)
+            - len(halted_evals),
+            "parameters": param_names,
+            "objective": self.config.objective,
+        }
+
+        if len(successful_evals) > 0:
+            maximize = "max" in self.config.objective.lower()
+            finite_evals = [
+                e
+                for e in successful_evals
+                if np.isfinite(e.get("objective_value", np.inf))
+            ]
+
+            if len(finite_evals) > 0:
+                if maximize:
+                    best = max(
+                        finite_evals,
+                        key=lambda x: x.get("objective_value", -float("inf")),
+                    )
+                else:
+                    best = min(
+                        finite_evals,
+                        key=lambda x: x.get("objective_value", float("inf")),
+                    )
+                summary["best_parameters"] = best["parameters"]
+                summary["best_value"] = best["objective_value"]
+            else:
+                summary["note"] = "No finite objective values found"
+
+        summary_path = output_dir / "partial_summary.json"
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        self._log_result(f"[OK] Summary saved to: {summary_path}")
+
+        if self._log_file_path is not None and self._log_file_path.exists():
+            import shutil
+
+            dest_log = output_dir / self._log_file_path.name
+            shutil.copy2(self._log_file_path, dest_log)
+            self._log_result(f"[OK] Log file saved to: {dest_log}")
+
+    def _save_sweep_results(
+        self, results: List[Dict[str, Any]], failed_runs: List[Dict[str, Any]] = None
+    ) -> None:
+        """Save sweep results to JSON file with timestamp."""
+        from datetime import datetime
+
+        if self._log_file is not None:
+            self._close_log_file()
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        config_name = "sweep"
+        if hasattr(self, "last_loaded_config") and self.last_loaded_config:
+            config_name = Path(self.last_loaded_config).stem
+
+        sweep_dir = Path(self.sweep_output_dir) / f"{timestamp}_{config_name}"
+        sweep_dir.mkdir(parents=True, exist_ok=True)
+
+        output_file = sweep_dir / "sweep_results.json"
+
+        output_data = {
+            "sweep_name": f"Parameter Sweep {timestamp}",
+            "timestamp": timestamp,
+            "config": {
+                "aperture_range": self.config.aperture_range,
+                "aperture_points": self.config.aperture_points,
+                "energy_range": self.config.energy_range,
+                "energy_points": self.config.energy_points,
+                "transverse_offset_fractions": self.config.transverse_offset_fractions,
+                "starting_z_positions": self.config.starting_z_positions,
+                "simulation_type": self.config.simulation_type.name,
+                "wall_z": self.config.wall_z,
+                "wall_z_range": self.config.wall_z_range,
+                "wall_z_points": self.config.wall_z_points,
+                "auto_steps": self.config.auto_steps,
+            },
+            "results": results,
+            "total_runs": len(results),
+        }
+
+        if failed_runs:
+            output_data["failed_runs"] = failed_runs
+            output_data["num_failed"] = len(failed_runs)
+
+        with open(output_file, "w") as f:
+            json.dump(output_data, f, indent=2)
+
+        self._log_result(f"Results saved to: {output_file}")
+        if failed_runs:
+            self._log_result(f"  (includes {len(failed_runs)} failed/timed-out runs)")
+
+        self._open_log_file(sweep_dir)
+
+        if len(results) > 0:
+            self._generate_summary_plots(results, sweep_dir)
+
+    def _generate_summary_plots(
+        self, results: List[Dict[str, Any]], output_dir: Path
+    ) -> None:
+        """Generate summary plots for the sweep results."""
+        try:
+            import matplotlib.pyplot as plt
+
+            apertures = []
+            energies = []
+            delta_es = []
+
+            for result in results:
+                params = result.get("parameters", {})
+                metrics = result.get("metrics", {})
+
+                if metrics:
+                    apertures.append(params.get("aperture_radius", 0))
+                    energies.append(params.get("particle_energy_gev", 0))
+                    delta_es.append(metrics.get("rider_delta_e_mev", 0))
+
+            if len(delta_es) == 0:
+                self._log_result("[INFO] No results with metrics to plot")
+                return
+
+            all_param_values = {}
+            for result in results:
+                params = result.get("parameters", {})
+                for key, value in params.items():
+                    if key in ["simulation_type", "run_number", "timestep", "steps"]:
+                        continue
+                    if key not in all_param_values:
+                        all_param_values[key] = []
+                    all_param_values[key].append(value)
+
+            num_swept_params = 0
+            for param_name, values in all_param_values.items():
+                unique_values = set(v for v in values if v is not None)
+                if len(unique_values) > 1:
+                    num_swept_params += 1
+
+            if num_swept_params == 2:
+                fig, ax = plt.subplots(figsize=(10, 8))
+
+                scatter = ax.scatter(
+                    energies,
+                    [a * 1e3 for a in apertures],
+                    c=delta_es,
+                    cmap="viridis",
+                    s=150,
+                    alpha=0.8,
+                    edgecolors="black",
+                    linewidth=1,
+                )
+
+                cbar = plt.colorbar(scatter, ax=ax)
+                cbar.set_label("Energy Gain ΔE (MeV)", fontsize=12)
+
+                ax.set_xlabel("Particle Energy (GeV)", fontsize=12)
+                ax.set_ylabel("Aperture Radius (μm)", fontsize=12)
+                ax.set_title(
+                    "Parameter Space Exploration: Energy Gain",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+                ax.grid(True, alpha=0.3)
+
+                if (
+                    len(energies) > 0 and max(energies) / min(energies) > 10
+                    if min(energies) > 0
+                    else False
+                ):
+                    ax.set_xscale("log")
+                if (
+                    len(apertures) > 0 and max(apertures) / min(apertures) > 10
+                    if min(apertures) > 0
+                    else False
+                ):
+                    ax.set_yscale("log")
+
+                plt.tight_layout()
+
+                heatmap_file = output_dir / "sweep_heatmap.png"
+                plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
+                plt.close(fig)
+
+                self._log_result(f"[OK] Heatmap saved to: {heatmap_file}")
+            else:
+                self._log_result(
+                    f"[INFO] Skipping heatmap generation ({num_swept_params} parameters swept; heatmap only generated for 2-parameter sweeps)"
+                )
+
+            results_with_traj = [
+                r
+                for r in results
+                if "trajectory" in r and len(r.get("trajectory", {}).get("z", [])) > 0
+            ]
+
+            if results_with_traj:
+                best_result = max(
+                    results_with_traj,
+                    key=lambda r: r.get("metrics", {}).get("rider_delta_e_mev", -1e9),
+                )
+                self._plot_single_trajectory(
+                    best_result, output_dir / "sweep_best_trajectory.png"
+                )
+            else:
+                self._log_result(
+                    "[INFO] No trajectories available for trajectory plot (enable 'Save trajectories' to generate)"
+                )
+
+        except Exception as e:  # pragma: no cover - plotting path
+            self._log_result(f"[WARNING] Failed to generate summary plots: {e}")
+
+    def _plot_single_trajectory(
+        self, result: Dict[str, Any], output_file: Path
+    ) -> None:
+        """Plot trajectory for a single run."""
+        try:
+            import matplotlib.pyplot as plt
+
+            traj = result.get("trajectory", {})
+            params = result.get("parameters", {})
+            metrics = result.get("metrics", {})
+
+            z = np.array(traj.get("z", []))
+            r = np.array(traj.get("r", []))
+
+            if len(z) == 0:
+                return
+
+            aperture = params.get("aperture_radius", 0)
+            energy = params.get("particle_energy_gev", 0)
+            delta_e = metrics.get("rider_delta_e_mev", 0)
+            gamma_initial = metrics.get("rider_gamma_initial", 1)
+            gamma_final = metrics.get("rider_gamma_final", 1)
+
+            energy_mev_initial = (gamma_initial - 1) * 0.511
+            energy_mev_final = (gamma_final - 1) * 0.511
+
+            if len(z) > 1 and abs(z[-1] - z[0]) > 1e-6:
+                energy_mev = energy_mev_initial + delta_e * (z - z[0]) / (z[-1] - z[0])
+            else:
+                energy_mev = np.full_like(z, energy_mev_initial)
+
+            fig = plt.figure(figsize=(12, 10))
+            gs = fig.add_gridspec(3, 1, hspace=0.3)
+
+            ax1 = fig.add_subplot(gs[0])
+            ax2 = fig.add_subplot(gs[1])
+            ax3 = fig.add_subplot(gs[2])
+
+            fig.suptitle(
+                f"Best Trajectory: a={aperture * 1e3:.1f}μm, E={energy:.1f}GeV, ΔE={delta_e:.6f}MeV",
+                fontsize=12,
+                fontweight="bold",
+            )
+
+            ax1.plot(z, energy_mev - energy_mev_initial, "b-", linewidth=2)
+            ax1.set_xlabel("z position (mm)", fontsize=10)
+            ax1.set_ylabel("ΔE (MeV)", fontsize=10)
+            ax1.set_title("Energy Gain vs Position", fontsize=11, fontweight="bold")
+            ax1.grid(True, alpha=0.3)
+
+            ax2.plot(z, r, "r-", linewidth=2, label="+r")
+            ax2.plot(z, -r, "r--", linewidth=1.5, alpha=0.6, label="-r")
+            ax2.axhline(y=0, color="k", linestyle="-", linewidth=0.5, alpha=0.3)
+            ax2.set_xlabel("z position (mm)", fontsize=10)
+            ax2.set_ylabel("Transverse position (mm)", fontsize=10)
+            ax2.set_title(
+                "Transverse Position (±r) vs z", fontsize=11, fontweight="bold"
+            )
+            ax2.legend(fontsize=9)
+            ax2.grid(True, alpha=0.3)
+
+            ax3.plot(z, r, "g-", linewidth=2)
+            ax3.set_xlabel("z position (mm)", fontsize=10)
+            ax3.set_ylabel("r (mm)", fontsize=10)
+            ax3.set_title("Radial Position Evolution", fontsize=11, fontweight="bold")
+            ax3.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            plt.savefig(output_file, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+
+            self._log_result(f"[OK] Best trajectory plot saved to: {output_file}")
+
+        except Exception as e:  # pragma: no cover - plotting path
+            self._log_result(f"[WARNING] Failed to plot trajectory: {e}")
+
+    def _export_evaluations_csv(self, all_evaluations, param_names, output_dir):
+        """Export all evaluations to CSV file."""
+        import csv
+
+        try:
+            output_path = Path(output_dir)
+            csv_file = output_path / "all_evaluations.csv"
+
+            with open(csv_file, "w", newline="", encoding="utf-8") as f:
+                metric_names = set()
+                for eval_rec in all_evaluations:
+                    if not eval_rec.get("failed", True) and "metrics" in eval_rec:
+                        metric_names.update(eval_rec["metrics"].keys())
+
+                metric_names = sorted(metric_names)
+
+                header = (
+                    ["evaluation", "failed", "halted_early", "halt_reason"]
+                    + param_names
+                    + metric_names
+                    + ["objective_value", "fitness"]
+                )
+                writer = csv.DictWriter(f, fieldnames=header)
+                writer.writeheader()
+
+                for eval_rec in all_evaluations:
+                    row = {
+                        "evaluation": eval_rec["evaluation"],
+                        "failed": eval_rec.get("failed", True),
+                        "halted_early": eval_rec.get("halted_early", False),
+                        "halt_reason": eval_rec.get("halt_reason", ""),
+                        "objective_value": eval_rec.get("objective_value", ""),
+                        "fitness": eval_rec.get("fitness", ""),
+                    }
+
+                    for param_name in param_names:
+                        row[param_name] = eval_rec.get("parameters", {}).get(
+                            param_name, ""
+                        )
+
+                    if not eval_rec.get("failed", True) and "metrics" in eval_rec:
+                        for metric_name in metric_names:
+                            row[metric_name] = eval_rec["metrics"].get(metric_name, "")
+
+                    writer.writerow(row)
+
+            self._log_result(f"Evaluation CSV exported to: {csv_file}")
+
+        except Exception as e:  # pragma: no cover - file path
+            self._log_result(f"[WARNING] Failed to export evaluations CSV: {e}")
+
+    def _view_npz_trajectories(self, results_dir):
+        """View NPZ trajectory files from an optimization run."""
+        import glob
+        import os
+
+        try:
+            results_path = Path(results_dir)
+
+            npz_pattern = str(results_path / "trajectory_rank*.npz")
+            npz_files = sorted(glob.glob(npz_pattern))
+
+            if not npz_files:
+                npz_pattern = str(results_path / "evaluation_*_trajectory.npz")
+                npz_files = sorted(glob.glob(npz_pattern))
+
+            if not npz_files:
+                _show_info_dialog(
+                    self,
+                    "No Trajectories Found",
+                    f"No NPZ trajectory files found in:\n{results_dir}\n\n"
+                    "Expected files like:\n"
+                    "- trajectory_rank1_best.npz\n"
+                    "- trajectory_rank2.npz\n"
+                    "- evaluation_0001_trajectory.npz",
+                )
+                return
+
+            dialog = tk.Toplevel(self)
+            dialog.title(f"NPZ Trajectories: {results_path.name}")
+            dialog.geometry("600x500")
+            dialog.transient(self)
+
+            ttk.Label(
+                dialog,
+                text=f"Found {len(npz_files)} trajectory files",
+                font=("TkDefaultFont", 10, "bold"),
+            ).pack(pady=(10, 5))
+
+            list_frame = ttk.Frame(dialog)
+            list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+            scrollbar = ttk.Scrollbar(list_frame)
+            scrollbar.pack(side="right", fill="y")
+
+            listbox = tk.Listbox(
+                list_frame,
+                selectmode="extended",
+                yscrollcommand=scrollbar.set,
+                height=15,
+            )
+            listbox.pack(side="left", fill="both", expand=True)
+            scrollbar.config(command=listbox.yview)
+
+            for npz_file in npz_files:
+                filename = os.path.basename(npz_file)
+                listbox.insert("end", filename)
+
+            if npz_files:
+                listbox.selection_set(0)
+
+            btn_frame = ttk.Frame(dialog)
+            btn_frame.pack(pady=10)
+
+            def plot_selected():
+                selection = listbox.curselection()
+                if not selection:
+                    _show_info_dialog(
+                        dialog,
+                        "No Selection",
+                        "Please select one or more trajectories to plot.",
+                    )
+                    return
+
+                selected_files = [npz_files[i] for i in selection]
+                self._plot_npz_trajectories(selected_files, results_path)
+
+            ttk.Button(
+                btn_frame,
+                text="Plot Selected",
+                command=plot_selected,
+                style="Accent.TButton",
+            ).pack(side="left", padx=5)
+
+            ttk.Button(
+                btn_frame,
+                text="Close",
+                command=dialog.destroy,
+            ).pack(side="left", padx=5)
+
+        except Exception as e:  # pragma: no cover - UI path
+            import traceback
+
+            _show_error_dialog(
+                self,
+                "Error Viewing NPZ Trajectories",
+                f"Failed to view NPZ trajectories:\n{e}\n\n{traceback.format_exc()}",
+            )
+
+    def _plot_npz_trajectories(self, npz_files, results_dir):
+        """Plot NPZ trajectory files."""
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_tkagg import (
+                FigureCanvasTkAgg,
+                NavigationToolbar2Tk,
+            )
+
+            fig = plt.figure(figsize=(14, 10))
+            gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+
+            ax_r = fig.add_subplot(gs[0, 0])
+            ax_pz = fig.add_subplot(gs[0, 1])
+            ax_pr = fig.add_subplot(gs[1, 0])
+            ax_gamma = fig.add_subplot(gs[1, 1])
+            ax_energy = fig.add_subplot(gs[2, :])
+
+            colors = plt.cm.tab10(np.linspace(0, 1, len(npz_files)))
+
+            for idx, npz_file in enumerate(npz_files):
+                data = np.load(npz_file)
+                z = data["z"]
+                r = data["r"]
+                pz = data["pz"]
+                pr = data["pr"]
+                gamma = data["gamma"]
+
+                label = Path(npz_file).stem.replace("trajectory_", "").replace("_", " ")
+
+                ax_r.plot(z, r * 1e3, label=label, color=colors[idx], alpha=0.7)
+                ax_pz.plot(z, pz, color=colors[idx], alpha=0.7)
+                ax_pr.plot(z, pr, color=colors[idx], alpha=0.7)
+                ax_gamma.plot(z, gamma, color=colors[idx], alpha=0.7)
+
+                energy_mev = (gamma - 1) * 0.511
+                ax_energy.plot(z, energy_mev, color=colors[idx], alpha=0.7, label=label)
+
+            ax_r.set_xlabel("z (mm)")
+            ax_r.set_ylabel("r (μm)")
+            ax_r.set_title("Transverse Position")
+            ax_r.grid(True, alpha=0.3)
+            ax_r.legend()
+
+            ax_pz.set_xlabel("z (mm)")
+            ax_pz.set_ylabel("Pz")
+            ax_pz.set_title("Longitudinal Momentum")
+            ax_pz.grid(True, alpha=0.3)
+
+            ax_pr.set_xlabel("z (mm)")
+            ax_pr.set_ylabel("Pr")
+            ax_pr.set_title("Transverse Momentum")
+            ax_pr.grid(True, alpha=0.3)
+
+            ax_gamma.set_xlabel("z (mm)")
+            ax_gamma.set_ylabel("γ")
+            ax_gamma.set_title("Lorentz Factor")
+            ax_gamma.grid(True, alpha=0.3)
+
+            ax_energy.set_xlabel("z (mm)")
+            ax_energy.set_ylabel("Energy (MeV)")
+            ax_energy.set_title("Particle Energy")
+            ax_energy.grid(True, alpha=0.3)
+            ax_energy.legend()
+
+            fig.suptitle(
+                f"Optimization Trajectories: {results_dir.name}",
+                fontsize=14,
+                fontweight="bold",
+            )
+
+            plt.tight_layout()
+
+            plot_window = tk.Toplevel(self)
+            plot_window.title(f"NPZ Trajectories: {results_dir.name}")
+            plot_window.geometry("1200x900")
+
+            main_frame = ttk.Frame(plot_window)
+            main_frame.pack(fill="both", expand=True)
+
+            canvas = FigureCanvasTkAgg(fig, master=main_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+
+            toolbar_frame = ttk.Frame(main_frame)
+            toolbar_frame.pack(side="top", fill="x")
+            toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
+            toolbar.update()
+
+            button_frame = ttk.Frame(main_frame, padding=5)
+            button_frame.pack(side="top", fill="x")
+            ttk.Button(
+                button_frame,
+                text="Close",
+                command=plot_window.destroy,
+            ).pack(side="right", padx=5)
+
+        except Exception as e:  # pragma: no cover - UI path
+            import traceback
+
+            _show_error_dialog(
+                self,
+                "Plotting Error",
+                f"Failed to plot NPZ trajectories:\n{e}\n\n{traceback.format_exc()}",
+            )
+
+    def _save_evaluation_trajectory(self, eval_num, trajectory_data, output_dir):
+        """Save a single evaluation trajectory to NPZ file."""
+        try:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            trajectory_file = output_path / f"evaluation_{eval_num:04d}_trajectory.npz"
+
+            np.savez(
+                trajectory_file,
+                z=np.array(trajectory_data["z"]),
+                r=np.array(trajectory_data["r"]),
+                pz=np.array(trajectory_data["pz"]),
+                pr=np.array(trajectory_data["pr"]),
+                t=np.array(trajectory_data["t"]),
+                gamma=np.array(trajectory_data["gamma"]),
+            )
+
+            return str(trajectory_file)
+        except Exception as e:  # pragma: no cover - file path
+            self._log_result(
+                f"  [WARNING] Failed to save evaluation {eval_num} trajectory: {e}"
+            )
+            return None
