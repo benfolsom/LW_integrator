@@ -15,6 +15,7 @@ import json
 import os
 import threading
 import tkinter as tk
+from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional, Tuple
@@ -34,12 +35,7 @@ from lw_integrator.testbed_runner import (  # type: ignore[import]
     SimulationOptions,
     run_testbed,
 )
-from optimization.config import (
-    OptimizationConfig,
-    calculate_auto_steps,
-    calculate_auto_timestep,
-    calculate_steps_from_duration,
-)
+from optimization.config import OptimizationConfig
 from optimization.result_io import (
     generate_optimization_heatmap,
     generate_optimization_plots,
@@ -49,15 +45,516 @@ from optimization.result_io import (
     save_top_n_optimization_trajectories,
     save_top_trajectories_summary_table,
 )
-from optimization.ui_mixins import OptimizationPluginUIMixin
-from optimization.ui_helpers import (
-    show_error_dialog as _show_error_dialog,
-    show_info_dialog as _show_info_dialog,
-    show_warning_dialog as _show_warning_dialog,
-)
 
 
-class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
+class ToolTip:
+    """Simple tooltip widget for displaying help text on hover."""
+
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        """Display the tooltip."""
+        if self.tip_window or not self.text:
+            return
+        x, y, _, _ = (
+            self.widget.bbox("insert") if hasattr(self.widget, "bbox") else (0, 0, 0, 0)
+        )
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            tw,
+            text=self.text,
+            justify="left",
+            background="#ffffe0",
+            relief="solid",
+            borderwidth=1,
+            font=("TkDefaultFont", 9),
+        )
+        label.pack(ipadx=5, ipady=3)
+
+    def hide_tip(self, event=None):
+        """Hide the tooltip."""
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
+def _show_error_dialog(parent: tk.Widget, title: str, message: str) -> None:
+    """Show an error dialog with selectable text."""
+    # Log to console/terminal
+    print(f"ERROR: {title}: {message}", flush=True)
+
+    # Log to results text if parent is OptimizationPlugin
+    if hasattr(parent, "_log_result"):
+        parent._log_result(f"[ERROR] {title}: {message}")
+
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent)
+    dialog.grab_set()
+
+    frame = ttk.Frame(dialog, padding=10)
+    frame.pack(fill="both", expand=True)
+
+    text = tk.Text(frame, wrap="word", height=8, width=60, relief="flat", borderwidth=0)
+    text.insert("1.0", message)
+    text.configure(state="disabled")
+    text.pack(side="top", fill="both", expand=True, pady=(0, 10))
+
+    button_frame = ttk.Frame(frame)
+    button_frame.pack(side="bottom")
+    ok_button = ttk.Button(button_frame, text="OK", command=dialog.destroy, width=10)
+    ok_button.pack()
+    ok_button.focus_set()
+
+    dialog.update_idletasks()
+    width = dialog.winfo_width()
+    height = dialog.winfo_height()
+    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+    y = (dialog.winfo_screenheight() // 2) - (height // 2)
+    dialog.geometry(f"+{x}+{y}")
+
+    dialog.bind("<Return>", lambda e: dialog.destroy())
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+
+def _show_info_dialog(parent: tk.Widget, title: str, message: str) -> None:
+    """Show an info dialog with selectable text."""
+    # Log to console/terminal
+    print(f"INFO: {title}: {message}", flush=True)
+    timestep_range: Optional[Tuple[float, float]] = None  # ns (proper time)
+    timestep_points: int = 1
+    starting_z_range: Optional[Tuple[float, float]] = None  # mm
+    starting_z_points: int = 1
+    wall_z_range: Optional[Tuple[float, float]] = None  # mm
+    wall_z_points: int = 1
+    particle_mass_range: Optional[Tuple[float, float]] = None  # amu
+    particle_mass_points: int = 1
+    particle_charge_range: Optional[Tuple[float, float]] = None  # charge_sign
+    particle_charge_points: int = 1
+    cavity_spacing_range: Optional[Tuple[float, float]] = None  # mm (SWITCHING_WALL)
+    cavity_spacing_points: int = 1
+    macroparticle_charge_range: Optional[Tuple[float, float]] = (
+        None  # charge multiplier
+    )
+    macroparticle_charge_points: int = 1
+    macroparticle_sigma_range: Optional[Tuple[float, float]] = None  # sigma multiplier
+    macroparticle_sigma_points: int = 1
+
+    # Fixed parameters
+    wall_z: float = 100.0  # mm
+    cavity_spacing: float = 1e5  # mm (for SWITCHING_WALL)
+    steps: int = 2000
+    timestep: float = 3e-7  # ns (proper time) - default from main GUI
+    auto_steps: bool = False  # Automatically calculate steps based on distance
+    auto_steps_target: int = (
+        500  # Target number of steps when auto-calculating timestep
+    )
+    auto_steps_distance_past_wall: float = 10.0  # mm past wall to stop integration
+    seed: int = 12345
+
+    # Timestep strategy for energy sweeps
+    timestep_strategy: str = (
+        "auto_distance"  # "fixed", "energy_scaled", or "auto_distance"
+    )
+    energy_scale_exponent: float = 1.0  # For energy_scaled: h ∝ γ^-α
+    target_distance_mm: float = 100.0  # For auto_distance: distance to reach
+    z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
+
+    # Fixed particle parameters (not swept)
+    transv_mom: float = 1.2e-05  # amu·mm/ns
+    transv_dist: float = 2e-06  # mm - transverse spread (half-width of distribution)
+    transv_offset_x: float = 0.0  # mm - x-offset of bunch center from axis
+    transv_offset_y: float = 0.0  # mm - y-offset of bunch center from axis
+    m_particle: float = 0.00054857990907  # amu (electron mass)
+    pcount: int = 1
+    charge_sign: float = -1.0
+    stripped_ions: float = 1.0
+
+    # Macroparticle simulation options (CONDUCTING_WALL only)
+    macroparticle_enabled: bool = False
+    macroparticle_charge_multiplier: float = 1.0
+    macroparticle_sigma_multiplier: float = 1.0  # Multiplier for bunch spread params
+    macroparticle_use_momentum_errors: bool = (
+        True  # Include momentum-based cumulative errors
+    )
+
+    # Optimization objective
+    objective: str = "max_energy_gain"  # Primary objective to optimize
+
+    # Multi-objective weighting (for future use)
+    objective_weights: Dict[str, float] = (
+        None  # e.g., {"max_energy_gain": 1.0, "min_transverse_spread": 0.5}
+    )
+
+    # Output
+    output_dir: str = "results/sweeps"
+    save_results: bool = True
+    save_plots: bool = True
+
+    # Trajectory saving options
+    save_top_n_trajectories: bool = False  # Save trajectories for top N results
+    save_all_trajectories: bool = False  # Save ALL evaluation trajectories
+    save_failed_trajectories: bool = False  # Save only failed trajectories
+    trajectory_stride: int = (
+        1  # Save every Nth point to reduce file size (only used with "All")
+    )
+
+    # Metrics export options
+    metrics_export_format: str = "both"  # Options: "json", "csv", "both", "none"
+    metrics_export_scope: str = "all"  # Options: "all", "top_n"
+
+    # Log saving options
+    log_verbosity: str = "truncated"  # "none", "truncated", "full", "top_n_only"
+    # none = no debug logs saved
+    # truncated = 1-2 lines per run with parameters + metrics + errors/warnings only
+    # full = complete debug output with SC iterations and adaptive timestep refinements
+    # top_n_only = logs only for top N trajectories
+
+    # Stability and robustness options (from SimulationOptions)
+    self_consistency_enabled: bool = True
+    self_consistency_tolerance: float = 1e-4
+    self_consistency_max_iterations: int = 5
+    self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
+    self_consistency_chrono_interpolate: bool = False
+    self_consistency_chrono_tolerance: float = 1e-3  # ns
+    self_consistency_chrono_high_precision: bool = False
+    self_consistency_chrono_adaptive_tolerance: bool = False
+
+    # Energy monitoring removed - functionality integrated into adaptive timestep
+    energy_monitor_enabled: bool = False
+    energy_monitor_threshold: float = 2.0
+    energy_monitor_check_interval: int = 10
+    energy_monitor_halt_on_jump: bool = False  # Now in adaptive_timestep
+    energy_monitor_debug: bool = False
+
+    adaptive_timestep_enabled: bool = True
+    adaptive_timestep_threshold: float = 0.10
+    adaptive_timestep_reduction_factor: int = 10
+    adaptive_timestep_max_attempts: int = 5
+    adaptive_timestep_min_factor: float = 1e-4
+    adaptive_timestep_cooldown_steps: int = 10
+    adaptive_timestep_probe_threshold: float = 0.01
+    adaptive_timestep_max_probe_steps: int = 3
+    adaptive_timestep_debug: bool = False
+
+    # Sweep robustness options
+    per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
+    skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
+
+    # Trajectory stability checking (multi-step numerical validation)
+    smoothness_enabled: bool = True  # Enable trajectory stability analysis
+    smoothness_window_size: int = 20  # Steps for moving-window analysis
+    smoothness_oscillation_threshold: float = (
+        0.5  # Max oscillation score (sign-change rate)
+    )
+    smoothness_trend_threshold: float = 0.30  # Max polynomial fit residual
+    smoothness_reject_on_violation: bool = True  # Reject numerically unstable runs
+    smoothness_max_violations: int = 3  # Max violations before rejection
+
+    def __post_init__(self):
+        """Set defaults for list fields."""
+        if self.transverse_offset_fractions is None:
+            self.transverse_offset_fractions = [0.0]
+        if self.starting_z_positions is None:
+            self.starting_z_positions = [0.0]  # Default: start at origin
+        if self.objective_weights is None:
+            self.objective_weights = {}
+
+    def calculate_timestep_for_energy(
+        self,
+        energy_gev: float,
+        m_particle_amu: float = 0.00054857990907,
+        wall_z: float = None,
+        start_z: float = 0.0,
+    ) -> float:
+        """Calculate appropriate timestep for given energy based on strategy.
+
+        Parameters
+        ----------
+        energy_gev : float
+            Particle energy in GeV
+        m_particle_amu : float
+            Particle mass in amu (default: electron)
+        wall_z : float, optional
+            Wall position in mm (required for auto_distance strategy)
+        start_z : float, optional
+            Starting z position in mm (default: 0.0)
+
+        Returns
+        -------
+        float
+            Timestep in ns (proper time)
+        """
+        if self.timestep_strategy == "fixed":
+            return self.timestep
+
+        # Calculate gamma and beta
+        rest_energy_mev = m_particle_amu * 931.494  # amu to MeV
+        gamma = (energy_gev * 1e3) / rest_energy_mev
+        beta = np.sqrt(1.0 - 1.0 / gamma**2)
+
+        if self.timestep_strategy == "energy_scaled":
+            # Scale timestep inversely with gamma
+            # h_sweep = h_base / γ^α
+            return self.timestep / (gamma**self.energy_scale_exponent)
+
+        elif self.timestep_strategy == "auto_distance":
+            # Calculate timestep to reach target distance in given steps
+            # Total distance = from start_z to wall_z + target_distance_mm
+            # Distance = N_steps × β × c × h × γ
+            # Therefore: h = Distance / (N_steps × β × c × γ)
+            if wall_z is None:
+                wall_z = self.wall_z
+
+            total_distance = abs(wall_z - start_z) + self.target_distance_mm
+            c_mmns = 299.792458  # mm/ns
+            h_calculated = total_distance / (self.steps * beta * c_mmns * gamma)
+            return h_calculated
+
+        else:
+            raise ValueError(f"Unknown timestep_strategy: {self.timestep_strategy}")
+
+    @classmethod
+    def from_simulation_options(cls, options: Any) -> "OptimizationConfig":
+        """Create OptimizationConfig from SimulationOptions (main GUI config).
+
+        Parameters
+        ----------
+        options : SimulationOptions
+            Main GUI simulation options
+
+        Returns
+        -------
+        OptimizationConfig
+            Optimization config with defaults from main GUI
+        """
+        # Extract particle parameters from rider_params
+        rider = options.rider_params
+        core = options.core_params
+
+        # Calculate timestep from options if available
+        # The main GUI stores time_step in core_params
+        timestep = core.get("time_step", 3e-7)
+
+        return cls(
+            simulation_type=options.simulation_type,
+            wall_z=core.get("wall_z", 100.0),
+            steps=options.steps,
+            timestep=timestep,
+            seed=options.seed,
+            m_particle=rider.get("m_particle", 0.00054857990907),
+            charge_sign=rider.get("charge_sign", -1.0),
+            pcount=rider.get("pcount", 1),
+            stripped_ions=rider.get("stripped_ions", 1.0),
+            transv_mom=rider.get("transv_mom", 1.2e-05),
+            transv_dist=rider.get("transv_dist", 2e-06),
+            output_dir=str(options.output_dir.parent / "optimization_results"),
+            # Preserve stability options from main config
+            self_consistency_enabled=options.self_consistency_enabled,
+            self_consistency_tolerance=options.self_consistency_tolerance,
+            self_consistency_max_iterations=options.self_consistency_max_iterations,
+            self_consistency_verbosity=options.self_consistency_verbosity,
+            self_consistency_chrono_interpolate=getattr(
+                options, "self_consistency_chrono_interpolate", False
+            ),
+            self_consistency_chrono_tolerance=getattr(
+                options, "self_consistency_chrono_tolerance", 1e-3
+            ),
+            self_consistency_chrono_high_precision=getattr(
+                options, "self_consistency_chrono_high_precision", False
+            ),
+            self_consistency_chrono_adaptive_tolerance=getattr(
+                options, "self_consistency_chrono_adaptive_tolerance", False
+            ),
+            energy_monitor_enabled=False,  # Removed - integrated into adaptive timestep
+            energy_monitor_threshold=2.0,
+            energy_monitor_check_interval=10,
+            energy_monitor_halt_on_jump=options.energy_monitor_halt_on_jump,
+            energy_monitor_debug=False,
+            adaptive_timestep_enabled=options.adaptive_timestep_enabled,
+            adaptive_timestep_threshold=options.adaptive_timestep_threshold,
+            adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
+            adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
+            adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
+            adaptive_timestep_cooldown_steps=options.adaptive_timestep_cooldown_steps,
+            adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
+            adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
+            adaptive_timestep_debug=options.adaptive_timestep_debug,
+            # Default timeout and skip settings for sweeps
+            per_run_timeout=300.0,
+            skip_failed_runs=True,
+            # Default stability checking for sweeps
+            smoothness_enabled=True,
+            smoothness_reject_on_violation=True,
+            smoothness_max_violations=3,
+        )
+
+
+def calculate_auto_timestep(
+    start_z: float,
+    wall_z: float,
+    distance_past_wall: float,
+    particle_energy_gev: float,
+    particle_mass_amu: float = 0.00054857990907,
+    target_steps: int = 500,
+) -> float:
+    """Calculate appropriate timestep to achieve target number of steps.
+
+    Parameters
+    ----------
+    start_z : float
+        Starting z position (mm)
+    wall_z : float
+        Wall z position (mm)
+    distance_past_wall : float
+        Additional distance past wall to integrate (mm)
+    particle_energy_gev : float
+        Particle energy (GeV)
+    particle_mass_amu : float
+        Particle rest mass (amu), default is electron mass
+    target_steps : int
+        Target number of integration steps (default: 500)
+
+    Returns
+    -------
+    float
+        Calculated timestep in proper time (ns)
+
+    Notes
+    -----
+    The integrator uses proper time steps h = dτ (in ns).
+    Coordinate time advance is Δt = γ·h. Distance per step is Δx = β·c·Δt = β·c·γ·h.
+    We solve for h given the desired number of steps and total distance.
+    """
+    # Calculate total distance to travel
+    total_distance = abs(wall_z - start_z) + distance_past_wall
+
+    # Calculate particle velocity (beta) and gamma
+    # E = gamma * m * c^2, where m*c^2 in MeV
+    # 1 amu = 931.494 MeV/c^2 (standard conversion factor)
+    AMU_TO_MEV = 931.494
+    rest_energy_mev = particle_mass_amu * AMU_TO_MEV
+    gamma = (particle_energy_gev * 1e3) / rest_energy_mev
+    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
+
+    # We want: total_distance = target_steps * distance_per_step
+    # distance_per_step = beta * gamma * C_MMNS * timestep (proper time h)
+    # So: timestep = total_distance / (target_steps * beta * gamma * C_MMNS)
+    timestep = total_distance / (target_steps * beta * gamma * C_MMNS)
+
+    return timestep
+
+
+def calculate_auto_steps(
+    start_z: float,
+    wall_z: float,
+    distance_past_wall: float,
+    timestep: float,
+    particle_energy_gev: float,
+    particle_mass_amu: float = 0.00054857990907,
+) -> int:
+    """Calculate number of integration steps automatically.
+
+    Parameters
+    ----------
+    start_z : float
+        Starting z position (mm)
+    wall_z : float
+        Wall z position (mm)
+    distance_past_wall : float
+        Additional distance past wall to integrate (mm)
+    timestep : float
+        Integration timestep in proper time (ns)
+    particle_energy_gev : float
+        Particle energy (GeV)
+    particle_mass_amu : float
+        Particle rest mass (amu), default is electron mass
+
+    Returns
+    -------
+    int
+        Number of integration steps needed
+
+    Notes
+    -----
+    The integrator uses proper time steps h (in ns), but coordinate
+    time advance is Δt = γ·h. Distance per step is β·c·Δt = β·c·γ·h.
+    For ultra-relativistic particles (β ≈ 1), this becomes c·γ·h.
+    """
+    # Calculate total distance to travel
+    total_distance = abs(wall_z - start_z) + distance_past_wall
+
+    # Calculate particle velocity (beta) and gamma
+    # E = gamma * m * c^2, where m*c^2 in MeV
+    # 1 amu = 931.494 MeV/c^2 (standard conversion factor)
+    AMU_TO_MEV = 931.494
+    rest_energy_mev = particle_mass_amu * AMU_TO_MEV
+    gamma = (particle_energy_gev * 1e3) / rest_energy_mev
+    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
+
+    # Distance traveled per step = beta * c * coordinate_time_step
+    # coordinate_time_step = gamma * timestep (proper time dilation)
+    # distance_per_step = beta * c * gamma * h
+    # For ultra-relativistic: β ≈ 1, so distance ≈ c * gamma * h
+    distance_per_step = beta * gamma * C_MMNS * timestep
+
+    # Calculate steps needed (add 10% margin for safety)
+    steps = int(np.ceil(total_distance / distance_per_step * 1.1))
+
+    # Ensure minimum reasonable value (absolute floor of 20)
+    min_steps = 20
+    return max(steps, min_steps)
+
+
+def calculate_steps_from_duration(
+    total_duration_ns: float,
+    particle_energy_gev: float,
+    particle_mass_amu: float = 0.00054857990907,
+) -> tuple[int, float]:
+    """Calculate timestep and number of steps from total duration.
+
+    Auto-calculates timestep (h) given a desired total duration and step count.
+    Enforces a minimum of 5% of requested steps (absolute floor of 20).
+
+    Parameters
+    ----------
+    total_duration_ns : float
+        Desired total duration in proper time (ns)
+    particle_energy_gev : float
+        Particle energy (GeV)
+    particle_mass_amu : float
+        Particle rest mass (amu), default is electron mass
+
+    Returns
+    -------
+    tuple[int, float]
+        (number_of_steps, timestep_in_ns) where steps >= max(20, requested_steps * 0.05)
+
+    Notes
+    -----
+    Uses proper time formulation: h = dτ = dt/γ
+    Total proper time = N_steps × h
+    """
+    # For duration mode, we don't have a target step count to base the minimum on,
+    # so use an absolute minimum of 20 steps
+    min_steps = 20
+
+    # Calculate timestep from duration and minimum steps
+    timestep = total_duration_ns / min_steps
+
+    return min_steps, timestep
+
+
+class OptimizationPlugin(ttk.Frame):
     """Optimization plugin for LW Integrator GUI."""
 
     import time
@@ -103,6 +600,1629 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
         self._cleanup_orphaned_temp_dirs()
 
         self._build_ui()
+
+    def _build_ui(self):
+        """Build the user interface."""
+        # Main container with scrollbar
+        self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux(event):
+            if event.num == 4:
+                self.canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.canvas.yview_scroll(1, "units")
+
+        def _bind_to_mousewheel(event):
+            # Bind mousewheel for Windows/Mac
+            self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            # Bind mousewheel for Linux
+            self.canvas.bind_all("<Button-4>", _on_mousewheel_linux)
+            self.canvas.bind_all("<Button-5>", _on_mousewheel_linux)
+
+        def _unbind_from_mousewheel(event):
+            self.canvas.unbind_all("<MouseWheel>")
+            self.canvas.unbind_all("<Button-4>")
+            self.canvas.unbind_all("<Button-5>")
+
+        # Bind/unbind on enter/leave
+        self.canvas.bind("<Enter>", _bind_to_mousewheel)
+        self.canvas.bind("<Leave>", _unbind_from_mousewheel)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Build sections
+        self._build_simulation_section()
+        self._build_mode_section()
+        self._build_parameter_section()
+        self._build_objective_section()
+        self._build_optimization_section()
+        self._build_control_section()
+        self._build_results_output_section()
+        self._build_progress_section()
+
+        # Initialize mode visibility
+        self._update_mode_visibility()
+
+    def _add_tooltip(self, widget, text):
+        """Add a tooltip to a widget.
+
+        Args:
+            widget: The tkinter widget to add tooltip to
+            text: The tooltip text to display
+        """
+        ToolTip(widget, text)
+
+    def _build_simulation_section(self):
+        """Build simulation type selection section."""
+        frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Simulation Type", padding=10
+        )
+        frame.pack(fill="x", padx=10, pady=5)
+
+        self.sim_type_var = tk.StringVar(value="CONDUCTING_WALL")
+        types = [
+            ("Conducting Wall", "CONDUCTING_WALL"),
+            ("Switching Wall", "SWITCHING_WALL"),
+            ("Bunch to Bunch", "BUNCH_TO_BUNCH"),
+        ]
+
+        for i, (label, value) in enumerate(types):
+            rb = ttk.Radiobutton(
+                frame,
+                text=label,
+                variable=self.sim_type_var,
+                value=value,
+                command=self._on_sim_type_changed,
+            )
+            rb.grid(row=0, column=i, padx=5, sticky="w")
+
+        # Store reference for updating visibility
+        self.sim_type_frame = frame
+
+    def _build_mode_section(self):
+        """Build mode selection section (blind sweep vs optimization)."""
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Run Mode", padding=10)
+        frame.pack(fill="x", padx=10, pady=5)
+        self.mode_section_frame = frame
+
+        # Mode selection
+        self.mode_var = tk.StringVar(value="blind_sweep")
+
+        mode_frame = ttk.Frame(frame)
+        mode_frame.pack(fill="x", pady=5)
+
+        ttk.Radiobutton(
+            mode_frame,
+            text="Blind Sweep (Grid Search)",
+            variable=self.mode_var,
+            value="blind_sweep",
+            command=self._update_mode_visibility,
+        ).grid(row=0, column=0, padx=5, sticky="w")
+
+        ttk.Radiobutton(
+            mode_frame,
+            text="Optimization",
+            variable=self.mode_var,
+            value="optimization",
+            command=self._update_mode_visibility,
+        ).grid(row=0, column=1, padx=5, sticky="w")
+
+        # Help text
+        help_frame = ttk.Frame(frame)
+        help_frame.pack(fill="x", pady=(5, 0))
+
+        self.mode_help_label = ttk.Label(
+            help_frame,
+            text="Blind Sweep: Exhaustively evaluate all parameter combinations (good for exploring full space).\n"
+            "Optimization: Use algorithms to find optimal parameters (faster, finds best configurations).",
+            foreground="gray40",
+            font=("TkDefaultFont", 8),
+            wraplength=600,
+        )
+        self.mode_help_label.pack(anchor="w")
+
+    def _build_parameter_section(self):
+        """Build parameter range specification section."""
+        frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Parameter Ranges", padding=10
+        )
+        frame.pack(fill="x", padx=10, pady=5)
+        self.parameter_frame = frame
+
+        # Add explanatory help text
+        help_frame = ttk.Frame(frame)
+        help_frame.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        help_text = (
+            "Coordinate system: Particles start at z-coordinate and travel toward the conducting wall.\n"
+            "Example: Particle at z=0 travels to wall at z=2200 mm (distance = 2200 mm).\n"
+            "Transverse offset: Fraction of aperture radius (0.0 = on-axis, 1.0 = at aperture edge)."
+        )
+        help_label = ttk.Label(
+            help_frame, text=help_text, foreground="gray40", font=("TkDefaultFont", 8)
+        )
+        help_label.pack(anchor="w")
+
+        # Aperture range
+        ttk.Label(frame, text="Aperture Radius:").grid(
+            row=1, column=0, sticky="w", pady=2
+        )
+        aperture_frame = ttk.Frame(frame)
+        aperture_frame.grid(row=1, column=1, columnspan=3, sticky="ew", pady=2)
+
+        ttk.Label(aperture_frame, text="Min (mm):").pack(side="left", padx=(0, 2))
+        self.aperture_min_var = tk.StringVar(value="1e-5")
+        ttk.Entry(aperture_frame, textvariable=self.aperture_min_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(aperture_frame, text="Max (mm):").pack(side="left", padx=(10, 2))
+        self.aperture_max_var = tk.StringVar(value="1e-3")
+        ttk.Entry(aperture_frame, textvariable=self.aperture_max_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(aperture_frame, text="Points:").pack(side="left", padx=(10, 2))
+        self.aperture_points_var = tk.StringVar(value="10")
+        ttk.Entry(aperture_frame, textvariable=self.aperture_points_var, width=5).pack(
+            side="left", padx=2
+        )
+
+        self.aperture_log_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            aperture_frame, text="Log scale", variable=self.aperture_log_var
+        ).pack(side="left", padx=(10, 0))
+
+        # Energy range
+        ttk.Label(frame, text="Particle Energy:").grid(
+            row=2, column=0, sticky="w", pady=2
+        )
+        energy_frame = ttk.Frame(frame)
+        energy_frame.grid(row=2, column=1, columnspan=3, sticky="ew", pady=2)
+
+        ttk.Label(energy_frame, text="Min (GeV):").pack(side="left", padx=(0, 2))
+        self.energy_min_var = tk.StringVar(value="1.0")
+        ttk.Entry(energy_frame, textvariable=self.energy_min_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(energy_frame, text="Max (GeV):").pack(side="left", padx=(10, 2))
+        self.energy_max_var = tk.StringVar(value="1000.0")
+        ttk.Entry(energy_frame, textvariable=self.energy_max_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(energy_frame, text="Points:").pack(side="left", padx=(10, 2))
+        self.energy_points_var = tk.StringVar(value="10")
+        ttk.Entry(energy_frame, textvariable=self.energy_points_var, width=5).pack(
+            side="left", padx=2
+        )
+
+        self.energy_log_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            energy_frame, text="Log scale", variable=self.energy_log_var
+        ).pack(side="left", padx=(10, 0))
+
+        # Transverse offset fractions
+        ttk.Label(frame, text="Transverse Offset:").grid(
+            row=3, column=0, sticky="w", pady=2
+        )
+        ttk.Label(frame, text="Fractions of aperture (comma-separated):").grid(
+            row=3, column=1, sticky="w", pady=2
+        )
+        self.offset_fractions_var = tk.StringVar(value="0.0")
+        ttk.Entry(frame, textvariable=self.offset_fractions_var, width=30).grid(
+            row=3, column=2, columnspan=2, sticky="ew", pady=2, padx=5
+        )
+
+        # Starting z positions
+        ttk.Label(frame, text="Starting Positions:").grid(
+            row=4, column=0, sticky="w", pady=2
+        )
+        ttk.Label(frame, text="Particle z-coordinate (mm, comma-separated):").grid(
+            row=4, column=1, sticky="w", pady=2
+        )
+        self.start_z_var = tk.StringVar(value="0.0")
+        ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
+            row=4, column=2, columnspan=2, sticky="ew", pady=2, padx=5
+        )
+        # Wall Position (sweepable)
+        ttk.Label(frame, text="Wall Position:").grid(
+            row=5, column=0, sticky="w", pady=2
+        )
+
+        # Fixed value and sweep checkbox on same row
+        wall_z_fixed_frame = ttk.Frame(frame)
+        wall_z_fixed_frame.grid(row=5, column=1, columnspan=3, sticky="w", pady=2)
+
+        self.wall_z_var = tk.StringVar(value="2200.0")
+        self.wall_z_entry = ttk.Entry(
+            wall_z_fixed_frame, textvariable=self.wall_z_var, width=10
+        )
+        self.wall_z_entry.pack(side="left", padx=(0, 10))
+
+        self.wall_z_sweep_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            wall_z_fixed_frame,
+            text="Sweep",
+            variable=self.wall_z_sweep_var,
+            command=self._toggle_wall_z_sweep,
+        ).pack(side="left")
+
+        # Sweep controls on new row for better visibility
+        wall_z_sweep_frame = ttk.Frame(frame)
+        wall_z_sweep_frame.grid(
+            row=6, column=1, columnspan=3, sticky="w", pady=2, padx=(20, 0)
+        )
+
+        ttk.Label(wall_z_sweep_frame, text="Min:").pack(side="left", padx=(0, 2))
+        self.wall_z_min_var = tk.StringVar(value="2000.0")
+        self.wall_z_min_entry = ttk.Entry(
+            wall_z_sweep_frame, textvariable=self.wall_z_min_var, width=8
+        )
+        self.wall_z_min_entry.pack(side="left", padx=2)
+
+        ttk.Label(wall_z_sweep_frame, text="Max:").pack(side="left", padx=(5, 2))
+        self.wall_z_max_var = tk.StringVar(value="2400.0")
+        self.wall_z_max_entry = ttk.Entry(
+            wall_z_sweep_frame, textvariable=self.wall_z_max_var, width=8
+        )
+        self.wall_z_max_entry.pack(side="left", padx=2)
+
+        ttk.Label(wall_z_sweep_frame, text="Pts:").pack(side="left", padx=(5, 2))
+        self.wall_z_points_var = tk.StringVar(value="3")
+        self.wall_z_points_entry = ttk.Entry(
+            wall_z_sweep_frame, textvariable=self.wall_z_points_var, width=4
+        )
+        self.wall_z_points_entry.pack(side="left", padx=2)
+
+        self.wall_z_log_var = tk.BooleanVar(value=False)
+        self.wall_z_log_check = ttk.Checkbutton(
+            wall_z_sweep_frame, text="Log", variable=self.wall_z_log_var
+        )
+        self.wall_z_log_check.pack(side="left", padx=(5, 0))
+
+        # Store references for sweep control
+        self.wall_z_sweep_frame = wall_z_sweep_frame
+        self.wall_z_sweep_widgets = [
+            self.wall_z_min_entry,
+            self.wall_z_max_entry,
+            self.wall_z_points_entry,
+            self.wall_z_log_check,
+        ]
+
+        # Initially disable sweep controls
+        self._toggle_wall_z_sweep()
+
+        # Cavity Spacing (for SWITCHING_WALL)
+        ttk.Label(frame, text="Cavity Spacing:").grid(
+            row=7, column=0, sticky="w", pady=2
+        )
+        ttk.Label(frame, text="SWITCHING_WALL only (mm):").grid(
+            row=7, column=1, sticky="w", pady=2
+        )
+        self.cavity_spacing_var = tk.StringVar(value="1e5")
+        self.cavity_spacing_entry = ttk.Entry(
+            frame, textvariable=self.cavity_spacing_var, width=10
+        )
+        self.cavity_spacing_entry.grid(row=7, column=2, sticky="w", pady=2, padx=5)
+
+        # Timestep Auto-Calculation (always uses auto_distance strategy)
+        timestep_label = ttk.Label(frame, text="Timestep Calculation:")
+        timestep_label.grid(row=8, column=0, sticky="w", pady=2)
+
+        # Add tooltip for explanatory note
+        self._add_tooltip(
+            timestep_label,
+            "All runs travel to wall_z + target distance regardless of energy.\n"
+            "This ensures consistent trajectory length across different energies.",
+        )
+
+        timestep_frame = ttk.Frame(frame)
+        timestep_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=2)
+
+        self.timestep_mode_var = tk.StringVar(value="duration")
+        ttk.Radiobutton(
+            timestep_frame,
+            text="Auto-calc duration, provide count:",
+            variable=self.timestep_mode_var,
+            value="duration",
+            command=self._toggle_timestep_mode,
+        ).pack(side="left", padx=(0, 5))
+
+        self.steps_var = tk.StringVar(value="500")
+        self.steps_entry = ttk.Entry(
+            timestep_frame, textvariable=self.steps_var, width=8
+        )
+        self.steps_entry.pack(side="left", padx=2)
+        ttk.Label(timestep_frame, text="steps").pack(side="left", padx=(2, 15))
+
+        ttk.Radiobutton(
+            timestep_frame,
+            text="Auto-calc count, provide duration:",
+            variable=self.timestep_mode_var,
+            value="count",
+            command=self._toggle_timestep_mode,
+        ).pack(side="left", padx=(0, 5))
+
+        self.duration_var = tk.StringVar(value="1e-3")
+        self.duration_entry = ttk.Entry(
+            timestep_frame, textvariable=self.duration_var, width=10
+        )
+        self.duration_entry.pack(side="left", padx=2)
+        ttk.Label(timestep_frame, text="ns (proper time)").pack(side="left", padx=2)
+
+        # Distance target
+        ttk.Label(frame, text="Distance Target:").grid(
+            row=9, column=0, sticky="w", pady=2
+        )
+        distance_frame = ttk.Frame(frame)
+        distance_frame.grid(row=9, column=1, columnspan=3, sticky="ew", pady=2)
+        ttk.Label(distance_frame, text="Target: wall +").pack(side="left", padx=(0, 2))
+        self.auto_steps_distance_var = tk.StringVar(value="10.0")
+        ttk.Entry(
+            distance_frame, textvariable=self.auto_steps_distance_var, width=6
+        ).pack(side="left", padx=2)
+        ttk.Label(distance_frame, text="mm (min 5% of steps enforced)").pack(
+            side="left", padx=2
+        )
+
+        # Note about trajectory and output configuration
+        config_note = ttk.Label(
+            frame,
+            text="ℹ For trajectory saving and output options, see the 'Results & Output Configuration' section below",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="blue",
+            justify="left",
+        )
+        config_note.grid(row=10, column=0, columnspan=4, sticky="w", pady=(10, 10))
+
+        frame.columnconfigure(2, weight=1)
+
+        # Initialize timestep mode state
+        self._toggle_timestep_mode()
+
+    def _build_particle_section(self):
+        """Build rider and driver particle parameters sections with optional sweeping."""
+        # Store sweep control variables (shared by rider and driver)
+        self.sweep_params = {}
+
+        # Rider particle parameters
+        self._build_rider_particle_section()
+
+        # Driver particle parameters (shown/hidden based on simulation type)
+        self._build_driver_particle_section()
+
+    def _build_rider_particle_section(self):
+        """Build rider particle parameters section with optional sweeping."""
+        frame = ttk.LabelFrame(
+            self.scrollable_frame,
+            text="Rider Particle Parameters (optionally sweepable)",
+            padding=10,
+        )
+        frame.pack(fill="x", padx=10, pady=5)
+
+        row = 0
+
+        # Particle Mass
+        self._add_sweepable_param(
+            frame,
+            row,
+            "rider_m_particle",
+            "Particle Mass (amu):",
+            "0.00054857990907",
+            width=15,
+        )
+        row += 1
+
+        # Charge Sign
+        self._add_sweepable_param(
+            frame, row, "rider_charge_sign", "Charge Sign:", "-1.0", width=10
+        )
+        row += 1
+
+        # Particle Count
+        self._add_sweepable_param(
+            frame, row, "rider_pcount", "Particle Count:", "1", width=10
+        )
+        row += 1
+
+        # Transverse Momentum (spread, uniform ±)
+        self._add_sweepable_param(
+            frame,
+            row,
+            "rider_transv_mom",
+            "Transverse Momentum (amu·mm/ns, spread ±):",
+            "1.2e-05",
+            width=15,
+        )
+        row += 1
+
+        # Transverse Spread (bunch radius / half-width)
+        self._add_sweepable_param(
+            frame,
+            row,
+            "rider_transv_dist",
+            "Transverse Spread (mm, half-width):",
+            "2e-06",
+            width=15,
+        )
+        row += 1
+
+        # Stripped Ions (not sweepable, always fixed)
+        ttk.Label(frame, text="Stripped Ions:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        self.rider_stripped_ions_var = tk.StringVar(value="1.0")
+        ttk.Entry(frame, textvariable=self.rider_stripped_ions_var, width=10).grid(
+            row=row, column=1, sticky="w", pady=2, padx=5
+        )
+        row += 1
+
+        # Timestep from main config (display only)
+        ttk.Label(frame, text="Timestep from main config (ns):").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        self.main_timestep_display_var = tk.StringVar(value="3e-7")
+        ttk.Label(frame, textvariable=self.main_timestep_display_var).grid(
+            row=row, column=1, sticky="w", pady=2, padx=5
+        )
+        row += 1
+
+        # Info label
+        info_label = ttk.Label(
+            frame,
+            text="Check 'Sweep' to enable range controls. Energy and position are swept by default.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        )
+        info_label.grid(row=row, column=0, columnspan=6, sticky="w", pady=(5, 0))
+
+        # Macroparticle simulation section
+        row += 1
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=6, sticky="ew", pady=(10, 10)
+        )
+        row += 1
+
+        ttk.Label(
+            frame,
+            text="Macroparticle Simulation (Conducting Wall only):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=row, column=0, columnspan=6, sticky="w", pady=(0, 5))
+        row += 1
+
+        self.macroparticle_enabled_var = tk.BooleanVar(value=False)
+        self.macroparticle_enable_check = ttk.Checkbutton(
+            frame,
+            text="Enable macroparticle simulation (bunch spread inherited from above)",
+            variable=self.macroparticle_enabled_var,
+            command=self._toggle_macroparticle_controls,
+        )
+        self.macroparticle_enable_check.grid(
+            row=row, column=0, columnspan=6, sticky="w", pady=2
+        )
+        row += 1
+
+        # Charge multiplier (sweepable)
+        # Add with indented label text
+        ttk.Label(frame, text="    Charge multiplier:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        charge_var = tk.StringVar(value="1.0")
+        charge_entry = ttk.Entry(frame, textvariable=charge_var, width=15)
+        charge_entry.grid(row=row, column=1, sticky="w", pady=2, padx=5)
+
+        charge_sweep_var = tk.BooleanVar(value=False)
+        charge_sweep_cb = ttk.Checkbutton(
+            frame,
+            text="Sweep:",
+            variable=charge_sweep_var,
+            command=lambda: self._toggle_sweep_controls(
+                "macroparticle_charge_multiplier"
+            ),
+        )
+        charge_sweep_cb.grid(row=row, column=2, sticky="w", pady=2, padx=(10, 2))
+
+        charge_range_frame = ttk.Frame(frame)
+        charge_range_frame.grid(row=row, column=3, columnspan=3, sticky="w", pady=2)
+        charge_range_frame.grid_remove()
+
+        ttk.Label(charge_range_frame, text="Min:").pack(side="left", padx=(0, 2))
+        charge_min_var = tk.StringVar(value="1.0")
+        ttk.Entry(charge_range_frame, textvariable=charge_min_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(charge_range_frame, text="Max:").pack(side="left", padx=(5, 2))
+        charge_max_var = tk.StringVar(value="1.0")
+        ttk.Entry(charge_range_frame, textvariable=charge_max_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(charge_range_frame, text="Pts:").pack(side="left", padx=(5, 2))
+        charge_points_var = tk.StringVar(value="3")
+        ttk.Entry(charge_range_frame, textvariable=charge_points_var, width=4).pack(
+            side="left", padx=2
+        )
+
+        charge_log_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(charge_range_frame, text="Log", variable=charge_log_var).pack(
+            side="left", padx=(5, 0)
+        )
+
+        self.sweep_params["macroparticle_charge_multiplier"] = {
+            "fixed_var": charge_var,
+            "fixed_entry": charge_entry,
+            "sweep_var": charge_sweep_var,
+            "range_frame": charge_range_frame,
+            "min_var": charge_min_var,
+            "max_var": charge_max_var,
+            "points_var": charge_points_var,
+            "log_var": charge_log_var,
+        }
+        row += 1
+
+        # Sigma multiplier for image charge errors (sweepable)
+        # Add with indented label text
+        ttk.Label(frame, text="    Image error sigma multiplier:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        sigma_var = tk.StringVar(value="1.0")
+        sigma_entry = ttk.Entry(frame, textvariable=sigma_var, width=15)
+        sigma_entry.grid(row=row, column=1, sticky="w", pady=2, padx=5)
+
+        sigma_sweep_var = tk.BooleanVar(value=False)
+        sigma_sweep_cb = ttk.Checkbutton(
+            frame,
+            text="Sweep:",
+            variable=sigma_sweep_var,
+            command=lambda: self._toggle_sweep_controls(
+                "macroparticle_sigma_multiplier"
+            ),
+        )
+        sigma_sweep_cb.grid(row=row, column=2, sticky="w", pady=2, padx=(10, 2))
+
+        sigma_range_frame = ttk.Frame(frame)
+        sigma_range_frame.grid(row=row, column=3, columnspan=3, sticky="w", pady=2)
+        sigma_range_frame.grid_remove()
+
+        ttk.Label(sigma_range_frame, text="Min:").pack(side="left", padx=(0, 2))
+        sigma_min_var = tk.StringVar(value="1.0")
+        ttk.Entry(sigma_range_frame, textvariable=sigma_min_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(sigma_range_frame, text="Max:").pack(side="left", padx=(5, 2))
+        sigma_max_var = tk.StringVar(value="1.0")
+        ttk.Entry(sigma_range_frame, textvariable=sigma_max_var, width=10).pack(
+            side="left", padx=2
+        )
+
+        ttk.Label(sigma_range_frame, text="Pts:").pack(side="left", padx=(5, 2))
+        sigma_points_var = tk.StringVar(value="3")
+        ttk.Entry(sigma_range_frame, textvariable=sigma_points_var, width=4).pack(
+            side="left", padx=2
+        )
+
+        sigma_log_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sigma_range_frame, text="Log", variable=sigma_log_var).pack(
+            side="left", padx=(5, 0)
+        )
+
+        self.sweep_params["macroparticle_sigma_multiplier"] = {
+            "fixed_var": sigma_var,
+            "fixed_entry": sigma_entry,
+            "sweep_var": sigma_sweep_var,
+            "range_frame": sigma_range_frame,
+            "min_var": sigma_min_var,
+            "max_var": sigma_max_var,
+            "points_var": sigma_points_var,
+            "log_var": sigma_log_var,
+        }
+        row += 1
+
+        # Include momentum errors checkbox
+        self.macroparticle_momentum_errors_var = tk.BooleanVar(value=True)
+        self.macroparticle_momentum_errors_check = ttk.Checkbutton(
+            frame,
+            text="Include momentum errors (cumulative)",
+            variable=self.macroparticle_momentum_errors_var,
+        )
+        self.macroparticle_momentum_errors_check.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        row += 1
+
+        # Help text
+        help_label = ttk.Label(
+            frame,
+            text=(
+                "Macroparticle mode scales test particle charge and adds Gaussian errors to image subcharges.\n"
+                "Image errors derived from bunch spread (transv_dist, transv_mom) × sigma multiplier.\n"
+                "Position errors: constant σ from transv_dist. Momentum errors: cumulative from transv_mom.\n"
+                "Uncheck 'Include momentum errors' to apply only constant position errors (no cumulative growth).\n"
+                "Only for CONDUCTING_WALL."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_label.grid(
+            row=row, column=0, columnspan=6, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        # Store macroparticle widgets for enable/disable
+        self._macroparticle_widgets = [
+            self.macroparticle_momentum_errors_check,
+            self.sweep_params["macroparticle_charge_multiplier"]["fixed_entry"],
+            self.sweep_params["macroparticle_sigma_multiplier"]["fixed_entry"],
+        ]
+        # Store sweep control references separately for conditional disabling
+        self._macroparticle_sweep_controls = [
+            self.sweep_params["macroparticle_charge_multiplier"],
+            self.sweep_params["macroparticle_sigma_multiplier"],
+        ]
+
+    def _build_driver_particle_section(self):
+        """Build driver particle parameters section with optional sweeping."""
+        self.driver_frame = ttk.LabelFrame(
+            self.scrollable_frame,
+            text="Driver Particle Parameters (optionally sweepable)",
+            padding=10,
+        )
+        self.driver_frame.pack(fill="x", padx=10, pady=5)
+
+        row = 0
+
+        # Particle Mass
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_m_particle",
+            "Particle Mass (amu):",
+            "207.2",
+            width=15,
+        )
+        row += 1
+
+        # Charge Sign
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_charge_sign",
+            "Charge Sign:",
+            "1.0",
+            width=10,
+        )
+        row += 1
+
+        # Particle Count
+        self._add_sweepable_param(
+            self.driver_frame, row, "driver_pcount", "Particle Count:", "5", width=10
+        )
+        row += 1
+
+        # Transverse Momentum
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_transv_mom",
+            "Transverse Momentum (amu·mm/ns):",
+            "0.0",
+            width=15,
+        )
+        row += 1
+
+        # Transverse Distance
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_transv_dist",
+            "Transverse Distance (mm):",
+            "-0.07998",
+            width=15,
+        )
+        row += 1
+
+        # Starting Distance (driver-specific)
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_starting_distance",
+            "Starting Distance (mm):",
+            "1000.0",
+            width=15,
+        )
+        row += 1
+
+        # Starting Pz (driver-specific)
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_starting_Pz",
+            "Starting Pz (amu·mm/ns):",
+            "-4925.0",
+            width=15,
+        )
+        row += 1
+
+        # Stripped Ions (not sweepable, always fixed)
+        ttk.Label(self.driver_frame, text="Stripped Ions:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        self.driver_stripped_ions_var = tk.StringVar(value="54.0")
+        ttk.Entry(
+            self.driver_frame, textvariable=self.driver_stripped_ions_var, width=10
+        ).grid(row=row, column=1, sticky="w", pady=2, padx=5)
+        row += 1
+
+        # Info label
+        info_label = ttk.Label(
+            self.driver_frame,
+            text="Driver parameters only used for BUNCH_TO_BUNCH simulations.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        )
+        info_label.grid(row=row, column=0, columnspan=6, sticky="w", pady=(5, 0))
+
+        # Hide driver section initially (shown for BUNCH_TO_BUNCH type)
+        self._update_driver_visibility()
+
+    def _add_sweepable_param(
+        self, parent, row, param_name, label, default_value, width=15
+    ):
+        """Add a parameter row with optional sweep controls."""
+        # Label
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
+
+        # Fixed value entry
+        var = tk.StringVar(value=default_value)
+        entry = ttk.Entry(parent, textvariable=var, width=width)
+        entry.grid(row=row, column=1, sticky="w", pady=2, padx=5)
+
+        # Sweep checkbox
+        sweep_var = tk.BooleanVar(value=False)
+        sweep_cb = ttk.Checkbutton(
+            parent,
+            text="Sweep:",
+            variable=sweep_var,
+            command=lambda: self._toggle_sweep_controls(param_name),
+        )
+        sweep_cb.grid(row=row, column=2, sticky="w", pady=2, padx=(10, 2))
+
+        # Range controls (initially hidden)
+        range_frame = ttk.Frame(parent)
+        range_frame.grid(row=row, column=3, columnspan=3, sticky="w", pady=2)
+        range_frame.grid_remove()  # Hide initially
+
+        ttk.Label(range_frame, text="Min:").pack(side="left", padx=(0, 2))
+        min_var = tk.StringVar(value=default_value)
+        ttk.Entry(range_frame, textvariable=min_var, width=10).pack(side="left", padx=2)
+
+        ttk.Label(range_frame, text="Max:").pack(side="left", padx=(5, 2))
+        max_var = tk.StringVar(value=default_value)
+        ttk.Entry(range_frame, textvariable=max_var, width=10).pack(side="left", padx=2)
+
+        ttk.Label(range_frame, text="Pts:").pack(side="left", padx=(5, 2))
+        points_var = tk.StringVar(value="3")
+        ttk.Entry(range_frame, textvariable=points_var, width=4).pack(
+            side="left", padx=2
+        )
+
+        log_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(range_frame, text="Log", variable=log_var).pack(
+            side="left", padx=(5, 0)
+        )
+
+        # Store all controls
+        self.sweep_params[param_name] = {
+            "fixed_var": var,
+            "fixed_entry": entry,
+            "sweep_var": sweep_var,
+            "range_frame": range_frame,
+            "min_var": min_var,
+            "max_var": max_var,
+            "points_var": points_var,
+            "log_var": log_var,
+        }
+
+    def _toggle_sweep_controls(self, param_name):
+        """Show/hide sweep range controls based on checkbox state."""
+        controls = self.sweep_params[param_name]
+        if controls["sweep_var"].get():
+            controls["range_frame"].grid()
+            controls["fixed_entry"].config(state="disabled")
+        else:
+            controls["range_frame"].grid_remove()
+            controls["fixed_entry"].config(state="normal")
+
+    def _toggle_wall_z_sweep(self):
+        """Toggle wall_z sweep controls."""
+        if self.wall_z_sweep_var.get():
+            # Enable sweep controls, disable fixed value
+            self.wall_z_entry.config(state="disabled")
+            for widget in self.wall_z_sweep_widgets:
+                widget.config(state="normal")
+        else:
+            # Disable sweep controls, enable fixed value
+            self.wall_z_entry.config(state="normal")
+            for widget in self.wall_z_sweep_widgets:
+                widget.config(state="disabled")
+
+    def _toggle_timestep_mode(self):
+        """Toggle between duration/count auto-calculation modes."""
+        mode = self.timestep_mode_var.get()
+        if mode == "duration":
+            # User provides count, we calculate duration
+            self.steps_entry.config(state="normal")
+            self.duration_entry.config(state="disabled")
+        else:  # mode == "count"
+            # User provides duration, we calculate count (min 200)
+            self.steps_entry.config(state="disabled")
+            self.duration_entry.config(state="normal")
+
+    def _update_driver_visibility(self):
+        """Show/hide driver section based on simulation type."""
+        if not hasattr(self, "driver_frame"):
+            return
+
+        sim_type = self.sim_type_var.get()
+        if sim_type == "BUNCH_TO_BUNCH":
+            self.driver_frame.pack(
+                fill="x",
+                padx=10,
+                pady=5,
+                after=self.driver_frame.master.winfo_children()[2],
+            )
+        else:
+            self.driver_frame.pack_forget()
+
+    def _on_sim_type_changed(self):
+        """Handle simulation type change."""
+        self._update_driver_visibility()
+        self._update_macroparticle_state()
+
+    def _toggle_macroparticle_controls(self):
+        """Enable/disable macroparticle controls based on checkbox state."""
+        if not hasattr(self, "_macroparticle_widgets"):
+            return
+
+        enabled = self.macroparticle_enabled_var.get()
+        state = "normal" if enabled else "disabled"
+
+        for widget in self._macroparticle_widgets:
+            if isinstance(widget, ttk.Entry):
+                widget.configure(state=state)
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(state=state)
+            elif isinstance(widget, ttk.Label):
+                fg_color = "black" if enabled else "gray"
+                widget.configure(foreground=fg_color)
+
+        # Also handle sweep controls (checkboxes and range frames)
+        if hasattr(self, "_macroparticle_sweep_controls"):
+            for controls in self._macroparticle_sweep_controls:
+                # Disable sweep checkbox
+                if "sweep_var" in controls:
+                    # Get the checkbox widget by finding it in the parent
+                    # We need to find it from the stored frame
+                    pass  # The checkboxes are not directly stored, skip for now
+                # Disable/hide range frame if not sweeping
+                if "range_frame" in controls and not controls["sweep_var"].get():
+                    # Range frames are already hidden when not sweeping
+                    pass
+
+    def _update_macroparticle_state(self):
+        """Enable/disable macroparticle controls based on simulation type."""
+        if not hasattr(self, "macroparticle_enable_check"):
+            return
+
+        # Macroparticle simulation only available for CONDUCTING_WALL
+        is_conducting_wall = self.sim_type_var.get() == "CONDUCTING_WALL"
+
+        # Disable the entire macroparticle section if not conducting wall
+        check_state = "normal" if is_conducting_wall else "disabled"
+        self.macroparticle_enable_check.configure(state=check_state)
+
+        # If not conducting wall, force it disabled and grey out all controls
+        if not is_conducting_wall:
+            self.macroparticle_enabled_var.set(False)
+            widget_state = "disabled"
+            label_color = "gray"
+        else:
+            # If conducting wall, respect the enabled checkbox state
+            enabled = self.macroparticle_enabled_var.get()
+            widget_state = "normal" if enabled else "disabled"
+            label_color = "black" if enabled else "gray"
+
+        if hasattr(self, "_macroparticle_widgets"):
+            for widget in self._macroparticle_widgets:
+                if isinstance(widget, ttk.Entry):
+                    widget.configure(state=widget_state)
+                elif isinstance(widget, ttk.Checkbutton):
+                    widget.configure(state=widget_state)
+                elif isinstance(widget, ttk.Label):
+                    widget.configure(foreground=label_color)
+
+        # Also disable/enable macroparticle sweep parameter controls
+        if hasattr(self, "_macroparticle_sweep_controls"):
+            for controls in self._macroparticle_sweep_controls:
+                # Entry widgets in the controls are already in _macroparticle_widgets
+                # Just handle the range frame entries
+                if "range_frame" in controls:
+                    for child in controls["range_frame"].winfo_children():
+                        if isinstance(child, ttk.Entry):
+                            child.configure(state=widget_state)
+        self._update_parameter_visibility()
+
+    def _update_parameter_visibility(self):
+        """Update parameter field states based on simulation type."""
+        if not hasattr(self, "cavity_spacing_entry"):
+            return
+
+        sim_type = self.sim_type_var.get()
+
+        # Grey out cavity_spacing unless SWITCHING_WALL mode
+        if sim_type == "SWITCHING_WALL":
+            self.cavity_spacing_entry.config(state="normal")
+        else:
+            self.cavity_spacing_entry.config(state="disabled")
+
+    def _build_objective_section(self):
+        """Build optimization objective selection section."""
+        # First build particle section
+        self._build_particle_section()
+
+        frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Optimization Objective", padding=10
+        )
+        frame.pack(fill="x", padx=10, pady=5)
+
+        self.objective_var = tk.StringVar(value="max_energy_gain")
+        objectives = [
+            ("Maximize Energy Gain (GeV)", "max_energy_gain"),
+            ("Maximize Energy Gain (%)", "max_percent_energy_gain"),
+            ("Maximize Energy Efficiency", "max_energy_efficiency"),
+            ("Minimize Transverse Deflection", "min_transverse_deflection"),
+        ]
+
+        for i, (label, value) in enumerate(objectives):
+            rb = ttk.Radiobutton(
+                frame, text=label, variable=self.objective_var, value=value
+            )
+            rb.grid(row=i, column=0, sticky="w", pady=2)
+
+    def _build_optimization_section(self):
+        """Build optimization method selection section."""
+        self.optimization_frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Optimization Settings", padding=10
+        )
+        self.optimization_frame.pack(fill="x", padx=10, pady=5)
+
+        # Method selection
+        ttk.Label(self.optimization_frame, text="Optimization Method:").grid(
+            row=0, column=0, sticky="w", pady=2
+        )
+
+        self.optimization_method_var = tk.StringVar(value="genetic_algorithm")
+        method_combo = ttk.Combobox(
+            self.optimization_frame,
+            textvariable=self.optimization_method_var,
+            values=[
+                "genetic_algorithm",
+                "differential_evolution",
+                "nelder_mead",
+                "multi_start",
+                "adaptive_grid",
+            ],
+            state="readonly",
+            width=25,
+        )
+        method_combo.grid(
+            row=0, column=1, columnspan=2, sticky="ew", pady=2, padx=(5, 0)
+        )
+        method_combo.bind("<<ComboboxSelected>>", self._update_optimization_controls)
+
+        # Method descriptions
+        method_descriptions = {
+            "genetic_algorithm": "Evolutionary approach with selection, crossover, and mutation (robust, parallelizable)",
+            "differential_evolution": "Global optimizer using vector differences (robust for rugged landscapes)",
+            "nelder_mead": "Local simplex method (fast convergence, may find local optima)",
+            "multi_start": "Multiple random starting points with local optimization (finds global optima)",
+            "adaptive_grid": "Coarse-to-fine grid refinement (systematic, interpretable)",
+        }
+
+        self.method_desc_label = ttk.Label(
+            self.optimization_frame,
+            text=method_descriptions["genetic_algorithm"],
+            foreground="gray40",
+            font=("TkDefaultFont", 8),
+            wraplength=500,
+        )
+        self.method_desc_label.grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(0, 10)
+        )
+
+        # Common parameters
+        params_frame = ttk.Frame(self.optimization_frame)
+        params_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=5)
+
+        # Max iterations / generations
+        ttk.Label(params_frame, text="Max Iterations/Generations:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_maxiter_var = tk.StringVar(value="50")
+        ttk.Entry(
+            params_frame, textvariable=self.optimization_maxiter_var, width=10
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        # Population size (for GA and DE)
+        ttk.Label(params_frame, text="Population Size:").grid(
+            row=0, column=2, sticky="w", pady=2, padx=(15, 5)
+        )
+        self.optimization_popsize_var = tk.StringVar(value="20")
+        self.popsize_entry = ttk.Entry(
+            params_frame, textvariable=self.optimization_popsize_var, width=10
+        )
+        self.popsize_entry.grid(row=0, column=3, sticky="w", pady=2)
+
+        # GA-specific parameters
+        self.ga_frame = ttk.LabelFrame(
+            self.optimization_frame, text="Genetic Algorithm Parameters", padding=5
+        )
+        self.ga_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=5)
+
+        ga_params_frame = ttk.Frame(self.ga_frame)
+        ga_params_frame.pack(fill="x")
+
+        ttk.Label(ga_params_frame, text="Mutation Rate:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_mutation_var = tk.StringVar(value="0.1")
+        ttk.Entry(
+            ga_params_frame, textvariable=self.optimization_mutation_var, width=8
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(ga_params_frame, text="Crossover Rate:").grid(
+            row=0, column=2, sticky="w", pady=2, padx=(15, 5)
+        )
+        self.optimization_crossover_var = tk.StringVar(value="0.7")
+        ttk.Entry(
+            ga_params_frame, textvariable=self.optimization_crossover_var, width=8
+        ).grid(row=0, column=3, sticky="w", pady=2)
+
+        # Multi-start parameter
+        self.multistart_frame = ttk.Frame(self.optimization_frame)
+        self.multistart_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=5)
+
+        ttk.Label(self.multistart_frame, text="Number of Random Starts:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_nstarts_var = tk.StringVar(value="5")
+        ttk.Entry(
+            self.multistart_frame, textvariable=self.optimization_nstarts_var, width=10
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        # Output settings
+        output_frame = ttk.LabelFrame(
+            self.optimization_frame, text="Output Options", padding=5
+        )
+        output_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Label(output_frame, text="Save top N trajectories:").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_save_top_n_var = tk.StringVar(value="3")
+        self.optimization_save_top_n_entry = ttk.Entry(
+            output_frame, textvariable=self.optimization_save_top_n_var, width=8
+        )
+        self.optimization_save_top_n_entry.grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(
+            output_frame,
+            text="(Re-runs top N parameter sets to generate trajectories)",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        # Convergence settings
+        convergence_frame = ttk.LabelFrame(
+            self.optimization_frame, text="Convergence Settings", padding=5
+        )
+        convergence_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Label(convergence_frame, text="Tolerance (rel):").grid(
+            row=0, column=0, sticky="w", pady=2, padx=(0, 5)
+        )
+        self.optimization_convergence_tol_var = tk.StringVar(value="1e-6")
+        ttk.Entry(
+            convergence_frame,
+            textvariable=self.optimization_convergence_tol_var,
+            width=10,
+        ).grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(convergence_frame, text="Patience (generations):").grid(
+            row=0, column=2, sticky="w", pady=2, padx=(15, 5)
+        )
+        self.optimization_convergence_patience_var = tk.StringVar(value="10")
+        ttk.Entry(
+            convergence_frame,
+            textvariable=self.optimization_convergence_patience_var,
+            width=8,
+        ).grid(row=0, column=3, sticky="w", pady=2)
+
+        ttk.Label(
+            convergence_frame,
+            text="Early stopping: stops if fitness doesn't improve by tolerance over patience generations",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray40",
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(2, 0))
+
+        # Initialize visibility
+        self._update_optimization_controls()
+
+    def _update_mode_visibility(self):
+        """Update visibility of sections based on selected mode."""
+        mode = self.mode_var.get()
+
+        if mode == "blind_sweep":
+            # Hide optimization settings
+            self.optimization_frame.pack_forget()
+            # Grey out Top N controls (only relevant for optimization)
+            self._set_top_n_controls_state("disabled")
+        else:  # optimization
+            # Show optimization settings
+            self.optimization_frame.pack(fill="x", padx=10, pady=5)
+            # Enable Top N controls
+            self._set_top_n_controls_state("normal")
+
+        # Update parameter visibility based on simulation type
+        self._update_parameter_visibility()
+
+    def _set_top_n_controls_state(self, state):
+        """Enable or disable Top N related controls.
+
+        Parameters
+        ----------
+        state : str
+            "normal" or "disabled"
+        """
+        if not hasattr(self, "save_top_n_traj_var"):
+            return  # Widgets not created yet
+        if not hasattr(self, "results_output_frame"):
+            return  # Results output frame not created yet
+
+        # Optimization section: "Save top N trajectories" entry
+        if hasattr(self, "optimization_save_top_n_entry"):
+            self.optimization_save_top_n_entry.configure(state=state)
+
+        # Top N trajectory checkbox
+        for widget in self.results_output_frame.winfo_children():
+            if isinstance(widget, ttk.LabelFrame):
+                for child in widget.winfo_children():
+                    if isinstance(child, ttk.Checkbutton):
+                        # Find the "Top N trajectories" checkbox
+                        if "top_n_traj_var" in str(child.cget("variable")):
+                            child.configure(state=state)
+
+        # Metrics scope "Top N only" radio button
+        if hasattr(self, "metrics_scope_var"):
+            for widget in self.results_output_frame.winfo_children():
+                if isinstance(widget, ttk.LabelFrame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, ttk.Frame):
+                            for radio in child.winfo_children():
+                                if isinstance(radio, ttk.Radiobutton):
+                                    if radio.cget("value") == "top_n":
+                                        radio.configure(state=state)
+
+        # Log verbosity "Top N only" radio button
+        if hasattr(self, "log_verbosity_var"):
+            for widget in self.results_output_frame.winfo_children():
+                if isinstance(widget, ttk.LabelFrame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, ttk.Radiobutton):
+                            if child.cget("value") == "top_n_only":
+                                child.configure(state=state)
+
+        # If disabling and Top N is selected, switch to default
+        if state == "disabled":
+            if hasattr(self, "save_top_n_traj_var") and self.save_top_n_traj_var.get():
+                self.save_top_n_traj_var.set(False)
+            if (
+                hasattr(self, "metrics_scope_var")
+                and self.metrics_scope_var.get() == "top_n"
+            ):
+                self.metrics_scope_var.set("all")
+            if (
+                hasattr(self, "log_verbosity_var")
+                and self.log_verbosity_var.get() == "top_n_only"
+            ):
+                self.log_verbosity_var.set("truncated")
+
+    def _update_optimization_controls(self, event=None):
+        """Update visibility of optimization controls based on selected method."""
+        method = self.optimization_method_var.get()
+
+        # Update description
+        method_descriptions = {
+            "genetic_algorithm": "Evolutionary approach with selection, crossover, and mutation (robust, parallelizable)",
+            "differential_evolution": "Global optimizer using vector differences (robust for rugged landscapes)",
+            "nelder_mead": "Local simplex method (fast convergence, may find local optima)",
+            "multi_start": "Multiple random starting points with local optimization (finds global optima)",
+            "adaptive_grid": "Coarse-to-fine grid refinement (systematic, interpretable)",
+        }
+        self.method_desc_label.config(text=method_descriptions.get(method, ""))
+
+        # Show/hide method-specific controls
+        if method == "genetic_algorithm":
+            self.ga_frame.grid()
+            self.multistart_frame.grid_forget()
+            self.popsize_entry.config(state="normal")
+        elif method == "differential_evolution":
+            self.ga_frame.grid_forget()
+            self.multistart_frame.grid_forget()
+            self.popsize_entry.config(state="normal")
+        elif method == "multi_start":
+            self.ga_frame.grid_forget()
+            self.multistart_frame.grid()
+            self.popsize_entry.config(state="disabled")
+        else:  # nelder_mead, adaptive_grid
+            self.ga_frame.grid_forget()
+            self.multistart_frame.grid_forget()
+            self.popsize_entry.config(state="disabled")
+
+    def _build_control_section(self):
+        """Build control buttons section."""
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Tools", padding=10)
+        frame.pack(fill="x", padx=10, pady=5)
+
+        # Info label
+        info_label = ttk.Label(
+            frame,
+            text="Use 'Run Mode' selector in right panel to choose Single Run or Parameter Sweep, then click Run button.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray40",
+        )
+        info_label.pack(anchor="w", pady=(0, 10))
+
+        # Row 1: Load from main config helper
+        helper_frame = ttk.Frame(frame)
+        helper_frame.pack(fill="x", pady=2)
+
+        ttk.Button(
+            helper_frame,
+            text="Load from Main GUI Config",
+            command=self._on_load_from_main_config,
+        ).pack(side="left", padx=5)
+
+        ttk.Label(
+            helper_frame,
+            text="← Copy current single-run config to sweep parameters",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).pack(side="left", padx=5)
+
+        # Robustness options
+        robustness_frame = ttk.Frame(frame)
+        robustness_frame.pack(fill="x", pady=(10, 2))
+
+        ttk.Label(robustness_frame, text="Robustness:").pack(side="left", padx=(5, 10))
+
+        ttk.Label(robustness_frame, text="Per-run timeout (s, 0=unlimited):").pack(
+            side="left", padx=(0, 5)
+        )
+        self.per_run_timeout_var = tk.StringVar(value="300.0")
+        ttk.Entry(
+            robustness_frame, textvariable=self.per_run_timeout_var, width=8
+        ).pack(side="left", padx=(0, 15))
+
+        self.skip_failed_runs_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            robustness_frame,
+            text="Skip failed runs and continue sweep",
+            variable=self.skip_failed_runs_var,
+        ).pack(side="left", padx=5)
+
+        # Row 4: Trajectory stability checking (multi-step analysis)
+        smoothness_frame = ttk.LabelFrame(
+            frame, text="Trajectory Stability Analysis", padding=8
+        )
+        smoothness_frame.pack(fill="x", pady=(5, 0))
+
+        self.smoothness_enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            smoothness_frame,
+            text="Enable multi-step stability analysis (detects numerical instabilities)",
+            variable=self.smoothness_enabled_var,
+            command=self._toggle_smoothness_controls,
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(smoothness_frame, text="Window size (steps):").grid(
+            row=1, column=0, sticky="w", padx=(20, 5), pady=2
+        )
+        self.smoothness_window_var = tk.StringVar(value="20")
+        window_entry = ttk.Entry(
+            smoothness_frame, textvariable=self.smoothness_window_var, width=8
+        )
+        window_entry.grid(row=1, column=1, sticky="w", pady=2)
+        self._add_tooltip(window_entry, "Moving window size for trend analysis")
+
+        ttk.Label(smoothness_frame, text="Oscillation threshold:").grid(
+            row=2, column=0, sticky="w", padx=(20, 5), pady=2
+        )
+        self.smoothness_oscillation_var = tk.StringVar(value="0.5")
+        oscillation_entry = ttk.Entry(
+            smoothness_frame, textvariable=self.smoothness_oscillation_var, width=8
+        )
+        oscillation_entry.grid(row=2, column=1, sticky="w", pady=2)
+        self._add_tooltip(
+            oscillation_entry, "Sign-change rate threshold (lower = stricter)"
+        )
+
+        self.smoothness_reject_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            smoothness_frame,
+            text="Reject runs with numerical instabilities",
+            variable=self.smoothness_reject_var,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=(20, 0), pady=2)
+
+        # Store widgets for enable/disable toggle
+        self.smoothness_widgets = [
+            smoothness_frame.grid_slaves(row=1, column=0)[0],  # Window size label
+            smoothness_frame.grid_slaves(row=1, column=1)[0],  # Window size entry
+            smoothness_frame.grid_slaves(row=2, column=0)[0],  # Oscillation label
+            smoothness_frame.grid_slaves(row=2, column=1)[0],  # Oscillation entry
+            smoothness_frame.grid_slaves(row=3, column=0)[0],  # Reject checkbox
+        ]
+
+    def _build_results_output_section(self):
+        """Build results viewing and output configuration section."""
+        frame = ttk.LabelFrame(
+            self.scrollable_frame, text="Results & Output Configuration", padding=10
+        )
+        frame.pack(fill="x", padx=10, pady=5)
+        frame.columnconfigure(1, weight=1)
+
+        # Results viewing buttons
+        results_frame = ttk.Frame(frame)
+        results_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 15))
+
+        ttk.Label(results_frame, text="View Results:").pack(side="left", padx=(0, 10))
+
+        ttk.Button(
+            results_frame, text="View Results", command=self._on_view_results
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            results_frame,
+            text="Plot Trajectories",
+            command=self._on_plot_trajectories,
+        ).pack(side="left", padx=5)
+
+        # Trajectory saving options
+        ttk.Label(frame, text="Trajectory Data:").grid(
+            row=1, column=0, sticky="nw", pady=(5, 2)
+        )
+
+        traj_frame = ttk.Frame(frame)
+        traj_frame.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(5, 2))
+
+        self.save_top_n_traj_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            traj_frame,
+            text="Top N trajectories (full detail)",
+            variable=self.save_top_n_traj_var,
+            command=self._on_top_n_traj_changed,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        self.save_all_traj_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            traj_frame,
+            text="All trajectories (with stride)",
+            variable=self.save_all_traj_var,
+            command=self._on_all_traj_changed,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 10))
+
+        self.save_failed_traj_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            traj_frame,
+            text="Failed only (full detail)",
+            variable=self.save_failed_traj_var,
+            command=self._on_failed_traj_changed,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 10))
+
+        self.trajectory_stride_label = ttk.Label(traj_frame, text="Stride:")
+        self.trajectory_stride_label.grid(row=0, column=3, sticky="w", padx=(10, 2))
+        self.trajectory_stride_var = tk.StringVar(value="1")
+        self.trajectory_stride_entry = ttk.Entry(
+            traj_frame, textvariable=self.trajectory_stride_var, width=6
+        )
+        self.trajectory_stride_entry.grid(row=0, column=4, sticky="w", padx=2)
+
+        # Initialize trajectory stride state
+        self._update_stride_state()
+
+        # Metrics export options
+        ttk.Label(frame, text="Metrics Export:").grid(
+            row=2, column=0, sticky="nw", pady=(10, 2)
+        )
+
+        metrics_frame = ttk.Frame(frame)
+        metrics_frame.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(10, 2))
+
+        # Format selection
+        format_frame = ttk.Frame(metrics_frame)
+        format_frame.grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Label(format_frame, text="Format:").pack(side="left", padx=(0, 5))
+
+        self.metrics_format_var = tk.StringVar(value="both")
+        format_options = [
+            ("JSON + CSV", "both"),
+            ("JSON only", "json"),
+            ("CSV only", "csv"),
+            ("None", "none"),
+        ]
+        for text, value in format_options:
+            ttk.Radiobutton(
+                format_frame,
+                text=text,
+                variable=self.metrics_format_var,
+                value=value,
+            ).pack(side="left", padx=5)
+
+        # Scope selection
+        scope_frame = ttk.Frame(metrics_frame)
+        scope_frame.grid(row=1, column=0, sticky="w", pady=2)
+
+        ttk.Label(scope_frame, text="Scope:").pack(side="left", padx=(0, 5))
+
+        self.metrics_scope_var = tk.StringVar(value="all")
+        ttk.Radiobutton(
+            scope_frame,
+            text="All evaluations",
+            variable=self.metrics_scope_var,
+            value="all",
+        ).pack(side="left", padx=5)
+        ttk.Radiobutton(
+            scope_frame,
+            text="Top N only",
+            variable=self.metrics_scope_var,
+            value="top_n",
+        ).pack(side="left", padx=5)
+
+        ttk.Label(
+            frame,
+            text="ℹ JSON contains metadata & structure; CSV is tabular with all parameters & metrics",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+        ).grid(row=3, column=1, columnspan=2, sticky="w", pady=(0, 10))
+
+        # Log saving options
+        ttk.Label(frame, text="Debug Logs:").grid(
+            row=4, column=0, sticky="nw", pady=(5, 2)
+        )
+
+        log_frame = ttk.Frame(frame)
+        log_frame.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(5, 2))
+
+        self.log_verbosity_var = tk.StringVar(value="truncated")
+
+        ttk.Radiobutton(
+            log_frame,
+            text="None (no debug logs saved)",
+            variable=self.log_verbosity_var,
+            value="none",
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            log_frame,
+            text="Truncated (1-2 lines/run: parameters + metrics + errors only) — DEFAULT",
+            variable=self.log_verbosity_var,
+            value="truncated",
+        ).grid(row=1, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            log_frame,
+            text="Full debug (inherits SC verbosity & adaptive timestep debug from Stability tab)",
+            variable=self.log_verbosity_var,
+            value="full",
+        ).grid(row=2, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            log_frame,
+            text="Top N only (logs only for best N trajectories)",
+            variable=self.log_verbosity_var,
+            value="top_n_only",
+        ).grid(row=3, column=0, sticky="w", pady=2)
+
+        ttk.Label(
+            frame,
+            text="ℹ 'Truncated' is recommended for large sweeps.\n'Full debug' inherits verbosity settings from Stability tab and generates large log files.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="blue",
+            justify="left",
+        ).grid(row=5, column=1, columnspan=2, sticky="w", pady=(0, 5))
+
+    def _on_top_n_traj_changed(self):
+        """Handle Top N trajectory checkbox change."""
+        # Top N can be combined with All or Failed, no exclusivity needed
+        self._update_stride_state()
+
+    def _on_all_traj_changed(self):
+        """Handle All trajectories checkbox change."""
+        if self.save_all_traj_var.get():
+            # "All" was just checked - uncheck "Failed only"
+            self.save_failed_traj_var.set(False)
+        self._update_stride_state()
+
+    def _on_failed_traj_changed(self):
+        """Handle Failed only checkbox change."""
+        if self.save_failed_traj_var.get():
+            # "Failed only" was just checked - uncheck "All"
+            self.save_all_traj_var.set(False)
+        self._update_stride_state()
+
+    def _update_stride_state(self):
+        """Update stride field enabled/disabled state."""
+        if not hasattr(self, "trajectory_stride_entry"):
+            return  # Widgets not created yet
+
+        # Stride is ONLY enabled when "All trajectories" is selected
+        # (Top N and Failed only always save full detail with stride=1)
+        stride_enabled = self.save_all_traj_var.get()
+
+        widget_state = "normal" if stride_enabled else "disabled"
+        label_color = "black" if stride_enabled else "gray"
+
+        self.trajectory_stride_entry.configure(state=widget_state)
+        self.trajectory_stride_label.configure(foreground=label_color)
+
+    def _build_progress_section(self):
+        """Build progress monitoring section."""
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Sweep Progress", padding=10)
+        frame.pack(fill="x", padx=10, pady=5)
+
+        # Progress bar
+        self.progress_bar = ttk.Progressbar(
+            frame, mode="determinate", maximum=100, length=400
+        )
+        self.progress_bar.pack(fill="x", pady=5)
+
+        # Progress label
+        self.progress_label = ttk.Label(frame, text="Ready")
+        self.progress_label.pack(anchor="w", pady=2)
+
+        # Info label directing users to main GUI logs
+        log_info = ttk.Label(
+            frame,
+            text="📋 Sweep progress and results are logged to the main GUI's LOGS window",
+            font=("TkDefaultFont", 9),
+            foreground="blue",
+        )
+        log_info.pack(anchor="w", pady=(10, 2))
+
+    def _toggle_smoothness_controls(self):
+        """Enable/disable smoothness controls based on checkbox."""
+        state = "normal" if self.smoothness_enabled_var.get() else "disabled"
+        for widget in self.smoothness_widgets:
+            widget.configure(state=state)
 
     def _log_truncated_run(
         self, run_num: int, params: dict, metrics: dict = None, error: str = None
@@ -480,25 +2600,33 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
             starting_z_positions=self._parse_list_field(self.start_z_var.get()),
             wall_z=float(self.wall_z_var.get()),
             wall_z_range=(
-                float(self.wall_z_min_var.get()),
-                float(self.wall_z_max_var.get()),
-            )
-            if self.wall_z_sweep_var.get()
-            else None,
-            wall_z_points=int(self.wall_z_points_var.get())
-            if self.wall_z_sweep_var.get()
-            else 1,
+                (
+                    float(self.wall_z_min_var.get()),
+                    float(self.wall_z_max_var.get()),
+                )
+                if self.wall_z_sweep_var.get()
+                else None
+            ),
+            wall_z_points=(
+                int(self.wall_z_points_var.get()) if self.wall_z_sweep_var.get() else 1
+            ),
             cavity_spacing=float(self.cavity_spacing_var.get()),
-            timestep=float(self.duration_var.get())
-            if self.timestep_mode_var.get() == "count"
-            else 3e-7,
-            steps=int(self.steps_var.get())
-            if self.timestep_mode_var.get() == "duration"
-            else 200,
+            timestep=(
+                float(self.duration_var.get())
+                if self.timestep_mode_var.get() == "count"
+                else 3e-7
+            ),
+            steps=(
+                int(self.steps_var.get())
+                if self.timestep_mode_var.get() == "duration"
+                else 200
+            ),
             auto_steps=True,  # Always use auto-calculation
-            auto_steps_target=int(self.steps_var.get())
-            if self.timestep_mode_var.get() == "duration"
-            else 200,
+            auto_steps_target=(
+                int(self.steps_var.get())
+                if self.timestep_mode_var.get() == "duration"
+                else 200
+            ),
             auto_steps_distance_past_wall=float(self.auto_steps_distance_var.get()),
             objective=self.objective_var.get(),
             transv_mom=float(self.sweep_params["rider_transv_mom"]["fixed_var"].get()),
@@ -552,9 +2680,11 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
             ),
             self_consistency_max_iterations=self._get_gui_stability_setting(
                 "self_consistency_max_iterations_var",
-                existing_config.self_consistency_max_iterations
-                if existing_config
-                else 5,
+                (
+                    existing_config.self_consistency_max_iterations
+                    if existing_config
+                    else 5
+                ),
             ),
             self_consistency_verbosity=self._get_gui_stability_setting(
                 "self_consistency_verbosity_var",
@@ -562,33 +2692,43 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
             ),
             self_consistency_chrono_interpolate=self._get_gui_stability_setting(
                 "self_consistency_chrono_interpolate_var",
-                existing_config.self_consistency_chrono_interpolate
-                if existing_config
-                else False,
+                (
+                    existing_config.self_consistency_chrono_interpolate
+                    if existing_config
+                    else False
+                ),
             ),
             self_consistency_chrono_tolerance=self._get_gui_stability_setting(
                 "self_consistency_chrono_tolerance_var",
-                existing_config.self_consistency_chrono_tolerance
-                if existing_config
-                else 1e-3,
+                (
+                    existing_config.self_consistency_chrono_tolerance
+                    if existing_config
+                    else 1e-3
+                ),
             ),
             self_consistency_chrono_high_precision=self._get_gui_stability_setting(
                 "self_consistency_chrono_high_precision_var",
-                existing_config.self_consistency_chrono_high_precision
-                if existing_config
-                else False,
+                (
+                    existing_config.self_consistency_chrono_high_precision
+                    if existing_config
+                    else False
+                ),
             ),
             self_consistency_chrono_adaptive_tolerance=self._get_gui_stability_setting(
                 "self_consistency_chrono_adaptive_tolerance_var",
-                existing_config.self_consistency_chrono_adaptive_tolerance
-                if existing_config
-                else False,
+                (
+                    existing_config.self_consistency_chrono_adaptive_tolerance
+                    if existing_config
+                    else False
+                ),
             ),
             energy_monitor_halt_on_jump=self._get_gui_stability_setting(
                 "adaptive_timestep_halt_on_jump_var",
-                existing_config.energy_monitor_halt_on_jump
-                if existing_config
-                else False,
+                (
+                    existing_config.energy_monitor_halt_on_jump
+                    if existing_config
+                    else False
+                ),
             ),
             adaptive_timestep_enabled=self._get_gui_stability_setting(
                 "adaptive_timestep_enabled_var",
@@ -596,65 +2736,79 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
             ),
             adaptive_timestep_threshold=self._get_gui_stability_setting(
                 "adaptive_timestep_threshold_var",
-                existing_config.adaptive_timestep_threshold
-                if existing_config
-                else 0.10,
+                (
+                    existing_config.adaptive_timestep_threshold
+                    if existing_config
+                    else 0.10
+                ),
             ),
             adaptive_timestep_reduction_factor=self._get_gui_stability_setting(
                 "adaptive_timestep_reduction_factor_var",
-                existing_config.adaptive_timestep_reduction_factor
-                if existing_config
-                else 10,
+                (
+                    existing_config.adaptive_timestep_reduction_factor
+                    if existing_config
+                    else 10
+                ),
             ),
             adaptive_timestep_max_attempts=self._get_gui_stability_setting(
                 "adaptive_timestep_max_attempts_var",
-                existing_config.adaptive_timestep_max_attempts
-                if existing_config
-                else 5,
+                (
+                    existing_config.adaptive_timestep_max_attempts
+                    if existing_config
+                    else 5
+                ),
             ),
             adaptive_timestep_min_factor=self._get_gui_stability_setting(
                 "adaptive_timestep_min_factor_var",
-                existing_config.adaptive_timestep_min_factor
-                if existing_config
-                else 1e-4,
+                (
+                    existing_config.adaptive_timestep_min_factor
+                    if existing_config
+                    else 1e-4
+                ),
             ),
             adaptive_timestep_cooldown_steps=self._get_gui_stability_setting(
                 "adaptive_timestep_cooldown_steps_var",
-                existing_config.adaptive_timestep_cooldown_steps
-                if existing_config
-                else 10,
+                (
+                    existing_config.adaptive_timestep_cooldown_steps
+                    if existing_config
+                    else 10
+                ),
             ),
             adaptive_timestep_probe_threshold=self._get_gui_stability_setting(
                 "adaptive_timestep_probe_threshold_var",
-                existing_config.adaptive_timestep_probe_threshold
-                if existing_config
-                else 0.01,
+                (
+                    existing_config.adaptive_timestep_probe_threshold
+                    if existing_config
+                    else 0.01
+                ),
             ),
             adaptive_timestep_max_probe_steps=self._get_gui_stability_setting(
                 "adaptive_timestep_max_probe_steps_var",
-                existing_config.adaptive_timestep_max_probe_steps
-                if existing_config
-                else 3,
+                (
+                    existing_config.adaptive_timestep_max_probe_steps
+                    if existing_config
+                    else 3
+                ),
             ),
             adaptive_timestep_debug=self._get_gui_stability_setting(
                 "adaptive_timestep_debug_var",
                 existing_config.adaptive_timestep_debug if existing_config else False,
             ),
-            smoothness_trend_threshold=existing_config.smoothness_trend_threshold
-            if existing_config
-            else 0.30,
-            smoothness_max_violations=existing_config.smoothness_max_violations
-            if existing_config
-            else 3,
+            smoothness_trend_threshold=(
+                existing_config.smoothness_trend_threshold if existing_config else 0.30
+            ),
+            smoothness_max_violations=(
+                existing_config.smoothness_max_violations if existing_config else 3
+            ),
             # Timestep strategy - use auto_distance for sweeps/optimizations
             # This ensures all runs travel to wall_z + target_distance regardless of energy
             timestep_strategy="auto_distance",
-            target_distance_mm=existing_config.target_distance_mm
-            if existing_config
-            else 100.0,
-            energy_scale_exponent=existing_config.energy_scale_exponent
-            if existing_config
-            else 1.0,
+            target_distance_mm=(
+                existing_config.target_distance_mm if existing_config else 100.0
+            ),
+            energy_scale_exponent=(
+                existing_config.energy_scale_exponent if existing_config else 1.0
+            ),
         )
 
         # Dynamically add sweepable parameter ranges after config creation
@@ -1999,7 +4153,1251 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
             )
             self.gui_controller._refresh_sweep_config_list(selected=config_name)
 
-    # Result viewing/plotting methods are provided by OptimizationPluginResultsMixin
+    def _on_view_results(self):
+        """Display pre-generated summary plots from the latest sweep/optimization run."""
+        import glob
+        import os
+        from pathlib import Path
+
+        # Use sweep output directory from GUI preferences
+        default_results_dir = self.sweep_output_dir
+
+        # Find all timestamped result directories
+        if os.path.exists(default_results_dir):
+            result_dirs = [
+                d
+                for d in glob.glob(os.path.join(default_results_dir, "*"))
+                if os.path.isdir(d)
+            ]
+        else:
+            result_dirs = []
+
+        # Also check legacy location
+        legacy_dir = "optimization_results"
+        if os.path.exists(legacy_dir):
+            result_dirs.extend(
+                [
+                    d
+                    for d in glob.glob(os.path.join(legacy_dir, "*"))
+                    if os.path.isdir(d)
+                ]
+            )
+
+        if result_dirs:
+            # Sort by modification time, most recent first
+            result_dirs.sort(key=os.path.getmtime, reverse=True)
+            latest_dir = result_dirs[0]
+
+            # Find PNG plots in the directory
+            png_files = sorted(glob.glob(os.path.join(latest_dir, "*.png")))
+
+            if png_files:
+                self._display_summary_plots(latest_dir, png_files)
+            else:
+                # No plots found, offer to browse
+                response = messagebox.askyesno(
+                    "No Plots Found",
+                    f"No summary plots found in:\n{os.path.basename(latest_dir)}\n\n"
+                    "Would you like to browse for a different results directory?",
+                    parent=self,
+                )
+                if response:
+                    dir_path = filedialog.askdirectory(
+                        title="Select Results Directory",
+                        initialdir=default_results_dir,
+                    )
+                    if dir_path:
+                        png_files = sorted(glob.glob(os.path.join(dir_path, "*.png")))
+                        if png_files:
+                            self._display_summary_plots(dir_path, png_files)
+                        else:
+                            _show_info_dialog(
+                                self,
+                                "No Plots Found",
+                                f"No PNG plot files found in:\n{dir_path}",
+                            )
+        else:
+            # No result directories found, offer to browse
+            response = messagebox.askyesno(
+                "No Results Found",
+                "No result directories found in the default location.\n\n"
+                f"Default location: {default_results_dir}\n\n"
+                "Would you like to browse for a results directory?",
+                parent=self,
+            )
+            if response:
+                dir_path = filedialog.askdirectory(
+                    title="Select Results Directory",
+                    initialdir=(
+                        default_results_dir
+                        if os.path.exists(default_results_dir)
+                        else "."
+                    ),
+                )
+                if dir_path:
+                    png_files = sorted(glob.glob(os.path.join(dir_path, "*.png")))
+                    if png_files:
+                        self._display_summary_plots(dir_path, png_files)
+                    else:
+                        _show_info_dialog(
+                            self,
+                            "No Plots Found",
+                            f"No PNG plot files found in:\n{dir_path}",
+                        )
+
+    def _display_summary_plots(self, results_dir, png_files):
+        """Display summary plots in a scrollable window.
+
+        Parameters
+        ----------
+        results_dir : str
+            Path to results directory
+        png_files : list
+            List of PNG file paths
+        """
+        from pathlib import Path
+
+        try:
+            from PIL import Image, ImageTk
+        except ImportError as e:
+            _show_error_dialog(
+                self,
+                "PIL/Pillow Not Installed",
+                f"Cannot display images: PIL/Pillow is not installed.\n\n{e}\n\n"
+                "Install with: pip install Pillow",
+            )
+            return
+
+        dir_name = os.path.basename(results_dir)
+
+        # Debug: Log what we're trying to load
+        self._log_result(f"[INFO] Loading summary plots from: {results_dir}")
+        self._log_result(f"[INFO] Found {len(png_files)} PNG files")
+
+        # Create window
+        plot_window = tk.Toplevel(self)
+        plot_window.title(f"Summary Plots: {dir_name}")
+        plot_window.geometry("1000x800")
+
+        # Main frame
+        main_frame = ttk.Frame(plot_window)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Title
+        ttk.Label(
+            main_frame,
+            text=f"Summary Plots: {dir_name}",
+            font=("TkDefaultFont", 12, "bold"),
+        ).pack(pady=(0, 10))
+
+        # Create canvas with scrollbar for plots
+        canvas = tk.Canvas(main_frame, bg="white")
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Load and display each PNG
+        # Store as window attribute to prevent garbage collection
+        plot_window.photo_images = []
+
+        for png_file in png_files:
+            try:
+                # Debug: Log each file
+                self._log_result(f"[INFO] Loading: {Path(png_file).name}")
+
+                # Load image
+                img = Image.open(png_file)
+
+                # Debug: Log image info
+                self._log_result(
+                    f"[INFO] Image size: {img.width}x{img.height}, mode: {img.mode}"
+                )
+
+                # Resize if too large (maintain aspect ratio)
+                max_width = 950
+                if img.width > max_width:
+                    ratio = max_width / img.width
+                    new_height = int(img.height * ratio)
+                    img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+                    self._log_result(f"[INFO] Resized to: {img.width}x{img.height}")
+
+                # Convert to PhotoImage
+                photo = ImageTk.PhotoImage(img)
+                plot_window.photo_images.append(photo)
+
+                # Plot name label
+                plot_name = Path(png_file).stem.replace("_", " ").title()
+                ttk.Label(
+                    scrollable_frame,
+                    text=plot_name,
+                    font=("TkDefaultFont", 10, "bold"),
+                ).pack(pady=(10, 5))
+
+                # Image label
+                img_label = tk.Label(scrollable_frame, image=photo, bg="white")
+                img_label.pack(pady=(0, 20))
+
+                self._log_result(
+                    f"[INFO] Successfully displayed: {Path(png_file).name}"
+                )
+
+            except Exception as e:
+                # If image loading fails, show error in both GUI and log
+                import traceback
+
+                error_msg = f"Error loading {Path(png_file).name}: {e}"
+                self._log_result(f"[ERROR] {error_msg}")
+                self._log_result(f"[ERROR] Traceback: {traceback.format_exc()}")
+
+                error_label = ttk.Label(
+                    scrollable_frame,
+                    text=error_msg,
+                    foreground="red",
+                )
+                error_label.pack(pady=5)
+
+        # Debug: Final summary
+        self._log_result(
+            f"[INFO] Finished loading {len(plot_window.photo_images)} images successfully"
+        )
+
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=(10, 0))
+
+        ttk.Button(
+            button_frame,
+            text="Close",
+            command=plot_window.destroy,
+        ).pack()
+
+        # Bind mouse wheel to scroll
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        # Cleanup binding when window closes
+        def on_close():
+            canvas.unbind_all("<MouseWheel>")
+            plot_window.destroy()
+
+        plot_window.protocol("WM_DELETE_WINDOW", on_close)
+
+    def _load_and_plot_results(self, file_path: str):
+        """Load results file and display trajectory viewer with plots."""
+        try:
+            # Only JSON files contain trajectory data
+            # CSV files (all_evaluations.csv) only contain metrics
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            # Try to detect file format
+            results = None
+
+            if "results" in data:
+                # Sweep format: sweep_results.json
+                results = data.get("results", [])
+                if not results:
+                    _show_info_dialog(self, "No Results", "No results found in file.")
+                    return
+
+                # Check if we have trajectory data for plotting
+                results_with_traj = [r for r in results if "trajectory" in r]
+
+                if not results_with_traj:
+                    # Show metrics summary even without trajectories
+                    self._show_results_summary(results, file_path)
+                    return
+
+            elif "all_evaluations" in data or "best_parameters" in data:
+                # Optimization format: optimization_results.json
+                # Check for NPZ trajectory files in the same directory
+                import os
+
+                results_dir = os.path.dirname(file_path)
+                self._view_npz_trajectories(results_dir)
+                return
+
+            elif "core" in data and "rider" in data["core"]:
+                # Legacy format: single trajectory file
+                results_with_traj = [self._convert_legacy_trajectory(data)]
+
+            else:
+                _show_info_dialog(
+                    self,
+                    "Unknown Format",
+                    "Cannot parse this file format.\n\n"
+                    "Expected either:\n"
+                    "- sweep_results.json with 'results' array\n"
+                    "- optimization_results.json with 'all_evaluations'\n"
+                    "- Legacy trajectory file with 'core'/'rider' structure",
+                )
+                return
+
+            # Create trajectory viewer dialog and automatically plot
+            self._show_trajectory_viewer(results_with_traj, file_path, auto_plot=True)
+
+        except Exception as e:
+            import traceback
+
+            _show_error_dialog(
+                self,
+                "Error Loading File",
+                f"Failed to load file:\n{e}\n\n{traceback.format_exc()}",
+            )
+
+    def _on_plot_trajectories(self):
+        """Open trajectory plotting dialog to visualize saved results."""
+        # Default to optimization_results directory
+        import glob
+        import os
+
+        # Use sweep output directory from GUI preferences, then fall back to legacy
+        legacy_results_dir = "optimization_results"
+
+        # Start with base directory
+        if os.path.exists(self.sweep_output_dir) and os.listdir(self.sweep_output_dir):
+            base_dir = self.sweep_output_dir
+        elif os.path.exists(legacy_results_dir):
+            base_dir = legacy_results_dir
+        else:
+            base_dir = self.config.output_dir
+
+        # Find most recent timestamped subdirectory if any exist
+        initial_dir = base_dir
+        if os.path.exists(base_dir):
+            result_dirs = [
+                d for d in glob.glob(os.path.join(base_dir, "*")) if os.path.isdir(d)
+            ]
+            if result_dirs:
+                # Sort by modification time, most recent first
+                result_dirs.sort(key=os.path.getmtime, reverse=True)
+                initial_dir = result_dirs[0]
+
+        # Ask user to select results file or directory
+        # Support JSON files (sweep_results.json or optimization_results.json)
+        # CSV files only contain metrics, not trajectories
+        # Show directory name in title for clarity
+        import os
+
+        dir_name = os.path.basename(initial_dir) if initial_dir else "results"
+        file_path = filedialog.askopenfilename(
+            title=f"Select Results File (JSON) - Starting in: {dir_name}",
+            initialdir=initial_dir,
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+
+        # If no file selected, offer to browse for NPZ directory
+        if not file_path:
+            response = messagebox.askyesno(
+                "Browse for NPZ Trajectories?",
+                "No file selected. Would you like to browse for a directory containing NPZ trajectory files?",
+                parent=self,
+            )
+            if response:
+                dir_path = filedialog.askdirectory(
+                    title="Select Directory with NPZ Trajectory Files",
+                    initialdir=initial_dir,
+                )
+                if dir_path:
+                    self._view_npz_trajectories(dir_path)
+            return
+
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            # Try to detect file format
+            results = None
+
+            if "results" in data:
+                # Sweep format: sweep_results.json with "results" array
+                results = data.get("results", [])
+                if not results:
+                    _show_info_dialog(self, "No Results", "No results found in file.")
+                    return
+
+                # Filter results with trajectories
+                results_with_traj = [r for r in results if "trajectory" in r]
+
+                if not results_with_traj:
+                    _show_info_dialog(
+                        self,
+                        "No Trajectories",
+                        "No trajectory data found in results.\n\n"
+                        "Make sure 'Save trajectories' was enabled during the sweep.\n\n"
+                        "Note: all_evaluations.csv only contains metrics, not trajectories.\n"
+                        "For optimizations, trajectory data is in NPZ files.",
+                    )
+                    return
+
+            elif "all_evaluations" in data or "best_parameters" in data:
+                # Optimization format: optimization_results.json
+                # This file contains metrics only, not trajectories
+                # Load NPZ trajectory files from the same directory
+                import os
+
+                results_dir = os.path.dirname(file_path)
+                self._view_npz_trajectories(results_dir)
+                return
+
+            elif "core" in data and "rider" in data["core"]:
+                # Legacy format: single trajectory file
+                results_with_traj = [self._convert_legacy_trajectory(data)]
+
+            else:
+                _show_info_dialog(
+                    self,
+                    "Unknown Format",
+                    "Cannot parse this file format.\n\n"
+                    "Expected either:\n"
+                    "- sweep_results.json with 'results' array\n"
+                    "- optimization_results.json with 'all_evaluations'\n"
+                    "- Legacy trajectory file with 'core'/'rider' structure\n\n"
+                    "Note: CSV files only contain metrics, not trajectory data.",
+                )
+                return
+
+            # Create trajectory viewer dialog
+            self._show_trajectory_viewer(results_with_traj, file_path)
+
+        except Exception as e:
+            import traceback
+
+            _show_error_dialog(
+                self,
+                "Error Loading File",
+                f"Failed to load file:\n{e}\n\n{traceback.format_exc()}",
+            )
+
+    def _convert_legacy_trajectory(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert legacy trajectory format to sweep results format."""
+        # Extract trajectory data from legacy format
+        rider_data = data.get("core", {}).get("rider", {})
+
+        # Get positions
+        positions = rider_data.get("positions_mm", {})
+        x = positions.get("x", [])
+        y = positions.get("y", [])
+        z_pos = positions.get("z", [])
+
+        # Calculate r from x and y
+        if x and y:
+            r = [np.sqrt(xi**2 + yi**2) for xi, yi in zip(x, y)]
+        else:
+            r = []
+
+        # Get momenta
+        momenta = rider_data.get("conjugate_momenta", {})
+        pz = momenta.get("Pz", [])
+        px = momenta.get("Px", [])
+        py = momenta.get("Py", [])
+
+        # Calculate pr from px and py
+        if px and py:
+            pr = [np.sqrt(pxi**2 + pyi**2) for pxi, pyi in zip(px, py)]
+        else:
+            pr = []
+
+        # Get time
+        t = rider_data.get("time_ns", [])
+
+        # Get gamma history for energy calculation
+        gamma_hist = rider_data.get("gamma_hist", [])
+
+        # Calculate metrics
+        if gamma_hist:
+            gamma_initial = gamma_hist[0] if len(gamma_hist) > 0 else 1.0
+            gamma_final = gamma_hist[-1] if len(gamma_hist) > 0 else 1.0
+            delta_e_mev = (gamma_final - gamma_initial) * 0.511  # For electrons
+        else:
+            gamma_initial = 1.0
+            gamma_final = 1.0
+            delta_e_mev = 0.0
+
+        # Build result in sweep format
+        result = {
+            "run_number": 1,
+            "parameters": {
+                "aperture_radius": data.get("aperture_radius", 0),
+                "particle_energy_gev": (gamma_initial - 1)
+                * 0.511
+                / 1000.0,  # Convert to GeV
+                "start_z": z_pos[0] if z_pos else 0,
+                "wall_z": data.get("wall_z", 0),
+                "simulation_type": data.get("simulation_type", "UNKNOWN"),
+            },
+            "metrics": {
+                "rider_delta_e_mev": delta_e_mev,
+                "rider_gamma_initial": gamma_initial,
+                "rider_gamma_final": gamma_final,
+            },
+            "trajectory": {
+                "z": z_pos,
+                "r": r,
+                "pz": pz,
+                "pr": pr,
+                "t": t,
+            },
+        }
+
+        return result
+
+    def _show_results_summary(self, results, file_path):
+        """Show metrics-first results summary (works without trajectory data).
+
+        Args:
+            results: List of result dictionaries (may or may not have trajectories)
+            file_path: Path to the results file
+        """
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Results Summary - {Path(file_path).name}")
+        dialog.geometry("1100x700")
+        dialog.transient(self)
+
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill="both", expand=True)
+
+        # Title
+        ttk.Label(
+            main_frame,
+            text="Sweep Results Summary",
+            font=("TkDefaultFont", 14, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+
+        # Summary info
+        num_runs = len(results)
+        sweep_info = results[0].get("sweep_info", {}) if results else {}
+        config_name = sweep_info.get("config_name", "Unknown")
+
+        info_frame = ttk.Frame(main_frame)
+        info_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(
+            info_frame,
+            text=f"Configuration: {config_name}  |  Total Runs: {num_runs}",
+            font=("TkDefaultFont", 10),
+        ).pack(anchor="w")
+
+        # Notebook for different views
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill="both", expand=True, pady=(5, 0))
+
+        # Tab 1: Metrics Table
+        metrics_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(metrics_frame, text="Metrics Table")
+
+        # Create scrollable table
+        table_container = ttk.Frame(metrics_frame)
+        table_container.pack(fill="both", expand=True)
+
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(table_container)
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar = ttk.Scrollbar(table_container, orient="horizontal")
+        h_scrollbar.pack(side="bottom", fill="x")
+
+        # Text widget for table (easier than Treeview for variable columns)
+        metrics_text = tk.Text(
+            table_container,
+            wrap="none",
+            font=("Courier", 9),
+            yscrollcommand=v_scrollbar.set,
+            xscrollcommand=h_scrollbar.set,
+        )
+        metrics_text.pack(side="left", fill="both", expand=True)
+        v_scrollbar.config(command=metrics_text.yview)
+        h_scrollbar.config(command=metrics_text.xview)
+
+        # Build table content
+        if results:
+            # Check if we have beam optics data in any result
+            has_beam_optics = any(
+                r.get("metrics", {}).get("rider_emittance_x_mm_mrad") is not None
+                for r in results
+            )
+
+            # Header
+            if has_beam_optics:
+                header = f"{'Run':<5} {'Aperture (mm)':<15} {'Energy (GeV)':<15} {'Start_z (mm)':<15} {'ΔE (MeV)':<12} {'Traveled (mm)':<15} {'γ_initial':<12} {'εx (mm·mrad)':<15} {'εnx (mm·mrad)':<16} {'βx (m)':<12}\n"
+                header += "-" * 157 + "\n"
+            else:
+                header = f"{'Run':<5} {'Aperture (mm)':<15} {'Energy (GeV)':<15} {'Start_z (mm)':<15} {'ΔE (MeV)':<12} {'Traveled (mm)':<15} {'γ_initial':<12}\n"
+                header += "-" * 110 + "\n"
+            metrics_text.insert("end", header)
+
+            # Data rows
+            for r in results:
+                params = r.get("parameters", {})
+                metrics = r.get("metrics", {})
+                dist_info = r.get("_distance_info", {})
+
+                run_num = r.get("run_number", "?")
+                aperture = params.get("aperture_radius", 0)
+                energy = params.get("particle_energy_gev", 0)
+                start_z = params.get("starting_z", 0)
+                delta_e = metrics.get("rider_delta_e_mev", 0)
+
+                # Calculate traveled distance
+                z_start = dist_info.get("z_start", 0)
+                z_end = dist_info.get("z_end", 0)
+                traveled = abs(z_end - z_start)
+
+                # Get gamma from metrics
+                gamma = metrics.get("rider_gamma_initial", 0)
+
+                if has_beam_optics:
+                    # Include beam optics columns
+                    emit_x = metrics.get("rider_emittance_x_mm_mrad", 0)
+                    norm_emit_x = metrics.get("rider_norm_emittance_x_mm_mrad", 0)
+                    beta_x = metrics.get("rider_beta_x_m", 0)
+                    row = f"{run_num:<5} {aperture:<15.3e} {energy:<15.2f} {start_z:<15.1f} {delta_e:<12.3f} {traveled:<15.1f} {gamma:<12.1f} {emit_x:<15.3e} {norm_emit_x:<16.3e} {beta_x:<12.3e}\n"
+                else:
+                    row = f"{run_num:<5} {aperture:<15.3e} {energy:<15.2f} {start_z:<15.1f} {delta_e:<12.3f} {traveled:<15.1f} {gamma:<12.1f}\n"
+                metrics_text.insert("end", row)
+
+        metrics_text.config(state="disabled")
+
+        # Tab 2: Plots (if applicable)
+        plots_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(plots_frame, text="Visualization")
+
+        # Check if we can make plots
+        has_trajectories = any("trajectory" in r for r in results)
+
+        if has_trajectories:
+            ttk.Label(
+                plots_frame,
+                text="Trajectory data available. Click below to view trajectory plots.",
+                font=("TkDefaultFont", 10),
+            ).pack(pady=20)
+
+            ttk.Button(
+                plots_frame,
+                text="Open Trajectory Viewer",
+                command=lambda: self._open_trajectory_viewer_from_summary(
+                    dialog, results, file_path
+                ),
+                style="Accent.TButton",
+            ).pack(pady=10)
+        else:
+            # Try to make parameter sweep plot if we have varied parameters
+            self._create_summary_plots(plots_frame, results)
+
+        # Bottom buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Button(
+            btn_frame,
+            text="Export to CSV",
+            command=lambda: self._export_metrics_csv(results, file_path),
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            btn_frame,
+            text="Close",
+            command=dialog.destroy,
+        ).pack(side="right", padx=5)
+
+    def _create_summary_plots(self, parent_frame, results):
+        """Create parameter sweep visualization plots."""
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            from matplotlib.backends.backend_tkagg import (
+                FigureCanvasTkAgg,
+                NavigationToolbar2Tk,
+            )
+
+            # Extract data
+            apertures = []
+            energies = []
+            delta_es = []
+
+            for r in results:
+                params = r.get("parameters", {})
+                metrics = r.get("metrics", {})
+                apertures.append(params.get("aperture_radius", 0))
+                energies.append(params.get("particle_energy_gev", 0))
+                delta_es.append(metrics.get("rider_delta_e_mev", 0))
+
+            # Create figure
+            fig = plt.figure(figsize=(10, 6))
+
+            # Determine if we have 1D or 2D sweep
+            unique_apertures = len(set(apertures))
+            unique_energies = len(set(energies))
+
+            if unique_apertures > 1 and unique_energies > 1:
+                # 2D sweep - make heatmap
+                ax = fig.add_subplot(111)
+
+                # Reshape data
+                apertures_arr = np.array(apertures)
+                energies_arr = np.array(energies)
+                delta_es_arr = np.array(delta_es)
+
+                # Create grid
+                unique_a = sorted(set(apertures))
+                unique_e = sorted(set(energies))
+                grid = np.zeros((len(unique_e), len(unique_a)))
+
+                for i, r in enumerate(results):
+                    params = r.get("parameters", {})
+                    a_val = params.get("aperture_radius", 0)
+                    e_val = params.get("particle_energy_gev", 0)
+                    de_val = delta_es[i]
+
+                    a_idx = unique_a.index(a_val)
+                    e_idx = unique_e.index(e_val)
+                    grid[e_idx, a_idx] = de_val
+
+                im = ax.imshow(grid, aspect="auto", origin="lower", cmap="RdYlGn_r")
+                ax.set_xticks(range(len(unique_a)))
+                ax.set_xticklabels(
+                    [f"{a:.1e}" for a in unique_a], rotation=45, ha="right"
+                )
+                ax.set_yticks(range(len(unique_e)))
+                ax.set_yticklabels([f"{e:.1f}" for e in unique_e])
+                ax.set_xlabel("Aperture Radius (mm)")
+                ax.set_ylabel("Particle Energy (GeV)")
+                ax.set_title("ΔE Heatmap (MeV)")
+                plt.colorbar(im, ax=ax, label="ΔE (MeV)")
+
+            elif unique_apertures > 1:
+                # Vary aperture, fixed energy
+                ax = fig.add_subplot(111)
+                ax.plot(apertures, delta_es, "o-", markersize=8)
+                ax.set_xlabel("Aperture Radius (mm)")
+                ax.set_ylabel("ΔE (MeV)")
+                ax.set_title(f"Energy Change vs Aperture (E={energies[0]:.1f} GeV)")
+                ax.grid(True, alpha=0.3)
+
+            elif unique_energies > 1:
+                # Vary energy, fixed aperture
+                ax = fig.add_subplot(111)
+                ax.plot(energies, delta_es, "o-", markersize=8)
+                ax.set_xlabel("Particle Energy (GeV)")
+                ax.set_ylabel("ΔE (MeV)")
+                ax.set_title(f"Energy Change vs Energy (a={apertures[0]:.2e} mm)")
+                ax.grid(True, alpha=0.3)
+            else:
+                # Single point
+                ax = fig.add_subplot(111)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "Single-point simulation\nNo parameter sweep to visualize",
+                    ha="center",
+                    va="center",
+                    fontsize=12,
+                )
+                ax.set_xlim(0, 1)
+                ax.set_ylim(0, 1)
+                ax.axis("off")
+
+            fig.tight_layout()
+
+            # Embed in Tkinter
+            canvas = FigureCanvasTkAgg(fig, parent_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+
+            toolbar = NavigationToolbar2Tk(canvas, parent_frame)
+            toolbar.update()
+
+        except Exception as e:
+            ttk.Label(
+                parent_frame,
+                text=f"Could not create plots: {e}",
+                foreground="red",
+            ).pack(pady=20)
+
+    def _export_metrics_csv(self, results, file_path):
+        """Export metrics to CSV file."""
+        import csv
+        from tkinter import filedialog
+
+        # Suggest filename
+        default_name = Path(file_path).stem + "_metrics.csv"
+        output_file = filedialog.asksaveasfilename(
+            title="Export Metrics to CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=default_name,
+            parent=self,
+        )
+
+        if not output_file:
+            return
+
+        try:
+            with open(output_file, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+
+                # Header
+                writer.writerow(
+                    [
+                        "Run",
+                        "Aperture_mm",
+                        "Energy_GeV",
+                        "Start_z_mm",
+                        "Delta_E_MeV",
+                        "Traveled_mm",
+                        "Gamma_initial",
+                        "Gamma_final",
+                        "Emittance_x_mm_mrad",
+                        "Emittance_y_mm_mrad",
+                        "Norm_Emittance_x_mm_mrad",
+                        "Norm_Emittance_y_mm_mrad",
+                        "Beta_x_m",
+                        "Beta_y_m",
+                    ]
+                )
+
+                # Data
+                for r in results:
+                    params = r.get("parameters", {})
+                    metrics = r.get("metrics", {})
+                    dist_info = r.get("_distance_info", {})
+
+                    run_num = r.get("run_number", "")
+                    aperture = params.get("aperture_radius", 0)
+                    energy = params.get("particle_energy_gev", 0)
+                    start_z = params.get("starting_z", 0)
+                    delta_e = metrics.get("rider_delta_e_mev", 0)
+
+                    z_start = dist_info.get("z_start", 0)
+                    z_end = dist_info.get("z_end", 0)
+                    traveled = abs(z_end - z_start)
+
+                    gamma_i = metrics.get("rider_gamma_initial", 0)
+                    gamma_f = metrics.get("rider_gamma_final", 0)
+
+                    # Beam optics metrics
+                    emit_x = metrics.get("rider_emittance_x_mm_mrad", "")
+                    emit_y = metrics.get("rider_emittance_y_mm_mrad", "")
+                    norm_emit_x = metrics.get("rider_norm_emittance_x_mm_mrad", "")
+                    norm_emit_y = metrics.get("rider_norm_emittance_y_mm_mrad", "")
+                    beta_x = metrics.get("rider_beta_x_m", "")
+                    beta_y = metrics.get("rider_beta_y_m", "")
+
+                    writer.writerow(
+                        [
+                            run_num,
+                            aperture,
+                            energy,
+                            start_z,
+                            delta_e,
+                            traveled,
+                            gamma_i,
+                            gamma_f,
+                            emit_x,
+                            emit_y,
+                            norm_emit_x,
+                            norm_emit_y,
+                            beta_x,
+                            beta_y,
+                        ]
+                    )
+
+            _show_info_dialog(
+                self, "Export Successful", f"Metrics exported to:\n{output_file}"
+            )
+
+        except Exception as e:
+            _show_error_dialog(self, "Export Failed", f"Failed to export CSV:\n{e}")
+
+    def _open_trajectory_viewer_from_summary(self, summary_dialog, results, file_path):
+        """Open trajectory viewer from the summary dialog."""
+        results_with_traj = [r for r in results if "trajectory" in r]
+        if results_with_traj:
+            self._show_trajectory_viewer(results_with_traj, file_path, auto_plot=True)
+        else:
+            _show_info_dialog(
+                summary_dialog,
+                "No Trajectories",
+                "No trajectory data found in results.",
+            )
+
+    def _show_trajectory_viewer(self, results, file_path, auto_plot=False):
+        """Show trajectory viewer dialog with run selection and plotting.
+
+        Args:
+            results: List of result dictionaries with trajectories
+            file_path: Path to the results file
+            auto_plot: If True, automatically select and plot results on open
+        """
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Trajectory Viewer - {Path(file_path).name}")
+        dialog.geometry("1000x700")
+        dialog.transient(self)
+
+        # Main container
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill="both", expand=True)
+
+        # Left panel: Run selection
+        left_panel = ttk.Frame(main_frame)
+        left_panel.pack(side="left", fill="both", expand=False, padx=(0, 5))
+
+        ttk.Label(
+            left_panel, text="Select Runs to Plot:", font=("TkDefaultFont", 10, "bold")
+        ).pack(anchor="w", pady=(0, 5))
+
+        # Scrollable listbox for runs
+        list_frame = ttk.Frame(left_panel)
+        list_frame.pack(fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        run_listbox = tk.Listbox(
+            list_frame,
+            selectmode="extended",
+            width=40,
+            height=20,
+            yscrollcommand=scrollbar.set,
+        )
+        run_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=run_listbox.yview)
+
+        # Populate listbox with run summaries
+        for r in results:
+            params = r.get("parameters", {})
+            run_num = r.get("run_number", "?")
+            aperture = params.get("aperture_radius", 0)
+            energy = params.get("particle_energy_gev", 0)
+            delta_e = r.get("metrics", {}).get("rider_delta_e_mev", 0)
+
+            summary = (
+                f"Run #{run_num}: "
+                f"a={aperture:.2e}mm, E={energy:.1f}GeV, "
+                f"ΔE={delta_e:.6f}MeV"
+            )
+            run_listbox.insert("end", summary)
+
+        # Control buttons
+        btn_frame = ttk.Frame(left_panel)
+        btn_frame.pack(fill="x", pady=(10, 0))
+
+        plot_button = ttk.Button(
+            btn_frame,
+            text="Plot Selected",
+            command=lambda: self._plot_selected_trajectories(
+                run_listbox, results, dialog
+            ),
+        )
+        plot_button.pack(fill="x", pady=2)
+
+        select_all_btn = ttk.Button(
+            btn_frame,
+            text="Select All",
+            command=lambda: run_listbox.select_set(0, "end"),
+        )
+        select_all_btn.pack(fill="x", pady=2)
+
+        clear_btn = ttk.Button(
+            btn_frame,
+            text="Clear Selection",
+            command=lambda: run_listbox.selection_clear(0, "end"),
+        )
+        clear_btn.pack(fill="x", pady=2)
+
+        # Right panel: Plot display
+        right_panel = ttk.Frame(main_frame)
+        right_panel.pack(side="right", fill="both", expand=True)
+
+        ttk.Label(
+            right_panel, text="Plot Area", font=("TkDefaultFont", 10, "bold")
+        ).pack(anchor="w", pady=(0, 5))
+
+        # Placeholder for matplotlib canvas
+        plot_info = ttk.Label(
+            right_panel,
+            text="Select runs and click 'Plot Selected' to visualize trajectories.\n\n"
+            "Transverse plots will be shown as scatter plots.",
+            justify="center",
+            foreground="gray",
+        )
+        plot_info.pack(expand=True)
+
+        # Store for later use
+        dialog.plot_area = right_panel
+        dialog.plot_info = plot_info
+
+        # Auto-plot if requested (for View Results button)
+        if auto_plot:
+            # Select all runs (or up to 10 for performance)
+            max_auto_plot = min(10, len(results))
+            for i in range(max_auto_plot):
+                run_listbox.select_set(i)
+
+            # Force widget and window updates
+            run_listbox.update_idletasks()
+            dialog.update()
+
+            # Schedule plotting with enough delay for window to fully initialize
+            # Use a longer delay and check that selection is valid before plotting
+            def safe_auto_plot():
+                if run_listbox.curselection():
+                    self._plot_selected_trajectories(
+                        run_listbox, results, dialog, is_auto_plot=True
+                    )
+                else:
+                    # Fallback: select again and plot
+                    for i in range(max_auto_plot):
+                        run_listbox.select_set(i)
+                    run_listbox.update()
+                    dialog.after(
+                        100,
+                        lambda: self._plot_selected_trajectories(
+                            run_listbox, results, dialog, is_auto_plot=True
+                        ),
+                    )
+
+            dialog.after(200, safe_auto_plot)
+
+    def _plot_selected_trajectories(
+        self, listbox, results, parent_dialog, is_auto_plot=False
+    ):
+        """Plot trajectories for selected runs.
+
+        Args:
+            listbox: The listbox containing run selections
+            results: List of result dictionaries
+            parent_dialog: Parent dialog window
+            is_auto_plot: If True, suppress error dialogs on empty selection
+        """
+        # Force update to ensure selection is current
+        listbox.update_idletasks()
+        selection = listbox.curselection()
+        if not selection:
+            # Only show dialog if this is a user-initiated action (not auto-plot)
+            if not is_auto_plot and listbox.size() > 0:
+                _show_info_dialog(
+                    parent_dialog,
+                    "No Selection",
+                    "Please select at least one run to plot.",
+                )
+            return
+
+        selected_results = [results[i] for i in selection]
+
+        # Clear previous plot
+        for widget in parent_dialog.plot_area.winfo_children():
+            widget.destroy()
+
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_tkagg import (
+                FigureCanvasTkAgg,
+                NavigationToolbar2Tk,
+            )
+
+            # Create figure with 3 subplots as requested
+            fig = plt.figure(figsize=(12, 10))
+            gs = fig.add_gridspec(3, 1, hspace=0.3)
+
+            ax_delta_e = fig.add_subplot(gs[0])
+            ax_transverse = fig.add_subplot(gs[1])
+            ax_heatmap = fig.add_subplot(gs[2])
+
+            fig.suptitle(
+                f"Sweep Results: {len(selected_results)} run(s)",
+                fontsize=12,
+                fontweight="bold",
+            )
+
+            # Collect data for heatmap
+            apertures = []
+            energies = []
+            delta_es = []
+
+            # Plot each selected trajectory
+            for idx, result in enumerate(selected_results):
+                traj = result.get("trajectory", {})
+                params = result.get("parameters", {})
+                metrics = result.get("metrics", {})
+                run_num = result.get("run_number", "?")
+
+                z = np.array(traj.get("z", []))
+                r = np.array(traj.get("r", []))
+                pz = np.array(traj.get("pz", []))
+                t = np.array(traj.get("t", []))
+
+                if len(z) == 0:
+                    continue
+
+                aperture = params.get("aperture_radius", 0)
+                energy = params.get("particle_energy_gev", 0)
+                delta_e_mev = metrics.get("rider_delta_e_mev", 0)
+                gamma_initial = metrics.get("rider_gamma_initial", 1)
+                gamma_final = metrics.get("rider_gamma_final", 1)
+
+                label = f"Run #{run_num} (a={aperture:.2e}mm, E={energy:.1f}GeV)"
+                color = plt.cm.tab10(idx % 10)
+
+                # Calculate energy from gamma (E = (gamma - 1) * m * c^2)
+                # For electrons: m*c^2 = 0.511 MeV
+                energy_mev_initial = (gamma_initial - 1) * 0.511
+                energy_mev_final = (gamma_final - 1) * 0.511
+
+                # Calculate energy at each point along trajectory
+                # Approximate: E(z) ≈ E_initial + ΔE * (z - z_0) / (z_final - z_0)
+                if len(z) > 1:
+                    z_range = z[-1] - z[0]
+                    if abs(z_range) > 1e-6:
+                        energy_mev = (
+                            energy_mev_initial + delta_e_mev * (z - z[0]) / z_range
+                        )
+                    else:
+                        energy_mev = np.full_like(z, energy_mev_initial)
+                else:
+                    energy_mev = np.array([energy_mev_initial])
+
+                # Plot 1: Delta E versus z
+                ax_delta_e.plot(
+                    z,
+                    energy_mev - energy_mev_initial,
+                    label=label,
+                    alpha=0.7,
+                    color=color,
+                    linewidth=1.5,
+                )
+
+                # Plot 2: x and y positions versus z (need to extract from r)
+                # Since we only have r (radial distance), we'll plot r and -r to show transverse extent
+                # In a real case, you'd have separate x and y coordinates
+                ax_transverse.plot(
+                    z, r, label=f"{label} (+r)", alpha=0.6, color=color, linewidth=1.5
+                )
+                ax_transverse.plot(
+                    z, -r, alpha=0.3, color=color, linewidth=1.0, linestyle="--"
+                )
+
+                # Collect data for heatmap
+                apertures.append(aperture)
+                energies.append(energy)
+                delta_es.append(delta_e_mev)
+
+            # Set labels and styling for Plot 1
+            ax_delta_e.set_xlabel("z position (mm)", fontsize=10)
+            ax_delta_e.set_ylabel("ΔE (MeV)", fontsize=10)
+            ax_delta_e.set_title(
+                "Energy Gain vs Position", fontsize=11, fontweight="bold"
+            )
+            ax_delta_e.legend(fontsize=7, loc="best")
+            ax_delta_e.grid(True, alpha=0.3)
+
+            # Set labels and styling for Plot 2
+            ax_transverse.set_xlabel("z position (mm)", fontsize=10)
+            ax_transverse.set_ylabel("Transverse position (mm)", fontsize=10)
+            ax_transverse.set_title(
+                "Transverse Position (±r) vs z", fontsize=11, fontweight="bold"
+            )
+            ax_transverse.legend(fontsize=7, loc="best")
+            ax_transverse.grid(True, alpha=0.3)
+            ax_transverse.axhline(
+                y=0, color="k", linestyle="-", linewidth=0.5, alpha=0.3
+            )
+
+            # Plot 3: Heatmap (aperture vs energy, colored by delta_e)
+            # Only show heatmap if both aperture and energy were swept
+            unique_apertures = len(set(apertures))
+            unique_energies = len(set(energies))
+
+            if len(apertures) > 0 and unique_apertures > 1 and unique_energies > 1:
+                # Create scatter plot for heatmap
+                scatter = ax_heatmap.scatter(
+                    energies,
+                    [
+                        a * 1e3 for a in apertures
+                    ],  # Convert mm to microns for readability
+                    c=delta_es,
+                    cmap="viridis",
+                    s=100,
+                    alpha=0.7,
+                    edgecolors="black",
+                    linewidth=0.5,
+                )
+
+                cbar = plt.colorbar(scatter, ax=ax_heatmap)
+                cbar.set_label("ΔE (MeV)", fontsize=10)
+
+                ax_heatmap.set_xlabel("Particle Energy (GeV)", fontsize=10)
+                ax_heatmap.set_ylabel("Aperture Radius (μm)", fontsize=10)
+                ax_heatmap.set_title(
+                    "Parameter Space: ΔE(Energy, Aperture)",
+                    fontsize=11,
+                    fontweight="bold",
+                )
+                ax_heatmap.grid(True, alpha=0.3)
+
+                # Use log scale if appropriate
+                if max(energies) / min(energies) > 10 if min(energies) > 0 else False:
+                    ax_heatmap.set_xscale("log")
+                if (
+                    max(apertures) / min(apertures) > 10
+                    if min(apertures) > 0
+                    else False
+                ):
+                    ax_heatmap.set_yscale("log")
+            else:
+                # Hide heatmap or show message
+                ax_heatmap.text(
+                    0.5,
+                    0.5,
+                    "Heatmap requires sweep over both\naperture and energy parameters",
+                    ha="center",
+                    va="center",
+                    fontsize=11,
+                    color="gray",
+                    transform=ax_heatmap.transAxes,
+                )
+                ax_heatmap.set_xticks([])
+                ax_heatmap.set_yticks([])
+                ax_heatmap.set_title(
+                    "Parameter Space Heatmap (N/A)",
+                    fontsize=11,
+                    fontweight="bold",
+                    color="gray",
+                )
+
+            plt.tight_layout()
+
+            # Embed in tkinter
+            canvas = FigureCanvasTkAgg(fig, master=parent_dialog.plot_area)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, parent_dialog.plot_area)
+            toolbar.update()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        except ImportError:
+            _show_error_dialog(
+                self,
+                "Missing Dependency",
+                "Matplotlib is required for plotting.\n\nInstall with: pip install matplotlib",
+            )
+        except Exception as e:
+            _show_error_dialog(
+                self, "Plotting Error", f"Failed to plot trajectories:\n{e}"
+            )
 
     def _run_optimization_background(self):
         """Run optimization in background using selected algorithm."""
@@ -2353,12 +5751,12 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                             "evaluation": eval_num,
                             "parameters": dict(zip(param_names, x)),
                             "failed": True,
-                            "halted_early": result.get("halted_early", False)
-                            if result
-                            else False,
-                            "halt_reason": result.get("halt_reason", None)
-                            if result
-                            else None,
+                            "halted_early": (
+                                result.get("halted_early", False) if result else False
+                            ),
+                            "halt_reason": (
+                                result.get("halt_reason", None) if result else None
+                            ),
                             "objective_value": float("inf"),
                         }
                         all_evaluations.append(eval_record)
@@ -3450,10 +6848,12 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                                     rider_transv_mom=rider_transv_mom,
                                     macroparticle_charge_multiplier=macroparticle_charge_multiplier,
                                     macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                                    driver_params=driver_params_dict
-                                    if self.config.simulation_type
-                                    == SimulationType.BUNCH_TO_BUNCH
-                                    else None,
+                                    driver_params=(
+                                        driver_params_dict
+                                        if self.config.simulation_type
+                                        == SimulationType.BUNCH_TO_BUNCH
+                                        else None
+                                    ),
                                     wall_z=params_dict.get(
                                         "wall_z", self.config.wall_z
                                     ),
@@ -3513,10 +6913,12 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                             rider_transv_mom=rider_transv_mom,
                             macroparticle_charge_multiplier=macroparticle_charge_multiplier,
                             macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                            driver_params=driver_params_dict
-                            if self.config.simulation_type
-                            == SimulationType.BUNCH_TO_BUNCH
-                            else None,
+                            driver_params=(
+                                driver_params_dict
+                                if self.config.simulation_type
+                                == SimulationType.BUNCH_TO_BUNCH
+                                else None
+                            ),
                             run_num=run_num,
                             cancel_flag=None,
                         )
@@ -3916,9 +7318,11 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
             "aperture_radius": aperture,
             "mean": 1.0e5,  # Large value (not used for CONDUCTING_WALL)
             "cav_spacing": 1.0e5,
-            "z_cutoff": self.config.target_distance_mm
-            if self.config.z_cutoff_mode == "relative"
-            else 0.0,
+            "z_cutoff": (
+                self.config.target_distance_mm
+                if self.config.z_cutoff_mode == "relative"
+                else 0.0
+            ),
             "z_cutoff_mode": self.config.z_cutoff_mode,
         }
 
@@ -4021,22 +7425,22 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                 self._log_result(
                     f"    Note: This may significantly slow integration due to strong image forces"
                 )
-    
+
             self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
-    
+
             # Create cancel callback if cancel_flag is provided
             cancel_callback = None
             if cancel_flag is not None:
-    
+
                 def check_cancel():
                     if cancel_flag[0]:
                         self._log_result(
                             f"  [CANCEL] Run {run_num}: Cancellation requested"
                         )
                     return cancel_flag[0] if cancel_flag else False
-    
+
                 cancel_callback = check_cancel
-    
+
             # Create log callback to stream verbose SC/adaptive timestep output to GUI
             # This ensures logs are visible in real-time even when not saved to file
             log_callback = None
@@ -4069,9 +7473,9 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                         ]
                     ):
                         self._log_result(f"    [VERBOSE] {message}")
-    
+
                 log_callback = verbose_log
-    
+
             result = run_testbed(
                 options,
                 log=log_callback,
@@ -4079,7 +7483,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                 cancel_callback=cancel_callback,
             )
             self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
-    
+
             # Check if integration was halted early
             if result.halted_early:
                 self._log_result(
@@ -4088,7 +7492,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                 self._log_result(
                     f"    Trajectory contains partial data and will still be analyzed"
                 )
-    
+
             # Sanity check: Verify final z position doesn't exceed expected distance
             if (
                 result.rider_trajectory is not None
@@ -4100,7 +7504,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                     if len(z_array) > 0:
                         final_z = float(z_array[-1])
                         expected_max_z = wall_z + self.config.target_distance_mm
-    
+
                         if final_z > expected_max_z:
                             excess = final_z - expected_max_z
                             self._log_result(
@@ -4115,7 +7519,9 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                             )
                         else:
                             under = expected_max_z - final_z
-                            self._log_result(f"  [DEBUG] Run {run_num}: Final z check OK")
+                            self._log_result(
+                                f"  [DEBUG] Run {run_num}: Final z check OK"
+                            )
                             self._log_result(
                                 f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)"
                             )
@@ -4123,7 +7529,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                     self._log_result(
                         f"  [WARNING] Run {run_num}: Failed to check final z position: {e}"
                     )
-    
+
             # No figures should be generated during sweeps (all display/save flags set to False)
             # If any figures were created (shouldn't happen), close them as a safety measure
             if result.figures:
@@ -4131,27 +7537,29 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                     f"  [WARNING] Run {run_num}: Unexpected figures generated ({len(result.figures)}), closing them"
                 )
                 import matplotlib.pyplot as plt
-    
+
                 for fig_name, fig in result.figures.items():
                     try:
                         plt.close(fig)
                         self._log_result(f"    Closed unexpected figure: {fig_name}")
                     except Exception as e:
                         self._log_result(f"    Error closing figure {fig_name}: {e}")
-    
+
             # Check if run was halted early - if so, skip metrics calculation
             if result.halted_early:
                 self._log_result(
                     f"  [INFO] Run {run_num} was halted early - skipping metrics calculation"
                 )
-                self._log_result(f"    Only trajectory and logs will be saved (if enabled)")
+                self._log_result(
+                    f"    Only trajectory and logs will be saved (if enabled)"
+                )
                 # Return minimal output with halt information
                 output = {
                     "metrics": {},  # Empty metrics
                     "halted_early": True,
                     "halt_reason": result.halt_reason,
                 }
-    
+
                 # Add trajectory if available and saving is enabled
                 if result.rider_trajectory is not None:
                     save_traj = (
@@ -4177,12 +7585,12 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                             self._log_result(
                                 f"    [WARNING] Failed to save halted trajectory: {e}"
                             )
-    
+
                 self._log_result(
                     f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
                 )
                 return output
-    
+
             # Extract metrics (only for non-halted runs)
             self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
             metrics = {}
@@ -4192,30 +7600,34 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                 metrics["rider_gamma_initial"] = result.rider_gamma_initial
             if result.rider_gamma_final is not None:
                 metrics["rider_gamma_final"] = result.rider_gamma_final
-    
+
             # Calculate max_percent_energy_gain from gamma values
             gamma_initial = result.rider_gamma_initial
             gamma_final = result.rider_gamma_final
-    
+
             # Diagnostic logging
             self._log_result(f"  [RESULT] Run {run_num} metrics:")
             self._log_result(f"    rider_gamma_initial: {gamma_initial}")
             self._log_result(f"    rider_gamma_final: {gamma_final}")
-    
+
             # Try to calculate from available gamma values
-            if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
+            if (
+                gamma_initial is not None
+                and gamma_final is not None
+                and gamma_initial > 0
+            ):
                 delta_gamma = gamma_final - gamma_initial
                 energy_gain_percent = delta_gamma / gamma_initial * 100.0
                 energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
                 # Calculate delta_e in MeV (for electrons: ΔE = Δγ * m_e*c^2 = Δγ * 0.511 MeV)
                 delta_e_mev = delta_gamma * 0.511
-    
+
                 metrics["max_percent_energy_gain"] = energy_gain_percent
                 metrics["percent_delta_e"] = energy_gain_percent
                 metrics["delta_gamma"] = delta_gamma
                 metrics["delta_e_mev"] = delta_e_mev
                 metrics["energy_gain_ppm"] = energy_gain_ppm
-    
+
                 self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
                 self._log_result(f"    delta_e_mev: {delta_e_mev:.12e} MeV")
                 self._log_result(
@@ -4223,13 +7635,17 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                 )
                 self._log_result(f"    percent_delta_e: {energy_gain_percent:.12e}%")
                 self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
-    
+
                 # For optimization runs, show what the optimizer sees
                 if hasattr(self, "config") and hasattr(self.config, "mode"):
                     if self.config.mode == "optimization":
                         # Optimizer minimizes, so negate for maximization objectives
-                        optimizer_value = -energy_gain_percent  # We maximize percent gain
-                        self._log_result(f"    optimizer_objective: {optimizer_value:.12e}")
+                        optimizer_value = (
+                            -energy_gain_percent
+                        )  # We maximize percent gain
+                        self._log_result(
+                            f"    optimizer_objective: {optimizer_value:.12e}"
+                        )
             else:
                 # Fallback: Try to calculate from trajectory if gamma values are missing
                 self._log_result(
@@ -4247,20 +7663,24 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                                     gamma_final_fallback - gamma_initial_fallback
                                 )
                                 energy_gain_percent = (
-                                    delta_gamma_fallback / gamma_initial_fallback * 100.0
+                                    delta_gamma_fallback
+                                    / gamma_initial_fallback
+                                    * 100.0
                                 )
                                 energy_gain_ppm = (
                                     delta_gamma_fallback / gamma_initial_fallback * 1e6
                                 )
                                 delta_e_mev_fallback = delta_gamma_fallback * 0.511
-    
+
                                 metrics["max_percent_energy_gain"] = energy_gain_percent
                                 metrics["percent_delta_e"] = energy_gain_percent
                                 metrics["delta_gamma"] = delta_gamma_fallback
                                 metrics["delta_e_mev"] = delta_e_mev_fallback
                                 metrics["energy_gain_ppm"] = energy_gain_ppm
-    
-                                self._log_result(f"  [OK] Fallback calculation successful:")
+
+                                self._log_result(
+                                    f"  [OK] Fallback calculation successful:"
+                                )
                                 self._log_result(
                                     f"    gamma_initial (from traj): {gamma_initial_fallback:.12e}"
                                 )
@@ -4283,14 +7703,20 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                                     f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
                                 )
                             else:
-                                self._log_result(f"  [ERROR] Fallback gamma_initial <= 0")
+                                self._log_result(
+                                    f"  [ERROR] Fallback gamma_initial <= 0"
+                                )
                         else:
-                            self._log_result(f"  [ERROR] Trajectory gamma array is empty")
+                            self._log_result(
+                                f"  [ERROR] Trajectory gamma array is empty"
+                            )
                     except Exception as e:
                         self._log_result(f"  [ERROR] Fallback calculation failed: {e}")
                 else:
-                    self._log_result(f"  [ERROR] No trajectory data available for fallback")
-    
+                    self._log_result(
+                        f"  [ERROR] No trajectory data available for fallback"
+                    )
+
                 # If still no metric calculated, warn explicitly
                 if "max_percent_energy_gain" not in metrics:
                     self._log_result(
@@ -4299,7 +7725,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                     self._log_result(
                         f"  [CRITICAL] This will result in NaN/inf for optimization objective"
                     )
-    
+
             # Add beam optics metrics if available
             if result.rider_emittance_x_mm_mrad is not None:
                 metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
@@ -4317,15 +7743,17 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                 metrics["rider_beta_x_m"] = result.rider_beta_x_m
             if result.rider_beta_y_m is not None:
                 metrics["rider_beta_y_m"] = result.rider_beta_y_m
-    
+
             output = {"metrics": metrics}
-    
-            self._log_result(f"  [DEBUG] Processing trajectory data for Run {run_num}...")
+
+            self._log_result(
+                f"  [DEBUG] Processing trajectory data for Run {run_num}..."
+            )
             # Add trajectory data for distance calculation even if not saving full arrays
             # (needed for diagnostics and basic metrics)
             if result.rider_trajectory is not None:
                 traj = result.rider_trajectory
-    
+
                 # Always include minimal trajectory info for distance calculation
                 try:
                     z_array = np.asarray(traj["z"])
@@ -4337,13 +7765,13 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                         }
                 except Exception as e:
                     print(f"[DEBUG] Failed to extract distance info: {e}")
-    
+
                 # Perform stability analysis if enabled
                 if self.config.smoothness_enabled:
                     self._log_result(
                         f"  [DEBUG] Performing stability analysis for Run {run_num}..."
                     )
-    
+
                     # Create stability config from optimization config
                     smoothness_config = SmoothnessConfig(
                         enabled=True,
@@ -4353,12 +7781,12 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                         reject_on_violation=self.config.smoothness_reject_on_violation,
                         max_allowed_violations=self.config.smoothness_max_violations,
                     )
-    
+
                     # Analyze trajectory stability
                     smoothness_result = analyze_trajectory_smoothness(
                         traj, smoothness_config, particle_mass_amu=rider_m_particle
                     )
-    
+
                     # Store stability analysis in output
                     output["stability_analysis"] = {
                         "passed": smoothness_result.passed,
@@ -4367,7 +7795,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                         "trend_smoothness_score": smoothness_result.trend_smoothness_score,
                         "quality": smoothness_result.quality_summary,
                     }
-    
+
                     if not smoothness_result.passed:
                         self._log_result(
                             f"  [WARNING] Stability check FAILED for Run {run_num}"
@@ -4381,7 +7809,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                             )
                             for v in smoothness_result.violations[:2]:  # Show first 2
                                 self._log_result(f"      - {v.description}")
-    
+
                         if self.config.smoothness_reject_on_violation:
                             self._log_result(
                                 f"  [REJECT] Run {run_num} rejected due to numerical instability"
@@ -4398,7 +7826,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                     self._log_result(
                         f"  [INFO] Stability analysis DISABLED for Run {run_num} (smoothness_enabled=False)"
                     )
-    
+
                 # Only save full trajectory arrays if explicitly requested
                 # Check if any trajectory saving option is enabled
                 # Note: save_top_n_trajectories is handled separately by re-running top N after optimization
@@ -4423,7 +7851,7 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                         self._log_result(
                             f"    [WARNING] Failed to save trajectory arrays: {e}"
                         )
-    
+
                 # Add halt information to output if present
                 if result.halted_early:
                     output["halted_early"] = True
@@ -4440,11 +7868,11 @@ class OptimizationPlugin(OptimizationPluginUIMixin, ttk.Frame):
                     self._log_result(
                         f"    Check that transverse_save=True in SimulationOptions"
                     )
-    
+
             self._log_result(
                 f"  [DEBUG] _run_single_integration returning for Run {run_num}"
             )
-    
+
             return output
         finally:
             # Always clean up temporary run directory (success, halt, exception, cancel)

@@ -24,167 +24,154 @@ _ENERGY_THRESHOLD_SCALE = _ELECTRON_ENERGY_THRESHOLD_GEV / (
 )
 
 
-class _BaseConfigMixin:
-    """Common base class that enables cooperative post-init chaining."""
-
-    def __post_init__(self):  # pragma: no cover - simple cooperative hook
-        pass
-
-
 @dataclass
-class SimulationModeConfig(_BaseConfigMixin):
-    """Simulation selection and top-level mode toggles."""
+class OptimizationConfig:
+    """Configuration for parameter sweep or optimization run."""
 
+    # Simulation type
     simulation_type: SimulationType = SimulationType.CONDUCTING_WALL
+
+    # Mode selection
     mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
 
+    # Optimization settings (only used when mode="optimization")
+    optimization_method: str = (
+        "genetic_algorithm"  # "genetic_algorithm", "differential_evolution", "nelder_mead", "multi_start", "adaptive_grid"
+    )
+    optimization_maxiter: int = 50  # Max iterations/generations
+    optimization_population_size: int = (
+        20  # For genetic algorithm and differential evolution
+    )
+    optimization_mutation_rate: float = 0.1  # For genetic algorithm
+    optimization_crossover_rate: float = 0.7  # For genetic algorithm
+    optimization_n_starts: int = 5  # For multi_start method
+    optimization_save_top_n: int = 3  # Save trajectories from top N results
+    optimization_convergence_tol: float = 1e-6  # Convergence tolerance (relative)
+    optimization_convergence_patience: int = 10  # Generations for plateau detection
 
-@dataclass
-class OptimizationAlgorithmConfig(_BaseConfigMixin):
-    """Algorithm parameters for optimization runs."""
-
-    optimization_method: str = "genetic_algorithm"
-    optimization_maxiter: int = 50
-    optimization_population_size: int = 20
-    optimization_mutation_rate: float = 0.1
-    optimization_crossover_rate: float = 0.7
-    optimization_n_starts: int = 5
-    optimization_save_top_n: int = 3
-    optimization_convergence_tol: float = 1e-6
-    optimization_convergence_patience: int = 10
-    objective: str = "max_energy_gain"
-    objective_weights: Dict[str, float] = None
-
-    def __post_init__(self):
-        if self.objective_weights is None:
-            self.objective_weights = {}
-        super().__post_init__()
-
-
-@dataclass
-class ParameterGridConfig(_BaseConfigMixin):
-    """Primary grid definitions for aperture, energy, and offsets."""
-
-    aperture_range: Tuple[float, float] = (1e-5, 1e-3)
+    # Parameter ranges
+    aperture_range: Tuple[float, float] = (1e-5, 1e-3)  # mm (10 μm to 1 mm)
     aperture_points: int = 10
     aperture_log_scale: bool = True
 
-    energy_range: Tuple[float, float] = (1.0, 1000.0)
+    energy_range: Tuple[float, float] = (1.0, 1000.0)  # GeV
     energy_points: int = 10
     energy_log_scale: bool = True
 
-    transverse_offset_fractions: List[float] = None
-    starting_z_positions: List[float] = None
+    transverse_offset_fractions: List[float] = None  # Fraction of aperture radius
+    starting_z_positions: List[float] = None  # mm (particle starting z-coordinates)
 
-    def __post_init__(self):
-        if self.transverse_offset_fractions is None:
-            self.transverse_offset_fractions = [0.0]
-        if self.starting_z_positions is None:
-            self.starting_z_positions = [0.0]
-        super().__post_init__()
-
-
-@dataclass
-class SweepParameterConfig(_BaseConfigMixin):
-    """Optional sweep definitions for extended parameter grids."""
-
-    transverse_momentum_range: Optional[Tuple[float, float]] = None
+    # Sweepable parameters (can be added to grid)
+    transverse_momentum_range: Optional[Tuple[float, float]] = None  # amu·mm/ns
     transverse_momentum_points: int = 1
-    transverse_spread_range: Optional[Tuple[float, float]] = None
+    transverse_spread_range: Optional[Tuple[float, float]] = None  # mm (transv_dist)
     transverse_spread_points: int = 1
-    timestep_range: Optional[Tuple[float, float]] = None
+    timestep_range: Optional[Tuple[float, float]] = None  # ns (proper time)
     timestep_points: int = 1
-    starting_z_range: Optional[Tuple[float, float]] = None
+    starting_z_range: Optional[Tuple[float, float]] = None  # mm
     starting_z_points: int = 1
-    wall_z_range: Optional[Tuple[float, float]] = None
+    wall_z_range: Optional[Tuple[float, float]] = None  # mm
     wall_z_points: int = 1
-    particle_mass_range: Optional[Tuple[float, float]] = None
+    particle_mass_range: Optional[Tuple[float, float]] = None  # amu
     particle_mass_points: int = 1
-    particle_charge_range: Optional[Tuple[float, float]] = None
+    particle_charge_range: Optional[Tuple[float, float]] = None  # charge_sign
     particle_charge_points: int = 1
-    cavity_spacing_range: Optional[Tuple[float, float]] = None
+    cavity_spacing_range: Optional[Tuple[float, float]] = None  # mm (SWITCHING_WALL)
     cavity_spacing_points: int = 1
-    macroparticle_charge_range: Optional[Tuple[float, float]] = None
+    macroparticle_charge_range: Optional[Tuple[float, float]] = (
+        None  # charge multiplier
+    )
     macroparticle_charge_points: int = 1
-    macroparticle_sigma_range: Optional[Tuple[float, float]] = None
+    macroparticle_sigma_range: Optional[Tuple[float, float]] = None  # sigma multiplier
     macroparticle_sigma_points: int = 1
 
-
-@dataclass
-class RunControlConfig(_BaseConfigMixin):
-    """Run-level controls such as timestep, steps, and geometry."""
-
-    wall_z: float = 100.0
-    cavity_spacing: float = 1e5
+    # Fixed parameters
+    wall_z: float = 100.0  # mm
+    cavity_spacing: float = 1e5  # mm (for SWITCHING_WALL)
     steps: int = 2000
-    timestep: float = 3e-7
-    auto_steps: bool = False
-    auto_steps_target: int = 500
-    auto_steps_distance_past_wall: float = 10.0
+    timestep: float = 3e-7  # ns (proper time) - default from main GUI
+    auto_steps: bool = False  # Automatically calculate steps based on distance
+    auto_steps_target: int = (
+        500  # Target number of steps when auto-calculating timestep
+    )
+    auto_steps_distance_past_wall: float = 10.0  # mm past wall to stop integration
     seed: int = 12345
-    timestep_strategy: str = "auto_distance"
-    energy_scale_exponent: float = 1.0
-    target_distance_mm: float = 100.0
-    z_cutoff_mode: str = "absolute"
 
+    # Timestep strategy for energy sweeps
+    timestep_strategy: str = (
+        "auto_distance"  # "fixed", "energy_scaled", or "auto_distance"
+    )
+    energy_scale_exponent: float = 1.0  # For energy_scaled: h ∝ γ^-α
+    target_distance_mm: float = 100.0  # For auto_distance: distance to reach
+    z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
 
-@dataclass
-class ParticleParametersConfig(_BaseConfigMixin):
-    """Fixed rider particle properties."""
-
-    transv_mom: float = 1.2e-05
-    transv_dist: float = 2e-06
-    transv_offset_x: float = 0.0
-    transv_offset_y: float = 0.0
-    m_particle: float = _ELECTRON_MASS_AMU
+    # Fixed particle parameters (not swept)
+    transv_mom: float = 1.2e-05  # amu·mm/ns
+    transv_dist: float = 2e-06  # mm - transverse spread (half-width of distribution)
+    transv_offset_x: float = 0.0  # mm - x-offset of bunch center from axis
+    transv_offset_y: float = 0.0  # mm - y-offset of bunch center from axis
+    m_particle: float = 0.00054857990907  # amu (electron mass)
     pcount: int = 1
     charge_sign: float = -1.0
     stripped_ions: float = 1.0
 
-
-@dataclass
-class MacroparticleConfig(_BaseConfigMixin):
-    """Macroparticle simulation toggles and multipliers."""
-
+    # Macroparticle simulation options (CONDUCTING_WALL only)
     macroparticle_enabled: bool = False
     macroparticle_charge_multiplier: float = 1.0
-    macroparticle_sigma_multiplier: float = 1.0
-    macroparticle_use_momentum_errors: bool = True
+    macroparticle_sigma_multiplier: float = 1.0  # Multiplier for bunch spread params
+    macroparticle_use_momentum_errors: bool = (
+        True  # Include momentum-based cumulative errors
+    )
 
+    # Optimization objective
+    objective: str = "max_energy_gain"  # Primary objective to optimize
 
-@dataclass
-class OutputAndLoggingConfig(_BaseConfigMixin):
-    """Result persistence, export, and logging preferences."""
+    # Multi-objective weighting (for future use)
+    objective_weights: Dict[str, float] = (
+        None  # e.g., {"max_energy_gain": 1.0, "min_transverse_spread": 0.5}
+    )
 
+    # Output
     output_dir: str = "results/sweeps"
     save_results: bool = True
     save_plots: bool = True
-    save_top_n_trajectories: bool = False
-    save_all_trajectories: bool = False
-    save_failed_trajectories: bool = False
-    trajectory_stride: int = 1
-    metrics_export_format: str = "both"
-    metrics_export_scope: str = "all"
-    log_verbosity: str = "truncated"
 
+    # Trajectory saving options
+    save_top_n_trajectories: bool = False  # Save trajectories for top N results
+    save_all_trajectories: bool = False  # Save ALL evaluation trajectories
+    save_failed_trajectories: bool = False  # Save only failed trajectories
+    trajectory_stride: int = (
+        1  # Save every Nth point to reduce file size (only used with "All")
+    )
 
-@dataclass
-class StabilityAndRobustnessConfig(_BaseConfigMixin):
-    """Self-consistency, adaptive timestep, and validation controls."""
+    # Metrics export options
+    metrics_export_format: str = "both"  # Options: "json", "csv", "both", "none"
+    metrics_export_scope: str = "all"  # Options: "all", "top_n"
 
+    # Log saving options
+    log_verbosity: str = "truncated"  # "none", "truncated", "full", "top_n_only"
+    # none = no debug logs saved
+    # truncated = 1-2 lines per run with parameters + metrics + errors/warnings only
+    # full = complete debug output with SC iterations and adaptive timestep refinements
+    # top_n_only = logs only for top N trajectories
+
+    # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = 1e-4
     self_consistency_max_iterations: int = 5
-    self_consistency_verbosity: int = 2
+    self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
     self_consistency_chrono_interpolate: bool = False
-    self_consistency_chrono_tolerance: float = 1e-3
+    self_consistency_chrono_tolerance: float = 1e-3  # ns
     self_consistency_chrono_high_precision: bool = False
     self_consistency_chrono_adaptive_tolerance: bool = False
+
+    # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
     energy_monitor_threshold: float = 2.0
     energy_monitor_check_interval: int = 10
-    energy_monitor_halt_on_jump: bool = False
+    energy_monitor_halt_on_jump: bool = False  # Now in adaptive_timestep
     energy_monitor_debug: bool = False
+
     adaptive_timestep_enabled: bool = True
     adaptive_timestep_threshold: float = 0.10
     adaptive_timestep_reduction_factor: int = 10
@@ -194,32 +181,29 @@ class StabilityAndRobustnessConfig(_BaseConfigMixin):
     adaptive_timestep_probe_threshold: float = 0.01
     adaptive_timestep_max_probe_steps: int = 3
     adaptive_timestep_debug: bool = False
-    per_run_timeout: float = 300.0
-    skip_failed_runs: bool = True
-    smoothness_enabled: bool = True
-    smoothness_window_size: int = 20
-    smoothness_oscillation_threshold: float = 0.5
-    smoothness_trend_threshold: float = 0.30
-    smoothness_reject_on_violation: bool = True
-    smoothness_max_violations: int = 3
 
+    # Sweep robustness options
+    per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
+    skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
 
-@dataclass
-class OptimizationConfig(
-    SimulationModeConfig,
-    OptimizationAlgorithmConfig,
-    ParameterGridConfig,
-    SweepParameterConfig,
-    RunControlConfig,
-    ParticleParametersConfig,
-    MacroparticleConfig,
-    OutputAndLoggingConfig,
-    StabilityAndRobustnessConfig,
-):
-    """Composite configuration for parameter sweeps and optimizations."""
+    # Trajectory stability checking (multi-step numerical validation)
+    smoothness_enabled: bool = True  # Enable trajectory stability analysis
+    smoothness_window_size: int = 20  # Steps for moving-window analysis
+    smoothness_oscillation_threshold: float = (
+        0.5  # Max oscillation score (sign-change rate)
+    )
+    smoothness_trend_threshold: float = 0.30  # Max polynomial fit residual
+    smoothness_reject_on_violation: bool = True  # Reject numerically unstable runs
+    smoothness_max_violations: int = 3  # Max violations before rejection
 
     def __post_init__(self):
-        super().__post_init__()
+        """Set defaults for list fields."""
+        if self.transverse_offset_fractions is None:
+            self.transverse_offset_fractions = [0.0]
+        if self.starting_z_positions is None:
+            self.starting_z_positions = [0.0]  # Default: start at origin
+        if self.objective_weights is None:
+            self.objective_weights = {}
 
     def calculate_timestep_for_energy(
         self,
@@ -362,15 +346,6 @@ def calculate_steps_from_duration(
 
 
 __all__ = [
-    "SimulationModeConfig",
-    "OptimizationAlgorithmConfig",
-    "ParameterGridConfig",
-    "SweepParameterConfig",
-    "RunControlConfig",
-    "ParticleParametersConfig",
-    "MacroparticleConfig",
-    "OutputAndLoggingConfig",
-    "StabilityAndRobustnessConfig",
     "OptimizationConfig",
     "calculate_auto_timestep",
     "calculate_auto_steps",
