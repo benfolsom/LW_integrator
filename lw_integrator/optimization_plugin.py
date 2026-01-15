@@ -49,6 +49,8 @@ from optimization.result_io import (
     save_top_n_optimization_trajectories,
     save_top_trajectories_summary_table,
 )
+from optimization.run_mixins import OptimizationRunMixin
+from optimization.results_mixins import OptimizationResultsMixin
 from optimization.ui_helpers import (
     ToolTip,
     show_error_dialog as _show_error_dialog,
@@ -57,7 +59,7 @@ from optimization.ui_helpers import (
 )
 
 
-class OptimizationPlugin(ttk.Frame):
+class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Frame):
     """Optimization plugin for LW Integrator GUI."""
 
     import time
