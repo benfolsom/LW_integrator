@@ -447,16 +447,72 @@ class OptimizationRunMixin:
                         initial_energy_gev=energy,
                     )
 
+                    # Add stability-based penalty if smoothness analysis is available
+                    stability_penalty = 0.0
+                    if "smoothness_metrics" in result:
+                        smoothness = result["smoothness_metrics"]
+                        quality = smoothness.get("quality_summary", "")
+
+                        # Apply penalties based on stability quality
+                        if "Poor - highly erratic" in quality:
+                            # Heavy penalty for highly erratic runs
+                            stability_penalty = (
+                                value * 0.99 if maximize else value * 1.01
+                            )
+                            self._log_result(
+                                f"[WARNING] Heavy stability penalty applied: {stability_penalty:.3e} "
+                                f"(quality: {quality})"
+                            )
+                        elif "Poor" in quality:
+                            # Moderate penalty for poor quality
+                            stability_penalty = value * 0.5 if maximize else value * 0.5
+                            self._log_result(
+                                f"[INFO] Stability penalty applied: {stability_penalty:.3e} "
+                                f"(quality: {quality})"
+                            )
+                        elif "Marginal" in quality:
+                            # Light penalty for marginal quality
+                            stability_penalty = value * 0.1 if maximize else value * 0.1
+                            self._log_result(
+                                f"[INFO] Light stability penalty applied: {stability_penalty:.3e} "
+                                f"(quality: {quality})"
+                            )
+                        elif "Acceptable" in quality:
+                            # Very light penalty for acceptable but not ideal
+                            stability_penalty = (
+                                value * 0.01 if maximize else value * 0.01
+                            )
+                        # "Good" quality gets no penalty
+
+                    # Also add penalty for unphysically high energy gains
+                    energy_gain_penalty = 0.0
+                    if "max_percent_energy_gain" in metrics:
+                        pct_gain = metrics["max_percent_energy_gain"]
+                        if pct_gain > 500.0:  # >500% likely unphysical
+                            # Scale penalty with how extreme the gain is
+                            excess = (pct_gain - 500.0) / 500.0
+                            energy_gain_penalty = (
+                                value * min(0.95, excess * 0.5)
+                                if maximize
+                                else value * min(0.95, excess * 0.5)
+                            )
+                            self._log_result(
+                                f"[WARNING] Unphysical energy gain penalty: {energy_gain_penalty:.3e} "
+                                f"(gain: {pct_gain:.1f}% > 500% threshold)"
+                            )
+
+                    total_penalty = penalty + stability_penalty + energy_gain_penalty
                     adjusted_value = value
-                    if penalty > 0:
+                    if total_penalty > 0:
                         if maximize:
-                            adjusted_value = value - penalty
+                            adjusted_value = value - total_penalty
                         else:
-                            adjusted_value = value + penalty
-                        self._log_result(
-                            "[INFO] Applied soft penalty of "
-                            f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
-                        )
+                            adjusted_value = value + total_penalty
+                        if penalty > 0:
+                            self._log_result(
+                                "[INFO] Applied parameter soft penalty of "
+                                f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
+                            )
 
                     # Return value to minimize (negate if maximizing)
                     result_value = -adjusted_value if maximize else adjusted_value
@@ -468,11 +524,20 @@ class OptimizationRunMixin:
                         "objective_value": adjusted_value,
                         "raw_objective_value": value,
                         "soft_penalty": penalty,
+                        "stability_penalty": stability_penalty,
+                        "energy_gain_penalty": energy_gain_penalty,
+                        "total_penalty": total_penalty,
                         "fitness": result_value,  # Store fitness (for minimization)
                         "failed": False,
                         "halted_early": False,
                         "metrics": result.get("metrics", {}),
                     }
+
+                    # Store stability quality if available
+                    if "smoothness_metrics" in result:
+                        eval_record["stability_quality"] = result[
+                            "smoothness_metrics"
+                        ].get("quality_summary", "Unknown")
 
                     # Save trajectory if requested and available
                     if self.config.save_all_trajectories and "trajectory" in result:
@@ -1200,12 +1265,12 @@ class OptimizationRunMixin:
                         result_data["parameters"]["wall_z"] = params_dict["wall_z"]
 
                     if self.config.macroparticle_enabled:
-                        result_data["parameters"][
-                            "macroparticle_charge_multiplier"
-                        ] = macroparticle_charge_multiplier
-                        result_data["parameters"][
-                            "macroparticle_sigma_multiplier"
-                        ] = macroparticle_sigma_multiplier
+                        result_data["parameters"]["macroparticle_charge_multiplier"] = (
+                            macroparticle_charge_multiplier
+                        )
+                        result_data["parameters"]["macroparticle_sigma_multiplier"] = (
+                            macroparticle_sigma_multiplier
+                        )
 
                     # Stability analysis only if trajectory is present
                     if result.trajectory is not None:

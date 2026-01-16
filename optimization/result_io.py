@@ -32,7 +32,9 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
         config_name = Path(plugin.last_loaded_config).stem
 
     method_suffix = plugin.config.optimization_method.replace("_", "")
-    opt_dir = Path(plugin.sweep_output_dir) / f"{timestamp}_{config_name}_{method_suffix}"
+    opt_dir = (
+        Path(plugin.sweep_output_dir) / f"{timestamp}_{config_name}_{method_suffix}"
+    )
     opt_dir.mkdir(parents=True, exist_ok=True)
 
     results_dict = {
@@ -46,11 +48,18 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
         "timestamp": timestamp,
     }
 
+    # Get all_evaluations early so we can use it for top_n_results
+    all_evaluations = None
+    if hasattr(plugin, "_all_evaluations_cache"):
+        all_evaluations = plugin._all_evaluations_cache
+
     if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
         fitness_array = np.asarray(result.final_fitness, dtype=float)
         finite_indices = np.where(np.isfinite(fitness_array))[0]
         if finite_indices.size == 0:
-            plugin._log_result("[INFO] Skipping top-N summary (no finite fitness values).")
+            plugin._log_result(
+                "[INFO] Skipping top-N summary (no finite fitness values)."
+            )
             results_dict["top_n_results"] = []
             results_dict["top_n_count"] = 0
         else:
@@ -68,14 +77,41 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
                 fitness = fitness_array[idx]
                 metric_value = -fitness if maximize else fitness
 
-                top_n_summary.append(
-                    {
-                        "rank": i + 1,
-                        "parameters": params_dict,
-                        "fitness": float(fitness),
-                        "metric_value": float(metric_value),
-                    }
-                )
+                top_n_entry = {
+                    "rank": i + 1,
+                    "parameters": params_dict,
+                    "fitness": float(fitness),
+                    "metric_value": float(metric_value),
+                }
+
+                # Try to find corresponding evaluation to include full metrics
+                if all_evaluations:
+                    # Find evaluation with matching fitness value
+                    for eval_rec in all_evaluations:
+                        if not eval_rec.get("failed", False):
+                            eval_fitness = eval_rec.get("fitness")
+                            if (
+                                eval_fitness is not None
+                                and abs(eval_fitness - fitness) < 1e-9
+                            ):
+                                # Found matching evaluation - include its metrics
+                                if "metrics" in eval_rec:
+                                    top_n_entry["metrics"] = eval_rec["metrics"]
+                                if "objective_value" in eval_rec:
+                                    top_n_entry["objective_value"] = eval_rec[
+                                        "objective_value"
+                                    ]
+                                if "raw_objective_value" in eval_rec:
+                                    top_n_entry["raw_objective_value"] = eval_rec[
+                                        "raw_objective_value"
+                                    ]
+                                if "soft_penalty" in eval_rec:
+                                    top_n_entry["soft_penalty"] = eval_rec[
+                                        "soft_penalty"
+                                    ]
+                                break
+
+                top_n_summary.append(top_n_entry)
 
             results_dict["top_n_results"] = top_n_summary
             results_dict["top_n_count"] = n_available
@@ -83,9 +119,8 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     if hasattr(result, "convergence_history"):
         results_dict["convergence_history"] = result.convergence_history
 
-    all_evaluations = None
-    if hasattr(plugin, "_all_evaluations_cache"):
-        all_evaluations = plugin._all_evaluations_cache
+    # all_evaluations already retrieved above for top_n_results
+    if all_evaluations:
         all_evaluations_for_json = []
         for eval_rec in all_evaluations:
             eval_rec_copy = dict(eval_rec)
@@ -102,18 +137,26 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     evaluations_to_export = None
     scope_desc = "0"
     finite_evals = (
-        [e for e in all_evaluations if np.isfinite(e.get("objective_value", float("inf")))]
+        [
+            e
+            for e in all_evaluations
+            if np.isfinite(e.get("objective_value", float("inf")))
+        ]
         if all_evaluations
         else []
     )
 
     if export_scope == "top_n" and finite_evals:
         top_n = max(1, int(plugin.config.optimization_save_top_n))
-        sorted_evals = sorted(finite_evals, key=lambda e: e.get("objective_value", float("inf")))
+        sorted_evals = sorted(
+            finite_evals, key=lambda e: e.get("objective_value", float("inf"))
+        )
         evaluations_to_export = sorted_evals[:top_n]
         scope_desc = f"top {len(evaluations_to_export)}"
     elif export_scope == "top_n" and not finite_evals and all_evaluations:
-        plugin._log_result("[INFO] Skipping top-N export (no finite evaluation metrics).")
+        plugin._log_result(
+            "[INFO] Skipping top-N export (no finite evaluation metrics)."
+        )
     elif all_evaluations:
         evaluations_to_export = all_evaluations
         scope_desc = "all"
@@ -159,10 +202,45 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     if hasattr(result, "final_population") and hasattr(result, "final_fitness"):
         plugin._save_top_trajectories_summary_table(result, param_names, opt_dir)
 
+    # Copy debug log from logcache to results directory
+    if hasattr(plugin, "_log_file_path") and plugin._log_file_path is not None:
+        if plugin._log_file_path.exists():
+            import shutil
+
+            dest_log = opt_dir / plugin._log_file_path.name
+            try:
+                shutil.copy2(plugin._log_file_path, dest_log)
+                plugin._log_result(f"[OK] Debug log copied to: {dest_log}")
+            except Exception as e:
+                plugin._log_result(f"[WARNING] Failed to copy debug log: {e}")
+    else:
+        # Try to find the most recent logcache file for this context
+        import glob
+        from pathlib import Path
+
+        logcache_dir = Path(plugin.config.output_dir).parent.parent / "logcache"
+        if logcache_dir.exists():
+            # Find most recent optimization log
+            log_files = sorted(
+                logcache_dir.glob("*optimization*.log"), key=lambda p: p.stat().st_mtime
+            )
+            if log_files:
+                most_recent_log = log_files[-1]
+                import shutil
+
+                dest_log = opt_dir / most_recent_log.name
+                try:
+                    shutil.copy2(most_recent_log, dest_log)
+                    plugin._log_result(f"[OK] Debug log copied to: {dest_log}")
+                except Exception as e:
+                    plugin._log_result(f"[WARNING] Failed to copy debug log: {e}")
+
     plugin._open_log_file(opt_dir)
 
 
-def save_top_trajectories_summary_table(plugin: Any, result: Any, param_names: List[str], output_dir: Path):
+def save_top_trajectories_summary_table(
+    plugin: Any, result: Any, param_names: List[str], output_dir: Path
+):
     """Generate and save a human-readable table of top trajectories with optimization metrics."""
     try:
         fitness_array = np.asarray(result.final_fitness, dtype=float)
@@ -251,7 +329,9 @@ def save_top_trajectories_summary_table(plugin: Any, result: Any, param_names: L
         )
 
 
-def generate_optimization_plots(plugin: Any, result: Any, param_names: List[str], output_dir: Path):
+def generate_optimization_plots(
+    plugin: Any, result: Any, param_names: List[str], output_dir: Path
+):
     """Generate optimization visualization plots."""
     import matplotlib.pyplot as plt
     import numpy as np
@@ -383,7 +463,9 @@ def generate_optimization_plots(plugin: Any, result: Any, param_names: List[str]
         plugin._log_result(traceback.format_exc())
 
 
-def generate_optimization_heatmap(plugin: Any, all_evaluations: List[dict], param_names: List[str], output_dir: Path):
+def generate_optimization_heatmap(
+    plugin: Any, all_evaluations: List[dict], param_names: List[str], output_dir: Path
+):
     """Generate sparse heatmap from optimization evaluations."""
     import matplotlib.pyplot as plt
     import numpy as np
@@ -391,7 +473,9 @@ def generate_optimization_heatmap(plugin: Any, all_evaluations: List[dict], para
 
     try:
         if len(all_evaluations) < 3:
-            plugin._log_result("[INFO] Not enough evaluations for heatmap (need at least 3)")
+            plugin._log_result(
+                "[INFO] Not enough evaluations for heatmap (need at least 3)"
+            )
             return
 
         successful_evals = [
@@ -501,7 +585,9 @@ def generate_optimization_heatmap(plugin: Any, all_evaluations: List[dict], para
             plt.close(fig)
             plugin._log_result(f"[OK] 2D optimization heatmap saved to: {heatmap_file}")
         else:
-            plugin._log_result("[INFO] Single parameter optimization - no heatmap needed")
+            plugin._log_result(
+                "[INFO] Single parameter optimization - no heatmap needed"
+            )
 
     except Exception as e:
         import traceback
@@ -510,13 +596,17 @@ def generate_optimization_heatmap(plugin: Any, all_evaluations: List[dict], para
         plugin._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
 
-def save_top_n_optimization_trajectories(plugin: Any, result: Any, param_names: List[str]):
+def save_top_n_optimization_trajectories(
+    plugin: Any, result: Any, param_names: List[str]
+):
     """Re-run top N parameter sets and save trajectories to timestamped directory."""
     from pathlib import Path
 
     if getattr(plugin, "_was_cancelled", False):
         plugin._log_result("")
-        plugin._log_result("[INFO] Skipping top-N trajectory regeneration (optimization cancelled).")
+        plugin._log_result(
+            "[INFO] Skipping top-N trajectory regeneration (optimization cancelled)."
+        )
         return
 
     try:
@@ -537,7 +627,9 @@ def save_top_n_optimization_trajectories(plugin: Any, result: Any, param_names: 
             n_available = min(top_n, len(sorted_indices))
 
             plugin._log_result("")
-            plugin._log_result(f"Generating top {n_available} trajectories from population...")
+            plugin._log_result(
+                f"Generating top {n_available} trajectories from population..."
+            )
 
             for i in range(n_available):
                 idx = sorted_indices[i]
@@ -591,7 +683,9 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
     import numpy as np
 
     try:
-        output_dir = getattr(plugin, "_last_optimization_dir", Path(plugin.config.output_dir))
+        output_dir = getattr(
+            plugin, "_last_optimization_dir", Path(plugin.config.output_dir)
+        )
         fig, axes = plt.subplots(3, 2, figsize=(14, 14))
         colors = plt.cm.tab10(np.linspace(0, 1, len(trajectory_data_list)))
         all_gamma_values = []
@@ -627,16 +721,24 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
                 axes[0, 0].plot(t, z, color=color, linewidth=2, label=label, alpha=0.8)
 
             if len(r) > 0 and len(z) > 0:
-                axes[0, 1].plot(z, r * 1e3, color=color, linewidth=2, label=label, alpha=0.8)
+                axes[0, 1].plot(
+                    z, r * 1e3, color=color, linewidth=2, label=label, alpha=0.8
+                )
 
             if len(gamma) > 0 and len(z) > 0:
-                axes[1, 0].plot(z, gamma, color=color, linewidth=2, label=label, alpha=0.8)
+                axes[1, 0].plot(
+                    z, gamma, color=color, linewidth=2, label=label, alpha=0.8
+                )
 
             if len(delta_e_mev) > 0 and len(z) > 0:
-                axes[1, 1].plot(z, delta_e_mev, color=color, linewidth=2, label=label, alpha=0.8)
+                axes[1, 1].plot(
+                    z, delta_e_mev, color=color, linewidth=2, label=label, alpha=0.8
+                )
 
             if len(percent_delta_e) > 0 and len(z) > 0:
-                axes[2, 0].plot(z, percent_delta_e, color=color, linewidth=2, label=label, alpha=0.8)
+                axes[2, 0].plot(
+                    z, percent_delta_e, color=color, linewidth=2, label=label, alpha=0.8
+                )
 
             if len(pr) > 0 and len(z) > 0:
                 axes[2, 1].plot(z, pr, color=color, linewidth=2, label=label, alpha=0.8)
@@ -698,7 +800,9 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
         plt.savefig(comparison_plot, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
-        plugin._log_result(f"[OK] Trajectory comparison plot saved to: {comparison_plot}")
+        plugin._log_result(
+            f"[OK] Trajectory comparison plot saved to: {comparison_plot}"
+        )
 
     except Exception as e:
         import traceback
@@ -707,7 +811,12 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
         plugin._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
 
-def save_partial_optimization_results(plugin: Any, all_evaluations: List[dict], param_names: List[str], status: str = "PARTIAL"):
+def save_partial_optimization_results(
+    plugin: Any,
+    all_evaluations: List[dict],
+    param_names: List[str],
+    status: str = "PARTIAL",
+):
     """Save partial optimization results when cancelled or failed."""
     from datetime import datetime
 
@@ -759,7 +868,9 @@ def save_partial_optimization_results(plugin: Any, all_evaluations: List[dict], 
         "total_evaluations": len(all_evaluations),
         "successful_evaluations": len(successful_evals),
         "halted_evaluations": len(halted_evals),
-        "failed_evaluations": len(all_evaluations) - len(successful_evals) - len(halted_evals),
+        "failed_evaluations": len(all_evaluations)
+        - len(successful_evals)
+        - len(halted_evals),
         "parameters": param_names,
         "objective": plugin.config.objective,
     }
@@ -772,9 +883,13 @@ def save_partial_optimization_results(plugin: Any, all_evaluations: List[dict], 
 
         if len(finite_evals) > 0:
             if maximize:
-                best = max(finite_evals, key=lambda x: x.get("objective_value", -float("inf")))
+                best = max(
+                    finite_evals, key=lambda x: x.get("objective_value", -float("inf"))
+                )
             else:
-                best = min(finite_evals, key=lambda x: x.get("objective_value", float("inf")))
+                best = min(
+                    finite_evals, key=lambda x: x.get("objective_value", float("inf"))
+                )
             summary["best_parameters"] = best["parameters"]
             summary["best_value"] = best["objective_value"]
         else:

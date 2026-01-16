@@ -907,13 +907,13 @@ class IntegratorGUI:
         ttk.Label(header, text="Simulation type:").grid(
             row=0, column=0, sticky="w", padx=(0, 6)
         )
-        sim_type = ttk.Combobox(
+        self.sim_type_combo = ttk.Combobox(
             header,
             textvariable=self.sim_type_var,
             state="readonly",
             values=[opt.name for opt in SimulationType],
         )
-        sim_type.grid(row=0, column=1, sticky="ew")
+        self.sim_type_combo.grid(row=0, column=1, sticky="ew")
 
         # Create main horizontal split: left (tabs) and right (config/control panel)
         self._main_horizontal_paned = tk.PanedWindow(
@@ -2806,6 +2806,19 @@ class IntegratorGUI:
         self._toggle_z_cutoff_controls()
         self._toggle_macroparticle_controls()
         self._update_macroparticle_state()
+
+        # Force update of simulation type combobox display
+        current_value = self.sim_type_var.get()
+        # Use current() method to set by index instead of set() for readonly combobox
+        try:
+            values_list = list(self.sim_type_combo["values"])
+            if current_value in values_list:
+                idx = values_list.index(current_value)
+                self.sim_type_combo.current(idx)
+                self.root.update_idletasks()
+        except Exception:
+            pass
+
         self._set_status(f"Loaded config: {filename}")
         self.current_config_label.config(text=filename, foreground="black")
 
@@ -3494,6 +3507,12 @@ class IntegratorGUI:
         self._update_cavity_spacing_state()
         self._update_macroparticle_state()
         self._refresh_initial_summary()
+
+        # Sync simulation type to optimization plugin if it exists
+        if hasattr(self, "optimization_tab") and self.optimization_tab:
+            sim_type_value = self.sim_type_var.get()
+            if hasattr(self.optimization_tab, "sim_type_var"):
+                self.optimization_tab.sim_type_var.set(sim_type_value)
 
     def _update_driver_visibility(self) -> None:
         enabled = supports_driver(SimulationType[self.sim_type_var.get()])

@@ -49,12 +49,18 @@ from optimization.result_io import (
     save_top_n_optimization_trajectories,
     save_top_trajectories_summary_table,
 )
-from optimization.run_mixins import OptimizationRunMixin
 from optimization.results_mixins import OptimizationResultsMixin
+from optimization.run_mixins import OptimizationRunMixin
 from optimization.ui_helpers import (
     ToolTip,
+)
+from optimization.ui_helpers import (
     show_error_dialog as _show_error_dialog,
+)
+from optimization.ui_helpers import (
     show_info_dialog as _show_info_dialog,
+)
+from optimization.ui_helpers import (
     show_warning_dialog as _show_warning_dialog,
 )
 
@@ -1001,6 +1007,21 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         """Handle simulation type change."""
         self._update_driver_visibility()
         self._update_macroparticle_state()
+
+        # Sync simulation type to main GUI
+        if self.gui_controller and hasattr(self.gui_controller, "sim_type_var"):
+            sim_type_value = self.sim_type_var.get()
+            self.gui_controller.sim_type_var.set(sim_type_value)
+            # Force update of main GUI's simulation type combobox display
+            if hasattr(self.gui_controller, "sim_type_combo"):
+                try:
+                    values_list = list(self.gui_controller.sim_type_combo["values"])
+                    if sim_type_value in values_list:
+                        idx = values_list.index(sim_type_value)
+                        self.gui_controller.sim_type_combo.current(idx)
+                        self.gui_controller.root.update_idletasks()
+                except Exception:
+                    pass
 
     def _toggle_macroparticle_controls(self):
         """Enable/disable macroparticle controls based on checkbox state."""
@@ -3020,7 +3041,23 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.gui_controller.sweep_config_name_var.set(config_name)
 
             # Populate UI fields
-            self.sim_type_var.set(data.get("simulation_type", "CONDUCTING_WALL"))
+            sim_type_value = data.get("simulation_type", "CONDUCTING_WALL")
+            self.sim_type_var.set(sim_type_value)
+
+            # Sync simulation type to main GUI
+            if self.gui_controller and hasattr(self.gui_controller, "sim_type_var"):
+                self.gui_controller.sim_type_var.set(sim_type_value)
+                # Force update of main GUI's simulation type combobox display
+                if hasattr(self.gui_controller, "sim_type_combo"):
+                    try:
+                        values_list = list(self.gui_controller.sim_type_combo["values"])
+                        if sim_type_value in values_list:
+                            idx = values_list.index(sim_type_value)
+                            self.gui_controller.sim_type_combo.current(idx)
+                            self.gui_controller.root.update_idletasks()
+                    except Exception:
+                        pass
+
             self.mode_var.set(data.get("mode", "blind_sweep"))
             self.aperture_min_var.set(str(data.get("aperture_min", 1e-5)))
             self.aperture_max_var.set(str(data.get("aperture_max", 1e-3)))

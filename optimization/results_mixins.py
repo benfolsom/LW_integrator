@@ -77,6 +77,14 @@ class OptimizationResultsMixin:
             timestep = self.config.timestep
             steps = self.config.steps
             wall_z = self.config.wall_z
+            rider_transv_mom = self.config.transv_mom  # default
+            rider_transv_dist = self.config.transv_dist  # default
+            macroparticle_charge_mult = (
+                self.config.macroparticle_charge_multiplier
+            )  # default
+            macroparticle_sigma_mult = (
+                self.config.macroparticle_sigma_multiplier
+            )  # default
 
             # Map parameters
             for param_name, value in params_dict.items():
@@ -92,6 +100,14 @@ class OptimizationResultsMixin:
                     timestep = value
                 elif param_name == "wall_z":
                     wall_z = value
+                elif param_name == "transverse_momentum":
+                    rider_transv_mom = value
+                elif param_name == "rider_transv_dist":
+                    rider_transv_dist = value
+                elif param_name == "macroparticle_charge_multiplier":
+                    macroparticle_charge_mult = value
+                elif param_name == "macroparticle_sigma_multiplier":
+                    macroparticle_sigma_mult = value
 
             transv_offset = offset_frac * aperture
 
@@ -110,7 +126,10 @@ class OptimizationResultsMixin:
                 rider_m_particle=self.config.m_particle,
                 rider_charge_sign=self.config.charge_sign,
                 rider_pcount=int(self.config.pcount),
-                rider_transv_mom=self.config.transv_mom,
+                rider_transv_mom=rider_transv_mom,
+                rider_transv_dist=rider_transv_dist,
+                macroparticle_charge_multiplier=macroparticle_charge_mult,
+                macroparticle_sigma_multiplier=macroparticle_sigma_mult,
                 driver_params=None,
                 wall_z=wall_z,
                 run_num=9999 + rank,

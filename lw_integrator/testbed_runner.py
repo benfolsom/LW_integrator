@@ -3163,6 +3163,27 @@ def run_testbed(
             except Exception as exc:
                 _log(f"Failed to save verbose log: {exc}")
 
+        # Copy debug log from logcache to output directory
+        import glob
+
+        logcache_dir = Path("logcache")
+        if logcache_dir.exists():
+            # Find most recent testbed log
+            log_files = sorted(
+                logcache_dir.glob("*testbed*.log"), key=lambda p: p.stat().st_mtime
+            )
+            if log_files:
+                most_recent_log = log_files[-1]
+                import shutil
+
+                debug_log_path = output_dir / most_recent_log.name
+                try:
+                    shutil.copy2(most_recent_log, debug_log_path)
+                    saved_paths["debug_log"] = debug_log_path
+                    _log(f"Copied debug log to: {debug_log_path}")
+                except Exception as exc:
+                    _log(f"Failed to copy debug log: {exc}")
+
     return RunResult(
         metrics=metrics,
         saved_paths=saved_paths,
