@@ -447,42 +447,64 @@ class OptimizationRunMixin:
                         initial_energy_gev=energy,
                     )
 
-                    # Add stability-based penalty if smoothness analysis is available
+                    # Add stability-based penalty using continuous sliding scale
                     stability_penalty = 0.0
                     if "smoothness_metrics" in result:
                         smoothness = result["smoothness_metrics"]
                         quality = smoothness.get("quality_summary", "")
 
-                        # Apply penalties based on stability quality
-                        if "Poor - highly erratic" in quality:
-                            # Heavy penalty for highly erratic runs
-                            stability_penalty = (
-                                value * 0.99 if maximize else value * 1.01
-                            )
-                            self._log_result(
-                                f"[WARNING] Heavy stability penalty applied: {stability_penalty:.3e} "
-                                f"(quality: {quality})"
-                            )
-                        elif "Poor" in quality:
-                            # Moderate penalty for poor quality
-                            stability_penalty = value * 0.5 if maximize else value * 0.5
-                            self._log_result(
-                                f"[INFO] Stability penalty applied: {stability_penalty:.3e} "
-                                f"(quality: {quality})"
-                            )
-                        elif "Marginal" in quality:
-                            # Light penalty for marginal quality
-                            stability_penalty = value * 0.1 if maximize else value * 0.1
-                            self._log_result(
-                                f"[INFO] Light stability penalty applied: {stability_penalty:.3e} "
-                                f"(quality: {quality})"
-                            )
-                        elif "Acceptable" in quality:
-                            # Very light penalty for acceptable but not ideal
-                            stability_penalty = (
-                                value * 0.01 if maximize else value * 0.01
-                            )
-                        # "Good" quality gets no penalty
+                        # Get quantitative metrics for sliding scale
+                        max_oscillation = smoothness.get("oscillation_score", 0.0)
+                        max_trend_residual = smoothness.get(
+                            "trend_smoothness_score", 0.0
+                        )
+
+                        # Compute penalty factor based on continuous scale (0.0 = no penalty, 1.0 = full penalty)
+                        # Oscillation contribution (0.7+ is severe, 0.3-0.7 is concerning, <0.3 is acceptable)
+                        osc_factor = 0.0
+                        if max_oscillation > 0.7:
+                            osc_factor = 1.0  # Severe
+                        elif max_oscillation > 0.3:
+                            # Linear scale from 0.3 (0.0 penalty) to 0.7 (1.0 penalty)
+                            osc_factor = (max_oscillation - 0.3) / 0.4
+
+                        # Trend residual contribution (0.5+ is highly erratic, 0.2-0.5 is concerning, <0.2 is acceptable)
+                        trend_factor = 0.0
+                        if max_trend_residual > 0.5:
+                            trend_factor = 1.0  # Highly erratic
+                        elif max_trend_residual > 0.2:
+                            # Linear scale from 0.2 (0.0 penalty) to 0.5 (1.0 penalty)
+                            trend_factor = (max_trend_residual - 0.2) / 0.3
+
+                        # Combined penalty factor (take worst of the two)
+                        penalty_factor = max(osc_factor, trend_factor)
+
+                        # Apply penalty with scaling: 0% penalty at factor=0, 99% penalty at factor=1
+                        if penalty_factor > 0.0:
+                            # Exponential scaling for more aggressive penalties at higher factors
+                            # penalty_factor^2 gives: 0.25 → 6.25%, 0.5 → 25%, 0.75 → 56%, 1.0 → 99%
+                            scaled_penalty = penalty_factor**2
+                            stability_penalty = value * min(0.99, scaled_penalty)
+
+                            # Log penalty with details
+                            if penalty_factor > 0.8:
+                                self._log_result(
+                                    f"[WARNING] Heavy stability penalty: {stability_penalty:.3e} "
+                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f}, "
+                                    f"factor={penalty_factor:.3f}, quality: {quality})"
+                                )
+                            elif penalty_factor > 0.4:
+                                self._log_result(
+                                    f"[INFO] Moderate stability penalty: {stability_penalty:.3e} "
+                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f}, "
+                                    f"factor={penalty_factor:.3f})"
+                                )
+                            elif penalty_factor > 0.1:
+                                self._log_result(
+                                    f"[INFO] Light stability penalty: {stability_penalty:.3e} "
+                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f})"
+                                )
+                        # penalty_factor = 0 → no penalty (Good quality)
 
                     # Also add penalty for unphysically high energy gains
                     energy_gain_penalty = 0.0
