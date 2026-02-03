@@ -12,7 +12,6 @@ import numpy as np
 
 def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     """Save optimization results to file in timestamped directory."""
-    from datetime import datetime
 
     # Generate timestamp in sortable format: YYYYMMDD_HHMMSS
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -216,7 +215,6 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     else:
         # Try to find the most recent logcache file for this context
         import glob
-        from pathlib import Path
 
         logcache_dir = Path(plugin.config.output_dir).parent.parent / "logcache"
         if logcache_dir.exists():

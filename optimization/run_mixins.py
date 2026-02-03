@@ -416,6 +416,59 @@ class OptimizationRunMixin:
                     metrics = result["metrics"]
                     value = metrics.get(metric_name, np.nan)
 
+                    # Hard rejection for unphysical energy gains > 100%
+                    if "max_percent_energy_gain" in metrics:
+                        pct_gain = metrics["max_percent_energy_gain"]
+                        if pct_gain > 100.0:
+                            self._log_result(
+                                f"[REJECT] Evaluation {eval_num} DISQUALIFIED: "
+                                f"energy gain {pct_gain:.1f}% > 100% (unphysical)"
+                            )
+                            # Store rejected evaluation
+                            eval_record = {
+                                "evaluation": eval_num,
+                                "parameters": dict(zip(param_names, x)),
+                                "failed": True,
+                                "halted_early": False,
+                                "reject_reason": f"Unphysical energy gain: {pct_gain:.1f}% > 100%",
+                                "objective_value": float("inf"),
+                                "metrics": result.get("metrics", {}),
+                            }
+                            all_evaluations.append(eval_record)
+                            return np.inf
+
+                        # Penalize negative energy gains (deceleration)
+                        # Make them worse than minimal positive gains but better than failures
+                        if pct_gain < 0.0:
+                            # Map negative gains to large positive penalty values
+                            # Worse deceleration → larger penalty, but still finite (unlike blowups)
+                            # Scale: -0.001% → penalty ~1.0, -1.0% → penalty ~1000, -10% → penalty ~10000
+                            penalty_magnitude = (
+                                abs(pct_gain) * 1000.0
+                            )  # Scale to reasonable range
+
+                            self._log_result(
+                                f"[PENALTY] Evaluation {eval_num}: Negative energy gain "
+                                f"({pct_gain:.6f}%) → penalty {penalty_magnitude:.3e}"
+                            )
+
+                            # Store evaluation with large penalty
+                            eval_record = {
+                                "evaluation": eval_num,
+                                "parameters": dict(zip(param_names, x)),
+                                "failed": False,
+                                "halted_early": False,
+                                "negative_gain": True,
+                                "objective_value": penalty_magnitude,  # Large positive = bad for minimization
+                                "raw_objective_value": pct_gain,
+                                "metrics": result.get("metrics", {}),
+                            }
+                            all_evaluations.append(eval_record)
+
+                            # Return penalty that's worse than any positive gain but better than inf
+                            # For maximization, we'll return large positive value (gets negated later)
+                            return penalty_magnitude
+
                     if np.isnan(value) or np.isinf(value):
                         self._log_result(
                             f"[WARNING] Evaluation {eval_num} returned {'NaN' if np.isnan(value) else 'inf'} for metric '{metric_name}'"
