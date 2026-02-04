@@ -7286,6 +7286,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             if result.rider_beta_y_m is not None:
                 metrics["rider_beta_y_m"] = result.rider_beta_y_m
 
+            # Add particle failure tracking
+            metrics["num_particles_dead"] = result.num_particles_dead
+            if result.halted_early:
+                metrics["halted_early"] = True
+                if result.halt_reason:
+                    metrics["halt_reason"] = result.halt_reason
+
             output = {"metrics": metrics}
 
             self._log_result(

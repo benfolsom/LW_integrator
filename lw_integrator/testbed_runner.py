@@ -722,6 +722,11 @@ class RunResult:
     halt_reason: Optional[str] = (
         None  # Reason for early halt (e.g., "gamma_blowup", "distance_reached")
     )
+    # Particle failure tracking
+    num_particles_dead: int = 0  # Number of particles that failed during simulation
+    particle_failure_info: Optional[Dict[int, Dict]] = (
+        None  # Detailed failure info per particle
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1567,6 +1572,8 @@ def run_testbed(
                 # Check for early halt metadata and particle failures in the last trajectory state
                 halted_early = False
                 halt_reason = None
+                num_particles_dead = 0
+                particle_failure_info = None
                 if len(rider_states) > 0:
                     last_state = rider_states[-1]
                     if "_halted_early" in last_state:
@@ -1578,6 +1585,8 @@ def run_testbed(
                     # Log particle failure summary if any particles failed
                     failure_info = get_particle_failure_summary(rider_states)
                     if failure_info:
+                        num_particles_dead = len(failure_info)
+                        particle_failure_info = failure_info
                         failure_summary = format_failure_summary(failure_info)
                         _log(f"[INFO] {failure_summary}")
 
@@ -3288,6 +3297,12 @@ def run_testbed(
         rider_beta_y_m=rider_beta_y,
         halted_early=halted_early if "halted_early" in locals() else False,
         halt_reason=halt_reason if "halt_reason" in locals() else None,
+        num_particles_dead=num_particles_dead
+        if "num_particles_dead" in locals()
+        else 0,
+        particle_failure_info=particle_failure_info
+        if "particle_failure_info" in locals()
+        else None,
     )
 
 
