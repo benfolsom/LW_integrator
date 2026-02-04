@@ -38,6 +38,12 @@ from core.particle_config import (
     DEFAULT_RIDER_PARAMS,
     PARTICLE_PARAM_FIELDS,
 )
+from core.particle_status import (
+    compute_alive_particle_average,
+    format_failure_summary,
+    get_alive_particle_values,
+    get_particle_failure_summary,
+)
 from core.types import SimulationType
 from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     compute_delta_energy_components,
@@ -1415,13 +1421,28 @@ def run_testbed(
             rider_delta_e = rider_delta_e_total  # For backward compatibility
             rider_z_rel = rider_z - rider_z[0]
 
-            # Compute transverse energy components
-            rider_gamma_series = np.array([float(s["gamma"][0]) for s in rider_states])
-            rider_bx_series = np.array([float(s["bx"][0]) for s in rider_states])
-            rider_by_series = np.array([float(s["by"][0]) for s in rider_states])
-            rider_initial_gamma = float(rider_initial["gamma"][0])
-            rider_initial_bx = float(rider_initial["bx"][0])
-            rider_initial_by = float(rider_initial["by"][0])
+            # Compute transverse energy components (use alive particles only)
+            rider_gamma_series = np.array(
+                [
+                    compute_alive_particle_average(s, "gamma") or 1.0
+                    for s in rider_states
+                ]
+            )
+            rider_bx_series = np.array(
+                [compute_alive_particle_average(s, "bx") or 0.0 for s in rider_states]
+            )
+            rider_by_series = np.array(
+                [compute_alive_particle_average(s, "by") or 0.0 for s in rider_states]
+            )
+            rider_initial_gamma = (
+                compute_alive_particle_average(rider_initial, "gamma") or 1.0
+            )
+            rider_initial_bx = (
+                compute_alive_particle_average(rider_initial, "bx") or 0.0
+            )
+            rider_initial_by = (
+                compute_alive_particle_average(rider_initial, "by") or 0.0
+            )
             rider_rest_gev = rider_rest_mev * 1e-3
 
             rider_delta_e_x = (
@@ -1450,41 +1471,76 @@ def run_testbed(
                 p_init = P_init / (mass_init * C_MMNS)
                 rider_gamma_initial = float(np.sqrt(1 + p_init**2))
 
-                # Compute final gamma from trajectory
+                # Compute final gamma from trajectory (using alive particles only)
                 final_state = rider_states[-1]
-                Pz_final = float(np.asarray(final_state.get("Pz", 0)).flat[0])
-                Px_final = float(np.asarray(final_state.get("Px", 0)).flat[0])
-                Py_final = float(np.asarray(final_state.get("Py", 0)).flat[0])
-                P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
-                mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
-                p_final = P_final / (mass_final * C_MMNS)
-                rider_gamma_final = float(np.sqrt(1 + p_final**2))
 
-                # Store trajectory data (extract scalars from normalized arrays)
+                # Use alive particles only for final gamma computation
+                Pz_final_alive = get_alive_particle_values(final_state, "Pz")
+                Px_final_alive = get_alive_particle_values(final_state, "Px")
+                Py_final_alive = get_alive_particle_values(final_state, "Py")
+
+                if Pz_final_alive is not None and len(Pz_final_alive) > 0:
+                    # Average over alive particles
+                    Pz_final = float(np.mean(Pz_final_alive))
+                    Px_final = float(np.mean(Px_final_alive))
+                    Py_final = float(np.mean(Py_final_alive))
+                    P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
+                    mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
+                    p_final = P_final / (mass_final * C_MMNS)
+                    rider_gamma_final = float(np.sqrt(1 + p_final**2))
+                else:
+                    # All particles dead - use initial gamma as fallback
+                    rider_gamma_final = rider_gamma_initial
+                    _log(
+                        "[WARNING] All particles dead at final step - using initial gamma"
+                    )
+
+                # Store trajectory data (extract values from alive particles, averaged)
                 # Compute r from x,y; compute normalized momentum components
                 z_arr = np.array(
-                    [float(np.asarray(s.get("z", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "z") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 x_arr = np.array(
-                    [float(np.asarray(s.get("x", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "x") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 y_arr = np.array(
-                    [float(np.asarray(s.get("y", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "y") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 r_arr = np.sqrt(x_arr**2 + y_arr**2)
 
                 # Extract momentum components (capital P) and normalize by m*c
                 Pz_arr = np.array(
-                    [float(np.asarray(s.get("Pz", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "Pz") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 Px_arr = np.array(
-                    [float(np.asarray(s.get("Px", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "Px") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 Py_arr = np.array(
-                    [float(np.asarray(s.get("Py", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "Py") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 m_arr = np.array(
-                    [float(np.asarray(s.get("m", 1)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "m") or 1.0
+                        for s in rider_states
+                    ]
                 )
                 # Compute transverse momentum magnitude
                 Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
@@ -1501,11 +1557,14 @@ def run_testbed(
                     "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
                     "gamma": gamma_arr,  # Lorentz factor for stability analysis
                     "t": np.array(
-                        [float(np.asarray(s.get("t", 0)).flat[0]) for s in rider_states]
+                        [
+                            compute_alive_particle_average(s, "t") or 0.0
+                            for s in rider_states
+                        ]
                     ),
                 }
 
-                # Check for early halt metadata in the last trajectory state
+                # Check for early halt metadata and particle failures in the last trajectory state
                 halted_early = False
                 halt_reason = None
                 if len(rider_states) > 0:
@@ -1515,6 +1574,12 @@ def run_testbed(
                     if "_halt_reason" in last_state:
                         halt_reason = str(last_state["_halt_reason"])
                         _log(f"[INFO] Integration halted early: {halt_reason}")
+
+                    # Log particle failure summary if any particles failed
+                    failure_info = get_particle_failure_summary(rider_states)
+                    if failure_info:
+                        failure_summary = format_failure_summary(failure_info)
+                        _log(f"[INFO] {failure_summary}")
 
         except Exception as exc:  # pragma: no cover - defensive guard
             _log(f"Failed to compute rider energy series: {exc}")
@@ -1542,13 +1607,32 @@ def run_testbed(
 
                 # Compute transverse energy components
                 driver_gamma_series = np.array(
-                    [float(s["gamma"][0]) for s in driver_states]
+                    [
+                        compute_alive_particle_average(s, "gamma") or 1.0
+                        for s in driver_states
+                    ]
                 )
-                driver_bx_series = np.array([float(s["bx"][0]) for s in driver_states])
-                driver_by_series = np.array([float(s["by"][0]) for s in driver_states])
-                driver_initial_gamma = float(driver_initial["gamma"][0])
-                driver_initial_bx = float(driver_initial["bx"][0])
-                driver_initial_by = float(driver_initial["by"][0])
+                driver_bx_series = np.array(
+                    [
+                        compute_alive_particle_average(s, "bx") or 0.0
+                        for s in driver_states
+                    ]
+                )
+                driver_by_series = np.array(
+                    [
+                        compute_alive_particle_average(s, "by") or 0.0
+                        for s in driver_states
+                    ]
+                )
+                driver_initial_gamma = (
+                    compute_alive_particle_average(driver_initial, "gamma") or 1.0
+                )
+                driver_initial_bx = (
+                    compute_alive_particle_average(driver_initial, "bx") or 0.0
+                )
+                driver_initial_by = (
+                    compute_alive_particle_average(driver_initial, "by") or 0.0
+                )
                 driver_rest_gev = driver_rest_mev * 1e-3
 
                 driver_delta_e_x = (

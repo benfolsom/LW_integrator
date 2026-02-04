@@ -12,8 +12,15 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 
 from .constants import C_MMNS
-from .equations import retarded_equations_of_motion
+from .equations import GammaBlowupError, retarded_equations_of_motion
 from .images import generate_conducting_image, generate_switching_image
+from .particle_status import (
+    all_particles_dead,
+    format_failure_summary,
+    get_particle_failure_summary,
+    mark_particle_dead,
+    propagate_dead_particle_status,
+)
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import (
     ChronoMatchingMode,
@@ -72,6 +79,14 @@ class AdaptiveTimestepConfig:
     cooldown_steps: int = 10  # Minimum steps at reduced timestep before probing return
     probe_threshold: float = 0.01  # Energy stability threshold for safe return (1%)
     max_probe_steps: int = 3  # Number of consecutive stable steps needed to return
+
+    # Impractical timestep handling
+    max_substeps_per_step: int = (
+        1000  # If a step requires more sub-steps, skip cooldown
+    )
+    skip_cooldown_on_particle_death: bool = (
+        True  # Don't apply dead particle's reduced timestep to survivors
+    )
 
     # Proximity-based refinement: refine timesteps near walls/apertures
     proximity_refinement_enabled: bool = True  # Enable proximity-based refinement
@@ -272,6 +287,9 @@ def retarded_integrator(
     reduced_h_step = h_step
     cooldown_counter = 0
     stable_steps_counter = 0  # Count consecutive stable steps during probing
+    last_particle_death_step = (
+        -1
+    )  # Track when particles die to handle timestep recovery
 
     # Store initial z position for relative cutoff mode
     z_initial: Optional[float] = None
@@ -378,7 +396,39 @@ def retarded_integrator(
 
             # Hysteresis logic: decide starting timestep for this step
             if reduced_timestep_mode and adaptive_timestep is not None:
-                if cooldown_counter < adaptive_timestep.cooldown_steps:
+                # Check if timestep is impractically small (would require too many sub-steps)
+                expected_substeps = int(np.ceil(h_step / reduced_h_step))
+                impractical_timestep = (
+                    expected_substeps > adaptive_timestep.max_substeps_per_step
+                )
+
+                # Skip cooldown if a particle just died and we have the skip flag enabled
+                skip_cooldown = (
+                    adaptive_timestep.skip_cooldown_on_particle_death
+                    and last_particle_death_step == i - 1
+                )
+
+                if impractical_timestep:
+                    # Timestep is too small - skip cooldown and try to recover immediately
+                    if adaptive_timestep.debug:
+                        print(
+                            f"Step {i}: Impractical timestep detected ({expected_substeps} sub-steps required). "
+                            f"Skipping cooldown and attempting recovery to {h_step:.6e} ns"
+                        )
+                    cooldown_counter = (
+                        adaptive_timestep.cooldown_steps
+                    )  # Jump to probing phase
+                elif skip_cooldown:
+                    # Particle just died - skip cooldown for survivors
+                    if adaptive_timestep.debug:
+                        print(
+                            f"Step {i}: Particle died last step. Skipping cooldown for survivors, "
+                            f"attempting recovery to {h_step:.6e} ns"
+                        )
+                    cooldown_counter = (
+                        adaptive_timestep.cooldown_steps
+                    )  # Jump to probing phase
+                elif cooldown_counter < adaptive_timestep.cooldown_steps:
                     # Still in cooldown - use reduced timestep
                     current_h_step = reduced_h_step
                     cooldown_counter += 1
@@ -408,6 +458,34 @@ def retarded_integrator(
                             f"{h_step:.6e} → {current_h_step:.6e} ns"
                         )
 
+            # Initialize temp_trajectory base ONCE before retry loop
+            # This preserves dead particle status across retry attempts within this step
+            temp_trajectory_base = {
+                k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                for k, v in trajectory[i - 1].items()
+            }
+
+            # Propagate dead particle status from previous step ONCE
+            if i > 0:
+                propagate_dead_particle_status(temp_trajectory_base, trajectory[i - 1])
+
+            def propagate_deaths_to_base(state_with_deaths):
+                """Helper to propagate dead particles from a state to temp_trajectory_base."""
+                if "_dead_particles" in state_with_deaths:
+                    if "_dead_particles" not in temp_trajectory_base:
+                        num_particles = len(state_with_deaths.get("gamma", []))
+                        temp_trajectory_base["_dead_particles"] = np.zeros(
+                            num_particles, dtype=bool
+                        )
+                        temp_trajectory_base["_particle_failure_info"] = {}
+                    temp_trajectory_base["_dead_particles"] |= state_with_deaths[
+                        "_dead_particles"
+                    ]
+                    if "_particle_failure_info" in state_with_deaths:
+                        temp_trajectory_base["_particle_failure_info"].update(
+                            state_with_deaths["_particle_failure_info"]
+                        )
+
             while not step_accepted:
                 # Determine number of sub-steps needed to cover base timestep interval
                 num_substeps = int(np.round(h_step / current_h_step))
@@ -415,49 +493,228 @@ def retarded_integrator(
                     num_substeps = 1
 
                 # Build temporary trajectory for sub-stepping
-                # Start with the previous full step as our base
-                temp_trajectory = [trajectory[i - 1]]
+                # Start with a COPY of the base (which already has dead particle status)
+                # This ensures dead particles from previous retry attempts are preserved
+                temp_trajectory = [
+                    {
+                        k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                        for k, v in temp_trajectory_base.items()
+                    }
+                ]
                 temp_driver = [trajectory_drv[i - 1]]
+
                 energy_jump_detected = False
+                gamma_blowup_detected = False
 
                 for substep_idx in range(num_substeps):
-                    # Compute one sub-step
-                    trial_state = self_consistent_step(
-                        retarded_equations_of_motion,
-                        current_h_step,
-                        temp_trajectory,
-                        temp_driver,
-                        substep_idx,  # Use correct index in temp trajectory
-                        aperture_radius,
-                        sim_type,
-                        self_consistency,
-                        chrono_mode,
-                        startup_mode,
-                        step_idx=i,  # Pass main step index for error messages
-                    )
-
-                    # Check for gamma blowup flag immediately after computing trial_state
-                    if trial_state.get("_gamma_blowup", False):
-                        gamma_blowup_value = trial_state.get(
-                            "_gamma_blowup_value", np.nan
+                    # Compute one sub-step, catching soft gamma blowups
+                    try:
+                        trial_state = self_consistent_step(
+                            retarded_equations_of_motion,
+                            current_h_step,
+                            temp_trajectory,
+                            temp_driver,
+                            substep_idx,  # Use correct index in temp trajectory
+                            aperture_radius,
+                            sim_type,
+                            self_consistency,
+                            chrono_mode,
+                            startup_mode,
+                            step_idx=i,  # Pass main step index for error messages
                         )
-                        gamma_blowup_particle = trial_state.get(
-                            "_gamma_blowup_particle", 0
-                        )
-                        if adaptive_timestep is not None and adaptive_timestep.debug:
+                    except GammaBlowupError as e:
+                        # Soft gamma blowup detected - reduce timestep and retry
+                        # Only handle this if adaptive timestep is enabled
+                        if adaptive_timestep is None or not adaptive_timestep.enabled:
+                            # No adaptive timestep available - treat as hard blowup
                             print(
-                                f"[CRITICAL] Step {i}, substep {substep_idx}: Gamma blowup detected during self-consistency "
-                                f"(particle {gamma_blowup_particle}, γ={gamma_blowup_value:.2e}). "
-                                f"Numerical breakdown - halting integration."
+                                f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
+                                f"Gamma blowup (γ={e.gamma_value:.2e}) with no adaptive timestep available. "
+                                f"Marking particle as dead."
                             )
-                        # Store trial_state with blowup flag in temp_trajectory so it can be accessed later
-                        temp_trajectory.append(trial_state)
-                        # Use previous driver state as placeholder (integration will halt anyway)
-                        temp_driver.append(temp_driver[-1])
-                        # Mark step as accepted to exit the retry loop
-                        step_accepted = True
-                        # Break out of substep loop - will be caught by main check below
-                        break
+                            # Get or create trial_state from previous step to mark particle dead
+                            if len(temp_trajectory) > 0:
+                                trial_state = {
+                                    k: (
+                                        v.copy()
+                                        if isinstance(v, (dict, np.ndarray))
+                                        else v
+                                    )
+                                    for k, v in temp_trajectory[-1].items()
+                                }
+                            else:
+                                trial_state = {
+                                    k: (
+                                        v.copy()
+                                        if isinstance(v, (dict, np.ndarray))
+                                        else v
+                                    )
+                                    for k, v in trajectory[i - 1].items()
+                                }
+
+                            mark_particle_dead(
+                                trial_state,
+                                e.particle_idx,
+                                i,
+                                "gamma_blowup_no_adaptive",
+                                gamma_value=e.gamma_value,
+                                iteration=e.iteration,
+                            )
+
+                            # Append the state with dead particle to trajectory
+                            temp_trajectory.append(trial_state)
+                            temp_driver.append(
+                                temp_driver[-1]
+                                if temp_driver
+                                else trajectory_drv[i - 1]
+                            )
+
+                            # Track particle death for timestep recovery logic
+                            last_particle_death_step = i
+
+                            # Don't retry - accept step with dead particle
+                            gamma_blowup_detected = False
+                            break  # Exit substep loop, step will be accepted below
+                        else:
+                            # Adaptive timestep available - try to reduce and retry
+                            gamma_blowup_detected = True
+                            refinement_attempt += 1
+
+                            if (
+                                refinement_attempt
+                                > adaptive_timestep.max_refinement_attempts
+                            ):
+                                # Exhausted retry attempts - convert to hard blowup
+                                print(
+                                    f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
+                                    f"Max refinement attempts reached after gamma blowup (γ={e.gamma_value:.6e}). "
+                                    f"Marking particle as dead."
+                                )
+                                # Get or create trial_state from previous step
+                                if len(temp_trajectory) > 0:
+                                    trial_state = {
+                                        k: (
+                                            v.copy()
+                                            if isinstance(v, (dict, np.ndarray))
+                                            else v
+                                        )
+                                        for k, v in temp_trajectory[-1].items()
+                                    }
+                                else:
+                                    trial_state = {
+                                        k: (
+                                            v.copy()
+                                            if isinstance(v, (dict, np.ndarray))
+                                            else v
+                                        )
+                                        for k, v in trajectory[i - 1].items()
+                                    }
+
+                                mark_particle_dead(
+                                    trial_state,
+                                    e.particle_idx,
+                                    i,
+                                    "gamma_blowup_max_retries",
+                                    gamma_value=e.gamma_value,
+                                    iteration=e.iteration,
+                                )
+
+                                # Append the state with dead particle to trajectory
+                                temp_trajectory.append(trial_state)
+                                temp_driver.append(
+                                    temp_driver[-1]
+                                    if temp_driver
+                                    else trajectory_drv[i - 1]
+                                )
+
+                                # Track particle death for timestep recovery logic
+                                last_particle_death_step = i
+
+                                # Don't retry - accept step with dead particle
+                                gamma_blowup_detected = False
+                                break  # Exit substep loop, step will be accepted below
+                            else:
+                                # Check minimum timestep limit
+                                min_h = h_step * adaptive_timestep.min_timestep_factor
+                                new_h_step = (
+                                    current_h_step
+                                    / adaptive_timestep.timestep_reduction_factor
+                                )
+
+                                if new_h_step < min_h:
+                                    # Minimum timestep reached - convert to hard blowup
+                                    print(
+                                        f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
+                                        f"Minimum timestep reached after gamma blowup (γ={e.gamma_value:.6e}). "
+                                        f"Marking particle as dead."
+                                    )
+                                    # Get or create trial_state from previous step
+                                    if len(temp_trajectory) > 0:
+                                        trial_state = {
+                                            k: (
+                                                v.copy()
+                                                if isinstance(v, (dict, np.ndarray))
+                                                else v
+                                            )
+                                            for k, v in temp_trajectory[-1].items()
+                                        }
+                                    else:
+                                        trial_state = {
+                                            k: (
+                                                v.copy()
+                                                if isinstance(v, (dict, np.ndarray))
+                                                else v
+                                            )
+                                            for k, v in trajectory[i - 1].items()
+                                        }
+
+                                    mark_particle_dead(
+                                        trial_state,
+                                        e.particle_idx,
+                                        i,
+                                        "gamma_blowup_min_timestep",
+                                        gamma_value=e.gamma_value,
+                                        iteration=e.iteration,
+                                    )
+
+                                    # Append the state with dead particle to trajectory
+                                    temp_trajectory.append(trial_state)
+                                    temp_driver.append(
+                                        temp_driver[-1]
+                                        if temp_driver
+                                        else trajectory_drv[i - 1]
+                                    )
+
+                                    # Track particle death for timestep recovery logic
+                                    last_particle_death_step = i
+
+                                    # Don't retry - accept step with dead particle
+                                    gamma_blowup_detected = False
+                                    break  # Exit substep loop, step will be accepted below
+                                else:
+                                    # Reduce timestep and retry
+                                    current_h_step = new_h_step
+                                    if adaptive_timestep.debug:
+                                        print(
+                                            f"Step {i}.{substep_idx}: Gamma blowup detected (γ={e.gamma_value:.6e}). "
+                                            f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
+                                            f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
+                                        )
+
+                                    # Enter or stay in reduced timestep mode
+                                    reduced_timestep_mode = True
+                                    reduced_h_step = current_h_step
+                                    cooldown_counter = 0
+                                    stable_steps_counter = 0
+
+                                    # Propagate dead particles to base before breaking
+                                    propagate_deaths_to_base(trial_state)
+
+                                    break  # Exit sub-step loop to retry with smaller timestep
+
+                    # After substep completes, propagate any newly-dead particles back to base
+                    # so subsequent retries will skip them
+                    propagate_deaths_to_base(trial_state)
 
                     # Update driver state for this substep
                     if sim_type == SimulationType.SWITCHING_WALL:
@@ -530,7 +787,7 @@ def retarded_integrator(
                                         current_h_step = new_h_step
                                         if adaptive_timestep.debug:
                                             print(
-                                                f"Step {i}.{substep_idx}: Energy jump detected (ΔE/E = {relative_change:.6e}). "
+                                                f"Step {i}: Energy jump (ΔE/E = {relative_change:.6e}). "
                                                 f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
                                                 f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
                                             )
@@ -541,6 +798,9 @@ def retarded_integrator(
                                         cooldown_counter = 0
                                         stable_steps_counter = 0
 
+                                        # Propagate dead particles to base before breaking
+                                        propagate_deaths_to_base(temp_trajectory[-1])
+
                                         break  # Exit sub-step loop to retry with smaller timestep
 
                         # Update previous energy for next substep
@@ -550,8 +810,8 @@ def retarded_integrator(
                     temp_trajectory.append(trial_state)
                     temp_driver.append(trial_driver)
 
-                # If no energy jump or we're accepting anyway, we're done
-                if not energy_jump_detected:
+                # If no energy jump, gamma blowup, or we're accepting anyway, we're done
+                if not energy_jump_detected and not gamma_blowup_detected:
                     step_accepted = True
                     if (
                         adaptive_timestep is not None
@@ -610,53 +870,75 @@ def retarded_integrator(
                                         f"restarting cooldown"
                                     )
 
+                                # Propagate dead particles to base before restarting cooldown
+                                propagate_deaths_to_base(temp_trajectory[-1])
+
             # Accept the final sub-step state as the step result
             trajectory[i] = temp_trajectory[-1]
             _ensure_startup_metadata(trajectory[i])
 
-            # Check for gamma blowup flag set during self-consistency iterations
-            if trajectory[i].get("_gamma_blowup", False):
-                gamma_blowup_value = trajectory[i].get("_gamma_blowup_value", np.nan)
-                gamma_blowup_particle = trajectory[i].get("_gamma_blowup_particle", 0)
-                if adaptive_timestep is not None and adaptive_timestep.debug:
-                    print(
-                        f"[CRITICAL] Step {i}: Gamma blowup detected during self-consistency "
-                        f"(particle {gamma_blowup_particle}, γ={gamma_blowup_value:.2e}). "
-                        f"Numerical breakdown - halting integration."
-                    )
+            # Check if all particles are dead
+            if all_particles_dead(trajectory[i]):
+                # Get failure summary
+                failure_info = get_particle_failure_summary(trajectory)
+                failure_summary = format_failure_summary(failure_info)
+                num_dead = len(failure_info)
+
+                print(
+                    f"[CRITICAL] Step {i}: All {num_dead} particles have failed. "
+                    f"Halting integration."
+                )
+                print(f"  {failure_summary}")
+
                 # Truncate trajectory and mark as halted
                 trajectory = trajectory[: i + 1]
                 trajectory_drv = trajectory_drv[: i + 1]
-                # Store halt information in the last particle's metadata
+
+                # Store halt information
                 trajectory[-1]["_halted_early"] = True
                 trajectory[-1]["_halt_reason"] = (
-                    f"gamma_blowup (γ={gamma_blowup_value:.2e} at step {i}/{steps}, "
-                    f"particle {gamma_blowup_particle} during self-consistency)"
+                    f"all_particles_dead at step {i}/{steps}. {failure_summary}"
                 )
                 trajectory[-1]["_halt_step"] = i
                 trajectory[-1]["_requested_steps"] = steps
                 return trajectory, trajectory_drv
 
-            # Check for gamma blowup (numerical breakdown)
-            # Gamma > 1e8 is physically unrealistic and indicates severe numerical issues
-            gamma_check = _calculate_gamma(trajectory[i])
-            if gamma_check > 1e8 or np.isnan(gamma_check) or np.isinf(gamma_check):
-                if adaptive_timestep is not None and adaptive_timestep.debug:
+            # Post-step gamma check for individual particles
+            # Mark any particle with extreme gamma as dead
+            gamma_array = trajectory[i].get("gamma")
+            if gamma_array is not None:
+                for particle_idx in range(len(gamma_array)):
+                    gamma_val = gamma_array[particle_idx]
+                    # Skip if already dead
+                    dead_mask = trajectory[i].get("_dead_particles")
+                    if dead_mask is not None and dead_mask[particle_idx]:
+                        continue
+
+                    # Check for gamma blowup
+                    if gamma_val > 1e8 or np.isnan(gamma_val) or np.isinf(gamma_val):
+                        print(
+                            f"[WARNING] Step {i}: Particle {particle_idx} gamma blowup "
+                            f"detected (γ={gamma_val:.2e}). Marking particle as dead."
+                        )
+                        mark_particle_dead(
+                            trajectory[i],
+                            particle_idx,
+                            i,
+                            "gamma_blowup_post_step",
+                            gamma_value=gamma_val,
+                        )
+
+            # Log alive/dead particle counts after post-step checks
+            dead_mask = trajectory[i].get("_dead_particles")
+            if dead_mask is not None and np.any(dead_mask):
+                num_alive = np.sum(~dead_mask)
+                num_dead = np.sum(dead_mask)
+                num_total = len(dead_mask)
+                if num_dead > 0:
                     print(
-                        f"[CRITICAL] Step {i}: Gamma blowup detected (γ={gamma_check:.2e}). "
-                        f"Numerical breakdown - halting integration."
+                        f"  [STATUS] Step {i}: {num_alive}/{num_total} particles alive, "
+                        f"{num_dead}/{num_total} dead"
                     )
-                # Truncate trajectory and mark as halted
-                trajectory = trajectory[: i + 1]
-                trajectory_drv = trajectory_drv[: i + 1]
-                # Store halt information in the last particle's metadata
-                trajectory[-1]["_halted_early"] = True
-                trajectory[-1]["_halt_reason"] = (
-                    f"gamma_blowup (γ={gamma_check:.2e} at step {i}/{steps})"
-                )
-                trajectory[-1]["_halt_step"] = i
-                trajectory[-1]["_requested_steps"] = steps
-                return trajectory, trajectory_drv
 
             if sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(

@@ -83,6 +83,7 @@ from .distances import (
     compute_instantaneous_distance,
     compute_retarded_distance,
 )
+from .particle_status import mark_particle_dead
 from .self_consistency import SelfConsistencyConfig
 from .types import (
     ChronoMatchingMode,
@@ -95,6 +96,38 @@ from .vectorized_interactions import (
     compute_vectorized_contributions,
     gather_external_samples,
 )
+
+
+class GammaBlowupError(Exception):
+    """Exception raised when gamma exceeds soft threshold during integration.
+
+    This exception signals to the integration runner that the timestep should
+    be reduced and the step retried. It is NOT raised for hard blowups (gamma > 1e20
+    or NaN/Inf), which result in immediate particle death.
+
+    Attributes
+    ----------
+    step_idx : int
+        Integration step number where the blowup occurred.
+    particle_idx : int
+        Index of the particle that experienced the blowup.
+    gamma_value : float
+        The gamma value that triggered the soft blowup.
+    iteration : int
+        Self-consistency iteration number where the blowup was detected.
+    """
+
+    def __init__(
+        self, step_idx: int, particle_idx: int, gamma_value: float, iteration: int
+    ):
+        self.step_idx = step_idx
+        self.particle_idx = particle_idx
+        self.gamma_value = gamma_value
+        self.iteration = iteration
+        super().__init__(
+            f"Soft gamma blowup at step {step_idx}, particle {particle_idx}: "
+            f"γ={gamma_value:.2e} (iteration {iteration})"
+        )
 
 
 def _ensure_startup_metadata(state: ParticleState) -> None:
@@ -168,9 +201,9 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
     Returns
     -------
     ParticleState
-        A deep copy with all arrays duplicated.
+        A deep copy with all arrays duplicated, including dead particle metadata.
     """
-    return {
+    result = {
         "x": np.copy(current_state["x"]),
         "y": np.copy(current_state["y"]),
         "z": np.copy(current_state["z"]),
@@ -198,6 +231,18 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "beta_avg_z": np.copy(current_state["beta_avg_z"]),
         "beta_samples": np.copy(current_state["beta_samples"]),
     }
+
+    # Preserve dead particle metadata to prevent redundant logging
+    if "_dead_particles" in current_state:
+        result["_dead_particles"] = np.copy(current_state["_dead_particles"])
+    if "_particle_failure_info" in current_state:
+        # Deep copy the failure info dict
+        result["_particle_failure_info"] = {
+            k: v.copy() if isinstance(v, dict) else v
+            for k, v in current_state["_particle_failure_info"].items()
+        }
+
+    return result
 
 
 def _get_particle_charge(state: ParticleState, particle_idx: int):
@@ -827,6 +872,9 @@ def retarded_equations_of_motion(
 
     num_particles = len(current_state["x"])
 
+    # Track particles marked dead in this step
+    particles_marked_dead_this_step = 0
+
     # Extract self-consistency configuration
     (
         sc_enabled,
@@ -847,6 +895,30 @@ def retarded_equations_of_motion(
 
     # Process each particle independently
     for particle_idx in range(num_particles):
+        # Skip particles that are already marked dead
+        if "_dead_particles" in result and result["_dead_particles"][particle_idx]:
+            # Copy previous state for dead particle (don't recompute)
+            for key in [
+                "x",
+                "y",
+                "z",
+                "t",
+                "bx",
+                "by",
+                "bz",
+                "gamma",
+                "Px",
+                "Py",
+                "Pz",
+                "Pt",
+                "bdotx",
+                "bdoty",
+                "bdotz",
+            ]:
+                if key in current_state:
+                    result[key][particle_idx] = current_state[key][particle_idx]
+            continue
+
         # Working state for SC iterations - tracks evolving state
         # On iteration 0, use current_state values
         # On iteration k > 0, use values from previous iteration
@@ -1498,26 +1570,54 @@ def retarded_equations_of_motion(
             working_y = result["y"][particle_idx]
             working_z = result["z"][particle_idx]
 
-            # Check for gamma blowup during self-consistency iterations
-            # Gamma > 1e8 indicates severe numerical breakdown
-            if sc_enabled and (
-                working_gamma > 1e8
-                or np.isnan(working_gamma)
-                or np.isinf(working_gamma)
-            ):
-                if sc_verbosity > 0:
-                    print(
-                        f"    [CRITICAL] Step {step_idx if step_idx is not None else '?'}, "
-                        f"Particle {particle_idx}, Iteration {sc_iteration}: "
-                        f"Gamma blowup detected (γ={working_gamma:.2e})"
+            # Two-tier gamma blowup detection:
+            # - Soft threshold (1e8): trigger timestep reduction and retry
+            # - Hard threshold (1e20): particle is truly unrecoverable, mark dead
+            if sc_enabled:
+                is_nan_or_inf = np.isnan(working_gamma) or np.isinf(working_gamma)
+                gamma_soft_threshold = 1e8
+                gamma_hard_threshold = 1e20
+
+                # Hard blowup: immediate death, no recovery possible
+                if is_nan_or_inf or working_gamma > gamma_hard_threshold:
+                    # Only log and mark if not already dead (suppress redundant logging)
+                    already_dead = (
+                        "_dead_particles" in result
+                        and result["_dead_particles"][particle_idx]
                     )
-                    print(f"      Numerical breakdown - aborting self-consistency loop")
-                # Set a flag in result to signal that this step should halt integration
-                # The integration_runner will check for this and halt the run
-                result["_gamma_blowup"] = True
-                result["_gamma_blowup_value"] = float(working_gamma)
-                result["_gamma_blowup_particle"] = particle_idx
-                break  # Exit self-consistency loop immediately
+                    if not already_dead:
+                        print(
+                            f"    [CRITICAL] Step {step_idx if step_idx is not None else '?'}, "
+                            f"Particle {particle_idx}/{num_particles}, Iteration {sc_iteration}: "
+                            f"Hard gamma blowup detected (γ={working_gamma:.2e})"
+                        )
+                        print(f"      Marking particle {particle_idx} as dead")
+                        mark_particle_dead(
+                            result,
+                            particle_idx,
+                            step_idx if step_idx is not None else -1,
+                            "gamma_blowup_hard",
+                            gamma_value=working_gamma,
+                            iteration=sc_iteration,
+                        )
+                        particles_marked_dead_this_step += 1
+                    break  # Exit self-consistency loop for this particle
+
+                # Soft blowup: trigger timestep reduction for recovery attempt
+                elif working_gamma > gamma_soft_threshold:
+                    if sc_verbosity >= 1:
+                        print(
+                            f"    [WARNING] Step {step_idx if step_idx is not None else '?'}, "
+                            f"Particle {particle_idx}/{num_particles}, Iteration {sc_iteration}: "
+                            f"Soft gamma blowup (γ={working_gamma:.2e}), requesting timestep reduction"
+                        )
+                    # Raise exception to signal integration_runner to reduce timestep
+                    raise GammaBlowupError(
+                        step_idx if step_idx is not None else -1,
+                        particle_idx,
+                        working_gamma,
+                        sc_iteration,
+                    )
 
         # ================================================================
         # AFTER self-consistency loop: Apply mass-shell projection if needed
@@ -1556,6 +1656,13 @@ def retarded_equations_of_motion(
                 result["gamma"][particle_idx] = kinetic_energy / (
                     particle_mass * C_MMNS
                 )
+
+    # Log summary if any particles died in this step
+    if particles_marked_dead_this_step > 0:
+        print(
+            f"  [SUMMARY] Step {step_idx if step_idx is not None else '?'}: "
+            f"{particles_marked_dead_this_step}/{num_particles} particles marked dead in this step"
+        )
 
     return result
 

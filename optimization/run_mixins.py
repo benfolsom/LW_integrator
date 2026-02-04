@@ -1651,7 +1651,8 @@ class OptimizationRunMixin:
 
         options = SimulationOptions(
             steps=steps,
-            seed=self.config.seed,
+            seed=self.config.seed
+            + run_num,  # Unique seed per run for varied particle distributions
             simulation_type=self.config.simulation_type,
             rider_params=rider_params,
             driver_params=driver_params,
