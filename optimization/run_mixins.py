@@ -576,7 +576,30 @@ class OptimizationRunMixin:
                                 f"(gain: {pct_gain:.1f}% > 500% threshold)"
                             )
 
-                    total_penalty = penalty + stability_penalty + energy_gain_penalty
+                    # Add penalty for particle deaths
+                    particle_death_penalty = 0.0
+                    if "num_particles_dead" in metrics:
+                        num_dead = metrics["num_particles_dead"]
+                        if num_dead > 0:
+                            # Configurable penalty per dead particle (default: 10% of objective value)
+                            # This is less severe than the 50% example in documentation
+                            penalty_per_particle = getattr(
+                                self.config, "particle_death_penalty_fraction", 0.10
+                            )
+                            particle_death_penalty = (
+                                value * penalty_per_particle * num_dead
+                            )
+                            self._log_result(
+                                f"[INFO] Particle death penalty: {particle_death_penalty:.3e} "
+                                f"({num_dead} dead × {penalty_per_particle * 100:.0f}% each)"
+                            )
+
+                    total_penalty = (
+                        penalty
+                        + stability_penalty
+                        + energy_gain_penalty
+                        + particle_death_penalty
+                    )
                     adjusted_value = value
                     if total_penalty > 0:
                         if maximize:
@@ -601,6 +624,7 @@ class OptimizationRunMixin:
                         "soft_penalty": penalty,
                         "stability_penalty": stability_penalty,
                         "energy_gain_penalty": energy_gain_penalty,
+                        "particle_death_penalty": particle_death_penalty,
                         "total_penalty": total_penalty,
                         "fitness": result_value,  # Store fitness (for minimization)
                         "failed": False,
