@@ -51,6 +51,15 @@ High-level anatomy
     integrator expects.  ``bunch_initialization.py`` is the main entry point and
     is documented in the API section below.
 
+``lw_integrator/gui/``
+    Tkinter-based graphical user interface for single runs, parameter sweeps,
+    and optimization. Launch with ``python -m lw_integrator.gui`` to access
+    three operational modes: Single Run (Main tab) for individual simulations
+    with real-time visualization, Blind Sweep for parameter space exploration,
+    and Optimization for global search using Genetic Algorithm, Differential
+    Evolution, Nelder-Mead, or Multi-start methods. Includes convergence
+    detection, top-N result saving, and comprehensive trajectory export options.
+
 ``docs/``
     The refreshed documentation that you are currently reading.  Sphinx builds
     use the configuration in ``docs/source/conf.py`` and the helper script
@@ -104,6 +113,13 @@ Key ideas to keep in mind
   checked in the GUI or ``use_legacy=True`` is passed to
   ``prepare_particle_bunches()``. Default behavior uses modern core
   initialization (``input_output.bunch_initialization.create_bunch_from_params``).
+* **GUI application for all workflows.**  The Tkinter-based GUI (``python -m
+  lw_integrator.gui``) supports single runs, parameter sweeps, and optimization
+  with real-time progress tracking and trajectory visualization. It provides
+  full control over particle properties, boundary conditions, physics parameters,
+  and numerical methods. Results can be exported in CSV, JSON, or NPZ formats.
+  The GUI is the recommended interface for most users, with CLI and notebook
+  options available for scripting and batch processing.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to
