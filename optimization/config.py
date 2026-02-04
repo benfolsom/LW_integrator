@@ -11,7 +11,6 @@ import numpy as np
 from core.constants import C_MMNS  # type: ignore[import]
 from core.types import SimulationType  # type: ignore[import]
 
-
 _ELECTRON_MASS_AMU = 0.00054857990907
 _PROTON_MASS_AMU = 1.0
 _ELECTRON_ENERGY_THRESHOLD_GEV = 120.0
@@ -35,9 +34,7 @@ class OptimizationConfig:
     mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
 
     # Optimization settings (only used when mode="optimization")
-    optimization_method: str = (
-        "genetic_algorithm"  # "genetic_algorithm", "differential_evolution", "nelder_mead", "multi_start", "adaptive_grid"
-    )
+    optimization_method: str = "genetic_algorithm"  # "genetic_algorithm", "differential_evolution", "nelder_mead", "multi_start", "adaptive_grid"
     optimization_maxiter: int = 50  # Max iterations/generations
     optimization_population_size: int = (
         20  # For genetic algorithm and differential evolution
@@ -48,6 +45,11 @@ class OptimizationConfig:
     optimization_save_top_n: int = 3  # Save trajectories from top N results
     optimization_convergence_tol: float = 1e-6  # Convergence tolerance (relative)
     optimization_convergence_patience: int = 10  # Generations for plateau detection
+
+    # Penalty settings
+    particle_death_penalty_fraction: float = (
+        0.10  # Penalty per dead particle (10% of objective value)
+    )
 
     # Parameter ranges
     aperture_range: Tuple[float, float] = (1e-5, 1e-3)  # mm (10 μm to 1 mm)
