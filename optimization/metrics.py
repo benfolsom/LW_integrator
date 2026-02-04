@@ -285,6 +285,7 @@ def compute_trajectory_metrics(
         - 'near_aperture_z_mm': Z position of near-aperture max
         - 'max_transverse_displacement_mm': Maximum transverse displacement
         - 'num_deflection_events': Number of detected deflection events
+        - 'num_particles_dead': Number of particles that failed during simulation
     """
     initial_gamma = float(initial_state["gamma"][0])
     rest_energy_gev = rest_energy_mev * 1e-3
@@ -350,6 +351,14 @@ def compute_trajectory_metrics(
         1 for _, event_type, _ in deflections if event_type == "deflection"
     )
     metrics["num_deflection_events"] = deflection_count
+
+    # Particle failure count
+    num_dead = 0
+    if len(trajectory) > 0:
+        final_state = trajectory[-1]
+        if "_dead_particles" in final_state:
+            num_dead = int(np.sum(final_state["_dead_particles"]))
+    metrics["num_particles_dead"] = num_dead
 
     return metrics
 
