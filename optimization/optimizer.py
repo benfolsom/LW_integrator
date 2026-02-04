@@ -88,14 +88,14 @@ class ObjectiveFunction:
                 logger.warning(f"NaN metric value for params {x}")
                 return np.inf if not self.maximize else -np.inf
 
-            # Track best
+            # Track best (filter out inf/-inf values)
             if self.maximize:
-                if value > self.best_value:
+                if np.isfinite(value) and value > self.best_value:
                     self.best_value = value
                     self.best_params = x.copy()
                 objective_value = -value  # Minimize negative
             else:
-                if value < self.best_value:
+                if np.isfinite(value) and value < self.best_value:
                     self.best_value = value
                     self.best_params = x.copy()
                 objective_value = value
@@ -397,11 +397,11 @@ def multi_start_optimize(
             objective_value = -result.fun if maximize else result.fun
 
         if maximize:
-            if objective_value > best_value:
+            if np.isfinite(objective_value) and objective_value > best_value:
                 best_value = objective_value
                 best_result = result
         else:
-            if objective_value < best_value:
+            if np.isfinite(objective_value) and objective_value < best_value:
                 best_value = objective_value
                 best_result = result
 
@@ -502,11 +502,11 @@ def adaptive_grid_search(
 
             # Update best for this level
             if maximize:
-                if metric_value > best_value_level:
+                if np.isfinite(metric_value) and metric_value > best_value_level:
                     best_value_level = metric_value
                     best_params_level = params
             else:
-                if metric_value < best_value_level:
+                if np.isfinite(metric_value) and metric_value < best_value_level:
                     best_value_level = metric_value
                     best_params_level = params
 
@@ -663,13 +663,19 @@ def genetic_algorithm(
     fitness = np.array([objective(ind) for ind in population])
 
     # Track best individual (remember: objective returns value to minimize)
-    if maximize:
-        best_idx = np.argmin(fitness)  # Most negative = best for maximization
+    # Filter out inf values when finding best
+    finite_mask = np.isfinite(fitness)
+    if np.any(finite_mask):
+        finite_fitness = fitness[finite_mask]
+        finite_population = population[finite_mask]
+        best_idx_finite = np.argmin(finite_fitness)
+        best_individual = finite_population[best_idx_finite].copy()
+        best_fitness = finite_fitness[best_idx_finite]
     else:
-        best_idx = np.argmin(fitness)  # Most positive = best for minimization
-
-    best_individual = population[best_idx].copy()
-    best_fitness = fitness[best_idx]
+        # All fitness values are inf - use first individual as placeholder
+        best_individual = population[0].copy()
+        best_fitness = fitness[0]
+        logger.warning("All initial population has infinite fitness")
 
     convergence_history = []
 
@@ -682,25 +688,44 @@ def genetic_algorithm(
 
         # Track convergence
         current_best_fitness = fitness[0]
+
+        # Calculate mean/std only from finite values
+        finite_fitness = fitness[np.isfinite(fitness)]
+        if len(finite_fitness) > 0:
+            mean_fitness = np.mean(finite_fitness)
+            std_fitness = np.std(finite_fitness)
+        else:
+            mean_fitness = np.inf
+            std_fitness = 0.0
+
         convergence_history.append(
             {
                 "generation": generation,
                 "best_fitness": current_best_fitness,
-                "mean_fitness": np.mean(fitness),
-                "std_fitness": np.std(fitness),
+                "mean_fitness": mean_fitness,
+                "std_fitness": std_fitness,
             }
         )
 
-        # Update global best
-        if current_best_fitness < best_fitness:
+        # Update global best (only if finite and better)
+        if np.isfinite(current_best_fitness) and current_best_fitness < best_fitness:
             best_fitness = current_best_fitness
             best_individual = population[0].copy()
 
-        logger.info(
-            f"Generation {generation + 1}/{n_generations}: "
-            f"Best = {-best_fitness if maximize else best_fitness:.6f}, "
-            f"Mean = {-np.mean(fitness) if maximize else np.mean(fitness):.6f}"
-        )
+        # Log with proper handling of inf values
+        if np.isfinite(best_fitness):
+            best_display = -best_fitness if maximize else best_fitness
+            logger.info(
+                f"Generation {generation + 1}/{n_generations}: "
+                f"Best = {best_display:.6f}, "
+                f"Mean = {-mean_fitness if maximize else mean_fitness:.6f}"
+            )
+        else:
+            logger.info(
+                f"Generation {generation + 1}/{n_generations}: "
+                f"Best = inf (no valid solutions), "
+                f"Mean = {-mean_fitness if maximize else mean_fitness:.6f}"
+            )
 
         # Check for early stopping (fitness plateau detection)
         improvement = 0.0
@@ -711,7 +736,12 @@ def genetic_algorithm(
             recent_best = [
                 h["best_fitness"] for h in convergence_history[-convergence_patience:]
             ]
-            improvement = abs(recent_best[0] - recent_best[-1])
+            # Only check convergence if we have finite values
+            if all(np.isfinite(recent_best)):
+                improvement = abs(recent_best[0] - recent_best[-1])
+            else:
+                # If any inf values, no convergence yet
+                improvement = np.inf
             # Use relative tolerance with fallback to absolute for near-zero values
             tolerance = (
                 convergence_tol * abs(recent_best[-1])

@@ -12,6 +12,9 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from core.particle_status import (
+    compute_alive_particle_average,
+)
 from core.types import ParticleState
 
 
@@ -21,6 +24,8 @@ def compute_max_energy_gain(
     rest_energy_mev: float,
 ) -> float:
     """Compute maximum energy gain in GeV along trajectory.
+
+    Only considers alive (non-dead) particles.
 
     Parameters
     ----------
@@ -40,7 +45,9 @@ def compute_max_energy_gain(
     max_gain = 0.0
 
     for state in trajectory:
-        gamma = np.mean(state["gamma"])
+        gamma = compute_alive_particle_average(state, "gamma")
+        if gamma is None:
+            continue
         delta_e = (gamma - initial_gamma) * rest_energy_gev
         if delta_e > max_gain:
             max_gain = delta_e
@@ -95,6 +102,8 @@ def compute_energy_gain_near_aperture(
 ) -> Tuple[float, float, int]:
     """Compute maximum energy gain near aperture position.
 
+    Only considers alive (non-dead) particles.
+
     Parameters
     ----------
     trajectory : List[ParticleState]
@@ -122,13 +131,17 @@ def compute_energy_gain_near_aperture(
     z_max = aperture_z + search_range_mm
 
     for i, state in enumerate(trajectory):
-        z_pos = np.mean(state["z"])
-        if z_min <= z_pos <= z_max:
-            gamma = np.mean(state["gamma"])
+        z_avg = compute_alive_particle_average(state, "z")
+        if z_avg is None:
+            continue
+        if z_min <= z_avg <= z_max:
+            gamma = compute_alive_particle_average(state, "gamma")
+            if gamma is None:
+                continue
             delta_e = (gamma - initial_gamma) * rest_energy_gev
             if delta_e > max_gain:
                 max_gain = delta_e
-                max_z = z_pos
+                max_z = z_avg
                 max_step = i
 
     if max_z is None:
@@ -143,6 +156,8 @@ def compute_relative_energy_gain(
     initial_gamma: float,
 ) -> float:
     """Compute maximum relative energy gain (ΔE/E₀).
+
+    Only considers alive (non-dead) particles.
 
     Parameters
     ----------
@@ -159,7 +174,9 @@ def compute_relative_energy_gain(
     max_relative_gain = 0.0
 
     for state in trajectory:
-        gamma = np.mean(state["gamma"])
+        gamma = compute_alive_particle_average(state, "gamma")
+        if gamma is None:
+            continue
         relative_gain = (gamma - initial_gamma) / initial_gamma
         if relative_gain > max_relative_gain:
             max_relative_gain = relative_gain
@@ -177,6 +194,8 @@ def detect_transverse_deflection(
 
     Energy jumps followed by large energy dips often indicate strong transverse
     deflections rather than true acceleration.
+
+    Only considers alive (non-dead) particles.
 
     Parameters
     ----------
@@ -199,13 +218,20 @@ def detect_transverse_deflection(
         return []
 
     if initial_gamma is None:
-        initial_gamma = np.mean(trajectory[0]["gamma"])
+        gamma_0 = compute_alive_particle_average(trajectory[0], "gamma")
+        if gamma_0 is None:
+            return []
+        initial_gamma = gamma_0
 
     events = []
-    gamma_prev = np.mean(trajectory[0]["gamma"])
+    gamma_prev = compute_alive_particle_average(trajectory[0], "gamma")
+    if gamma_prev is None:
+        return []
 
     for i in range(1, len(trajectory)):
-        gamma_curr = np.mean(trajectory[i]["gamma"])
+        gamma_curr = compute_alive_particle_average(trajectory[i], "gamma")
+        if gamma_curr is None:
+            continue
 
         # Check for jump
         relative_change = (gamma_curr - gamma_prev) / initial_gamma
@@ -214,11 +240,12 @@ def detect_transverse_deflection(
 
             # Look ahead for dip
             if i + 1 < len(trajectory):
-                gamma_next = np.mean(trajectory[i + 1]["gamma"])
-                dip = (gamma_curr - gamma_next) / initial_gamma
-                if dip > energy_dip_threshold:
-                    events.append((i + 1, "dip", dip))
-                    events.append((i, "deflection", relative_change))
+                gamma_next = compute_alive_particle_average(trajectory[i + 1], "gamma")
+                if gamma_next is not None:
+                    dip = (gamma_curr - gamma_next) / initial_gamma
+                    if dip > energy_dip_threshold:
+                        events.append((i + 1, "dip", dip))
+                        events.append((i, "deflection", relative_change))
 
         gamma_prev = gamma_curr
 
@@ -232,6 +259,8 @@ def compute_trajectory_metrics(
     aperture_z: Optional[float] = None,
 ) -> Dict[str, float]:
     """Compute comprehensive metrics for a trajectory.
+
+    Only considers alive (non-dead) particles in all calculations.
 
     Parameters
     ----------
@@ -277,12 +306,15 @@ def compute_trajectory_metrics(
         trajectory, initial_gamma
     )
 
-    # Final energy gain
+    # Final energy gain (using alive particles only)
     if len(trajectory) > 0:
-        final_gamma = np.mean(trajectory[-1]["gamma"])
-        metrics["final_energy_gain_gev"] = (
-            final_gamma - initial_gamma
-        ) * rest_energy_gev
+        final_gamma = compute_alive_particle_average(trajectory[-1], "gamma")
+        if final_gamma is not None:
+            metrics["final_energy_gain_gev"] = (
+                final_gamma - initial_gamma
+            ) * rest_energy_gev
+        else:
+            metrics["final_energy_gain_gev"] = 0.0
     else:
         metrics["final_energy_gain_gev"] = 0.0
 
@@ -297,17 +329,18 @@ def compute_trajectory_metrics(
         metrics["near_aperture_max_gev"] = 0.0
         metrics["near_aperture_z_mm"] = 0.0
 
-    # Transverse displacement
+    # Transverse displacement (using alive particles only)
     initial_x = float(initial_state["x"][0])
     initial_y = float(initial_state["y"][0])
     max_displacement = 0.0
 
     for state in trajectory:
-        x = np.mean(state["x"])
-        y = np.mean(state["y"])
-        displacement = np.sqrt((x - initial_x) ** 2 + (y - initial_y) ** 2)
-        if displacement > max_displacement:
-            max_displacement = displacement
+        x_avg = compute_alive_particle_average(state, "x")
+        y_avg = compute_alive_particle_average(state, "y")
+        if x_avg is not None and y_avg is not None:
+            displacement = np.sqrt((x_avg - initial_x) ** 2 + (y_avg - initial_y) ** 2)
+            if displacement > max_displacement:
+                max_displacement = displacement
 
     metrics["max_transverse_displacement_mm"] = max_displacement
 
@@ -330,6 +363,8 @@ def compute_energy_at_position(
 ) -> Optional[float]:
     """Compute energy gain at a specific z position.
 
+    Only considers alive (non-dead) particles.
+
     Parameters
     ----------
     trajectory : List[ParticleState]
@@ -351,10 +386,13 @@ def compute_energy_at_position(
     rest_energy_gev = rest_energy_mev * 1e-3
 
     for state in trajectory:
-        z_pos = np.mean(state["z"])
-        if abs(z_pos - target_z) <= tolerance_mm:
-            gamma = np.mean(state["gamma"])
-            return (gamma - initial_gamma) * rest_energy_gev
+        z_avg = compute_alive_particle_average(state, "z")
+        if z_avg is None:
+            continue
+        if abs(z_avg - target_z) <= tolerance_mm:
+            gamma = compute_alive_particle_average(state, "gamma")
+            if gamma is not None:
+                return (gamma - initial_gamma) * rest_energy_gev
 
     return None
 

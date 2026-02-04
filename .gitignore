@@ -167,6 +167,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+logcache/
 
 # Performance profiling output
 *.prof

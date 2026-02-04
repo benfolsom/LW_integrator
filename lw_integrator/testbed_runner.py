@@ -32,10 +32,17 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from core.constants import C_MMNS
+from core.debug_logger import get_current_log_path, initialize_debug_logging
 from core.particle_config import (
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     PARTICLE_PARAM_FIELDS,
+)
+from core.particle_status import (
+    compute_alive_particle_average,
+    format_failure_summary,
+    get_alive_particle_values,
+    get_particle_failure_summary,
 )
 from core.types import SimulationType
 from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
@@ -234,7 +241,7 @@ class SimulationOptions:
     zposition_display: bool = False
     zposition_save: bool = False
     trajectory_save: bool = False
-    trajectory_interval: int = 10
+    trajectory_interval: int = 1
     plot_dpi: int = DEFAULT_PLOT_DPI
     output_dir: Path = Path("test_outputs/testbed_runs")
     config_dir: Path = Path("configs/testbed_runs")
@@ -277,7 +284,7 @@ class SimulationOptions:
         0.7  # Relaxation weight for Pt correction (0.0-1.0, default 0.7)
     )
     self_consistency_verbosity: int = (
-        0  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
+        2  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
     )
     self_consistency_chrono_interpolate: bool = (
         False  # Enable chrono-match interpolation for retarded fields
@@ -710,6 +717,11 @@ class RunResult:
     rider_norm_emittance_y_mm_mrad: Optional[float] = None
     rider_beta_x_m: Optional[float] = None
     rider_beta_y_m: Optional[float] = None
+    # Early termination tracking
+    halted_early: bool = False  # True if integration was halted before completion
+    halt_reason: Optional[str] = (
+        None  # Reason for early halt (e.g., "gamma_blowup", "distance_reached")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1047,6 +1059,12 @@ def run_testbed(
     cancel_callback:
         Optional predicate that returns True if cancellation is requested.
     """
+
+    # Initialize debug logging if not already active (for API/testbed usage)
+    current_log = get_current_log_path()
+    if current_log is None:
+        initialize_debug_logging(context="testbed")
+        print("[LOGCACHE] Debug logging initialized in logcache/")
 
     start = time.perf_counter()
     logs: List[str] = []
@@ -1403,13 +1421,28 @@ def run_testbed(
             rider_delta_e = rider_delta_e_total  # For backward compatibility
             rider_z_rel = rider_z - rider_z[0]
 
-            # Compute transverse energy components
-            rider_gamma_series = np.array([float(s["gamma"][0]) for s in rider_states])
-            rider_bx_series = np.array([float(s["bx"][0]) for s in rider_states])
-            rider_by_series = np.array([float(s["by"][0]) for s in rider_states])
-            rider_initial_gamma = float(rider_initial["gamma"][0])
-            rider_initial_bx = float(rider_initial["bx"][0])
-            rider_initial_by = float(rider_initial["by"][0])
+            # Compute transverse energy components (use alive particles only)
+            rider_gamma_series = np.array(
+                [
+                    compute_alive_particle_average(s, "gamma") or 1.0
+                    for s in rider_states
+                ]
+            )
+            rider_bx_series = np.array(
+                [compute_alive_particle_average(s, "bx") or 0.0 for s in rider_states]
+            )
+            rider_by_series = np.array(
+                [compute_alive_particle_average(s, "by") or 0.0 for s in rider_states]
+            )
+            rider_initial_gamma = (
+                compute_alive_particle_average(rider_initial, "gamma") or 1.0
+            )
+            rider_initial_bx = (
+                compute_alive_particle_average(rider_initial, "bx") or 0.0
+            )
+            rider_initial_by = (
+                compute_alive_particle_average(rider_initial, "by") or 0.0
+            )
             rider_rest_gev = rider_rest_mev * 1e-3
 
             rider_delta_e_x = (
@@ -1438,41 +1471,76 @@ def run_testbed(
                 p_init = P_init / (mass_init * C_MMNS)
                 rider_gamma_initial = float(np.sqrt(1 + p_init**2))
 
-                # Compute final gamma from trajectory
+                # Compute final gamma from trajectory (using alive particles only)
                 final_state = rider_states[-1]
-                Pz_final = float(np.asarray(final_state.get("Pz", 0)).flat[0])
-                Px_final = float(np.asarray(final_state.get("Px", 0)).flat[0])
-                Py_final = float(np.asarray(final_state.get("Py", 0)).flat[0])
-                P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
-                mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
-                p_final = P_final / (mass_final * C_MMNS)
-                rider_gamma_final = float(np.sqrt(1 + p_final**2))
 
-                # Store trajectory data (extract scalars from normalized arrays)
+                # Use alive particles only for final gamma computation
+                Pz_final_alive = get_alive_particle_values(final_state, "Pz")
+                Px_final_alive = get_alive_particle_values(final_state, "Px")
+                Py_final_alive = get_alive_particle_values(final_state, "Py")
+
+                if Pz_final_alive is not None and len(Pz_final_alive) > 0:
+                    # Average over alive particles
+                    Pz_final = float(np.mean(Pz_final_alive))
+                    Px_final = float(np.mean(Px_final_alive))
+                    Py_final = float(np.mean(Py_final_alive))
+                    P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
+                    mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
+                    p_final = P_final / (mass_final * C_MMNS)
+                    rider_gamma_final = float(np.sqrt(1 + p_final**2))
+                else:
+                    # All particles dead - use initial gamma as fallback
+                    rider_gamma_final = rider_gamma_initial
+                    _log(
+                        "[WARNING] All particles dead at final step - using initial gamma"
+                    )
+
+                # Store trajectory data (extract values from alive particles, averaged)
                 # Compute r from x,y; compute normalized momentum components
                 z_arr = np.array(
-                    [float(np.asarray(s.get("z", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "z") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 x_arr = np.array(
-                    [float(np.asarray(s.get("x", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "x") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 y_arr = np.array(
-                    [float(np.asarray(s.get("y", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "y") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 r_arr = np.sqrt(x_arr**2 + y_arr**2)
 
                 # Extract momentum components (capital P) and normalize by m*c
                 Pz_arr = np.array(
-                    [float(np.asarray(s.get("Pz", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "Pz") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 Px_arr = np.array(
-                    [float(np.asarray(s.get("Px", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "Px") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 Py_arr = np.array(
-                    [float(np.asarray(s.get("Py", 0)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "Py") or 0.0
+                        for s in rider_states
+                    ]
                 )
                 m_arr = np.array(
-                    [float(np.asarray(s.get("m", 1)).flat[0]) for s in rider_states]
+                    [
+                        compute_alive_particle_average(s, "m") or 1.0
+                        for s in rider_states
+                    ]
                 )
                 # Compute transverse momentum magnitude
                 Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
@@ -1489,9 +1557,29 @@ def run_testbed(
                     "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
                     "gamma": gamma_arr,  # Lorentz factor for stability analysis
                     "t": np.array(
-                        [float(np.asarray(s.get("t", 0)).flat[0]) for s in rider_states]
+                        [
+                            compute_alive_particle_average(s, "t") or 0.0
+                            for s in rider_states
+                        ]
                     ),
                 }
+
+                # Check for early halt metadata and particle failures in the last trajectory state
+                halted_early = False
+                halt_reason = None
+                if len(rider_states) > 0:
+                    last_state = rider_states[-1]
+                    if "_halted_early" in last_state:
+                        halted_early = bool(last_state["_halted_early"])
+                    if "_halt_reason" in last_state:
+                        halt_reason = str(last_state["_halt_reason"])
+                        _log(f"[INFO] Integration halted early: {halt_reason}")
+
+                    # Log particle failure summary if any particles failed
+                    failure_info = get_particle_failure_summary(rider_states)
+                    if failure_info:
+                        failure_summary = format_failure_summary(failure_info)
+                        _log(f"[INFO] {failure_summary}")
 
         except Exception as exc:  # pragma: no cover - defensive guard
             _log(f"Failed to compute rider energy series: {exc}")
@@ -1519,13 +1607,32 @@ def run_testbed(
 
                 # Compute transverse energy components
                 driver_gamma_series = np.array(
-                    [float(s["gamma"][0]) for s in driver_states]
+                    [
+                        compute_alive_particle_average(s, "gamma") or 1.0
+                        for s in driver_states
+                    ]
                 )
-                driver_bx_series = np.array([float(s["bx"][0]) for s in driver_states])
-                driver_by_series = np.array([float(s["by"][0]) for s in driver_states])
-                driver_initial_gamma = float(driver_initial["gamma"][0])
-                driver_initial_bx = float(driver_initial["bx"][0])
-                driver_initial_by = float(driver_initial["by"][0])
+                driver_bx_series = np.array(
+                    [
+                        compute_alive_particle_average(s, "bx") or 0.0
+                        for s in driver_states
+                    ]
+                )
+                driver_by_series = np.array(
+                    [
+                        compute_alive_particle_average(s, "by") or 0.0
+                        for s in driver_states
+                    ]
+                )
+                driver_initial_gamma = (
+                    compute_alive_particle_average(driver_initial, "gamma") or 1.0
+                )
+                driver_initial_bx = (
+                    compute_alive_particle_average(driver_initial, "bx") or 0.0
+                )
+                driver_initial_by = (
+                    compute_alive_particle_average(driver_initial, "by") or 0.0
+                )
                 driver_rest_gev = driver_rest_mev * 1e-3
 
                 driver_delta_e_x = (
@@ -2801,6 +2908,63 @@ def run_testbed(
                 axes_gamma[1].legend()
                 axes_gamma[1].grid(True, alpha=0.3)
 
+            # Apply intelligent y-axis scaling for gamma to show small fluctuations
+            for i, ax in enumerate(axes_gamma):
+                try:
+                    # Collect all gamma values for this subplot
+                    all_gamma = []
+                    if i == 0:  # Rider axis
+                        if len(core_r_gamma) > 0:
+                            all_gamma.extend(core_r_gamma)
+                        if (
+                            driver_allowed
+                            and core_d_gamma is not None
+                            and len(core_d_gamma) > 0
+                        ):
+                            all_gamma.extend(core_d_gamma)
+                        if (
+                            legacy_enabled
+                            and legacy_r_gamma is not None
+                            and len(legacy_r_gamma) > 0
+                        ):
+                            all_gamma.extend(legacy_r_gamma)
+                    elif i == 1 and driver_allowed:  # Driver axis
+                        if core_d_gamma is not None and len(core_d_gamma) > 0:
+                            all_gamma.extend(core_d_gamma)
+                        if (
+                            legacy_enabled
+                            and legacy_d_gamma is not None
+                            and len(legacy_d_gamma) > 0
+                        ):
+                            all_gamma.extend(legacy_d_gamma)
+
+                    if len(all_gamma) > 0:
+                        gamma_array = np.array(all_gamma)
+                        gamma_min = np.min(gamma_array)
+                        gamma_max = np.max(gamma_array)
+                        gamma_mean = np.mean(gamma_array)
+                        gamma_range = gamma_max - gamma_min
+
+                        # Check if variation is small relative to mean (< 5% is considered small)
+                        relative_variation = (
+                            gamma_range / gamma_mean if gamma_mean > 0 else 0
+                        )
+
+                        if relative_variation < 0.05 and gamma_range > 0:
+                            # Small variation: zoom in with 10% buffer around actual range
+                            buffer = (
+                                gamma_range * 0.1
+                                if gamma_range > 0
+                                else gamma_mean * 0.001
+                            )
+                            ax.set_ylim(gamma_min - buffer, gamma_max + buffer)
+                            _log(
+                                f"Applied y-axis scaling for gamma subplot {i + 1} (Δγ/γ = {relative_variation * 100:.3f}%)"
+                            )
+                except Exception as e:
+                    # Silently ignore errors in y-axis scaling
+                    pass
+
             # Attach metadata for interactive replotting
             fig_gamma._lw_plot_data = {
                 "plot_type": "gamma",
@@ -3004,13 +3168,52 @@ def run_testbed(
                 traj_data["legacy"] = legacy_payload
 
             label_prefix = config_label if config_label else "trajectory"
-            traj_path = (
+
+            # Save as JSON (legacy format for backwards compatibility)
+            traj_path_json = (
                 output_dir / f"{label_prefix}_trajectory_data_{timestamp_token}.json"
             )
-            with traj_path.open("w", encoding="utf-8") as handle:
+            with traj_path_json.open("w", encoding="utf-8") as handle:
                 json.dump(traj_data, handle, indent=2)
-            saved_paths["trajectory"] = traj_path
-            _log(f"Saved trajectories to: {traj_path} (interval={interval})")
+            saved_paths["trajectory_json"] = traj_path_json
+            _log(f"Saved trajectory JSON to: {traj_path_json} (interval={interval})")
+
+            # Also save as NPZ (standard format matching sweep/optimization)
+            # This allows trajectory files to be loaded by the optimization plugin viewer
+            traj_path_npz = (
+                output_dir / f"{label_prefix}_trajectory_data_{timestamp_token}.npz"
+            )
+
+            # Extract core rider trajectory data in NPZ format
+            rider_data = core_payload.get("rider", {})
+            positions = rider_data.get("positions_mm", {})
+            momenta = rider_data.get("conjugate_momenta", {})
+
+            # Calculate r and pr from x, y components
+            x_arr = np.array(positions.get("x", []))
+            y_arr = np.array(positions.get("y", []))
+            z_arr = np.array(positions.get("z", []))
+            px_arr = np.array(momenta.get("Px", []))
+            py_arr = np.array(momenta.get("Py", []))
+            pz_arr = np.array(momenta.get("Pz", []))
+            gamma_arr = np.array(rider_data.get("gamma_hist", []))
+            t_arr = np.array(rider_data.get("time_ns", []))
+
+            r_arr = np.sqrt(x_arr**2 + y_arr**2)
+            pr_arr = np.sqrt(px_arr**2 + py_arr**2)
+
+            # Save NPZ with standard format (z, r, pz, pr, t, gamma)
+            np.savez(
+                traj_path_npz,
+                z=z_arr,
+                r=r_arr,
+                pz=pz_arr,
+                pr=pr_arr,
+                t=t_arr,
+                gamma=gamma_arr,
+            )
+            saved_paths["trajectory_npz"] = traj_path_npz
+            _log(f"Saved trajectory NPZ to: {traj_path_npz} (interval={interval})")
 
     duration = time.perf_counter() - start
     _log("")
@@ -3044,6 +3247,27 @@ def run_testbed(
             except Exception as exc:
                 _log(f"Failed to save verbose log: {exc}")
 
+        # Copy debug log from logcache to output directory
+        import glob
+
+        logcache_dir = Path("logcache")
+        if logcache_dir.exists():
+            # Find most recent testbed log
+            log_files = sorted(
+                logcache_dir.glob("*testbed*.log"), key=lambda p: p.stat().st_mtime
+            )
+            if log_files:
+                most_recent_log = log_files[-1]
+                import shutil
+
+                debug_log_path = output_dir / most_recent_log.name
+                try:
+                    shutil.copy2(most_recent_log, debug_log_path)
+                    saved_paths["debug_log"] = debug_log_path
+                    _log(f"Copied debug log to: {debug_log_path}")
+                except Exception as exc:
+                    _log(f"Failed to copy debug log: {exc}")
+
     return RunResult(
         metrics=metrics,
         saved_paths=saved_paths,
@@ -3062,6 +3286,8 @@ def run_testbed(
         rider_norm_emittance_y_mm_mrad=rider_norm_emittance_y,
         rider_beta_x_m=rider_beta_x,
         rider_beta_y_m=rider_beta_y,
+        halted_early=halted_early if "halted_early" in locals() else False,
+        halt_reason=halt_reason if "halt_reason" in locals() else None,
     )
 
 

@@ -25,46 +25,92 @@ simulation, and confirm that the regression tooling works on your machine.
    The ``dev`` extra mirrors the dependencies used in CI (NumPy, SciPy,
    Matplotlib, pytest, Sphinx, nbsphinx, etc.).
 
-3. Run the integration test suite to confirm the core and legacy solvers agree
-   on the canonical benchmark:
-
-   .. code-block:: bash
-
-      pytest tests/integration/test_core_integrators.py -k two_particle
-
-   Expect to see both the pure core solver and the self-consistent wrapper match
-   the legacy reference to within floating-point tolerances.
-
-4. Launch the colourblind-friendly benchmark notebook:
+4. (Optional) Launch the validation notebook for interactive comparison:
 
    .. code-block:: bash
 
       code examples/validation/core_vs_legacy_benchmark.ipynb
 
    From VS Code or Jupyter Lab, execute the cells and experiment with the
-   widgets.  The notebook runs the same ``run_benchmark`` helper that the CLI
+   widgets. The notebook runs the same ``run_benchmark`` helper that the CLI
    uses and can save overlay plots and ΔE scatter figures directly.
 
-5. Exercise the command-line entry point:
+5. Launch the GUI application:
+
+   .. code-block:: bash
+
+      python -m lw_integrator.gui
+
+   The GUI provides three operational modes:
+
+   * **Single Run Mode** (Main tab): Configure and execute individual simulations
+     with real-time progress tracking, trajectory visualization, and interactive
+     energy/position analysis. Export results in CSV, JSON, or NPZ formats.
+
+   * **Blind Sweep Mode** (Sweep/Optimization tab): Parameter sweeps over aperture
+     radius, particle energy, transverse offset, and starting positions with
+     auto-timestep calculation and configurable trajectory saving.
+
+   * **Optimization Mode** (Sweep/Optimization tab): Global optimization using
+     Genetic Algorithm, Differential Evolution, Nelder-Mead, or Multi-start
+     methods with convergence detection and top-N result saving.
+
+   For detailed optimization workflows, see ``local/SWEEP_AND_OPTIMIZATION_GUIDE.md``.
+
+6. Exercise the command-line entry point:
 
    .. code-block:: bash
 
       lw-simulate --quiet
 
    The ``lw-simulate`` executable (also accessible via ``python -m
-   lw_integrator.cli``) runs the core integrator with the default configuration.
-   Override parameters as needed, for example to shorten the run and capture a
-   JSON summary:
+   lw_integrator.cli``) runs the core integrator with default settings
+   (35 MeV electron approaching a conducting aperture). Override parameters
+   inline or provide a JSON configuration file:
+
+   **Inline parameter overrides:**
 
    .. code-block:: bash
 
-      lw-simulate --steps 250 --time-step 5e-4 --output run.json
+      lw-simulate --steps 250 --time-step 5e-4 --aperture-radius 0.5 --output run.json
+
+   **Using a configuration file:**
+
+   .. code-block:: bash
+
+      lw-simulate --config my_scenario.json --output results.json
+
+   Example JSON configuration structure:
+
+   .. code-block:: json
+
+      {
+        "simulation": {
+          "steps": 1000,
+          "time_step": 3e-7,
+          "simulation_type": "conducting-wall",
+          "aperture_radius": 0.01,
+          "wall_position": 100.0
+        },
+        "rider": {
+          "mass": 1.0,
+          "charge": 1.0,
+          "energy": 5.0,
+          "x0": 0.0,
+          "y0": 0.0,
+          "z0": 0.0
+        }
+      }
+
+   Additional options include ``--chrono-mode``, ``--startup-mode``,
+   ``--image-weighting``, and ``--self-consistency``. Run ``lw-simulate --help``
+   for the complete list.
 
    You can replicate the same behaviour programmatically by calling
    ``lw_integrator.cli.main`` with a list of CLI-style arguments; see
    ``examples/entrypoint_demo.py`` for a minimal example.
 
-6. Generate the HTML documentation locally:
+7. Generate the HTML documentation locally:
 
    .. code-block:: bash
 
@@ -73,7 +119,16 @@ simulation, and confirm that the regression tooling works on your machine.
 
    Open ``docs/build/html/index.html`` in a browser to browse the rendered pages.
 
-7. Run a macroparticle simulation (conducting-wall mode):
+8. Run the integration test suite to validate physics parity:
+
+   .. code-block:: bash
+
+      pytest tests/integration/test_core_integrators.py -k two_particle
+
+   The tests confirm that the core and legacy solvers agree on canonical
+   benchmarks to within floating-point tolerances.
+
+9. Run a macroparticle simulation (conducting-wall mode):
 
    .. code-block:: python
 
@@ -99,7 +154,7 @@ simulation, and confirm that the regression tooling works on your machine.
    This example demonstrates beam emittance modeling with stochastic errors
    applied to image subcharges before charge attenuation calculations.
 
-8. Run an off-axis beam simulation with transverse offset:
+10. Run an off-axis beam simulation with transverse offset:
 
    .. code-block:: python
 

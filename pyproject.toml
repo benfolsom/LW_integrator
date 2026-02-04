@@ -2,6 +2,71 @@
 requires = ["setuptools>=45", "wheel", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
 
+[project]
+name = "lw-integrator"
+dynamic = ["version"]
+description = "Production-ready Lienard-Wiechert electromagnetic field simulator"
+readme = {file = "README.md", content-type = "text/markdown"}
+authors = [{name = "Ben Folsom"}]
+license = {text = "GPL-3.0"}
+keywords = ["physics", "electromagnetic", "simulation", "lienard-wiechert", "relativity"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.19.0",
+    "scipy>=1.5.0",
+    "numba>=0.50.0",
+    "matplotlib>=3.3.0",
+    "Pillow>=8.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.10",
+    "black>=21.0",
+    "flake8>=3.8",
+    "mypy>=0.800",
+    "bump2version>=1.0.0",
+]
+examples = [
+    "jupyter>=1.0.0",
+    "ipywidgets>=7.6.0",
+]
+docs = [
+    "sphinx>=6.2,<7.0",
+    "sphinx-rtd-theme>=1.3",
+    "nbsphinx>=0.9",
+    "ipykernel>=6.0",
+    "sphinx-autobuild>=2021.3",
+]
+
+[project.scripts]
+lw-simulate = "lw_integrator.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/username/LW_integrator"
+Documentation = "https://lw-integrator.readthedocs.io/"
+Repository = "https://github.com/username/LW_integrator"
+"Bug Reports" = "https://github.com/username/LW_integrator/issues"
+
+[tool.setuptools]
+packages = {find = {}}
+
+[tool.setuptools.dynamic]
+version = {attr = "core._version.__version__"}
+
 [tool.black]
 line-length = 88
 target-version = ['py38', 'py39', 'py310']
