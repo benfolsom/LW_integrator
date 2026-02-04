@@ -576,23 +576,31 @@ class OptimizationRunMixin:
                                 f"(gain: {pct_gain:.1f}% > 500% threshold)"
                             )
 
-                    # Add penalty for particle deaths
+                    # Add penalty for particle deaths (scales by fraction lost)
                     particle_death_penalty = 0.0
                     if "num_particles_dead" in metrics:
                         num_dead = metrics["num_particles_dead"]
                         if num_dead > 0:
-                            # Configurable penalty per dead particle (default: 10% of objective value)
-                            # This is less severe than the 50% example in documentation
-                            penalty_per_particle = getattr(
-                                self.config, "particle_death_penalty_fraction", 0.10
-                            )
-                            particle_death_penalty = (
-                                value * penalty_per_particle * num_dead
-                            )
-                            self._log_result(
-                                f"[INFO] Particle death penalty: {particle_death_penalty:.3e} "
-                                f"({num_dead} dead × {penalty_per_particle * 100:.0f}% each)"
-                            )
+                            # Get total particle count from config
+                            total_particles = int(self.config.pcount)
+                            if total_particles > 0:
+                                # Penalty scales by fraction lost: 10% penalty for 10% lost
+                                # Default: particle_death_penalty_fraction = 0.10 means
+                                # 10% particles lost → 10% × 0.10 = 1% penalty
+                                # 50% particles lost → 50% × 0.10 = 5% penalty
+                                # 100% particles lost → 100% × 0.10 = 10% penalty
+                                penalty_scale = getattr(
+                                    self.config, "particle_death_penalty_fraction", 0.10
+                                )
+                                fraction_lost = num_dead / total_particles
+                                particle_death_penalty = (
+                                    value * penalty_scale * fraction_lost
+                                )
+                                self._log_result(
+                                    f"[INFO] Particle death penalty: {particle_death_penalty:.3e} "
+                                    f"({num_dead}/{total_particles} = {fraction_lost * 100:.1f}% lost, "
+                                    f"penalty = {fraction_lost * penalty_scale * 100:.1f}% of objective)"
+                                )
 
                     total_penalty = (
                         penalty
