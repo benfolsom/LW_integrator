@@ -85,7 +85,7 @@ class AdaptiveTimestepConfig:
         1000  # If a step requires more sub-steps, skip cooldown
     )
     skip_cooldown_on_particle_death: bool = (
-        True  # Don't apply dead particle's reduced timestep to survivors
+        False  # Keep survivors in cooldown mode for safer recovery
     )
 
     # Proximity-based refinement: refine timesteps near walls/apertures
