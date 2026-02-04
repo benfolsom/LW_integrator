@@ -48,8 +48,10 @@ class OptimizationConfig:
 
     # Penalty settings
     particle_death_penalty_fraction: float = (
-        0.10  # Penalty scale for particle deaths: fraction_lost × this_value
-        # Example with default 0.10: 10% lost → 1% penalty, 50% lost → 5% penalty
+        1.0  # Penalty multiplier for particle deaths (1.0 = 1:1 scaling)
+        # Example with default 1.0: 10% lost → 10% penalty, 50% lost → 50% penalty
+        # Set to 0.5 for gentler: 10% lost → 5% penalty
+        # Set to 2.0 for stricter: 10% lost → 20% penalty
     )
 
     # Parameter ranges

@@ -584,22 +584,25 @@ class OptimizationRunMixin:
                             # Get total particle count from config
                             total_particles = int(self.config.pcount)
                             if total_particles > 0:
-                                # Penalty scales by fraction lost: 10% penalty for 10% lost
-                                # Default: particle_death_penalty_fraction = 0.10 means
-                                # 10% particles lost → 10% × 0.10 = 1% penalty
-                                # 50% particles lost → 50% × 0.10 = 5% penalty
-                                # 100% particles lost → 100% × 0.10 = 10% penalty
-                                penalty_scale = getattr(
-                                    self.config, "particle_death_penalty_fraction", 0.10
+                                # Penalty scales 1:1 with fraction lost: 10% lost → 10% penalty
+                                # particle_death_penalty_fraction is a multiplier (default 1.0)
+                                # Examples with default 1.0:
+                                #   10% particles lost → 10% penalty
+                                #   50% particles lost → 50% penalty
+                                #   100% particles lost → 100% penalty
+                                # Set to 0.5 for gentler: 10% lost → 5% penalty
+                                # Set to 2.0 for stricter: 10% lost → 20% penalty
+                                penalty_multiplier = getattr(
+                                    self.config, "particle_death_penalty_fraction", 1.0
                                 )
                                 fraction_lost = num_dead / total_particles
                                 particle_death_penalty = (
-                                    value * penalty_scale * fraction_lost
+                                    value * fraction_lost * penalty_multiplier
                                 )
                                 self._log_result(
                                     f"[INFO] Particle death penalty: {particle_death_penalty:.3e} "
                                     f"({num_dead}/{total_particles} = {fraction_lost * 100:.1f}% lost, "
-                                    f"penalty = {fraction_lost * penalty_scale * 100:.1f}% of objective)"
+                                    f"penalty = {fraction_lost * penalty_multiplier * 100:.1f}% of objective)"
                                 )
 
                     total_penalty = (
