@@ -128,6 +128,10 @@ class OptimizationConfig:
         True  # Include momentum-based cumulative errors
     )
 
+    # Conducting wall image parameters
+    image_subcharge_count: int = 12  # Number of subcharges for conducting wall images
+    use_image_weighting: bool = True  # Apply radial weighting to image subcharges
+
     # Optimization objective
     objective: str = "max_energy_gain"  # Primary objective to optimize
 
@@ -190,6 +194,7 @@ class OptimizationConfig:
     # Sweep robustness options
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
     skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
+    failed_run_retry_attempts: int = 1  # Number of retry attempts for failed runs with new random seeds (0 = no retries)
 
     # Trajectory stability checking (multi-step numerical validation)
     smoothness_enabled: bool = True  # Enable trajectory stability analysis

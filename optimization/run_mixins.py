@@ -1231,98 +1231,183 @@ class OptimizationRunMixin:
                         f"h={timestep:.4e}ns, N={steps}"
                     )
 
-                # Run integration with timeout
+                # Run integration with timeout and retry logic
                 result = None
                 run_error = None
                 run_timed_out = False
+                retry_attempt = 0
+                max_retries = self.config.failed_run_retry_attempts
 
-                try:
-                    # Check if timeout is enabled
-                    if self.config.per_run_timeout > 0:
-                        # Container for result (mutable for thread access)
-                        result_container: List[Optional[RunResult]] = [None]
-                        error_container: List[Optional[Exception]] = [None]
-                        cancel_flag = [False]
-
-                        def run_integration():
-                            try:
-                                result_container[0] = self._run_single_integration(
-                                    aperture=aperture,
-                                    energy_gev=energy,
-                                    start_z=start_z,
-                                    transv_offset=transv_offset,
-                                    timestep=timestep,
-                                    steps=steps,
-                                    rider_m_particle=rider_m_particle,
-                                    rider_charge_sign=rider_charge_sign,
-                                    rider_pcount=int(rider_pcount),
-                                    rider_transv_mom=rider_transv_mom,
-                                    rider_transv_dist=rider_transv_dist,
-                                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                                    driver_params=driver_params_dict,
-                                    wall_z=params_dict.get(
-                                        "wall_z", self.config.wall_z
-                                    ),
-                                    run_num=run_num,
-                                    cancel_flag=cancel_flag,
-                                )
-                            except Exception as e:  # pragma: no cover - passthrough
-                                error_container[0] = e
-
-                        thread = threading.Thread(target=run_integration)
-                        thread.daemon = True
-                        thread.start()
-
-                        # Wait for completion or timeout
-                        thread.join(timeout=self.config.per_run_timeout)
-
-                        if thread.is_alive():
-                            run_timed_out = True
-                            cancel_flag[0] = True
-                            self._log_result(
-                                f"  [TIMEOUT] Run {run_num}: exceeded {self.config.per_run_timeout}s, requesting cancel..."
-                            )
-                            # Give integration a brief moment to stop
-                            thread.join(timeout=2.0)
-
-                        if error_container[0] is not None:
-                            run_error = error_container[0]
-                        else:
-                            result = result_container[0]
-                    else:
-                        # No timeout - run directly
-                        result = self._run_single_integration(
-                            aperture=aperture,
-                            energy_gev=energy,
-                            start_z=start_z,
-                            transv_offset=transv_offset,
-                            timestep=timestep,
-                            steps=steps,
-                            rider_m_particle=rider_m_particle,
-                            rider_charge_sign=rider_charge_sign,
-                            rider_pcount=int(rider_pcount),
-                            rider_transv_mom=rider_transv_mom,
-                            rider_transv_dist=rider_transv_dist,
-                            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                            driver_params=driver_params_dict,
-                            wall_z=params_dict.get("wall_z", self.config.wall_z),
-                            run_num=run_num,
+                # Loop for retry attempts
+                while retry_attempt <= max_retries:
+                    # Generate new seed for retries (original run uses config seed)
+                    if retry_attempt > 0:
+                        # Use a deterministic but different seed based on run number and retry attempt
+                        current_seed = (
+                            self.config.seed + run_num * 10000 + retry_attempt * 100
                         )
+                        if use_full_debug or use_truncated_logging:
+                            self._log_result(
+                                f"  [RETRY] Run {run_num}, attempt {retry_attempt}/{max_retries} with new seed {current_seed}"
+                            )
+                    else:
+                        current_seed = self.config.seed
 
-                except Exception as e:  # pragma: no cover - integration path
-                    run_error = e
+                    # Reset error/timeout flags for this attempt
+                    attempt_result = None
+                    attempt_error = None
+                    attempt_timed_out = False
 
-                # Handle results
+                    try:
+                        # Check if timeout is enabled
+                        if self.config.per_run_timeout > 0:
+                            # Container for result (mutable for thread access)
+                            result_container: List[Optional[RunResult]] = [None]
+                            error_container: List[Optional[Exception]] = [None]
+                            cancel_flag = [False]
+
+                            def run_integration():
+                                try:
+                                    result_container[0] = self._run_single_integration(
+                                        aperture=aperture,
+                                        energy_gev=energy,
+                                        start_z=start_z,
+                                        transv_offset=transv_offset,
+                                        timestep=timestep,
+                                        steps=steps,
+                                        rider_m_particle=rider_m_particle,
+                                        rider_charge_sign=rider_charge_sign,
+                                        rider_pcount=int(rider_pcount),
+                                        rider_transv_mom=rider_transv_mom,
+                                        rider_transv_dist=rider_transv_dist,
+                                        macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                                        macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                                        driver_params=driver_params_dict,
+                                        wall_z=params_dict.get(
+                                            "wall_z", self.config.wall_z
+                                        ),
+                                        run_num=run_num,
+                                        cancel_flag=cancel_flag,
+                                        seed_override=current_seed,
+                                    )
+                                except Exception as e:  # pragma: no cover - passthrough
+                                    error_container[0] = e
+
+                            thread = threading.Thread(target=run_integration)
+                            thread.daemon = True
+                            thread.start()
+
+                            # Wait for completion or timeout
+                            thread.join(timeout=self.config.per_run_timeout)
+
+                            if thread.is_alive():
+                                attempt_timed_out = True
+                                cancel_flag[0] = True
+                                self._log_result(
+                                    f"  [TIMEOUT] Run {run_num}: exceeded {self.config.per_run_timeout}s, requesting cancel..."
+                                )
+                                # Give integration a brief moment to stop
+                                thread.join(timeout=2.0)
+
+                            if error_container[0] is not None:
+                                attempt_error = error_container[0]
+                            else:
+                                attempt_result = result_container[0]
+                        else:
+                            # No timeout - run directly
+                            attempt_result = self._run_single_integration(
+                                aperture=aperture,
+                                energy_gev=energy,
+                                start_z=start_z,
+                                transv_offset=transv_offset,
+                                timestep=timestep,
+                                steps=steps,
+                                rider_m_particle=rider_m_particle,
+                                rider_charge_sign=rider_charge_sign,
+                                rider_pcount=int(rider_pcount),
+                                rider_transv_mom=rider_transv_mom,
+                                rider_transv_dist=rider_transv_dist,
+                                macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                                macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                                driver_params=driver_params_dict,
+                                wall_z=params_dict.get("wall_z", self.config.wall_z),
+                                run_num=run_num,
+                                seed_override=current_seed,
+                            )
+
+                    except Exception as e:  # pragma: no cover - integration path
+                        attempt_error = e
+
+                    # Check if this attempt succeeded
+                    if (
+                        not attempt_timed_out
+                        and attempt_error is None
+                        and attempt_result is not None
+                    ):
+                        # Check if result has valid metrics (not all particles dead)
+                        # A run is considered failed if:
+                        # 1. It was halted early (all particles died)
+                        # 2. Metrics dict is empty or missing key metrics
+
+                        is_halted = attempt_result.get("halted_early", False)
+                        metrics = attempt_result.get("metrics", {})
+
+                        has_useful_metrics = False
+                        if not is_halted and metrics:
+                            # Check for key optimization metrics
+                            if metrics.get("max_percent_energy_gain") is not None:
+                                has_useful_metrics = True
+                            elif (
+                                metrics.get("rider_gamma_final") is not None
+                                and metrics.get("rider_gamma_final") > 0
+                            ):
+                                has_useful_metrics = True
+                            elif metrics.get("delta_e_mev") is not None:
+                                has_useful_metrics = True
+
+                        if has_useful_metrics:
+                            # Success! Use this result
+                            result = attempt_result
+                            run_error = None
+                            run_timed_out = False
+                            if retry_attempt > 0:
+                                self._log_result(
+                                    f"  [SUCCESS] Run {run_num} succeeded on retry attempt {retry_attempt}"
+                                )
+                            break
+                        else:
+                            # No useful metrics - all particles died or halted early
+                            halt_reason = attempt_result.get("halt_reason", "unknown")
+                            attempt_error = Exception(
+                                f"Run failed: halted_early={is_halted}, reason={halt_reason}"
+                            )
+                            if use_full_debug or use_truncated_logging:
+                                self._log_result(
+                                    f"  [FAILED] Run {run_num} attempt {retry_attempt}: halted={is_halted}, no useful metrics"
+                                )
+
+                    # This attempt failed - decide whether to retry
+                    if retry_attempt < max_retries:
+                        # Will retry
+                        retry_attempt += 1
+                        continue
+                    else:
+                        # No more retries - record the final failure
+                        result = attempt_result
+                        run_error = attempt_error
+                        run_timed_out = attempt_timed_out
+                        break
+
+                # Handle results (after all retry attempts)
                 if run_timed_out:
                     # Treat timeout as failed run
                     failed_runs.append(
                         {
                             "run_number": run_num,
                             "parameters": params_dict,
-                            "error": f"Timeout after {self.config.per_run_timeout}s",
+                            "error": f"Timeout after {self.config.per_run_timeout}s (tried {retry_attempt + 1} time(s))",
                             "timed_out": True,
+                            "retry_attempts": retry_attempt,
                         }
                     )
                     self._log_result(
@@ -1335,6 +1420,7 @@ class OptimizationRunMixin:
                             "parameters": params_dict,
                             "error": str(run_error),
                             "timed_out": False,
+                            "retry_attempts": retry_attempt,
                         }
                     )
                     self._log_result(
@@ -1347,6 +1433,7 @@ class OptimizationRunMixin:
                             "parameters": params_dict,
                             "error": "Integration returned no result",
                             "timed_out": False,
+                            "retry_attempts": retry_attempt,
                         }
                     )
                     self._log_result(
@@ -1366,6 +1453,7 @@ class OptimizationRunMixin:
                             "transverse_offset_fraction": offset_frac,
                             "timestep": timestep,
                             "steps": steps,
+                            "retry_attempts": retry_attempt,
                         },
                         "metrics": metrics,
                     }
@@ -1596,6 +1684,7 @@ class OptimizationRunMixin:
         wall_z: float = None,
         run_num: int = 0,
         cancel_flag: Optional[List[bool]] = None,
+        seed_override: int = None,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
         # Log stability analysis configuration for debugging
@@ -1684,10 +1773,14 @@ class OptimizationRunMixin:
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Use seed override if provided (for retries), otherwise use config seed + run_num
+        actual_seed = (
+            seed_override if seed_override is not None else (self.config.seed + run_num)
+        )
+
         options = SimulationOptions(
             steps=steps,
-            seed=self.config.seed
-            + run_num,  # Unique seed per run for varied particle distributions
+            seed=actual_seed,  # Unique seed per run for varied particle distributions
             simulation_type=self.config.simulation_type,
             rider_params=rider_params,
             driver_params=driver_params,

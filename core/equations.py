@@ -72,7 +72,7 @@ See :class:`core.self_consistency.SelfConsistencyConfig` for configuration.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -99,11 +99,13 @@ from .vectorized_interactions import (
 
 
 class GammaBlowupError(Exception):
-    """Exception raised when gamma exceeds soft threshold during integration.
+    """Exception raised when gamma exceeds threshold during integration.
 
     This exception signals to the integration runner that the timestep should
-    be reduced and the step retried. It is NOT raised for hard blowups (gamma > 1e20
-    or NaN/Inf), which result in immediate particle death.
+    be reduced and the step retried. This is raised for ALL gamma blowups,
+    including extreme values (> 1e20, NaN, or Inf). The integration runner
+    will attempt timestep reduction, and only after exhausting retry attempts
+    will the particle be marked as dead.
 
     Attributes
     ----------
@@ -112,20 +114,29 @@ class GammaBlowupError(Exception):
     particle_idx : int
         Index of the particle that experienced the blowup.
     gamma_value : float
-        The gamma value that triggered the soft blowup.
+        The gamma value that triggered the blowup.
     iteration : int
         Self-consistency iteration number where the blowup was detected.
+    is_hard_blowup : bool
+        True if this was a hard blowup (NaN/Inf or > 1e20), used for logging.
     """
 
     def __init__(
-        self, step_idx: int, particle_idx: int, gamma_value: float, iteration: int
+        self,
+        step_idx: int,
+        particle_idx: int,
+        gamma_value: float,
+        iteration: int,
+        is_hard_blowup: bool = False,
     ):
         self.step_idx = step_idx
         self.particle_idx = particle_idx
         self.gamma_value = gamma_value
         self.iteration = iteration
+        self.is_hard_blowup = is_hard_blowup
+        severity = "Hard" if is_hard_blowup else "Soft"
         super().__init__(
-            f"Soft gamma blowup at step {step_idx}, particle {particle_idx}: "
+            f"{severity} gamma blowup at step {step_idx}, particle {particle_idx}: "
             f"γ={gamma_value:.2e} (iteration {iteration})"
         )
 
@@ -825,6 +836,7 @@ def retarded_equations_of_motion(
     startup_mode: StartupMode = StartupMode.COLD_START,
     self_consistency: Optional[SelfConsistencyConfig] = None,
     step_idx: Optional[int] = None,
+    cancel_callback: Optional[Any] = None,
 ) -> ParticleState:
     """Core equations of motion mirroring the validated legacy implementation.
 
@@ -857,6 +869,9 @@ def retarded_equations_of_motion(
         solving the circular dependency between forces and gamma.
     step_idx:
         Optional integration step number for context in error messages.
+    cancel_callback:
+        Optional predicate to check for cancellation. If provided and returns True,
+        raises IntegrationCancelled to abort the integration.
 
     Returns
     -------
@@ -893,8 +908,15 @@ def retarded_equations_of_motion(
             self_consistency, "chrono_high_precision", False
         )
 
+    # Import IntegrationCancelled at top of function for use in cancel checks
+    from .integration_runner import IntegrationCancelled
+
     # Process each particle independently
     for particle_idx in range(num_particles):
+        # Check for cancellation before processing each particle
+        if cancel_callback is not None and cancel_callback():
+            raise IntegrationCancelled("Integration cancelled by caller.")
+
         # Skip particles that are already marked dead
         if "_dead_particles" in result and result["_dead_particles"][particle_idx]:
             # Copy previous state for dead particle (don't recompute)
@@ -936,6 +958,10 @@ def retarded_equations_of_motion(
 
         # Self-consistency loop: iterate until gamma converges
         for sc_iteration in range(sc_max_iterations):
+            # Check for cancellation during self-consistency iterations
+            if cancel_callback is not None and cancel_callback():
+                raise IntegrationCancelled("Integration cancelled by caller.")
+
             if sc_verbosity >= 3 and sc_iteration > 0:
                 print(
                     f"    Particle {particle_idx} iteration {sc_iteration}: "
@@ -1570,53 +1596,45 @@ def retarded_equations_of_motion(
             working_y = result["y"][particle_idx]
             working_z = result["z"][particle_idx]
 
-            # Two-tier gamma blowup detection:
-            # - Soft threshold (1e8): trigger timestep reduction and retry
-            # - Hard threshold (1e20): particle is truly unrecoverable, mark dead
+            # Gamma blowup detection: ALL blowups now trigger retry attempts
+            # The integration runner will reduce timestep and retry, only marking
+            # particle as dead after exhausting all retry attempts.
+            # - Soft threshold (1e8): likely recoverable with smaller timestep
+            # - Hard threshold (1e20 or NaN/Inf): less likely but still attempt recovery
             if sc_enabled:
                 is_nan_or_inf = np.isnan(working_gamma) or np.isinf(working_gamma)
                 gamma_soft_threshold = 1e8
                 gamma_hard_threshold = 1e20
 
-                # Hard blowup: immediate death, no recovery possible
-                if is_nan_or_inf or working_gamma > gamma_hard_threshold:
-                    # Only log and mark if not already dead (suppress redundant logging)
+                # Check for any gamma blowup
+                if is_nan_or_inf or working_gamma > gamma_soft_threshold:
+                    # Skip if particle already dead (suppress redundant errors)
                     already_dead = (
                         "_dead_particles" in result
                         and result["_dead_particles"][particle_idx]
                     )
-                    if not already_dead:
-                        print(
-                            f"    [CRITICAL] Step {step_idx if step_idx is not None else '?'}, "
-                            f"Particle {particle_idx}/{num_particles}, Iteration {sc_iteration}: "
-                            f"Hard gamma blowup detected (γ={working_gamma:.2e})"
-                        )
-                        print(f"      Marking particle {particle_idx} as dead")
-                        mark_particle_dead(
-                            result,
-                            particle_idx,
-                            step_idx if step_idx is not None else -1,
-                            "gamma_blowup_hard",
-                            gamma_value=working_gamma,
-                            iteration=sc_iteration,
-                        )
-                        particles_marked_dead_this_step += 1
-                    break  # Exit self-consistency loop for this particle
+                    if already_dead:
+                        break  # Exit self-consistency loop for this particle
 
-                # Soft blowup: trigger timestep reduction for recovery attempt
-                elif working_gamma > gamma_soft_threshold:
+                    # Determine if this is a hard or soft blowup (for logging/metrics)
+                    is_hard = is_nan_or_inf or working_gamma > gamma_hard_threshold
+
                     if sc_verbosity >= 1:
+                        severity = "Hard" if is_hard else "Soft"
                         print(
                             f"    [WARNING] Step {step_idx if step_idx is not None else '?'}, "
                             f"Particle {particle_idx}/{num_particles}, Iteration {sc_iteration}: "
-                            f"Soft gamma blowup (γ={working_gamma:.2e}), requesting timestep reduction"
+                            f"{severity} gamma blowup (γ={working_gamma:.2e}), requesting timestep reduction"
                         )
+
                     # Raise exception to signal integration_runner to reduce timestep
+                    # The runner will attempt recovery for ALL blowups (soft and hard)
                     raise GammaBlowupError(
                         step_idx if step_idx is not None else -1,
                         particle_idx,
                         working_gamma,
                         sc_iteration,
+                        is_hard_blowup=is_hard,
                     )
 
         # ================================================================

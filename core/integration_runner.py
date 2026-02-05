@@ -368,7 +368,7 @@ def retarded_integrator(
                 )
 
                 # Check if we're in or approaching the interaction region
-                if distance_to_wall < interaction_distance:
+                if distance_to_wall <= interaction_distance:
                     proximity_reduction_active = True
 
                     # Smooth transition: full reduction close to wall, gradual outside
@@ -387,11 +387,17 @@ def retarded_integrator(
                         )
 
                     if adaptive_timestep.debug:
+                        # Determine which zone we're in for clearer logging
+                        in_transition = distance_to_wall >= (
+                            interaction_distance - transition_distance
+                        )
+                        zone_name = "transition" if in_transition else "full reduction"
+
                         print(
-                            f"Step {i}: Proximity refinement active. "
+                            f"Step {i}: Proximity refinement active ({zone_name} zone). "
                             f"Distance to wall: {distance_to_wall:.6e} mm "
                             f"({distance_to_wall / aperture_radius:.1f} aperture radii). "
-                            f"Reduction factor: {proximity_factor:.2f}x"
+                            f"Reduction factor: {proximity_factor:.4f}x"
                         )
 
             # Hysteresis logic: decide starting timestep for this step
@@ -487,6 +493,10 @@ def retarded_integrator(
                         )
 
             while not step_accepted:
+                # Check for cancellation inside retry loop
+                if cancel_callback is not None and cancel_callback():
+                    raise IntegrationCancelled("Integration cancelled by caller.")
+
                 # Determine number of sub-steps needed to cover base timestep interval
                 num_substeps = int(np.round(h_step / current_h_step))
                 if num_substeps < 1:
@@ -507,6 +517,10 @@ def retarded_integrator(
                 gamma_blowup_detected = False
 
                 for substep_idx in range(num_substeps):
+                    # Check for cancellation inside substep loop
+                    if cancel_callback is not None and cancel_callback():
+                        raise IntegrationCancelled("Integration cancelled by caller.")
+
                     # Compute one sub-step, catching soft gamma blowups
                     try:
                         trial_state = self_consistent_step(
@@ -521,6 +535,7 @@ def retarded_integrator(
                             chrono_mode,
                             startup_mode,
                             step_idx=i,  # Pass main step index for error messages
+                            cancel_callback=cancel_callback,  # Pass cancellation check through
                         )
                     except GammaBlowupError as e:
                         # Soft gamma blowup detected - reduce timestep and retry
@@ -693,11 +708,35 @@ def retarded_integrator(
                                     break  # Exit substep loop, step will be accepted below
                                 else:
                                     # Reduce timestep and retry
+                                    # For hard blowups (NaN/Inf or gamma > 1e20), use more aggressive reduction
+                                    if (
+                                        hasattr(e, "is_hard_blowup")
+                                        and e.is_hard_blowup
+                                    ):
+                                        # Hard blowup: reduce by factor squared for more aggressive stepping
+                                        reduction_factor = (
+                                            adaptive_timestep.timestep_reduction_factor
+                                            ** 2
+                                        )
+                                        severity = "HARD"
+                                    else:
+                                        # Soft blowup: use normal reduction factor
+                                        reduction_factor = (
+                                            adaptive_timestep.timestep_reduction_factor
+                                        )
+                                        severity = "soft"
+
+                                    new_h_step = current_h_step / reduction_factor
+
+                                    # Ensure we don't go below minimum
+                                    if new_h_step < min_h:
+                                        new_h_step = min_h
+
                                     current_h_step = new_h_step
                                     if adaptive_timestep.debug:
                                         print(
-                                            f"Step {i}.{substep_idx}: Gamma blowup detected (γ={e.gamma_value:.6e}). "
-                                            f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
+                                            f"Step {i}.{substep_idx}: {severity} gamma blowup detected (γ={e.gamma_value:.6e}). "
+                                            f"Reducing timestep by {reduction_factor}x "
                                             f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
                                         )
 

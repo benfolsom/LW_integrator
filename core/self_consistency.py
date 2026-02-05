@@ -34,6 +34,7 @@ StepFunction = Callable[
         StartupMode,
         Optional["SelfConsistencyConfig"],
         Optional[int],
+        Optional[Any],
     ],
     ParticleState,
 ]
@@ -294,6 +295,7 @@ def self_consistent_step(
     chrono_mode: ChronoMatchingMode,
     startup_mode: StartupMode,
     step_idx: Optional[int] = None,
+    cancel_callback: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -331,6 +333,9 @@ def self_consistent_step(
         Early-step handling mode.
     step_idx : Optional[int]
         Integration step number for context in error messages.
+    cancel_callback : Optional[callable]
+        Optional predicate to check for cancellation. If provided and returns True,
+        the equations of motion should raise IntegrationCancelled.
 
     Returns
     -------
@@ -353,6 +358,7 @@ def self_consistent_step(
         startup_mode,
         config,
         step_idx,
+        cancel_callback,
     )
 
     return result
