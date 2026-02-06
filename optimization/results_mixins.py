@@ -465,7 +465,13 @@ class OptimizationResultsMixin:
             for result in results:
                 params = result.get("parameters", {})
                 for key, value in params.items():
-                    if key in ["simulation_type", "run_number", "timestep", "steps"]:
+                    if key in [
+                        "simulation_type",
+                        "run_number",
+                        "timestep",
+                        "steps",
+                        "retry_attempts",
+                    ]:
                         continue
                     if key not in all_param_values:
                         all_param_values[key] = []

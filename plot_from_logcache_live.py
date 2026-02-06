@@ -764,9 +764,14 @@ def live_monitor(log_file, output_file, interval=3):
                     update_count = 0  # Reset update counter for new sweep
 
                 print(f"\n[{timestamp}] New data detected!")
-                print(
-                    f"  Completed runs: {stats['completed']}/{stats['total']} ({stats['completed'] / stats['total'] * 100:.1f}%)"
-                )
+                if stats["total"] > 0:
+                    print(
+                        f"  Completed runs: {stats['completed']}/{stats['total']} ({stats['completed'] / stats['total'] * 100:.1f}%)"
+                    )
+                else:
+                    print(
+                        f"  Completed runs: {stats['completed']} (total not yet determined)"
+                    )
                 print(f"  Positive gains: {stats['positive_gains']}")
                 print(f"  Generating plot...")
 
