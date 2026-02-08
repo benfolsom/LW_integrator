@@ -1030,11 +1030,14 @@ class IntegratorGUI:
             row=next_row + 1, column=0, columnspan=2, sticky="w", pady=(0, 8)
         )
 
-        ttk.Checkbutton(
+        self.image_weighting_check = ttk.Checkbutton(
             particle_frame,
             text="Enable image weighting",
             variable=self.image_weighting_var,
-        ).grid(row=next_row + 2, column=0, columnspan=2, sticky="w", pady=2)
+        )
+        self.image_weighting_check.grid(
+            row=next_row + 2, column=0, columnspan=2, sticky="w", pady=2
+        )
 
         # Help text for image weighting
         help_text_weighting = ttk.Label(
@@ -3450,62 +3453,52 @@ class IntegratorGUI:
         return result[0]
 
     def _save_config(self) -> None:
+        """Save current run configuration using entered filename."""
         try:
             options = self._build_options_from_ui()
         except ValueError as exc:
             _show_error_dialog(self.root, "Invalid configuration", str(exc))
             return
 
-        # Use file dialog to get save path
-        config_dir = Path(self.config_dir_var.get())
-        ensure_directory(config_dir)
-
-        # Remember original filename to detect if user chose a new name
-        original_filename = self.config_name_var.get() or ""
-
-        filename = filedialog.asksaveasfilename(
-            title="Save Run Configuration",
-            initialdir=config_dir,
-            initialfile=original_filename or "config.json",
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-        )
+        # Get filename from entry field
+        filename = self.config_name_var.get().strip()
 
         if not filename:
+            messagebox.showinfo("Save Run Config", "Enter a config name to save.")
             return
 
-        config_path = Path(filename)
+        # Ensure .json extension
+        if not filename.endswith(".json"):
+            filename += ".json"
 
-        # Check if this is a new file name (not an overwrite of the currently loaded config)
-        is_new_name = config_path.name != original_filename
+        import os
 
-        # Note: filedialog.asksaveasfilename already shows an override warning on most platforms,
-        # so we don't need to show our custom warning here to avoid double prompts.
-        # If the user proceeded past the file dialog, they already confirmed any override.
+        config_dir = self.config_dir_var.get()
+        os.makedirs(config_dir, exist_ok=True)
+
+        filepath = os.path.join(config_dir, filename)
+
+        # Check for override warning
+        if not self._check_override_warning(Path(filepath), "run"):
+            return
 
         # Update the config name to match the saved file
-        options.config_name = config_path.name
+        options.config_name = filename
 
         try:
-            save_config(options, config_path)
+            save_config(options, Path(filepath))
         except Exception as exc:
             _show_error_dialog(
                 self.root, "Save config", f"Failed to save configuration: {exc}"
             )
             return
 
-        self.config_name_var.set(config_path.name)
-        self.config_file_var.set(config_path.name)
-        self._refresh_config_list(selected=config_path.name)
-        self.current_config_label.config(text=config_path.name, foreground="black")
-
-        # Only show success dialog for newly named configs, not overwrites
-        if is_new_name:
-            messagebox.showinfo(
-                "Save config", f"Configuration saved as {config_path.name}"
-            )
-
-        self._set_status(f"Saved config: {config_path.name}")
+        self.config_name_var.set(filename)
+        self.config_file_var.set(filename)
+        self._refresh_config_list(selected=filename)
+        self.current_config_label.config(text=filename, foreground="black")
+        messagebox.showinfo("Save Run Config", f"Configuration saved as {filename}")
+        self._set_status(f"Saved config: {filename}")
 
     def _on_sim_type_change(self) -> None:
         self._update_driver_visibility()
@@ -3535,13 +3528,21 @@ class IntegratorGUI:
             self.driver_species_var.set(default_label)
 
     def _update_image_subcharge_state(self) -> None:
-        """Grey out image subcharge count when in BUNCH_TO_BUNCH mode."""
+        """Grey out image subcharge count, weighting, aperture radius, and wall_z when in BUNCH_TO_BUNCH mode."""
         sim_type = SimulationType[self.sim_type_var.get()]
-        # Image subcharge is only used in CONDUCTING_WALL and SWITCHING_WALL modes
+        # Image subcharge, weighting, aperture, and wall_z are only used in CONDUCTING_WALL and SWITCHING_WALL modes
         enabled = sim_type != SimulationType.BUNCH_TO_BUNCH
         entry_state = "normal" if enabled else "disabled"
         if hasattr(self, "image_subcharge_entry"):
             self.image_subcharge_entry.configure(state=entry_state)
+        if hasattr(self, "image_weighting_check"):
+            self.image_weighting_check.configure(state=entry_state)
+        # Also grey out aperture_radius and wall_z in core params
+        if hasattr(self, "core_param_widgets"):
+            if "aperture_radius" in self.core_param_widgets:
+                self.core_param_widgets["aperture_radius"].configure(state=entry_state)
+            if "wall_z" in self.core_param_widgets:
+                self.core_param_widgets["wall_z"].configure(state=entry_state)
 
     def _update_legacy_state(self) -> None:
         enabled = self.legacy_var.get()
