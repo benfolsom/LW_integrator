@@ -341,6 +341,7 @@ class IntegratorGUI:
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+        self._update_image_subcharge_state()
 
         # Set initial sash position for main horizontal pane (70/30 split)
         self.root.update_idletasks()  # Ensure window is laid out
@@ -1010,7 +1011,10 @@ class IntegratorGUI:
         ttk.Label(particle_frame, text="Image subcharge count:").grid(
             row=next_row, column=0, sticky="w", pady=(12, 2)
         )
-        ttk.Entry(particle_frame, textvariable=self.image_subcharge_var, width=12).grid(
+        self.image_subcharge_entry = ttk.Entry(
+            particle_frame, textvariable=self.image_subcharge_var, width=12
+        )
+        self.image_subcharge_entry.grid(
             row=next_row, column=1, sticky="ew", pady=(12, 2)
         )
 
@@ -2802,6 +2806,7 @@ class IntegratorGUI:
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+        self._update_image_subcharge_state()
         self._update_cavity_spacing_state()
         self._toggle_z_cutoff_controls()
         self._toggle_macroparticle_controls()
@@ -3505,6 +3510,7 @@ class IntegratorGUI:
     def _on_sim_type_change(self) -> None:
         self._update_driver_visibility()
         self._update_cavity_spacing_state()
+        self._update_image_subcharge_state()
         self._update_macroparticle_state()
         self._refresh_initial_summary()
 
@@ -3527,6 +3533,15 @@ class IntegratorGUI:
                 "custom", next(iter(self._species_by_label))
             )
             self.driver_species_var.set(default_label)
+
+    def _update_image_subcharge_state(self) -> None:
+        """Grey out image subcharge count when in BUNCH_TO_BUNCH mode."""
+        sim_type = SimulationType[self.sim_type_var.get()]
+        # Image subcharge is only used in CONDUCTING_WALL and SWITCHING_WALL modes
+        enabled = sim_type != SimulationType.BUNCH_TO_BUNCH
+        entry_state = "normal" if enabled else "disabled"
+        if hasattr(self, "image_subcharge_entry"):
+            self.image_subcharge_entry.configure(state=entry_state)
 
     def _update_legacy_state(self) -> None:
         enabled = self.legacy_var.get()

@@ -7755,27 +7755,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
     ) -> None:
         """Generate summary plots for the sweep results."""
         try:
-            import matplotlib.pyplot as plt
-
-            # Heatmap only needs metrics, not full trajectories
-            # Collect all data from results with metrics
-            apertures = []
-            energies = []
-            delta_es = []
-
-            for result in results:
-                params = result.get("parameters", {})
-                metrics = result.get("metrics", {})
-
-                # Only include if we have the necessary metrics
-                if metrics:
-                    apertures.append(params.get("aperture_radius", 0))
-                    energies.append(params.get("particle_energy_gev", 0))
-                    delta_es.append(metrics.get("rider_delta_e_mev", 0))
-
-            if len(delta_es) == 0:
-                self._log_result("[INFO] No results with metrics to plot")
-                return
+            import subprocess
+            import sys
 
             # Count how many parameters were actually swept
             # (have more than 1 unique value across all results)
@@ -7806,53 +7787,39 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Only generate heatmap if exactly 2 parameters were swept
             if num_swept_params == 2:
-                # Create heatmap
-                fig, ax = plt.subplots(figsize=(10, 8))
+                # Use the new smooth heatmap generator script
+                script_path = Path(__file__).parent.parent / "generate_sweep_heatmap.py"
 
-                scatter = ax.scatter(
-                    energies,
-                    [a * 1e3 for a in apertures],  # Convert mm to microns
-                    c=delta_es,
-                    cmap="viridis",
-                    s=150,
-                    alpha=0.8,
-                    edgecolors="black",
-                    linewidth=1,
-                )
+                try:
+                    # Call the script with --gain-filter all to show both positive and negative gains
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(script_path),
+                            str(output_dir),
+                            "--gain-filter",
+                            "all",
+                            "--output",
+                            "sweep_heatmap.png",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,  # 2 minute timeout
+                    )
 
-                cbar = plt.colorbar(scatter, ax=ax)
-                cbar.set_label("Energy Gain ΔE (MeV)", fontsize=12)
+                    if result.returncode == 0:
+                        self._log_result(
+                            f"[OK] Heatmap saved to: {output_dir / 'sweep_heatmap.png'}"
+                        )
+                    else:
+                        self._log_result(
+                            f"[WARNING] Heatmap generation failed: {result.stderr}"
+                        )
 
-                ax.set_xlabel("Particle Energy (GeV)", fontsize=12)
-                ax.set_ylabel("Aperture Radius (μm)", fontsize=12)
-                ax.set_title(
-                    "Parameter Space Exploration: Energy Gain",
-                    fontsize=14,
-                    fontweight="bold",
-                )
-                ax.grid(True, alpha=0.3)
-
-                # Use log scale if range is large
-                if (
-                    len(energies) > 0 and max(energies) / min(energies) > 10
-                    if min(energies) > 0
-                    else False
-                ):
-                    ax.set_xscale("log")
-                if (
-                    len(apertures) > 0 and max(apertures) / min(apertures) > 10
-                    if min(apertures) > 0
-                    else False
-                ):
-                    ax.set_yscale("log")
-
-                plt.tight_layout()
-
-                heatmap_file = output_dir / "sweep_heatmap.png"
-                plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
-                plt.close(fig)
-
-                self._log_result(f"[OK] Heatmap saved to: {heatmap_file}")
+                except subprocess.TimeoutExpired:
+                    self._log_result("[WARNING] Heatmap generation timed out")
+                except Exception as e:
+                    self._log_result(f"[WARNING] Failed to generate heatmap: {e}")
             else:
                 self._log_result(
                     f"[INFO] Skipping heatmap generation ({num_swept_params} parameters swept; heatmap only generated for 2-parameter sweeps)"
