@@ -43,6 +43,8 @@ def extract_data(
     data,
     energy_min=None,
     energy_max=None,
+    aperture_min=None,
+    aperture_max=None,
     gain_filter="positive",
     gain_min=None,
     gain_max=None,
@@ -57,6 +59,10 @@ def extract_data(
         Minimum energy threshold (GeV)
     energy_max : float, optional
         Maximum energy threshold (GeV)
+    aperture_min : float, optional
+        Minimum aperture threshold (mm)
+    aperture_max : float, optional
+        Maximum aperture threshold (mm)
     gain_filter : str
         'positive' (only positive gains), 'negative' (only negative), 'all' (all values)
     gain_min : float, optional
@@ -88,6 +94,10 @@ def extract_data(
         if energy_min is not None and energy < energy_min:
             continue
         if energy_max is not None and energy > energy_max:
+            continue
+        if aperture_min is not None and aperture < aperture_min:
+            continue
+        if aperture_max is not None and aperture > aperture_max:
             continue
 
         if gain_filter == "positive" and gain <= 0:
@@ -126,6 +136,7 @@ def create_smooth_heatmap(
     num_contours_high=7,
     contour_threshold=1.0,
     title=None,
+    show_title=True,
     figsize=(12, 8),
     dpi=300,
     show_all_gains=False,
@@ -167,6 +178,8 @@ def create_smooth_heatmap(
         Gain value separating low/high contour density
     title : str, optional
         Plot title (auto-generated if None)
+    show_title : bool
+        If True, display the title; if False, hide it but preserve headspace
     figsize : tuple
         Figure size in inches
     dpi : int
@@ -365,7 +378,12 @@ def create_smooth_heatmap(
         else:
             title = "Energy Gain Map"
 
-    ax.set_title(title, fontsize=14, fontweight="bold")
+    if show_title:
+        ax.set_title(title, fontsize=14, fontweight="bold")
+    else:
+        # Add invisible title to preserve headspace
+        ax.set_title(" ", fontsize=14, fontweight="bold")
+
     ax.grid(True, alpha=0.2, which="both")
 
     plt.tight_layout()
@@ -378,12 +396,15 @@ def generate_heatmap(
     sweep_dir,
     energy_min=None,
     energy_max=None,
+    aperture_min=None,
+    aperture_max=None,
     gain_filter="positive",
     gain_min=None,
     gain_max=None,
     output_name="sweep_heatmap_smooth.png",
     log_energy=True,
     log_aperture=False,
+    show_title=True,
     resolution=800,
     dpi=300,
 ):
@@ -396,6 +417,8 @@ def generate_heatmap(
         data,
         energy_min=energy_min,
         energy_max=energy_max,
+        aperture_min=aperture_min,
+        aperture_max=aperture_max,
         gain_filter=gain_filter,
         gain_min=gain_min,
         gain_max=gain_max,
@@ -429,6 +452,8 @@ def generate_heatmap(
 
     if energy_min is not None:
         title_parts.append(f"E ≥ {energy_min} GeV")
+    if aperture_min is not None:
+        title_parts.append(f"a ≥ {aperture_min} mm")
 
     if title_parts:
         title = f"Energy Gain Map: {', '.join(title_parts)}"
@@ -446,6 +471,7 @@ def generate_heatmap(
         log_aperture=log_aperture,
         grid_resolution=resolution,
         title=title,
+        show_title=show_title,
         dpi=dpi,
         show_all_gains=(gain_filter == "all"),
     )
@@ -476,6 +502,18 @@ def main():
         type=float,
         default=None,
         help="Maximum energy threshold (GeV)",
+    )
+    parser.add_argument(
+        "--aperture-min",
+        type=float,
+        default=None,
+        help="Minimum aperture threshold (mm)",
+    )
+    parser.add_argument(
+        "--aperture-max",
+        type=float,
+        default=None,
+        help="Maximum aperture threshold (mm)",
     )
     parser.add_argument(
         "--gain-filter",
@@ -531,6 +569,13 @@ def main():
         default=300,
         help="Output DPI (default: 300)",
     )
+    parser.add_argument(
+        "--no-title",
+        action="store_false",
+        dest="show_title",
+        default=True,
+        help="Hide the plot title (preserves headspace)",
+    )
 
     args = parser.parse_args()
 
@@ -538,12 +583,15 @@ def main():
         args.sweep_dir,
         energy_min=args.energy_min,
         energy_max=args.energy_max,
+        aperture_min=args.aperture_min,
+        aperture_max=args.aperture_max,
         gain_filter=args.gain_filter,
         gain_min=args.gain_min,
         gain_max=args.gain_max,
         output_name=args.output,
         log_energy=args.log_energy,
         log_aperture=args.log_aperture,
+        show_title=args.show_title,
         resolution=args.resolution,
         dpi=args.dpi,
     )

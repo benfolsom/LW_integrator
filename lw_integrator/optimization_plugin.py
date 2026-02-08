@@ -1900,7 +1900,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 )
             if hasattr(self.gui_controller, "adaptive_timestep_probe_threshold_var"):
                 self.gui_controller.adaptive_timestep_probe_threshold_var.set(
-                    f"{config.adaptive_timestep_probe_threshold:.2f}"
+                    f"{config.adaptive_timestep_probe_threshold:.6g}"
                 )
             if hasattr(self.gui_controller, "adaptive_timestep_max_probe_steps_var"):
                 self.gui_controller.adaptive_timestep_max_probe_steps_var.set(
