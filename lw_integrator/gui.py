@@ -589,9 +589,8 @@ class IntegratorGUI:
         self.adaptive_timestep_reduction_factor_var = tk.IntVar(
             value=self.options.adaptive_timestep_reduction_factor
         )
-        self.adaptive_timestep_max_attempts_var = tk.IntVar(
-            value=self.options.adaptive_timestep_max_attempts
-        )
+        # max_refinement_attempts is now calculated from reduction_factor and min_timestep_factor (read-only display)
+        self.adaptive_timestep_max_attempts_display_var = tk.StringVar(value="")
         self.adaptive_timestep_min_factor_var = tk.DoubleVar(
             value=self.options.adaptive_timestep_min_factor
         )
@@ -2197,30 +2196,45 @@ class IntegratorGUI:
         )
         self.adaptive_reduction_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
-        # Max refinement attempts with help icon
+        # Add trace to update max_attempts display when reduction_factor changes
+        self.adaptive_timestep_reduction_factor_var.trace_add(
+            "write", lambda *args: self._update_max_attempts_display()
+        )
+
+        # Max refinement attempts with help icon (calculated, read-only)
         att_frame = ttk.Frame(at_frame)
         att_frame.grid(row=3, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_max_attempts_label = ttk.Label(
-            att_frame, text="Max refinement attempts:"
+            att_frame, text="Max refinement attempts (calculated):"
         )
         self.adaptive_max_attempts_label.pack(side="left")
         att_help = ttk.Label(att_frame, text="ⓘ", foreground="blue", cursor="hand2")
         att_help.pack(side="left", padx=(3, 0))
         Tooltip(
             att_help,
-            "Maximum timestep reductions per step.\n\n"
-            "Each attempt: h_new = h / reduction_factor\n"
-            "If energy jump persists after max attempts → fail\n\n"
-            "Default: 5 attempts\n"
-            "Patient: 10 for difficult regions (walls/apertures)\n"
-            "Quick fail: 3 to detect pathological setups\n\n"
-            "Example: factor=10, attempts=5\n"
-            "  → can reduce h by up to 10^5 = 100,000×",
+            "Maximum timestep reductions per step (READ-ONLY).\n\n"
+            "Auto-calculated to be consistent with reduction_factor and min_timestep_factor:\n\n"
+            "  max_attempts = ceil(log(1/min_factor) / log(reduction_factor))\n\n"
+            "Examples:\n"
+            "  • reduction_factor=3, min_factor=1e-4 → max_attempts = 9\n"
+            "  • reduction_factor=10, min_factor=1e-4 → max_attempts = 4\n\n"
+            "Why automatic?\n"
+            "After n attempts: h_final = h_base / (reduction_factor^n)\n"
+            "At minimum: h_min = h_base × min_timestep_factor\n"
+            "These must be consistent!\n\n"
+            "To change: adjust 'Reduction factor' or 'Min timestep factor' above.",
         )
-        self.adaptive_max_attempts_entry = ttk.Entry(
-            at_frame, textvariable=self.adaptive_timestep_max_attempts_var, width=16
+        # Create read-only display label for max_attempts (calculated value)
+        self.adaptive_max_attempts_display = ttk.Label(
+            at_frame,
+            textvariable=self.adaptive_timestep_max_attempts_display_var,
+            relief="sunken",
+            background="#f0f0f0",
+            foreground="#606060",
+            padding=(5, 2),
+            font=("TkDefaultFont", 9, "italic"),
         )
-        self.adaptive_max_attempts_entry.grid(row=3, column=1, sticky="ew", pady=2)
+        self.adaptive_max_attempts_display.grid(row=3, column=1, sticky="ew", pady=2)
 
         # Min timestep factor with help icon
         min_frame = ttk.Frame(at_frame)
@@ -2248,9 +2262,13 @@ class IntegratorGUI:
         )
         self.adaptive_min_factor_entry.grid(row=4, column=1, sticky="ew", pady=2)
 
-        # Add trace to update max_substeps display when min_factor changes
+        # Add traces to update calculated displays when min_factor changes
         self.adaptive_timestep_min_factor_var.trace_add(
-            "write", lambda *args: self._update_max_substeps_display()
+            "write",
+            lambda *args: (
+                self._update_max_attempts_display(),
+                self._update_max_substeps_display(),
+            ),
         )
 
         # Hysteresis parameters
@@ -3262,9 +3280,8 @@ class IntegratorGUI:
         self.adaptive_timestep_reduction_factor_var.set(
             options.adaptive_timestep_reduction_factor
         )
-        self.adaptive_timestep_max_attempts_var.set(
-            options.adaptive_timestep_max_attempts
-        )
+        # Update calculated max_attempts display
+        self._update_max_attempts_display()
         self.adaptive_timestep_min_factor_var.set(options.adaptive_timestep_min_factor)
         self.adaptive_timestep_cooldown_steps_var.set(
             options.adaptive_timestep_cooldown_steps
@@ -3308,6 +3325,29 @@ class IntegratorGUI:
         z_cutoff_val = options.core_params.get("z_cutoff", 0.0)
         self.z_cutoff_enabled_var.set(z_cutoff_val != 0.0)
         self._toggle_z_cutoff_controls()
+
+    def _update_max_attempts_display(self):
+        """Update the calculated max_refinement_attempts display based on reduction_factor and min_timestep_factor."""
+        import math
+
+        try:
+            reduction_factor = self.adaptive_timestep_reduction_factor_var.get()
+            min_factor = self.adaptive_timestep_min_factor_var.get()
+
+            if reduction_factor <= 1 or min_factor <= 0:
+                self.adaptive_timestep_max_attempts_display_var.set("N/A")
+                return
+
+            attempts = math.ceil(
+                math.log(1.0 / min_factor) / math.log(reduction_factor)
+            )
+            attempts = max(1, attempts)
+            self.adaptive_timestep_max_attempts_display_var.set(
+                f"{attempts} (from reduction & min factor)"
+            )
+        except (ValueError, ZeroDivisionError):
+            # Handle invalid input gracefully
+            self.adaptive_timestep_max_attempts_display_var.set("N/A")
 
     def _update_max_substeps_display(self):
         """Update the calculated max_substeps display based on min_timestep_factor."""
@@ -3472,9 +3512,7 @@ class IntegratorGUI:
             adaptive_timestep_reduction_factor=int(
                 self.adaptive_timestep_reduction_factor_var.get()
             ),
-            adaptive_timestep_max_attempts=int(
-                self.adaptive_timestep_max_attempts_var.get()
-            ),
+            # max_refinement_attempts is now auto-calculated in AdaptiveTimestepConfig
             adaptive_timestep_min_factor=float(
                 self.adaptive_timestep_min_factor_var.get()
             ),
@@ -4136,7 +4174,7 @@ class IntegratorGUI:
             self.adaptive_reduction_label,
             self.adaptive_reduction_entry,
             self.adaptive_max_attempts_label,
-            self.adaptive_max_attempts_entry,
+            self.adaptive_max_attempts_display,
             self.adaptive_min_factor_label,
             self.adaptive_min_factor_entry,
             self.adaptive_cooldown_label,

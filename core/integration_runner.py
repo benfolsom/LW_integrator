@@ -70,10 +70,36 @@ class AdaptiveTimestepConfig:
         0.1  # Relative energy change to trigger refinement (e.g., 0.1 = 10%)
     )
     timestep_reduction_factor: int = (
-        10  # Reduce timestep by this factor when jump detected
+        3  # Reduce timestep by this factor when jump detected (2, 3, or 10 typical)
     )
-    max_refinement_attempts: int = 5  # Maximum number of timestep refinements per step
     min_timestep_factor: float = 1e-4  # Minimum timestep as fraction of original
+
+    @property
+    def max_refinement_attempts(self) -> int:
+        """Maximum refinement attempts, auto-calculated from reduction_factor and min_timestep_factor.
+
+        This ensures consistency: the maximum number of reductions needed to reach
+        the minimum timestep is automatically determined.
+
+        Formula: max_attempts = ceil(log(1/min_timestep_factor) / log(reduction_factor))
+
+        Examples:
+            reduction_factor=3, min_timestep_factor=1e-4 → max_attempts = 9
+            reduction_factor=10, min_timestep_factor=1e-4 → max_attempts = 4
+        """
+        import math
+
+        if self.timestep_reduction_factor <= 1:
+            return 1  # Safety: avoid division by zero or invalid log
+
+        # Calculate how many reductions needed to reach min_timestep_factor
+        # h / (factor^n) = h * min_factor  →  factor^n = 1/min_factor
+        # n = log(1/min_factor) / log(factor)
+        attempts = math.ceil(
+            math.log(1.0 / self.min_timestep_factor)
+            / math.log(self.timestep_reduction_factor)
+        )
+        return max(1, attempts)  # At least 1 attempt
 
     # Hysteresis parameters: stay on reduced timestep for stability
     cooldown_steps: int = 10  # Minimum steps at reduced timestep before probing return

@@ -332,8 +332,9 @@ class SimulationOptions:
     # Adaptive timestep options
     adaptive_timestep_enabled: bool = True
     adaptive_timestep_threshold: float = 0.10
-    adaptive_timestep_reduction_factor: int = 10
-    adaptive_timestep_max_attempts: int = 5
+    adaptive_timestep_reduction_factor: int = 3
+    # Note: max_refinement_attempts is now auto-calculated in AdaptiveTimestepConfig
+    # from reduction_factor and min_timestep_factor to prevent inconsistencies
     adaptive_timestep_min_factor: float = 1e-4
 
     # Adaptive timestep hysteresis (stay on reduced timestep for stability)
@@ -421,7 +422,7 @@ class SimulationOptions:
             "adaptive_timestep_enabled": self.adaptive_timestep_enabled,
             "adaptive_timestep_threshold": self.adaptive_timestep_threshold,
             "adaptive_timestep_reduction_factor": self.adaptive_timestep_reduction_factor,
-            "adaptive_timestep_max_attempts": self.adaptive_timestep_max_attempts,
+            # max_refinement_attempts no longer stored (calculated from reduction_factor & min_factor)
             "adaptive_timestep_min_factor": self.adaptive_timestep_min_factor,
             "adaptive_timestep_cooldown_steps": self.adaptive_timestep_cooldown_steps,
             "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
@@ -584,9 +585,9 @@ class SimulationOptions:
             adaptive_timestep_enabled=_bool("adaptive_timestep_enabled", True),
             adaptive_timestep_threshold=_float("adaptive_timestep_threshold", 0.10),
             adaptive_timestep_reduction_factor=_int(
-                "adaptive_timestep_reduction_factor", 10
+                "adaptive_timestep_reduction_factor", 3
             ),
-            adaptive_timestep_max_attempts=_int("adaptive_timestep_max_attempts", 5),
+            # max_refinement_attempts no longer loaded (calculated automatically)
             adaptive_timestep_min_factor=_float("adaptive_timestep_min_factor", 1e-4),
             adaptive_timestep_cooldown_steps=_int(
                 "adaptive_timestep_cooldown_steps", 10
@@ -1089,7 +1090,7 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
         enabled=True,
         energy_jump_threshold=options.adaptive_timestep_threshold,
         timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
-        max_refinement_attempts=options.adaptive_timestep_max_attempts,
+        # max_refinement_attempts is now a calculated property, not passed as parameter
         min_timestep_factor=options.adaptive_timestep_min_factor,
         cooldown_steps=options.adaptive_timestep_cooldown_steps,
         probe_threshold=options.adaptive_timestep_probe_threshold,
