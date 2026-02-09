@@ -605,8 +605,8 @@ class IntegratorGUI:
         self.adaptive_timestep_debug_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_debug
         )
-        self.adaptive_timestep_hard_substep_cap_var = tk.StringVar(
-            value=str(getattr(self.options, "adaptive_timestep_hard_substep_cap", ""))
+        self.adaptive_timestep_max_substeps_var = tk.StringVar(
+            value=str(getattr(self.options, "adaptive_timestep_max_substeps", "1000"))
         )
 
         # Use preferences for directories
@@ -2339,46 +2339,49 @@ class IntegratorGUI:
         # Max sub-steps limit
         max_substeps_frame = ttk.Frame(at_frame)
         max_substeps_frame.grid(row=10, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.adaptive_hard_substep_cap_label = ttk.Label(
-            max_substeps_frame, text="Hard sub-step cap:"
+        self.adaptive_max_substeps_label = ttk.Label(
+            max_substeps_frame, text="Max sub-steps per step:"
         )
-        self.adaptive_hard_substep_cap_label.pack(side="left")
+        self.adaptive_max_substeps_label.pack(side="left")
         max_substeps_help = ttk.Label(
             max_substeps_frame, text="ⓘ", foreground="blue", cursor="hand2"
         )
         max_substeps_help.pack(side="left", padx=(3, 0))
         Tooltip(
             max_substeps_help,
-            "Hard cap on the number of sub-steps per main integration step.\n\n"
+            "Maximum number of sub-steps allowed per main integration step.\n\n"
             "When adaptive timestep reduces the timestep significantly,\n"
             "a single main step may require many sub-steps to cover the\n"
             "base timestep interval.\n\n"
-            "Examples:\n"
+            "Theoretical maximum:\n"
+            "  max_substeps ≈ 1 / min_timestep_factor\n"
+            "  With min_timestep_factor = 1e-4 → max = 10,000 substeps\n\n"
+            "Example:\n"
             "  • Base timestep: 2.3e-06 ns\n"
             "  • Reduced to: 3.2e-09 ns (after refinement)\n"
             "  • Sub-steps needed: 2.3e-06 / 3.2e-09 = 719\n\n"
-            "Use this hard cap to prevent runaway subdivision in pathological\n"
-            "regions where energy errors persist regardless of timestep.\n\n"
-            "Different from 'max_substeps_per_step' (internal threshold):\n"
-            "  • max_substeps_per_step = detection threshold for recovery\n"
-            "  • hard_substep_cap = actual execution limit\n\n"
+            "This cap prevents runaway subdivision in pathological regions\n"
+            "where energy errors persist regardless of timestep.\n\n"
+            "Unified parameter (replaces old hard_substep_cap):\n"
+            "  • Detection threshold: triggers cooldown skip\n"
+            "  • Execution limit: caps actual sub-step count\n\n"
             "Values:\n"
-            "  • Empty/blank = unlimited (allow all needed sub-steps)\n"
-            "  • 100-1000 = reasonable cap for most cases\n"
-            "  • Higher values = more thorough but slower\n\n"
-            "Performance impact:\n"
-            "  • 729 sub-steps → ~700× slower for that step\n"
-            "  • Capping at 100 → ~14× speedup (86% reduction)\n\n"
-            "Default: unlimited (blank)\n"
-            "Recommended: blank for production, 100-200 for faster debugging",
+            "  • 100-500 = conservative (faster, may skip time)\n"
+            "  • 1000 = default (balanced)\n"
+            "  • 10000 = theoretical max from min_timestep_factor\n\n"
+            "Performance vs accuracy trade-off:\n"
+            "  • Lower values = faster but may create time discontinuities\n"
+            "  • Higher values = more accurate but slower in bad regions\n\n"
+            "Default: 1000\n"
+            "Recommended: 1000 for production, 100-200 for debugging",
         )
 
-        self.adaptive_hard_substep_cap_entry = ttk.Entry(
+        self.adaptive_max_substeps_entry = ttk.Entry(
             at_frame,
-            textvariable=self.adaptive_timestep_hard_substep_cap_var,
+            textvariable=self.adaptive_timestep_max_substeps_var,
             width=16,
         )
-        self.adaptive_hard_substep_cap_entry.grid(
+        self.adaptive_max_substeps_entry.grid(
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
@@ -3271,12 +3274,8 @@ class IntegratorGUI:
             options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
-        hard_substep_cap_val = getattr(
-            options, "adaptive_timestep_hard_substep_cap", None
-        )
-        self.adaptive_timestep_hard_substep_cap_var.set(
-            str(hard_substep_cap_val) if hard_substep_cap_val is not None else ""
-        )
+        max_substeps_val = getattr(options, "adaptive_timestep_max_substeps", 1000)
+        self.adaptive_timestep_max_substeps_var.set(str(max_substeps_val))
         self.save_log_file_var.set(options.save_log_file)
 
         # Only override directories if not preserving loaded preferences
@@ -3472,10 +3471,8 @@ class IntegratorGUI:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
-            adaptive_timestep_hard_substep_cap=(
-                int(self.adaptive_timestep_hard_substep_cap_var.get())
-                if self.adaptive_timestep_hard_substep_cap_var.get().strip()
-                else None
+            adaptive_timestep_max_substeps=int(
+                self.adaptive_timestep_max_substeps_var.get() or "1000"
             ),
             save_log_file=bool(self.save_log_file_var.get()),
         )

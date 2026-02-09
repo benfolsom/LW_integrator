@@ -80,17 +80,12 @@ class AdaptiveTimestepConfig:
     probe_threshold: float = 0.01  # Energy stability threshold for safe return (1%)
     max_probe_steps: int = 3  # Number of consecutive stable steps needed to return
 
-    # Impractical timestep handling
+    # Impractical timestep handling and sub-step limit
     max_substeps_per_step: int = (
-        1000  # If a step requires more sub-steps, skip cooldown
+        1000  # Hard cap on substeps per step (derived from 1/min_timestep_factor)
     )
     skip_cooldown_on_particle_death: bool = (
         False  # Keep survivors in cooldown mode for safer recovery
-    )
-
-    # Sub-step limit: cap maximum number of sub-steps per main step
-    hard_substep_cap: Optional[int] = (
-        None  # If set, caps sub-steps to prevent runaway subdivision (None = unlimited)
     )
 
     # Proximity-based refinement: refine timesteps near walls/apertures
@@ -345,7 +340,7 @@ def retarded_integrator(
             # Adaptive timestep refinement with sub-stepping and hysteresis:
             # If timestep is reduced, we stay reduced for several steps before probing return
             step_accepted = False
-            refinement_attempt = 0
+            refinement_attempt = 0  # Track energy jump detections for this step
 
             # Initialize to satisfy type checker (will be assigned in loop)
             temp_trajectory: Trajectory = []
@@ -409,6 +404,7 @@ def retarded_integrator(
             if reduced_timestep_mode and adaptive_timestep is not None:
                 # Check if timestep is impractically small (would require too many sub-steps)
                 expected_substeps = int(np.ceil(h_step / reduced_h_step))
+                # Note: max_substeps_per_step also serves as hard cap to prevent discontinuities
                 impractical_timestep = (
                     expected_substeps > adaptive_timestep.max_substeps_per_step
                 )
@@ -505,24 +501,24 @@ def retarded_integrator(
                 # Determine number of sub-steps needed to cover base timestep interval
                 num_substeps_raw = int(np.round(h_step / current_h_step))
 
-                # Apply optional cap to prevent runaway subdivision in pathological regions
-                if (
-                    adaptive_timestep is not None
-                    and hasattr(adaptive_timestep, "hard_substep_cap")
-                    and adaptive_timestep.hard_substep_cap is not None
-                ):
-                    hard_cap = adaptive_timestep.hard_substep_cap
-                    num_substeps = min(num_substeps_raw, hard_cap)
+                # Apply cap to prevent runaway subdivision (uses max_substeps_per_step)
+                if adaptive_timestep is not None:
+                    num_substeps = min(
+                        num_substeps_raw, adaptive_timestep.max_substeps_per_step
+                    )
 
                     # Warn if cap is hit (indicates pathological region)
-                    if num_substeps_raw > hard_cap and adaptive_timestep.debug:
+                    if (
+                        num_substeps_raw > adaptive_timestep.max_substeps_per_step
+                        and adaptive_timestep.debug
+                    ):
                         print(
-                            f"Step {i}: Sub-step limit reached ({hard_cap}). "
+                            f"Step {i}: Sub-step limit reached ({adaptive_timestep.max_substeps_per_step}). "
                             f"Timestep {current_h_step:.6e} ns would require {num_substeps_raw} sub-steps. "
                             f"This step may not fully cover the base timestep interval."
                         )
                 else:
-                    # No cap - allow as many sub-steps as needed
+                    # No adaptive timestep - use raw count
                     num_substeps = num_substeps_raw
 
                 if num_substeps < 1:
@@ -541,6 +537,12 @@ def retarded_integrator(
 
                 energy_jump_detected = False
                 gamma_blowup_detected = False
+                max_refinement_reached = (
+                    False  # Track if we've already warned about max refinement
+                )
+                min_timestep_reached = (
+                    False  # Track if we've already warned about minimum timestep
+                )
 
                 for substep_idx in range(num_substeps):
                     # Check for cancellation inside substep loop
@@ -619,7 +621,6 @@ def retarded_integrator(
                         else:
                             # Adaptive timestep available - try to reduce and retry
                             gamma_blowup_detected = True
-                            refinement_attempt += 1
 
                             if (
                                 refinement_attempt
@@ -825,12 +826,21 @@ def retarded_integrator(
                                     refinement_attempt
                                     > adaptive_timestep.max_refinement_attempts
                                 ):
-                                    if adaptive_timestep.debug:
+                                    # Max refinement attempts reached - accept step and continue substeps
+                                    if (
+                                        adaptive_timestep.debug
+                                        and not max_refinement_reached
+                                    ):
                                         print(
-                                            f"Step {i}: Max refinement attempts reached. "
-                                            f"Accepting step with ΔE/E = {relative_change:.6e}"
+                                            f"Step {i}: Max refinement attempts ({adaptive_timestep.max_refinement_attempts}) reached. "
+                                            f"Accepting remaining substeps (ΔE/E = {relative_change:.6e})"
                                         )
-                                    energy_jump_detected = False  # Accept anyway
+                                        max_refinement_reached = (
+                                            True  # Only print once per step
+                                        )
+                                    energy_jump_detected = (
+                                        False  # Don't retry, accept this substep
+                                    )
                                 else:
                                     # Check minimum timestep limit
                                     min_h = (
@@ -842,10 +852,16 @@ def retarded_integrator(
                                     )
 
                                     if new_h_step < min_h:
-                                        if adaptive_timestep.debug:
+                                        if (
+                                            adaptive_timestep.debug
+                                            and not min_timestep_reached
+                                        ):
                                             print(
                                                 f"Step {i}: Minimum timestep reached. "
-                                                f"Accepting step with ΔE/E = {relative_change:.6e}"
+                                                f"Accepting remaining substeps (ΔE/E = {relative_change:.6e})"
+                                            )
+                                            min_timestep_reached = (
+                                                True  # Only print once per retry
                                             )
                                         energy_jump_detected = False  # Accept anyway
                                     else:

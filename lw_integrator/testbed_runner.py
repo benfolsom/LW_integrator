@@ -342,8 +342,8 @@ class SimulationOptions:
     adaptive_timestep_max_probe_steps: int = 3
 
     adaptive_timestep_debug: bool = False
-    adaptive_timestep_hard_substep_cap: Optional[int] = (
-        None  # Hard cap on sub-steps per main step (None = unlimited)
+    adaptive_timestep_max_substeps: int = (
+        1000  # Hard cap on sub-steps per main step (derived from 1/min_timestep_factor)
     )
 
     # Logging options
@@ -428,7 +428,7 @@ class SimulationOptions:
             "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
             "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
-            "adaptive_timestep_hard_substep_cap": self.adaptive_timestep_hard_substep_cap,
+            "adaptive_timestep_max_substeps": self.adaptive_timestep_max_substeps,
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -599,11 +599,7 @@ class SimulationOptions:
                 "adaptive_timestep_max_probe_steps", 3
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
-            adaptive_timestep_hard_substep_cap=_int(
-                "adaptive_timestep_hard_substep_cap", 0
-            )
-            if payload.get("adaptive_timestep_hard_substep_cap") is not None
-            else None,
+            adaptive_timestep_max_substeps=_int("adaptive_timestep_max_substeps", 1000),
             self_consistency_gamma_reconciliation_method=_str(
                 "self_consistency_gamma_reconciliation_method", "ADAPTIVE_WEIGHTED"
             ),
@@ -1099,8 +1095,8 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
         cooldown_steps=options.adaptive_timestep_cooldown_steps,
         probe_threshold=options.adaptive_timestep_probe_threshold,
         max_probe_steps=options.adaptive_timestep_max_probe_steps,
+        max_substeps_per_step=options.adaptive_timestep_max_substeps,
         debug=options.adaptive_timestep_debug,
-        hard_substep_cap=options.adaptive_timestep_hard_substep_cap,
     )
 
 
