@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
+from core.batched_logger import BatchedLogger, ThrottledProgressCallback
 from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
@@ -320,6 +321,7 @@ class IntegratorGUI:
         self._running = False
         self._cancel_requested = False
         self._scroll_pages: List[_ScrollableNotebookPage] = []
+        self._batched_logger: Optional[BatchedLogger] = None
 
         # Keyboard debugging mode (via environment variable)
         self._keyboard_debug = os.environ.get("LW_KEYBOARD_DEBUG", "0") == "1"
@@ -4132,8 +4134,8 @@ class IntegratorGUI:
             self.adaptive_max_probe_entry,
             self.adaptive_halt_check,
             self.adaptive_debug_check,
-            self.adaptive_hard_substep_cap_label,
-            self.adaptive_hard_substep_cap_entry,
+            self.adaptive_max_substeps_label,
+            self.adaptive_max_substeps_entry,
         ]
 
         for control in all_controls:
@@ -4258,9 +4260,26 @@ class IntegratorGUI:
     def _run_background(self, options: SimulationOptions) -> None:
         from core.integration_runner import IntegrationCancelled
 
-        def progress_callback(current: int, total: int) -> None:
-            progress_pct = (current / total * 100.0) if total > 0 else 0.0
-            self.root.after(0, lambda: self.progress_var.set(progress_pct))
+        # Create batched logger for this run (100 messages per batch, 500ms flush interval)
+        def gui_log_callback(text: str) -> None:
+            self.root.after(0, partial(self._append_log, text))
+
+        self._batched_logger = BatchedLogger(
+            gui_callback=gui_log_callback,
+            batch_size=100,
+            flush_interval_ms=500,
+            max_queue_size=10000,
+            enable_batching=True,  # Can be disabled for debugging if needed
+        )
+
+        # Throttled progress callback (max 10 updates/second)
+        throttled_progress = ThrottledProgressCallback(
+            gui_callback=lambda pct: self.root.after(
+                0, lambda: self.progress_var.set(pct)
+            ),
+            min_interval_ms=100,
+            force_final=True,
+        )
 
         def cancel_callback() -> bool:
             return self._cancel_requested
@@ -4268,14 +4287,20 @@ class IntegratorGUI:
         try:
             result = run_testbed(
                 options,
-                log=self._queue_log,
-                progress_callback=progress_callback,
+                log=self._batched_logger.log,  # Use batched logger
+                progress_callback=throttled_progress,  # Use throttled progress
                 cancel_callback=cancel_callback,
             )
         except IntegrationCancelled:
+            # Flush any remaining log messages before canceling
+            if self._batched_logger:
+                self._batched_logger.flush()
             self.root.after(0, self._on_cancelled)
             return
         except Exception as exc:  # pragma: no cover - UI safeguard
+            # Flush any remaining log messages before error handling
+            if self._batched_logger:
+                self._batched_logger.flush()
             # Log brief error to summary
             brief_error = str(exc)
             # Log full traceback to detailed logs
@@ -4289,9 +4314,25 @@ class IntegratorGUI:
             # Pass brief error to failure handler
             self.root.after(0, partial(self._on_failure, brief_error))
             return
+        finally:
+            # Clean shutdown of batched logger
+            if self._batched_logger:
+                stats = self._batched_logger.get_stats()
+                if stats["total_messages"] > 0:
+                    # Log batching statistics for monitoring
+                    reduction = stats["reduction_factor"]
+                    self._append_log(
+                        f"[Batched Logging Stats] {stats['total_messages']} messages "
+                        f"→ {stats['total_batches']} batches "
+                        f"({reduction:.1f}× reduction, {stats['dropped_messages']} dropped)"
+                    )
+                self._batched_logger.shutdown()
+                self._batched_logger = None
+
         self.root.after(0, partial(self._on_success, result))
 
     def _queue_log(self, text: str) -> None:
+        """Legacy log queuing (kept for compatibility, but batched logger preferred)."""
         self.root.after(0, partial(self._append_log, text))
 
     def _replot_with_new_axis(

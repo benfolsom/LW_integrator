@@ -400,6 +400,11 @@ def retarded_integrator(
                             f"Reduction factor: {proximity_factor:.4f}x"
                         )
 
+            # Check for cancellation before cooldown/hysteresis logic
+            # This allows interruption during long cooldown periods
+            if cancel_callback is not None and cancel_callback():
+                raise IntegrationCancelled("Integration cancelled by caller.")
+
             # Hysteresis logic: decide starting timestep for this step
             if reduced_timestep_mode and adaptive_timestep is not None:
                 # Check if timestep is impractically small (would require too many sub-steps)
