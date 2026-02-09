@@ -600,6 +600,210 @@ Full convergence details with 15-digit precision:
 
 Use for debugging convergence issues or investigating numerical precision.
 
+Gamma Reconciliation
+=====================
+
+The Dual-Gamma Problem
+-----------------------
+
+The integrator computes the Lorentz factor γ in two independent ways:
+
+1. **γ_energy** (from conjugate momentum):
+
+   .. math::
+
+      \gamma_{\text{energy}} = \frac{P_t - q\Phi}{mc}
+
+2. **γ_velocity** (from velocity):
+
+   .. math::
+
+      \gamma_{\text{velocity}} = \frac{1}{\sqrt{1 - \beta^2}}
+
+In exact mathematics, these should be identical. However, numerical discretization
+can create small differences that accumulate over long integration runs, potentially
+causing:
+
+- Energy jumps and conservation violations
+- Catastrophic gamma blowups (γ → ∞)
+- Numerical instabilities in high-energy regimes
+
+Reconciliation Methods
+----------------------
+
+To address this dual-gamma inconsistency, five reconciliation methods are available
+via :py:class:`core.types.GammaReconciliationMethod`:
+
+**ADAPTIVE_WEIGHTED (default, recommended)**
+   Velocity-dependent weighted average with configurable thresholds:
+
+   .. math::
+
+      \gamma_{\text{reconciled}} = \alpha(\beta) \cdot \gamma_{\text{energy}} + (1-\alpha(\beta)) \cdot \gamma_{\text{velocity}}
+
+   Where α varies by velocity regime:
+
+   - β < 0.9: α = 0.8 (trust energy more)
+   - β > 0.99: α = 0.2 (trust velocity more)
+   - 0.9 ≤ β ≤ 0.99: α = 0.5 (balanced)
+
+   After reconciliation, both γ and Pt are updated, and spatial momentum is
+   rescaled to preserve the mass shell: Pt² = P² + (mc)²
+
+**FIXED_WEIGHTED**
+   Fixed 50/50 blend (or custom weight) across all velocities:
+
+   .. math::
+
+      \gamma_{\text{reconciled}} = \alpha \cdot \gamma_{\text{energy}} + (1-\alpha) \cdot \gamma_{\text{velocity}}
+
+   Default α = 0.5, configurable via ``gamma_reconciliation_fixed_weight``
+
+**USE_VELOCITY**
+   Always use γ_velocity = 1/√(1-β²)
+
+   .. warning::
+      This breaks energy bookkeeping and can cause unphysical energy changes.
+      Only use for testing/debugging.
+
+**USE_ENERGY**
+   Always use γ_energy = (Pt - q·Φ)/(mc)
+
+   Equivalent to DISABLED; provided for symmetry/clarity.
+
+**DISABLED**
+   No reconciliation applied (legacy behavior)
+
+   .. warning::
+      Can cause dual-gamma inconsistency and energy blowups. Not recommended
+      for production simulations.
+
+Configuration
+-------------
+
+Configure via ``SelfConsistencyConfig``:
+
+.. code-block:: python
+
+   from core.self_consistency import SelfConsistencyConfig
+   from core.types import GammaReconciliationMethod
+
+   # Example 1: Default (ADAPTIVE_WEIGHTED with standard thresholds)
+   config = SelfConsistencyConfig()
+   # Uses ADAPTIVE_WEIGHTED with β thresholds [0.9, 0.99] and weights [0.8, 0.5, 0.2]
+
+   # Example 2: Custom adaptive weighting for ultra-relativistic particles
+   config = SelfConsistencyConfig(
+       gamma_reconciliation_method=GammaReconciliationMethod.ADAPTIVE_WEIGHTED,
+       gamma_reconciliation_low_beta_threshold=0.85,
+       gamma_reconciliation_high_beta_threshold=0.995,
+       gamma_reconciliation_low_beta_weight=0.9,    # Trust energy more at low β
+       gamma_reconciliation_high_beta_weight=0.1,   # Trust velocity more at high β
+       gamma_reconciliation_mid_beta_weight=0.5
+   )
+
+   # Example 3: Fixed weighted blend
+   config = SelfConsistencyConfig(
+       gamma_reconciliation_method=GammaReconciliationMethod.FIXED_WEIGHTED,
+       gamma_reconciliation_fixed_weight=0.6  # 60% energy, 40% velocity
+   )
+
+   # Example 4: Disable reconciliation (not recommended)
+   config = SelfConsistencyConfig(
+       gamma_reconciliation_method=GammaReconciliationMethod.DISABLED
+   )
+
+API Usage
+---------
+
+Configure via :py:class:`lw_integrator.testbed_runner.SimulationOptions`:
+
+.. code-block:: python
+
+   from lw_integrator.testbed_runner import SimulationOptions
+   from core.types import SimulationType
+
+   options = SimulationOptions(
+       simulation_type=SimulationType.CONDUCTING_WALL,
+       steps=1000,
+       self_consistency_gamma_reconciliation_method='ADAPTIVE_WEIGHTED',
+       self_consistency_gamma_reconciliation_low_beta_threshold=0.9,
+       self_consistency_gamma_reconciliation_high_beta_threshold=0.99,
+       self_consistency_gamma_reconciliation_low_beta_weight=0.8,
+       self_consistency_gamma_reconciliation_high_beta_weight=0.2,
+       self_consistency_gamma_reconciliation_mid_beta_weight=0.5
+   )
+
+GUI Controls
+------------
+
+In the GUI, navigate to **Stability** tab → **Self-Consistency Checks** →
+**Gamma Reconciliation**:
+
+- **Method dropdown**: Select from 5 reconciliation methods
+- **Adaptive Weighted Parameters** panel: Configure thresholds and weights (shown for ADAPTIVE_WEIGHTED)
+- **Fixed Weighted Parameter** panel: Configure fixed weight (shown for FIXED_WEIGHTED)
+
+Panels automatically show/hide based on the selected method.
+
+Backward Compatibility
+----------------------
+
+The old boolean ``gamma_reconciliation_enabled`` parameter has been replaced with
+``gamma_reconciliation_method``. For backward compatibility:
+
+.. code-block:: python
+
+   # Old style (deprecated)
+   config.gamma_reconciliation_enabled = True   # Now uses ADAPTIVE_WEIGHTED
+   config.gamma_reconciliation_enabled = False  # Now uses DISABLED
+
+   # New style (recommended)
+   config.gamma_reconciliation_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
+
+The ``gamma_reconciliation_enabled`` property still works (returns True if method != DISABLED)
+for legacy code compatibility.
+
+Recommendations
+---------------
+
+**Production use**: ADAPTIVE_WEIGHTED (default)
+   - Handles all velocity regimes appropriately
+   - Prevents dual-gamma blowups
+   - Maintains energy conservation
+   - Default thresholds work for most cases
+
+**Custom tuning**: For ultra-relativistic particles (β > 0.999)
+   - Lower ``high_beta_threshold`` to 0.995
+   - Lower ``high_beta_weight`` to 0.1 (trust velocity more)
+
+**Debugging**: Use USE_VELOCITY or USE_ENERGY to isolate problematic calculations
+
+**Not recommended**: DISABLED
+   - Only for legacy comparison or debugging
+   - Can cause catastrophic energy blowups
+
+Diagnostics
+-----------
+
+With ``verbosity >= 3``, reconciliation details are logged:
+
+.. code-block:: text
+
+   Gamma reconciliation (ADAPTIVE_WEIGHTED): α=0.80, β=0.856000,
+     γ_energy=2.123456e+00, γ_velocity=2.123401e+00, γ_reconciled=2.123445e+00
+
+Interpretation:
+
+- **α**: Weight applied to γ_energy (1-α applied to γ_velocity)
+- **β**: Total velocity magnitude
+- **γ_energy**: Gamma from conjugate momentum
+- **γ_velocity**: Gamma from velocity
+- **γ_reconciled**: Final blended value
+
+Watch for large discrepancies (>1% relative difference) between γ_energy and γ_velocity,
+which indicate numerical instability requiring reconciliation.
+
 References
 ==========
 
@@ -612,5 +816,8 @@ See Also
 ========
 
 - :py:class:`core.self_consistency.SelfConsistencyConfig` - Configuration class
+- :py:class:`core.types.GammaReconciliationMethod` - Reconciliation method enum
 - :py:func:`core.equations.retarded_equations_of_motion` - Main equations implementation
 - :py:func:`core.self_consistency.self_consistent_step` - Wrapper function
+- Local documentation: ``local/gamma_reconciliation_config.md`` - Comprehensive reconciliation guide
+- Local documentation: ``local/gamma_reconciliation_quickref.md`` - Quick parameter reference

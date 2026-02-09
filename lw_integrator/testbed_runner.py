@@ -301,6 +301,26 @@ class SimulationOptions:
     self_consistency_chrono_adaptive_tolerance: bool = (
         False  # Auto-set tolerance = 0.1 × timestep
     )
+    # Gamma reconciliation options
+    self_consistency_gamma_reconciliation_method: str = "ADAPTIVE_WEIGHTED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED
+    self_consistency_gamma_reconciliation_low_beta_threshold: float = (
+        0.9  # Below this β: trust energy (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_high_beta_threshold: float = (
+        0.99  # Above this β: trust velocity (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_low_beta_weight: float = (
+        0.8  # Weight α for β < low threshold (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_high_beta_weight: float = (
+        0.2  # Weight α for β > high threshold (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_mid_beta_weight: float = (
+        0.5  # Weight α for mid β range (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_fixed_weight: float = (
+        0.5  # Weight α for FIXED_WEIGHTED method
+    )
 
     # Energy monitoring options
     energy_monitor_enabled: bool = True
@@ -322,6 +342,9 @@ class SimulationOptions:
     adaptive_timestep_max_probe_steps: int = 3
 
     adaptive_timestep_debug: bool = False
+    adaptive_timestep_hard_substep_cap: Optional[int] = (
+        None  # Hard cap on sub-steps per main step (None = unlimited)
+    )
 
     # Logging options
     save_log_file: bool = False
@@ -384,6 +407,13 @@ class SimulationOptions:
             "self_consistency_chrono_matching_mode": self.self_consistency_chrono_matching_mode,
             "self_consistency_chrono_high_precision": self.self_consistency_chrono_high_precision,
             "self_consistency_chrono_adaptive_tolerance": self.self_consistency_chrono_adaptive_tolerance,
+            "self_consistency_gamma_reconciliation_method": self.self_consistency_gamma_reconciliation_method,
+            "self_consistency_gamma_reconciliation_low_beta_threshold": self.self_consistency_gamma_reconciliation_low_beta_threshold,
+            "self_consistency_gamma_reconciliation_high_beta_threshold": self.self_consistency_gamma_reconciliation_high_beta_threshold,
+            "self_consistency_gamma_reconciliation_low_beta_weight": self.self_consistency_gamma_reconciliation_low_beta_weight,
+            "self_consistency_gamma_reconciliation_high_beta_weight": self.self_consistency_gamma_reconciliation_high_beta_weight,
+            "self_consistency_gamma_reconciliation_mid_beta_weight": self.self_consistency_gamma_reconciliation_mid_beta_weight,
+            "self_consistency_gamma_reconciliation_fixed_weight": self.self_consistency_gamma_reconciliation_fixed_weight,
             "energy_monitor_enabled": self.energy_monitor_enabled,
             "energy_monitor_threshold": self.energy_monitor_threshold,
             "energy_monitor_check_interval": self.energy_monitor_check_interval,
@@ -398,6 +428,7 @@ class SimulationOptions:
             "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
             "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
+            "adaptive_timestep_hard_substep_cap": self.adaptive_timestep_hard_substep_cap,
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -568,6 +599,32 @@ class SimulationOptions:
                 "adaptive_timestep_max_probe_steps", 3
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
+            adaptive_timestep_hard_substep_cap=_int(
+                "adaptive_timestep_hard_substep_cap", 0
+            )
+            if payload.get("adaptive_timestep_hard_substep_cap") is not None
+            else None,
+            self_consistency_gamma_reconciliation_method=_str(
+                "self_consistency_gamma_reconciliation_method", "ADAPTIVE_WEIGHTED"
+            ),
+            self_consistency_gamma_reconciliation_low_beta_threshold=_float(
+                "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
+            ),
+            self_consistency_gamma_reconciliation_high_beta_threshold=_float(
+                "self_consistency_gamma_reconciliation_high_beta_threshold", 0.99
+            ),
+            self_consistency_gamma_reconciliation_low_beta_weight=_float(
+                "self_consistency_gamma_reconciliation_low_beta_weight", 0.8
+            ),
+            self_consistency_gamma_reconciliation_high_beta_weight=_float(
+                "self_consistency_gamma_reconciliation_high_beta_weight", 0.2
+            ),
+            self_consistency_gamma_reconciliation_mid_beta_weight=_float(
+                "self_consistency_gamma_reconciliation_mid_beta_weight", 0.5
+            ),
+            self_consistency_gamma_reconciliation_fixed_weight=_float(
+                "self_consistency_gamma_reconciliation_fixed_weight", 0.5
+            ),
             save_log_file=_bool("save_log_file", False),
             log_file_path=str(payload.get("log_file_path"))
             if payload.get("log_file_path") is not None
@@ -971,6 +1028,15 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         return None
 
     from core.self_consistency import SelfConsistencyConfig
+    from core.types import GammaReconciliationMethod
+
+    # Parse gamma reconciliation method string to enum
+    method_str = options.self_consistency_gamma_reconciliation_method.upper()
+    try:
+        gamma_method = GammaReconciliationMethod[method_str]
+    except KeyError:
+        # Fallback to ADAPTIVE_WEIGHTED if invalid method specified
+        gamma_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
 
     return SelfConsistencyConfig(
         enabled=True,
@@ -985,6 +1051,13 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         chrono_matching_mode=options.self_consistency_chrono_matching_mode,
         chrono_high_precision=options.self_consistency_chrono_high_precision,
         chrono_adaptive_tolerance=options.self_consistency_chrono_adaptive_tolerance,
+        gamma_reconciliation_method=gamma_method,
+        gamma_reconciliation_low_beta_threshold=options.self_consistency_gamma_reconciliation_low_beta_threshold,
+        gamma_reconciliation_high_beta_threshold=options.self_consistency_gamma_reconciliation_high_beta_threshold,
+        gamma_reconciliation_low_beta_weight=options.self_consistency_gamma_reconciliation_low_beta_weight,
+        gamma_reconciliation_high_beta_weight=options.self_consistency_gamma_reconciliation_high_beta_weight,
+        gamma_reconciliation_mid_beta_weight=options.self_consistency_gamma_reconciliation_mid_beta_weight,
+        gamma_reconciliation_fixed_weight=options.self_consistency_gamma_reconciliation_fixed_weight,
     )
 
 
@@ -1027,6 +1100,7 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
         probe_threshold=options.adaptive_timestep_probe_threshold,
         max_probe_steps=options.adaptive_timestep_max_probe_steps,
         debug=options.adaptive_timestep_debug,
+        hard_substep_cap=options.adaptive_timestep_hard_substep_cap,
     )
 
 

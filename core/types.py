@@ -68,6 +68,46 @@ class StartupMode(Enum):
     APPROXIMATE_BACK_HISTORY = auto()
 
 
+class GammaReconciliationMethod(Enum):
+    """Methods for reconciling dual gamma calculations (from energy vs velocity).
+
+    The integrator computes gamma in two ways:
+    - γ_energy from conjugate momentum: γ = (Pt - q·Φ)/(mc)
+    - γ_velocity from velocity: γ = 1/√(1-β²)
+
+    These should be identical in exact math but differ numerically due to
+    discretization, potentially causing energy jumps and instabilities.
+
+    Reconciliation methods:
+
+    ``DISABLED`` - No reconciliation; use γ_energy directly (legacy behavior).
+        May cause dual-gamma inconsistency and energy blowups.
+
+    ``ADAPTIVE_WEIGHTED`` - Weighted average with velocity-dependent α (default).
+        α = 0.8 (trust energy) for β < 0.9
+        α = 0.2 (trust velocity) for β > 0.99
+        α = 0.5 (balanced) for 0.9 ≤ β ≤ 0.99
+        Provides smooth transition across velocity regimes.
+
+    ``USE_VELOCITY`` - Always use γ_velocity (γ = 1/√(1-β²)).
+        Geometrically consistent but can break energy bookkeeping.
+        Not recommended for production.
+
+    ``USE_ENERGY`` - Always use γ_energy (γ = (Pt - q·Φ)/(mc)).
+        Same as DISABLED; provided for symmetry/clarity.
+
+    ``FIXED_WEIGHTED`` - Fixed 50/50 weighted average.
+        γ = 0.5·γ_energy + 0.5·γ_velocity
+        Simple but doesn't adapt to physics regime.
+    """
+
+    DISABLED = auto()
+    ADAPTIVE_WEIGHTED = auto()
+    USE_VELOCITY = auto()
+    USE_ENERGY = auto()
+    FIXED_WEIGHTED = auto()
+
+
 @dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.

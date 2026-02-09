@@ -87,6 +87,7 @@ from .particle_status import mark_particle_dead
 from .self_consistency import SelfConsistencyConfig
 from .types import (
     ChronoMatchingMode,
+    GammaReconciliationMethod,
     ParticleState,
     SimulationType,
     StartupMode,
@@ -1385,6 +1386,101 @@ def retarded_equations_of_motion(
                     f"      γ_velocity (from β over Δt={coordinate_dt:.15e}) = {gamma_from_velocity:.15e}, "
                     f"βtot={beta_total:.15e}"
                 )
+
+            # ================================================================
+            # GAMMA RECONCILIATION (configurable)
+            # ================================================================
+            # Reconcile gamma_from_energy (from Pt) and gamma_from_velocity (from beta)
+            # to prevent dual-gamma inconsistency and blowups
+            if (
+                sc_enabled
+                and self_consistency is not None
+                and self_consistency.gamma_reconciliation_enabled
+            ):
+                gamma_from_energy = result["gamma"][particle_idx]
+                beta_total = np.sqrt(
+                    beta_x_limited**2 + beta_y_limited**2 + beta_z_limited**2
+                )
+
+                # Determine reconciliation method
+                method = self_consistency.gamma_reconciliation_method
+
+                if method == GammaReconciliationMethod.DISABLED:
+                    # No reconciliation - use energy-based gamma (already set)
+                    gamma_reconciled = gamma_from_energy
+                    alpha = 1.0  # For logging
+
+                elif method == GammaReconciliationMethod.USE_VELOCITY:
+                    # Always use velocity-based gamma
+                    gamma_reconciled = gamma_from_velocity
+                    alpha = 0.0  # For logging
+
+                elif method == GammaReconciliationMethod.USE_ENERGY:
+                    # Always use energy-based gamma (same as DISABLED)
+                    gamma_reconciled = gamma_from_energy
+                    alpha = 1.0  # For logging
+
+                elif method == GammaReconciliationMethod.FIXED_WEIGHTED:
+                    # Fixed 50/50 weighted average (or custom weight)
+                    alpha = self_consistency.gamma_reconciliation_fixed_weight
+                    gamma_reconciled = (
+                        alpha * gamma_from_energy + (1.0 - alpha) * gamma_from_velocity
+                    )
+
+                elif method == GammaReconciliationMethod.ADAPTIVE_WEIGHTED:
+                    # Adaptive weighting based on velocity regime (default)
+                    low_threshold = (
+                        self_consistency.gamma_reconciliation_low_beta_threshold
+                    )
+                    high_threshold = (
+                        self_consistency.gamma_reconciliation_high_beta_threshold
+                    )
+                    low_weight = self_consistency.gamma_reconciliation_low_beta_weight
+                    high_weight = self_consistency.gamma_reconciliation_high_beta_weight
+                    mid_weight = self_consistency.gamma_reconciliation_mid_beta_weight
+
+                    if beta_total < low_threshold:
+                        alpha = low_weight  # Trust energy at lower velocities
+                    elif beta_total > high_threshold:
+                        alpha = high_weight  # Trust velocity near speed of light
+                    else:
+                        alpha = mid_weight  # Balanced weighting
+
+                    gamma_reconciled = (
+                        alpha * gamma_from_energy + (1.0 - alpha) * gamma_from_velocity
+                    )
+                else:
+                    # Fallback to energy-based gamma for unknown methods
+                    gamma_reconciled = gamma_from_energy
+                    alpha = 1.0
+
+                # Update gamma and Pt to be consistent
+                result["gamma"][particle_idx] = gamma_reconciled
+                result["Pt"][particle_idx] = gamma_reconciled * particle_mass * C_MMNS
+
+                # Rescale spatial momentum to preserve mass shell: Pt² = P² + (mc)²
+                P_magnitude_sq = (
+                    result["Pt"][particle_idx] ** 2 - (particle_mass * C_MMNS) ** 2
+                )
+                if P_magnitude_sq > 0:
+                    P_magnitude = np.sqrt(P_magnitude_sq)
+                    current_P_mag = np.sqrt(
+                        result["Px"][particle_idx] ** 2
+                        + result["Py"][particle_idx] ** 2
+                        + result["Pz"][particle_idx] ** 2
+                    )
+                    if current_P_mag > 1e-20:
+                        scale_factor = P_magnitude / current_P_mag
+                        result["Px"][particle_idx] *= scale_factor
+                        result["Py"][particle_idx] *= scale_factor
+                        result["Pz"][particle_idx] *= scale_factor
+
+                if sc_verbosity >= 3:
+                    print(
+                        f"      Gamma reconciliation ({method.name}): α={alpha:.2f}, β={beta_total:.6f}, "
+                        f"γ_energy={gamma_from_energy:.6e}, γ_velocity={gamma_from_velocity:.6e}, "
+                        f"γ_reconciled={gamma_reconciled:.6e}"
+                    )
 
             # ================================================================
             # STEP 7: Compute acceleration (beta-dot)

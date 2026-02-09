@@ -512,6 +512,60 @@ class IntegratorGUI:
                 self.options, "self_consistency_chrono_adaptive_tolerance", False
             )
         )
+        # Gamma reconciliation options
+        self.self_consistency_gamma_reconciliation_method_var = tk.StringVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_method",
+                "ADAPTIVE_WEIGHTED",
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_threshold_var = (
+            tk.DoubleVar(
+                value=getattr(
+                    self.options,
+                    "self_consistency_gamma_reconciliation_low_beta_threshold",
+                    0.9,
+                )
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_threshold_var = (
+            tk.DoubleVar(
+                value=getattr(
+                    self.options,
+                    "self_consistency_gamma_reconciliation_high_beta_threshold",
+                    0.99,
+                )
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_low_beta_weight",
+                0.8,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_high_beta_weight",
+                0.2,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_mid_beta_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_mid_beta_weight",
+                0.5,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_fixed_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_fixed_weight",
+                0.5,
+            )
+        )
         # chrono_matching_mode kept at FAST (internal only, not exposed in GUI)
 
         # Trace to update control states
@@ -550,6 +604,9 @@ class IntegratorGUI:
         )
         self.adaptive_timestep_debug_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_debug
+        )
+        self.adaptive_timestep_hard_substep_cap_var = tk.StringVar(
+            value=str(getattr(self.options, "adaptive_timestep_hard_substep_cap", ""))
         )
 
         # Use preferences for directories
@@ -985,26 +1042,55 @@ class IntegratorGUI:
         # Add info note about bunch parameters
         ttk.Label(
             particle_frame,
-            text="Note: Particle count, transverse spread, and transverse momentum define the bunch distribution",
+            text="Note: Particle count, transverse spread, and transverse momentum define the bunch distribution.\n"
+            "Transverse offsets (x/y) define bunch center positions and are only used in BUNCH_TO_BUNCH mode.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray",
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 2))
 
+        # Track offset entries separately for bunch-to-bunch visibility control
+        self._rider_offset_entries = []
+        self._driver_offset_entries = []
+        self._rider_offset_labels = []
+        self._driver_offset_labels = []
+
         for row, name in enumerate(PARTICLE_PARAM_FIELDS, start=2):
-            ttk.Label(particle_frame, text=PARAM_LABELS[name] + ":").grid(
-                row=row, column=0, sticky="w", pady=2
-            )
-            ttk.Entry(
+            rider_label = ttk.Label(particle_frame, text=PARAM_LABELS[name] + ":")
+            rider_label.grid(row=row, column=0, sticky="w", pady=2)
+
+            rider_entry = ttk.Entry(
                 particle_frame, textvariable=self.rider_param_vars[name], width=12
-            ).grid(row=row, column=1, sticky="ew", pady=2)
-            ttk.Label(particle_frame, text=PARAM_LABELS[name] + " (driver):").grid(
-                row=row, column=2, sticky="w", pady=2, padx=(12, 0)
             )
+            rider_entry.grid(row=row, column=1, sticky="ew", pady=2)
+
+            driver_label = ttk.Label(
+                particle_frame, text=PARAM_LABELS[name] + " (driver):"
+            )
+            driver_label.grid(row=row, column=2, sticky="w", pady=2, padx=(12, 0))
+
             driver_entry = ttk.Entry(
                 particle_frame, textvariable=self.driver_param_vars[name], width=12
             )
             driver_entry.grid(row=row, column=3, sticky="ew", pady=2)
             self._driver_entries.append(driver_entry)
+
+            # Store offset widget references for bunch-to-bunch visibility control
+            if name in ("transv_offset_x", "transv_offset_y"):
+                self._rider_offset_entries.append(rider_entry)
+                self._rider_offset_labels.append(rider_label)
+                self._driver_offset_entries.append(driver_entry)
+                self._driver_offset_labels.append(driver_label)
+
+                # Add tooltip for offset fields
+                tooltip_text = (
+                    "Transverse offset (bunch center position).\n"
+                    "Only used in BUNCH_TO_BUNCH simulations.\n\n"
+                    "Defines the (x, y) position of the bunch center.\n"
+                    "Separation between rider and driver bunches is:\n"
+                    "  √[(x_driver - x_rider)² + (y_driver - y_rider)²]"
+                )
+                Tooltip(rider_entry, tooltip_text)
+                Tooltip(driver_entry, tooltip_text)
 
         # Image subcharge controls
         next_row = len(PARTICLE_PARAM_FIELDS) + 2
@@ -1868,6 +1954,180 @@ class IntegratorGUI:
         # Always uses FAST mode (legacy behavior)
         # AVERAGED mode reserved for future APPROXIMATE_BACK_HISTORY implementation
 
+        # Gamma reconciliation
+        gamma_recon_frame = ttk.LabelFrame(
+            sc_frame, text="Gamma Reconciliation", padding=8
+        )
+        gamma_recon_frame.grid(
+            row=12, column=0, columnspan=2, sticky="ew", pady=2, padx=(20, 0)
+        )
+        gamma_recon_frame.columnconfigure(1, weight=1)
+
+        # Method selection
+        method_frame = ttk.Frame(gamma_recon_frame)
+        method_frame.grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Label(method_frame, text="Method:").pack(side="left")
+        self.sc_gamma_reconciliation_method_combo = ttk.Combobox(
+            method_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_method_var,
+            values=[
+                "DISABLED",
+                "ADAPTIVE_WEIGHTED",
+                "USE_VELOCITY",
+                "USE_ENERGY",
+                "FIXED_WEIGHTED",
+            ],
+            state="readonly",
+            width=20,
+        )
+        self.sc_gamma_reconciliation_method_combo.pack(side="left", padx=(5, 5))
+        method_help = ttk.Label(
+            method_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        method_help.pack(side="left")
+        Tooltip(
+            method_help,
+            "Gamma Reconciliation Method:\n\n"
+            "DISABLED - No reconciliation (legacy, may cause blowups)\n\n"
+            "ADAPTIVE_WEIGHTED - Velocity-dependent weighting (recommended)\n"
+            "  • β < 0.9: Trust energy (weight=0.8)\n"
+            "  • β > 0.99: Trust velocity (weight=0.2)\n"
+            "  • Mid-range: Balanced (weight=0.5)\n\n"
+            "USE_VELOCITY - Always use γ from β (breaks energy)\n\n"
+            "USE_ENERGY - Always use γ from Pt (legacy)\n\n"
+            "FIXED_WEIGHTED - Fixed 50/50 blend\n\n"
+            "Recommended: ADAPTIVE_WEIGHTED",
+        )
+
+        # Adaptive weighted parameters
+        self.sc_gamma_reconciliation_adaptive_frame = ttk.LabelFrame(
+            gamma_recon_frame, text="Adaptive Weighted Parameters", padding=6
+        )
+        self.sc_gamma_reconciliation_adaptive_frame.grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(5, 2), padx=(10, 0)
+        )
+        self.sc_gamma_reconciliation_adaptive_frame.columnconfigure(1, weight=1)
+
+        # Low beta threshold
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="Low β threshold:"
+        ).grid(row=0, column=0, sticky="w", pady=2)
+        self.sc_gamma_low_beta_threshold_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_low_beta_threshold_var,
+            width=10,
+        )
+        self.sc_gamma_low_beta_threshold_entry.grid(
+            row=0, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_low_beta_threshold_entry,
+            "Velocity below which energy is trusted more\nDefault: 0.9",
+        )
+
+        # High beta threshold
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="High β threshold:"
+        ).grid(row=1, column=0, sticky="w", pady=2)
+        self.sc_gamma_high_beta_threshold_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_high_beta_threshold_var,
+            width=10,
+        )
+        self.sc_gamma_high_beta_threshold_entry.grid(
+            row=1, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_high_beta_threshold_entry,
+            "Velocity above which velocity is trusted more\nDefault: 0.99",
+        )
+
+        # Low beta weight
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="Low β weight (α):"
+        ).grid(row=2, column=0, sticky="w", pady=2)
+        self.sc_gamma_low_beta_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_low_beta_weight_var,
+            width=10,
+        )
+        self.sc_gamma_low_beta_weight_entry.grid(
+            row=2, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_low_beta_weight_entry,
+            "Weight for energy when β < low threshold\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.8",
+        )
+
+        # High beta weight
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="High β weight (α):"
+        ).grid(row=3, column=0, sticky="w", pady=2)
+        self.sc_gamma_high_beta_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_high_beta_weight_var,
+            width=10,
+        )
+        self.sc_gamma_high_beta_weight_entry.grid(
+            row=3, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_high_beta_weight_entry,
+            "Weight for energy when β > high threshold\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.2",
+        )
+
+        # Mid beta weight
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="Mid β weight (α):"
+        ).grid(row=4, column=0, sticky="w", pady=2)
+        self.sc_gamma_mid_beta_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_mid_beta_weight_var,
+            width=10,
+        )
+        self.sc_gamma_mid_beta_weight_entry.grid(
+            row=4, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_mid_beta_weight_entry,
+            "Weight for energy in mid β range\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.5",
+        )
+
+        # Fixed weighted parameter
+        self.sc_gamma_reconciliation_fixed_frame = ttk.LabelFrame(
+            gamma_recon_frame, text="Fixed Weighted Parameter", padding=6
+        )
+        self.sc_gamma_reconciliation_fixed_frame.grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(5, 2), padx=(10, 0)
+        )
+        self.sc_gamma_reconciliation_fixed_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            self.sc_gamma_reconciliation_fixed_frame, text="Fixed weight (α):"
+        ).grid(row=0, column=0, sticky="w", pady=2)
+        self.sc_gamma_fixed_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_fixed_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_fixed_weight_var,
+            width=10,
+        )
+        self.sc_gamma_fixed_weight_entry.grid(
+            row=0, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_fixed_weight_entry,
+            "Fixed weight for FIXED_WEIGHTED method\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.5",
+        )
+
+        # Trace method change to toggle parameter visibility
+        self.self_consistency_gamma_reconciliation_method_var.trace_add(
+            "write", lambda *_: self._toggle_gamma_reconciliation_params()
+        )
+        self._toggle_gamma_reconciliation_params()
+
         # Adaptive timestep section (Energy Jump Detection functionality integrated here)
         at_frame = ttk.LabelFrame(
             stability_frame, text="Adaptive Timestep Refinement", padding=8
@@ -2074,6 +2334,52 @@ class IntegratorGUI:
         )
         self.adaptive_debug_check.grid(
             row=9, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+
+        # Max sub-steps limit
+        max_substeps_frame = ttk.Frame(at_frame)
+        max_substeps_frame.grid(row=10, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.adaptive_hard_substep_cap_label = ttk.Label(
+            max_substeps_frame, text="Hard sub-step cap:"
+        )
+        self.adaptive_hard_substep_cap_label.pack(side="left")
+        max_substeps_help = ttk.Label(
+            max_substeps_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        max_substeps_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            max_substeps_help,
+            "Hard cap on the number of sub-steps per main integration step.\n\n"
+            "When adaptive timestep reduces the timestep significantly,\n"
+            "a single main step may require many sub-steps to cover the\n"
+            "base timestep interval.\n\n"
+            "Examples:\n"
+            "  • Base timestep: 2.3e-06 ns\n"
+            "  • Reduced to: 3.2e-09 ns (after refinement)\n"
+            "  • Sub-steps needed: 2.3e-06 / 3.2e-09 = 719\n\n"
+            "Use this hard cap to prevent runaway subdivision in pathological\n"
+            "regions where energy errors persist regardless of timestep.\n\n"
+            "Different from 'max_substeps_per_step' (internal threshold):\n"
+            "  • max_substeps_per_step = detection threshold for recovery\n"
+            "  • hard_substep_cap = actual execution limit\n\n"
+            "Values:\n"
+            "  • Empty/blank = unlimited (allow all needed sub-steps)\n"
+            "  • 100-1000 = reasonable cap for most cases\n"
+            "  • Higher values = more thorough but slower\n\n"
+            "Performance impact:\n"
+            "  • 729 sub-steps → ~700× slower for that step\n"
+            "  • Capping at 100 → ~14× speedup (86% reduction)\n\n"
+            "Default: unlimited (blank)\n"
+            "Recommended: blank for production, 100-200 for faster debugging",
+        )
+
+        self.adaptive_hard_substep_cap_entry = ttk.Entry(
+            at_frame,
+            textvariable=self.adaptive_timestep_hard_substep_cap_var,
+            width=16,
+        )
+        self.adaptive_hard_substep_cap_entry.grid(
+            row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
         # Help text
@@ -2907,6 +3213,43 @@ class IntegratorGUI:
         self.self_consistency_chrono_adaptive_tolerance_var.set(
             getattr(options, "self_consistency_chrono_adaptive_tolerance", False)
         )
+        self.self_consistency_gamma_reconciliation_method_var.set(
+            getattr(
+                options,
+                "self_consistency_gamma_reconciliation_method",
+                "ADAPTIVE_WEIGHTED",
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_threshold_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_threshold_var.set(
+            getattr(
+                options,
+                "self_consistency_gamma_reconciliation_high_beta_threshold",
+                0.99,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_weight_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_low_beta_weight", 0.8
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_weight_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_high_beta_weight", 0.2
+            )
+        )
+        self.self_consistency_gamma_reconciliation_mid_beta_weight_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_mid_beta_weight", 0.5
+            )
+        )
+        self.self_consistency_gamma_reconciliation_fixed_weight_var.set(
+            getattr(options, "self_consistency_gamma_reconciliation_fixed_weight", 0.5)
+        )
         # chrono_matching_mode not exposed in GUI, always FAST
         self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
         self.adaptive_timestep_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
@@ -2928,6 +3271,12 @@ class IntegratorGUI:
             options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
+        hard_substep_cap_val = getattr(
+            options, "adaptive_timestep_hard_substep_cap", None
+        )
+        self.adaptive_timestep_hard_substep_cap_var.set(
+            str(hard_substep_cap_val) if hard_substep_cap_val is not None else ""
+        )
         self.save_log_file_var.set(options.save_log_file)
 
         # Only override directories if not preserving loaded preferences
@@ -3073,6 +3422,25 @@ class IntegratorGUI:
             self_consistency_chrono_adaptive_tolerance=bool(
                 self.self_consistency_chrono_adaptive_tolerance_var.get()
             ),
+            self_consistency_gamma_reconciliation_method=self.self_consistency_gamma_reconciliation_method_var.get(),
+            self_consistency_gamma_reconciliation_low_beta_threshold=float(
+                self.self_consistency_gamma_reconciliation_low_beta_threshold_var.get()
+            ),
+            self_consistency_gamma_reconciliation_high_beta_threshold=float(
+                self.self_consistency_gamma_reconciliation_high_beta_threshold_var.get()
+            ),
+            self_consistency_gamma_reconciliation_low_beta_weight=float(
+                self.self_consistency_gamma_reconciliation_low_beta_weight_var.get()
+            ),
+            self_consistency_gamma_reconciliation_high_beta_weight=float(
+                self.self_consistency_gamma_reconciliation_high_beta_weight_var.get()
+            ),
+            self_consistency_gamma_reconciliation_mid_beta_weight=float(
+                self.self_consistency_gamma_reconciliation_mid_beta_weight_var.get()
+            ),
+            self_consistency_gamma_reconciliation_fixed_weight=float(
+                self.self_consistency_gamma_reconciliation_fixed_weight_var.get()
+            ),
             self_consistency_chrono_matching_mode="FAST",  # Always FAST, not exposed in GUI
             energy_monitor_enabled=False,  # Removed, functionality in adaptive timestep
             energy_monitor_threshold=2.0,  # Default (unused)
@@ -3104,6 +3472,11 @@ class IntegratorGUI:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
+            adaptive_timestep_hard_substep_cap=(
+                int(self.adaptive_timestep_hard_substep_cap_var.get())
+                if self.adaptive_timestep_hard_substep_cap_var.get().strip()
+                else None
+            ),
             save_log_file=bool(self.save_log_file_var.get()),
         )
         return options
@@ -3514,7 +3887,8 @@ class IntegratorGUI:
                 self.optimization_tab.sim_type_var.set(sim_type_value)
 
     def _update_driver_visibility(self) -> None:
-        enabled = supports_driver(SimulationType[self.sim_type_var.get()])
+        sim_type = SimulationType[self.sim_type_var.get()]
+        enabled = supports_driver(sim_type)
         entry_state = "normal" if enabled else "disabled"
         combo_state = "readonly" if enabled else "disabled"
         if hasattr(self, "driver_species_combo"):
@@ -3526,6 +3900,22 @@ class IntegratorGUI:
                 "custom", next(iter(self._species_by_label))
             )
             self.driver_species_var.set(default_label)
+
+        # Transverse offsets are only used in BUNCH_TO_BUNCH mode
+        offsets_enabled = sim_type == SimulationType.BUNCH_TO_BUNCH
+        offset_state = "normal" if offsets_enabled else "disabled"
+
+        for entry in getattr(self, "_rider_offset_entries", []):
+            entry.configure(state=offset_state)
+        for entry in getattr(self, "_driver_offset_entries", []):
+            entry.configure(state=offset_state)
+
+        # Also update label colors to indicate disabled state
+        label_color = "black" if offsets_enabled else "gray60"
+        for label in getattr(self, "_rider_offset_labels", []):
+            label.configure(foreground=label_color)
+        for label in getattr(self, "_driver_offset_labels", []):
+            label.configure(foreground=label_color)
 
     def _update_image_subcharge_state(self) -> None:
         """Grey out image subcharge count, weighting, aperture radius, and wall_z when in BUNCH_TO_BUNCH mode."""
@@ -3622,6 +4012,13 @@ class IntegratorGUI:
             self.sc_chrono_tolerance_entry,
             self.sc_chrono_high_precision_check,
             self.sc_chrono_adaptive_check,
+            self.sc_gamma_reconciliation_method_combo,
+            self.sc_gamma_low_beta_threshold_entry,
+            self.sc_gamma_high_beta_threshold_entry,
+            self.sc_gamma_low_beta_weight_entry,
+            self.sc_gamma_high_beta_weight_entry,
+            self.sc_gamma_mid_beta_weight_entry,
+            self.sc_gamma_fixed_weight_entry,
         ]
 
         for control in controls_to_toggle:
@@ -3689,6 +4086,26 @@ class IntegratorGUI:
                 elif isinstance(widget, ttk.Label):
                     widget.configure(foreground=label_color)
 
+    def _toggle_gamma_reconciliation_params(self) -> None:
+        """Show/hide gamma reconciliation parameter groups based on selected method."""
+        if not hasattr(self, "sc_gamma_reconciliation_adaptive_frame"):
+            return  # Widgets not created yet
+
+        method = self.self_consistency_gamma_reconciliation_method_var.get()
+
+        # Show adaptive parameters only for ADAPTIVE_WEIGHTED method
+        if method == "ADAPTIVE_WEIGHTED":
+            self.sc_gamma_reconciliation_adaptive_frame.grid()
+            self.sc_gamma_reconciliation_fixed_frame.grid_remove()
+        # Show fixed weight only for FIXED_WEIGHTED method
+        elif method == "FIXED_WEIGHTED":
+            self.sc_gamma_reconciliation_adaptive_frame.grid_remove()
+            self.sc_gamma_reconciliation_fixed_frame.grid()
+        # Hide both for other methods (DISABLED, USE_VELOCITY, USE_ENERGY)
+        else:
+            self.sc_gamma_reconciliation_adaptive_frame.grid_remove()
+            self.sc_gamma_reconciliation_fixed_frame.grid_remove()
+
     def _toggle_adaptive_timestep_controls(self) -> None:
         """Enable/disable adaptive timestep controls based on enabled checkbox.
 
@@ -3718,6 +4135,8 @@ class IntegratorGUI:
             self.adaptive_max_probe_entry,
             self.adaptive_halt_check,
             self.adaptive_debug_check,
+            self.adaptive_hard_substep_cap_label,
+            self.adaptive_hard_substep_cap_entry,
         ]
 
         for control in all_controls:

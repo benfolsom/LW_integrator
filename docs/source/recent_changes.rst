@@ -7,6 +7,181 @@ This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
 
+Gamma Reconciliation Configuration (January 2025)
+--------------------------------------------------
+
+Configurable Dual-Gamma Reconciliation Methods
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The integrator now exposes configurable gamma reconciliation parameters to address
+the dual-gamma bookkeeping problem where γ is computed in two ways:
+
+* **γ_energy** from conjugate momentum: γ = (Pt - q·Φ)/(mc)
+* **γ_velocity** from velocity: γ = 1/√(1-β²)
+
+Numerical differences between these can cause energy jumps and catastrophic blowups.
+Five reconciliation methods are now available:
+
+**ADAPTIVE_WEIGHTED (default, recommended)**
+  Velocity-dependent blending with configurable thresholds and weights:
+
+  - β < 0.9: Trust energy more (default weight α=0.8)
+  - β > 0.99: Trust velocity more (default weight α=0.2)
+  - 0.9 ≤ β ≤ 0.99: Balanced (default weight α=0.5)
+
+**FIXED_WEIGHTED**
+  Fixed 50/50 blend (or custom weight) across all velocities
+
+**USE_VELOCITY**
+  Always use γ from velocity (for testing/debugging only, breaks energy bookkeeping)
+
+**USE_ENERGY**
+  Always use γ from energy (equivalent to DISABLED)
+
+**DISABLED**
+  No reconciliation (legacy behavior, not recommended for production)
+
+API Configuration
+~~~~~~~~~~~~~~~~~
+
+Configure via ``SimulationOptions``:
+
+.. code-block:: python
+
+   from lw_integrator.testbed_runner import SimulationOptions
+   from core.types import SimulationType
+
+   # Example 1: Default (ADAPTIVE_WEIGHTED with standard thresholds)
+   options = SimulationOptions(
+       simulation_type=SimulationType.CONDUCTING_WALL,
+       steps=1000
+   )
+   # Uses ADAPTIVE_WEIGHTED by default
+
+   # Example 2: Custom adaptive weights for ultra-relativistic particles
+   options = SimulationOptions(
+       simulation_type=SimulationType.CONDUCTING_WALL,
+       steps=1000,
+       self_consistency_gamma_reconciliation_method='ADAPTIVE_WEIGHTED',
+       self_consistency_gamma_reconciliation_low_beta_threshold=0.85,
+       self_consistency_gamma_reconciliation_high_beta_threshold=0.995,
+       self_consistency_gamma_reconciliation_low_beta_weight=0.9,
+       self_consistency_gamma_reconciliation_high_beta_weight=0.1,
+       self_consistency_gamma_reconciliation_mid_beta_weight=0.5
+   )
+
+   # Example 3: Fixed weighted blend
+   options = SimulationOptions(
+       simulation_type=SimulationType.CONDUCTING_WALL,
+       steps=1000,
+       self_consistency_gamma_reconciliation_method='FIXED_WEIGHTED',
+       self_consistency_gamma_reconciliation_fixed_weight=0.6
+   )
+
+Direct Config Usage
+~~~~~~~~~~~~~~~~~~~
+
+Configure via ``SelfConsistencyConfig``:
+
+.. code-block:: python
+
+   from core.self_consistency import SelfConsistencyConfig
+   from core.types import GammaReconciliationMethod
+
+   config = SelfConsistencyConfig(
+       enabled=True,
+       gamma_reconciliation_method=GammaReconciliationMethod.ADAPTIVE_WEIGHTED,
+       gamma_reconciliation_low_beta_threshold=0.9,
+       gamma_reconciliation_high_beta_threshold=0.99,
+       gamma_reconciliation_low_beta_weight=0.8,
+       gamma_reconciliation_high_beta_weight=0.2,
+       gamma_reconciliation_mid_beta_weight=0.5
+   )
+
+GUI Controls
+~~~~~~~~~~~~
+
+In the GUI, navigate to **Stability** tab → **Self-Consistency Checks** → **Gamma Reconciliation**:
+
+* **Method dropdown**: Select from 5 reconciliation methods
+* **Adaptive Weighted Parameters** panel: Configure thresholds and weights (shown for ADAPTIVE_WEIGHTED)
+* **Fixed Weighted Parameter** panel: Configure fixed weight (shown for FIXED_WEIGHTED)
+* Panels automatically show/hide based on selected method
+
+Recommendations
+~~~~~~~~~~~~~~~
+
+**Production use**: ADAPTIVE_WEIGHTED (default) handles all velocity regimes appropriately
+
+**Custom tuning**: For ultra-relativistic particles (β > 0.999), lower the high_beta_threshold
+and high_beta_weight to trust velocity more strongly
+
+**Debugging**: Use USE_VELOCITY or USE_ENERGY to isolate which calculation is problematic
+
+**Not recommended**: DISABLED - only for legacy comparison or debugging
+
+**Impact**: Prevents dual-gamma inconsistency and energy blowups while maintaining energy
+conservation. Critical for high-energy simulations and long integration runs.
+
+Transverse Offset GUI Improvements (January 2025)
+--------------------------------------------------
+
+Context-Aware Transverse Offset Controls
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The GUI now provides better visual feedback for transverse offset parameters,
+which define bunch center positions and are only meaningful in BUNCH_TO_BUNCH mode:
+
+* **Conditional visibility**: Offset fields grayed out when not in BUNCH_TO_BUNCH mode
+* **Visual feedback**: Labels turn gray to indicate inactive state
+* **Usage guidance**: Informational note and tooltips explain when/how offsets are used
+* **Automatic state management**: Fields enable/disable when simulation type changes
+
+Behavior by Simulation Type
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+============== ============== =================== ==============================
+Mode           Driver Params  Transverse Offsets  Use Case
+============== ============== =================== ==============================
+CONDUCTING_WALL Disabled      **Disabled**        Single bunch vs conducting wall
+SWITCHING_WALL  Enabled       **Disabled**        Two bunches, no transverse offset
+BUNCH_TO_BUNCH  Enabled       **Enabled**         Two bunches with separation
+============== ============== =================== ==============================
+
+Original Demo Compatibility
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The original ``legacy/two_particle_demo_main.ipynb`` used:
+
+.. code-block:: python
+
+   transv_offset = 8e-2  # mm (single radial offset)
+   rider:  transv_dist = 2e-4
+   driver: transv_dist = 2e-4 - transv_offset  # ≈ -8e-2
+
+The modern implementation is more flexible:
+
+.. code-block:: python
+
+   # Independent x and y positioning for each bunch
+   rider:  transv_offset_x = 0.0,    transv_offset_y = 0.0
+   driver: transv_offset_x = 0.08,   transv_offset_y = 0.0
+   # Result: 80 μm offset in x, 0 in y
+   # Bunch separation = √[(x_driver - x_rider)² + (y_driver - y_rider)²]
+
+GUI Tooltips
+~~~~~~~~~~~~
+
+Offset fields now include tooltips explaining:
+
+* What they represent: "Transverse offset (bunch center position)"
+* When they're used: "Only used in BUNCH_TO_BUNCH simulations"
+* How separation is calculated: √[(x_driver - x_rider)² + (y_driver - y_rider)²]
+
+**Impact**: Reduces user confusion about parameter relevance, provides clearer interface
+for bunch-to-bunch simulations, and maintains backward compatibility with existing
+configurations.
+
 
 
 Transverse Offset and Legacy Code Isolation (January 2025)

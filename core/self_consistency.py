@@ -20,7 +20,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from .types import ChronoMatchingMode, ParticleState, StartupMode, Trajectory
+from .types import (
+    ChronoMatchingMode,
+    GammaReconciliationMethod,
+    ParticleState,
+    StartupMode,
+    Trajectory,
+)
 
 StepFunction = Callable[
     [
@@ -182,6 +188,18 @@ class SelfConsistencyConfig:
     target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
     mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
+
+    # Gamma reconciliation parameters
+    gamma_reconciliation_method: GammaReconciliationMethod = (
+        GammaReconciliationMethod.ADAPTIVE_WEIGHTED  # Default: adaptive weighted
+    )
+    gamma_reconciliation_low_beta_threshold: float = 0.9  # Below this: trust energy
+    gamma_reconciliation_high_beta_threshold: float = 0.99  # Above this: trust velocity
+    gamma_reconciliation_low_beta_weight: float = 0.8  # α for β < low threshold
+    gamma_reconciliation_high_beta_weight: float = 0.2  # α for β > high threshold
+    gamma_reconciliation_mid_beta_weight: float = 0.5  # α for mid range
+    gamma_reconciliation_fixed_weight: float = 0.5  # α for FIXED_WEIGHTED method
+
     chrono_interpolate: bool = False  # Enable chrono-match interpolation
     chrono_tolerance: float = 1e-3  # Time residual tolerance (ns)
     chrono_matching_mode: str = (
@@ -204,6 +222,14 @@ class SelfConsistencyConfig:
             object.__setattr__(
                 self, "convergence_mode", self._MODE_ALIASES[self.convergence_mode]
             )
+
+    @property
+    def gamma_reconciliation_enabled(self) -> bool:
+        """Backward compatibility property for gamma_reconciliation_enabled.
+
+        Returns True if reconciliation method is not DISABLED.
+        """
+        return self.gamma_reconciliation_method != GammaReconciliationMethod.DISABLED
 
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":

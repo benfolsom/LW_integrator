@@ -88,6 +88,11 @@ class AdaptiveTimestepConfig:
         False  # Keep survivors in cooldown mode for safer recovery
     )
 
+    # Sub-step limit: cap maximum number of sub-steps per main step
+    hard_substep_cap: Optional[int] = (
+        None  # If set, caps sub-steps to prevent runaway subdivision (None = unlimited)
+    )
+
     # Proximity-based refinement: refine timesteps near walls/apertures
     proximity_refinement_enabled: bool = True  # Enable proximity-based refinement
     proximity_distance_aperture_radii: float = (
@@ -498,7 +503,28 @@ def retarded_integrator(
                     raise IntegrationCancelled("Integration cancelled by caller.")
 
                 # Determine number of sub-steps needed to cover base timestep interval
-                num_substeps = int(np.round(h_step / current_h_step))
+                num_substeps_raw = int(np.round(h_step / current_h_step))
+
+                # Apply optional cap to prevent runaway subdivision in pathological regions
+                if (
+                    adaptive_timestep is not None
+                    and hasattr(adaptive_timestep, "hard_substep_cap")
+                    and adaptive_timestep.hard_substep_cap is not None
+                ):
+                    hard_cap = adaptive_timestep.hard_substep_cap
+                    num_substeps = min(num_substeps_raw, hard_cap)
+
+                    # Warn if cap is hit (indicates pathological region)
+                    if num_substeps_raw > hard_cap and adaptive_timestep.debug:
+                        print(
+                            f"Step {i}: Sub-step limit reached ({hard_cap}). "
+                            f"Timestep {current_h_step:.6e} ns would require {num_substeps_raw} sub-steps. "
+                            f"This step may not fully cover the base timestep interval."
+                        )
+                else:
+                    # No cap - allow as many sub-steps as needed
+                    num_substeps = num_substeps_raw
+
                 if num_substeps < 1:
                     num_substeps = 1
 
