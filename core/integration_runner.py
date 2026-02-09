@@ -7,7 +7,7 @@ programmatic entry points for running the modern Liénard–Wiechert integrator.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 
@@ -80,13 +80,25 @@ class AdaptiveTimestepConfig:
     probe_threshold: float = 0.01  # Energy stability threshold for safe return (1%)
     max_probe_steps: int = 3  # Number of consecutive stable steps needed to return
 
-    # Impractical timestep handling and sub-step limit
-    max_substeps_per_step: int = (
-        1000  # Hard cap on substeps per step (derived from 1/min_timestep_factor)
-    )
+    # Impractical timestep handling
     skip_cooldown_on_particle_death: bool = (
         False  # Keep survivors in cooldown mode for safer recovery
     )
+
+    @property
+    def max_substeps_per_step(self) -> int:
+        """Maximum substeps per step, automatically calculated from min_timestep_factor.
+
+        This ensures that even at minimum timestep, we can cover the full base timestep
+        interval without time discontinuities.
+
+        Returns ceil(1 / min_timestep_factor) with a 10% safety margin.
+        """
+        import math
+
+        theoretical_max = math.ceil(1.0 / self.min_timestep_factor)
+        # Add 10% safety margin
+        return int(theoretical_max * 1.1)
 
     # Proximity-based refinement: refine timesteps near walls/apertures
     proximity_refinement_enabled: bool = True  # Enable proximity-based refinement
@@ -188,6 +200,7 @@ def retarded_integrator(
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
+    logger: Optional[Any] = None,
 ) -> Tuple[Trajectory, Trajectory]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -296,10 +309,14 @@ def retarded_integrator(
     if z_cutoff_mode == "relative" and sim_type == SimulationType.BUNCH_TO_BUNCH:
         z_initial = float(np.mean(init_rider["z"]))
         if adaptive_timestep is not None and adaptive_timestep.debug:
-            print(
+            msg = (
                 f"BUNCH_TO_BUNCH relative cutoff mode: z_initial = {z_initial:.6f} mm, "
                 f"will stop after traveling {z_cutoff:.2f} mm"
             )
+            if logger:
+                logger(msg)
+            else:
+                print(msg)
 
     if progress_callback is not None:
         progress_callback(0, steps)
@@ -393,12 +410,16 @@ def retarded_integrator(
                         )
                         zone_name = "transition" if in_transition else "full reduction"
 
-                        print(
+                        msg = (
                             f"Step {i}: Proximity refinement active ({zone_name} zone). "
                             f"Distance to wall: {distance_to_wall:.6e} mm "
                             f"({distance_to_wall / aperture_radius:.1f} aperture radii). "
                             f"Reduction factor: {proximity_factor:.4f}x"
                         )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
 
             # Check for cancellation before cooldown/hysteresis logic
             # This allows interruption during long cooldown periods
@@ -423,20 +444,28 @@ def retarded_integrator(
                 if impractical_timestep:
                     # Timestep is too small - skip cooldown and try to recover immediately
                     if adaptive_timestep.debug:
-                        print(
+                        msg = (
                             f"Step {i}: Impractical timestep detected ({expected_substeps} sub-steps required). "
                             f"Skipping cooldown and attempting recovery to {h_step:.6e} ns"
                         )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
                     cooldown_counter = (
                         adaptive_timestep.cooldown_steps
                     )  # Jump to probing phase
                 elif skip_cooldown:
                     # Particle just died - skip cooldown for survivors
                     if adaptive_timestep.debug:
-                        print(
+                        msg = (
                             f"Step {i}: Particle died last step. Skipping cooldown for survivors, "
                             f"attempting recovery to {h_step:.6e} ns"
                         )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
                     cooldown_counter = (
                         adaptive_timestep.cooldown_steps
                     )  # Jump to probing phase
@@ -445,18 +474,26 @@ def retarded_integrator(
                     current_h_step = reduced_h_step
                     cooldown_counter += 1
                     if adaptive_timestep.debug:
-                        print(
+                        msg = (
                             f"Step {i}: Cooldown mode ({cooldown_counter}/{adaptive_timestep.cooldown_steps}), "
                             f"using reduced timestep {current_h_step:.6e} ns"
                         )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
                 else:
                     # Cooldown complete - probe whether we can return to normal
                     current_h_step = reduced_h_step  # Still use reduced for now
                     if adaptive_timestep.debug:
-                        print(
+                        msg = (
                             f"Step {i}: Probing stability with reduced timestep "
                             f"({stable_steps_counter}/{adaptive_timestep.max_probe_steps} stable)"
                         )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
             else:
                 # Normal mode or adaptive disabled
                 current_h_step = h_step
@@ -465,10 +502,14 @@ def retarded_integrator(
                 if proximity_reduction_active and adaptive_timestep is not None:
                     current_h_step = h_step / proximity_factor
                     if adaptive_timestep.debug:
-                        print(
+                        msg = (
                             f"Step {i}: Applying proximity refinement: "
                             f"{h_step:.6e} → {current_h_step:.6e} ns"
                         )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
 
             # Initialize temp_trajectory base ONCE before retry loop
             # This preserves dead particle status across retry attempts within this step
@@ -517,11 +558,15 @@ def retarded_integrator(
                         num_substeps_raw > adaptive_timestep.max_substeps_per_step
                         and adaptive_timestep.debug
                     ):
-                        print(
+                        msg = (
                             f"Step {i}: Sub-step limit reached ({adaptive_timestep.max_substeps_per_step}). "
                             f"Timestep {current_h_step:.6e} ns would require {num_substeps_raw} sub-steps. "
                             f"This step may not fully cover the base timestep interval."
                         )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
                 else:
                     # No adaptive timestep - use raw count
                     num_substeps = num_substeps_raw
@@ -575,11 +620,15 @@ def retarded_integrator(
                         # Only handle this if adaptive timestep is enabled
                         if adaptive_timestep is None or not adaptive_timestep.enabled:
                             # No adaptive timestep available - treat as hard blowup
-                            print(
+                            msg = (
                                 f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
                                 f"Gamma blowup (γ={e.gamma_value:.2e}) with no adaptive timestep available. "
                                 f"Marking particle as dead."
                             )
+                            if logger:
+                                logger(msg)
+                            else:
+                                print(msg)
                             # Get or create trial_state from previous step to mark particle dead
                             if len(temp_trajectory) > 0:
                                 trial_state = {
@@ -632,11 +681,15 @@ def retarded_integrator(
                                 > adaptive_timestep.max_refinement_attempts
                             ):
                                 # Exhausted retry attempts - convert to hard blowup
-                                print(
+                                msg = (
                                     f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
                                     f"Max refinement attempts reached after gamma blowup (γ={e.gamma_value:.6e}). "
                                     f"Marking particle as dead."
                                 )
+                                if logger:
+                                    logger(msg)
+                                else:
+                                    print(msg)
                                 # Get or create trial_state from previous step
                                 if len(temp_trajectory) > 0:
                                     trial_state = {
@@ -690,11 +743,15 @@ def retarded_integrator(
 
                                 if new_h_step < min_h:
                                     # Minimum timestep reached - convert to hard blowup
-                                    print(
+                                    msg = (
                                         f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
                                         f"Minimum timestep reached after gamma blowup (γ={e.gamma_value:.6e}). "
                                         f"Marking particle as dead."
                                     )
+                                    if logger:
+                                        logger(msg)
+                                    else:
+                                        print(msg)
                                     # Get or create trial_state from previous step
                                     if len(temp_trajectory) > 0:
                                         trial_state = {
@@ -766,11 +823,15 @@ def retarded_integrator(
 
                                     current_h_step = new_h_step
                                     if adaptive_timestep.debug:
-                                        print(
+                                        msg = (
                                             f"Step {i}.{substep_idx}: {severity} gamma blowup detected (γ={e.gamma_value:.6e}). "
                                             f"Reducing timestep by {reduction_factor}x "
                                             f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
                                         )
+                                        if logger:
+                                            logger(msg)
+                                        else:
+                                            print(msg)
 
                                     # Enter or stay in reduced timestep mode
                                     reduced_timestep_mode = True
@@ -836,10 +897,14 @@ def retarded_integrator(
                                         adaptive_timestep.debug
                                         and not max_refinement_reached
                                     ):
-                                        print(
+                                        msg = (
                                             f"Step {i}: Max refinement attempts ({adaptive_timestep.max_refinement_attempts}) reached. "
                                             f"Accepting remaining substeps (ΔE/E = {relative_change:.6e})"
                                         )
+                                        if logger:
+                                            logger(msg)
+                                        else:
+                                            print(msg)
                                         max_refinement_reached = (
                                             True  # Only print once per step
                                         )
@@ -861,10 +926,14 @@ def retarded_integrator(
                                             adaptive_timestep.debug
                                             and not min_timestep_reached
                                         ):
-                                            print(
+                                            msg = (
                                                 f"Step {i}: Minimum timestep reached. "
                                                 f"Accepting remaining substeps (ΔE/E = {relative_change:.6e})"
                                             )
+                                            if logger:
+                                                logger(msg)
+                                            else:
+                                                print(msg)
                                             min_timestep_reached = (
                                                 True  # Only print once per retry
                                             )
@@ -872,11 +941,15 @@ def retarded_integrator(
                                     else:
                                         current_h_step = new_h_step
                                         if adaptive_timestep.debug:
-                                            print(
+                                            msg = (
                                                 f"Step {i}: Energy jump (ΔE/E = {relative_change:.6e}). "
                                                 f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
                                                 f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
                                             )
+                                            if logger:
+                                                logger(msg)
+                                            else:
+                                                print(msg)
 
                                         # Enter or stay in reduced timestep mode
                                         reduced_timestep_mode = True
@@ -904,9 +977,11 @@ def retarded_integrator(
                         and adaptive_timestep.debug
                         and refinement_attempt > 0
                     ):
-                        print(
-                            f"Step {i}: Completed {num_substeps} sub-step(s) with timestep {current_h_step:.6e} ns"
-                        )
+                        msg = f"Step {i}: Completed {num_substeps} sub-step(s) with timestep {current_h_step:.6e} ns"
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
 
                     # Hysteresis: check if we're in probing phase and can return to normal
                     if (
@@ -928,10 +1003,14 @@ def retarded_integrator(
                                 # This step was stable
                                 stable_steps_counter += 1
                                 if adaptive_timestep.debug:
-                                    print(
+                                    msg = (
                                         f"Step {i}: Stable (ΔE/E = {relative_change:.6e} < {adaptive_timestep.probe_threshold:.6e}), "
                                         f"count = {stable_steps_counter}/{adaptive_timestep.max_probe_steps}"
                                     )
+                                    if logger:
+                                        logger(msg)
+                                    else:
+                                        print(msg)
 
                                 if (
                                     stable_steps_counter
@@ -942,19 +1021,27 @@ def retarded_integrator(
                                     stable_steps_counter = 0
                                     cooldown_counter = 0
                                     if adaptive_timestep.debug:
-                                        print(
+                                        msg = (
                                             f"Step {i}: Returning to normal timestep {h_step:.6e} ns "
                                             f"after {adaptive_timestep.max_probe_steps} stable steps"
                                         )
+                                        if logger:
+                                            logger(msg)
+                                        else:
+                                            print(msg)
                             else:
                                 # Energy jump during probing - reset and stay reduced
                                 stable_steps_counter = 0
                                 cooldown_counter = 0  # Restart cooldown
                                 if adaptive_timestep.debug:
-                                    print(
+                                    msg = (
                                         f"Step {i}: Unstable during probing (ΔE/E = {relative_change:.6e}), "
                                         f"restarting cooldown"
                                     )
+                                    if logger:
+                                        logger(msg)
+                                    else:
+                                        print(msg)
 
                                 # Propagate dead particles to base before restarting cooldown
                                 propagate_deaths_to_base(temp_trajectory[-1])
@@ -970,11 +1057,17 @@ def retarded_integrator(
                 failure_summary = format_failure_summary(failure_info)
                 num_dead = len(failure_info)
 
-                print(
+                msg1 = (
                     f"[CRITICAL] Step {i}: All {num_dead} particles have failed. "
                     f"Halting integration."
                 )
-                print(f"  {failure_summary}")
+                msg2 = f"  {failure_summary}"
+                if logger:
+                    logger(msg1)
+                    logger(msg2)
+                else:
+                    print(msg1)
+                    print(msg2)
 
                 # Truncate trajectory and mark as halted
                 trajectory = trajectory[: i + 1]

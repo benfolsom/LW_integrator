@@ -607,9 +607,8 @@ class IntegratorGUI:
         self.adaptive_timestep_debug_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_debug
         )
-        self.adaptive_timestep_max_substeps_var = tk.StringVar(
-            value=str(getattr(self.options, "adaptive_timestep_max_substeps", "1000"))
-        )
+        # max_substeps is now calculated from min_timestep_factor (read-only display)
+        self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 
         # Use preferences for directories
         self.output_dir_var = tk.StringVar(value=self._last_output_dir)
@@ -2249,6 +2248,11 @@ class IntegratorGUI:
         )
         self.adaptive_min_factor_entry.grid(row=4, column=1, sticky="ew", pady=2)
 
+        # Add trace to update max_substeps display when min_factor changes
+        self.adaptive_timestep_min_factor_var.trace_add(
+            "write", lambda *args: self._update_max_substeps_display()
+        )
+
         # Hysteresis parameters
         cd_frame = ttk.Frame(at_frame)
         cd_frame.grid(row=5, column=0, sticky="w", pady=2)
@@ -2342,7 +2346,7 @@ class IntegratorGUI:
         max_substeps_frame = ttk.Frame(at_frame)
         max_substeps_frame.grid(row=10, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_max_substeps_label = ttk.Label(
-            max_substeps_frame, text="Max sub-steps per step:"
+            max_substeps_frame, text="Max sub-steps (calculated):"
         )
         self.adaptive_max_substeps_label.pack(side="left")
         max_substeps_help = ttk.Label(
@@ -2351,39 +2355,35 @@ class IntegratorGUI:
         max_substeps_help.pack(side="left", padx=(3, 0))
         Tooltip(
             max_substeps_help,
-            "Maximum number of sub-steps allowed per main integration step.\n\n"
-            "When adaptive timestep reduces the timestep significantly,\n"
-            "a single main step may require many sub-steps to cover the\n"
-            "base timestep interval.\n\n"
-            "Theoretical maximum:\n"
-            "  max_substeps ≈ 1 / min_timestep_factor\n"
-            "  With min_timestep_factor = 1e-4 → max = 10,000 substeps\n\n"
+            "Maximum number of sub-steps per main step (READ-ONLY).\n\n"
+            "This value is automatically calculated from min_timestep_factor\n"
+            "to prevent time discontinuities:\n\n"
+            "  max_substeps = ceil(1 / min_timestep_factor) × 1.1\n\n"
+            "The 1.1× safety margin ensures coverage even with rounding.\n\n"
             "Example:\n"
-            "  • Base timestep: 2.3e-06 ns\n"
-            "  • Reduced to: 3.2e-09 ns (after refinement)\n"
-            "  • Sub-steps needed: 2.3e-06 / 3.2e-09 = 719\n\n"
-            "This cap prevents runaway subdivision in pathological regions\n"
-            "where energy errors persist regardless of timestep.\n\n"
-            "Unified parameter (replaces old hard_substep_cap):\n"
-            "  • Detection threshold: triggers cooldown skip\n"
-            "  • Execution limit: caps actual sub-step count\n\n"
-            "Values:\n"
-            "  • 100-500 = conservative (faster, may skip time)\n"
-            "  • 1000 = default (balanced)\n"
-            "  • 10000 = theoretical max from min_timestep_factor\n\n"
-            "Performance vs accuracy trade-off:\n"
-            "  • Lower values = faster but may create time discontinuities\n"
-            "  • Higher values = more accurate but slower in bad regions\n\n"
-            "Default: 1000\n"
-            "Recommended: 1000 for production, 100-200 for debugging",
+            "  • min_timestep_factor = 1e-4\n"
+            "  • Theoretical max = ceil(1 / 1e-4) = 10,000\n"
+            "  • With margin = 10,000 × 1.1 = 11,000 substeps\n\n"
+            "Why automatic?\n"
+            "If min_timestep_factor allows timestep to reduce to h × 1e-4,\n"
+            "then at minimum timestep you need 1/1e-4 = 10,000 substeps\n"
+            "to cover the full base timestep interval.\n\n"
+            "Setting max_substeps lower than this would create time\n"
+            "discontinuities where some time is skipped!\n\n"
+            "To change this value: adjust 'Min timestep factor' above.",
         )
 
-        self.adaptive_max_substeps_entry = ttk.Entry(
+        # Create read-only display label for max_substeps (calculated value)
+        self.adaptive_max_substeps_display = ttk.Label(
             at_frame,
-            textvariable=self.adaptive_timestep_max_substeps_var,
-            width=16,
+            textvariable=self.adaptive_timestep_max_substeps_display_var,
+            relief="sunken",
+            background="#f0f0f0",
+            foreground="#606060",
+            padding=(5, 2),
+            font=("TkDefaultFont", 9, "italic"),
         )
-        self.adaptive_max_substeps_entry.grid(
+        self.adaptive_max_substeps_display.grid(
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
@@ -3276,8 +3276,8 @@ class IntegratorGUI:
             options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
-        max_substeps_val = getattr(options, "adaptive_timestep_max_substeps", 1000)
-        self.adaptive_timestep_max_substeps_var.set(str(max_substeps_val))
+        # Update calculated max_substeps display
+        self._update_max_substeps_display()
         self.save_log_file_var.set(options.save_log_file)
 
         # Only override directories if not preserving loaded preferences
@@ -3308,6 +3308,21 @@ class IntegratorGUI:
         z_cutoff_val = options.core_params.get("z_cutoff", 0.0)
         self.z_cutoff_enabled_var.set(z_cutoff_val != 0.0)
         self._toggle_z_cutoff_controls()
+
+    def _update_max_substeps_display(self):
+        """Update the calculated max_substeps display based on min_timestep_factor."""
+        import math
+
+        try:
+            min_factor = self.adaptive_timestep_min_factor_var.get()
+            theoretical_max = math.ceil(1.0 / min_factor)
+            with_margin = int(theoretical_max * 1.1)
+            self.adaptive_timestep_max_substeps_display_var.set(
+                f"{with_margin} (from min factor)"
+            )
+        except (ValueError, ZeroDivisionError):
+            # Handle invalid input gracefully
+            self.adaptive_timestep_max_substeps_display_var.set("N/A")
 
     def _build_options_from_ui(self) -> SimulationOptions:
         sim_type = SimulationType[self.sim_type_var.get()]
@@ -3473,9 +3488,7 @@ class IntegratorGUI:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
-            adaptive_timestep_max_substeps=int(
-                self.adaptive_timestep_max_substeps_var.get() or "1000"
-            ),
+            # max_substeps_per_step is now auto-calculated in AdaptiveTimestepConfig
             save_log_file=bool(self.save_log_file_var.get()),
         )
         return options
@@ -4135,7 +4148,7 @@ class IntegratorGUI:
             self.adaptive_halt_check,
             self.adaptive_debug_check,
             self.adaptive_max_substeps_label,
-            self.adaptive_max_substeps_entry,
+            self.adaptive_max_substeps_display,
         ]
 
         for control in all_controls:

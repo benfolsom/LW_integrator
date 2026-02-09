@@ -342,9 +342,8 @@ class SimulationOptions:
     adaptive_timestep_max_probe_steps: int = 3
 
     adaptive_timestep_debug: bool = False
-    adaptive_timestep_max_substeps: int = (
-        1000  # Hard cap on sub-steps per main step (derived from 1/min_timestep_factor)
-    )
+    # Note: max_substeps_per_step is now auto-calculated in AdaptiveTimestepConfig
+    # from min_timestep_factor to prevent time discontinuities
 
     # Logging options
     save_log_file: bool = False
@@ -428,7 +427,7 @@ class SimulationOptions:
             "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
             "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
-            "adaptive_timestep_max_substeps": self.adaptive_timestep_max_substeps,
+            # max_substeps no longer stored - auto-calculated from min_timestep_factor
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -599,7 +598,7 @@ class SimulationOptions:
                 "adaptive_timestep_max_probe_steps", 3
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
-            adaptive_timestep_max_substeps=_int("adaptive_timestep_max_substeps", 1000),
+            # max_substeps no longer loaded - auto-calculated from min_timestep_factor
             self_consistency_gamma_reconciliation_method=_str(
                 "self_consistency_gamma_reconciliation_method", "ADAPTIVE_WEIGHTED"
             ),
@@ -1095,7 +1094,7 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
         cooldown_steps=options.adaptive_timestep_cooldown_steps,
         probe_threshold=options.adaptive_timestep_probe_threshold,
         max_probe_steps=options.adaptive_timestep_max_probe_steps,
-        max_substeps_per_step=options.adaptive_timestep_max_substeps,
+        # max_substeps_per_step is now a calculated property, not passed as parameter
         debug=options.adaptive_timestep_debug,
     )
 
@@ -1364,6 +1363,7 @@ def run_testbed(
             bunch_transv_mom=float(options.rider_params.get("transv_mom", 0.0)),
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
+            logger=log,
         )
 
         # Build result in same format as run_benchmark
