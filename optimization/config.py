@@ -289,7 +289,6 @@ class OptimizationConfig:
             adaptive_timestep_enabled=options.adaptive_timestep_enabled,
             adaptive_timestep_threshold=options.adaptive_timestep_threshold,
             adaptive_timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
-            adaptive_timestep_max_attempts=options.adaptive_timestep_max_attempts,
             adaptive_timestep_min_factor=options.adaptive_timestep_min_factor,
             adaptive_timestep_cooldown_steps=options.adaptive_timestep_cooldown_steps,
             adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,

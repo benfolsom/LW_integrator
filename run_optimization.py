@@ -112,7 +112,6 @@ def run_single_sim(
         adaptive_timestep_reduction_factor=base_config[
             "adaptive_timestep_reduction_factor"
         ],
-        adaptive_timestep_max_attempts=base_config["adaptive_timestep_max_attempts"],
         adaptive_timestep_min_factor=base_config["adaptive_timestep_min_factor"],
         adaptive_timestep_cooldown_steps=base_config[
             "adaptive_timestep_cooldown_steps"
