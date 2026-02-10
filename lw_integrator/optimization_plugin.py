@@ -112,6 +112,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         self._build_ui()
 
+        # Sync simulation type with main GUI if available
+        if self.gui_controller and hasattr(self.gui_controller, "sim_type_var"):
+            main_sim_type = self.gui_controller.sim_type_var.get()
+            self.sim_type_var.set(main_sim_type)
+            # Update driver visibility based on synced simulation type
+            self._update_driver_visibility()
+
     def _build_ui(self):
         """Build the user interface."""
         # Main container with scrollbar
@@ -2457,18 +2464,48 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.macroparticle_enabled_var.set(
                 getattr(opt_config, "macroparticle_enabled", False)
             )
-            self.macroparticle_charge_var.set(
+            self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].set(
                 f"{getattr(opt_config, 'macroparticle_charge_multiplier', 1.0):.2e}"
             )
-            self.macroparticle_position_var.set(
-                f"{getattr(opt_config, 'macroparticle_position_spread', 0.0):.2e}"
+            self.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].set(
+                f"{getattr(opt_config, 'macroparticle_sigma_multiplier', 1.0):.2e}"
             )
-            self.macroparticle_momentum_var.set(
-                f"{getattr(opt_config, 'macroparticle_momentum_spread', 0.0):.2e}"
+            self.macroparticle_momentum_errors_var.set(
+                getattr(opt_config, "macroparticle_use_momentum_errors", True)
             )
             self._toggle_macroparticle_controls()
             self._update_macroparticle_state()
             self.main_timestep_display_var.set(f"{opt_config.timestep:.2e}")
+
+            # Load driver parameters if BUNCH_TO_BUNCH
+            if main_options.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                driver = main_options.driver_params
+                if driver:
+                    self.sweep_params["driver_m_particle"]["fixed_var"].set(
+                        f"{driver.get('m_particle', 207.2):.6e}"
+                    )
+                    self.sweep_params["driver_charge_sign"]["fixed_var"].set(
+                        str(driver.get("charge_sign", 1.0))
+                    )
+                    self.sweep_params["driver_pcount"]["fixed_var"].set(
+                        str(driver.get("pcount", 5))
+                    )
+                    self.sweep_params["driver_transv_mom"]["fixed_var"].set(
+                        f"{driver.get('transv_mom', 0.0):.2e}"
+                    )
+                    self.sweep_params["driver_transv_dist"]["fixed_var"].set(
+                        f"{driver.get('transv_dist', -0.07998):.6e}"
+                    )
+                    self.sweep_params["driver_starting_distance"]["fixed_var"].set(
+                        f"{driver.get('starting_distance', 1000.0):.2e}"
+                    )
+                    self.sweep_params["driver_starting_Pz"]["fixed_var"].set(
+                        f"{driver.get('starting_Pz', -4925.0):.2e}"
+                    )
+                    self.driver_stripped_ions_var.set(
+                        str(driver.get("stripped_ions", 54.0))
+                    )
+                    self._log_result("[INFO] Loaded driver parameters from main GUI")
 
             # Update stability options if they exist in config
             if hasattr(opt_config, "smoothness_enabled"):
@@ -2497,6 +2534,32 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
             self._log_result(f"  Transverse distance: {opt_config.transv_dist:.2e} mm")
             self._log_result("")
+
+            # Update GUI controller's simulation type and driver visibility
+            # This ensures the main GUI shows the correct simulation mode and driver parameters
+            if self.gui_controller:
+                self.gui_controller.sim_type_var.set(opt_config.simulation_type.name)
+                # Force update of simulation type combobox display
+                if hasattr(self.gui_controller, "sim_type_combo"):
+                    try:
+                        values_list = list(self.gui_controller.sim_type_combo["values"])
+                        sim_type_name = opt_config.simulation_type.name
+                        if sim_type_name in values_list:
+                            idx = values_list.index(sim_type_name)
+                            self.gui_controller.sim_type_combo.current(idx)
+                            self.gui_controller.root.update_idletasks()
+                    except Exception:
+                        pass
+                # Update driver visibility (shows driver params for BUNCH_TO_BUNCH)
+                if hasattr(self.gui_controller, "_update_driver_visibility"):
+                    self.gui_controller._update_driver_visibility()
+                # Update image subcharge state (greys out for BUNCH_TO_BUNCH)
+                if hasattr(self.gui_controller, "_update_image_subcharge_state"):
+                    self.gui_controller._update_image_subcharge_state()
+
+            # Update sweep optimizer's own driver visibility based on loaded simulation type
+            self._update_driver_visibility()
+
             self._log_result("[INFO] Stability options loaded from main config:")
             self._log_result(
                 f"  Self-consistency: {opt_config.self_consistency_enabled} (tol={opt_config.self_consistency_tolerance:.1e})"
@@ -3537,6 +3600,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self._log_result(
                     "[INFO] Auto-switched main GUI to Sweep/Optim run mode"
                 )
+
+                # Update driver visibility and image subcharge state based on simulation type
+                # This ensures driver parameters are shown for BUNCH_TO_BUNCH and hidden otherwise
+                if hasattr(self.gui_controller, "_update_driver_visibility"):
+                    self.gui_controller._update_driver_visibility()
+                if hasattr(self.gui_controller, "_update_image_subcharge_state"):
+                    self.gui_controller._update_image_subcharge_state()
 
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")
