@@ -1465,6 +1465,29 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             variable=self.skip_failed_runs_var,
         ).pack(side="left", padx=5)
 
+        # Row 2: Retry attempts for failed runs
+        retry_frame = ttk.Frame(frame)
+        retry_frame.pack(fill="x", pady=(5, 2))
+
+        ttk.Label(retry_frame, text="Failed run retries:").pack(
+            side="left", padx=(5, 10)
+        )
+
+        ttk.Label(retry_frame, text="Retry attempts (with new random seeds):").pack(
+            side="left", padx=(0, 5)
+        )
+        self.failed_run_retry_attempts_var = tk.StringVar(value="1")
+        ttk.Entry(
+            retry_frame, textvariable=self.failed_run_retry_attempts_var, width=8
+        ).pack(side="left", padx=(0, 5))
+
+        ttk.Label(
+            retry_frame,
+            text="← 0=no retries, 1=retry once (default), 2+=retry multiple times",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).pack(side="left", padx=5)
+
         # Row 4: Trajectory stability checking (multi-step analysis)
         smoothness_frame = ttk.LabelFrame(
             frame, text="Trajectory Stability Analysis", padding=8
@@ -1863,10 +1886,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.gui_controller.adaptive_timestep_reduction_factor_var.set(
                     str(config.adaptive_timestep_reduction_factor)
                 )
-            if hasattr(self.gui_controller, "adaptive_timestep_max_attempts_var"):
-                self.gui_controller.adaptive_timestep_max_attempts_var.set(
-                    str(config.adaptive_timestep_max_attempts)
-                )
+            # max_refinement_attempts is now auto-calculated (read-only display in GUI)
             if hasattr(self.gui_controller, "adaptive_timestep_min_factor_var"):
                 self.gui_controller.adaptive_timestep_min_factor_var.set(
                     f"{config.adaptive_timestep_min_factor:.1e}"
@@ -1877,7 +1897,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 )
             if hasattr(self.gui_controller, "adaptive_timestep_probe_threshold_var"):
                 self.gui_controller.adaptive_timestep_probe_threshold_var.set(
-                    f"{config.adaptive_timestep_probe_threshold:.2f}"
+                    f"{config.adaptive_timestep_probe_threshold:.6g}"
                 )
             if hasattr(self.gui_controller, "adaptive_timestep_max_probe_steps_var"):
                 self.gui_controller.adaptive_timestep_max_probe_steps_var.set(
@@ -2195,6 +2215,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Sweep robustness options
             per_run_timeout=float(self.per_run_timeout_var.get()),
             skip_failed_runs=self.skip_failed_runs_var.get(),
+            failed_run_retry_attempts=int(self.failed_run_retry_attempts_var.get()),
+            # Conducting wall image parameters - read from main GUI
+            image_subcharge_count=self._get_gui_stability_setting(
+                "image_subcharge_var",
+                existing_config.image_subcharge_count if existing_config else 12,
+            ),
+            use_image_weighting=self._get_gui_stability_setting(
+                "image_weighting_var",
+                existing_config.use_image_weighting if existing_config else True,
+            ),
             # Stability options - read from main GUI if available, otherwise use existing config or defaults
             self_consistency_enabled=self._get_gui_stability_setting(
                 "self_consistency_enabled_var",
@@ -2274,14 +2304,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     existing_config.adaptive_timestep_reduction_factor
                     if existing_config
                     else 10
-                ),
-            ),
-            adaptive_timestep_max_attempts=self._get_gui_stability_setting(
-                "adaptive_timestep_max_attempts_var",
-                (
-                    existing_config.adaptive_timestep_max_attempts
-                    if existing_config
-                    else 5
                 ),
             ),
             adaptive_timestep_min_factor=self._get_gui_stability_setting(
@@ -2622,15 +2644,36 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         at_factor_entry.pack(anchor="w")
         all_widgets.append(at_factor_entry)
 
+        # Max refinement attempts is now auto-calculated (read-only display)
+        import math
+
+        try:
+            reduction_factor = self.config.adaptive_timestep_reduction_factor
+            min_factor = self.config.adaptive_timestep_min_factor
+            if reduction_factor > 1 and min_factor > 0:
+                calculated_attempts = math.ceil(
+                    math.log(1.0 / min_factor) / math.log(reduction_factor)
+                )
+                attempts_display = f"{max(1, calculated_attempts)} (auto-calculated from reduction factor & min timestep)"
+            else:
+                attempts_display = "N/A"
+        except (ValueError, ZeroDivisionError):
+            attempts_display = "N/A"
+
         ttk.Label(at_frame, text="Max reduction attempts:").pack(
             anchor="w", pady=(5, 0)
         )
-        at_attempts_var = tk.StringVar(
-            value=str(self.config.adaptive_timestep_max_attempts)
+        at_attempts_display = ttk.Label(
+            at_frame,
+            text=attempts_display,
+            relief="sunken",
+            background="#f0f0f0",
+            foreground="#606060",
+            padding=(5, 2),
+            font=("TkDefaultFont", 9, "italic"),
         )
-        at_attempts_entry = ttk.Entry(at_frame, textvariable=at_attempts_var, width=15)
-        at_attempts_entry.pack(anchor="w")
-        all_widgets.append(at_attempts_entry)
+        at_attempts_display.pack(anchor="w")
+        all_widgets.append(at_attempts_display)
 
         at_halt_var = tk.BooleanVar(value=self.config.energy_monitor_halt_on_jump)
         at_halt_cb = ttk.Checkbutton(
@@ -2653,10 +2696,10 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             """Apply safer defaults for sweeps."""
             # Self-consistency: more verbose for debugging
             sc_verb_var.set("1")
-            # Adaptive timestep: debug enabled, don't halt, reduced max attempts to fail faster
+            # Adaptive timestep: debug enabled, don't halt
+            # Note: max_attempts is now auto-calculated from reduction_factor and min_timestep_factor
             at_debug_var.set(True)
             at_halt_var.set(False)
-            at_attempts_var.set("3")
 
         # Function to toggle widgets based on checkbox
         def on_checkbox_toggle():
@@ -2726,7 +2769,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.config.adaptive_timestep_reduction_factor = int(
                     at_factor_var.get()
                 )
-                self.config.adaptive_timestep_max_attempts = int(at_attempts_var.get())
+                # max_refinement_attempts is now auto-calculated from reduction_factor and min_timestep_factor
                 self.config.adaptive_timestep_debug = at_debug_var.get()
 
                 # Sweep robustness options
@@ -2778,7 +2821,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
             # Energy monitoring removed - halt option integrated into adaptive timestep
             self._log_result(
-                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%, reduction={self.config.adaptive_timestep_reduction_factor}x, max_attempts={self.config.adaptive_timestep_max_attempts}, debug={self.config.adaptive_timestep_debug})"
+                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%, reduction={self.config.adaptive_timestep_reduction_factor}x, min_factor={self.config.adaptive_timestep_min_factor}, debug={self.config.adaptive_timestep_debug})"
             )
             self._log_result(
                 f"  Per-run timeout: {self.config.per_run_timeout}s, Skip failed: {self.config.skip_failed_runs}"
@@ -2930,6 +2973,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Update robustness options from UI
             self.config.per_run_timeout = float(self.per_run_timeout_var.get())
             self.config.skip_failed_runs = self.skip_failed_runs_var.get()
+            self.config.failed_run_retry_attempts = int(
+                self.failed_run_retry_attempts_var.get()
+            )
 
             # Update stability options from UI
             self.config.smoothness_enabled = self.smoothness_enabled_var.get()
@@ -3212,9 +3258,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             loaded_config.adaptive_timestep_reduction_factor = data.get(
                 "adaptive_timestep_reduction_factor", 10
             )
-            loaded_config.adaptive_timestep_max_attempts = data.get(
-                "adaptive_timestep_max_attempts", 5
-            )
+            # max_refinement_attempts removed - now auto-calculated from reduction_factor and min_timestep_factor
             loaded_config.adaptive_timestep_min_factor = data.get(
                 "adaptive_timestep_min_factor", 1e-4
             )
@@ -3233,6 +3277,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Sweep robustness options
             loaded_config.per_run_timeout = data.get("per_run_timeout", 300.0)
             loaded_config.skip_failed_runs = data.get("skip_failed_runs", True)
+            loaded_config.failed_run_retry_attempts = data.get(
+                "failed_run_retry_attempts", 1
+            )
             # Trajectory stability checking options
             loaded_config.smoothness_enabled = data.get("smoothness_enabled", True)
             loaded_config.smoothness_window_size = data.get(
@@ -3264,6 +3311,10 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "macroparticle_use_momentum_errors", True
             )
 
+            # Conducting wall image parameters
+            loaded_config.image_subcharge_count = data.get("image_subcharge_count", 12)
+            loaded_config.use_image_weighting = data.get("use_image_weighting", True)
+
             # Load timestep strategy and related parameters
             # Default to auto_distance for sweeps/optimizations
             loaded_config.timestep_strategy = data.get(
@@ -3285,6 +3336,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Update UI controls
             self.per_run_timeout_var.set(str(loaded_config.per_run_timeout))
             self.skip_failed_runs_var.set(loaded_config.skip_failed_runs)
+            self.failed_run_retry_attempts_var.set(
+                str(loaded_config.failed_run_retry_attempts)
+            )
 
             # Load UI-specific fields
             self.timestep_mode_var.set(data.get("timestep_mode", "duration"))
@@ -3309,6 +3363,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             if self.gui_controller:
                 self._sync_stability_to_main_gui(loaded_config)
 
+                # Sync image parameters to main GUI Particles tab
+                if hasattr(self.gui_controller, "image_subcharge_var"):
+                    self.gui_controller.image_subcharge_var.set(
+                        loaded_config.image_subcharge_count
+                    )
+                if hasattr(self.gui_controller, "image_weighting_var"):
+                    self.gui_controller.image_weighting_var.set(
+                        loaded_config.use_image_weighting
+                    )
+
             self._log_result("[INFO] Additional stability settings loaded:")
             self._log_result(
                 f"  Self-consistency max_iterations: {loaded_config.self_consistency_max_iterations}"
@@ -3332,7 +3396,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 f"  Adaptive timestep reduction_factor: {loaded_config.adaptive_timestep_reduction_factor}"
             )
             self._log_result(
-                f"  Adaptive timestep max_attempts: {loaded_config.adaptive_timestep_max_attempts}"
+                f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
             )
             self._log_result(
                 f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
@@ -3422,7 +3486,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 f"  Reduction factor: {self.config.adaptive_timestep_reduction_factor}x"
             )
             self._log_result(
-                f"  Max attempts: {self.config.adaptive_timestep_max_attempts}"
+                f"  Min timestep factor: {self.config.adaptive_timestep_min_factor}"
             )
             self._log_result(
                 f"  Min factor: {self.config.adaptive_timestep_min_factor}"
@@ -3584,7 +3648,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
                 "adaptive_timestep_threshold": config.adaptive_timestep_threshold,
                 "adaptive_timestep_reduction_factor": config.adaptive_timestep_reduction_factor,
-                "adaptive_timestep_max_attempts": config.adaptive_timestep_max_attempts,
                 "adaptive_timestep_min_factor": config.adaptive_timestep_min_factor,
                 "adaptive_timestep_cooldown_steps": config.adaptive_timestep_cooldown_steps,
                 "adaptive_timestep_probe_threshold": config.adaptive_timestep_probe_threshold,
@@ -3593,6 +3656,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 # Sweep robustness options
                 "per_run_timeout": config.per_run_timeout,
                 "skip_failed_runs": config.skip_failed_runs,
+                "failed_run_retry_attempts": config.failed_run_retry_attempts,
                 # Trajectory stability checking
                 "smoothness_enabled": config.smoothness_enabled,
                 "smoothness_window_size": config.smoothness_window_size,
@@ -3605,6 +3669,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "macroparticle_charge_multiplier": config.macroparticle_charge_multiplier,
                 "macroparticle_sigma_multiplier": config.macroparticle_sigma_multiplier,
                 "macroparticle_use_momentum_errors": config.macroparticle_use_momentum_errors,
+                # Conducting wall image parameters
+                "image_subcharge_count": config.image_subcharge_count,
+                "use_image_weighting": config.use_image_weighting,
                 # Timestep strategy parameters
                 "timestep_strategy": config.timestep_strategy,
                 "target_distance_mm": config.target_distance_mm,
@@ -6349,122 +6416,262 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         f"h={timestep:.4e}ns, N={steps}"
                     )
 
-                # Run integration with timeout
+                # Run integration with timeout and retry logic
                 result = None
                 run_error = None
                 run_timed_out = False
+                retry_attempt = 0
+                max_retries = self.config.failed_run_retry_attempts
 
-                try:
-                    # Check if timeout is enabled
-                    if self.config.per_run_timeout > 0:
-                        import threading
-
-                        # Container for result (mutable for thread access)
-                        result_container = [None]
-                        error_container = [None]
-                        cancel_flag = [False]  # Flag to signal cancellation
-
-                        # Log warning for potentially problematic parameter combinations
-                        if aperture < 0.1 and macroparticle_charge_multiplier > 1000:
-                            self._log_result(
-                                f"  [WARNING] Run {run_num}: Very small aperture ({aperture:.4f} mm) "
-                                f"with large charge multiplier ({macroparticle_charge_multiplier:.0f})"
-                            )
-                            self._log_result(
-                                f"    This may cause numerical instability or slow convergence"
-                            )
-
-                        def run_with_exception_handling():
-                            """Wrapper to run integration and catch exceptions."""
-                            try:
-                                result_container[0] = self._run_single_integration(
-                                    aperture=aperture,
-                                    energy_gev=energy,
-                                    start_z=start_z,
-                                    transv_offset=transv_offset,
-                                    timestep=timestep,
-                                    steps=steps,
-                                    rider_m_particle=rider_m_particle,
-                                    rider_charge_sign=rider_charge_sign,
-                                    rider_pcount=int(rider_pcount),
-                                    rider_transv_mom=rider_transv_mom,
-                                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                                    driver_params=(
-                                        driver_params_dict
-                                        if self.config.simulation_type
-                                        == SimulationType.BUNCH_TO_BUNCH
-                                        else None
-                                    ),
-                                    wall_z=params_dict.get(
-                                        "wall_z", self.config.wall_z
-                                    ),
-                                    run_num=run_num,
-                                    cancel_flag=cancel_flag,
-                                )
-                            except Exception as e:
-                                error_container[0] = e
-
-                        # Start integration in separate thread
-                        integration_thread = threading.Thread(
-                            target=run_with_exception_handling
+                # Loop for retry attempts (1 original + max_retries additional attempts)
+                while retry_attempt <= max_retries:
+                    # Check for global cancellation before starting a retry
+                    if not self.running:
+                        self._log_result(
+                            f"  [CANCEL] Run {run_num}: Cancellation requested"
                         )
-                        integration_thread.daemon = True
-                        integration_thread.start()
-
-                        # Wait for completion or timeout
-                        integration_thread.join(timeout=self.config.per_run_timeout)
-
-                        if integration_thread.is_alive():
-                            # Timeout occurred - signal the integration to cancel
-                            run_timed_out = True
-                            cancel_flag[0] = True
+                        break
+                    if self.gui_controller and hasattr(
+                        self.gui_controller, "_cancel_requested"
+                    ):
+                        if self.gui_controller._cancel_requested:
                             self._log_result(
-                                f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
+                                f"  [CANCEL] Run {run_num}: Cancellation requested"
                             )
-                            self._log_result(
-                                f"    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
-                            )
-                            # Give it a brief moment to respond to cancellation
-                            integration_thread.join(timeout=2.0)
-                            if integration_thread.is_alive():
-                                self._log_result(
-                                    f"    Warning: Integration thread still running after cancel signal"
-                                )
-                                self._log_result(
-                                    f"    Thread will be abandoned (daemon thread will terminate with main thread)"
-                                )
-                            elif error_container[0] is not None:
-                                # Exception occurred in thread
-                                raise error_container[0]
-                        else:
-                            # Success
-                            result = result_container[0]
+                            break
+
+                    # Generate seed for this attempt
+                    if retry_attempt == 0:
+                        # First attempt uses config seed
+                        current_seed = self.config.seed
                     else:
-                        # No timeout - run directly
-                        result = self._run_single_integration(
-                            aperture=aperture,
-                            energy_gev=energy,
-                            start_z=start_z,
-                            transv_offset=transv_offset,
-                            timestep=timestep,
-                            steps=steps,
-                            rider_m_particle=rider_m_particle,
-                            rider_charge_sign=rider_charge_sign,
-                            rider_pcount=int(rider_pcount),
-                            rider_transv_mom=rider_transv_mom,
-                            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                            driver_params=(
-                                driver_params_dict
-                                if self.config.simulation_type
-                                == SimulationType.BUNCH_TO_BUNCH
-                                else None
-                            ),
-                            run_num=run_num,
-                            cancel_flag=None,
+                        # Retry attempts use deterministic but different seed
+                        current_seed = (
+                            self.config.seed + run_num * 10000 + retry_attempt * 100
                         )
+                        if use_full_debug or use_truncated_logging:
+                            self._log_result(
+                                f"  [RETRY] Run {run_num}, attempt {retry_attempt}/{max_retries} with new seed {current_seed}"
+                            )
 
+                    # Reset error/timeout flags for this attempt
+                    attempt_result = None
+                    attempt_error = None
+                    attempt_timed_out = False
+
+                    try:
+                        # Check if timeout is enabled
+                        if self.config.per_run_timeout > 0:
+                            import threading
+
+                            # Container for result (mutable for thread access)
+                            result_container = [None]
+                            error_container = [None]
+                            cancel_flag = [False]  # Flag to signal cancellation
+
+                            # Log warning for potentially problematic parameter combinations
+                            if (
+                                aperture < 0.1
+                                and macroparticle_charge_multiplier > 1000
+                            ):
+                                self._log_result(
+                                    f"  [WARNING] Run {run_num}: Very small aperture ({aperture:.4f} mm) "
+                                    f"with large charge multiplier ({macroparticle_charge_multiplier:.0f})"
+                                )
+                                self._log_result(
+                                    f"    This may cause numerical instability or slow convergence"
+                                )
+
+                            def run_with_exception_handling():
+                                """Wrapper to run integration and catch exceptions."""
+                                try:
+                                    result_container[0] = self._run_single_integration(
+                                        aperture=aperture,
+                                        energy_gev=energy,
+                                        start_z=start_z,
+                                        transv_offset=transv_offset,
+                                        timestep=timestep,
+                                        steps=steps,
+                                        rider_m_particle=rider_m_particle,
+                                        rider_charge_sign=rider_charge_sign,
+                                        rider_pcount=int(rider_pcount),
+                                        rider_transv_mom=rider_transv_mom,
+                                        rider_transv_dist=rider_transv_dist,
+                                        macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                                        macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                                        driver_params=(
+                                            driver_params_dict
+                                            if self.config.simulation_type
+                                            == SimulationType.BUNCH_TO_BUNCH
+                                            else None
+                                        ),
+                                        wall_z=params_dict.get(
+                                            "wall_z", self.config.wall_z
+                                        ),
+                                        run_num=run_num,
+                                        cancel_flag=cancel_flag,
+                                        seed_override=current_seed,
+                                    )
+                                except Exception as e:
+                                    error_container[0] = e
+
+                            # Start integration in separate thread
+                            integration_thread = threading.Thread(
+                                target=run_with_exception_handling
+                            )
+                            integration_thread.daemon = True
+                            integration_thread.start()
+
+                            # Wait for completion or timeout
+                            integration_thread.join(timeout=self.config.per_run_timeout)
+
+                            if integration_thread.is_alive():
+                                # Timeout occurred - signal the integration to cancel
+                                attempt_timed_out = True
+                                cancel_flag[0] = True
+                                self._log_result(
+                                    f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
+                                )
+                                self._log_result(
+                                    f"    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
+                                )
+                                # Give it a brief moment to respond to cancellation
+                                integration_thread.join(timeout=2.0)
+                                if integration_thread.is_alive():
+                                    self._log_result(
+                                        f"    Warning: Integration thread still running after cancel signal"
+                                    )
+                                    self._log_result(
+                                        f"    Thread will be abandoned (daemon thread will terminate with main thread)"
+                                    )
+
+                            if error_container[0] is not None:
+                                attempt_error = error_container[0]
+                            else:
+                                attempt_result = result_container[0]
+                        else:
+                            # No timeout - run directly
+                            attempt_result = self._run_single_integration(
+                                aperture=aperture,
+                                energy_gev=energy,
+                                start_z=start_z,
+                                transv_offset=transv_offset,
+                                timestep=timestep,
+                                steps=steps,
+                                rider_m_particle=rider_m_particle,
+                                rider_charge_sign=rider_charge_sign,
+                                rider_pcount=int(rider_pcount),
+                                rider_transv_mom=rider_transv_mom,
+                                rider_transv_dist=rider_transv_dist,
+                                macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                                macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                                driver_params=(
+                                    driver_params_dict
+                                    if self.config.simulation_type
+                                    == SimulationType.BUNCH_TO_BUNCH
+                                    else None
+                                ),
+                                run_num=run_num,
+                                cancel_flag=None,
+                                seed_override=current_seed,
+                            )
+
+                    except Exception as e:
+                        attempt_error = e
+                        if use_full_debug:
+                            import traceback
+
+                            self._log_result(
+                                f"  [ERROR] Run {run_num} attempt {retry_attempt} exception: {type(e).__name__}: {e}"
+                            )
+                            self._log_result(
+                                f"    Traceback:\n{traceback.format_exc()}"
+                            )
+
+                    # Check if this attempt succeeded
+                    attempt_succeeded = False
+                    if (
+                        not attempt_timed_out
+                        and attempt_error is None
+                        and attempt_result is not None
+                    ):
+                        # Check if result has valid metrics (not all particles dead)
+                        is_halted = attempt_result.get("halted_early", False)
+                        metrics = attempt_result.get("metrics", {})
+
+                        # DEBUG: Log what we're checking
+                        if use_full_debug:
+                            self._log_result(
+                                f"  [DEBUG] Run {run_num} attempt {retry_attempt}: is_halted={is_halted}, has_metrics={bool(metrics)}"
+                            )
+                            if metrics:
+                                self._log_result(
+                                    f"    max_percent_energy_gain={metrics.get('max_percent_energy_gain')}"
+                                )
+                                self._log_result(
+                                    f"    rider_gamma_final={metrics.get('rider_gamma_final')}"
+                                )
+                                self._log_result(
+                                    f"    rider_delta_e_mev={metrics.get('rider_delta_e_mev')}"
+                                )
+
+                        has_useful_metrics = False
+                        if not is_halted and metrics:
+                            # Check for key optimization metrics
+                            if metrics.get("max_percent_energy_gain") is not None:
+                                has_useful_metrics = True
+                            elif (
+                                metrics.get("rider_gamma_final") is not None
+                                and metrics.get("rider_gamma_final") > 0
+                            ):
+                                has_useful_metrics = True
+                            elif metrics.get("rider_delta_e_mev") is not None:
+                                has_useful_metrics = True
+
+                        if has_useful_metrics:
+                            # Success! Use this result
+                            result = attempt_result
+                            run_error = None
+                            run_timed_out = False
+                            attempt_succeeded = True
+                            if retry_attempt > 0:
+                                self._log_result(
+                                    f"  [SUCCESS] Run {run_num} succeeded on retry attempt {retry_attempt}"
+                                )
+                            break
+                        else:
+                            # No useful metrics - all particles died or halted early
+                            halt_reason = attempt_result.get("halt_reason", "unknown")
+                            attempt_error = Exception(
+                                f"Run failed: halted_early={is_halted}, reason={halt_reason}"
+                            )
+                            if use_full_debug or use_truncated_logging:
+                                self._log_result(
+                                    f"  [FAILED] Run {run_num} attempt {retry_attempt}: halted={is_halted}, has_metrics={bool(metrics)}, has_useful_metrics=False"
+                                )
+
+                    # If we got here without breaking, the attempt failed
+                    if not attempt_succeeded:
+                        if use_full_debug:
+                            error_msg = f"  [DEBUG] Run {run_num} attempt {retry_attempt} failed: timeout={attempt_timed_out}, error={attempt_error is not None}"
+                            if attempt_error is not None:
+                                error_msg += f" ({type(attempt_error).__name__}: {attempt_error})"
+                            self._log_result(error_msg)
+
+                        # Decide whether to retry
+                        if retry_attempt < max_retries:
+                            # Will retry
+                            retry_attempt += 1
+                            continue
+                        else:
+                            # No more retries - record the final failure
+                            result = attempt_result
+                            run_error = attempt_error
+                            run_timed_out = attempt_timed_out
+                            break
+
+                # Handle results (after all retry attempts)
+                try:
                     if result is not None and use_full_debug:
                         self._log_result(
                             f"  [DEBUG] Run {run_num} integration completed"
@@ -6496,6 +6703,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                                 "transverse_offset_fraction": offset_frac,
                                 "timestep": timestep,
                                 "steps": steps,
+                                "retry_attempts": retry_attempt,
                                 "wall_z": params_dict.get("wall_z", self.config.wall_z),
                                 "rider_m_particle": rider_m_particle,
                                 "rider_charge_sign": rider_charge_sign,
@@ -6782,6 +6990,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         wall_z: float = None,
         run_num: int = 0,
         cancel_flag: Optional[List[bool]] = None,
+        seed_override: int = None,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
         # Log stability analysis configuration for debugging
@@ -6881,9 +7090,14 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Use seed override if provided (for retries), otherwise use config seed + run_num
+        actual_seed = (
+            seed_override if seed_override is not None else (self.config.seed + run_num)
+        )
+
         options = SimulationOptions(
             steps=steps,
-            seed=self.config.seed,
+            seed=actual_seed,  # Unique seed per run for varied particle distributions
             simulation_type=self.config.simulation_type,
             rider_params=rider_params,
             driver_params=driver_params,  # Use provided driver params (None for CONDUCTING_WALL)
@@ -6907,6 +7121,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             macroparticle_charge_multiplier=macroparticle_charge_multiplier,
             macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
             macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
+            image_subcharge_count=self.config.image_subcharge_count,
+            use_image_weighting=self.config.use_image_weighting,
             overlay_display=False,
             overlay_save=False,
             difference_display=False,
@@ -6926,7 +7142,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             adaptive_timestep_enabled=self.config.adaptive_timestep_enabled,
             adaptive_timestep_threshold=self.config.adaptive_timestep_threshold,
             adaptive_timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
-            adaptive_timestep_max_attempts=self.config.adaptive_timestep_max_attempts,
             adaptive_timestep_min_factor=self.config.adaptive_timestep_min_factor,
             adaptive_timestep_cooldown_steps=self.config.adaptive_timestep_cooldown_steps,
             adaptive_timestep_probe_threshold=self.config.adaptive_timestep_probe_threshold,
@@ -7546,27 +7761,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
     ) -> None:
         """Generate summary plots for the sweep results."""
         try:
-            import matplotlib.pyplot as plt
-
-            # Heatmap only needs metrics, not full trajectories
-            # Collect all data from results with metrics
-            apertures = []
-            energies = []
-            delta_es = []
-
-            for result in results:
-                params = result.get("parameters", {})
-                metrics = result.get("metrics", {})
-
-                # Only include if we have the necessary metrics
-                if metrics:
-                    apertures.append(params.get("aperture_radius", 0))
-                    energies.append(params.get("particle_energy_gev", 0))
-                    delta_es.append(metrics.get("rider_delta_e_mev", 0))
-
-            if len(delta_es) == 0:
-                self._log_result("[INFO] No results with metrics to plot")
-                return
+            import subprocess
+            import sys
 
             # Count how many parameters were actually swept
             # (have more than 1 unique value across all results)
@@ -7576,7 +7772,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 params = result.get("parameters", {})
                 for key, value in params.items():
                     # Skip non-numeric parameters and internal bookkeeping
-                    if key in ["simulation_type", "run_number", "timestep", "steps"]:
+                    if key in [
+                        "simulation_type",
+                        "run_number",
+                        "timestep",
+                        "steps",
+                        "retry_attempts",
+                    ]:
                         continue
                     if key not in all_param_values:
                         all_param_values[key] = []
@@ -7591,53 +7793,39 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Only generate heatmap if exactly 2 parameters were swept
             if num_swept_params == 2:
-                # Create heatmap
-                fig, ax = plt.subplots(figsize=(10, 8))
+                # Use the new smooth heatmap generator script
+                script_path = Path(__file__).parent.parent / "generate_sweep_heatmap.py"
 
-                scatter = ax.scatter(
-                    energies,
-                    [a * 1e3 for a in apertures],  # Convert mm to microns
-                    c=delta_es,
-                    cmap="viridis",
-                    s=150,
-                    alpha=0.8,
-                    edgecolors="black",
-                    linewidth=1,
-                )
+                try:
+                    # Call the script with --gain-filter all to show both positive and negative gains
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(script_path),
+                            str(output_dir),
+                            "--gain-filter",
+                            "all",
+                            "--output",
+                            "sweep_heatmap.png",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,  # 2 minute timeout
+                    )
 
-                cbar = plt.colorbar(scatter, ax=ax)
-                cbar.set_label("Energy Gain ΔE (MeV)", fontsize=12)
+                    if result.returncode == 0:
+                        self._log_result(
+                            f"[OK] Heatmap saved to: {output_dir / 'sweep_heatmap.png'}"
+                        )
+                    else:
+                        self._log_result(
+                            f"[WARNING] Heatmap generation failed: {result.stderr}"
+                        )
 
-                ax.set_xlabel("Particle Energy (GeV)", fontsize=12)
-                ax.set_ylabel("Aperture Radius (μm)", fontsize=12)
-                ax.set_title(
-                    "Parameter Space Exploration: Energy Gain",
-                    fontsize=14,
-                    fontweight="bold",
-                )
-                ax.grid(True, alpha=0.3)
-
-                # Use log scale if range is large
-                if (
-                    len(energies) > 0 and max(energies) / min(energies) > 10
-                    if min(energies) > 0
-                    else False
-                ):
-                    ax.set_xscale("log")
-                if (
-                    len(apertures) > 0 and max(apertures) / min(apertures) > 10
-                    if min(apertures) > 0
-                    else False
-                ):
-                    ax.set_yscale("log")
-
-                plt.tight_layout()
-
-                heatmap_file = output_dir / "sweep_heatmap.png"
-                plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
-                plt.close(fig)
-
-                self._log_result(f"[OK] Heatmap saved to: {heatmap_file}")
+                except subprocess.TimeoutExpired:
+                    self._log_result("[WARNING] Heatmap generation timed out")
+                except Exception as e:
+                    self._log_result(f"[WARNING] Failed to generate heatmap: {e}")
             else:
                 self._log_result(
                     f"[INFO] Skipping heatmap generation ({num_swept_params} parameters swept; heatmap only generated for 2-parameter sweeps)"

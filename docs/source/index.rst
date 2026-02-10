@@ -17,6 +17,8 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    :caption: Physics background
 
    theory
+   self_consistency
+   adaptive_timestep
    recent_changes
 
 .. toctree::

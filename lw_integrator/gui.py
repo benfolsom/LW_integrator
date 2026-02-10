@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
+from core.batched_logger import BatchedLogger, ThrottledProgressCallback
 from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
@@ -320,6 +321,7 @@ class IntegratorGUI:
         self._running = False
         self._cancel_requested = False
         self._scroll_pages: List[_ScrollableNotebookPage] = []
+        self._batched_logger: Optional[BatchedLogger] = None
 
         # Keyboard debugging mode (via environment variable)
         self._keyboard_debug = os.environ.get("LW_KEYBOARD_DEBUG", "0") == "1"
@@ -341,6 +343,7 @@ class IntegratorGUI:
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+        self._update_image_subcharge_state()
 
         # Set initial sash position for main horizontal pane (70/30 split)
         self.root.update_idletasks()  # Ensure window is laid out
@@ -511,6 +514,60 @@ class IntegratorGUI:
                 self.options, "self_consistency_chrono_adaptive_tolerance", False
             )
         )
+        # Gamma reconciliation options
+        self.self_consistency_gamma_reconciliation_method_var = tk.StringVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_method",
+                "ADAPTIVE_WEIGHTED",
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_threshold_var = (
+            tk.DoubleVar(
+                value=getattr(
+                    self.options,
+                    "self_consistency_gamma_reconciliation_low_beta_threshold",
+                    0.9,
+                )
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_threshold_var = (
+            tk.DoubleVar(
+                value=getattr(
+                    self.options,
+                    "self_consistency_gamma_reconciliation_high_beta_threshold",
+                    0.99,
+                )
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_low_beta_weight",
+                0.8,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_high_beta_weight",
+                0.2,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_mid_beta_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_mid_beta_weight",
+                0.5,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_fixed_weight_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "self_consistency_gamma_reconciliation_fixed_weight",
+                0.5,
+            )
+        )
         # chrono_matching_mode kept at FAST (internal only, not exposed in GUI)
 
         # Trace to update control states
@@ -532,9 +589,8 @@ class IntegratorGUI:
         self.adaptive_timestep_reduction_factor_var = tk.IntVar(
             value=self.options.adaptive_timestep_reduction_factor
         )
-        self.adaptive_timestep_max_attempts_var = tk.IntVar(
-            value=self.options.adaptive_timestep_max_attempts
-        )
+        # max_refinement_attempts is now calculated from reduction_factor and min_timestep_factor (read-only display)
+        self.adaptive_timestep_max_attempts_display_var = tk.StringVar(value="")
         self.adaptive_timestep_min_factor_var = tk.DoubleVar(
             value=self.options.adaptive_timestep_min_factor
         )
@@ -550,6 +606,8 @@ class IntegratorGUI:
         self.adaptive_timestep_debug_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_debug
         )
+        # max_substeps is now calculated from min_timestep_factor (read-only display)
+        self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 
         # Use preferences for directories
         self.output_dir_var = tk.StringVar(value=self._last_output_dir)
@@ -984,33 +1042,65 @@ class IntegratorGUI:
         # Add info note about bunch parameters
         ttk.Label(
             particle_frame,
-            text="Note: Particle count, transverse spread, and transverse momentum define the bunch distribution",
+            text="Note: Particle count, transverse spread, and transverse momentum define the bunch distribution.\n"
+            "Transverse offsets (x/y) define bunch center positions and are only used in BUNCH_TO_BUNCH mode.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray",
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 2))
 
+        # Track offset entries separately for bunch-to-bunch visibility control
+        self._rider_offset_entries = []
+        self._driver_offset_entries = []
+        self._rider_offset_labels = []
+        self._driver_offset_labels = []
+
         for row, name in enumerate(PARTICLE_PARAM_FIELDS, start=2):
-            ttk.Label(particle_frame, text=PARAM_LABELS[name] + ":").grid(
-                row=row, column=0, sticky="w", pady=2
-            )
-            ttk.Entry(
+            rider_label = ttk.Label(particle_frame, text=PARAM_LABELS[name] + ":")
+            rider_label.grid(row=row, column=0, sticky="w", pady=2)
+
+            rider_entry = ttk.Entry(
                 particle_frame, textvariable=self.rider_param_vars[name], width=12
-            ).grid(row=row, column=1, sticky="ew", pady=2)
-            ttk.Label(particle_frame, text=PARAM_LABELS[name] + " (driver):").grid(
-                row=row, column=2, sticky="w", pady=2, padx=(12, 0)
             )
+            rider_entry.grid(row=row, column=1, sticky="ew", pady=2)
+
+            driver_label = ttk.Label(
+                particle_frame, text=PARAM_LABELS[name] + " (driver):"
+            )
+            driver_label.grid(row=row, column=2, sticky="w", pady=2, padx=(12, 0))
+
             driver_entry = ttk.Entry(
                 particle_frame, textvariable=self.driver_param_vars[name], width=12
             )
             driver_entry.grid(row=row, column=3, sticky="ew", pady=2)
             self._driver_entries.append(driver_entry)
 
+            # Store offset widget references for bunch-to-bunch visibility control
+            if name in ("transv_offset_x", "transv_offset_y"):
+                self._rider_offset_entries.append(rider_entry)
+                self._rider_offset_labels.append(rider_label)
+                self._driver_offset_entries.append(driver_entry)
+                self._driver_offset_labels.append(driver_label)
+
+                # Add tooltip for offset fields
+                tooltip_text = (
+                    "Transverse offset (bunch center position).\n"
+                    "Only used in BUNCH_TO_BUNCH simulations.\n\n"
+                    "Defines the (x, y) position of the bunch center.\n"
+                    "Separation between rider and driver bunches is:\n"
+                    "  √[(x_driver - x_rider)² + (y_driver - y_rider)²]"
+                )
+                Tooltip(rider_entry, tooltip_text)
+                Tooltip(driver_entry, tooltip_text)
+
         # Image subcharge controls
         next_row = len(PARTICLE_PARAM_FIELDS) + 2
         ttk.Label(particle_frame, text="Image subcharge count:").grid(
             row=next_row, column=0, sticky="w", pady=(12, 2)
         )
-        ttk.Entry(particle_frame, textvariable=self.image_subcharge_var, width=12).grid(
+        self.image_subcharge_entry = ttk.Entry(
+            particle_frame, textvariable=self.image_subcharge_var, width=12
+        )
+        self.image_subcharge_entry.grid(
             row=next_row, column=1, sticky="ew", pady=(12, 2)
         )
 
@@ -1026,11 +1116,14 @@ class IntegratorGUI:
             row=next_row + 1, column=0, columnspan=2, sticky="w", pady=(0, 8)
         )
 
-        ttk.Checkbutton(
+        self.image_weighting_check = ttk.Checkbutton(
             particle_frame,
             text="Enable image weighting",
             variable=self.image_weighting_var,
-        ).grid(row=next_row + 2, column=0, columnspan=2, sticky="w", pady=2)
+        )
+        self.image_weighting_check.grid(
+            row=next_row + 2, column=0, columnspan=2, sticky="w", pady=2
+        )
 
         # Help text for image weighting
         help_text_weighting = ttk.Label(
@@ -1861,6 +1954,180 @@ class IntegratorGUI:
         # Always uses FAST mode (legacy behavior)
         # AVERAGED mode reserved for future APPROXIMATE_BACK_HISTORY implementation
 
+        # Gamma reconciliation
+        gamma_recon_frame = ttk.LabelFrame(
+            sc_frame, text="Gamma Reconciliation", padding=8
+        )
+        gamma_recon_frame.grid(
+            row=12, column=0, columnspan=2, sticky="ew", pady=2, padx=(20, 0)
+        )
+        gamma_recon_frame.columnconfigure(1, weight=1)
+
+        # Method selection
+        method_frame = ttk.Frame(gamma_recon_frame)
+        method_frame.grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Label(method_frame, text="Method:").pack(side="left")
+        self.sc_gamma_reconciliation_method_combo = ttk.Combobox(
+            method_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_method_var,
+            values=[
+                "DISABLED",
+                "ADAPTIVE_WEIGHTED",
+                "USE_VELOCITY",
+                "USE_ENERGY",
+                "FIXED_WEIGHTED",
+            ],
+            state="readonly",
+            width=20,
+        )
+        self.sc_gamma_reconciliation_method_combo.pack(side="left", padx=(5, 5))
+        method_help = ttk.Label(
+            method_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        method_help.pack(side="left")
+        Tooltip(
+            method_help,
+            "Gamma Reconciliation Method:\n\n"
+            "DISABLED - No reconciliation (legacy, may cause blowups)\n\n"
+            "ADAPTIVE_WEIGHTED - Velocity-dependent weighting (recommended)\n"
+            "  • β < 0.9: Trust energy (weight=0.8)\n"
+            "  • β > 0.99: Trust velocity (weight=0.2)\n"
+            "  • Mid-range: Balanced (weight=0.5)\n\n"
+            "USE_VELOCITY - Always use γ from β (breaks energy)\n\n"
+            "USE_ENERGY - Always use γ from Pt (legacy)\n\n"
+            "FIXED_WEIGHTED - Fixed 50/50 blend\n\n"
+            "Recommended: ADAPTIVE_WEIGHTED",
+        )
+
+        # Adaptive weighted parameters
+        self.sc_gamma_reconciliation_adaptive_frame = ttk.LabelFrame(
+            gamma_recon_frame, text="Adaptive Weighted Parameters", padding=6
+        )
+        self.sc_gamma_reconciliation_adaptive_frame.grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(5, 2), padx=(10, 0)
+        )
+        self.sc_gamma_reconciliation_adaptive_frame.columnconfigure(1, weight=1)
+
+        # Low beta threshold
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="Low β threshold:"
+        ).grid(row=0, column=0, sticky="w", pady=2)
+        self.sc_gamma_low_beta_threshold_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_low_beta_threshold_var,
+            width=10,
+        )
+        self.sc_gamma_low_beta_threshold_entry.grid(
+            row=0, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_low_beta_threshold_entry,
+            "Velocity below which energy is trusted more\nDefault: 0.9",
+        )
+
+        # High beta threshold
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="High β threshold:"
+        ).grid(row=1, column=0, sticky="w", pady=2)
+        self.sc_gamma_high_beta_threshold_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_high_beta_threshold_var,
+            width=10,
+        )
+        self.sc_gamma_high_beta_threshold_entry.grid(
+            row=1, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_high_beta_threshold_entry,
+            "Velocity above which velocity is trusted more\nDefault: 0.99",
+        )
+
+        # Low beta weight
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="Low β weight (α):"
+        ).grid(row=2, column=0, sticky="w", pady=2)
+        self.sc_gamma_low_beta_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_low_beta_weight_var,
+            width=10,
+        )
+        self.sc_gamma_low_beta_weight_entry.grid(
+            row=2, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_low_beta_weight_entry,
+            "Weight for energy when β < low threshold\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.8",
+        )
+
+        # High beta weight
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="High β weight (α):"
+        ).grid(row=3, column=0, sticky="w", pady=2)
+        self.sc_gamma_high_beta_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_high_beta_weight_var,
+            width=10,
+        )
+        self.sc_gamma_high_beta_weight_entry.grid(
+            row=3, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_high_beta_weight_entry,
+            "Weight for energy when β > high threshold\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.2",
+        )
+
+        # Mid beta weight
+        ttk.Label(
+            self.sc_gamma_reconciliation_adaptive_frame, text="Mid β weight (α):"
+        ).grid(row=4, column=0, sticky="w", pady=2)
+        self.sc_gamma_mid_beta_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_adaptive_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_mid_beta_weight_var,
+            width=10,
+        )
+        self.sc_gamma_mid_beta_weight_entry.grid(
+            row=4, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_mid_beta_weight_entry,
+            "Weight for energy in mid β range\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.5",
+        )
+
+        # Fixed weighted parameter
+        self.sc_gamma_reconciliation_fixed_frame = ttk.LabelFrame(
+            gamma_recon_frame, text="Fixed Weighted Parameter", padding=6
+        )
+        self.sc_gamma_reconciliation_fixed_frame.grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(5, 2), padx=(10, 0)
+        )
+        self.sc_gamma_reconciliation_fixed_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            self.sc_gamma_reconciliation_fixed_frame, text="Fixed weight (α):"
+        ).grid(row=0, column=0, sticky="w", pady=2)
+        self.sc_gamma_fixed_weight_entry = ttk.Entry(
+            self.sc_gamma_reconciliation_fixed_frame,
+            textvariable=self.self_consistency_gamma_reconciliation_fixed_weight_var,
+            width=10,
+        )
+        self.sc_gamma_fixed_weight_entry.grid(
+            row=0, column=1, sticky="w", padx=(5, 0), pady=2
+        )
+        Tooltip(
+            self.sc_gamma_fixed_weight_entry,
+            "Fixed weight for FIXED_WEIGHTED method\n"
+            "γ = α·γ_energy + (1-α)·γ_velocity\nDefault: 0.5",
+        )
+
+        # Trace method change to toggle parameter visibility
+        self.self_consistency_gamma_reconciliation_method_var.trace_add(
+            "write", lambda *_: self._toggle_gamma_reconciliation_params()
+        )
+        self._toggle_gamma_reconciliation_params()
+
         # Adaptive timestep section (Energy Jump Detection functionality integrated here)
         at_frame = ttk.LabelFrame(
             stability_frame, text="Adaptive Timestep Refinement", padding=8
@@ -1929,30 +2196,45 @@ class IntegratorGUI:
         )
         self.adaptive_reduction_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
-        # Max refinement attempts with help icon
+        # Add trace to update max_attempts display when reduction_factor changes
+        self.adaptive_timestep_reduction_factor_var.trace_add(
+            "write", lambda *args: self._update_max_attempts_display()
+        )
+
+        # Max refinement attempts with help icon (calculated, read-only)
         att_frame = ttk.Frame(at_frame)
         att_frame.grid(row=3, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_max_attempts_label = ttk.Label(
-            att_frame, text="Max refinement attempts:"
+            att_frame, text="Max refinement attempts (calculated):"
         )
         self.adaptive_max_attempts_label.pack(side="left")
         att_help = ttk.Label(att_frame, text="ⓘ", foreground="blue", cursor="hand2")
         att_help.pack(side="left", padx=(3, 0))
         Tooltip(
             att_help,
-            "Maximum timestep reductions per step.\n\n"
-            "Each attempt: h_new = h / reduction_factor\n"
-            "If energy jump persists after max attempts → fail\n\n"
-            "Default: 5 attempts\n"
-            "Patient: 10 for difficult regions (walls/apertures)\n"
-            "Quick fail: 3 to detect pathological setups\n\n"
-            "Example: factor=10, attempts=5\n"
-            "  → can reduce h by up to 10^5 = 100,000×",
+            "Maximum timestep reductions per step (READ-ONLY).\n\n"
+            "Auto-calculated to be consistent with reduction_factor and min_timestep_factor:\n\n"
+            "  max_attempts = ceil(log(1/min_factor) / log(reduction_factor))\n\n"
+            "Examples:\n"
+            "  • reduction_factor=3, min_factor=1e-4 → max_attempts = 9\n"
+            "  • reduction_factor=10, min_factor=1e-4 → max_attempts = 4\n\n"
+            "Why automatic?\n"
+            "After n attempts: h_final = h_base / (reduction_factor^n)\n"
+            "At minimum: h_min = h_base × min_timestep_factor\n"
+            "These must be consistent!\n\n"
+            "To change: adjust 'Reduction factor' or 'Min timestep factor' above.",
         )
-        self.adaptive_max_attempts_entry = ttk.Entry(
-            at_frame, textvariable=self.adaptive_timestep_max_attempts_var, width=16
+        # Create read-only display label for max_attempts (calculated value)
+        self.adaptive_max_attempts_display = ttk.Label(
+            at_frame,
+            textvariable=self.adaptive_timestep_max_attempts_display_var,
+            relief="sunken",
+            background="#f0f0f0",
+            foreground="#606060",
+            padding=(5, 2),
+            font=("TkDefaultFont", 9, "italic"),
         )
-        self.adaptive_max_attempts_entry.grid(row=3, column=1, sticky="ew", pady=2)
+        self.adaptive_max_attempts_display.grid(row=3, column=1, sticky="ew", pady=2)
 
         # Min timestep factor with help icon
         min_frame = ttk.Frame(at_frame)
@@ -1979,6 +2261,15 @@ class IntegratorGUI:
             at_frame, textvariable=self.adaptive_timestep_min_factor_var, width=16
         )
         self.adaptive_min_factor_entry.grid(row=4, column=1, sticky="ew", pady=2)
+
+        # Add traces to update calculated displays when min_factor changes
+        self.adaptive_timestep_min_factor_var.trace_add(
+            "write",
+            lambda *args: (
+                self._update_max_attempts_display(),
+                self._update_max_substeps_display(),
+            ),
+        )
 
         # Hysteresis parameters
         cd_frame = ttk.Frame(at_frame)
@@ -2067,6 +2358,51 @@ class IntegratorGUI:
         )
         self.adaptive_debug_check.grid(
             row=9, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+
+        # Max sub-steps limit
+        max_substeps_frame = ttk.Frame(at_frame)
+        max_substeps_frame.grid(row=10, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.adaptive_max_substeps_label = ttk.Label(
+            max_substeps_frame, text="Max sub-steps (calculated):"
+        )
+        self.adaptive_max_substeps_label.pack(side="left")
+        max_substeps_help = ttk.Label(
+            max_substeps_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        max_substeps_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            max_substeps_help,
+            "Maximum number of sub-steps per main step (READ-ONLY).\n\n"
+            "This value is automatically calculated from min_timestep_factor\n"
+            "to prevent time discontinuities:\n\n"
+            "  max_substeps = ceil(1 / min_timestep_factor) × 1.1\n\n"
+            "The 1.1× safety margin ensures coverage even with rounding.\n\n"
+            "Example:\n"
+            "  • min_timestep_factor = 1e-4\n"
+            "  • Theoretical max = ceil(1 / 1e-4) = 10,000\n"
+            "  • With margin = 10,000 × 1.1 = 11,000 substeps\n\n"
+            "Why automatic?\n"
+            "If min_timestep_factor allows timestep to reduce to h × 1e-4,\n"
+            "then at minimum timestep you need 1/1e-4 = 10,000 substeps\n"
+            "to cover the full base timestep interval.\n\n"
+            "Setting max_substeps lower than this would create time\n"
+            "discontinuities where some time is skipped!\n\n"
+            "To change this value: adjust 'Min timestep factor' above.",
+        )
+
+        # Create read-only display label for max_substeps (calculated value)
+        self.adaptive_max_substeps_display = ttk.Label(
+            at_frame,
+            textvariable=self.adaptive_timestep_max_substeps_display_var,
+            relief="sunken",
+            background="#f0f0f0",
+            foreground="#606060",
+            padding=(5, 2),
+            font=("TkDefaultFont", 9, "italic"),
+        )
+        self.adaptive_max_substeps_display.grid(
+            row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
         # Help text
@@ -2802,6 +3138,7 @@ class IntegratorGUI:
         self._refresh_initial_summary()
         self._update_legacy_state()
         self._update_driver_visibility()
+        self._update_image_subcharge_state()
         self._update_cavity_spacing_state()
         self._toggle_z_cutoff_controls()
         self._toggle_macroparticle_controls()
@@ -2899,6 +3236,43 @@ class IntegratorGUI:
         self.self_consistency_chrono_adaptive_tolerance_var.set(
             getattr(options, "self_consistency_chrono_adaptive_tolerance", False)
         )
+        self.self_consistency_gamma_reconciliation_method_var.set(
+            getattr(
+                options,
+                "self_consistency_gamma_reconciliation_method",
+                "ADAPTIVE_WEIGHTED",
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_threshold_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_threshold_var.set(
+            getattr(
+                options,
+                "self_consistency_gamma_reconciliation_high_beta_threshold",
+                0.99,
+            )
+        )
+        self.self_consistency_gamma_reconciliation_low_beta_weight_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_low_beta_weight", 0.8
+            )
+        )
+        self.self_consistency_gamma_reconciliation_high_beta_weight_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_high_beta_weight", 0.2
+            )
+        )
+        self.self_consistency_gamma_reconciliation_mid_beta_weight_var.set(
+            getattr(
+                options, "self_consistency_gamma_reconciliation_mid_beta_weight", 0.5
+            )
+        )
+        self.self_consistency_gamma_reconciliation_fixed_weight_var.set(
+            getattr(options, "self_consistency_gamma_reconciliation_fixed_weight", 0.5)
+        )
         # chrono_matching_mode not exposed in GUI, always FAST
         self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
         self.adaptive_timestep_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
@@ -2906,9 +3280,8 @@ class IntegratorGUI:
         self.adaptive_timestep_reduction_factor_var.set(
             options.adaptive_timestep_reduction_factor
         )
-        self.adaptive_timestep_max_attempts_var.set(
-            options.adaptive_timestep_max_attempts
-        )
+        # Update calculated max_attempts display
+        self._update_max_attempts_display()
         self.adaptive_timestep_min_factor_var.set(options.adaptive_timestep_min_factor)
         self.adaptive_timestep_cooldown_steps_var.set(
             options.adaptive_timestep_cooldown_steps
@@ -2920,6 +3293,8 @@ class IntegratorGUI:
             options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
+        # Update calculated max_substeps display
+        self._update_max_substeps_display()
         self.save_log_file_var.set(options.save_log_file)
 
         # Only override directories if not preserving loaded preferences
@@ -2950,6 +3325,44 @@ class IntegratorGUI:
         z_cutoff_val = options.core_params.get("z_cutoff", 0.0)
         self.z_cutoff_enabled_var.set(z_cutoff_val != 0.0)
         self._toggle_z_cutoff_controls()
+
+    def _update_max_attempts_display(self):
+        """Update the calculated max_refinement_attempts display based on reduction_factor and min_timestep_factor."""
+        import math
+
+        try:
+            reduction_factor = self.adaptive_timestep_reduction_factor_var.get()
+            min_factor = self.adaptive_timestep_min_factor_var.get()
+
+            if reduction_factor <= 1 or min_factor <= 0:
+                self.adaptive_timestep_max_attempts_display_var.set("N/A")
+                return
+
+            attempts = math.ceil(
+                math.log(1.0 / min_factor) / math.log(reduction_factor)
+            )
+            attempts = max(1, attempts)
+            self.adaptive_timestep_max_attempts_display_var.set(
+                f"{attempts} (from reduction & min factor)"
+            )
+        except (ValueError, ZeroDivisionError):
+            # Handle invalid input gracefully
+            self.adaptive_timestep_max_attempts_display_var.set("N/A")
+
+    def _update_max_substeps_display(self):
+        """Update the calculated max_substeps display based on min_timestep_factor."""
+        import math
+
+        try:
+            min_factor = self.adaptive_timestep_min_factor_var.get()
+            theoretical_max = math.ceil(1.0 / min_factor)
+            with_margin = int(theoretical_max * 1.1)
+            self.adaptive_timestep_max_substeps_display_var.set(
+                f"{with_margin} (from min factor)"
+            )
+        except (ValueError, ZeroDivisionError):
+            # Handle invalid input gracefully
+            self.adaptive_timestep_max_substeps_display_var.set("N/A")
 
     def _build_options_from_ui(self) -> SimulationOptions:
         sim_type = SimulationType[self.sim_type_var.get()]
@@ -3065,6 +3478,25 @@ class IntegratorGUI:
             self_consistency_chrono_adaptive_tolerance=bool(
                 self.self_consistency_chrono_adaptive_tolerance_var.get()
             ),
+            self_consistency_gamma_reconciliation_method=self.self_consistency_gamma_reconciliation_method_var.get(),
+            self_consistency_gamma_reconciliation_low_beta_threshold=float(
+                self.self_consistency_gamma_reconciliation_low_beta_threshold_var.get()
+            ),
+            self_consistency_gamma_reconciliation_high_beta_threshold=float(
+                self.self_consistency_gamma_reconciliation_high_beta_threshold_var.get()
+            ),
+            self_consistency_gamma_reconciliation_low_beta_weight=float(
+                self.self_consistency_gamma_reconciliation_low_beta_weight_var.get()
+            ),
+            self_consistency_gamma_reconciliation_high_beta_weight=float(
+                self.self_consistency_gamma_reconciliation_high_beta_weight_var.get()
+            ),
+            self_consistency_gamma_reconciliation_mid_beta_weight=float(
+                self.self_consistency_gamma_reconciliation_mid_beta_weight_var.get()
+            ),
+            self_consistency_gamma_reconciliation_fixed_weight=float(
+                self.self_consistency_gamma_reconciliation_fixed_weight_var.get()
+            ),
             self_consistency_chrono_matching_mode="FAST",  # Always FAST, not exposed in GUI
             energy_monitor_enabled=False,  # Removed, functionality in adaptive timestep
             energy_monitor_threshold=2.0,  # Default (unused)
@@ -3080,9 +3512,7 @@ class IntegratorGUI:
             adaptive_timestep_reduction_factor=int(
                 self.adaptive_timestep_reduction_factor_var.get()
             ),
-            adaptive_timestep_max_attempts=int(
-                self.adaptive_timestep_max_attempts_var.get()
-            ),
+            # max_refinement_attempts is now auto-calculated in AdaptiveTimestepConfig
             adaptive_timestep_min_factor=float(
                 self.adaptive_timestep_min_factor_var.get()
             ),
@@ -3096,6 +3526,7 @@ class IntegratorGUI:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
+            # max_substeps_per_step is now auto-calculated in AdaptiveTimestepConfig
             save_log_file=bool(self.save_log_file_var.get()),
         )
         return options
@@ -3445,66 +3876,57 @@ class IntegratorGUI:
         return result[0]
 
     def _save_config(self) -> None:
+        """Save current run configuration using entered filename."""
         try:
             options = self._build_options_from_ui()
         except ValueError as exc:
             _show_error_dialog(self.root, "Invalid configuration", str(exc))
             return
 
-        # Use file dialog to get save path
-        config_dir = Path(self.config_dir_var.get())
-        ensure_directory(config_dir)
-
-        # Remember original filename to detect if user chose a new name
-        original_filename = self.config_name_var.get() or ""
-
-        filename = filedialog.asksaveasfilename(
-            title="Save Run Configuration",
-            initialdir=config_dir,
-            initialfile=original_filename or "config.json",
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-        )
+        # Get filename from entry field
+        filename = self.config_name_var.get().strip()
 
         if not filename:
+            messagebox.showinfo("Save Run Config", "Enter a config name to save.")
             return
 
-        config_path = Path(filename)
+        # Ensure .json extension
+        if not filename.endswith(".json"):
+            filename += ".json"
 
-        # Check if this is a new file name (not an overwrite of the currently loaded config)
-        is_new_name = config_path.name != original_filename
+        import os
 
-        # Note: filedialog.asksaveasfilename already shows an override warning on most platforms,
-        # so we don't need to show our custom warning here to avoid double prompts.
-        # If the user proceeded past the file dialog, they already confirmed any override.
+        config_dir = self.config_dir_var.get()
+        os.makedirs(config_dir, exist_ok=True)
+
+        filepath = os.path.join(config_dir, filename)
+
+        # Check for override warning
+        if not self._check_override_warning(Path(filepath), "run"):
+            return
 
         # Update the config name to match the saved file
-        options.config_name = config_path.name
+        options.config_name = filename
 
         try:
-            save_config(options, config_path)
+            save_config(options, Path(filepath))
         except Exception as exc:
             _show_error_dialog(
                 self.root, "Save config", f"Failed to save configuration: {exc}"
             )
             return
 
-        self.config_name_var.set(config_path.name)
-        self.config_file_var.set(config_path.name)
-        self._refresh_config_list(selected=config_path.name)
-        self.current_config_label.config(text=config_path.name, foreground="black")
-
-        # Only show success dialog for newly named configs, not overwrites
-        if is_new_name:
-            messagebox.showinfo(
-                "Save config", f"Configuration saved as {config_path.name}"
-            )
-
-        self._set_status(f"Saved config: {config_path.name}")
+        self.config_name_var.set(filename)
+        self.config_file_var.set(filename)
+        self._refresh_config_list(selected=filename)
+        self.current_config_label.config(text=filename, foreground="black")
+        messagebox.showinfo("Save Run Config", f"Configuration saved as {filename}")
+        self._set_status(f"Saved config: {filename}")
 
     def _on_sim_type_change(self) -> None:
         self._update_driver_visibility()
         self._update_cavity_spacing_state()
+        self._update_image_subcharge_state()
         self._update_macroparticle_state()
         self._refresh_initial_summary()
 
@@ -3515,7 +3937,8 @@ class IntegratorGUI:
                 self.optimization_tab.sim_type_var.set(sim_type_value)
 
     def _update_driver_visibility(self) -> None:
-        enabled = supports_driver(SimulationType[self.sim_type_var.get()])
+        sim_type = SimulationType[self.sim_type_var.get()]
+        enabled = supports_driver(sim_type)
         entry_state = "normal" if enabled else "disabled"
         combo_state = "readonly" if enabled else "disabled"
         if hasattr(self, "driver_species_combo"):
@@ -3527,6 +3950,39 @@ class IntegratorGUI:
                 "custom", next(iter(self._species_by_label))
             )
             self.driver_species_var.set(default_label)
+
+        # Transverse offsets are only used in BUNCH_TO_BUNCH mode
+        offsets_enabled = sim_type == SimulationType.BUNCH_TO_BUNCH
+        offset_state = "normal" if offsets_enabled else "disabled"
+
+        for entry in getattr(self, "_rider_offset_entries", []):
+            entry.configure(state=offset_state)
+        for entry in getattr(self, "_driver_offset_entries", []):
+            entry.configure(state=offset_state)
+
+        # Also update label colors to indicate disabled state
+        label_color = "black" if offsets_enabled else "gray60"
+        for label in getattr(self, "_rider_offset_labels", []):
+            label.configure(foreground=label_color)
+        for label in getattr(self, "_driver_offset_labels", []):
+            label.configure(foreground=label_color)
+
+    def _update_image_subcharge_state(self) -> None:
+        """Grey out image subcharge count, weighting, aperture radius, and wall_z when in BUNCH_TO_BUNCH mode."""
+        sim_type = SimulationType[self.sim_type_var.get()]
+        # Image subcharge, weighting, aperture, and wall_z are only used in CONDUCTING_WALL and SWITCHING_WALL modes
+        enabled = sim_type != SimulationType.BUNCH_TO_BUNCH
+        entry_state = "normal" if enabled else "disabled"
+        if hasattr(self, "image_subcharge_entry"):
+            self.image_subcharge_entry.configure(state=entry_state)
+        if hasattr(self, "image_weighting_check"):
+            self.image_weighting_check.configure(state=entry_state)
+        # Also grey out aperture_radius and wall_z in core params
+        if hasattr(self, "core_param_widgets"):
+            if "aperture_radius" in self.core_param_widgets:
+                self.core_param_widgets["aperture_radius"].configure(state=entry_state)
+            if "wall_z" in self.core_param_widgets:
+                self.core_param_widgets["wall_z"].configure(state=entry_state)
 
     def _update_legacy_state(self) -> None:
         enabled = self.legacy_var.get()
@@ -3606,6 +4062,13 @@ class IntegratorGUI:
             self.sc_chrono_tolerance_entry,
             self.sc_chrono_high_precision_check,
             self.sc_chrono_adaptive_check,
+            self.sc_gamma_reconciliation_method_combo,
+            self.sc_gamma_low_beta_threshold_entry,
+            self.sc_gamma_high_beta_threshold_entry,
+            self.sc_gamma_low_beta_weight_entry,
+            self.sc_gamma_high_beta_weight_entry,
+            self.sc_gamma_mid_beta_weight_entry,
+            self.sc_gamma_fixed_weight_entry,
         ]
 
         for control in controls_to_toggle:
@@ -3673,6 +4136,26 @@ class IntegratorGUI:
                 elif isinstance(widget, ttk.Label):
                     widget.configure(foreground=label_color)
 
+    def _toggle_gamma_reconciliation_params(self) -> None:
+        """Show/hide gamma reconciliation parameter groups based on selected method."""
+        if not hasattr(self, "sc_gamma_reconciliation_adaptive_frame"):
+            return  # Widgets not created yet
+
+        method = self.self_consistency_gamma_reconciliation_method_var.get()
+
+        # Show adaptive parameters only for ADAPTIVE_WEIGHTED method
+        if method == "ADAPTIVE_WEIGHTED":
+            self.sc_gamma_reconciliation_adaptive_frame.grid()
+            self.sc_gamma_reconciliation_fixed_frame.grid_remove()
+        # Show fixed weight only for FIXED_WEIGHTED method
+        elif method == "FIXED_WEIGHTED":
+            self.sc_gamma_reconciliation_adaptive_frame.grid_remove()
+            self.sc_gamma_reconciliation_fixed_frame.grid()
+        # Hide both for other methods (DISABLED, USE_VELOCITY, USE_ENERGY)
+        else:
+            self.sc_gamma_reconciliation_adaptive_frame.grid_remove()
+            self.sc_gamma_reconciliation_fixed_frame.grid_remove()
+
     def _toggle_adaptive_timestep_controls(self) -> None:
         """Enable/disable adaptive timestep controls based on enabled checkbox.
 
@@ -3691,7 +4174,7 @@ class IntegratorGUI:
             self.adaptive_reduction_label,
             self.adaptive_reduction_entry,
             self.adaptive_max_attempts_label,
-            self.adaptive_max_attempts_entry,
+            self.adaptive_max_attempts_display,
             self.adaptive_min_factor_label,
             self.adaptive_min_factor_entry,
             self.adaptive_cooldown_label,
@@ -3702,6 +4185,8 @@ class IntegratorGUI:
             self.adaptive_max_probe_entry,
             self.adaptive_halt_check,
             self.adaptive_debug_check,
+            self.adaptive_max_substeps_label,
+            self.adaptive_max_substeps_display,
         ]
 
         for control in all_controls:
@@ -3826,9 +4311,26 @@ class IntegratorGUI:
     def _run_background(self, options: SimulationOptions) -> None:
         from core.integration_runner import IntegrationCancelled
 
-        def progress_callback(current: int, total: int) -> None:
-            progress_pct = (current / total * 100.0) if total > 0 else 0.0
-            self.root.after(0, lambda: self.progress_var.set(progress_pct))
+        # Create batched logger for this run (100 messages per batch, 500ms flush interval)
+        def gui_log_callback(text: str) -> None:
+            self.root.after(0, partial(self._append_log, text))
+
+        self._batched_logger = BatchedLogger(
+            gui_callback=gui_log_callback,
+            batch_size=100,
+            flush_interval_ms=500,
+            max_queue_size=10000,
+            enable_batching=True,  # Can be disabled for debugging if needed
+        )
+
+        # Throttled progress callback (max 10 updates/second)
+        throttled_progress = ThrottledProgressCallback(
+            gui_callback=lambda pct: self.root.after(
+                0, lambda: self.progress_var.set(pct)
+            ),
+            min_interval_ms=100,
+            force_final=True,
+        )
 
         def cancel_callback() -> bool:
             return self._cancel_requested
@@ -3836,14 +4338,20 @@ class IntegratorGUI:
         try:
             result = run_testbed(
                 options,
-                log=self._queue_log,
-                progress_callback=progress_callback,
+                log=self._batched_logger.log,  # Use batched logger
+                progress_callback=throttled_progress,  # Use throttled progress
                 cancel_callback=cancel_callback,
             )
         except IntegrationCancelled:
+            # Flush any remaining log messages before canceling
+            if self._batched_logger:
+                self._batched_logger.flush()
             self.root.after(0, self._on_cancelled)
             return
         except Exception as exc:  # pragma: no cover - UI safeguard
+            # Flush any remaining log messages before error handling
+            if self._batched_logger:
+                self._batched_logger.flush()
             # Log brief error to summary
             brief_error = str(exc)
             # Log full traceback to detailed logs
@@ -3857,9 +4365,25 @@ class IntegratorGUI:
             # Pass brief error to failure handler
             self.root.after(0, partial(self._on_failure, brief_error))
             return
+        finally:
+            # Clean shutdown of batched logger
+            if self._batched_logger:
+                stats = self._batched_logger.get_stats()
+                if stats["total_messages"] > 0:
+                    # Log batching statistics for monitoring
+                    reduction = stats["reduction_factor"]
+                    self._append_log(
+                        f"[Batched Logging Stats] {stats['total_messages']} messages "
+                        f"→ {stats['total_batches']} batches "
+                        f"({reduction:.1f}× reduction, {stats['dropped_messages']} dropped)"
+                    )
+                self._batched_logger.shutdown()
+                self._batched_logger = None
+
         self.root.after(0, partial(self._on_success, result))
 
     def _queue_log(self, text: str) -> None:
+        """Legacy log queuing (kept for compatibility, but batched logger preferred)."""
         self.root.after(0, partial(self._append_log, text))
 
     def _replot_with_new_axis(

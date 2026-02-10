@@ -10,6 +10,7 @@ from optimization.ui_helpers import ToolTip
 
 class OptimizationPluginUIMixin:
     """Builds and manages the Tkinter UI for the optimization plugin."""
+
     def _build_ui(self):
         """Build the user interface."""
         # Main container with scrollbar
@@ -1348,6 +1349,29 @@ class OptimizationPluginUIMixin:
             variable=self.skip_failed_runs_var,
         ).pack(side="left", padx=5)
 
+        # Row 2: Retry attempts for failed runs
+        retry_frame = ttk.Frame(frame)
+        retry_frame.pack(fill="x", pady=(5, 2))
+
+        ttk.Label(retry_frame, text="Failed run retries:").pack(
+            side="left", padx=(5, 10)
+        )
+
+        ttk.Label(retry_frame, text="Retry attempts (with new random seeds):").pack(
+            side="left", padx=(0, 5)
+        )
+        self.failed_run_retry_attempts_var = tk.StringVar(value="1")
+        ttk.Entry(
+            retry_frame, textvariable=self.failed_run_retry_attempts_var, width=8
+        ).pack(side="left", padx=(0, 5))
+
+        ttk.Label(
+            retry_frame,
+            text="← 0=no retries, 1=retry once (default), 2+=retry multiple times",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).pack(side="left", padx=5)
+
         # Row 4: Trajectory stability checking (multi-step analysis)
         smoothness_frame = ttk.LabelFrame(
             frame, text="Trajectory Stability Analysis", padding=8
@@ -1632,4 +1656,3 @@ class OptimizationPluginUIMixin:
         state = "normal" if self.smoothness_enabled_var.get() else "disabled"
         for widget in self.smoothness_widgets:
             widget.configure(state=state)
-

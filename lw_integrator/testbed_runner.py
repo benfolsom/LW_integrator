@@ -301,6 +301,26 @@ class SimulationOptions:
     self_consistency_chrono_adaptive_tolerance: bool = (
         False  # Auto-set tolerance = 0.1 × timestep
     )
+    # Gamma reconciliation options
+    self_consistency_gamma_reconciliation_method: str = "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
+    self_consistency_gamma_reconciliation_low_beta_threshold: float = (
+        0.9  # Below this β: trust energy (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_high_beta_threshold: float = (
+        0.99  # Above this β: trust velocity (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_low_beta_weight: float = (
+        0.8  # Weight α for β < low threshold (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_high_beta_weight: float = (
+        0.2  # Weight α for β > high threshold (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_mid_beta_weight: float = (
+        0.5  # Weight α for mid β range (for ADAPTIVE_WEIGHTED)
+    )
+    self_consistency_gamma_reconciliation_fixed_weight: float = (
+        0.5  # Weight α for FIXED_WEIGHTED method
+    )
 
     # Energy monitoring options
     energy_monitor_enabled: bool = True
@@ -312,8 +332,9 @@ class SimulationOptions:
     # Adaptive timestep options
     adaptive_timestep_enabled: bool = True
     adaptive_timestep_threshold: float = 0.10
-    adaptive_timestep_reduction_factor: int = 10
-    adaptive_timestep_max_attempts: int = 5
+    adaptive_timestep_reduction_factor: int = 3
+    # Note: max_refinement_attempts is now auto-calculated in AdaptiveTimestepConfig
+    # from reduction_factor and min_timestep_factor to prevent inconsistencies
     adaptive_timestep_min_factor: float = 1e-4
 
     # Adaptive timestep hysteresis (stay on reduced timestep for stability)
@@ -322,6 +343,8 @@ class SimulationOptions:
     adaptive_timestep_max_probe_steps: int = 3
 
     adaptive_timestep_debug: bool = False
+    # Note: max_substeps_per_step is now auto-calculated in AdaptiveTimestepConfig
+    # from min_timestep_factor to prevent time discontinuities
 
     # Logging options
     save_log_file: bool = False
@@ -384,6 +407,13 @@ class SimulationOptions:
             "self_consistency_chrono_matching_mode": self.self_consistency_chrono_matching_mode,
             "self_consistency_chrono_high_precision": self.self_consistency_chrono_high_precision,
             "self_consistency_chrono_adaptive_tolerance": self.self_consistency_chrono_adaptive_tolerance,
+            "self_consistency_gamma_reconciliation_method": self.self_consistency_gamma_reconciliation_method,
+            "self_consistency_gamma_reconciliation_low_beta_threshold": self.self_consistency_gamma_reconciliation_low_beta_threshold,
+            "self_consistency_gamma_reconciliation_high_beta_threshold": self.self_consistency_gamma_reconciliation_high_beta_threshold,
+            "self_consistency_gamma_reconciliation_low_beta_weight": self.self_consistency_gamma_reconciliation_low_beta_weight,
+            "self_consistency_gamma_reconciliation_high_beta_weight": self.self_consistency_gamma_reconciliation_high_beta_weight,
+            "self_consistency_gamma_reconciliation_mid_beta_weight": self.self_consistency_gamma_reconciliation_mid_beta_weight,
+            "self_consistency_gamma_reconciliation_fixed_weight": self.self_consistency_gamma_reconciliation_fixed_weight,
             "energy_monitor_enabled": self.energy_monitor_enabled,
             "energy_monitor_threshold": self.energy_monitor_threshold,
             "energy_monitor_check_interval": self.energy_monitor_check_interval,
@@ -392,12 +422,13 @@ class SimulationOptions:
             "adaptive_timestep_enabled": self.adaptive_timestep_enabled,
             "adaptive_timestep_threshold": self.adaptive_timestep_threshold,
             "adaptive_timestep_reduction_factor": self.adaptive_timestep_reduction_factor,
-            "adaptive_timestep_max_attempts": self.adaptive_timestep_max_attempts,
+            # max_refinement_attempts no longer stored (calculated from reduction_factor & min_factor)
             "adaptive_timestep_min_factor": self.adaptive_timestep_min_factor,
             "adaptive_timestep_cooldown_steps": self.adaptive_timestep_cooldown_steps,
             "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
             "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
+            # max_substeps no longer stored - auto-calculated from min_timestep_factor
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -554,9 +585,9 @@ class SimulationOptions:
             adaptive_timestep_enabled=_bool("adaptive_timestep_enabled", True),
             adaptive_timestep_threshold=_float("adaptive_timestep_threshold", 0.10),
             adaptive_timestep_reduction_factor=_int(
-                "adaptive_timestep_reduction_factor", 10
+                "adaptive_timestep_reduction_factor", 3
             ),
-            adaptive_timestep_max_attempts=_int("adaptive_timestep_max_attempts", 5),
+            # max_refinement_attempts no longer loaded (calculated automatically)
             adaptive_timestep_min_factor=_float("adaptive_timestep_min_factor", 1e-4),
             adaptive_timestep_cooldown_steps=_int(
                 "adaptive_timestep_cooldown_steps", 10
@@ -568,6 +599,28 @@ class SimulationOptions:
                 "adaptive_timestep_max_probe_steps", 3
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
+            # max_substeps no longer loaded - auto-calculated from min_timestep_factor
+            self_consistency_gamma_reconciliation_method=_str(
+                "self_consistency_gamma_reconciliation_method", "DISABLED"
+            ),
+            self_consistency_gamma_reconciliation_low_beta_threshold=_float(
+                "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
+            ),
+            self_consistency_gamma_reconciliation_high_beta_threshold=_float(
+                "self_consistency_gamma_reconciliation_high_beta_threshold", 0.99
+            ),
+            self_consistency_gamma_reconciliation_low_beta_weight=_float(
+                "self_consistency_gamma_reconciliation_low_beta_weight", 0.8
+            ),
+            self_consistency_gamma_reconciliation_high_beta_weight=_float(
+                "self_consistency_gamma_reconciliation_high_beta_weight", 0.2
+            ),
+            self_consistency_gamma_reconciliation_mid_beta_weight=_float(
+                "self_consistency_gamma_reconciliation_mid_beta_weight", 0.5
+            ),
+            self_consistency_gamma_reconciliation_fixed_weight=_float(
+                "self_consistency_gamma_reconciliation_fixed_weight", 0.5
+            ),
             save_log_file=_bool("save_log_file", False),
             log_file_path=str(payload.get("log_file_path"))
             if payload.get("log_file_path") is not None
@@ -971,6 +1024,15 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         return None
 
     from core.self_consistency import SelfConsistencyConfig
+    from core.types import GammaReconciliationMethod
+
+    # Parse gamma reconciliation method string to enum
+    method_str = options.self_consistency_gamma_reconciliation_method.upper()
+    try:
+        gamma_method = GammaReconciliationMethod[method_str]
+    except KeyError:
+        # Fallback to ADAPTIVE_WEIGHTED if invalid method specified
+        gamma_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
 
     return SelfConsistencyConfig(
         enabled=True,
@@ -985,6 +1047,13 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         chrono_matching_mode=options.self_consistency_chrono_matching_mode,
         chrono_high_precision=options.self_consistency_chrono_high_precision,
         chrono_adaptive_tolerance=options.self_consistency_chrono_adaptive_tolerance,
+        gamma_reconciliation_method=gamma_method,
+        gamma_reconciliation_low_beta_threshold=options.self_consistency_gamma_reconciliation_low_beta_threshold,
+        gamma_reconciliation_high_beta_threshold=options.self_consistency_gamma_reconciliation_high_beta_threshold,
+        gamma_reconciliation_low_beta_weight=options.self_consistency_gamma_reconciliation_low_beta_weight,
+        gamma_reconciliation_high_beta_weight=options.self_consistency_gamma_reconciliation_high_beta_weight,
+        gamma_reconciliation_mid_beta_weight=options.self_consistency_gamma_reconciliation_mid_beta_weight,
+        gamma_reconciliation_fixed_weight=options.self_consistency_gamma_reconciliation_fixed_weight,
     )
 
 
@@ -1021,11 +1090,12 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
         enabled=True,
         energy_jump_threshold=options.adaptive_timestep_threshold,
         timestep_reduction_factor=options.adaptive_timestep_reduction_factor,
-        max_refinement_attempts=options.adaptive_timestep_max_attempts,
+        # max_refinement_attempts is now a calculated property, not passed as parameter
         min_timestep_factor=options.adaptive_timestep_min_factor,
         cooldown_steps=options.adaptive_timestep_cooldown_steps,
         probe_threshold=options.adaptive_timestep_probe_threshold,
         max_probe_steps=options.adaptive_timestep_max_probe_steps,
+        # max_substeps_per_step is now a calculated property, not passed as parameter
         debug=options.adaptive_timestep_debug,
     )
 
@@ -1294,6 +1364,7 @@ def run_testbed(
             bunch_transv_mom=float(options.rider_params.get("transv_mom", 0.0)),
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
+            logger=log,
         )
 
         # Build result in same format as run_benchmark

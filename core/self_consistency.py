@@ -20,7 +20,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from .types import ChronoMatchingMode, ParticleState, StartupMode, Trajectory
+from .types import (
+    ChronoMatchingMode,
+    GammaReconciliationMethod,
+    ParticleState,
+    StartupMode,
+    Trajectory,
+)
 
 StepFunction = Callable[
     [
@@ -34,6 +40,7 @@ StepFunction = Callable[
         StartupMode,
         Optional["SelfConsistencyConfig"],
         Optional[int],
+        Optional[Any],
     ],
     ParticleState,
 ]
@@ -181,6 +188,18 @@ class SelfConsistencyConfig:
     target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
     mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
+
+    # Gamma reconciliation parameters
+    gamma_reconciliation_method: GammaReconciliationMethod = (
+        GammaReconciliationMethod.DISABLED  # Default: disabled (v0.4.8 legacy behavior)
+    )
+    gamma_reconciliation_low_beta_threshold: float = 0.9  # Below this: trust energy
+    gamma_reconciliation_high_beta_threshold: float = 0.99  # Above this: trust velocity
+    gamma_reconciliation_low_beta_weight: float = 0.8  # α for β < low threshold
+    gamma_reconciliation_high_beta_weight: float = 0.2  # α for β > high threshold
+    gamma_reconciliation_mid_beta_weight: float = 0.5  # α for mid range
+    gamma_reconciliation_fixed_weight: float = 0.5  # α for FIXED_WEIGHTED method
+
     chrono_interpolate: bool = False  # Enable chrono-match interpolation
     chrono_tolerance: float = 1e-3  # Time residual tolerance (ns)
     chrono_matching_mode: str = (
@@ -203,6 +222,14 @@ class SelfConsistencyConfig:
             object.__setattr__(
                 self, "convergence_mode", self._MODE_ALIASES[self.convergence_mode]
             )
+
+    @property
+    def gamma_reconciliation_enabled(self) -> bool:
+        """Backward compatibility property for gamma_reconciliation_enabled.
+
+        Returns True if reconciliation method is not DISABLED.
+        """
+        return self.gamma_reconciliation_method != GammaReconciliationMethod.DISABLED
 
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":
@@ -294,6 +321,7 @@ def self_consistent_step(
     chrono_mode: ChronoMatchingMode,
     startup_mode: StartupMode,
     step_idx: Optional[int] = None,
+    cancel_callback: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -331,6 +359,9 @@ def self_consistent_step(
         Early-step handling mode.
     step_idx : Optional[int]
         Integration step number for context in error messages.
+    cancel_callback : Optional[callable]
+        Optional predicate to check for cancellation. If provided and returns True,
+        the equations of motion should raise IntegrationCancelled.
 
     Returns
     -------
@@ -353,6 +384,7 @@ def self_consistent_step(
         startup_mode,
         config,
         step_idx,
+        cancel_callback,
     )
 
     return result
