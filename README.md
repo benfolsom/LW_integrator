@@ -2,6 +2,41 @@
 
 ## Recent Updates
 
+### Adaptive Timestep Refactoring (February 2026)
+
+**Auto-calculated parameters** - The adaptive timestep system now automatically calculates derived parameters to prevent inconsistent configurations:
+
+- **`max_refinement_attempts`** - Computed from `timestep_reduction_factor` and `min_timestep_factor` using formula: `ceil(log(1/min_factor) / log(reduction_factor))`
+- **`max_substeps_per_step`** - Computed from `min_timestep_factor` with 10% safety margin: `ceil(1/min_factor) × 1.1`
+- **Reduced default reduction factor** - Changed from 10 to 3 for more gradual refinement, reducing oscillation in pathological cases
+- **GUI improvements** - Max attempts shown as read-only calculated value with visual feedback
+- **Time discontinuity prevention** - Automatic substep cap ensures full timestep coverage even at minimum refinement level
+
+**Impact**: Eliminates overdetermined parameter combinations that could cause time skipping or excessive refinement. Users only set two independent parameters (`reduction_factor` and `min_timestep_factor`), with derived values calculated automatically for consistency.
+
+### Batched Logging Implementation (February 2026)
+
+**Performance optimization** - Inner-loop debug logging now uses batched updates to prevent GUI unresponsiveness:
+
+- **Batch aggregation** - Debug messages accumulated in memory and flushed in batches (default: 50 messages per flush)
+- **Throttled GUI updates** - Reduces event queue flooding by ~100× in pathological cases (e.g., 750 messages → 8 GUI updates)
+- **Logger parameter** - New optional `logger` parameter on `retarded_integrator()` accepts callable for custom logging
+- **Backward compatible** - Falls back to `print()` if no logger provided; existing code unaffected
+- **GUI responsiveness** - Prevents multi-minute freezes when `adaptive_timestep_debug = True` during challenging runs
+
+**Impact**: GUI remains responsive during verbose debugging. Users can enable full adaptive timestep diagnostics without performance penalty.
+
+### Gamma Reconciliation Default Changed (February 2026)
+
+**Disabled by default** - Gamma reconciliation feature now defaults to `DISABLED` for v0.4.8 compatibility:
+
+- **Energy conservation** - Original reconciliation implementation violated energy conservation by overwriting `Pt` without preserving scalar potential contribution
+- **Momentum rescaling issue** - Spatial momentum rescaling altered particle trajectories incorrectly
+- **Opt-in feature** - Reconciliation methods (ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, etc.) still available but require explicit enablement
+- **Legacy behavior restored** - Default configuration matches v0.4.8 stable behavior: `gamma_reconciliation_method = DISABLED`
+
+**Impact**: Eliminates silent energy non-conservation for users upgrading from v0.4.8. Feature requires redesign before safe re-enablement (see `local/GAMMA_RECONCILIATION_FIX.md`).
+
 ### Verbose Logging in Sweep/Optimization (v0.4.2+)
 
 When running sweeps or optimizations, verbose diagnostic logs (SC iterations, adaptive timestep refinements) are now streamed to the GUI in real-time when verbosity settings are enabled:
@@ -453,16 +488,44 @@ branches can download the output for review.
 
 ---
 
+## Recent changes (February 2026)
+
+### Adaptive Timestep Auto-Calculation (February 10, 2026)
+
+- **Auto-calculated max attempts** - `max_refinement_attempts` now computed from `timestep_reduction_factor` and `min_timestep_factor` to ensure minimum timestep is always reachable
+- **Auto-calculated substep cap** - `max_substeps_per_step` computed from `min_timestep_factor` with safety margin to prevent time discontinuities
+- **Simplified configuration** - Only 2 independent parameters required (reduction_factor, min_factor); derived values calculated automatically
+- **GUI improvements** - Read-only displays show calculated values with explanatory tooltips
+- **Parameter consistency** - Eliminates configurations where min_timestep is unreachable within max_attempts
+- **Optimization plugin fixed** - Removed obsolete `adaptive_timestep_max_attempts` parameter causing TypeError in sweeps
+
+### Batched Logging for GUI Responsiveness (February 10, 2026)
+
+- **Batch aggregation** - Debug messages buffered and flushed in batches (default 50 messages) instead of individual GUI updates
+- **Logger parameter** - `retarded_integrator()` accepts optional `logger` callable for custom logging backends
+- **Throttled updates** - Reduces GUI event queue flooding by ~100× during verbose debugging
+- **Preserved diagnostics** - All debug messages still captured; only GUI update frequency reduced
+- **Backward compatible** - Falls back to print() if no logger provided
+
+### Gamma Reconciliation Default Changed (February 10, 2026)
+
+- **Now DISABLED by default** - Changed from ADAPTIVE_WEIGHTED to DISABLED for v0.4.8 compatibility
+- **Energy conservation issue** - Original implementation overwrote Pt without preserving scalar potential (q·Φ), violating energy conservation
+- **Opt-in feature** - Five methods still available (ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, USE_VELOCITY, USE_ENERGY, DISABLED) but require explicit enablement
+- **Momentum rescaling removed** - Spatial momentum no longer rescaled by default, preventing trajectory alterations
+- **Legacy behavior restored** - Default matches v0.4.8 stable version behavior
+- **Detailed documentation** - See `local/GAMMA_RECONCILIATION_FIX.md` for analysis and migration guide
+
 ## Recent changes (January 2025)
 
 ### Gamma Reconciliation Configuration (January 2025)
 
-- **Configurable reconciliation methods** - Five methods now available: ADAPTIVE_WEIGHTED (default), FIXED_WEIGHTED, USE_VELOCITY, USE_ENERGY, and DISABLED
+- **Configurable reconciliation methods** - Five methods available: ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, USE_VELOCITY, USE_ENERGY, and DISABLED (now default)
 - **Velocity-dependent weighting** - ADAPTIVE_WEIGHTED method uses β-dependent weights: trust energy at low β (<0.9), trust velocity at high β (>0.99), balanced in mid-range
 - **Custom threshold tuning** - All thresholds and weights configurable via API and GUI for ultra-relativistic particles or specific physics regimes
-- **GUI controls** - New Gamma Reconciliation panel in Stability → Self-Consistency with method dropdown and parameter fields that show/hide dynamically
+- **GUI controls** - Gamma Reconciliation panel in Stability → Self-Consistency with method dropdown and parameter fields that show/hide dynamically
 - **Backward compatibility** - Old `gamma_reconciliation_enabled` boolean replaced with method enum; legacy property still works for compatibility
-- **Comprehensive documentation** - See `local/gamma_reconciliation_config.md` for detailed usage guide
+- **Important note** - Feature disabled by default (Feb 2026) due to energy conservation issues; requires redesign before safe re-enablement
 
 ### Transverse Offset GUI Improvements (January 2025)
 
@@ -506,7 +569,7 @@ branches can download the output for review.
 - **Self-consistency enabled by default** - Essential for energy conservation in high-energy simulations
 - **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`. See `local/CHRONO_INTERPOLATION_SUMMARY.md` for details.
 
-**Impact**: Energy conservation improved by 3+ orders of magnitude in high-energy electron-wall simulations. Configurable gamma reconciliation prevents dual-gamma inconsistency and catastrophic blowups while maintaining energy conservation across all velocity regimes. Improved GUI feedback for transverse offsets reduces user confusion and makes bunch-to-bunch positioning more intuitive. Early stopping enables practical parameter optimization for computationally expensive self-consistent simulations. Macroparticle simulation enables realistic modeling of beam emittance and collective effects in conducting-wall scenarios. Transverse offset functionality enables off-axis beam studies critical for aperture tolerance analysis and beam dynamics research. Legacy code isolation ensures modern core implementation is used by default while maintaining validation capability.
+**Impact**: Energy conservation improved by 3+ orders of magnitude in high-energy electron-wall simulations. Adaptive timestep auto-calculation eliminates parameter inconsistencies and prevents time discontinuities. Batched logging maintains GUI responsiveness during verbose debugging. Gamma reconciliation disabled by default restores v0.4.8 energy conservation behavior. Improved GUI feedback for transverse offsets reduces user confusion and makes bunch-to-bunch positioning more intuitive. Early stopping enables practical parameter optimization for computationally expensive self-consistent simulations. Macroparticle simulation enables realistic modeling of beam emittance and collective effects in conducting-wall scenarios. Transverse offset functionality enables off-axis beam studies critical for aperture tolerance analysis and beam dynamics research. Legacy code isolation ensures modern core implementation is used by default while maintaining validation capability.
 
 ## Versioning and release notes
 

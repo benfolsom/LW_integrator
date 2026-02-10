@@ -302,7 +302,7 @@ class SimulationOptions:
         False  # Auto-set tolerance = 0.1 × timestep
     )
     # Gamma reconciliation options
-    self_consistency_gamma_reconciliation_method: str = "ADAPTIVE_WEIGHTED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED
+    self_consistency_gamma_reconciliation_method: str = "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
     self_consistency_gamma_reconciliation_low_beta_threshold: float = (
         0.9  # Below this β: trust energy (for ADAPTIVE_WEIGHTED)
     )
@@ -601,7 +601,7 @@ class SimulationOptions:
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
             # max_substeps no longer loaded - auto-calculated from min_timestep_factor
             self_consistency_gamma_reconciliation_method=_str(
-                "self_consistency_gamma_reconciliation_method", "ADAPTIVE_WEIGHTED"
+                "self_consistency_gamma_reconciliation_method", "DISABLED"
             ),
             self_consistency_gamma_reconciliation_low_beta_threshold=_float(
                 "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9

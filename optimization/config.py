@@ -183,8 +183,7 @@ class OptimizationConfig:
 
     adaptive_timestep_enabled: bool = True
     adaptive_timestep_threshold: float = 0.10
-    adaptive_timestep_reduction_factor: int = 10
-    adaptive_timestep_max_attempts: int = 5
+    adaptive_timestep_reduction_factor: int = 3
     adaptive_timestep_min_factor: float = 1e-4
     adaptive_timestep_cooldown_steps: int = 10
     adaptive_timestep_probe_threshold: float = 0.01

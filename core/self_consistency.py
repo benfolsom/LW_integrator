@@ -191,7 +191,7 @@ class SelfConsistencyConfig:
 
     # Gamma reconciliation parameters
     gamma_reconciliation_method: GammaReconciliationMethod = (
-        GammaReconciliationMethod.ADAPTIVE_WEIGHTED  # Default: adaptive weighted
+        GammaReconciliationMethod.DISABLED  # Default: disabled (v0.4.8 legacy behavior)
     )
     gamma_reconciliation_low_beta_threshold: float = 0.9  # Below this: trust energy
     gamma_reconciliation_high_beta_threshold: float = 0.99  # Above this: trust velocity

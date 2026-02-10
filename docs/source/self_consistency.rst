@@ -634,7 +634,7 @@ Reconciliation Methods
 To address this dual-gamma inconsistency, five reconciliation methods are available
 via :py:class:`core.types.GammaReconciliationMethod`:
 
-**ADAPTIVE_WEIGHTED (default, recommended)**
+**ADAPTIVE_WEIGHTED**
    Velocity-dependent weighted average with configurable thresholds:
 
    .. math::
@@ -671,12 +671,18 @@ via :py:class:`core.types.GammaReconciliationMethod`:
 
    Equivalent to DISABLED; provided for symmetry/clarity.
 
-**DISABLED**
-   No reconciliation applied (legacy behavior)
+**DISABLED (default as of February 2026)**
+   No reconciliation applied (v0.4.8 legacy behavior)
 
-   .. warning::
-      Can cause dual-gamma inconsistency and energy blowups. Not recommended
-      for production simulations.
+   .. note::
+      This is now the **recommended default** as of February 2026. The original
+      reconciliation implementation violated energy conservation by overwriting
+      Pt without preserving the scalar potential contribution (q·Φ), causing
+      -99% energy losses in some parameter regimes.
+
+      The feature remains available for opt-in use but requires redesign before
+      safe re-enablement. See the February 2026 updates in recent_changes.rst
+      for details.
 
 Configuration
 -------------
@@ -694,7 +700,7 @@ Configure via ``SelfConsistencyConfig``:
 
    # Example 2: Custom adaptive weighting for ultra-relativistic particles
    config = SelfConsistencyConfig(
-       gamma_reconciliation_method=GammaReconciliationMethod.ADAPTIVE_WEIGHTED,
+       gamma_reconciliation_method=GammaReconciliationMethod.DISABLED,  # Default as of Feb 2026
        gamma_reconciliation_low_beta_threshold=0.85,
        gamma_reconciliation_high_beta_threshold=0.995,
        gamma_reconciliation_low_beta_weight=0.9,    # Trust energy more at low β
@@ -723,10 +729,11 @@ Configure via :py:class:`lw_integrator.testbed_runner.SimulationOptions`:
    from lw_integrator.testbed_runner import SimulationOptions
    from core.types import SimulationType
 
+   # Example 2: Opt-in to adaptive weights (not recommended as of Feb 2026)
    options = SimulationOptions(
        simulation_type=SimulationType.CONDUCTING_WALL,
        steps=1000,
-       self_consistency_gamma_reconciliation_method='ADAPTIVE_WEIGHTED',
+       self_consistency_gamma_reconciliation_method='ADAPTIVE_WEIGHTED',  # Opt-in only
        self_consistency_gamma_reconciliation_low_beta_threshold=0.9,
        self_consistency_gamma_reconciliation_high_beta_threshold=0.99,
        self_consistency_gamma_reconciliation_low_beta_weight=0.8,
@@ -755,7 +762,7 @@ The old boolean ``gamma_reconciliation_enabled`` parameter has been replaced wit
 .. code-block:: python
 
    # Old style (deprecated)
-   config.gamma_reconciliation_enabled = True   # Now uses ADAPTIVE_WEIGHTED
+   config.gamma_reconciliation_enabled = True   # Now uses ADAPTIVE_WEIGHTED (opt-in)
    config.gamma_reconciliation_enabled = False  # Now uses DISABLED
 
    # New style (recommended)
@@ -767,11 +774,11 @@ for legacy code compatibility.
 Recommendations
 ---------------
 
-**Production use**: ADAPTIVE_WEIGHTED (default)
-   - Handles all velocity regimes appropriately
-   - Prevents dual-gamma blowups
-   - Maintains energy conservation
-   - Default thresholds work for most cases
+**Production use**: DISABLED (default as of February 2026)
+   - Matches v0.4.8 stable behavior
+   - Ensures energy conservation
+   - Recommended until reconciliation feature is redesigned
+   - No reconciliation applied (uses γ_energy directly)
 
 **Custom tuning**: For ultra-relativistic particles (β > 0.999)
    - Lower ``high_beta_threshold`` to 0.995

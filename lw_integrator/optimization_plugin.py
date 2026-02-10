@@ -1886,10 +1886,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.gui_controller.adaptive_timestep_reduction_factor_var.set(
                     str(config.adaptive_timestep_reduction_factor)
                 )
-            if hasattr(self.gui_controller, "adaptive_timestep_max_attempts_var"):
-                self.gui_controller.adaptive_timestep_max_attempts_var.set(
-                    str(config.adaptive_timestep_max_attempts)
-                )
+            # max_refinement_attempts is now auto-calculated (read-only display in GUI)
             if hasattr(self.gui_controller, "adaptive_timestep_min_factor_var"):
                 self.gui_controller.adaptive_timestep_min_factor_var.set(
                     f"{config.adaptive_timestep_min_factor:.1e}"
@@ -2309,14 +2306,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     else 10
                 ),
             ),
-            adaptive_timestep_max_attempts=self._get_gui_stability_setting(
-                "adaptive_timestep_max_attempts_var",
-                (
-                    existing_config.adaptive_timestep_max_attempts
-                    if existing_config
-                    else 5
-                ),
-            ),
             adaptive_timestep_min_factor=self._get_gui_stability_setting(
                 "adaptive_timestep_min_factor_var",
                 (
@@ -2655,15 +2644,36 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         at_factor_entry.pack(anchor="w")
         all_widgets.append(at_factor_entry)
 
+        # Max refinement attempts is now auto-calculated (read-only display)
+        import math
+
+        try:
+            reduction_factor = self.config.adaptive_timestep_reduction_factor
+            min_factor = self.config.adaptive_timestep_min_factor
+            if reduction_factor > 1 and min_factor > 0:
+                calculated_attempts = math.ceil(
+                    math.log(1.0 / min_factor) / math.log(reduction_factor)
+                )
+                attempts_display = f"{max(1, calculated_attempts)} (auto-calculated from reduction factor & min timestep)"
+            else:
+                attempts_display = "N/A"
+        except (ValueError, ZeroDivisionError):
+            attempts_display = "N/A"
+
         ttk.Label(at_frame, text="Max reduction attempts:").pack(
             anchor="w", pady=(5, 0)
         )
-        at_attempts_var = tk.StringVar(
-            value=str(self.config.adaptive_timestep_max_attempts)
+        at_attempts_display = ttk.Label(
+            at_frame,
+            text=attempts_display,
+            relief="sunken",
+            background="#f0f0f0",
+            foreground="#606060",
+            padding=(5, 2),
+            font=("TkDefaultFont", 9, "italic"),
         )
-        at_attempts_entry = ttk.Entry(at_frame, textvariable=at_attempts_var, width=15)
-        at_attempts_entry.pack(anchor="w")
-        all_widgets.append(at_attempts_entry)
+        at_attempts_display.pack(anchor="w")
+        all_widgets.append(at_attempts_display)
 
         at_halt_var = tk.BooleanVar(value=self.config.energy_monitor_halt_on_jump)
         at_halt_cb = ttk.Checkbutton(
@@ -2686,10 +2696,10 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             """Apply safer defaults for sweeps."""
             # Self-consistency: more verbose for debugging
             sc_verb_var.set("1")
-            # Adaptive timestep: debug enabled, don't halt, reduced max attempts to fail faster
+            # Adaptive timestep: debug enabled, don't halt
+            # Note: max_attempts is now auto-calculated from reduction_factor and min_timestep_factor
             at_debug_var.set(True)
             at_halt_var.set(False)
-            at_attempts_var.set("3")
 
         # Function to toggle widgets based on checkbox
         def on_checkbox_toggle():
@@ -2759,7 +2769,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.config.adaptive_timestep_reduction_factor = int(
                     at_factor_var.get()
                 )
-                self.config.adaptive_timestep_max_attempts = int(at_attempts_var.get())
+                # max_refinement_attempts is now auto-calculated from reduction_factor and min_timestep_factor
                 self.config.adaptive_timestep_debug = at_debug_var.get()
 
                 # Sweep robustness options
@@ -2811,7 +2821,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
             # Energy monitoring removed - halt option integrated into adaptive timestep
             self._log_result(
-                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%, reduction={self.config.adaptive_timestep_reduction_factor}x, max_attempts={self.config.adaptive_timestep_max_attempts}, debug={self.config.adaptive_timestep_debug})"
+                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%, reduction={self.config.adaptive_timestep_reduction_factor}x, min_factor={self.config.adaptive_timestep_min_factor}, debug={self.config.adaptive_timestep_debug})"
             )
             self._log_result(
                 f"  Per-run timeout: {self.config.per_run_timeout}s, Skip failed: {self.config.skip_failed_runs}"
@@ -3248,9 +3258,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             loaded_config.adaptive_timestep_reduction_factor = data.get(
                 "adaptive_timestep_reduction_factor", 10
             )
-            loaded_config.adaptive_timestep_max_attempts = data.get(
-                "adaptive_timestep_max_attempts", 5
-            )
+            # max_refinement_attempts removed - now auto-calculated from reduction_factor and min_timestep_factor
             loaded_config.adaptive_timestep_min_factor = data.get(
                 "adaptive_timestep_min_factor", 1e-4
             )
@@ -3388,7 +3396,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 f"  Adaptive timestep reduction_factor: {loaded_config.adaptive_timestep_reduction_factor}"
             )
             self._log_result(
-                f"  Adaptive timestep max_attempts: {loaded_config.adaptive_timestep_max_attempts}"
+                f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
             )
             self._log_result(
                 f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
@@ -3478,7 +3486,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 f"  Reduction factor: {self.config.adaptive_timestep_reduction_factor}x"
             )
             self._log_result(
-                f"  Max attempts: {self.config.adaptive_timestep_max_attempts}"
+                f"  Min timestep factor: {self.config.adaptive_timestep_min_factor}"
             )
             self._log_result(
                 f"  Min factor: {self.config.adaptive_timestep_min_factor}"
@@ -3640,7 +3648,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
                 "adaptive_timestep_threshold": config.adaptive_timestep_threshold,
                 "adaptive_timestep_reduction_factor": config.adaptive_timestep_reduction_factor,
-                "adaptive_timestep_max_attempts": config.adaptive_timestep_max_attempts,
                 "adaptive_timestep_min_factor": config.adaptive_timestep_min_factor,
                 "adaptive_timestep_cooldown_steps": config.adaptive_timestep_cooldown_steps,
                 "adaptive_timestep_probe_threshold": config.adaptive_timestep_probe_threshold,
@@ -7135,7 +7142,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             adaptive_timestep_enabled=self.config.adaptive_timestep_enabled,
             adaptive_timestep_threshold=self.config.adaptive_timestep_threshold,
             adaptive_timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
-            adaptive_timestep_max_attempts=self.config.adaptive_timestep_max_attempts,
             adaptive_timestep_min_factor=self.config.adaptive_timestep_min_factor,
             adaptive_timestep_cooldown_steps=self.config.adaptive_timestep_cooldown_steps,
             adaptive_timestep_probe_threshold=self.config.adaptive_timestep_probe_threshold,

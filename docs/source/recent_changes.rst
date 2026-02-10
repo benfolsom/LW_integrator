@@ -1,11 +1,205 @@
 Recent Changes
 ==============
 
-*Last updated: January 2025*
+*Last updated: February 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+February 2026 Updates
+---------------------
+
+Adaptive Timestep Auto-Calculation (February 10, 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Overview**
+
+The adaptive timestep system now automatically calculates derived parameters to
+prevent inconsistent configurations and ensure mathematical consistency.
+
+**Auto-Calculated Parameters**
+
+* **max_refinement_attempts** - Computed from ``timestep_reduction_factor`` and ``min_timestep_factor``
+
+  Formula: ``ceil(log(1/min_timestep_factor) / log(timestep_reduction_factor))``
+
+  Example: reduction_factor=3, min_factor=1e-4 → max_attempts=9
+
+* **max_substeps_per_step** - Computed from ``min_timestep_factor`` with 10% safety margin
+
+  Formula: ``ceil(1/min_timestep_factor) × 1.1``
+
+  Example: min_factor=1e-4 → max_substeps=11000
+
+**Simplified Configuration**
+
+Users now only set **2 independent parameters**:
+
+.. code-block:: python
+
+   from core.integration_runner import AdaptiveTimestepConfig
+
+   config = AdaptiveTimestepConfig(
+       enabled=True,
+       timestep_reduction_factor=3,      # How aggressively to reduce
+       min_timestep_factor=1e-4,         # Minimum allowed timestep
+       # max_refinement_attempts is AUTO-CALCULATED
+       # max_substeps_per_step is AUTO-CALCULATED
+   )
+
+**GUI Improvements**
+
+* Max attempts shown as **read-only calculated value** with explanatory text
+* Visual feedback: italic gray text indicates auto-calculated values
+* Tooltips explain the calculation formula
+
+**Impact**
+
+* Eliminates configurations where minimum timestep is unreachable within max attempts
+* Prevents time discontinuities from undersized substep caps
+* Reduces user confusion by removing redundant parameters
+* Ensures mathematical consistency automatically
+
+**Default Change**
+
+* ``timestep_reduction_factor`` changed from **10 to 3** for more gradual refinement
+* Reduces oscillation in pathological cases while still providing effective refinement
+
+Batched Logging for GUI Responsiveness (February 10, 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Problem Solved**
+
+Inner-loop debug logging previously caused GUI freezes lasting minutes when
+``adaptive_timestep_debug=True`` during challenging runs (e.g., 750+ messages
+in a single step).
+
+**Solution: Batch Aggregation**
+
+Debug messages are now accumulated in memory and flushed to GUI in batches:
+
+.. code-block:: python
+
+   from core.integration_runner import retarded_integrator
+   from core.batched_logger import BatchedLogger
+
+   # Create batched logger (flushes every 50 messages)
+   logger = BatchedLogger(target_logger=my_gui_logger.log, batch_size=50)
+
+   # Pass to integrator
+   trajectory, trajectory_ext = retarded_integrator(
+       ...,
+       logger=logger.log  # Pass the callable
+   )
+
+**Performance Improvement**
+
+* Reduces GUI updates by **~100× in pathological cases**
+* Example: 750 messages → 15 GUI updates (instead of 750)
+* GUI remains responsive during verbose debugging
+* All messages still captured; only update frequency reduced
+
+**Backward Compatibility**
+
+* Logger parameter is **optional**
+* Falls back to ``print()`` if no logger provided
+* Existing code works without modification
+
+**GUI Integration**
+
+The GUI automatically provides a batched logger when running simulations,
+eliminating the need for manual setup.
+
+Gamma Reconciliation Default Changed (February 10, 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Critical Change**
+
+Gamma reconciliation now defaults to **DISABLED** (changed from ADAPTIVE_WEIGHTED).
+
+**Reason for Change**
+
+Analysis revealed the original implementation violated energy conservation:
+
+1. **Scalar potential loss** - Overwrote ``Pt`` without preserving ``q·Φ`` contribution:
+
+   .. code-block:: python
+
+      # WRONG (old implementation):
+      Pt = gamma_reconciled * m * c  # Lost potential energy!
+
+      # CORRECT (should be):
+      Pt = gamma_reconciled * m * c + q * Phi
+
+2. **Momentum rescaling** - Rescaled spatial momentum ``(Px, Py, Pz)`` after integration,
+   altering particle trajectories
+
+3. **Energy non-conservation** - Caused -99% energy losses in parameter sweeps
+
+**New Default Configuration**
+
+.. code-block:: python
+
+   from core.self_consistency import SelfConsistencyConfig
+   from core.types import GammaReconciliationMethod
+
+   # v0.4.8 compatible (new default):
+   config = SelfConsistencyConfig(
+       gamma_reconciliation_method=GammaReconciliationMethod.DISABLED
+   )
+
+**Migration Impact**
+
+* **No action required** - Default matches v0.4.8 stable behavior
+* **Existing configs** - Old files with ADAPTIVE_WEIGHTED still load/work (opt-in)
+* **Energy conservation restored** - Eliminates silent energy non-conservation
+
+**Feature Status**
+
+* All 5 reconciliation methods still available (ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, etc.)
+* Feature can be explicitly enabled if needed
+* **Not recommended** until redesigned to preserve scalar potential
+
+**Detailed Analysis**
+
+See ``local/GAMMA_RECONCILIATION_FIX.md`` for:
+
+* Root cause analysis
+* Comparison with v0.4.8 stable results
+* Migration guide
+* Future redesign recommendations
+
+Optimization Plugin Fix (February 10, 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Error Fixed**
+
+.. code-block:: text
+
+   TypeError: SimulationOptions.__init__() got an unexpected keyword
+   argument 'adaptive_timestep_max_attempts'
+
+**Root Cause**
+
+The optimization plugin was still passing ``adaptive_timestep_max_attempts`` as
+a parameter after it was converted to an auto-calculated property.
+
+**Changes Made**
+
+* Removed ``adaptive_timestep_max_attempts`` from ``OptimizationConfig`` dataclass
+* Removed parameter from all ``SimulationOptions`` constructor calls
+* Updated stability dialog to show calculated value as read-only label
+* Removed from config save/load operations
+
+**Impact**
+
+* Optimization sweeps now work without TypeError
+* Configs auto-calculate max_attempts from reduction_factor and min_factor
+* One fewer parameter to configure in optimization setups
+
+January 2025 Updates
+--------------------
 
 Gamma Reconciliation Configuration (January 2025)
 --------------------------------------------------
@@ -22,7 +216,7 @@ the dual-gamma bookkeeping problem where γ is computed in two ways:
 Numerical differences between these can cause energy jumps and catastrophic blowups.
 Five reconciliation methods are now available:
 
-**ADAPTIVE_WEIGHTED (default, recommended)**
+**ADAPTIVE_WEIGHTED**
   Velocity-dependent blending with configurable thresholds and weights:
 
   - β < 0.9: Trust energy more (default weight α=0.8)
@@ -38,8 +232,8 @@ Five reconciliation methods are now available:
 **USE_ENERGY**
   Always use γ from energy (equivalent to DISABLED)
 
-**DISABLED**
-  No reconciliation (legacy behavior, not recommended for production)
+**DISABLED (now default as of February 2026)**
+  No reconciliation (v0.4.8 legacy behavior, recommended until feature redesigned)
 
 API Configuration
 ~~~~~~~~~~~~~~~~~
@@ -51,12 +245,12 @@ Configure via ``SimulationOptions``:
    from lw_integrator.testbed_runner import SimulationOptions
    from core.types import SimulationType
 
-   # Example 1: Default (ADAPTIVE_WEIGHTED with standard thresholds)
+   # Example 1: Default (DISABLED as of February 2026)
    options = SimulationOptions(
        simulation_type=SimulationType.CONDUCTING_WALL,
        steps=1000
    )
-   # Uses ADAPTIVE_WEIGHTED by default
+   # Uses DISABLED by default (v0.4.8 compatible)
 
    # Example 2: Custom adaptive weights for ultra-relativistic particles
    options = SimulationOptions(
@@ -111,17 +305,18 @@ In the GUI, navigate to **Stability** tab → **Self-Consistency Checks** → **
 Recommendations
 ~~~~~~~~~~~~~~~
 
-**Production use**: ADAPTIVE_WEIGHTED (default) handles all velocity regimes appropriately
+**Production use**: DISABLED (default as of Feb 2026) provides v0.4.8 energy conservation
 
 **Custom tuning**: For ultra-relativistic particles (β > 0.999), lower the high_beta_threshold
 and high_beta_weight to trust velocity more strongly
 
 **Debugging**: Use USE_VELOCITY or USE_ENERGY to isolate which calculation is problematic
 
-**Not recommended**: DISABLED - only for legacy comparison or debugging
+**Not recommended**: ADAPTIVE_WEIGHTED - disabled by default due to energy conservation issues (see February 2026 updates above)
 
-**Impact**: Prevents dual-gamma inconsistency and energy blowups while maintaining energy
-conservation. Critical for high-energy simulations and long integration runs.
+**Impact** (February 2026 update): Feature now disabled by default due to energy conservation
+issues. When properly implemented, would prevent dual-gamma inconsistency and energy blowups.
+Requires redesign to preserve scalar potential contribution before safe re-enablement.
 
 Transverse Offset GUI Improvements (January 2025)
 --------------------------------------------------
