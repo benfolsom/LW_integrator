@@ -262,13 +262,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         frame.pack(fill="x", padx=10, pady=5)
         self.parameter_frame = frame
 
+        # Store parameter widgets for mode-based visibility control
+        self._param_widgets = {}
+
         # Add explanatory help text
         help_frame = ttk.Frame(frame)
         help_frame.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
         help_text = (
             "Coordinate system: Particles start at z-coordinate and travel toward the conducting wall.\n"
             "Example: Particle at z=0 travels to wall at z=2200 mm (distance = 2200 mm).\n"
-            "Transverse offset: Fraction of aperture radius (0.0 = on-axis, 1.0 = at aperture edge)."
+            "Transverse offset: BUNCH_TO_BUNCH mode uses absolute distance (mm), CONDUCTING_WALL uses fraction of aperture."
         )
         help_label = ttk.Label(
             help_frame, text=help_text, foreground="gray40", font=("TkDefaultFont", 8)
@@ -276,34 +279,40 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         help_label.pack(anchor="w")
 
         # Aperture range
-        ttk.Label(frame, text="Aperture Radius:").grid(
-            row=1, column=0, sticky="w", pady=2
+        self._param_widgets["aperture_label"] = ttk.Label(
+            frame, text="Aperture Radius:"
         )
-        aperture_frame = ttk.Frame(frame)
+        self._param_widgets["aperture_label"].grid(row=1, column=0, sticky="w", pady=2)
+        self._param_widgets["aperture_frame"] = ttk.Frame(frame)
+        aperture_frame = self._param_widgets["aperture_frame"]
         aperture_frame.grid(row=1, column=1, columnspan=3, sticky="ew", pady=2)
 
         ttk.Label(aperture_frame, text="Min (mm):").pack(side="left", padx=(0, 2))
         self.aperture_min_var = tk.StringVar(value="1e-5")
-        ttk.Entry(aperture_frame, textvariable=self.aperture_min_var, width=10).pack(
-            side="left", padx=2
+        self._param_widgets["aperture_min_entry"] = ttk.Entry(
+            aperture_frame, textvariable=self.aperture_min_var, width=10
         )
+        self._param_widgets["aperture_min_entry"].pack(side="left", padx=2)
 
         ttk.Label(aperture_frame, text="Max (mm):").pack(side="left", padx=(10, 2))
         self.aperture_max_var = tk.StringVar(value="1e-3")
-        ttk.Entry(aperture_frame, textvariable=self.aperture_max_var, width=10).pack(
-            side="left", padx=2
+        self._param_widgets["aperture_max_entry"] = ttk.Entry(
+            aperture_frame, textvariable=self.aperture_max_var, width=10
         )
+        self._param_widgets["aperture_max_entry"].pack(side="left", padx=2)
 
         ttk.Label(aperture_frame, text="Points:").pack(side="left", padx=(10, 2))
         self.aperture_points_var = tk.StringVar(value="10")
-        ttk.Entry(aperture_frame, textvariable=self.aperture_points_var, width=5).pack(
-            side="left", padx=2
+        self._param_widgets["aperture_points_entry"] = ttk.Entry(
+            aperture_frame, textvariable=self.aperture_points_var, width=5
         )
+        self._param_widgets["aperture_points_entry"].pack(side="left", padx=2)
 
         self.aperture_log_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        self._param_widgets["aperture_log_check"] = ttk.Checkbutton(
             aperture_frame, text="Log scale", variable=self.aperture_log_var
-        ).pack(side="left", padx=(10, 0))
+        )
+        self._param_widgets["aperture_log_check"].pack(side="left", padx=(10, 0))
 
         # Energy range
         ttk.Label(frame, text="Particle Energy:").grid(
@@ -335,37 +344,74 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             energy_frame, text="Log scale", variable=self.energy_log_var
         ).pack(side="left", padx=(10, 0))
 
-        # Transverse offset fractions
-        ttk.Label(frame, text="Transverse Offset:").grid(
-            row=3, column=0, sticky="w", pady=2
+        # Rider Transverse offset (x, y)
+        self._param_widgets["offset_label"] = ttk.Label(
+            frame, text="Rider Transverse Offset (x, y):"
         )
-        ttk.Label(frame, text="Fractions of aperture (comma-separated):").grid(
-            row=3, column=1, sticky="w", pady=2
+        self._param_widgets["offset_label"].grid(row=3, column=0, sticky="w", pady=2)
+        self.offset_fractions_var = tk.StringVar(value="0.0, 0.0")
+        self._param_widgets["offset_entry"] = ttk.Entry(
+            frame, textvariable=self.offset_fractions_var, width=15
         )
-        self.offset_fractions_var = tk.StringVar(value="0.0")
-        ttk.Entry(frame, textvariable=self.offset_fractions_var, width=30).grid(
-            row=3, column=2, columnspan=2, sticky="ew", pady=2, padx=5
+        self._param_widgets["offset_entry"].grid(
+            row=3, column=1, sticky="w", pady=2, padx=(0, 5)
+        )
+        self._param_widgets["offset_desc_label"] = ttk.Label(
+            frame,
+            text="mm (BUNCH_TO_BUNCH: absolute offset | CONDUCTING_WALL: fraction of aperture)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        )
+        self._param_widgets["offset_desc_label"].grid(
+            row=3, column=2, columnspan=2, sticky="w", pady=2
+        )
+
+        # Driver Transverse offset (x, y)
+        self._param_widgets["driver_offset_label"] = ttk.Label(
+            frame, text="Driver Transverse Offset (x, y):"
+        )
+        self._param_widgets["driver_offset_label"].grid(
+            row=4, column=0, sticky="w", pady=2
+        )
+        self.driver_offset_var = tk.StringVar(value="0.0, 0.0")
+        self._param_widgets["driver_offset_entry"] = ttk.Entry(
+            frame, textvariable=self.driver_offset_var, width=15
+        )
+        self._param_widgets["driver_offset_entry"].grid(
+            row=4, column=1, sticky="w", pady=2, padx=(0, 5)
+        )
+        self._param_widgets["driver_offset_desc_label"] = ttk.Label(
+            frame,
+            text="mm (BUNCH_TO_BUNCH only)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        )
+        self._param_widgets["driver_offset_desc_label"].grid(
+            row=4, column=2, columnspan=2, sticky="w", pady=2
         )
 
         # Starting z positions
-        ttk.Label(frame, text="Starting Positions:").grid(
-            row=4, column=0, sticky="w", pady=2
-        )
-        ttk.Label(frame, text="Particle z-coordinate (mm, comma-separated):").grid(
-            row=4, column=1, sticky="w", pady=2
-        )
-        self.start_z_var = tk.StringVar(value="0.0")
-        ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
-            row=4, column=2, columnspan=2, sticky="ew", pady=2, padx=5
-        )
-        # Wall Position (sweepable)
-        ttk.Label(frame, text="Wall Position:").grid(
+        ttk.Label(frame, text="Starting Position(s):").grid(
             row=5, column=0, sticky="w", pady=2
         )
+        self.start_z_var = tk.StringVar(value="0.0")
+        ttk.Entry(frame, textvariable=self.start_z_var, width=15).grid(
+            row=5, column=1, sticky="w", pady=2, padx=(0, 5)
+        )
+        ttk.Label(
+            frame,
+            text="mm (comma-separated for BUNCH_TO_BUNCH: rider, driver)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        ).grid(row=5, column=2, columnspan=2, sticky="w", pady=2)
+        # Wall Position (sweepable)
+        self._param_widgets["wall_z_label"] = ttk.Label(frame, text="Wall Position:")
+        self._param_widgets["wall_z_label"].grid(row=6, column=0, sticky="w", pady=2)
 
         # Fixed value and sweep checkbox on same row
-        wall_z_fixed_frame = ttk.Frame(frame)
-        wall_z_fixed_frame.grid(row=5, column=1, columnspan=3, sticky="w", pady=2)
+        self._param_widgets["wall_z_fixed_frame"] = ttk.Frame(frame)
+        wall_z_fixed_frame = self._param_widgets["wall_z_fixed_frame"]
+        wall_z_fixed_frame.grid(row=6, column=1, columnspan=3, sticky="w", pady=2)
 
         self.wall_z_var = tk.StringVar(value="2200.0")
         self.wall_z_entry = ttk.Entry(
@@ -374,17 +420,19 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         self.wall_z_entry.pack(side="left", padx=(0, 10))
 
         self.wall_z_sweep_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self._param_widgets["wall_z_sweep_check"] = ttk.Checkbutton(
             wall_z_fixed_frame,
             text="Sweep",
             variable=self.wall_z_sweep_var,
             command=self._toggle_wall_z_sweep,
-        ).pack(side="left")
+        )
+        self._param_widgets["wall_z_sweep_check"].pack(side="left")
 
         # Sweep controls on new row for better visibility
-        wall_z_sweep_frame = ttk.Frame(frame)
+        self._param_widgets["wall_z_sweep_frame"] = ttk.Frame(frame)
+        wall_z_sweep_frame = self._param_widgets["wall_z_sweep_frame"]
         wall_z_sweep_frame.grid(
-            row=6, column=1, columnspan=3, sticky="w", pady=2, padx=(20, 0)
+            row=7, column=1, columnspan=3, sticky="w", pady=2, padx=(20, 0)
         )
 
         ttk.Label(wall_z_sweep_frame, text="Min:").pack(side="left", padx=(0, 2))
@@ -430,14 +478,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         ttk.Label(frame, text="Cavity Spacing:").grid(
             row=7, column=0, sticky="w", pady=2
         )
-        ttk.Label(frame, text="SWITCHING_WALL only (mm):").grid(
-            row=7, column=1, sticky="w", pady=2
-        )
         self.cavity_spacing_var = tk.StringVar(value="1e5")
         self.cavity_spacing_entry = ttk.Entry(
-            frame, textvariable=self.cavity_spacing_var, width=10
+            frame, textvariable=self.cavity_spacing_var, width=15
         )
-        self.cavity_spacing_entry.grid(row=7, column=2, sticky="w", pady=2, padx=5)
+        self.cavity_spacing_entry.grid(row=7, column=1, sticky="w", pady=2, padx=(0, 5))
+        ttk.Label(
+            frame,
+            text="mm (SWITCHING_WALL only)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        ).grid(row=7, column=2, columnspan=2, sticky="w", pady=2)
 
         # Timestep Auto-Calculation (always uses auto_distance strategy)
         timestep_label = ttk.Label(frame, text="Timestep Calculation:")
@@ -456,7 +507,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         self.timestep_mode_var = tk.StringVar(value="duration")
         ttk.Radiobutton(
             timestep_frame,
-            text="Auto-calc duration, provide count:",
+            text="Auto-calc step duration, provide count:",
             variable=self.timestep_mode_var,
             value="duration",
             command=self._toggle_timestep_mode,
@@ -471,7 +522,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         ttk.Radiobutton(
             timestep_frame,
-            text="Auto-calc count, provide duration:",
+            text="Auto-calc count, provide step duration:",
             variable=self.timestep_mode_var,
             value="count",
             command=self._toggle_timestep_mode,
@@ -485,16 +536,19 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         ttk.Label(timestep_frame, text="ns (proper time)").pack(side="left", padx=2)
 
         # Distance target
-        ttk.Label(frame, text="Distance Target:").grid(
-            row=9, column=0, sticky="w", pady=2
+        self._param_widgets["distance_label"] = ttk.Label(
+            frame, text="Distance Target:"
         )
-        distance_frame = ttk.Frame(frame)
-        distance_frame.grid(row=9, column=1, columnspan=3, sticky="ew", pady=2)
+        self._param_widgets["distance_label"].grid(row=10, column=0, sticky="w", pady=2)
+        self._param_widgets["distance_frame"] = ttk.Frame(frame)
+        distance_frame = self._param_widgets["distance_frame"]
+        distance_frame.grid(row=10, column=1, columnspan=3, sticky="ew", pady=2)
         ttk.Label(distance_frame, text="Target: wall +").pack(side="left", padx=(0, 2))
         self.auto_steps_distance_var = tk.StringVar(value="10.0")
-        ttk.Entry(
+        self._param_widgets["distance_entry"] = ttk.Entry(
             distance_frame, textvariable=self.auto_steps_distance_var, width=6
-        ).pack(side="left", padx=2)
+        )
+        self._param_widgets["distance_entry"].pack(side="left", padx=2)
         ttk.Label(distance_frame, text="mm (min 5% of steps enforced)").pack(
             side="left", padx=2
         )
@@ -507,12 +561,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             foreground="blue",
             justify="left",
         )
-        config_note.grid(row=10, column=0, columnspan=4, sticky="w", pady=(10, 10))
+        config_note.grid(row=11, column=0, columnspan=4, sticky="w", pady=(10, 10))
 
         frame.columnconfigure(2, weight=1)
 
         # Initialize timestep mode state
         self._toggle_timestep_mode()
+
+        # Initialize parameter visibility based on simulation type
+        self._update_parameter_visibility()
 
     def _build_particle_section(self):
         """Build rider and driver particle parameters sections with optional sweeping."""
@@ -1014,6 +1071,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         """Handle simulation type change."""
         self._update_driver_visibility()
         self._update_macroparticle_state()
+        self._update_parameter_visibility()
 
         # Sync simulation type to main GUI
         if self.gui_controller and hasattr(self.gui_controller, "sim_type_var"):
@@ -1103,18 +1161,78 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             child.configure(state=widget_state)
         self._update_parameter_visibility()
 
+    def _set_frame_state(self, frame, state):
+        """Recursively set state for all widgets in a frame.
+
+        Args:
+            frame: The frame widget containing children to update
+            state: "normal" or "disabled"
+        """
+        if frame is None:
+            return
+
+        label_color = "black" if state == "normal" else "gray"
+
+        for child in frame.winfo_children():
+            widget_type = child.winfo_class()
+            try:
+                if widget_type in ("TEntry", "Entry"):
+                    child.configure(state=state)
+                elif widget_type in ("TCheckbutton", "Checkbutton"):
+                    child.configure(state=state)
+                elif widget_type in ("TLabel", "Label"):
+                    child.configure(foreground=label_color)
+                elif widget_type in ("TFrame", "Frame"):
+                    # Recursively process nested frames
+                    self._set_frame_state(child, state)
+            except Exception:
+                # Some widgets might not support these configurations
+                pass
+
     def _update_parameter_visibility(self):
         """Update parameter field states based on simulation type."""
         if not hasattr(self, "cavity_spacing_entry"):
             return
 
         sim_type = self.sim_type_var.get()
+        is_bunch_to_bunch = sim_type == "BUNCH_TO_BUNCH"
 
         # Grey out cavity_spacing unless SWITCHING_WALL mode
         if sim_type == "SWITCHING_WALL":
             self.cavity_spacing_entry.config(state="normal")
         else:
             self.cavity_spacing_entry.config(state="disabled")
+
+        # Grey out aperture radius and wall position in BUNCH_TO_BUNCH mode
+        if is_bunch_to_bunch:
+            # Disable aperture widgets
+            self._set_frame_state(self._param_widgets.get("aperture_frame"), "disabled")
+            if "aperture_label" in self._param_widgets:
+                self._param_widgets["aperture_label"].config(foreground="gray")
+
+            # Disable wall_z widgets
+            self._set_frame_state(
+                self._param_widgets.get("wall_z_fixed_frame"), "disabled"
+            )
+            self._set_frame_state(
+                self._param_widgets.get("wall_z_sweep_frame"), "disabled"
+            )
+            if "wall_z_label" in self._param_widgets:
+                self._param_widgets["wall_z_label"].config(foreground="gray")
+        else:
+            # Enable aperture widgets
+            self._set_frame_state(self._param_widgets.get("aperture_frame"), "normal")
+            if "aperture_label" in self._param_widgets:
+                self._param_widgets["aperture_label"].config(foreground="black")
+
+            # Enable wall_z widgets (but sweep controls depend on sweep checkbox)
+            self._set_frame_state(
+                self._param_widgets.get("wall_z_fixed_frame"), "normal"
+            )
+            if "wall_z_label" in self._param_widgets:
+                self._param_widgets["wall_z_label"].config(foreground="black")
+            # Re-apply sweep control state
+            self._toggle_wall_z_sweep()
 
     def _build_objective_section(self):
         """Build optimization objective selection section."""
@@ -1440,7 +1558,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         ttk.Button(
             helper_frame,
-            text="Load from Main GUI Config",
+            text="Load from Single Run Config",
             command=self._on_load_from_main_config,
         ).pack(side="left", padx=5)
 
@@ -2093,6 +2211,23 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             return value
         return default_value
 
+    def _parse_offset_pair(self, offset_str: str) -> tuple:
+        """Parse x,y offset pair from string like '0.0, 0.0'.
+
+        Returns (x, y) tuple. Defaults to (0.0, 0.0) if parsing fails.
+        """
+        try:
+            values = [float(x.strip()) for x in offset_str.split(",")]
+            if len(values) >= 2:
+                return (values[0], values[1])
+            elif len(values) == 1:
+                # Single value - use for x, set y=0
+                return (values[0], 0.0)
+            else:
+                return (0.0, 0.0)
+        except (ValueError, AttributeError):
+            return (0.0, 0.0)
+
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
         # Stability settings are read from main GUI if available, otherwise from existing config
@@ -2186,6 +2321,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             transv_dist=float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
+            # Parse rider transverse offset (x, y)
+            transv_offset_x=self._parse_offset_pair(self.offset_fractions_var.get())[0],
+            transv_offset_y=self._parse_offset_pair(self.offset_fractions_var.get())[1],
+            # Parse driver transverse offset (x, y)
+            driver_transv_offset_x=self._parse_offset_pair(
+                self.driver_offset_var.get()
+            )[0],
+            driver_transv_offset_y=self._parse_offset_pair(
+                self.driver_offset_var.get()
+            )[1],
             macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
             macroparticle_charge_multiplier=float(
                 self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].get()
@@ -2506,6 +2651,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         str(driver.get("stripped_ions", 54.0))
                     )
                     self._log_result("[INFO] Loaded driver parameters from main GUI")
+
+                    # Update starting positions field for BUNCH_TO_BUNCH mode
+                    rider_start_z = main_options.rider_params.get(
+                        "starting_distance", 0.0
+                    )
+                    driver_start_z = driver.get("starting_distance", 1000.0)
+                    self.start_z_var.set(f"{rider_start_z}, {driver_start_z}")
+            else:
+                # For non-BUNCH_TO_BUNCH modes, only set rider starting position
+                rider_start_z = main_options.rider_params.get("starting_distance", 0.0)
+                self.start_z_var.set(f"{rider_start_z}")
 
             # Update stability options if they exist in config
             if hasattr(opt_config, "smoothness_enabled"):
@@ -3408,6 +3564,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.auto_steps_distance_var.set(str(data.get("auto_steps_distance", 10.0)))
             self.trajectory_stride_var.set(str(data.get("trajectory_stride", 10)))
             self.rider_stripped_ions_var.set(str(data.get("rider_stripped_ions", 1.0)))
+            # Load rider/driver offset pairs
+            rider_x = data.get("rider_offset_x", 0.0)
+            rider_y = data.get("rider_offset_y", 0.0)
+            self.offset_fractions_var.set(f"{rider_x}, {rider_y}")
+            driver_x = data.get("driver_offset_x", 0.0)
+            driver_y = data.get("driver_offset_y", 0.0)
+            self.driver_offset_var.set(f"{driver_x}, {driver_y}")
             self.driver_stripped_ions_var.set(
                 str(data.get("driver_stripped_ions", 54.0))
             )
@@ -3752,6 +3915,11 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "auto_steps_distance": float(self.auto_steps_distance_var.get()),
                 "rider_stripped_ions": float(self.rider_stripped_ions_var.get()),
                 "driver_stripped_ions": float(self.driver_stripped_ions_var.get()),
+                # Store rider/driver offset pairs
+                "rider_offset_x": config.transv_offset_x,
+                "rider_offset_y": config.transv_offset_y,
+                "driver_offset_x": config.driver_transv_offset_x,
+                "driver_offset_y": config.driver_transv_offset_y,
             }
 
             # Dynamically save all sweep parameter states
@@ -5333,8 +5501,18 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         elif param_name == "wall_z":
                             wall_z = x[i]
 
-                    # Calculate transverse offset in mm from fraction
-                    transv_offset = offset_frac * aperture
+                    # Calculate transverse offset in mm
+                    # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+                    # For BUNCH_TO_BUNCH: absolute distance in mm
+                    sim_type_str = self.config.simulation_type
+                    if sim_type_str == "BUNCH_TO_BUNCH":
+                        transv_offset = (
+                            offset_frac  # Direct mm value for bunch-to-bunch
+                        )
+                    else:
+                        transv_offset = (
+                            offset_frac * aperture
+                        )  # Fraction for conducting wall
 
                     # Calculate timestep if using auto_distance strategy
                     if self.config.timestep_strategy == "auto_distance":
@@ -5555,40 +5733,40 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
                     return np.inf
 
-            if method == "genetic_algorithm":
-                # Define progress callback for convergence monitoring
-                def log_convergence_progress(
-                    generation,
-                    best_value,
-                    improvement,
-                    tolerance,
-                    patience_remaining,
-                    converged,
-                ):
-                    """Log convergence progress after each generation."""
-                    # Filter out inf values in logging
-                    if np.isfinite(best_value):
+            # Define progress callback for convergence monitoring (used by all methods)
+            def log_convergence_progress(
+                generation,
+                best_value,
+                improvement,
+                tolerance,
+                patience_remaining,
+                converged,
+            ):
+                """Log convergence progress after each generation."""
+                # Filter out inf values in logging
+                if np.isfinite(best_value):
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                else:
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                if generation >= self.config.optimization_convergence_patience:
+                    if converged:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
+                            f"< tolerance ({tolerance:.6e})"
                         )
                     else:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Progress: {patience_remaining} generations "
+                            f"remaining before early stop check"
                         )
-                    if generation >= self.config.optimization_convergence_patience:
-                        if converged:
-                            self._log_result(
-                                f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
-                                f"< tolerance ({tolerance:.6e})"
-                            )
-                        else:
-                            self._log_result(
-                                f"[CONVERGENCE] Progress: {patience_remaining} generations "
-                                f"remaining before early stop check"
-                            )
 
+            if method == "genetic_algorithm":
                 result = genetic_algorithm(
                     config_template=config_template,
                     parameter_names=param_names,
@@ -5856,7 +6034,14 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 elif param_name == "wall_z":
                     wall_z = value
 
-            transv_offset = offset_frac * aperture
+            # Calculate transverse offset in mm
+            # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+            # For BUNCH_TO_BUNCH: absolute distance in mm
+            sim_type_str = self.config.simulation_type
+            if sim_type_str == "BUNCH_TO_BUNCH":
+                transv_offset = offset_frac  # Direct mm value for bunch-to-bunch
+            else:
+                transv_offset = offset_frac * aperture  # Fraction for conducting wall
 
             # Temporarily enable trajectory saving
             save_all_backup = self.config.save_all_trajectories
@@ -6385,8 +6570,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         "stripped_ions": float(self.driver_stripped_ions_var.get()),
                     }
 
-                # Calculate transverse offset
-                transv_offset = offset_frac * aperture
+                # Calculate transverse offset in mm
+                # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+                # For BUNCH_TO_BUNCH: absolute distance in mm
+                sim_type_str = self.config.simulation_type
+                if sim_type_str == "BUNCH_TO_BUNCH":
+                    transv_offset = offset_frac  # Direct mm value for bunch-to-bunch
+                else:
+                    transv_offset = (
+                        offset_frac * aperture
+                    )  # Fraction for conducting wall
 
                 # Calculate timestep based on strategy
                 if self.config.timestep_strategy != "fixed":

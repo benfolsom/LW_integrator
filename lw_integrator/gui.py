@@ -574,6 +574,9 @@ class IntegratorGUI:
         self.self_consistency_enabled_var.trace_add(
             "write", lambda *_: self._toggle_self_consistency_controls()
         )
+        self.self_consistency_chrono_interpolate_var.trace_add(
+            "write", lambda *_: self._toggle_chrono_controls()
+        )
 
         # Adaptive timestep options (includes halt on jump from removed energy monitor)
         self.adaptive_timestep_enabled_var = tk.BooleanVar(
@@ -1832,6 +1835,7 @@ class IntegratorGUI:
             chrono_interp_frame,
             text="Enable chrono-match interpolation",
             variable=self.self_consistency_chrono_interpolate_var,
+            command=self._toggle_chrono_controls,
         )
         self.sc_chrono_interpolate_check.pack(side="left")
         chrono_interp_help = ttk.Label(
@@ -2424,6 +2428,7 @@ class IntegratorGUI:
 
         # Initialize control states
         self._toggle_self_consistency_controls()
+        self._toggle_chrono_controls()
         self._toggle_adaptive_timestep_controls()
 
         # Optimization/Sweep tab ----------------------------------------
@@ -4083,6 +4088,36 @@ class IntegratorGUI:
         # Also update mode-specific greying
         if enabled:
             self._on_sc_mode_changed()
+            self._toggle_chrono_controls()
+
+    def _toggle_chrono_controls(self) -> None:
+        """Enable/disable chrono sub-controls based on chrono-match interpolation checkbox."""
+        if not hasattr(self, "sc_chrono_tolerance_label"):
+            return  # Widgets not created yet
+
+        # Only enable chrono sub-options if both self-consistency AND chrono-match are enabled
+        sc_enabled = self.self_consistency_enabled_var.get()
+        chrono_enabled = self.self_consistency_chrono_interpolate_var.get()
+        enable_chrono_options = sc_enabled and chrono_enabled
+
+        param_state = "normal" if enable_chrono_options else "disabled"
+        label_color = "black" if enable_chrono_options else "gray"
+
+        # Chrono sub-controls that should only be enabled when chrono-match is enabled
+        chrono_sub_controls = [
+            (self.sc_chrono_tolerance_label, "label"),
+            (self.sc_chrono_tolerance_entry, "entry"),
+            (self.sc_chrono_high_precision_check, "checkbutton"),
+            (self.sc_chrono_adaptive_check, "checkbutton"),
+        ]
+
+        for control, control_type in chrono_sub_controls:
+            if control_type == "entry":
+                control.configure(state=param_state)
+            elif control_type == "checkbutton":
+                control.configure(state=param_state)
+            elif control_type == "label":
+                control.configure(foreground=label_color)
 
     def _on_sc_mode_changed(self, event=None):
         """Handle convergence mode changes."""
