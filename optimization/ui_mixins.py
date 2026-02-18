@@ -473,13 +473,14 @@ class OptimizationPluginUIMixin:
         )
         row += 1
 
-        # Stripped Ions (not sweepable, always fixed)
-        ttk.Label(frame, text="Stripped Ions:").grid(
-            row=row, column=0, sticky="w", pady=2
-        )
-        self.rider_stripped_ions_var = tk.StringVar(value="1.0")
-        ttk.Entry(frame, textvariable=self.rider_stripped_ions_var, width=10).grid(
-            row=row, column=1, sticky="w", pady=2, padx=5
+        # Stripped Ions (sweepable)
+        self._add_sweepable_param(
+            frame,
+            row,
+            "rider_stripped_ions",
+            "Stripped Ions (charge state):",
+            "1.0",
+            width=15,
         )
         row += 1
 
@@ -771,14 +772,15 @@ class OptimizationPluginUIMixin:
         )
         row += 1
 
-        # Stripped Ions (not sweepable, always fixed)
-        ttk.Label(self.driver_frame, text="Stripped Ions:").grid(
-            row=row, column=0, sticky="w", pady=2
+        # Stripped Ions (sweepable)
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_stripped_ions",
+            "Stripped Ions (charge state):",
+            "54.0",
+            width=15,
         )
-        self.driver_stripped_ions_var = tk.StringVar(value="54.0")
-        ttk.Entry(
-            self.driver_frame, textvariable=self.driver_stripped_ions_var, width=10
-        ).grid(row=row, column=1, sticky="w", pady=2, padx=5)
         row += 1
 
         # Info label

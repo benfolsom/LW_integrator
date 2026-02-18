@@ -34,7 +34,7 @@ class OptimizationConfig:
     mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
 
     # Optimization settings (only used when mode="optimization")
-    optimization_method: str = "genetic_algorithm"  # "genetic_algorithm", "differential_evolution", "nelder_mead", "multi_start", "adaptive_grid"
+    optimization_method: str = "differential_evolution"  # "differential_evolution", "genetic_algorithm", "multi_start", "adaptive_grid"
     optimization_maxiter: int = 50  # Max iterations/generations
     optimization_population_size: int = (
         20  # For genetic algorithm and differential evolution
@@ -89,6 +89,12 @@ class OptimizationConfig:
     macroparticle_charge_points: int = 1
     macroparticle_sigma_range: Optional[Tuple[float, float]] = None  # sigma multiplier
     macroparticle_sigma_points: int = 1
+    rider_stripped_ions_range: Optional[Tuple[float, float]] = None  # charge state
+    rider_stripped_ions_points: int = 1
+    driver_stripped_ions_range: Optional[Tuple[float, float]] = (
+        None  # charge state (BUNCH_TO_BUNCH)
+    )
+    driver_stripped_ions_points: int = 1
 
     # Fixed parameters
     wall_z: float = 100.0  # mm
@@ -124,7 +130,8 @@ class OptimizationConfig:
     m_particle: float = 0.00054857990907  # amu (electron mass)
     pcount: int = 1
     charge_sign: float = -1.0
-    stripped_ions: float = 1.0
+    stripped_ions: float = 1.0  # Rider stripped ions (charge state)
+    driver_stripped_ions: float = 54.0  # Driver stripped ions (for BUNCH_TO_BUNCH)
 
     # Macroparticle simulation options (CONDUCTING_WALL only)
     macroparticle_enabled: bool = False
@@ -226,8 +233,28 @@ class OptimizationConfig:
         m_particle_amu: float = 0.00054857990907,
         wall_z: float = None,
         start_z: float = 0.0,
+        driver_start_z: float = 1000.0,
     ) -> float:
-        """Calculate appropriate timestep for given energy based on strategy."""
+        """Calculate appropriate timestep for given energy based on strategy.
+
+        Parameters
+        ----------
+        energy_gev : float
+            Particle energy in GeV
+        m_particle_amu : float
+            Particle mass in amu
+        wall_z : float
+            Wall position in mm (for CONDUCTING_WALL/SWITCHING_WALL)
+        start_z : float
+            Rider starting position in mm
+        driver_start_z : float
+            Driver starting position in mm (for BUNCH_TO_BUNCH mode)
+
+        Returns
+        -------
+        float
+            Timestep in ns (proper time)
+        """
         if self.timestep_strategy == "fixed":
             return self.timestep
 
@@ -243,7 +270,15 @@ class OptimizationConfig:
             if wall_z is None:
                 wall_z = self.wall_z
 
-            total_distance = abs(wall_z - start_z) + self.target_distance_mm
+            # Calculate target distance based on simulation type
+            if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                # For BUNCH_TO_BUNCH: rider travels to driver_start + target_distance
+                # This ensures rider reaches interaction region with driver
+                total_distance = abs(driver_start_z - start_z) + self.target_distance_mm
+            else:
+                # For CONDUCTING_WALL/SWITCHING_WALL: travel to wall + target_distance
+                total_distance = abs(wall_z - start_z) + self.target_distance_mm
+
             c_mmns = 299.792458  # mm/ns
             h_calculated = total_distance / (self.steps * beta * c_mmns * gamma)
             return h_calculated

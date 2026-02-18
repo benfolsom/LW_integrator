@@ -207,8 +207,13 @@ def optimize_parameters(
     metric_name : str, optional
         Name of metric to optimize (default: 'max_energy_gain_gev')
     method : str, optional
-        Optimization method: 'differential_evolution', 'nelder_mead', 'powell', etc.
-        (default: 'differential_evolution')
+        Optimization method (default: 'differential_evolution')
+        Supported methods:
+        - 'differential_evolution': Global optimizer (robust, no initial guess needed)
+        - 'nelder_mead': Nelder-Mead simplex (local, requires initial guess)
+        - 'powell': Powell's method (local, derivative-free)
+        - 'cobyla': COBYLA (constrained optimization)
+        - 'slsqp': Sequential Least Squares Programming
     maximize : bool, optional
         If True, maximizes metric; if False, minimizes (default: True)
     maxiter : int, optional
@@ -284,11 +289,20 @@ def optimize_parameters(
             # Use midpoint of bounds
             x0 = [(b[0] + b[1]) / 2 for b in parameter_bounds]
 
+        # Map our lowercase names to scipy's expected format
+        method_map = {
+            "nelder_mead": "Nelder-Mead",
+            "powell": "Powell",
+            "cobyla": "COBYLA",
+            "slsqp": "SLSQP",
+        }
+        scipy_method = method_map.get(method, method)
+
         result = minimize(
             objective,
             x0=x0,
             bounds=parameter_bounds,
-            method=method,
+            method=scipy_method,
             options={"maxiter": maxiter, **optimizer_kwargs},
         )
     else:
@@ -298,9 +312,13 @@ def optimize_parameters(
     result.best_params_dict = dict(zip(parameter_names, result.x))
     result.objective_function = objective
 
-    logger.info(
-        f"Optimization complete. Best {metric_name}: {objective.best_value:.6f}"
-    )
+    # Log results - handle both ObjectiveFunction class and custom functions
+    if hasattr(objective, "best_value"):
+        logger.info(
+            f"Optimization complete. Best {metric_name}: {objective.best_value:.6f}"
+        )
+    else:
+        logger.info(f"Optimization complete. Best value: {result.fun:.6f}")
     logger.info(f"Best parameters: {result.best_params_dict}")
 
     return result

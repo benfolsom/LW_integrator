@@ -170,6 +170,22 @@ class OptimizationRunMixin:
                 param_names.append("wall_z")
                 param_bounds.append(self.config.wall_z_range)
 
+            # Rider stripped ions - if enabled as sweep parameter
+            if (
+                self.config.rider_stripped_ions_range is not None
+                and self.config.rider_stripped_ions_points > 1
+            ):
+                param_names.append("rider_stripped_ions")
+                param_bounds.append(self.config.rider_stripped_ions_range)
+
+            # Driver stripped ions - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_stripped_ions_range is not None
+                and self.config.driver_stripped_ions_points > 1
+            ):
+                param_names.append("driver_stripped_ions")
+                param_bounds.append(self.config.driver_stripped_ions_range)
+
             if len(param_names) == 0:
                 self._log_result(
                     "[ERROR] No parameters to optimize! Enable at least 2 points for aperture or energy."
@@ -265,6 +281,8 @@ class OptimizationRunMixin:
                         self.config.macroparticle_sigma_multiplier
                     )  # default
                     wall_z = self.config.wall_z  # default
+                    rider_stripped_ions = self.config.stripped_ions  # default
+                    driver_stripped_ions = self.config.driver_stripped_ions  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -285,9 +303,27 @@ class OptimizationRunMixin:
                             macroparticle_sigma_mult = x[i]
                         elif param_name == "wall_z":
                             wall_z = x[i]
+                        elif param_name == "rider_stripped_ions":
+                            rider_stripped_ions = x[i]
+                        elif param_name == "driver_stripped_ions":
+                            driver_stripped_ions = x[i]
 
                     # Calculate transverse offset in mm from fraction
                     transv_offset = offset_frac * aperture
+
+                    # Build driver_params if BUNCH_TO_BUNCH mode
+                    driver_params_dict = None
+                    if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                        driver_params_dict = {
+                            "m_particle": self.config.m_particle,  # Could make this sweepable
+                            "charge_sign": 1.0,  # Typically positive for ions
+                            "pcount": int(self.config.pcount),
+                            "transv_mom": self.config.transv_mom,
+                            "transv_dist": self.config.transv_dist,
+                            "starting_distance": 1000.0,  # Could make this sweepable
+                            "starting_Pz": -4925.0,  # Could make this sweepable
+                            "stripped_ions": driver_stripped_ions,
+                        }
 
                     # Calculate timestep if using auto_distance strategy
                     if self.config.timestep_strategy == "auto_distance":
@@ -322,9 +358,10 @@ class OptimizationRunMixin:
                                     rider_pcount=int(self.config.pcount),
                                     rider_transv_mom=self.config.transv_mom,
                                     rider_transv_dist=rider_transv_dist,
+                                    rider_stripped_ions=rider_stripped_ions,
                                     macroparticle_charge_multiplier=macroparticle_charge_mult,
                                     macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                                    driver_params=None,
+                                    driver_params=driver_params_dict,
                                     wall_z=wall_z,
                                     run_num=eval_num,
                                     cancel_flag=cancel_flag,
@@ -367,9 +404,10 @@ class OptimizationRunMixin:
                             rider_pcount=int(self.config.pcount),
                             rider_transv_mom=self.config.transv_mom,
                             rider_transv_dist=rider_transv_dist,
+                            rider_stripped_ions=rider_stripped_ions,
                             macroparticle_charge_multiplier=macroparticle_charge_mult,
                             macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                            driver_params=None,
+                            driver_params=driver_params_dict,
                             wall_z=wall_z,
                             run_num=eval_num,
                             cancel_flag=None,
@@ -1070,6 +1108,9 @@ class OptimizationRunMixin:
                 rider_transv_dist = params_dict.get(
                     "rider_transv_dist", self.config.transv_dist
                 )
+                rider_stripped_ions = params_dict.get(
+                    "rider_stripped_ions", self.config.stripped_ions
+                )
 
                 # Get macroparticle parameters (either from sweep or fixed values)
                 macroparticle_charge_multiplier = params_dict.get(
@@ -1127,7 +1168,9 @@ class OptimizationRunMixin:
                             "driver_starting_distance", 1000.0
                         ),
                         "starting_Pz": params_dict.get("driver_starting_Pz", -4925.0),
-                        "stripped_ions": float(self.driver_stripped_ions_var.get()),
+                        "stripped_ions": params_dict.get(
+                            "driver_stripped_ions", self.config.driver_stripped_ions
+                        ),
                     }
 
                 # Calculate transverse offset
@@ -1280,6 +1323,7 @@ class OptimizationRunMixin:
                                         rider_pcount=int(rider_pcount),
                                         rider_transv_mom=rider_transv_mom,
                                         rider_transv_dist=rider_transv_dist,
+                                        rider_stripped_ions=rider_stripped_ions,
                                         macroparticle_charge_multiplier=macroparticle_charge_multiplier,
                                         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
                                         driver_params=driver_params_dict,
@@ -1327,6 +1371,7 @@ class OptimizationRunMixin:
                                 rider_pcount=int(rider_pcount),
                                 rider_transv_mom=rider_transv_mom,
                                 rider_transv_dist=rider_transv_dist,
+                                rider_stripped_ions=rider_stripped_ions,
                                 macroparticle_charge_multiplier=macroparticle_charge_multiplier,
                                 macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
                                 driver_params=driver_params_dict,
@@ -1678,6 +1723,7 @@ class OptimizationRunMixin:
         rider_pcount: int = None,
         rider_transv_mom: float = None,
         rider_transv_dist: float = None,
+        rider_stripped_ions: float = None,
         macroparticle_charge_multiplier: float = None,
         macroparticle_sigma_multiplier: float = None,
         driver_params: Dict[str, Any] = None,
@@ -1729,6 +1775,11 @@ class OptimizationRunMixin:
             if macroparticle_sigma_multiplier is not None
             else self.config.macroparticle_sigma_multiplier
         )
+        rider_stripped_ions = (
+            rider_stripped_ions
+            if rider_stripped_ions is not None
+            else self.config.stripped_ions
+        )
 
         # Build rider params
         rider_params = {
@@ -1740,7 +1791,7 @@ class OptimizationRunMixin:
             "m_particle": rider_m_particle,
             "charge_sign": rider_charge_sign,
             "pcount": rider_pcount,
-            "stripped_ions": float(self.rider_stripped_ions_var.get()),
+            "stripped_ions": rider_stripped_ions,
             "starting_Pz": 0.0,
         }
 
