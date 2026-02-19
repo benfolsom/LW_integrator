@@ -34,7 +34,7 @@ class OptimizationConfig:
     mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
 
     # Optimization settings (only used when mode="optimization")
-    optimization_method: str = "genetic_algorithm"  # "genetic_algorithm", "differential_evolution", "nelder_mead", "multi_start", "adaptive_grid"
+    optimization_method: str = "differential_evolution"  # "differential_evolution", "genetic_algorithm", "multi_start", "adaptive_grid"
     optimization_maxiter: int = 50  # Max iterations/generations
     optimization_population_size: int = (
         20  # For genetic algorithm and differential evolution
@@ -89,6 +89,38 @@ class OptimizationConfig:
     macroparticle_charge_points: int = 1
     macroparticle_sigma_range: Optional[Tuple[float, float]] = None  # sigma multiplier
     macroparticle_sigma_points: int = 1
+    rider_stripped_ions_range: Optional[Tuple[float, float]] = None  # charge state
+    rider_stripped_ions_points: int = 1
+    driver_stripped_ions_range: Optional[Tuple[float, float]] = (
+        None  # charge state (BUNCH_TO_BUNCH)
+    )
+    driver_stripped_ions_points: int = 1
+    particle_count_range: Optional[Tuple[int, int]] = None  # rider pcount
+    particle_count_points: int = 1
+    driver_mass_range: Optional[Tuple[float, float]] = None  # amu (BUNCH_TO_BUNCH)
+    driver_mass_points: int = 1
+    driver_charge_sign_range: Optional[Tuple[float, float]] = None  # BUNCH_TO_BUNCH
+    driver_charge_sign_points: int = 1
+    driver_pcount_range: Optional[Tuple[int, int]] = None  # BUNCH_TO_BUNCH
+    driver_pcount_points: int = 1
+    driver_transv_mom_range: Optional[Tuple[float, float]] = (
+        None  # amu·mm/ns (BUNCH_TO_BUNCH)
+    )
+    driver_transv_mom_points: int = 1
+    driver_transv_dist_range: Optional[Tuple[float, float]] = (
+        None  # mm (BUNCH_TO_BUNCH)
+    )
+    driver_transv_dist_points: int = 1
+    driver_starting_distance_range: Optional[Tuple[float, float]] = (
+        None  # mm (BUNCH_TO_BUNCH)
+    )
+    driver_starting_distance_points: int = 1
+    driver_starting_Pz_range: Optional[Tuple[float, float]] = (
+        None  # amu·mm/ns (BUNCH_TO_BUNCH)
+    )
+    driver_starting_Pz_points: int = 1
+    driver_energy_range: Optional[Tuple[float, float]] = None  # GeV (BUNCH_TO_BUNCH)
+    driver_energy_points: int = 1
 
     # Fixed parameters
     wall_z: float = 100.0  # mm
@@ -113,12 +145,21 @@ class OptimizationConfig:
     # Fixed particle parameters (not swept)
     transv_mom: float = 1.2e-05  # amu·mm/ns
     transv_dist: float = 2e-06  # mm - transverse spread (half-width of distribution)
-    transv_offset_x: float = 0.0  # mm - x-offset of bunch center from axis
-    transv_offset_y: float = 0.0  # mm - y-offset of bunch center from axis
+    transv_offset_x: float = 0.0  # mm - rider x-offset of bunch center from axis
+    transv_offset_y: float = 0.0  # mm - rider y-offset of bunch center from axis
+    driver_transv_offset_x: float = (
+        0.0  # mm - driver x-offset of bunch center from axis
+    )
+    driver_transv_offset_y: float = (
+        0.0  # mm - driver y-offset of bunch center from axis
+    )
     m_particle: float = 0.00054857990907  # amu (electron mass)
     pcount: int = 1
     charge_sign: float = -1.0
-    stripped_ions: float = 1.0
+    stripped_ions: float = 1.0  # Rider stripped ions (charge state)
+    driver_stripped_ions: float = 54.0  # Driver stripped ions (for BUNCH_TO_BUNCH)
+    driver_starting_Pz: float = -4925.0  # Fixed driver Pz (amu·mm/ns)
+    driver_energy_gev: float = 112.5  # Fixed driver energy (GeV)
 
     # Macroparticle simulation options (CONDUCTING_WALL only)
     macroparticle_enabled: bool = False
@@ -174,6 +215,15 @@ class OptimizationConfig:
     self_consistency_chrono_high_precision: bool = False
     self_consistency_chrono_adaptive_tolerance: bool = False
 
+    # Gamma reconciliation parameters
+    self_consistency_gamma_reconciliation_method: str = "DISABLED"
+    self_consistency_gamma_reconciliation_low_beta_threshold: float = 0.9
+    self_consistency_gamma_reconciliation_high_beta_threshold: float = 0.99
+    self_consistency_gamma_reconciliation_low_beta_weight: float = 0.8
+    self_consistency_gamma_reconciliation_high_beta_weight: float = 0.2
+    self_consistency_gamma_reconciliation_mid_beta_weight: float = 0.5
+    self_consistency_gamma_reconciliation_fixed_weight: float = 0.5
+
     # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
     energy_monitor_threshold: float = 2.0
@@ -220,8 +270,28 @@ class OptimizationConfig:
         m_particle_amu: float = 0.00054857990907,
         wall_z: float = None,
         start_z: float = 0.0,
+        driver_start_z: float = 1000.0,
     ) -> float:
-        """Calculate appropriate timestep for given energy based on strategy."""
+        """Calculate appropriate timestep for given energy based on strategy.
+
+        Parameters
+        ----------
+        energy_gev : float
+            Particle energy in GeV
+        m_particle_amu : float
+            Particle mass in amu
+        wall_z : float
+            Wall position in mm (for CONDUCTING_WALL/SWITCHING_WALL)
+        start_z : float
+            Rider starting position in mm
+        driver_start_z : float
+            Driver starting position in mm (for BUNCH_TO_BUNCH mode)
+
+        Returns
+        -------
+        float
+            Timestep in ns (proper time)
+        """
         if self.timestep_strategy == "fixed":
             return self.timestep
 
@@ -237,7 +307,15 @@ class OptimizationConfig:
             if wall_z is None:
                 wall_z = self.wall_z
 
-            total_distance = abs(wall_z - start_z) + self.target_distance_mm
+            # Calculate target distance based on simulation type
+            if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                # For BUNCH_TO_BUNCH: rider travels to driver_start + target_distance
+                # This ensures rider reaches interaction region with driver
+                total_distance = abs(driver_start_z - start_z) + self.target_distance_mm
+            else:
+                # For CONDUCTING_WALL/SWITCHING_WALL: travel to wall + target_distance
+                total_distance = abs(wall_z - start_z) + self.target_distance_mm
+
             c_mmns = 299.792458  # mm/ns
             h_calculated = total_distance / (self.steps * beta * c_mmns * gamma)
             return h_calculated

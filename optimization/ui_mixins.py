@@ -473,13 +473,14 @@ class OptimizationPluginUIMixin:
         )
         row += 1
 
-        # Stripped Ions (not sweepable, always fixed)
-        ttk.Label(frame, text="Stripped Ions:").grid(
-            row=row, column=0, sticky="w", pady=2
-        )
-        self.rider_stripped_ions_var = tk.StringVar(value="1.0")
-        ttk.Entry(frame, textvariable=self.rider_stripped_ions_var, width=10).grid(
-            row=row, column=1, sticky="w", pady=2, padx=5
+        # Stripped Ions (sweepable)
+        self._add_sweepable_param(
+            frame,
+            row,
+            "rider_stripped_ions",
+            "Stripped Ions (charge state):",
+            "1.0",
+            width=15,
         )
         row += 1
 
@@ -771,14 +772,15 @@ class OptimizationPluginUIMixin:
         )
         row += 1
 
-        # Stripped Ions (not sweepable, always fixed)
-        ttk.Label(self.driver_frame, text="Stripped Ions:").grid(
-            row=row, column=0, sticky="w", pady=2
+        # Stripped Ions (sweepable)
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_stripped_ions",
+            "Stripped Ions (charge state):",
+            "54.0",
+            width=15,
         )
-        self.driver_stripped_ions_var = tk.StringVar(value="54.0")
-        ttk.Entry(
-            self.driver_frame, textvariable=self.driver_stripped_ions_var, width=10
-        ).grid(row=row, column=1, sticky="w", pady=2, padx=5)
         row += 1
 
         # Info label
@@ -981,17 +983,121 @@ class OptimizationPluginUIMixin:
         self._update_parameter_visibility()
 
     def _update_parameter_visibility(self):
-        """Update parameter field states based on simulation type."""
+        """Update parameter field states based on simulation type.
+
+        In BUNCH_TO_BUNCH mode:
+        - Grey out aperture radius (not used, no wall)
+        - Grey out wall position (not used, no wall)
+        - Grey out distance target (depends on number of steps, not distance)
+        - Enable transverse offset (absolute distance in mm)
+
+        In CONDUCTING_WALL/SWITCHING_WALL modes:
+        - Enable aperture radius
+        - Enable wall position
+        - Enable distance target
+        - Grey out transverse offset (not applicable)
+        """
         if not hasattr(self, "cavity_spacing_entry"):
             return
 
         sim_type = self.sim_type_var.get()
+        is_bunch_to_bunch = sim_type == "BUNCH_TO_BUNCH"
 
         # Grey out cavity_spacing unless SWITCHING_WALL mode
         if sim_type == "SWITCHING_WALL":
             self.cavity_spacing_entry.config(state="normal")
         else:
             self.cavity_spacing_entry.config(state="disabled")
+
+        # Handle parameter widgets if they exist
+        if not hasattr(self, "_param_widgets"):
+            return
+
+        # Aperture radius, wall position, and distance target are disabled in BUNCH_TO_BUNCH
+        conducting_wall_params_enabled = not is_bunch_to_bunch
+        entry_state = "normal" if conducting_wall_params_enabled else "disabled"
+        label_color = "black" if conducting_wall_params_enabled else "gray"
+
+        # Aperture radius controls
+        if "aperture_label" in self._param_widgets:
+            self._param_widgets["aperture_label"].configure(foreground=label_color)
+        # Recursively disable all children in aperture_frame
+        if "aperture_frame" in self._param_widgets:
+            self._set_frame_state(
+                self._param_widgets["aperture_frame"], entry_state, label_color
+            )
+
+        # Wall position controls
+        if "wall_z_label" in self._param_widgets:
+            self._param_widgets["wall_z_label"].configure(foreground=label_color)
+        # Recursively disable all children in wall_z frames
+        if "wall_z_fixed_frame" in self._param_widgets:
+            self._set_frame_state(
+                self._param_widgets["wall_z_fixed_frame"], entry_state, label_color
+            )
+        if "wall_z_sweep_frame" in self._param_widgets:
+            self._set_frame_state(
+                self._param_widgets["wall_z_sweep_frame"], entry_state, label_color
+            )
+
+        # Distance target controls
+        if "distance_label" in self._param_widgets:
+            self._param_widgets["distance_label"].configure(foreground=label_color)
+        if "distance_entry" in self._param_widgets:
+            self._param_widgets["distance_entry"].configure(state=entry_state)
+
+        # Rider transverse offset works in both modes (different meanings)
+        # BUNCH_TO_BUNCH: absolute distance in mm
+        # CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+        # Always enabled, labels stay black
+        if "offset_label" in self._param_widgets:
+            self._param_widgets["offset_label"].configure(foreground="black")
+        if "offset_desc_label" in self._param_widgets:
+            self._param_widgets["offset_desc_label"].configure(foreground="gray40")
+        if "offset_entry" in self._param_widgets:
+            self._param_widgets["offset_entry"].configure(state="normal")
+
+        # Driver transverse offset is ONLY used in BUNCH_TO_BUNCH mode
+        driver_offset_enabled = is_bunch_to_bunch
+        driver_offset_state = "normal" if driver_offset_enabled else "disabled"
+        driver_offset_color = "black" if driver_offset_enabled else "gray"
+
+        if "driver_offset_label" in self._param_widgets:
+            self._param_widgets["driver_offset_label"].configure(
+                foreground=driver_offset_color
+            )
+        if "driver_offset_desc_label" in self._param_widgets:
+            self._param_widgets["driver_offset_desc_label"].configure(
+                foreground="gray40" if driver_offset_enabled else "gray"
+            )
+        if "driver_offset_entry" in self._param_widgets:
+            self._param_widgets["driver_offset_entry"].configure(
+                state=driver_offset_state
+            )
+
+    def _set_frame_state(self, frame, entry_state, label_color):
+        """Recursively set state for all widgets in a frame.
+
+        Args:
+            frame: The frame widget containing children to update
+            entry_state: "normal" or "disabled" for entry widgets
+            label_color: "black" or "gray" for label foreground
+        """
+        for child in frame.winfo_children():
+            widget_type = child.winfo_class()
+            try:
+                if widget_type in ("TEntry", "Entry"):
+                    child.configure(state=entry_state)
+                elif widget_type in ("TCheckbutton", "Checkbutton"):
+                    child.configure(state=entry_state)
+                elif widget_type in ("TLabel", "Label"):
+                    child.configure(foreground=label_color)
+                elif widget_type in ("TFrame", "Frame"):
+                    # Recursively process nested frames
+                    self._set_frame_state(child, entry_state, label_color)
+            except Exception:
+                # Some widgets might not support these configurations
+                pass
 
     def _build_objective_section(self):
         """Build optimization objective selection section."""
@@ -1317,7 +1423,7 @@ class OptimizationPluginUIMixin:
 
         ttk.Button(
             helper_frame,
-            text="Load from Main GUI Config",
+            text="Load from Single Run Config",
             command=self._on_load_from_main_config,
         ).pack(side="left", padx=5)
 

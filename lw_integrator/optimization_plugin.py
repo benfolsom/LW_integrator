@@ -21,6 +21,38 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+# Physical constants
+C_MMNS = 299.792458  # Speed of light in mm/ns
+AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
+
+
+def calculate_starting_pz_from_energy(energy_gev: float, mass_amu: float) -> float:
+    """Calculate starting Pz from energy and mass.
+
+    Parameters
+    ----------
+    energy_gev : float
+        Total energy in GeV
+    mass_amu : float
+        Particle mass in amu
+
+    Returns
+    -------
+    float
+        Starting Pz in amu·mm/ns
+    """
+    rest_energy_mev = mass_amu * AMU_TO_MEV
+    gamma = (energy_gev * 1e3) / rest_energy_mev
+
+    if gamma < 1.0:
+        gamma = 1.0  # Non-relativistic limit
+
+    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
+    pz = gamma * mass_amu * C_MMNS * beta
+
+    return pz
+
+
 from core.constants import C_MMNS  # type: ignore[import]
 from core.debug_logger import set_logging_context  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
@@ -262,13 +294,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         frame.pack(fill="x", padx=10, pady=5)
         self.parameter_frame = frame
 
+        # Store parameter widgets for mode-based visibility control
+        self._param_widgets = {}
+
         # Add explanatory help text
         help_frame = ttk.Frame(frame)
         help_frame.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
         help_text = (
             "Coordinate system: Particles start at z-coordinate and travel toward the conducting wall.\n"
             "Example: Particle at z=0 travels to wall at z=2200 mm (distance = 2200 mm).\n"
-            "Transverse offset: Fraction of aperture radius (0.0 = on-axis, 1.0 = at aperture edge)."
+            "Transverse offset: BUNCH_TO_BUNCH mode uses absolute distance (mm), CONDUCTING_WALL uses fraction of aperture."
         )
         help_label = ttk.Label(
             help_frame, text=help_text, foreground="gray40", font=("TkDefaultFont", 8)
@@ -276,39 +311,44 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         help_label.pack(anchor="w")
 
         # Aperture range
-        ttk.Label(frame, text="Aperture Radius:").grid(
-            row=1, column=0, sticky="w", pady=2
+        self._param_widgets["aperture_label"] = ttk.Label(
+            frame, text="Aperture Radius:"
         )
-        aperture_frame = ttk.Frame(frame)
+        self._param_widgets["aperture_label"].grid(row=1, column=0, sticky="w", pady=2)
+        self._param_widgets["aperture_frame"] = ttk.Frame(frame)
+        aperture_frame = self._param_widgets["aperture_frame"]
         aperture_frame.grid(row=1, column=1, columnspan=3, sticky="ew", pady=2)
 
         ttk.Label(aperture_frame, text="Min (mm):").pack(side="left", padx=(0, 2))
         self.aperture_min_var = tk.StringVar(value="1e-5")
-        ttk.Entry(aperture_frame, textvariable=self.aperture_min_var, width=10).pack(
-            side="left", padx=2
+        self._param_widgets["aperture_min_entry"] = ttk.Entry(
+            aperture_frame, textvariable=self.aperture_min_var, width=10
         )
+        self._param_widgets["aperture_min_entry"].pack(side="left", padx=2)
 
         ttk.Label(aperture_frame, text="Max (mm):").pack(side="left", padx=(10, 2))
         self.aperture_max_var = tk.StringVar(value="1e-3")
-        ttk.Entry(aperture_frame, textvariable=self.aperture_max_var, width=10).pack(
-            side="left", padx=2
+        self._param_widgets["aperture_max_entry"] = ttk.Entry(
+            aperture_frame, textvariable=self.aperture_max_var, width=10
         )
+        self._param_widgets["aperture_max_entry"].pack(side="left", padx=2)
 
         ttk.Label(aperture_frame, text="Points:").pack(side="left", padx=(10, 2))
         self.aperture_points_var = tk.StringVar(value="10")
-        ttk.Entry(aperture_frame, textvariable=self.aperture_points_var, width=5).pack(
-            side="left", padx=2
+        self._param_widgets["aperture_points_entry"] = ttk.Entry(
+            aperture_frame, textvariable=self.aperture_points_var, width=5
         )
+        self._param_widgets["aperture_points_entry"].pack(side="left", padx=2)
 
         self.aperture_log_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        self._param_widgets["aperture_log_check"] = ttk.Checkbutton(
             aperture_frame, text="Log scale", variable=self.aperture_log_var
-        ).pack(side="left", padx=(10, 0))
+        )
+        self._param_widgets["aperture_log_check"].pack(side="left", padx=(10, 0))
 
         # Energy range
-        ttk.Label(frame, text="Particle Energy:").grid(
-            row=2, column=0, sticky="w", pady=2
-        )
+        self.energy_label = ttk.Label(frame, text="Particle Energy:")
+        self.energy_label.grid(row=2, column=0, sticky="w", pady=2)
         energy_frame = ttk.Frame(frame)
         energy_frame.grid(row=2, column=1, columnspan=3, sticky="ew", pady=2)
 
@@ -335,37 +375,96 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             energy_frame, text="Log scale", variable=self.energy_log_var
         ).pack(side="left", padx=(10, 0))
 
-        # Transverse offset fractions
-        ttk.Label(frame, text="Transverse Offset:").grid(
-            row=3, column=0, sticky="w", pady=2
+        # Helper text showing starting Pz for rider
+        self.rider_pz_helper_var = tk.StringVar(value="")
+        self.rider_pz_helper_label = ttk.Label(
+            frame,
+            textvariable=self.rider_pz_helper_var,
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
         )
-        ttk.Label(frame, text="Fractions of aperture (comma-separated):").grid(
-            row=3, column=1, sticky="w", pady=2
+        self.rider_pz_helper_label.grid(
+            row=3, column=1, columnspan=3, sticky="w", pady=(0, 5)
         )
-        self.offset_fractions_var = tk.StringVar(value="0.0")
-        ttk.Entry(frame, textvariable=self.offset_fractions_var, width=30).grid(
-            row=3, column=2, columnspan=2, sticky="ew", pady=2, padx=5
+
+        # Trace energy and mass changes to update Pz helper
+        self.energy_min_var.trace_add(
+            "write", lambda *_: self._update_rider_pz_helper()
+        )
+        self.energy_max_var.trace_add(
+            "write", lambda *_: self._update_rider_pz_helper()
+        )
+        # Note: rider mass trace is added in _build_rider_particle_section after widget creation
+
+        # Rider Transverse offset (x, y)
+        self._param_widgets["offset_label"] = ttk.Label(
+            frame, text="Rider Transverse Offset (x, y):"
+        )
+        self._param_widgets["offset_label"].grid(row=4, column=0, sticky="w", pady=2)
+        self.offset_fractions_var = tk.StringVar(value="0.0, 0.0")
+        self._param_widgets["offset_entry"] = ttk.Entry(
+            frame, textvariable=self.offset_fractions_var, width=15
+        )
+        self._param_widgets["offset_entry"].grid(
+            row=4, column=1, sticky="w", pady=2, padx=(0, 5)
+        )
+        self._param_widgets["offset_desc_label"] = ttk.Label(
+            frame,
+            text="mm (BUNCH_TO_BUNCH: absolute offset | CONDUCTING_WALL: fraction of aperture)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        )
+        self._param_widgets["offset_desc_label"].grid(
+            row=4, column=2, columnspan=2, sticky="w", pady=2
+        )
+
+        # Driver Transverse offset (x, y)
+        self._param_widgets["driver_offset_label"] = ttk.Label(
+            frame, text="Driver Transverse Offset (x, y):"
+        )
+        self._param_widgets["driver_offset_label"].grid(
+            row=5, column=0, sticky="w", pady=2
+        )
+        self.driver_offset_var = tk.StringVar(value="0.0, 0.0")
+        self._param_widgets["driver_offset_entry"] = ttk.Entry(
+            frame, textvariable=self.driver_offset_var, width=15
+        )
+        self._param_widgets["driver_offset_entry"].grid(
+            row=5, column=1, sticky="w", pady=2, padx=(0, 5)
+        )
+        self._param_widgets["driver_offset_desc_label"] = ttk.Label(
+            frame,
+            text="mm (BUNCH_TO_BUNCH only)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        )
+        self._param_widgets["driver_offset_desc_label"].grid(
+            row=5, column=2, columnspan=2, sticky="w", pady=2
         )
 
         # Starting z positions
-        ttk.Label(frame, text="Starting Positions:").grid(
-            row=4, column=0, sticky="w", pady=2
+        ttk.Label(frame, text="Starting z Positions (mm):").grid(
+            row=6, column=0, sticky="w", pady=2
         )
-        ttk.Label(frame, text="Particle z-coordinate (mm, comma-separated):").grid(
-            row=4, column=1, sticky="w", pady=2
-        )
-        self.start_z_var = tk.StringVar(value="0.0")
+        self.start_z_var = tk.StringVar(value="0.0, 1000.0")
         ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
-            row=4, column=2, columnspan=2, sticky="ew", pady=2, padx=5
+            row=6, column=1, columnspan=3, sticky="ew", pady=2
         )
+        ttk.Label(
+            frame,
+            text="mm (comma-separated for BUNCH_TO_BUNCH: rider, driver)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        ).grid(row=7, column=1, columnspan=3, sticky="w", pady=(0, 5))
+
         # Wall Position (sweepable)
-        ttk.Label(frame, text="Wall Position:").grid(
-            row=5, column=0, sticky="w", pady=2
-        )
+        self._param_widgets["wall_z_label"] = ttk.Label(frame, text="Wall Position:")
+        self._param_widgets["wall_z_label"].grid(row=8, column=0, sticky="w", pady=2)
 
         # Fixed value and sweep checkbox on same row
-        wall_z_fixed_frame = ttk.Frame(frame)
-        wall_z_fixed_frame.grid(row=5, column=1, columnspan=3, sticky="w", pady=2)
+        self._param_widgets["wall_z_fixed_frame"] = ttk.Frame(frame)
+        wall_z_fixed_frame = self._param_widgets["wall_z_fixed_frame"]
+        wall_z_fixed_frame.grid(row=8, column=1, columnspan=3, sticky="w", pady=2)
 
         self.wall_z_var = tk.StringVar(value="2200.0")
         self.wall_z_entry = ttk.Entry(
@@ -374,17 +473,19 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         self.wall_z_entry.pack(side="left", padx=(0, 10))
 
         self.wall_z_sweep_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self._param_widgets["wall_z_sweep_check"] = ttk.Checkbutton(
             wall_z_fixed_frame,
             text="Sweep",
             variable=self.wall_z_sweep_var,
             command=self._toggle_wall_z_sweep,
-        ).pack(side="left")
+        )
+        self._param_widgets["wall_z_sweep_check"].pack(side="left")
 
         # Sweep controls on new row for better visibility
-        wall_z_sweep_frame = ttk.Frame(frame)
+        self._param_widgets["wall_z_sweep_frame"] = ttk.Frame(frame)
+        wall_z_sweep_frame = self._param_widgets["wall_z_sweep_frame"]
         wall_z_sweep_frame.grid(
-            row=6, column=1, columnspan=3, sticky="w", pady=2, padx=(20, 0)
+            row=9, column=1, columnspan=3, sticky="w", pady=2, padx=(20, 0)
         )
 
         ttk.Label(wall_z_sweep_frame, text="Min:").pack(side="left", padx=(0, 2))
@@ -426,37 +527,47 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         # Initially disable sweep controls
         self._toggle_wall_z_sweep()
 
-        # Cavity Spacing (for SWITCHING_WALL)
-        ttk.Label(frame, text="Cavity Spacing:").grid(
-            row=7, column=0, sticky="w", pady=2
+        # Cavity Spacing (for SWITCHING_WALL) - moved to row 10
+        self._param_widgets["cavity_spacing_label"] = ttk.Label(
+            frame, text="Cavity Spacing:"
         )
-        ttk.Label(frame, text="SWITCHING_WALL only (mm):").grid(
-            row=7, column=1, sticky="w", pady=2
+        self._param_widgets["cavity_spacing_label"].grid(
+            row=10, column=0, sticky="w", pady=2
         )
         self.cavity_spacing_var = tk.StringVar(value="1e5")
         self.cavity_spacing_entry = ttk.Entry(
-            frame, textvariable=self.cavity_spacing_var, width=10
+            frame, textvariable=self.cavity_spacing_var, width=15
         )
-        self.cavity_spacing_entry.grid(row=7, column=2, sticky="w", pady=2, padx=5)
+        self.cavity_spacing_entry.grid(
+            row=10, column=1, sticky="w", pady=2, padx=(0, 5)
+        )
+        self._param_widgets["cavity_spacing_desc_label"] = ttk.Label(
+            frame,
+            text="mm (SWITCHING_WALL only)",
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+        )
+        self._param_widgets["cavity_spacing_desc_label"].grid(
+            row=10, column=2, columnspan=2, sticky="w", pady=2
+        )
 
         # Timestep Auto-Calculation (always uses auto_distance strategy)
         timestep_label = ttk.Label(frame, text="Timestep Calculation:")
-        timestep_label.grid(row=8, column=0, sticky="w", pady=2)
+        timestep_label.grid(row=11, column=0, sticky="w", pady=2)
 
-        # Add tooltip for explanatory note
-        self._add_tooltip(
-            timestep_label,
-            "All runs travel to wall_z + target distance regardless of energy.\n"
-            "This ensures consistent trajectory length across different energies.",
-        )
+        # Store label for dynamic tooltip update
+        self.timestep_calc_label = timestep_label
+
+        # Initial tooltip - will be updated based on sim type
+        self._update_timestep_tooltip()
 
         timestep_frame = ttk.Frame(frame)
-        timestep_frame.grid(row=8, column=1, columnspan=3, sticky="ew", pady=2)
+        timestep_frame.grid(row=11, column=1, columnspan=3, sticky="ew", pady=2)
 
         self.timestep_mode_var = tk.StringVar(value="duration")
         ttk.Radiobutton(
             timestep_frame,
-            text="Auto-calc duration, provide count:",
+            text="Auto-calc step duration, provide count:",
             variable=self.timestep_mode_var,
             value="duration",
             command=self._toggle_timestep_mode,
@@ -471,7 +582,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         ttk.Radiobutton(
             timestep_frame,
-            text="Auto-calc count, provide duration:",
+            text="Auto-calc count, provide step duration:",
             variable=self.timestep_mode_var,
             value="count",
             command=self._toggle_timestep_mode,
@@ -485,19 +596,29 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         ttk.Label(timestep_frame, text="ns (proper time)").pack(side="left", padx=2)
 
         # Distance target
-        ttk.Label(frame, text="Distance Target:").grid(
-            row=9, column=0, sticky="w", pady=2
+        self._param_widgets["distance_label"] = ttk.Label(
+            frame, text="Distance Target:"
         )
-        distance_frame = ttk.Frame(frame)
-        distance_frame.grid(row=9, column=1, columnspan=3, sticky="ew", pady=2)
-        ttk.Label(distance_frame, text="Target: wall +").pack(side="left", padx=(0, 2))
+        self._param_widgets["distance_label"].grid(row=12, column=0, sticky="w", pady=2)
+        self._param_widgets["distance_frame"] = ttk.Frame(frame)
+        distance_frame = self._param_widgets["distance_frame"]
+        distance_frame.grid(row=12, column=1, columnspan=3, sticky="ew", pady=2)
+
+        # Dynamic label that changes based on sim type
+        self.distance_target_prefix_label = ttk.Label(distance_frame, text="Target:")
+        self.distance_target_prefix_label.pack(side="left", padx=(0, 2))
+
         self.auto_steps_distance_var = tk.StringVar(value="10.0")
-        ttk.Entry(
+        self._param_widgets["distance_entry"] = ttk.Entry(
             distance_frame, textvariable=self.auto_steps_distance_var, width=6
-        ).pack(side="left", padx=2)
-        ttk.Label(distance_frame, text="mm (min 5% of steps enforced)").pack(
-            side="left", padx=2
         )
+        self._param_widgets["distance_entry"].pack(side="left", padx=2)
+
+        # Dynamic suffix label
+        self.distance_target_suffix_label = ttk.Label(
+            distance_frame, text="mm past wall (min 5% of driver position for B2B)"
+        )
+        self.distance_target_suffix_label.pack(side="left", padx=2)
 
         # Note about trajectory and output configuration
         config_note = ttk.Label(
@@ -507,12 +628,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             foreground="blue",
             justify="left",
         )
-        config_note.grid(row=10, column=0, columnspan=4, sticky="w", pady=(10, 10))
+        config_note.grid(row=13, column=0, columnspan=4, sticky="w", pady=(10, 10))
 
         frame.columnconfigure(2, weight=1)
 
         # Initialize timestep mode state
         self._toggle_timestep_mode()
+
+        # Initialize parameter visibility based on simulation type
+        self._update_parameter_visibility()
 
     def _build_particle_section(self):
         """Build rider and driver particle parameters sections with optional sweeping."""
@@ -546,6 +670,11 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             width=15,
         )
         row += 1
+
+        # Add trace for rider mass to update Pz helper
+        self.sweep_params["rider_m_particle"]["fixed_var"].trace_add(
+            "write", lambda *_: self._update_rider_pz_helper()
+        )
 
         # Charge Sign
         self._add_sweepable_param(
@@ -581,13 +710,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         )
         row += 1
 
-        # Stripped Ions (not sweepable, always fixed)
-        ttk.Label(frame, text="Stripped Ions:").grid(
-            row=row, column=0, sticky="w", pady=2
-        )
-        self.rider_stripped_ions_var = tk.StringVar(value="1.0")
-        ttk.Entry(frame, textvariable=self.rider_stripped_ions_var, width=10).grid(
-            row=row, column=1, sticky="w", pady=2, padx=5
+        # Stripped Ions (sweepable)
+        self._add_sweepable_param(
+            frame, row, "rider_stripped_ions", "Stripped Ions:", "1.0", width=10
         )
         row += 1
 
@@ -868,25 +993,53 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         )
         row += 1
 
-        # Starting Pz (driver-specific)
+        # Driver Energy (replaces Starting Pz)
         self._add_sweepable_param(
             self.driver_frame,
             row,
-            "driver_starting_Pz",
-            "Starting Pz (amu·mm/ns):",
-            "-4925.0",
+            "driver_energy_gev",
+            "Energy (GeV):",
+            "112.5",
             width=15,
         )
         row += 1
 
-        # Stripped Ions (not sweepable, always fixed)
-        ttk.Label(self.driver_frame, text="Stripped Ions:").grid(
-            row=row, column=0, sticky="w", pady=2
+        # Helper text showing calculated starting Pz for driver
+        self.driver_pz_helper_var = tk.StringVar(value="")
+        self.driver_pz_helper_label = ttk.Label(
+            self.driver_frame,
+            textvariable=self.driver_pz_helper_var,
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
         )
-        self.driver_stripped_ions_var = tk.StringVar(value="54.0")
-        ttk.Entry(
-            self.driver_frame, textvariable=self.driver_stripped_ions_var, width=10
-        ).grid(row=row, column=1, sticky="w", pady=2, padx=5)
+        self.driver_pz_helper_label.grid(
+            row=row, column=0, columnspan=4, sticky="w", pady=(0, 5), padx=(20, 0)
+        )
+        row += 1
+
+        # Trace driver energy and mass changes to update Pz helper
+        self.sweep_params["driver_energy_gev"]["fixed_var"].trace_add(
+            "write", lambda *_: self._update_driver_pz_helper()
+        )
+        self.sweep_params["driver_energy_gev"]["min_var"].trace_add(
+            "write", lambda *_: self._update_driver_pz_helper()
+        )
+        self.sweep_params["driver_energy_gev"]["max_var"].trace_add(
+            "write", lambda *_: self._update_driver_pz_helper()
+        )
+        self.sweep_params["driver_m_particle"]["fixed_var"].trace_add(
+            "write", lambda *_: self._update_driver_pz_helper()
+        )
+
+        # Stripped Ions (sweepable)
+        self._add_sweepable_param(
+            self.driver_frame,
+            row,
+            "driver_stripped_ions",
+            "Stripped Ions:",
+            "54.0",
+            width=10,
+        )
         row += 1
 
         # Info label
@@ -969,6 +1122,65 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             controls["range_frame"].grid_remove()
             controls["fixed_entry"].config(state="normal")
 
+    def _update_rider_pz_helper(self):
+        """Update helper text showing rider starting Pz calculated from energy."""
+        try:
+            # Get rider mass
+            mass_str = self.sweep_params["rider_m_particle"]["fixed_var"].get()
+            mass_amu = float(mass_str) if mass_str else 0.00054857990907
+
+            # Get energy range
+            energy_min = float(self.energy_min_var.get())
+            energy_max = float(self.energy_max_var.get())
+
+            # Calculate Pz values
+            pz_min = calculate_starting_pz_from_energy(energy_min, mass_amu)
+            pz_max = calculate_starting_pz_from_energy(energy_max, mass_amu)
+
+            # Update helper text
+            self.rider_pz_helper_var.set(
+                f"→ Starting Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu·mm/ns"
+            )
+        except (ValueError, ZeroDivisionError):
+            self.rider_pz_helper_var.set("")
+
+    def _update_driver_pz_helper(self):
+        """Update helper text showing driver starting Pz calculated from energy."""
+        try:
+            # Get driver mass
+            mass_str = self.sweep_params["driver_m_particle"]["fixed_var"].get()
+            mass_amu = float(mass_str) if mass_str else 207.2
+
+            # Check if energy is being swept
+            if self.sweep_params["driver_energy_gev"]["sweep_var"].get():
+                energy_min = float(
+                    self.sweep_params["driver_energy_gev"]["min_var"].get()
+                )
+                energy_max = float(
+                    self.sweep_params["driver_energy_gev"]["max_var"].get()
+                )
+                pz_min = calculate_starting_pz_from_energy(energy_min, mass_amu)
+                pz_max = calculate_starting_pz_from_energy(energy_max, mass_amu)
+                self.driver_pz_helper_var.set(
+                    f"→ Starting Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu·mm/ns"
+                )
+            else:
+                energy_gev = float(
+                    self.sweep_params["driver_energy_gev"]["fixed_var"].get()
+                )
+                pz = calculate_starting_pz_from_energy(energy_gev, mass_amu)
+                self.driver_pz_helper_var.set(f"→ Starting Pz = {pz:.2f} amu·mm/ns")
+        except (ValueError, ZeroDivisionError):
+            self.driver_pz_helper_var.set("")
+
+    def _update_energy_label(self):
+        """Update energy label to clarify it's rider-only in BUNCH_TO_BUNCH mode."""
+        sim_type = self.sim_type_var.get()
+        if sim_type == "BUNCH_TO_BUNCH":
+            self.energy_label.config(text="Rider Particle Energy:")
+        else:
+            self.energy_label.config(text="Particle Energy:")
+
     def _toggle_wall_z_sweep(self):
         """Toggle wall_z sweep controls."""
         if self.wall_z_sweep_var.get():
@@ -1007,13 +1219,21 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 pady=5,
                 after=self.driver_frame.master.winfo_children()[2],
             )
+            self._update_driver_pz_helper()
         else:
             self.driver_frame.pack_forget()
+
+        # Update energy label
+        self._update_energy_label()
+
+        # Update rider Pz helper
+        self._update_rider_pz_helper()
 
     def _on_sim_type_changed(self):
         """Handle simulation type change."""
         self._update_driver_visibility()
         self._update_macroparticle_state()
+        self._update_parameter_visibility()
 
         # Sync simulation type to main GUI
         if self.gui_controller and hasattr(self.gui_controller, "sim_type_var"):
@@ -1103,18 +1323,137 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             child.configure(state=widget_state)
         self._update_parameter_visibility()
 
+    def _set_frame_state(self, frame, state):
+        """Recursively set state for all widgets in a frame.
+
+        Args:
+            frame: The frame widget containing children to update
+            state: "normal" or "disabled"
+        """
+        if frame is None:
+            return
+
+        label_color = "black" if state == "normal" else "gray"
+
+        for child in frame.winfo_children():
+            widget_type = child.winfo_class()
+            try:
+                if widget_type in ("TEntry", "Entry"):
+                    child.configure(state=state)
+                elif widget_type in ("TCheckbutton", "Checkbutton"):
+                    child.configure(state=state)
+                elif widget_type in ("TLabel", "Label"):
+                    child.configure(foreground=label_color)
+                elif widget_type in ("TFrame", "Frame"):
+                    # Recursively process nested frames
+                    self._set_frame_state(child, state)
+            except Exception:
+                # Some widgets might not support these configurations
+                pass
+
     def _update_parameter_visibility(self):
         """Update parameter field states based on simulation type."""
         if not hasattr(self, "cavity_spacing_entry"):
             return
 
         sim_type = self.sim_type_var.get()
+        is_bunch_to_bunch = sim_type == "BUNCH_TO_BUNCH"
 
         # Grey out cavity_spacing unless SWITCHING_WALL mode
         if sim_type == "SWITCHING_WALL":
             self.cavity_spacing_entry.config(state="normal")
+            if "cavity_spacing_label" in self._param_widgets:
+                self._param_widgets["cavity_spacing_label"].config(foreground="black")
+            if "cavity_spacing_desc_label" in self._param_widgets:
+                self._param_widgets["cavity_spacing_desc_label"].config(
+                    foreground="gray40"
+                )
         else:
             self.cavity_spacing_entry.config(state="disabled")
+            if "cavity_spacing_label" in self._param_widgets:
+                self._param_widgets["cavity_spacing_label"].config(foreground="gray")
+            if "cavity_spacing_desc_label" in self._param_widgets:
+                self._param_widgets["cavity_spacing_desc_label"].config(
+                    foreground="gray"
+                )
+
+        # Grey out aperture radius and wall position in BUNCH_TO_BUNCH mode
+        if is_bunch_to_bunch:
+            # Disable aperture widgets
+            self._set_frame_state(self._param_widgets.get("aperture_frame"), "disabled")
+            if "aperture_label" in self._param_widgets:
+                self._param_widgets["aperture_label"].config(foreground="gray")
+
+            # Disable wall_z widgets
+            self._set_frame_state(
+                self._param_widgets.get("wall_z_fixed_frame"), "disabled"
+            )
+            self._set_frame_state(
+                self._param_widgets.get("wall_z_sweep_frame"), "disabled"
+            )
+            if "wall_z_label" in self._param_widgets:
+                self._param_widgets["wall_z_label"].config(foreground="gray")
+        else:
+            # Enable aperture widgets
+            self._set_frame_state(self._param_widgets.get("aperture_frame"), "normal")
+            if "aperture_label" in self._param_widgets:
+                self._param_widgets["aperture_label"].config(foreground="black")
+
+            # Enable wall_z widgets (but sweep controls depend on sweep checkbox)
+            self._set_frame_state(
+                self._param_widgets.get("wall_z_fixed_frame"), "normal"
+            )
+            if "wall_z_label" in self._param_widgets:
+                self._param_widgets["wall_z_label"].config(foreground="black")
+            # Re-apply sweep control state
+            self._toggle_wall_z_sweep()
+
+        # Update dynamic help text based on simulation type
+        self._update_timestep_tooltip()
+        self._update_distance_target_labels()
+
+    def _update_timestep_tooltip(self):
+        """Update timestep calculation tooltip based on simulation type."""
+        if not hasattr(self, "timestep_calc_label"):
+            return
+
+        sim_type = self.sim_type_var.get()
+
+        if sim_type == "BUNCH_TO_BUNCH":
+            tooltip_text = (
+                "BUNCH_TO_BUNCH Mode:\n"
+                "• Rider travels to: driver_start_position + distance_target\n"
+                "• This ensures rider reaches and passes driver interaction point\n"
+                "• Step duration auto-calculated to reach target in specified steps\n"
+                "• Or step count auto-calculated for specified duration"
+            )
+        else:  # CONDUCTING_WALL or SWITCHING_WALL
+            tooltip_text = (
+                "CONDUCTING_WALL / SWITCHING_WALL Mode:\n"
+                "• Particle travels to: wall_z + distance_target\n"
+                "• Ensures consistent trajectory length across energies\n"
+                "• Step duration auto-calculated to reach target in specified steps\n"
+                "• Or step count auto-calculated for specified duration"
+            )
+
+        # Remove old tooltip and add new one
+        self._add_tooltip(self.timestep_calc_label, tooltip_text)
+
+    def _update_distance_target_labels(self):
+        """Update distance target label text based on simulation type."""
+        if not hasattr(self, "distance_target_prefix_label"):
+            return
+
+        sim_type = self.sim_type_var.get()
+
+        if sim_type == "BUNCH_TO_BUNCH":
+            self.distance_target_prefix_label.config(text="Extra distance:")
+            self.distance_target_suffix_label.config(text="mm past driver_start")
+        else:  # CONDUCTING_WALL or SWITCHING_WALL
+            self.distance_target_prefix_label.config(text="Target: wall +")
+            self.distance_target_suffix_label.config(
+                text="mm (min 5% of steps enforced)"
+            )
 
     def _build_objective_section(self):
         """Build optimization objective selection section."""
@@ -1152,14 +1491,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             row=0, column=0, sticky="w", pady=2
         )
 
-        self.optimization_method_var = tk.StringVar(value="genetic_algorithm")
+        self.optimization_method_var = tk.StringVar(value="differential_evolution")
         method_combo = ttk.Combobox(
             self.optimization_frame,
             textvariable=self.optimization_method_var,
             values=[
-                "genetic_algorithm",
                 "differential_evolution",
-                "nelder_mead",
+                "genetic_algorithm",
                 "multi_start",
                 "adaptive_grid",
             ],
@@ -1173,16 +1511,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         # Method descriptions
         method_descriptions = {
+            "differential_evolution": "⭐ RECOMMENDED: Global optimizer, robust to noise, best overall choice",
             "genetic_algorithm": "Evolutionary approach with selection, crossover, and mutation (robust, parallelizable)",
-            "differential_evolution": "Global optimizer using vector differences (robust for rugged landscapes)",
-            "nelder_mead": "Local simplex method (fast convergence, may find local optima)",
             "multi_start": "Multiple random starting points with local optimization (finds global optima)",
-            "adaptive_grid": "Coarse-to-fine grid refinement (systematic, interpretable)",
+            "adaptive_grid": "Coarse-to-fine grid refinement (systematic exploration, creates heatmaps)",
         }
 
         self.method_desc_label = ttk.Label(
             self.optimization_frame,
-            text=method_descriptions["genetic_algorithm"],
+            text=method_descriptions["differential_evolution"],
             foreground="gray40",
             font=("TkDefaultFont", 8),
             wraplength=500,
@@ -1394,28 +1731,31 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         # Update description
         method_descriptions = {
+            "differential_evolution": "⭐ RECOMMENDED: Global optimizer, robust to noise, best overall choice",
             "genetic_algorithm": "Evolutionary approach with selection, crossover, and mutation (robust, parallelizable)",
-            "differential_evolution": "Global optimizer using vector differences (robust for rugged landscapes)",
-            "nelder_mead": "Local simplex method (fast convergence, may find local optima)",
             "multi_start": "Multiple random starting points with local optimization (finds global optima)",
-            "adaptive_grid": "Coarse-to-fine grid refinement (systematic, interpretable)",
+            "adaptive_grid": "Coarse-to-fine grid refinement (systematic exploration, creates heatmaps)",
         }
         self.method_desc_label.config(text=method_descriptions.get(method, ""))
 
         # Show/hide method-specific controls
         if method == "genetic_algorithm":
+            # Show GA-specific controls (mutation, crossover)
             self.ga_frame.grid()
             self.multistart_frame.grid_forget()
             self.popsize_entry.config(state="normal")
         elif method == "differential_evolution":
+            # Hide GA-specific controls, but enable population size
             self.ga_frame.grid_forget()
             self.multistart_frame.grid_forget()
             self.popsize_entry.config(state="normal")
         elif method == "multi_start":
+            # Show multi-start controls, disable population size
             self.ga_frame.grid_forget()
             self.multistart_frame.grid()
             self.popsize_entry.config(state="disabled")
-        else:  # nelder_mead, adaptive_grid
+        else:  # adaptive_grid
+            # Hide all method-specific controls
             self.ga_frame.grid_forget()
             self.multistart_frame.grid_forget()
             self.popsize_entry.config(state="disabled")
@@ -1440,7 +1780,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         ttk.Button(
             helper_frame,
-            text="Load from Main GUI Config",
+            text="Load from Single Run Config",
             command=self._on_load_from_main_config,
         ).pack(side="left", padx=5)
 
@@ -1915,11 +2255,63 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     config.adaptive_timestep_debug
                 )
 
+            # Gamma reconciliation settings
+            if hasattr(
+                self.gui_controller, "self_consistency_gamma_reconciliation_method_var"
+            ):
+                self.gui_controller.self_consistency_gamma_reconciliation_method_var.set(
+                    config.self_consistency_gamma_reconciliation_method
+                )
+            if hasattr(
+                self.gui_controller,
+                "self_consistency_gamma_reconciliation_low_beta_threshold_var",
+            ):
+                self.gui_controller.self_consistency_gamma_reconciliation_low_beta_threshold_var.set(
+                    f"{config.self_consistency_gamma_reconciliation_low_beta_threshold:.2f}"
+                )
+            if hasattr(
+                self.gui_controller,
+                "self_consistency_gamma_reconciliation_high_beta_threshold_var",
+            ):
+                self.gui_controller.self_consistency_gamma_reconciliation_high_beta_threshold_var.set(
+                    f"{config.self_consistency_gamma_reconciliation_high_beta_threshold:.2f}"
+                )
+            if hasattr(
+                self.gui_controller,
+                "self_consistency_gamma_reconciliation_low_beta_weight_var",
+            ):
+                self.gui_controller.self_consistency_gamma_reconciliation_low_beta_weight_var.set(
+                    f"{config.self_consistency_gamma_reconciliation_low_beta_weight:.2f}"
+                )
+            if hasattr(
+                self.gui_controller,
+                "self_consistency_gamma_reconciliation_high_beta_weight_var",
+            ):
+                self.gui_controller.self_consistency_gamma_reconciliation_high_beta_weight_var.set(
+                    f"{config.self_consistency_gamma_reconciliation_high_beta_weight:.2f}"
+                )
+            if hasattr(
+                self.gui_controller,
+                "self_consistency_gamma_reconciliation_mid_beta_weight_var",
+            ):
+                self.gui_controller.self_consistency_gamma_reconciliation_mid_beta_weight_var.set(
+                    f"{config.self_consistency_gamma_reconciliation_mid_beta_weight:.2f}"
+                )
+            if hasattr(
+                self.gui_controller,
+                "self_consistency_gamma_reconciliation_fixed_weight_var",
+            ):
+                self.gui_controller.self_consistency_gamma_reconciliation_fixed_weight_var.set(
+                    f"{config.self_consistency_gamma_reconciliation_fixed_weight:.2f}"
+                )
+
             # Toggle controls to match loaded state
             if hasattr(self.gui_controller, "_toggle_self_consistency_controls"):
                 self.gui_controller._toggle_self_consistency_controls()
             if hasattr(self.gui_controller, "_toggle_adaptive_timestep_controls"):
                 self.gui_controller._toggle_adaptive_timestep_controls()
+            if hasattr(self.gui_controller, "_toggle_gamma_reconciliation_params"):
+                self.gui_controller._toggle_gamma_reconciliation_params()
 
             self._log_result(
                 "[OK] Stability settings synced to main GUI's Stability tab"
@@ -1999,11 +2391,19 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             if energy_min <= 0:
                 return "Energy min must be positive"
 
-            # Points
+            # Points - only validate if in sweep mode (optimization can have 1 point for fixed params)
             aperture_points = int(self.aperture_points_var.get())
             energy_points = int(self.energy_points_var.get())
-            if aperture_points < 2 or energy_points < 2:
-                return "Must have at least 2 points per parameter"
+            mode = self.mode_var.get()
+
+            if mode == "blind_sweep":
+                # Sweep mode requires at least 2 points for main parameters
+                if aperture_points < 2 or energy_points < 2:
+                    return "Sweep mode: Must have at least 2 points per parameter"
+            else:
+                # Optimization mode allows 1 point (fixed) for any parameter
+                if aperture_points < 1 or energy_points < 1:
+                    return "Must have at least 1 point per parameter"
 
             # Lists
             self._parse_list_field(self.offset_fractions_var.get())
@@ -2041,9 +2441,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         return f"{param_name}: Particle count must be at least 1"
 
             # Stripped ions (always fixed)
-            rider_stripped = float(self.rider_stripped_ions_var.get())
+            rider_stripped = float(
+                self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
+            )
             if self.sim_type_var.get() == "BUNCH_TO_BUNCH":
-                driver_stripped = float(self.driver_stripped_ions_var.get())
+                driver_stripped = float(
+                    self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
+                )
 
             return None
         except ValueError as e:
@@ -2093,6 +2497,23 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             return value
         return default_value
 
+    def _parse_offset_pair(self, offset_str: str) -> tuple:
+        """Parse x,y offset pair from string like '0.0, 0.0'.
+
+        Returns (x, y) tuple. Defaults to (0.0, 0.0) if parsing fails.
+        """
+        try:
+            values = [float(x.strip()) for x in offset_str.split(",")]
+            if len(values) >= 2:
+                return (values[0], values[1])
+            elif len(values) == 1:
+                # Single value - use for x, set y=0
+                return (values[0], 0.0)
+            else:
+                return (0.0, 0.0)
+        except (ValueError, AttributeError):
+            return (0.0, 0.0)
+
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
         # Stability settings are read from main GUI if available, otherwise from existing config
@@ -2139,7 +2560,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 float(self.aperture_min_var.get()),
                 float(self.aperture_max_var.get()),
             ),
-            aperture_points=int(self.aperture_points_var.get()),
+            # Force aperture_points=1 for BUNCH_TO_BUNCH (aperture not applicable)
+            aperture_points=(
+                1
+                if SimulationType[self.sim_type_var.get()]
+                == SimulationType.BUNCH_TO_BUNCH
+                else int(self.aperture_points_var.get())
+            ),
             aperture_log_scale=self.aperture_log_var.get(),
             energy_range=(
                 float(self.energy_min_var.get()),
@@ -2186,6 +2613,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             transv_dist=float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
+            # Parse rider transverse offset (x, y)
+            transv_offset_x=self._parse_offset_pair(self.offset_fractions_var.get())[0],
+            transv_offset_y=self._parse_offset_pair(self.offset_fractions_var.get())[1],
+            # Parse driver transverse offset (x, y)
+            driver_transv_offset_x=self._parse_offset_pair(
+                self.driver_offset_var.get()
+            )[0],
+            driver_transv_offset_y=self._parse_offset_pair(
+                self.driver_offset_var.get()
+            )[1],
             macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
             macroparticle_charge_multiplier=float(
                 self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].get()
@@ -2201,7 +2638,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             charge_sign=float(
                 self.sweep_params["rider_charge_sign"]["fixed_var"].get()
             ),
-            stripped_ions=float(self.rider_stripped_ions_var.get()),
+            stripped_ions=float(
+                self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
+            ),
+            driver_stripped_ions=float(
+                self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
+            ),
             # Trajectory saving options
             save_top_n_trajectories=bool(self.save_top_n_traj_var.get()),
             save_all_trajectories=bool(self.save_all_traj_var.get()),
@@ -2349,6 +2791,63 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "adaptive_timestep_debug_var",
                 existing_config.adaptive_timestep_debug if existing_config else False,
             ),
+            # Gamma reconciliation parameters
+            self_consistency_gamma_reconciliation_method=self._get_gui_stability_setting(
+                "self_consistency_gamma_reconciliation_method_var",
+                (
+                    existing_config.self_consistency_gamma_reconciliation_method
+                    if existing_config
+                    else "DISABLED"
+                ),
+            ),
+            self_consistency_gamma_reconciliation_low_beta_threshold=self._get_gui_stability_setting(
+                "self_consistency_gamma_reconciliation_low_beta_threshold_var",
+                (
+                    existing_config.self_consistency_gamma_reconciliation_low_beta_threshold
+                    if existing_config
+                    else 0.9
+                ),
+            ),
+            self_consistency_gamma_reconciliation_high_beta_threshold=self._get_gui_stability_setting(
+                "self_consistency_gamma_reconciliation_high_beta_threshold_var",
+                (
+                    existing_config.self_consistency_gamma_reconciliation_high_beta_threshold
+                    if existing_config
+                    else 0.99
+                ),
+            ),
+            self_consistency_gamma_reconciliation_low_beta_weight=self._get_gui_stability_setting(
+                "self_consistency_gamma_reconciliation_low_beta_weight_var",
+                (
+                    existing_config.self_consistency_gamma_reconciliation_low_beta_weight
+                    if existing_config
+                    else 0.8
+                ),
+            ),
+            self_consistency_gamma_reconciliation_high_beta_weight=self._get_gui_stability_setting(
+                "self_consistency_gamma_reconciliation_high_beta_weight_var",
+                (
+                    existing_config.self_consistency_gamma_reconciliation_high_beta_weight
+                    if existing_config
+                    else 0.2
+                ),
+            ),
+            self_consistency_gamma_reconciliation_mid_beta_weight=self._get_gui_stability_setting(
+                "self_consistency_gamma_reconciliation_mid_beta_weight_var",
+                (
+                    existing_config.self_consistency_gamma_reconciliation_mid_beta_weight
+                    if existing_config
+                    else 0.5
+                ),
+            ),
+            self_consistency_gamma_reconciliation_fixed_weight=self._get_gui_stability_setting(
+                "self_consistency_gamma_reconciliation_fixed_weight_var",
+                (
+                    existing_config.self_consistency_gamma_reconciliation_fixed_weight
+                    if existing_config
+                    else 0.5
+                ),
+            ),
             smoothness_trend_threshold=(
                 existing_config.smoothness_trend_threshold if existing_config else 0.30
             ),
@@ -2368,6 +2867,21 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         # Dynamically add sweepable parameter ranges after config creation
         config = config_obj
+
+        # Debug: Log which sweep parameters are enabled
+        print("[DEBUG] _gather_config: Checking sweep parameters...")
+        for param_key in self.sweep_params.keys():
+            is_enabled = self.sweep_params[param_key]["sweep_var"].get()
+            print(f"  {param_key}: sweep_var={is_enabled}")
+            if is_enabled:
+                try:
+                    min_val = self.sweep_params[param_key]["min_var"].get()
+                    max_val = self.sweep_params[param_key]["max_var"].get()
+                    points = self.sweep_params[param_key]["points_var"].get()
+                    print(f"    Range: [{min_val}, {max_val}], points={points}")
+                except Exception as e:
+                    print(f"    ERROR reading values: {e}")
+
         if self.sweep_params["rider_transv_mom"]["sweep_var"].get():
             config.transverse_momentum_range = (
                 float(self.sweep_params["rider_transv_mom"]["min_var"].get()),
@@ -2375,6 +2889,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
             config.transverse_momentum_points = int(
                 self.sweep_params["rider_transv_mom"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added rider_transv_mom: {config.transverse_momentum_range}, {config.transverse_momentum_points} points"
             )
 
         if self.sweep_params["rider_transv_dist"]["sweep_var"].get():
@@ -2384,6 +2901,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
             config.transverse_spread_points = int(
                 self.sweep_params["rider_transv_dist"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added rider_transv_dist: {config.transverse_spread_range}, {config.transverse_spread_points} points"
             )
 
         # Add macroparticle sweeps if enabled
@@ -2417,6 +2937,188 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.sweep_params["macroparticle_sigma_multiplier"]["points_var"].get()
             )
 
+        # Add rider particle parameter sweeps if enabled
+        if self.sweep_params["rider_m_particle"]["sweep_var"].get():
+            config.particle_mass_range = (
+                float(self.sweep_params["rider_m_particle"]["min_var"].get()),
+                float(self.sweep_params["rider_m_particle"]["max_var"].get()),
+            )
+            config.particle_mass_points = int(
+                self.sweep_params["rider_m_particle"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added rider_m_particle: {config.particle_mass_range}, {config.particle_mass_points} points"
+            )
+
+        if self.sweep_params["rider_charge_sign"]["sweep_var"].get():
+            config.particle_charge_range = (
+                float(self.sweep_params["rider_charge_sign"]["min_var"].get()),
+                float(self.sweep_params["rider_charge_sign"]["max_var"].get()),
+            )
+            config.particle_charge_points = int(
+                self.sweep_params["rider_charge_sign"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added rider_charge_sign: {config.particle_charge_range}, {config.particle_charge_points} points"
+            )
+
+        if self.sweep_params["rider_pcount"]["sweep_var"].get():
+            pcount_min = float(self.sweep_params["rider_pcount"]["min_var"].get())
+            pcount_max = float(self.sweep_params["rider_pcount"]["max_var"].get())
+            pcount_points = int(self.sweep_params["rider_pcount"]["points_var"].get())
+            # pcount must be integer, so create integer range
+            import numpy as np
+
+            if pcount_points > 1:
+                pcount_values = np.linspace(
+                    pcount_min, pcount_max, pcount_points
+                ).astype(int)
+                # Store as range for compatibility, but will need special handling
+                config.particle_count_range = (int(pcount_min), int(pcount_max))
+                config.particle_count_points = pcount_points
+                print(
+                    f"[DEBUG] Added rider_pcount: {config.particle_count_range}, {config.particle_count_points} points"
+                )
+
+        # Add stripped ions sweeps if enabled
+        if self.sweep_params["rider_stripped_ions"]["sweep_var"].get():
+            config.rider_stripped_ions_range = (
+                float(self.sweep_params["rider_stripped_ions"]["min_var"].get()),
+                float(self.sweep_params["rider_stripped_ions"]["max_var"].get()),
+            )
+            config.rider_stripped_ions_points = int(
+                self.sweep_params["rider_stripped_ions"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added rider_stripped_ions: {config.rider_stripped_ions_range}, {config.rider_stripped_ions_points} points"
+            )
+
+        # Add driver particle parameter sweeps if enabled (BUNCH_TO_BUNCH only)
+        if self.sweep_params["driver_m_particle"]["sweep_var"].get():
+            config.driver_mass_range = (
+                float(self.sweep_params["driver_m_particle"]["min_var"].get()),
+                float(self.sweep_params["driver_m_particle"]["max_var"].get()),
+            )
+            config.driver_mass_points = int(
+                self.sweep_params["driver_m_particle"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added driver_m_particle: {config.driver_mass_range}, {config.driver_mass_points} points"
+            )
+
+        if self.sweep_params["driver_charge_sign"]["sweep_var"].get():
+            config.driver_charge_sign_range = (
+                float(self.sweep_params["driver_charge_sign"]["min_var"].get()),
+                float(self.sweep_params["driver_charge_sign"]["max_var"].get()),
+            )
+            config.driver_charge_sign_points = int(
+                self.sweep_params["driver_charge_sign"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added driver_charge_sign: {config.driver_charge_sign_range}, {config.driver_charge_sign_points} points"
+            )
+
+        if self.sweep_params["driver_pcount"]["sweep_var"].get():
+            driver_pcount_min = float(
+                self.sweep_params["driver_pcount"]["min_var"].get()
+            )
+            driver_pcount_max = float(
+                self.sweep_params["driver_pcount"]["max_var"].get()
+            )
+            driver_pcount_points = int(
+                self.sweep_params["driver_pcount"]["points_var"].get()
+            )
+            config.driver_pcount_range = (
+                int(driver_pcount_min),
+                int(driver_pcount_max),
+            )
+            config.driver_pcount_points = driver_pcount_points
+            print(
+                f"[DEBUG] Added driver_pcount: {config.driver_pcount_range}, {config.driver_pcount_points} points"
+            )
+
+        if self.sweep_params["driver_transv_mom"]["sweep_var"].get():
+            config.driver_transv_mom_range = (
+                float(self.sweep_params["driver_transv_mom"]["min_var"].get()),
+                float(self.sweep_params["driver_transv_mom"]["max_var"].get()),
+            )
+            config.driver_transv_mom_points = int(
+                self.sweep_params["driver_transv_mom"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added driver_transv_mom: {config.driver_transv_mom_range}, {config.driver_transv_mom_points} points"
+            )
+
+        if self.sweep_params["driver_transv_dist"]["sweep_var"].get():
+            config.driver_transv_dist_range = (
+                float(self.sweep_params["driver_transv_dist"]["min_var"].get()),
+                float(self.sweep_params["driver_transv_dist"]["max_var"].get()),
+            )
+            config.driver_transv_dist_points = int(
+                self.sweep_params["driver_transv_dist"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added driver_transv_dist: {config.driver_transv_dist_range}, {config.driver_transv_dist_points} points"
+            )
+
+        if self.sweep_params["driver_starting_distance"]["sweep_var"].get():
+            config.driver_starting_distance_range = (
+                float(self.sweep_params["driver_starting_distance"]["min_var"].get()),
+                float(self.sweep_params["driver_starting_distance"]["max_var"].get()),
+            )
+            config.driver_starting_distance_points = int(
+                self.sweep_params["driver_starting_distance"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added driver_starting_distance: {config.driver_starting_distance_range}, {config.driver_starting_distance_points} points"
+            )
+
+        if self.sweep_params["driver_energy_gev"]["sweep_var"].get():
+            # Get energy range and convert to Pz range
+            energy_min = float(self.sweep_params["driver_energy_gev"]["min_var"].get())
+            energy_max = float(self.sweep_params["driver_energy_gev"]["max_var"].get())
+            driver_mass = float(
+                self.sweep_params["driver_m_particle"]["fixed_var"].get()
+            )
+
+            pz_min = calculate_starting_pz_from_energy(energy_min, driver_mass)
+            pz_max = calculate_starting_pz_from_energy(energy_max, driver_mass)
+
+            config.driver_starting_Pz_range = (pz_min, pz_max)
+            config.driver_starting_Pz_points = int(
+                self.sweep_params["driver_energy_gev"]["points_var"].get()
+            )
+            # Store energy range for save/load
+            config.driver_energy_range = (energy_min, energy_max)
+            config.driver_energy_points = config.driver_starting_Pz_points
+            print(
+                f"[DEBUG] Added driver_energy: {config.driver_energy_range} GeV -> Pz: {config.driver_starting_Pz_range} amu·mm/ns, {config.driver_starting_Pz_points} points"
+            )
+        else:
+            # Fixed energy - convert to Pz
+            energy_gev = float(
+                self.sweep_params["driver_energy_gev"]["fixed_var"].get()
+            )
+            driver_mass = float(
+                self.sweep_params["driver_m_particle"]["fixed_var"].get()
+            )
+            pz = calculate_starting_pz_from_energy(energy_gev, driver_mass)
+            config.driver_starting_Pz = pz
+            config.driver_energy_gev = energy_gev
+
+        if self.sweep_params["driver_stripped_ions"]["sweep_var"].get():
+            config.driver_stripped_ions_range = (
+                float(self.sweep_params["driver_stripped_ions"]["min_var"].get()),
+                float(self.sweep_params["driver_stripped_ions"]["max_var"].get()),
+            )
+            config.driver_stripped_ions_points = int(
+                self.sweep_params["driver_stripped_ions"]["points_var"].get()
+            )
+            print(
+                f"[DEBUG] Added driver_stripped_ions: {config.driver_stripped_ions_range}, {config.driver_stripped_ions_points} points"
+            )
+
+        print("[DEBUG] _gather_config: Config building complete")
         return config
 
     def _on_load_from_main_config(self):
@@ -2454,7 +3156,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 str(opt_config.charge_sign)
             )
             self.sweep_params["rider_pcount"]["fixed_var"].set(str(opt_config.pcount))
-            self.rider_stripped_ions_var.set(str(opt_config.stripped_ions))
+            self.sweep_params["rider_stripped_ions"]["fixed_var"].set(
+                str(opt_config.stripped_ions)
+            )
             self.sweep_params["rider_transv_mom"]["fixed_var"].set(
                 f"{opt_config.transv_mom:.2e}"
             )
@@ -2502,10 +3206,21 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     self.sweep_params["driver_starting_Pz"]["fixed_var"].set(
                         f"{driver.get('starting_Pz', -4925.0):.2e}"
                     )
-                    self.driver_stripped_ions_var.set(
+                    self.sweep_params["driver_stripped_ions"]["fixed_var"].set(
                         str(driver.get("stripped_ions", 54.0))
                     )
                     self._log_result("[INFO] Loaded driver parameters from main GUI")
+
+                    # Update starting positions field for BUNCH_TO_BUNCH mode
+                    rider_start_z = main_options.rider_params.get(
+                        "starting_distance", 0.0
+                    )
+                    driver_start_z = driver.get("starting_distance", 1000.0)
+                    self.start_z_var.set(f"{rider_start_z}, {driver_start_z}")
+            else:
+                # For non-BUNCH_TO_BUNCH modes, only set rider starting position
+                rider_start_z = main_options.rider_params.get("starting_distance", 0.0)
+                self.start_z_var.set(f"{rider_start_z}")
 
             # Update stability options if they exist in config
             if hasattr(opt_config, "smoothness_enabled"):
@@ -3337,6 +4052,32 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             loaded_config.adaptive_timestep_debug = data.get(
                 "adaptive_timestep_debug", False
             )
+            # Gamma reconciliation parameters
+            loaded_config.self_consistency_gamma_reconciliation_method = data.get(
+                "self_consistency_gamma_reconciliation_method", "DISABLED"
+            )
+            loaded_config.self_consistency_gamma_reconciliation_low_beta_threshold = (
+                data.get(
+                    "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
+                )
+            )
+            loaded_config.self_consistency_gamma_reconciliation_high_beta_threshold = (
+                data.get(
+                    "self_consistency_gamma_reconciliation_high_beta_threshold", 0.99
+                )
+            )
+            loaded_config.self_consistency_gamma_reconciliation_low_beta_weight = (
+                data.get("self_consistency_gamma_reconciliation_low_beta_weight", 0.8)
+            )
+            loaded_config.self_consistency_gamma_reconciliation_high_beta_weight = (
+                data.get("self_consistency_gamma_reconciliation_high_beta_weight", 0.2)
+            )
+            loaded_config.self_consistency_gamma_reconciliation_mid_beta_weight = (
+                data.get("self_consistency_gamma_reconciliation_mid_beta_weight", 0.5)
+            )
+            loaded_config.self_consistency_gamma_reconciliation_fixed_weight = data.get(
+                "self_consistency_gamma_reconciliation_fixed_weight", 0.5
+            )
             # Sweep robustness options
             loaded_config.per_run_timeout = data.get("per_run_timeout", 300.0)
             loaded_config.skip_failed_runs = data.get("skip_failed_runs", True)
@@ -3407,8 +4148,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.timestep_mode_var.set(data.get("timestep_mode", "duration"))
             self.auto_steps_distance_var.set(str(data.get("auto_steps_distance", 10.0)))
             self.trajectory_stride_var.set(str(data.get("trajectory_stride", 10)))
-            self.rider_stripped_ions_var.set(str(data.get("rider_stripped_ions", 1.0)))
-            self.driver_stripped_ions_var.set(
+            self.sweep_params["rider_stripped_ions"]["fixed_var"].set(
+                str(data.get("rider_stripped_ions", 1.0))
+            )
+            # Load rider/driver offset pairs
+            rider_x = data.get("rider_offset_x", 0.0)
+            rider_y = data.get("rider_offset_y", 0.0)
+            self.offset_fractions_var.set(f"{rider_x}, {rider_y}")
+            driver_x = data.get("driver_offset_x", 0.0)
+            driver_y = data.get("driver_offset_y", 0.0)
+            self.driver_offset_var.set(f"{driver_x}, {driver_y}")
+            self.sweep_params["driver_stripped_ions"]["fixed_var"].set(
                 str(data.get("driver_stripped_ions", 54.0))
             )
             self._toggle_timestep_mode()
@@ -3496,22 +4246,45 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Load sweep parameter states dynamically
             sweep_state = data.get("sweep_parameters", {})
             for param_name, controls in self.sweep_params.items():
-                if param_name in sweep_state:
+                # Handle legacy driver_starting_Pz -> driver_energy_gev conversion
+                if (
+                    param_name == "driver_energy_gev"
+                    and param_name not in sweep_state
+                    and "driver_starting_Pz" in sweep_state
+                ):
+                    # Convert old Pz format to new energy format
+                    old_state = sweep_state["driver_starting_Pz"]
+                    # Use default energy values as approximation
+                    state = {
+                        "enabled": old_state.get("enabled", False),
+                        "min": "50.0",
+                        "max": "200.0",
+                        "points": old_state.get("points", "3"),
+                        "log": old_state.get("log", False),
+                        "fixed_value": "112.5",
+                    }
+                elif param_name in sweep_state:
                     state = sweep_state[param_name]
-                    if state.get("enabled", False):
-                        controls["sweep_var"].set(True)
-                        controls["min_var"].set(str(state.get("min", "")))
-                        controls["max_var"].set(str(state.get("max", "")))
-                        controls["points_var"].set(str(state.get("points", "3")))
-                        controls["log_var"].set(state.get("log", False))
-                        self._toggle_sweep_controls(param_name)
-                    else:
-                        controls["sweep_var"].set(False)
-                        fixed_val = state.get(
-                            "fixed_value", controls["fixed_var"].get()
-                        )
-                        controls["fixed_var"].set(str(fixed_val))
-                        self._toggle_sweep_controls(param_name)
+                else:
+                    continue
+
+                if state.get("enabled", False):
+                    controls["sweep_var"].set(True)
+                    controls["min_var"].set(str(state.get("min", "")))
+                    controls["max_var"].set(str(state.get("max", "")))
+                    controls["points_var"].set(str(state.get("points", "3")))
+                    controls["log_var"].set(state.get("log", False))
+                    self._toggle_sweep_controls(param_name)
+                else:
+                    controls["sweep_var"].set(False)
+                    fixed_val = state.get("fixed_value", controls["fixed_var"].get())
+                    controls["fixed_var"].set(str(fixed_val))
+                    self._toggle_sweep_controls(param_name)
+
+            # Update helper texts
+            self._update_driver_visibility()
+            self._update_rider_pz_helper()
+            self._update_driver_pz_helper()
 
             self._log_result("[OK] Configuration loaded and synced to main GUI")
             self._log_result("")
@@ -3713,6 +4486,14 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "self_consistency_chrono_tolerance": config.self_consistency_chrono_tolerance,
                 "self_consistency_chrono_high_precision": config.self_consistency_chrono_high_precision,
                 "self_consistency_chrono_adaptive_tolerance": config.self_consistency_chrono_adaptive_tolerance,
+                # Gamma reconciliation parameters
+                "self_consistency_gamma_reconciliation_method": config.self_consistency_gamma_reconciliation_method,
+                "self_consistency_gamma_reconciliation_low_beta_threshold": config.self_consistency_gamma_reconciliation_low_beta_threshold,
+                "self_consistency_gamma_reconciliation_high_beta_threshold": config.self_consistency_gamma_reconciliation_high_beta_threshold,
+                "self_consistency_gamma_reconciliation_low_beta_weight": config.self_consistency_gamma_reconciliation_low_beta_weight,
+                "self_consistency_gamma_reconciliation_high_beta_weight": config.self_consistency_gamma_reconciliation_high_beta_weight,
+                "self_consistency_gamma_reconciliation_mid_beta_weight": config.self_consistency_gamma_reconciliation_mid_beta_weight,
+                "self_consistency_gamma_reconciliation_fixed_weight": config.self_consistency_gamma_reconciliation_fixed_weight,
                 # Energy monitoring removed - halt option in adaptive timestep
                 "energy_monitor_halt_on_jump": config.energy_monitor_halt_on_jump,
                 "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
@@ -3750,8 +4531,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 # UI-specific fields
                 "timestep_mode": self.timestep_mode_var.get(),
                 "auto_steps_distance": float(self.auto_steps_distance_var.get()),
-                "rider_stripped_ions": float(self.rider_stripped_ions_var.get()),
-                "driver_stripped_ions": float(self.driver_stripped_ions_var.get()),
+                "rider_stripped_ions": float(
+                    self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
+                ),
+                "driver_stripped_ions": float(
+                    self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
+                ),
+                # Store rider/driver offset pairs
+                "rider_offset_x": config.transv_offset_x,
+                "rider_offset_y": config.transv_offset_y,
+                "driver_offset_x": config.driver_transv_offset_x,
+                "driver_offset_y": config.driver_transv_offset_y,
             }
 
             # Dynamically save all sweep parameter states
@@ -5217,6 +6007,103 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 param_names.append("wall_z")
                 param_bounds.append(self.config.wall_z_range)
 
+            # Rider stripped ions - if enabled as sweep parameter
+            if (
+                self.config.rider_stripped_ions_range is not None
+                and self.config.rider_stripped_ions_points > 1
+            ):
+                param_names.append("rider_stripped_ions")
+                param_bounds.append(self.config.rider_stripped_ions_range)
+
+            # Driver stripped ions - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_stripped_ions_range is not None
+                and self.config.driver_stripped_ions_points > 1
+            ):
+                param_names.append("driver_stripped_ions")
+                param_bounds.append(self.config.driver_stripped_ions_range)
+
+            # Rider particle mass - if enabled as sweep parameter
+            if (
+                self.config.particle_mass_range is not None
+                and self.config.particle_mass_points > 1
+            ):
+                param_names.append("rider_m_particle")
+                param_bounds.append(self.config.particle_mass_range)
+
+            # Rider charge sign - if enabled as sweep parameter
+            if (
+                self.config.particle_charge_range is not None
+                and self.config.particle_charge_points > 1
+            ):
+                param_names.append("rider_charge_sign")
+                param_bounds.append(self.config.particle_charge_range)
+
+            # Rider particle count - if enabled as sweep parameter
+            if (
+                self.config.particle_count_range is not None
+                and self.config.particle_count_points > 1
+            ):
+                param_names.append("rider_pcount")
+                param_bounds.append(self.config.particle_count_range)
+
+            # Driver particle mass - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_mass_range is not None
+                and self.config.driver_mass_points > 1
+            ):
+                param_names.append("driver_m_particle")
+                param_bounds.append(self.config.driver_mass_range)
+
+            # Driver charge sign - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_charge_sign_range is not None
+                and self.config.driver_charge_sign_points > 1
+            ):
+                param_names.append("driver_charge_sign")
+                param_bounds.append(self.config.driver_charge_sign_range)
+
+            # Driver particle count - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_pcount_range is not None
+                and self.config.driver_pcount_points > 1
+            ):
+                param_names.append("driver_pcount")
+                param_bounds.append(self.config.driver_pcount_range)
+
+            # Driver transverse momentum - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_transv_mom_range is not None
+                and self.config.driver_transv_mom_points > 1
+            ):
+                param_names.append("driver_transv_mom")
+                param_bounds.append(self.config.driver_transv_mom_range)
+
+            # Driver transverse distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_transv_dist_range is not None
+                and self.config.driver_transv_dist_points > 1
+            ):
+                param_names.append("driver_transv_dist")
+                param_bounds.append(self.config.driver_transv_dist_range)
+
+            # Driver starting distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_starting_distance_range is not None
+                and self.config.driver_starting_distance_points > 1
+            ):
+                param_names.append("driver_starting_distance")
+                param_bounds.append(self.config.driver_starting_distance_range)
+
+            # Driver energy - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            # Note: Internally uses Pz, but optimizer varies energy for user convenience
+            if (
+                self.config.driver_energy_range is not None
+                and self.config.driver_energy_points > 1
+            ):
+                param_names.append("driver_energy_gev")
+                param_bounds.append(self.config.driver_energy_range)
+
             if len(param_names) == 0:
                 self._log_result(
                     "[ERROR] No parameters to optimize! Enable at least 2 points for aperture or energy."
@@ -5224,6 +6111,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.running = False
                 return
 
+            self._log_result(
+                f"[DEBUG] Total parameters to optimize: {len(param_names)}"
+            )
             self._log_result(f"Optimizing parameters: {param_names}")
             self._log_result(f"Parameter bounds: {param_bounds}")
             self._log_result(f"Objective: {self.config.objective}")
@@ -5312,6 +6202,20 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         self.config.macroparticle_sigma_multiplier
                     )  # default
                     wall_z = self.config.wall_z  # default
+                    rider_stripped_ions = self.config.stripped_ions  # default
+                    driver_stripped_ions = self.config.driver_stripped_ions  # default
+                    rider_m_particle = self.config.m_particle  # default
+                    rider_charge_sign = self.config.charge_sign  # default
+                    rider_pcount = self.config.pcount  # default
+                    rider_transv_mom = self.config.transv_mom  # default
+                    driver_m_particle = 207.2  # default
+                    driver_charge_sign = 1.0  # default
+                    driver_pcount = 5  # default
+                    driver_transv_mom = 0.0  # default
+                    driver_transv_dist = -0.07998  # default
+                    driver_starting_distance = 1000.0  # default
+                    driver_starting_Pz = -4925.0  # default
+                    driver_energy_gev = 112.5  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -5324,6 +6228,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             offset_frac = x[i]
                         elif param_name == "timestep":
                             timestep = x[i]
+                        elif param_name == "transverse_momentum":
+                            rider_transv_mom = x[i]
                         elif param_name == "rider_transv_dist":
                             rider_transv_dist = x[i]
                         elif param_name == "macroparticle_charge_multiplier":
@@ -5332,17 +6238,83 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             macroparticle_sigma_mult = x[i]
                         elif param_name == "wall_z":
                             wall_z = x[i]
+                        elif param_name == "rider_stripped_ions":
+                            rider_stripped_ions = x[i]
+                        elif param_name == "driver_stripped_ions":
+                            driver_stripped_ions = x[i]
+                        elif param_name == "rider_m_particle":
+                            rider_m_particle = x[i]
+                        elif param_name == "rider_charge_sign":
+                            rider_charge_sign = x[i]
+                        elif param_name == "rider_pcount":
+                            rider_pcount = int(x[i])
+                        elif param_name == "driver_m_particle":
+                            driver_m_particle = x[i]
+                        elif param_name == "driver_charge_sign":
+                            driver_charge_sign = x[i]
+                        elif param_name == "driver_pcount":
+                            driver_pcount = int(x[i])
+                        elif param_name == "driver_transv_mom":
+                            driver_transv_mom = x[i]
+                        elif param_name == "driver_transv_dist":
+                            driver_transv_dist = x[i]
+                        elif param_name == "driver_starting_distance":
+                            driver_starting_distance = x[i]
+                        elif param_name == "driver_energy_gev":
+                            driver_energy_gev = x[i]
+                            # Convert energy to Pz for internal use
+                            driver_starting_Pz = calculate_starting_pz_from_energy(
+                                driver_energy_gev, driver_m_particle
+                            )
+                        elif param_name == "driver_starting_Pz":
+                            # Legacy support if old configs still use Pz
+                            driver_starting_Pz = x[i]
 
-                    # Calculate transverse offset in mm from fraction
-                    transv_offset = offset_frac * aperture
+                    # Calculate transverse offset in mm
+                    # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+                    # For BUNCH_TO_BUNCH: absolute distance in mm
+                    sim_type_str = self.config.simulation_type
+                    if sim_type_str == "BUNCH_TO_BUNCH":
+                        transv_offset = (
+                            offset_frac  # Direct mm value for bunch-to-bunch
+                        )
+                    else:
+                        transv_offset = (
+                            offset_frac * aperture
+                        )  # Fraction for conducting wall
+
+                    # Get driver particle parameters if BUNCH_TO_BUNCH (needed before timestep calc)
+                    driver_params_dict = None
+                    if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                        # Use unpacked parameter values (from x vector)
+                        driver_params_dict = {
+                            "m_particle": driver_m_particle,
+                            "charge_sign": driver_charge_sign,
+                            "pcount": int(driver_pcount),
+                            "transv_mom": driver_transv_mom,
+                            "transv_dist": driver_transv_dist,
+                            "starting_distance": driver_starting_distance,
+                            "starting_Pz": driver_starting_Pz,
+                            "stripped_ions": driver_stripped_ions,
+                            "transv_offset_x": self.config.driver_transv_offset_x,
+                            "transv_offset_y": self.config.driver_transv_offset_y,
+                        }
 
                     # Calculate timestep if using auto_distance strategy
                     if self.config.timestep_strategy == "auto_distance":
+                        # Get driver starting position for BUNCH_TO_BUNCH mode
+                        driver_start_z = 1000.0  # Default driver starting position
+                        if driver_params_dict is not None:
+                            driver_start_z = driver_params_dict.get(
+                                "starting_distance", 1000.0
+                            )
+
                         timestep = self.config.calculate_timestep_for_energy(
                             energy,
                             self.config.m_particle,
                             wall_z=wall_z,
                             start_z=start_z,
+                            driver_start_z=driver_start_z,
                         )
                         steps = self.config.steps
 
@@ -5366,14 +6338,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                                     transv_offset=transv_offset,
                                     timestep=timestep,
                                     steps=steps,
-                                    rider_m_particle=self.config.m_particle,
-                                    rider_charge_sign=self.config.charge_sign,
-                                    rider_pcount=int(self.config.pcount),
-                                    rider_transv_mom=self.config.transv_mom,
+                                    rider_m_particle=rider_m_particle,
+                                    rider_charge_sign=rider_charge_sign,
+                                    rider_pcount=int(rider_pcount),
+                                    rider_transv_mom=rider_transv_mom,
                                     rider_transv_dist=rider_transv_dist,
+                                    rider_stripped_ions=rider_stripped_ions,
                                     macroparticle_charge_multiplier=macroparticle_charge_mult,
                                     macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                                    driver_params=None,
+                                    driver_params=driver_params_dict,
                                     wall_z=wall_z,
                                     run_num=eval_num,
                                     cancel_flag=cancel_flag,
@@ -5411,14 +6384,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             transv_offset=transv_offset,
                             timestep=timestep,
                             steps=steps,
-                            rider_m_particle=self.config.m_particle,
-                            rider_charge_sign=self.config.charge_sign,
-                            rider_pcount=int(self.config.pcount),
-                            rider_transv_mom=self.config.transv_mom,
+                            rider_m_particle=rider_m_particle,
+                            rider_charge_sign=rider_charge_sign,
+                            rider_pcount=int(rider_pcount),
+                            rider_transv_mom=rider_transv_mom,
                             rider_transv_dist=rider_transv_dist,
+                            rider_stripped_ions=rider_stripped_ions,
                             macroparticle_charge_multiplier=macroparticle_charge_mult,
                             macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                            driver_params=None,
+                            driver_params=driver_params_dict,
                             wall_z=wall_z,
                             run_num=eval_num,
                             cancel_flag=None,
@@ -5555,40 +6529,40 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
                     return np.inf
 
-            if method == "genetic_algorithm":
-                # Define progress callback for convergence monitoring
-                def log_convergence_progress(
-                    generation,
-                    best_value,
-                    improvement,
-                    tolerance,
-                    patience_remaining,
-                    converged,
-                ):
-                    """Log convergence progress after each generation."""
-                    # Filter out inf values in logging
-                    if np.isfinite(best_value):
+            # Define progress callback for convergence monitoring (used by all methods)
+            def log_convergence_progress(
+                generation,
+                best_value,
+                improvement,
+                tolerance,
+                patience_remaining,
+                converged,
+            ):
+                """Log convergence progress after each generation."""
+                # Filter out inf values in logging
+                if np.isfinite(best_value):
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                else:
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                if generation >= self.config.optimization_convergence_patience:
+                    if converged:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
+                            f"< tolerance ({tolerance:.6e})"
                         )
                     else:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Progress: {patience_remaining} generations "
+                            f"remaining before early stop check"
                         )
-                    if generation >= self.config.optimization_convergence_patience:
-                        if converged:
-                            self._log_result(
-                                f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
-                                f"< tolerance ({tolerance:.6e})"
-                            )
-                        else:
-                            self._log_result(
-                                f"[CONVERGENCE] Progress: {patience_remaining} generations "
-                                f"remaining before early stop check"
-                            )
 
+            if method == "genetic_algorithm":
                 result = genetic_algorithm(
                     config_template=config_template,
                     parameter_names=param_names,
@@ -5616,19 +6590,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
                     popsize=self.config.optimization_population_size,
-                    objective_function=evaluate_params,
-                    progress_callback=log_convergence_progress,
-                )
-
-            elif method == "nelder_mead":
-                result = optimize_parameters(
-                    config_template=config_template,
-                    parameter_names=param_names,
-                    parameter_bounds=param_bounds,
-                    metric_name=metric_name,
-                    method="nelder_mead",
-                    maximize=maximize,
-                    maxiter=self.config.optimization_maxiter,
                     objective_function=evaluate_params,
                     progress_callback=log_convergence_progress,
                 )
@@ -5856,7 +6817,32 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 elif param_name == "wall_z":
                     wall_z = value
 
-            transv_offset = offset_frac * aperture
+            # Calculate transverse offset in mm
+            # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+            # For BUNCH_TO_BUNCH: absolute distance in mm
+            sim_type_str = self.config.simulation_type
+            if sim_type_str == "BUNCH_TO_BUNCH":
+                transv_offset = offset_frac  # Direct mm value for bunch-to-bunch
+            else:
+                transv_offset = offset_frac * aperture  # Fraction for conducting wall
+
+            # Get driver particle parameters if BUNCH_TO_BUNCH
+            driver_params_dict = None
+            if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                driver_params_dict = {
+                    "m_particle": 207.2,
+                    "charge_sign": 1.0,
+                    "pcount": 5,
+                    "transv_mom": 0.0,
+                    "transv_dist": -0.07998,
+                    "starting_distance": 1000.0,
+                    "starting_Pz": -4925.0,
+                    "stripped_ions": float(
+                        self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
+                    ),
+                    "transv_offset_x": self.config.driver_transv_offset_x,
+                    "transv_offset_y": self.config.driver_transv_offset_y,
+                }
 
             # Temporarily enable trajectory saving
             save_all_backup = self.config.save_all_trajectories
@@ -5874,7 +6860,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 rider_charge_sign=self.config.charge_sign,
                 rider_pcount=int(self.config.pcount),
                 rider_transv_mom=self.config.transv_mom,
-                driver_params=None,
+                driver_params=driver_params_dict,
                 wall_z=wall_z,
                 run_num=9999 + rank,  # Special run number for trajectory
             )
@@ -6325,6 +7311,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 rider_transv_dist = params_dict.get(
                     "rider_transv_dist", self.config.transv_dist
                 )
+                rider_stripped_ions = params_dict.get(
+                    "rider_stripped_ions", self.config.stripped_ions
+                )
 
                 # Get macroparticle parameters (either from sweep or fixed values)
                 macroparticle_charge_multiplier = params_dict.get(
@@ -6382,22 +7371,39 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             "driver_starting_distance", 1000.0
                         ),
                         "starting_Pz": params_dict.get("driver_starting_Pz", -4925.0),
-                        "stripped_ions": float(self.driver_stripped_ions_var.get()),
+                        "stripped_ions": params_dict.get("driver_stripped_ions", 54.0),
                     }
 
-                # Calculate transverse offset
-                transv_offset = offset_frac * aperture
+                # Calculate transverse offset in mm
+                # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+                # For BUNCH_TO_BUNCH: absolute distance in mm
+                sim_type_str = self.config.simulation_type
+                if sim_type_str == "BUNCH_TO_BUNCH":
+                    transv_offset = offset_frac  # Direct mm value for bunch-to-bunch
+                else:
+                    transv_offset = (
+                        offset_frac * aperture
+                    )  # Fraction for conducting wall
 
                 # Calculate timestep based on strategy
                 if self.config.timestep_strategy != "fixed":
                     # Use energy-aware timestep calculation
                     # Get wall_z for this run (it may be swept)
                     wall_z_for_calc = params_dict.get("wall_z", self.config.wall_z)
+
+                    # Get driver starting position for BUNCH_TO_BUNCH mode
+                    driver_start_z = 1000.0  # Default
+                    if driver_params_dict is not None:
+                        driver_start_z = driver_params_dict.get(
+                            "starting_distance", 1000.0
+                        )
+
                     timestep = self.config.calculate_timestep_for_energy(
                         energy,
                         rider_m_particle,
                         wall_z=wall_z_for_calc,
                         start_z=start_z,
+                        driver_start_z=driver_start_z,
                     )
                     steps = self.config.steps
 
@@ -6567,6 +7573,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                                         rider_pcount=int(rider_pcount),
                                         rider_transv_mom=rider_transv_mom,
                                         rider_transv_dist=rider_transv_dist,
+                                        rider_stripped_ions=rider_stripped_ions,
                                         macroparticle_charge_multiplier=macroparticle_charge_multiplier,
                                         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
                                         driver_params=(
@@ -6633,6 +7640,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                                 rider_pcount=int(rider_pcount),
                                 rider_transv_mom=rider_transv_mom,
                                 rider_transv_dist=rider_transv_dist,
+                                rider_stripped_ions=rider_stripped_ions,
                                 macroparticle_charge_multiplier=macroparticle_charge_multiplier,
                                 macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
                                 driver_params=(
@@ -7054,6 +8062,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         rider_pcount: int = None,
         rider_transv_mom: float = None,
         rider_transv_dist: float = None,
+        rider_stripped_ions: float = None,
         macroparticle_charge_multiplier: float = None,
         macroparticle_sigma_multiplier: float = None,
         driver_params: Dict[str, Any] = None,
@@ -7094,6 +8103,11 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             if rider_transv_dist is not None
             else self.config.transv_dist
         )
+        rider_stripped_ions = (
+            rider_stripped_ions
+            if rider_stripped_ions is not None
+            else self.config.stripped_ions
+        )
         wall_z = wall_z if wall_z is not None else self.config.wall_z
         macroparticle_charge_multiplier = (
             macroparticle_charge_multiplier
@@ -7118,7 +8132,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             "m_particle": rider_m_particle,
             "charge_sign": rider_charge_sign,
             "pcount": rider_pcount,
-            "stripped_ions": float(self.rider_stripped_ions_var.get()),
+            "stripped_ions": rider_stripped_ions,
             "starting_Pz": 0.0,  # Will be calculated from energy
         }
 
@@ -7330,7 +8344,22 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     z_array = np.asarray(traj.get("z", []))
                     if len(z_array) > 0:
                         final_z = float(z_array[-1])
-                        expected_max_z = wall_z + self.config.target_distance_mm
+
+                        # Calculate expected distance based on simulation type
+                        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                            # For BUNCH_TO_BUNCH: target is driver_start + target_distance
+                            if driver_params is not None:
+                                driver_start_z = driver_params.get(
+                                    "starting_distance", 1000.0
+                                )
+                            else:
+                                driver_start_z = 1000.0
+                            expected_max_z = (
+                                abs(driver_start_z) + self.config.target_distance_mm
+                            )
+                        else:
+                            # For CONDUCTING_WALL/SWITCHING_WALL: target is wall + target_distance
+                            expected_max_z = wall_z + self.config.target_distance_mm
 
                         if final_z > expected_max_z:
                             excess = final_z - expected_max_z
@@ -7338,9 +8367,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                                 f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!"
                             )
                             self._log_result(f"    Final z: {final_z:.2f} mm")
-                            self._log_result(
-                                f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
-                            )
+                            if (
+                                self.config.simulation_type
+                                == SimulationType.BUNCH_TO_BUNCH
+                            ):
+                                self._log_result(
+                                    f"    Expected max z: {expected_max_z:.2f} mm (driver_start + target={self.config.target_distance_mm:.2f})"
+                                )
+                            else:
+                                self._log_result(
+                                    f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
+                                )
                             self._log_result(
                                 f"    Exceeded by: {excess:.2f} mm ({excess / expected_max_z * 100:.1f}%)"
                             )
