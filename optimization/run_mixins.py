@@ -115,15 +115,35 @@ class OptimizationRunMixin:
             param_names = []
             param_bounds = []
 
-            # Aperture
-            if self.config.aperture_points > 1:
+            # Debug logging for aperture decision
+            self._log_result("[DEBUG] Optimization parameter setup:")
+            self._log_result(f"  simulation_type = {self.config.simulation_type}")
+            self._log_result(f"  aperture_points = {self.config.aperture_points}")
+            self._log_result(
+                f"  Is BUNCH_TO_BUNCH? {self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH}"
+            )
+
+            # Aperture (not used in BUNCH_TO_BUNCH mode)
+            if (
+                self.config.aperture_points > 1
+                and self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH
+            ):
                 param_names.append("aperture_radius")
                 param_bounds.append(self.config.aperture_range)
+                self._log_result(f"  → Aperture INCLUDED in optimization")
+                self._log_result(
+                    f"    Added: aperture_radius, range={self.config.aperture_range}"
+                )
+            else:
+                self._log_result(f"  → Aperture EXCLUDED from optimization")
 
             # Energy
             if self.config.energy_points > 1:
                 param_names.append("initial_energy_gev")
                 param_bounds.append(self.config.energy_range)
+                self._log_result(
+                    f"    Added: initial_energy_gev, range={self.config.energy_range}, points={self.config.energy_points}"
+                )
 
             # Transverse momentum (if enabled as sweep parameter)
             if (
@@ -132,6 +152,9 @@ class OptimizationRunMixin:
             ):
                 param_names.append("transverse_momentum")
                 param_bounds.append(self.config.transverse_momentum_range)
+                self._log_result(
+                    f"    Added: transverse_momentum, range={self.config.transverse_momentum_range}, points={self.config.transverse_momentum_points}"
+                )
 
             # Timestep (if enabled as sweep parameter)
             if (
@@ -148,6 +171,9 @@ class OptimizationRunMixin:
             ):
                 param_names.append("rider_transv_dist")
                 param_bounds.append(self.config.transverse_spread_range)
+                self._log_result(
+                    f"    Added: rider_transv_dist, range={self.config.transverse_spread_range}, points={self.config.transverse_spread_points}"
+                )
 
             # Macroparticle charge multiplier - if enabled as sweep parameter
             if (
@@ -186,6 +212,104 @@ class OptimizationRunMixin:
                 param_names.append("driver_stripped_ions")
                 param_bounds.append(self.config.driver_stripped_ions_range)
 
+            # Rider particle mass - if enabled as sweep parameter
+            if (
+                self.config.particle_mass_range is not None
+                and self.config.particle_mass_points > 1
+            ):
+                param_names.append("rider_m_particle")
+                param_bounds.append(self.config.particle_mass_range)
+                self._log_result(
+                    f"    Added: rider_m_particle, range={self.config.particle_mass_range}, points={self.config.particle_mass_points}"
+                )
+
+            # Rider charge sign - if enabled as sweep parameter
+            if (
+                self.config.particle_charge_range is not None
+                and self.config.particle_charge_points > 1
+            ):
+                param_names.append("rider_charge_sign")
+                param_bounds.append(self.config.particle_charge_range)
+
+            # Rider particle count - if enabled as sweep parameter
+            if (
+                self.config.particle_count_range is not None
+                and self.config.particle_count_points > 1
+            ):
+                param_names.append("rider_pcount")
+                param_bounds.append(self.config.particle_count_range)
+                self._log_result(
+                    f"    Added: rider_pcount, range={self.config.particle_count_range}, points={self.config.particle_count_points}"
+                )
+
+            # Driver particle mass - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_mass_range is not None
+                and self.config.driver_mass_points > 1
+            ):
+                param_names.append("driver_m_particle")
+                param_bounds.append(self.config.driver_mass_range)
+                self._log_result(
+                    f"    Added: driver_m_particle, range={self.config.driver_mass_range}, points={self.config.driver_mass_points}"
+                )
+
+            # Driver charge sign - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_charge_sign_range is not None
+                and self.config.driver_charge_sign_points > 1
+            ):
+                param_names.append("driver_charge_sign")
+                param_bounds.append(self.config.driver_charge_sign_range)
+
+            # Driver particle count - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_pcount_range is not None
+                and self.config.driver_pcount_points > 1
+            ):
+                param_names.append("driver_pcount")
+                param_bounds.append(self.config.driver_pcount_range)
+                self._log_result(
+                    f"    Added: driver_pcount, range={self.config.driver_pcount_range}, points={self.config.driver_pcount_points}"
+                )
+
+            # Driver transverse momentum - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_transv_mom_range is not None
+                and self.config.driver_transv_mom_points > 1
+            ):
+                param_names.append("driver_transv_mom")
+                param_bounds.append(self.config.driver_transv_mom_range)
+                self._log_result(
+                    f"    Added: driver_transv_mom, range={self.config.driver_transv_mom_range}, points={self.config.driver_transv_mom_points}"
+                )
+
+            # Driver transverse distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_transv_dist_range is not None
+                and self.config.driver_transv_dist_points > 1
+            ):
+                param_names.append("driver_transv_dist")
+                param_bounds.append(self.config.driver_transv_dist_range)
+                self._log_result(
+                    f"    Added: driver_transv_dist, range={self.config.driver_transv_dist_range}, points={self.config.driver_transv_dist_points}"
+                )
+
+            # Driver starting distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_starting_distance_range is not None
+                and self.config.driver_starting_distance_points > 1
+            ):
+                param_names.append("driver_starting_distance")
+                param_bounds.append(self.config.driver_starting_distance_range)
+
+            # Driver starting Pz - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            if (
+                self.config.driver_starting_Pz_range is not None
+                and self.config.driver_starting_Pz_points > 1
+            ):
+                param_names.append("driver_starting_Pz")
+                param_bounds.append(self.config.driver_starting_Pz_range)
+
             if len(param_names) == 0:
                 self._log_result(
                     "[ERROR] No parameters to optimize! Enable at least 2 points for aperture or energy."
@@ -193,6 +317,9 @@ class OptimizationRunMixin:
                 self.running = False
                 return
 
+            self._log_result(
+                f"[DEBUG] Total parameters to optimize: {len(param_names)}"
+            )
             self._log_result(f"Optimizing parameters: {param_names}")
             self._log_result(f"Parameter bounds: {param_bounds}")
             self._log_result(f"Objective: {self.config.objective}")
@@ -259,7 +386,12 @@ class OptimizationRunMixin:
 
                 try:
                     # Map parameters
-                    aperture = self.config.aperture_range[0]  # default
+                    # For BUNCH_TO_BUNCH, aperture is not used (set dummy value)
+                    aperture = (
+                        1.0e-4
+                        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
+                        else self.config.aperture_range[0]
+                    )
                     energy = self.config.energy_range[0]  # default
                     start_z = (
                         self.config.starting_z_positions[0]
@@ -283,6 +415,17 @@ class OptimizationRunMixin:
                     wall_z = self.config.wall_z  # default
                     rider_stripped_ions = self.config.stripped_ions  # default
                     driver_stripped_ions = self.config.driver_stripped_ions  # default
+                    rider_m_particle = self.config.m_particle  # default
+                    rider_charge_sign = self.config.charge_sign  # default
+                    rider_pcount = self.config.pcount  # default
+                    rider_transv_mom = self.config.transv_mom  # default
+                    driver_m_particle = 207.2  # default
+                    driver_charge_sign = 1.0  # default
+                    driver_pcount = 5  # default
+                    driver_transv_mom = 0.0  # default
+                    driver_transv_dist = -0.07998  # default
+                    driver_starting_distance = 1000.0  # default
+                    driver_starting_Pz = -4925.0  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -295,6 +438,8 @@ class OptimizationRunMixin:
                             offset_frac = x[i]
                         elif param_name == "timestep":
                             timestep = x[i]
+                        elif param_name == "transverse_momentum":
+                            rider_transv_mom = x[i]
                         elif param_name == "rider_transv_dist":
                             rider_transv_dist = x[i]
                         elif param_name == "macroparticle_charge_multiplier":
@@ -307,6 +452,26 @@ class OptimizationRunMixin:
                             rider_stripped_ions = x[i]
                         elif param_name == "driver_stripped_ions":
                             driver_stripped_ions = x[i]
+                        elif param_name == "rider_m_particle":
+                            rider_m_particle = x[i]
+                        elif param_name == "rider_charge_sign":
+                            rider_charge_sign = x[i]
+                        elif param_name == "rider_pcount":
+                            rider_pcount = int(x[i])
+                        elif param_name == "driver_m_particle":
+                            driver_m_particle = x[i]
+                        elif param_name == "driver_charge_sign":
+                            driver_charge_sign = x[i]
+                        elif param_name == "driver_pcount":
+                            driver_pcount = int(x[i])
+                        elif param_name == "driver_transv_mom":
+                            driver_transv_mom = x[i]
+                        elif param_name == "driver_transv_dist":
+                            driver_transv_dist = x[i]
+                        elif param_name == "driver_starting_distance":
+                            driver_starting_distance = x[i]
+                        elif param_name == "driver_starting_Pz":
+                            driver_starting_Pz = x[i]
 
                     # Calculate transverse offset in mm from fraction
                     transv_offset = offset_frac * aperture
@@ -315,13 +480,13 @@ class OptimizationRunMixin:
                     driver_params_dict = None
                     if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
                         driver_params_dict = {
-                            "m_particle": self.config.m_particle,  # Could make this sweepable
-                            "charge_sign": 1.0,  # Typically positive for ions
-                            "pcount": int(self.config.pcount),
-                            "transv_mom": self.config.transv_mom,
-                            "transv_dist": self.config.transv_dist,
-                            "starting_distance": 1000.0,  # Could make this sweepable
-                            "starting_Pz": -4925.0,  # Could make this sweepable
+                            "m_particle": driver_m_particle,
+                            "charge_sign": driver_charge_sign,
+                            "pcount": int(driver_pcount),
+                            "transv_mom": driver_transv_mom,
+                            "transv_dist": driver_transv_dist,
+                            "starting_distance": driver_starting_distance,
+                            "starting_Pz": driver_starting_Pz,
                             "stripped_ions": driver_stripped_ions,
                         }
 
@@ -353,10 +518,10 @@ class OptimizationRunMixin:
                                     transv_offset=transv_offset,
                                     timestep=timestep,
                                     steps=steps,
-                                    rider_m_particle=self.config.m_particle,
-                                    rider_charge_sign=self.config.charge_sign,
-                                    rider_pcount=int(self.config.pcount),
-                                    rider_transv_mom=self.config.transv_mom,
+                                    rider_m_particle=rider_m_particle,
+                                    rider_charge_sign=rider_charge_sign,
+                                    rider_pcount=int(rider_pcount),
+                                    rider_transv_mom=rider_transv_mom,
                                     rider_transv_dist=rider_transv_dist,
                                     rider_stripped_ions=rider_stripped_ions,
                                     macroparticle_charge_multiplier=macroparticle_charge_mult,
@@ -399,10 +564,10 @@ class OptimizationRunMixin:
                             transv_offset=transv_offset,
                             timestep=timestep,
                             steps=steps,
-                            rider_m_particle=self.config.m_particle,
-                            rider_charge_sign=self.config.charge_sign,
-                            rider_pcount=int(self.config.pcount),
-                            rider_transv_mom=self.config.transv_mom,
+                            rider_m_particle=rider_m_particle,
+                            rider_charge_sign=rider_charge_sign,
+                            rider_pcount=int(rider_pcount),
+                            rider_transv_mom=rider_transv_mom,
                             rider_transv_dist=rider_transv_dist,
                             rider_stripped_ions=rider_stripped_ions,
                             macroparticle_charge_multiplier=macroparticle_charge_mult,
@@ -1089,7 +1254,10 @@ class OptimizationRunMixin:
                 # Extract parameters from combination
                 params_dict = dict(zip(param_names, param_combo))
 
-                aperture = params_dict["aperture"]
+                # Aperture is not present in BUNCH_TO_BUNCH mode
+                aperture = params_dict.get(
+                    "aperture", 1.0e-4
+                )  # dummy value for BUNCH_TO_BUNCH
                 energy = params_dict["energy"]
                 start_z = params_dict["start_z"]
                 offset_frac = params_dict["transverse_offset_fraction"]
@@ -1143,6 +1311,9 @@ class OptimizationRunMixin:
                     self._log_result(
                         f"    rider_transv_dist: {rider_transv_dist:.4e} mm"
                     )
+                    self._log_result(
+                        f"    rider_stripped_ions: {rider_stripped_ions:.2f}"
+                    )
                     if self.config.macroparticle_enabled:
                         self._log_result(f"    macroparticle_enabled: True")
                         self._log_result(
@@ -1172,6 +1343,33 @@ class OptimizationRunMixin:
                             "driver_stripped_ions", self.config.driver_stripped_ions
                         ),
                     }
+
+                    # Log driver parameters if BUNCH_TO_BUNCH and full debug
+                    if use_full_debug:
+                        self._log_result(
+                            f"    driver_m_particle: {driver_params_dict['m_particle']:.4e} amu"
+                        )
+                        self._log_result(
+                            f"    driver_charge_sign: {driver_params_dict['charge_sign']:.1f}"
+                        )
+                        self._log_result(
+                            f"    driver_pcount: {driver_params_dict['pcount']}"
+                        )
+                        self._log_result(
+                            f"    driver_transv_mom: {driver_params_dict['transv_mom']:.4e} amu·mm/ns"
+                        )
+                        self._log_result(
+                            f"    driver_transv_dist: {driver_params_dict['transv_dist']:.4e} mm"
+                        )
+                        self._log_result(
+                            f"    driver_starting_distance: {driver_params_dict['starting_distance']:.4f} mm"
+                        )
+                        self._log_result(
+                            f"    driver_starting_Pz: {driver_params_dict['starting_Pz']:.4e} amu·mm/ns"
+                        )
+                        self._log_result(
+                            f"    driver_stripped_ions: {driver_params_dict['stripped_ions']:.2f}"
+                        )
 
                 # Calculate transverse offset
                 transv_offset = offset_frac * aperture
@@ -1492,7 +1690,6 @@ class OptimizationRunMixin:
                     result_data = {
                         "run_number": run_num,
                         "parameters": {
-                            "aperture_radius": aperture,
                             "particle_energy_gev": energy,
                             "starting_z_mm": start_z,
                             "transverse_offset_fraction": offset_frac,
@@ -1503,9 +1700,69 @@ class OptimizationRunMixin:
                         "metrics": metrics,
                     }
 
+                    # Add aperture_radius only for non-BUNCH_TO_BUNCH modes
+                    if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
+                        result_data["parameters"]["aperture_radius"] = aperture
+
                     # Include additional swept parameters if present
                     if "wall_z" in params_dict:
                         result_data["parameters"]["wall_z"] = params_dict["wall_z"]
+
+                    # Add rider particle parameters (always include, may be swept)
+                    if "rider_m_particle" in params_dict:
+                        result_data["parameters"]["rider_m_particle"] = rider_m_particle
+                    if "rider_charge_sign" in params_dict:
+                        result_data["parameters"]["rider_charge_sign"] = (
+                            rider_charge_sign
+                        )
+                    if "rider_pcount" in params_dict:
+                        result_data["parameters"]["rider_pcount"] = rider_pcount
+                    if "rider_transv_mom" in params_dict:
+                        result_data["parameters"]["rider_transv_mom"] = rider_transv_mom
+                    if "rider_transv_dist" in params_dict:
+                        result_data["parameters"]["rider_transv_dist"] = (
+                            rider_transv_dist
+                        )
+                    if "rider_stripped_ions" in params_dict:
+                        result_data["parameters"]["rider_stripped_ions"] = (
+                            rider_stripped_ions
+                        )
+
+                    # Add driver particle parameters if BUNCH_TO_BUNCH (always include, may be swept)
+                    if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                        if driver_params_dict is not None:
+                            if "driver_m_particle" in params_dict:
+                                result_data["parameters"]["driver_m_particle"] = (
+                                    driver_params_dict["m_particle"]
+                                )
+                            if "driver_charge_sign" in params_dict:
+                                result_data["parameters"]["driver_charge_sign"] = (
+                                    driver_params_dict["charge_sign"]
+                                )
+                            if "driver_pcount" in params_dict:
+                                result_data["parameters"]["driver_pcount"] = (
+                                    driver_params_dict["pcount"]
+                                )
+                            if "driver_transv_mom" in params_dict:
+                                result_data["parameters"]["driver_transv_mom"] = (
+                                    driver_params_dict["transv_mom"]
+                                )
+                            if "driver_transv_dist" in params_dict:
+                                result_data["parameters"]["driver_transv_dist"] = (
+                                    driver_params_dict["transv_dist"]
+                                )
+                            if "driver_starting_distance" in params_dict:
+                                result_data["parameters"][
+                                    "driver_starting_distance"
+                                ] = driver_params_dict["starting_distance"]
+                            if "driver_starting_Pz" in params_dict:
+                                result_data["parameters"]["driver_starting_Pz"] = (
+                                    driver_params_dict["starting_Pz"]
+                                )
+                            if "driver_stripped_ions" in params_dict:
+                                result_data["parameters"]["driver_stripped_ions"] = (
+                                    driver_params_dict["stripped_ions"]
+                                )
 
                     if self.config.macroparticle_enabled:
                         result_data["parameters"]["macroparticle_charge_multiplier"] = (
@@ -1652,13 +1909,16 @@ class OptimizationRunMixin:
         """Generate all parameter grids including sweepable parameters."""
         grids = {}
 
-        # Always swept: aperture and energy
-        grids["aperture"] = self._generate_range(
-            self.config.aperture_range[0],
-            self.config.aperture_range[1],
-            self.config.aperture_points,
-            self.config.aperture_log_scale,
-        )
+        # Aperture: only for non-BUNCH_TO_BUNCH modes
+        if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
+            grids["aperture"] = self._generate_range(
+                self.config.aperture_range[0],
+                self.config.aperture_range[1],
+                self.config.aperture_points,
+                self.config.aperture_log_scale,
+            )
+
+        # Energy: always swept
         grids["energy"] = self._generate_range(
             self.config.energy_range[0],
             self.config.energy_range[1],

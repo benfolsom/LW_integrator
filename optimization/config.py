@@ -95,6 +95,32 @@ class OptimizationConfig:
         None  # charge state (BUNCH_TO_BUNCH)
     )
     driver_stripped_ions_points: int = 1
+    particle_count_range: Optional[Tuple[int, int]] = None  # rider pcount
+    particle_count_points: int = 1
+    driver_mass_range: Optional[Tuple[float, float]] = None  # amu (BUNCH_TO_BUNCH)
+    driver_mass_points: int = 1
+    driver_charge_sign_range: Optional[Tuple[float, float]] = None  # BUNCH_TO_BUNCH
+    driver_charge_sign_points: int = 1
+    driver_pcount_range: Optional[Tuple[int, int]] = None  # BUNCH_TO_BUNCH
+    driver_pcount_points: int = 1
+    driver_transv_mom_range: Optional[Tuple[float, float]] = (
+        None  # amu·mm/ns (BUNCH_TO_BUNCH)
+    )
+    driver_transv_mom_points: int = 1
+    driver_transv_dist_range: Optional[Tuple[float, float]] = (
+        None  # mm (BUNCH_TO_BUNCH)
+    )
+    driver_transv_dist_points: int = 1
+    driver_starting_distance_range: Optional[Tuple[float, float]] = (
+        None  # mm (BUNCH_TO_BUNCH)
+    )
+    driver_starting_distance_points: int = 1
+    driver_starting_Pz_range: Optional[Tuple[float, float]] = (
+        None  # amu·mm/ns (BUNCH_TO_BUNCH)
+    )
+    driver_starting_Pz_points: int = 1
+    driver_energy_range: Optional[Tuple[float, float]] = None  # GeV (BUNCH_TO_BUNCH)
+    driver_energy_points: int = 1
 
     # Fixed parameters
     wall_z: float = 100.0  # mm
@@ -132,6 +158,8 @@ class OptimizationConfig:
     charge_sign: float = -1.0
     stripped_ions: float = 1.0  # Rider stripped ions (charge state)
     driver_stripped_ions: float = 54.0  # Driver stripped ions (for BUNCH_TO_BUNCH)
+    driver_starting_Pz: float = -4925.0  # Fixed driver Pz (amu·mm/ns)
+    driver_energy_gev: float = 112.5  # Fixed driver energy (GeV)
 
     # Macroparticle simulation options (CONDUCTING_WALL only)
     macroparticle_enabled: bool = False
@@ -186,6 +214,15 @@ class OptimizationConfig:
     self_consistency_chrono_tolerance: float = 1e-3  # ns
     self_consistency_chrono_high_precision: bool = False
     self_consistency_chrono_adaptive_tolerance: bool = False
+
+    # Gamma reconciliation parameters
+    self_consistency_gamma_reconciliation_method: str = "DISABLED"
+    self_consistency_gamma_reconciliation_low_beta_threshold: float = 0.9
+    self_consistency_gamma_reconciliation_high_beta_threshold: float = 0.99
+    self_consistency_gamma_reconciliation_low_beta_weight: float = 0.8
+    self_consistency_gamma_reconciliation_high_beta_weight: float = 0.2
+    self_consistency_gamma_reconciliation_mid_beta_weight: float = 0.5
+    self_consistency_gamma_reconciliation_fixed_weight: float = 0.5
 
     # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
