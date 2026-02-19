@@ -296,7 +296,15 @@ class OptimizationConfig:
             return self.timestep
 
         rest_energy_mev = m_particle_amu * 931.494  # amu to MeV
-        gamma = (energy_gev * 1e3) / rest_energy_mev
+
+        # For BUNCH_TO_BUNCH, energy is kinetic energy; for others, it's total energy
+        if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            # Kinetic energy: γ = (KE / E_rest) + 1
+            gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+        else:
+            # Total energy: γ = E_total / E_rest
+            gamma = (energy_gev * 1e3) / rest_energy_mev
+
         beta = np.sqrt(1.0 - 1.0 / gamma**2)
 
         if self.timestep_strategy == "energy_scaled":

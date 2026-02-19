@@ -26,15 +26,19 @@ C_MMNS = 299.792458  # Speed of light in mm/ns
 AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 
 
-def calculate_starting_pz_from_energy(energy_gev: float, mass_amu: float) -> float:
+def calculate_starting_pz_from_energy(
+    energy_gev: float, mass_amu: float, kinetic: bool = False
+) -> float:
     """Calculate starting Pz from energy and mass.
 
     Parameters
     ----------
     energy_gev : float
-        Total energy in GeV
+        Energy in GeV (total or kinetic, depending on kinetic parameter)
     mass_amu : float
         Particle mass in amu
+    kinetic : bool, optional
+        If True, energy_gev is kinetic energy; if False, it's total energy (default: False)
 
     Returns
     -------
@@ -42,7 +46,13 @@ def calculate_starting_pz_from_energy(energy_gev: float, mass_amu: float) -> flo
         Starting Pz in amu·mm/ns
     """
     rest_energy_mev = mass_amu * AMU_TO_MEV
-    gamma = (energy_gev * 1e3) / rest_energy_mev
+
+    if kinetic:
+        # Kinetic energy: γ = (KE / E_rest) + 1
+        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+    else:
+        # Total energy: γ = E_total / E_rest
+        gamma = (energy_gev * 1e3) / rest_energy_mev
 
     if gamma < 1.0:
         gamma = 1.0  # Non-relativistic limit
@@ -2375,13 +2385,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
     def _validate_inputs(self) -> Optional[str]:
         """Validate user inputs. Returns error message or None."""
         try:
-            # Aperture range
-            aperture_min = float(self.aperture_min_var.get())
-            aperture_max = float(self.aperture_max_var.get())
-            if aperture_min >= aperture_max:
-                return "Aperture min must be less than max"
-            if aperture_min <= 0:
-                return "Aperture min must be positive"
+            sim_type = self.sim_type_var.get()
+            is_bunch_to_bunch = sim_type == "BUNCH_TO_BUNCH"
+
+            # Aperture range - only validate for CONDUCTING_WALL modes
+            if not is_bunch_to_bunch:
+                aperture_min = float(self.aperture_min_var.get())
+                aperture_max = float(self.aperture_max_var.get())
+                if aperture_min >= aperture_max:
+                    return "Aperture min must be less than max"
+                if aperture_min <= 0:
+                    return "Aperture min must be positive"
 
             # Energy range
             energy_min = float(self.energy_min_var.get())
@@ -2392,18 +2406,26 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 return "Energy min must be positive"
 
             # Points - only validate if in sweep mode (optimization can have 1 point for fixed params)
-            aperture_points = int(self.aperture_points_var.get())
             energy_points = int(self.energy_points_var.get())
             mode = self.mode_var.get()
 
             if mode == "blind_sweep":
                 # Sweep mode requires at least 2 points for main parameters
-                if aperture_points < 2 or energy_points < 2:
-                    return "Sweep mode: Must have at least 2 points per parameter"
+                # Only validate aperture for CONDUCTING_WALL modes
+                if not is_bunch_to_bunch:
+                    aperture_points = int(self.aperture_points_var.get())
+                    if aperture_points < 2:
+                        return "Sweep mode: Aperture must have at least 2 points"
+                if energy_points < 2:
+                    return "Sweep mode: Energy must have at least 2 points"
             else:
                 # Optimization mode allows 1 point (fixed) for any parameter
-                if aperture_points < 1 or energy_points < 1:
-                    return "Must have at least 1 point per parameter"
+                if not is_bunch_to_bunch:
+                    aperture_points = int(self.aperture_points_var.get())
+                    if aperture_points < 1:
+                        return "Aperture must have at least 1 point"
+                if energy_points < 1:
+                    return "Energy must have at least 1 point"
 
             # Lists
             self._parse_list_field(self.offset_fractions_var.get())
@@ -3632,7 +3654,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         # Calculate gamma for max energy
         AMU_TO_MEV = 931.494
         rest_energy_mev = self.config.m_particle * AMU_TO_MEV
-        gamma_max = (energy_max * 1e3) / rest_energy_mev
+
+        # For BUNCH_TO_BUNCH, energy is kinetic; for others, it's total
+        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            gamma_max = (energy_max * 1e3) / rest_energy_mev + 1.0
+        else:
+            gamma_max = (energy_max * 1e3) / rest_energy_mev
 
         # Determine extreme energy threshold based on particle type
         # Electron mass in AMU
@@ -6641,7 +6668,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self._log_result("=" * 80)
             self._log_result("OPTIMIZATION COMPLETE")
             self._log_result("=" * 80)
-            self._log_result(f"Best {metric_name}: {result.fun:.12e}")
+            # Un-negate the result if we were maximizing (optimizer minimizes by negating)
+            best_metric_value = -result.fun if maximize else result.fun
+            self._log_result(f"Best {metric_name}: {best_metric_value:.12e}")
             self._log_result("Best parameters:")
             for param_name, value in result.best_params_dict.items():
                 self._log_result(f"  {param_name}: {value:.12e}")
@@ -7292,8 +7321,26 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 # Extract parameters from combination
                 params_dict = dict(zip(param_names, param_combo))
 
-                aperture = params_dict["aperture"]
-                energy = params_dict["energy"]
+                # Get aperture (only for CONDUCTING_WALL modes)
+                aperture = params_dict.get("aperture", 0.001)  # Default if not present
+
+                # Get energy (named differently for BUNCH_TO_BUNCH)
+                energy = params_dict.get("initial_energy_gev") or params_dict.get(
+                    "energy"
+                )
+
+                if energy is None:
+                    self._log_result(
+                        f"[ERROR] Run {run_num}: No energy parameter found in params_dict!"
+                    )
+                    self._log_result(
+                        f"  Available parameters: {list(params_dict.keys())}"
+                    )
+                    self._log_result(
+                        f"  Simulation type: {self.config.simulation_type}"
+                    )
+                    continue  # Skip this run
+
                 start_z = params_dict["start_z"]
                 offset_frac = params_dict["transverse_offset_fraction"]
 
@@ -7410,7 +7457,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     # Calculate gamma for diagnostics (ALWAYS log for debugging)
                     AMU_TO_MEV = 931.494
                     rest_energy_mev = rider_m_particle * AMU_TO_MEV
-                    gamma = (energy * 1e3) / rest_energy_mev
+
+                    # For BUNCH_TO_BUNCH, energy is kinetic; for others, it's total
+                    if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                        gamma = (energy * 1e3) / rest_energy_mev + 1.0
+                    else:
+                        gamma = (energy * 1e3) / rest_energy_mev
+
                     beta = (
                         np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
                     )
@@ -7801,15 +7854,45 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             pass
                         elif use_truncated_logging:
                             # Truncated mode: 1-2 lines with key info
+                            # Build log params from actual swept parameters
+                            log_params = {}
+
+                            # Include parameters that have multiple values (i.e., are being swept)
+                            for param_name in param_grids.keys():
+                                if len(param_grids[param_name]) > 1:
+                                    # This parameter is being swept - include it
+                                    if param_name in params_dict:
+                                        log_params[param_name] = params_dict[param_name]
+
+                            # If no parameters are being swept (all fixed), show key simulation params
+                            if not log_params:
+                                # For BUNCH_TO_BUNCH, show initial_energy_gev if present
+                                if (
+                                    self.config.simulation_type
+                                    == SimulationType.BUNCH_TO_BUNCH
+                                ):
+                                    if "initial_energy_gev" in params_dict:
+                                        log_params["initial_energy_gev"] = params_dict[
+                                            "initial_energy_gev"
+                                        ]
+                                    if "driver_starting_distance" in params_dict:
+                                        log_params["driver_starting_distance"] = (
+                                            params_dict["driver_starting_distance"]
+                                        )
+                                else:
+                                    # For CONDUCTING_WALL modes
+                                    log_params["aperture"] = aperture
+                                    log_params["energy"] = energy
+
+                                # Always show wall_z if present
+                                if "wall_z" in params_dict:
+                                    log_params["wall_z"] = params_dict["wall_z"]
+                                elif hasattr(self.config, "wall_z"):
+                                    log_params["wall_z"] = self.config.wall_z
+
                             self._log_truncated_run(
                                 run_num,
-                                params={
-                                    "aperture": aperture,
-                                    "energy": energy,
-                                    "wall_z": params_dict.get(
-                                        "wall_z", self.config.wall_z
-                                    ),
-                                },
+                                params=log_params,
                                 metrics={
                                     "ΔE": delta_e,
                                     "Δγ": delta_gamma,
@@ -7990,14 +8073,24 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         """Generate all parameter grids including sweepable parameters."""
         grids = {}
 
-        # Always swept: aperture and energy
-        grids["aperture"] = self._generate_range(
-            self.config.aperture_range[0],
-            self.config.aperture_range[1],
-            self.config.aperture_points,
-            self.config.aperture_log_scale,
+        sim_type = self.config.simulation_type
+
+        # Aperture - only for CONDUCTING_WALL/SWITCHING_WALL modes
+        if sim_type != SimulationType.BUNCH_TO_BUNCH:
+            grids["aperture"] = self._generate_range(
+                self.config.aperture_range[0],
+                self.config.aperture_range[1],
+                self.config.aperture_points,
+                self.config.aperture_log_scale,
+            )
+
+        # Energy parameter (named differently for BUNCH_TO_BUNCH)
+        energy_key = (
+            "initial_energy_gev"
+            if sim_type == SimulationType.BUNCH_TO_BUNCH
+            else "energy"
         )
-        grids["energy"] = self._generate_range(
+        grids[energy_key] = self._generate_range(
             self.config.energy_range[0],
             self.config.energy_range[1],
             self.config.energy_points,
@@ -8018,7 +8111,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
 
         # Optional sweeps for rider and driver particle parameters
-        sim_type = self.config.simulation_type
         for param_name, controls in self.sweep_params.items():
             # Skip driver params if not BUNCH_TO_BUNCH
             if (
@@ -8140,7 +8232,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         # E = gamma * m * c^2, where m*c^2 in MeV
         AMU_TO_MEV = 931.494
         rest_energy_mev = rider_m_particle * AMU_TO_MEV
-        gamma = (energy_gev * 1e3) / rest_energy_mev
+
+        # For BUNCH_TO_BUNCH, energy is kinetic energy; for others, it's total energy
+        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            # Kinetic energy: γ = (KE / E_rest) + 1
+            gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+        else:
+            # Total energy: γ = E_total / E_rest
+            gamma = (energy_gev * 1e3) / rest_energy_mev
+
         # Legacy init_bunch expects starting_Pz as specific momentum (momentum/mass)
         # It calculates: Pz = starting_Pz * mass, then γ = sqrt((Pz/(mc))² + 1)
         # Working backwards: γ² = (Pz/(mc))² + 1 = (starting_Pz/c)² + 1
@@ -8255,7 +8355,11 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         # run/analysis section in a try/finally.
         try:
             # Log diagnostic info for potentially problematic configurations
-            if aperture < 0.1:
+            # Only check aperture for CONDUCTING_WALL modes
+            if (
+                self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH
+                and aperture < 0.1
+            ):
                 self._log_result(
                     f"  [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)"
                 )

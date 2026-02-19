@@ -215,11 +215,22 @@ class _ScrollableNotebookPage:
 
         self.canvas = tk.Canvas(self.container, highlightthickness=0)
         self.canvas.grid(row=0, column=0, sticky="nsew")
+
+        # Vertical scrollbar
         self.scrollbar = ttk.Scrollbar(
             self.container, orient="vertical", command=self.canvas.yview
         )
         self.scrollbar.grid(row=0, column=1, sticky="ns")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        # Horizontal scrollbar
+        self.h_scrollbar = ttk.Scrollbar(
+            self.container, orient="horizontal", command=self.canvas.xview
+        )
+        self.h_scrollbar.grid(row=1, column=0, sticky="ew")
+
+        self.canvas.configure(
+            yscrollcommand=self.scrollbar.set, xscrollcommand=self.h_scrollbar.set
+        )
 
         self.frame = ttk.Frame(self.canvas, padding=padding)
         self._window_id = self.canvas.create_window(
@@ -238,10 +249,22 @@ class _ScrollableNotebookPage:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas_configure(self, event: Any) -> None:
-        # Ensure minimum width to keep input fields accessible
-        min_width = CONTENT_PANEL_MIN_WIDTH - 50  # Account for scrollbar and padding
-        new_width = max(event.width, min_width)
-        self.canvas.itemconfigure(self._window_id, width=new_width)
+        # Update scroll region but don't force width - let horizontal scrollbar work
+        canvas_width = event.width
+        canvas_height = event.height
+
+        # Get the actual content size
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            content_width = bbox[2] - bbox[0]
+            content_height = bbox[3] - bbox[1]
+
+            # Only set width if canvas is wider than content (prevents horizontal scroll when not needed)
+            if canvas_width >= content_width:
+                self.canvas.itemconfigure(self._window_id, width=canvas_width)
+            else:
+                # Let content maintain its natural width for horizontal scrolling
+                self.canvas.itemconfigure(self._window_id, width=content_width)
 
     def _bind_mousewheel(self, widget: tk.Widget) -> None:
         widget_id = widget.winfo_id()
@@ -2546,7 +2569,7 @@ class IntegratorGUI:
             highlightthickness=0,
         )
         scrollbar = ttk.Scrollbar(panel, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas, width=CONFIG_PANEL_MIN_WIDTH)
+        scrollable_frame = ttk.Frame(canvas)
 
         scrollable_frame.bind(
             "<Configure>",
@@ -2556,10 +2579,9 @@ class IntegratorGUI:
         window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Make scrollable_frame expand to fill canvas width, but respect minimum
+        # Make scrollable_frame expand to fill canvas width
         def _on_canvas_resize(event):
-            new_width = max(event.width, CONFIG_PANEL_MIN_WIDTH)
-            canvas.itemconfig(window_id, width=new_width)
+            canvas.itemconfig(window_id, width=event.width)
 
         canvas.bind("<Configure>", _on_canvas_resize)
 
@@ -2796,6 +2818,9 @@ class IntegratorGUI:
         control_frame = ttk.LabelFrame(panel, text="Controls", padding=4)
         control_frame.pack(fill="x", pady=(0, 10))
 
+        # Buttons use minwidth to prevent shrinking below readable size
+        # The CONFIG_PANEL_MIN_WIDTH on the paned window should prevent this,
+        # but minwidth provides an extra safeguard
         self._run_button = ttk.Button(
             control_frame,
             text="▶ Run",
@@ -2803,6 +2828,7 @@ class IntegratorGUI:
             style="Accent.TButton",
         )
         self._run_button.pack(fill="x", pady=2)
+        self._run_button.configure(width=12)  # minimum character width
 
         self._cancel_button = ttk.Button(
             control_frame,
@@ -2811,6 +2837,7 @@ class IntegratorGUI:
             state="disabled",
         )
         self._cancel_button.pack(fill="x", pady=2)
+        self._cancel_button.configure(width=12)  # minimum character width
 
         # Status display
         status_frame = ttk.LabelFrame(panel, text="Status", padding=4)

@@ -1009,7 +1009,9 @@ class OptimizationRunMixin:
             self._log_result("=" * 80)
             self._log_result("OPTIMIZATION COMPLETE")
             self._log_result("=" * 80)
-            self._log_result(f"Best {metric_name}: {result.fun:.12e}")
+            # Un-negate the result if we were maximizing (optimizer minimizes by negating)
+            best_metric_value = -result.fun if maximize else result.fun
+            self._log_result(f"Best {metric_name}: {best_metric_value:.12e}")
             self._log_result("Best parameters:")
             for param_name, value in result.best_params_dict.items():
                 self._log_result(f"  {param_name}: {value:.12e}")
