@@ -227,6 +227,7 @@ def retarded_integrator(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
     logger: Optional[Any] = None,
+    use_numba: bool = True,
 ) -> Tuple[Trajectory, Trajectory]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -298,18 +299,128 @@ def retarded_integrator(
         and retried with a smaller timestep.
     progress_callback:
         Optional callable invoked as ``progress_callback(current, steps)`` after
-        each integration step completes. ``current`` counts completed steps.
+        each successful step. Used for progress bars or cancellation checks.
     cancel_callback:
-        Optional predicate evaluated before each step. If it returns ``True``
-        the integration stops early by raising :class:`IntegrationCancelled`.
-
+        Optional callable invoked periodically to check for cancellation.
+        If it returns True, integration is aborted with IntegrationCancelled.
+    logger:
+        Optional logger instance for integration diagnostics.
+    use_numba:
+        Whether to use Numba JIT-compiled integration kernels for performance.
+        Default True. If Numba is unavailable, falls back to pure Python.
+        Note: Numba path currently has limited self-consistency support.
 
     Returns
     -------
-    tuple[Trajectory, Trajectory]
-        Two trajectories: the rider (primary bunch) and the driver (image or
-        opposing bunch), each represented as a list of particle states.
+    Tuple[Trajectory, Trajectory]
+        A pair of trajectories: ``(rider_trajectory, driver_trajectory)``.
+        Each trajectory is a tuple of :class:`ParticleState` dictionaries,
+        one per integration step.
+
+    Raises
+    ------
+    IntegrationCancelled
+        If ``cancel_callback()`` returns ``True`` during integration.
+    EnergyJumpDetected
+        If adaptive timestep is disabled and an energy jump exceeds the
+        threshold (with ``halt_on_jump=True``).
     """
+
+    # Try to use Numba-optimized path if requested and available
+    if use_numba:
+        try:
+            from .performance import NUMBA_AVAILABLE, retarded_integrator_numba
+
+            if NUMBA_AVAILABLE:
+                # Check if numba path supports current configuration
+                use_numba_path = True
+
+                # Numba path doesn't support some advanced features yet
+                if energy_monitor is not None and energy_monitor.enabled:
+                    if logger:
+                        if callable(logger):
+                            logger(
+                                "Energy monitoring not supported in Numba path, using Python"
+                            )
+                        else:
+                            logger.info(
+                                "Energy monitoring not supported in Numba path, using Python"
+                            )
+                    use_numba_path = False
+
+                if adaptive_timestep is not None and adaptive_timestep.enabled:
+                    if logger:
+                        if callable(logger):
+                            logger(
+                                "Adaptive timestep not supported in Numba path, using Python"
+                            )
+                        else:
+                            logger.info(
+                                "Adaptive timestep not supported in Numba path, using Python"
+                            )
+                    use_numba_path = False
+
+                if macroparticle_charge_multiplier != 1.0:
+                    if logger:
+                        if callable(logger):
+                            logger(
+                                "Macroparticle mode not supported in Numba path, using Python"
+                            )
+                        else:
+                            logger.info(
+                                "Macroparticle mode not supported in Numba path, using Python"
+                            )
+                    use_numba_path = False
+
+                # Use numba if all checks passed
+                if use_numba_path:
+                    if logger:
+                        if callable(logger):
+                            logger(
+                                f"Using Numba-optimized integrator (expected ~20x speedup)"
+                            )
+                        else:
+                            logger.info(
+                                f"Using Numba-optimized integrator (expected ~20x speedup)"
+                            )
+
+                    return retarded_integrator_numba(
+                        steps=steps,
+                        h_step=h_step,
+                        wall_z=wall_z,
+                        aperture_radius=aperture_radius,
+                        sim_type=sim_type,
+                        init_rider=init_rider,
+                        init_driver=init_driver,
+                        mean=mean,
+                        cav_spacing=cav_spacing,
+                        z_cutoff=z_cutoff,
+                        self_consistency=self_consistency,
+                        chrono_mode=chrono_mode,
+                        startup_mode=startup_mode,
+                        image_subcharge_count=image_subcharge_count,
+                        use_image_weighting=use_conducting_image_weighting,
+                    )
+            else:
+                if logger:
+                    if callable(logger):
+                        logger(
+                            "Numba not available, falling back to pure Python integrator"
+                        )
+                    else:
+                        logger.warning(
+                            "Numba not available, falling back to pure Python integrator"
+                        )
+        except ImportError:
+            if logger:
+                if callable(logger):
+                    logger("Could not import Numba integrator, using pure Python")
+                else:
+                    logger.warning(
+                        "Could not import Numba integrator, using pure Python"
+                    )
+
+    # Fall back to pure Python implementation
 
     trajectory: Trajectory = [{} for _ in range(steps)]
     trajectory_drv: Trajectory = [{} for _ in range(steps)]
@@ -390,12 +501,15 @@ def retarded_integrator(
             temp_driver: Trajectory = []
 
             # Proximity-based timestep refinement: detect nearness to walls/apertures
+            # Only applies to simulations with actual walls (CONDUCTING_WALL, SWITCHING_WALL)
+            # NOT for BUNCH_TO_BUNCH (free space interaction)
             proximity_reduction_active = False
             if (
                 adaptive_timestep is not None
                 and adaptive_timestep.proximity_refinement_enabled
                 and aperture_radius is not None
                 and wall_z is not None
+                and sim_type != SimulationType.BUNCH_TO_BUNCH
             ):
                 # Get current particle position (use mean z for bunch)
                 current_z = float(np.mean(trajectory[i - 1]["z"]))

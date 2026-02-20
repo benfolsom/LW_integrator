@@ -1602,7 +1602,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         output_frame = ttk.LabelFrame(
             self.optimization_frame, text="Output Options", padding=5
         )
-        output_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        output_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         ttk.Label(output_frame, text="Save top N trajectories:").grid(
             row=0, column=0, sticky="w", pady=2, padx=(0, 5)
@@ -1624,7 +1624,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         convergence_frame = ttk.LabelFrame(
             self.optimization_frame, text="Convergence Settings", padding=5
         )
-        convergence_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        convergence_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         ttk.Label(convergence_frame, text="Tolerance (rel):").grid(
             row=0, column=0, sticky="w", pady=2, padx=(0, 5)
@@ -2884,6 +2884,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             ),
             energy_scale_exponent=(
                 existing_config.energy_scale_exponent if existing_config else 1.0
+            ),
+            # Startup mode - read from main GUI core params
+            startup_mode=(
+                self.gui_controller.core_param_vars["startup_mode"].get()
+                if self.gui_controller
+                and hasattr(self.gui_controller, "core_param_vars")
+                else (existing_config.startup_mode if existing_config else "COLD_START")
             ),
         )
 
@@ -4151,6 +4158,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             loaded_config.timestep_strategy = data.get(
                 "timestep_strategy", "auto_distance"
             )
+            loaded_config.z_cutoff_mode = data.get("z_cutoff_mode", "absolute")
+            loaded_config.startup_mode = data.get("startup_mode", "COLD_START")
             loaded_config.target_distance_mm = data.get("target_distance_mm", 100.0)
             loaded_config.timestep = data.get("timestep", 3e-7)
             loaded_config.energy_scale_exponent = data.get("energy_scale_exponent", 1.0)
@@ -4555,6 +4564,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "target_distance_mm": config.target_distance_mm,
                 "timestep": config.timestep,
                 "energy_scale_exponent": config.energy_scale_exponent,
+                "z_cutoff_mode": config.z_cutoff_mode,
+                "startup_mode": config.startup_mode,
                 # UI-specific fields
                 "timestep_mode": self.timestep_mode_var.get(),
                 "auto_steps_distance": float(self.auto_steps_distance_var.get()),
@@ -8259,6 +8270,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 else 0.0
             ),
             "z_cutoff_mode": self.config.z_cutoff_mode,
+            "startup_mode": self.config.startup_mode,
         }
 
         # Create a temporary subdirectory for this run's outputs (will be cleaned up)

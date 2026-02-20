@@ -647,6 +647,11 @@ class IntegratorGUI:
         # Session-based warning suppression flags
         self._suppress_override_warning = False
 
+        # Performance options
+        self.use_numba_var = tk.BooleanVar(
+            value=getattr(self.options, "use_numba", True)
+        )
+
         # Log file options
         self.save_log_file_var = tk.BooleanVar(value=self.options.save_log_file)
 
@@ -1302,7 +1307,8 @@ class IntegratorGUI:
         for name in CORE_PARAM_LABELS:
             # Skip z_cutoff and z_cutoff_mode - handled separately below
             # Skip mean - deprecated parameter, not used in any simulation mode
-            if name in ["z_cutoff", "z_cutoff_mode", "mean"]:
+            # Skip startup_mode - handled separately below with combobox
+            if name in ["z_cutoff", "z_cutoff_mode", "mean", "startup_mode"]:
                 continue
 
             ttk.Label(core_frame, text=CORE_PARAM_LABELS[name] + ":").grid(
@@ -1316,6 +1322,61 @@ class IntegratorGUI:
             widget.grid(row=row, column=1, sticky="ew", pady=2)
             self.core_param_widgets[name] = widget
             row += 1
+
+        # Startup mode section
+        ttk.Separator(core_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+        )
+        row += 1
+
+        ttk.Label(core_frame, text="Startup mode:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        startup_mode_combo = ttk.Combobox(
+            core_frame,
+            textvariable=self.core_param_vars["startup_mode"],
+            values=["COLD_START", "APPROXIMATE_BACK_HISTORY"],
+            state="readonly",
+            width=22,
+        )
+        startup_mode_combo.grid(row=row, column=1, sticky="ew", pady=2)
+        self.core_param_widgets["startup_mode"] = startup_mode_combo
+
+        # Add informative tooltip for startup_mode
+        Tooltip(
+            startup_mode_combo,
+            "Startup mode controls retarded force calculation at early timesteps.\n\n"
+            "COLD_START (default, recommended):\n"
+            "  • Suppresses retarded forces until particles build causal history\n"
+            "  • Physically realistic for transient events (beam turn-on)\n"
+            "  • Avoids unphysical extrapolation errors\n"
+            "  • Compatible with all features (adaptive timestep, energy monitor)\n"
+            "  • May show startup transient in first ~100 steps\n\n"
+            "APPROXIMATE_BACK_HISTORY (experimental, benchmarking only):\n"
+            "  • Assumes particles had constant velocity since t = -∞\n"
+            "  • Enables immediate force calculation (no gating)\n"
+            "  • Use ONLY for comparison with legacy solvers\n"
+            "  • Not validated for production physics\n"
+            "  • May introduce unphysical initial conditions\n\n"
+            "For production: use COLD_START\n"
+            "For legacy benchmarking: use APPROXIMATE_BACK_HISTORY",
+        )
+        row += 1
+
+        # Brief inline help text for startup_mode
+        startup_help_label = ttk.Label(
+            core_frame,
+            text="COLD_START (recommended): Forces gated until causal history available\n"
+            "APPROXIMATE_BACK_HISTORY: Constant-velocity extrapolation (benchmarking only)",
+            foreground="gray",
+            font=("TkDefaultFont", 8),
+            justify="left",
+            wraplength=450,
+        )
+        startup_help_label.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(0, 5)
+        )
+        row += 1
 
         # Z-cutoff section with enable checkbox
         ttk.Separator(core_frame, orient="horizontal").grid(
@@ -2432,22 +2493,8 @@ class IntegratorGUI:
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
-        # Help text
-        help_text = ttk.Label(
-            stability_frame,
-            text="💡 These settings prevent energy jumps and numerical instabilities.\n\n"
-            "Self-Consistency: Enforces mass-shell constraint iteratively (recommended: ON).\n"
-            "  • fixed_geometry: Fixed geometry, fast (default)\n"
-            "  • variable_geometry: Variable geometry, accurate but slower\n"
-            "  • Target tolerance: Convergence goal for iteration loop (default: 1e-6)\n"
-            "  • Mass-shell tolerance: Safety net after loop if convergence fails (default: 1e-2)\n"
-            "Adaptive Timestep: Automatically reduces timestep on energy jumps (recommended: ON).\n\n"
-            "Click ⓘ icons for detailed parameter explanations.\n"
-            "Defaults work well for most cases — adjust only if needed.",
-            foreground="gray",
-            justify="left",
-        )
-        help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        # Help text removed - was obscuring Adaptive Timestep Refinement section
+        # All parameter help is now available via ⓘ tooltips
 
         # Initialize control states
         self._toggle_self_consistency_controls()
@@ -3227,6 +3274,7 @@ class IntegratorGUI:
         self.dpi_var.set(options.plot_dpi)
         self.image_subcharge_var.set(options.image_subcharge_count)
         self.image_weighting_var.set(options.use_image_weighting)
+        self.use_numba_var.set(getattr(options, "use_numba", True))
         self.macroparticle_enabled_var.set(
             getattr(options, "macroparticle_enabled", False)
         )

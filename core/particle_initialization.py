@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Tuple, Union
 
 import numpy as np
 
-from .constants import C_MMNS
+from .constants import C_MMNS, ELEMENTARY_CHARGE
 
 Scalar = Union[float, int]
 ParticleParams = Mapping[str, Scalar]
@@ -71,12 +71,21 @@ def create_particle_state(
     momenta_y = np.zeros(particle_count)
     momenta_z = np.full(particle_count, starting_pz)
 
-    charges = np.full(particle_count, charge_sign * stripped_ions * charge_multiplier)
+    # Convert charge to amu-mm-ns units (must match legacy exactly!)
+    charges = np.full(
+        particle_count,
+        charge_sign * ELEMENTARY_CHARGE * stripped_ions * charge_multiplier,
+    )
     masses = np.full(particle_count, particle_mass_amu)
 
     # Initialize all required integrator fields
     times = np.zeros(particle_count)
-    char_times = np.full(particle_count, 1e-15)  # Characteristic time scale
+
+    # Calculate characteristic time for radiation reaction
+    # char_time = (2/3) * q^2 / (m * c^3)
+    q_value = charge_sign * ELEMENTARY_CHARGE * stripped_ions * charge_multiplier
+    char_time_value = (2.0 / 3.0) * q_value**2 / (particle_mass_amu * C_MMNS**3)
+    char_times = np.full(particle_count, char_time_value)
 
     # Calculate initial gamma and momenta from input momentum
     # Following legacy initialization: Pt = sqrt(Px^2 + Py^2 + Pz^2 + (mc)^2)

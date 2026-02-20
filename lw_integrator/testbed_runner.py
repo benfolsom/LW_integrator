@@ -88,6 +88,7 @@ CORE_PARAM_LABELS: Dict[str, str] = {
     "cav_spacing": "Cavity spacing (mm)",
     "z_cutoff": "z cutoff (mm)",
     "z_cutoff_mode": "z cutoff mode",
+    "startup_mode": "Startup mode",
 }
 
 CORE_PARAM_DEFAULTS: Dict[str, Any] = {
@@ -98,6 +99,7 @@ CORE_PARAM_DEFAULTS: Dict[str, Any] = {
     "cav_spacing": 1.0e5,
     "z_cutoff": 0.0,
     "z_cutoff_mode": "absolute",
+    "startup_mode": "COLD_START",
 }
 
 CORE_REQUIRED_PARAMS: Dict[SimulationType, set[str]] = {
@@ -1114,6 +1116,20 @@ def build_chrono_mode_enum(chrono_mode_str: str) -> object:
         return ChronoMatchingMode.AVERAGED
 
 
+def build_startup_mode_enum(startup_mode_str: str) -> object:
+    """Convert startup mode string to StartupMode enum."""
+    from core.types import StartupMode
+
+    startup_mode_upper = startup_mode_str.upper()
+    if startup_mode_upper == "COLD_START":
+        return StartupMode.COLD_START
+    elif startup_mode_upper == "APPROXIMATE_BACK_HISTORY":
+        return StartupMode.APPROXIMATE_BACK_HISTORY
+    else:
+        # Default to COLD_START if invalid
+        return StartupMode.COLD_START
+
+
 def run_testbed(
     options: SimulationOptions,
     *,
@@ -1286,6 +1302,9 @@ def run_testbed(
     chrono_mode_enum = build_chrono_mode_enum(
         options.self_consistency_chrono_matching_mode
     )
+    startup_mode_enum = build_startup_mode_enum(
+        core_params.get("startup_mode", "COLD_START")
+    )
 
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
         # Prepare initial states (use legacy only if enabled)
@@ -1343,6 +1362,7 @@ def run_testbed(
             z_cutoff_mode=filtered_core_params.get("z_cutoff_mode", "absolute"),
             self_consistency=self_consistency_config,
             chrono_mode=chrono_mode_enum,
+            startup_mode=startup_mode_enum,
             energy_monitor=energy_monitor_config,
             adaptive_timestep=adaptive_timestep_config,
             image_subcharge_count=int(options.image_subcharge_count),
@@ -1365,6 +1385,7 @@ def run_testbed(
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
             logger=log,
+            use_numba=getattr(options, "use_numba", True),
         )
 
         # Build result in same format as run_benchmark
