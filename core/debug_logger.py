@@ -6,9 +6,11 @@ This module provides a singleton logger that:
 - Automatically rotates to a new log file when size limit is exceeded
 - Purges oldest logs when total cache size exceeds limit
 - Thread-safe for concurrent access during optimization/sweeps
+- Integrates with Python's logging module to capture logger.info() calls
 """
 
 import atexit
+import logging
 import os
 import sys
 import threading
@@ -328,8 +330,46 @@ class TeeStream:
         return getattr(self.original_stream, name)
 
 
+class DebugLoggerHandler(logging.Handler):
+    """Python logging handler that redirects to DebugLogger.
+
+    This allows logger.info(), logger.warning(), etc. calls to be captured
+    by the debug logging system alongside print() statements.
+    """
+
+    def __init__(self, debug_logger: DebugLogger):
+        """Initialize the handler.
+
+        Parameters
+        ----------
+        debug_logger : DebugLogger
+            DebugLogger instance to write to
+        """
+        super().__init__()
+        self.debug_logger = debug_logger
+        # Set a simple formatter
+        formatter = logging.Formatter("%(levelname)s: %(message)s")
+        self.setFormatter(formatter)
+
+    def emit(self, record):
+        """Emit a log record to the debug logger.
+
+        Parameters
+        ----------
+        record : logging.LogRecord
+            Log record to emit
+        """
+        try:
+            msg = self.format(record)
+            # Write to debug logger (which writes to both stdout and file)
+            self.debug_logger.write(msg + "\n")
+        except Exception:
+            self.handleError(record)
+
+
 # Global logger instance
 _global_logger: Optional[DebugLogger] = None
+_logging_handler: Optional[DebugLoggerHandler] = None
 
 
 def initialize_debug_logging(
@@ -369,6 +409,9 @@ def initialize_debug_logging(
     # Redirect stdout and stderr to tee streams
     sys.stdout = TeeStream(sys.stdout, _global_logger)
     sys.stderr = TeeStream(sys.stderr, _global_logger)
+
+    # Configure Python's logging module to also use our debug logger
+    _configure_python_logging(_global_logger)
 
 
 def set_logging_context(context: str):
@@ -422,9 +465,36 @@ def get_current_log_path() -> Optional[Path]:
     return None
 
 
+def _configure_python_logging(debug_logger: DebugLogger):
+    """Configure Python's logging module to use DebugLogger.
+
+    This adds a handler to the root logger so that logger.info(), logger.warning(),
+    etc. calls from any module (like optimization/optimizer.py) are captured.
+
+    Parameters
+    ----------
+    debug_logger : DebugLogger
+        DebugLogger instance to send log messages to
+    """
+    global _logging_handler
+
+    # Remove existing handler if present
+    if _logging_handler is not None:
+        logging.root.removeHandler(_logging_handler)
+
+    # Create and add new handler
+    _logging_handler = DebugLoggerHandler(debug_logger)
+    _logging_handler.setLevel(logging.INFO)  # Capture INFO and above
+
+    # Add to root logger so all loggers inherit it
+    logging.root.addHandler(_logging_handler)
+    logging.root.setLevel(logging.INFO)  # Set root level to INFO
+
+
 __all__ = [
     "DebugLogger",
     "TeeStream",
+    "DebugLoggerHandler",
     "initialize_debug_logging",
     "set_logging_context",
     "close_debug_logging",

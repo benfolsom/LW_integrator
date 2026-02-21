@@ -215,11 +215,22 @@ class _ScrollableNotebookPage:
 
         self.canvas = tk.Canvas(self.container, highlightthickness=0)
         self.canvas.grid(row=0, column=0, sticky="nsew")
+
+        # Vertical scrollbar
         self.scrollbar = ttk.Scrollbar(
             self.container, orient="vertical", command=self.canvas.yview
         )
         self.scrollbar.grid(row=0, column=1, sticky="ns")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        # Horizontal scrollbar
+        self.h_scrollbar = ttk.Scrollbar(
+            self.container, orient="horizontal", command=self.canvas.xview
+        )
+        self.h_scrollbar.grid(row=1, column=0, sticky="ew")
+
+        self.canvas.configure(
+            yscrollcommand=self.scrollbar.set, xscrollcommand=self.h_scrollbar.set
+        )
 
         self.frame = ttk.Frame(self.canvas, padding=padding)
         self._window_id = self.canvas.create_window(
@@ -238,10 +249,22 @@ class _ScrollableNotebookPage:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas_configure(self, event: Any) -> None:
-        # Ensure minimum width to keep input fields accessible
-        min_width = CONTENT_PANEL_MIN_WIDTH - 50  # Account for scrollbar and padding
-        new_width = max(event.width, min_width)
-        self.canvas.itemconfigure(self._window_id, width=new_width)
+        # Update scroll region but don't force width - let horizontal scrollbar work
+        canvas_width = event.width
+        canvas_height = event.height
+
+        # Get the actual content size
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            content_width = bbox[2] - bbox[0]
+            content_height = bbox[3] - bbox[1]
+
+            # Only set width if canvas is wider than content (prevents horizontal scroll when not needed)
+            if canvas_width >= content_width:
+                self.canvas.itemconfigure(self._window_id, width=canvas_width)
+            else:
+                # Let content maintain its natural width for horizontal scrolling
+                self.canvas.itemconfigure(self._window_id, width=content_width)
 
     def _bind_mousewheel(self, widget: tk.Widget) -> None:
         widget_id = widget.winfo_id()
@@ -623,6 +646,11 @@ class IntegratorGUI:
 
         # Session-based warning suppression flags
         self._suppress_override_warning = False
+
+        # Performance options
+        self.use_numba_var = tk.BooleanVar(
+            value=getattr(self.options, "use_numba", True)
+        )
 
         # Log file options
         self.save_log_file_var = tk.BooleanVar(value=self.options.save_log_file)
@@ -1279,7 +1307,8 @@ class IntegratorGUI:
         for name in CORE_PARAM_LABELS:
             # Skip z_cutoff and z_cutoff_mode - handled separately below
             # Skip mean - deprecated parameter, not used in any simulation mode
-            if name in ["z_cutoff", "z_cutoff_mode", "mean"]:
+            # Skip startup_mode - handled separately below with combobox
+            if name in ["z_cutoff", "z_cutoff_mode", "mean", "startup_mode"]:
                 continue
 
             ttk.Label(core_frame, text=CORE_PARAM_LABELS[name] + ":").grid(
@@ -1293,6 +1322,61 @@ class IntegratorGUI:
             widget.grid(row=row, column=1, sticky="ew", pady=2)
             self.core_param_widgets[name] = widget
             row += 1
+
+        # Startup mode section
+        ttk.Separator(core_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(10, 10)
+        )
+        row += 1
+
+        ttk.Label(core_frame, text="Startup mode:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        startup_mode_combo = ttk.Combobox(
+            core_frame,
+            textvariable=self.core_param_vars["startup_mode"],
+            values=["COLD_START", "APPROXIMATE_BACK_HISTORY"],
+            state="readonly",
+            width=22,
+        )
+        startup_mode_combo.grid(row=row, column=1, sticky="ew", pady=2)
+        self.core_param_widgets["startup_mode"] = startup_mode_combo
+
+        # Add informative tooltip for startup_mode
+        Tooltip(
+            startup_mode_combo,
+            "Startup mode controls retarded force calculation at early timesteps.\n\n"
+            "COLD_START (default, recommended):\n"
+            "  • Suppresses retarded forces until particles build causal history\n"
+            "  • Physically realistic for transient events (beam turn-on)\n"
+            "  • Avoids unphysical extrapolation errors\n"
+            "  • Compatible with all features (adaptive timestep, energy monitor)\n"
+            "  • May show startup transient in first ~100 steps\n\n"
+            "APPROXIMATE_BACK_HISTORY (experimental, benchmarking only):\n"
+            "  • Assumes particles had constant velocity since t = -∞\n"
+            "  • Enables immediate force calculation (no gating)\n"
+            "  • Use ONLY for comparison with legacy solvers\n"
+            "  • Not validated for production physics\n"
+            "  • May introduce unphysical initial conditions\n\n"
+            "For production: use COLD_START\n"
+            "For legacy benchmarking: use APPROXIMATE_BACK_HISTORY",
+        )
+        row += 1
+
+        # Brief inline help text for startup_mode
+        startup_help_label = ttk.Label(
+            core_frame,
+            text="COLD_START (recommended): Forces gated until causal history available\n"
+            "APPROXIMATE_BACK_HISTORY: Constant-velocity extrapolation (benchmarking only)",
+            foreground="gray",
+            font=("TkDefaultFont", 8),
+            justify="left",
+            wraplength=450,
+        )
+        startup_help_label.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(0, 5)
+        )
+        row += 1
 
         # Z-cutoff section with enable checkbox
         ttk.Separator(core_frame, orient="horizontal").grid(
@@ -2409,22 +2493,8 @@ class IntegratorGUI:
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
-        # Help text
-        help_text = ttk.Label(
-            stability_frame,
-            text="💡 These settings prevent energy jumps and numerical instabilities.\n\n"
-            "Self-Consistency: Enforces mass-shell constraint iteratively (recommended: ON).\n"
-            "  • fixed_geometry: Fixed geometry, fast (default)\n"
-            "  • variable_geometry: Variable geometry, accurate but slower\n"
-            "  • Target tolerance: Convergence goal for iteration loop (default: 1e-6)\n"
-            "  • Mass-shell tolerance: Safety net after loop if convergence fails (default: 1e-2)\n"
-            "Adaptive Timestep: Automatically reduces timestep on energy jumps (recommended: ON).\n\n"
-            "Click ⓘ icons for detailed parameter explanations.\n"
-            "Defaults work well for most cases — adjust only if needed.",
-            foreground="gray",
-            justify="left",
-        )
-        help_text.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        # Help text removed - was obscuring Adaptive Timestep Refinement section
+        # All parameter help is now available via ⓘ tooltips
 
         # Initialize control states
         self._toggle_self_consistency_controls()
@@ -2546,7 +2616,7 @@ class IntegratorGUI:
             highlightthickness=0,
         )
         scrollbar = ttk.Scrollbar(panel, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas, width=CONFIG_PANEL_MIN_WIDTH)
+        scrollable_frame = ttk.Frame(canvas)
 
         scrollable_frame.bind(
             "<Configure>",
@@ -2556,10 +2626,9 @@ class IntegratorGUI:
         window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Make scrollable_frame expand to fill canvas width, but respect minimum
+        # Make scrollable_frame expand to fill canvas width
         def _on_canvas_resize(event):
-            new_width = max(event.width, CONFIG_PANEL_MIN_WIDTH)
-            canvas.itemconfig(window_id, width=new_width)
+            canvas.itemconfig(window_id, width=event.width)
 
         canvas.bind("<Configure>", _on_canvas_resize)
 
@@ -2796,6 +2865,9 @@ class IntegratorGUI:
         control_frame = ttk.LabelFrame(panel, text="Controls", padding=4)
         control_frame.pack(fill="x", pady=(0, 10))
 
+        # Buttons use minwidth to prevent shrinking below readable size
+        # The CONFIG_PANEL_MIN_WIDTH on the paned window should prevent this,
+        # but minwidth provides an extra safeguard
         self._run_button = ttk.Button(
             control_frame,
             text="▶ Run",
@@ -2803,6 +2875,7 @@ class IntegratorGUI:
             style="Accent.TButton",
         )
         self._run_button.pack(fill="x", pady=2)
+        self._run_button.configure(width=12)  # minimum character width
 
         self._cancel_button = ttk.Button(
             control_frame,
@@ -2811,6 +2884,7 @@ class IntegratorGUI:
             state="disabled",
         )
         self._cancel_button.pack(fill="x", pady=2)
+        self._cancel_button.configure(width=12)  # minimum character width
 
         # Status display
         status_frame = ttk.LabelFrame(panel, text="Status", padding=4)
@@ -3200,6 +3274,7 @@ class IntegratorGUI:
         self.dpi_var.set(options.plot_dpi)
         self.image_subcharge_var.set(options.image_subcharge_count)
         self.image_weighting_var.set(options.use_image_weighting)
+        self.use_numba_var.set(getattr(options, "use_numba", True))
         self.macroparticle_enabled_var.set(
             getattr(options, "macroparticle_enabled", False)
         )

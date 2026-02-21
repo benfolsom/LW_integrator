@@ -141,6 +141,7 @@ class OptimizationConfig:
     energy_scale_exponent: float = 1.0  # For energy_scaled: h ∝ γ^-α
     target_distance_mm: float = 100.0  # For auto_distance: distance to reach
     z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
+    startup_mode: str = "COLD_START"  # "COLD_START" or "APPROXIMATE_BACK_HISTORY"
 
     # Fixed particle parameters (not swept)
     transv_mom: float = 1.2e-05  # amu·mm/ns
@@ -296,7 +297,15 @@ class OptimizationConfig:
             return self.timestep
 
         rest_energy_mev = m_particle_amu * 931.494  # amu to MeV
-        gamma = (energy_gev * 1e3) / rest_energy_mev
+
+        # For BUNCH_TO_BUNCH, energy is kinetic energy; for others, it's total energy
+        if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            # Kinetic energy: γ = (KE / E_rest) + 1
+            gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+        else:
+            # Total energy: γ = E_total / E_rest
+            gamma = (energy_gev * 1e3) / rest_energy_mev
+
         beta = np.sqrt(1.0 - 1.0 / gamma**2)
 
         if self.timestep_strategy == "energy_scaled":
@@ -372,6 +381,8 @@ class OptimizationConfig:
             adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
             adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
             adaptive_timestep_debug=options.adaptive_timestep_debug,
+            # Startup mode from core params
+            startup_mode=core.get("startup_mode", "COLD_START"),
             # Default timeout and skip settings for sweeps
             per_run_timeout=300.0,
             skip_failed_runs=True,

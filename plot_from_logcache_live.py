@@ -50,14 +50,21 @@ def parse_sweep_log(log_file, verbose=True):
     If multiple sweeps are detected (e.g., user cancelled and restarted),
     all data from previous sweeps is discarded.
 
-    Returns separate arrays for positive and negative/zero gains.
+    Returns separate arrays for positive and negative/zero gains, plus metadata.
+
+    Returns
+    -------
+    tuple
+        (energies_pos, x_values_pos, percent_gains_pos,
+         energies_neg, x_values_neg, percent_gains_neg,
+         stats, param_metadata)
     """
     energies_pos = []
-    apertures_pos = []
+    x_values_pos = []  # Generic x-axis values (aperture or driver_distance)
     percent_gains_pos = []
 
     energies_neg = []
-    apertures_neg = []
+    x_values_neg = []
     percent_gains_neg = []
 
     total_runs = 0
@@ -69,6 +76,17 @@ def parse_sweep_log(log_file, verbose=True):
     current_sweep_start_line = 0
 
     current_run = {}
+
+    # Metadata about the sweep parameters
+    param_metadata = {
+        "sweep_type": None,  # "CONDUCTING_WALL" or "BUNCH_TO_BUNCH"
+        "x_param_name": None,  # e.g., "aperture" or "driver_starting_distance"
+        "x_label": None,  # Human-readable label for plots
+        "x_units": None,  # e.g., "mm"
+        "y_param_name": "energy",  # Typically energy for both types
+        "y_label": "Energy",
+        "y_units": "GeV",
+    }
 
     try:
         with open(log_file, "r") as f:
@@ -89,10 +107,10 @@ def parse_sweep_log(log_file, verbose=True):
 
                     # Reset all data structures
                     energies_pos = []
-                    apertures_pos = []
+                    x_values_pos = []
                     percent_gains_pos = []
                     energies_neg = []
-                    apertures_neg = []
+                    x_values_neg = []
                     percent_gains_neg = []
                     runs_with_metrics = 0
                     runs_with_positive_gains = 0
@@ -103,18 +121,52 @@ def parse_sweep_log(log_file, verbose=True):
                     # Update total runs for this new sweep
                     total_runs = int(match.group(1))
 
-                # Match run start with parameters
+                # Match run start with parameters - CONDUCTING_WALL format
                 match = re.search(
                     r"\[START\] Run (\d+)/\d+: a=([0-9.e+-]+)mm, E=([0-9.e+-]+)GeV",
                     line,
                 )
                 if match:
+                    # Set metadata on first detection
+                    if param_metadata["sweep_type"] is None:
+                        param_metadata["sweep_type"] = "CONDUCTING_WALL"
+                        param_metadata["x_param_name"] = "aperture"
+                        param_metadata["x_label"] = "Aperture Radius"
+                        param_metadata["x_units"] = "mm"
+
                     current_run = {
                         "run_num": int(match.group(1)),
-                        "aperture": float(match.group(2)),
+                        "x_value": float(match.group(2)),
                         "energy": float(match.group(3)),
                     }
                     last_run_num = max(last_run_num, current_run["run_num"])
+
+                # Match BUNCH_TO_BUNCH truncated format - capture parameters
+                # Format: Run #   1 | initial_energy_gev=1 ... driver_starting_distance=300 | ...
+                match = re.search(
+                    r"Run #\s+(\d+)\s+\|.*?initial_energy_gev=([0-9.e+-]+).*?driver_starting_distance=([0-9.e+-]+)",
+                    line,
+                )
+                if match:
+                    # Set metadata on first detection
+                    if param_metadata["sweep_type"] is None:
+                        param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
+                        param_metadata["x_param_name"] = "driver_starting_distance"
+                        param_metadata["x_label"] = "Driver Starting Distance"
+                        param_metadata["x_units"] = "mm"
+                        param_metadata["y_label"] = "Initial Energy"
+
+                    run_num = int(match.group(1))
+                    energy = float(match.group(2))
+                    driver_dist = float(match.group(3))
+
+                    # Store as current_run for subsequent metric matching
+                    current_run = {
+                        "run_num": run_num,
+                        "x_value": driver_dist,
+                        "energy": energy,
+                    }
+                    last_run_num = max(last_run_num, run_num)
 
                 # Match metrics - try both max_percent_energy_gain and percent_delta_e
                 match = re.search(r"max_percent_energy_gain:\s*([0-9.e+-]+)%", line)
@@ -128,12 +180,12 @@ def parse_sweep_log(log_file, verbose=True):
                     # Separate positive and negative/zero gains
                     if gain > 0:
                         energies_pos.append(current_run["energy"])
-                        apertures_pos.append(current_run["aperture"])
+                        x_values_pos.append(current_run["x_value"])
                         percent_gains_pos.append(gain)
                         runs_with_positive_gains += 1
                     else:
                         energies_neg.append(current_run["energy"])
-                        apertures_neg.append(current_run["aperture"])
+                        x_values_neg.append(current_run["x_value"])
                         percent_gains_neg.append(gain)
                         runs_with_negative_gains += 1
 
@@ -145,7 +197,11 @@ def parse_sweep_log(log_file, verbose=True):
             None,
             None,
             None,
+            None,
+            None,
+            None,
             {"total": 0, "completed": 0, "last_run": 0, "sweep_count": 0},
+            param_metadata,
         )
 
     stats = {
@@ -174,21 +230,22 @@ def parse_sweep_log(log_file, verbose=True):
 
     # Convert to numpy arrays
     energies_pos = np.array(energies_pos) if energies_pos else None
-    apertures_pos = np.array(apertures_pos) if apertures_pos else None
+    x_values_pos = np.array(x_values_pos) if x_values_pos else None
     percent_gains_pos = np.array(percent_gains_pos) if percent_gains_pos else None
 
     energies_neg = np.array(energies_neg) if energies_neg else None
-    apertures_neg = np.array(apertures_neg) if apertures_neg else None
+    x_values_neg = np.array(x_values_neg) if x_values_neg else None
     percent_gains_neg = np.array(percent_gains_neg) if percent_gains_neg else None
 
     return (
         energies_pos,
-        apertures_pos,
+        x_values_pos,
         percent_gains_pos,
         energies_neg,
-        apertures_neg,
+        x_values_neg,
         percent_gains_neg,
         stats,
+        param_metadata,
     )
 
 
@@ -315,33 +372,43 @@ def create_1d_curves_plot(
 
 def create_combined_gains_plot(
     energies_pos,
-    apertures_pos,
+    x_values_pos,
     percent_gains_pos,
     energies_neg,
-    apertures_neg,
+    x_values_neg,
     percent_gains_neg,
     output_file,
     stats=None,
     live_mode=False,
+    param_metadata=None,
 ):
     """Create heatmap showing both positive and negative energy gains.
 
     Uses viridis colormap with absolute values for all gains.
     Distinction via markers: red for positive, blue for negative.
     """
+    # Extract axis labels from metadata
+    if param_metadata:
+        x_label = f"{param_metadata['x_label']} ({param_metadata['x_units']})"
+        y_label = f"{param_metadata['y_label']} ({param_metadata['y_units']})"
+    else:
+        # Fallback to generic labels
+        x_label = "X Parameter"
+        y_label = "Energy (GeV)"
+
     # Combine positive and negative data, using absolute values
     energies_all = []
-    apertures_all = []
+    x_values_all = []
     gains_all = []
 
     if energies_pos is not None and len(energies_pos) > 0:
         energies_all.extend(energies_pos)
-        apertures_all.extend(apertures_pos)
+        x_values_all.extend(x_values_pos)
         gains_all.extend(percent_gains_pos)
 
     if energies_neg is not None and len(energies_neg) > 0:
         energies_all.extend(energies_neg)
-        apertures_all.extend(apertures_neg)
+        x_values_all.extend(x_values_neg)
         # Use absolute values for negative gains
         gains_all.extend(np.abs(percent_gains_neg))
 
@@ -349,14 +416,14 @@ def create_combined_gains_plot(
         return  # No data to plot
 
     energies_all = np.array(energies_all)
-    apertures_all = np.array(apertures_all)
+    x_values_all = np.array(x_values_all)
     gains_all = np.array(gains_all)
 
     # Create regular grid for interpolation
     n_points = 200
     energy_grid = np.linspace(energies_all.min(), energies_all.max(), n_points)
-    aperture_grid = np.linspace(apertures_all.min(), apertures_all.max(), n_points)
-    energy_mesh, aperture_mesh = np.meshgrid(energy_grid, aperture_grid)
+    x_grid = np.linspace(x_values_all.min(), x_values_all.max(), n_points)
+    energy_mesh, x_mesh = np.meshgrid(energy_grid, x_grid)
 
     # Try interpolation with fallback chain
     gain_interpolated = None
@@ -365,9 +432,9 @@ def create_combined_gains_plot(
     for method in ["nearest", "linear", "cubic"]:
         try:
             gain_interpolated = griddata(
-                (energies_all, apertures_all),
+                (energies_all, x_values_all),
                 gains_all,
-                (energy_mesh, aperture_mesh),
+                (energy_mesh, x_mesh),
                 method=method,
             )
             method_used = method
@@ -407,7 +474,7 @@ def create_combined_gains_plot(
     # Use viridis colormap (same as positive-only plot)
     contour = ax.contourf(
         energy_mesh,
-        aperture_mesh,
+        x_mesh,
         gain_interpolated,
         levels=levels,
         cmap="viridis",
@@ -431,7 +498,7 @@ def create_combined_gains_plot(
     if energies_pos is not None and len(energies_pos) > 0:
         ax.scatter(
             energies_pos,
-            apertures_pos,
+            x_values_pos,
             c="red",
             s=20,
             alpha=0.4,
@@ -444,7 +511,7 @@ def create_combined_gains_plot(
     if energies_neg is not None and len(energies_neg) > 0:
         ax.scatter(
             energies_neg,
-            apertures_neg,
+            x_values_neg,
             c="blue",
             s=20,
             alpha=0.4,
@@ -456,8 +523,8 @@ def create_combined_gains_plot(
     if energies_pos is not None and energies_neg is not None:
         ax.legend(loc="upper right", fontsize=9)
 
-    ax.set_xlabel("Energy (GeV)", fontsize=12)
-    ax.set_ylabel("Aperture (mm)", fontsize=12)
+    ax.set_xlabel(y_label, fontsize=12)
+    ax.set_ylabel(x_label, fontsize=12)
 
     # Build title
     n_pos = len(energies_pos) if energies_pos is not None else 0
@@ -480,9 +547,15 @@ def create_combined_gains_plot(
 
 
 def create_contour_plot(
-    energies, apertures, percent_gains, output_file, stats=None, live_mode=False
+    energies,
+    x_values,
+    percent_gains,
+    output_file,
+    stats=None,
+    live_mode=False,
+    param_metadata=None,
 ):
-    """Create a contour plot of energy gains vs energy and aperture.
+    """Create a contour plot of energy gains vs energy and x parameter.
 
     Handles degenerate cases (quasi-1D data) gracefully by:
     1. Detecting if one dimension has very small variation
@@ -493,46 +566,84 @@ def create_contour_plot(
     Also creates a 1D multi-curve plot (if multiple apertures) showing gain vs energy
     for each aperture value.
     """
+    # Extract axis labels from metadata
+    if param_metadata:
+        x_label = f"{param_metadata['x_label']} ({param_metadata['x_units']})"
+        y_label = f"{param_metadata['y_label']} ({param_metadata['y_units']})"
+    else:
+        # Fallback to generic labels
+        x_label = "X Parameter"
+        y_label = "Energy (GeV)"
+
     # Detect degenerate dimensions (very small relative variation)
     RELATIVE_VARIATION_THRESHOLD = 0.01  # 1% variation threshold
 
-    aperture_range = apertures.max() - apertures.min()
-    aperture_mean = apertures.mean()
-    aperture_rel_var = (
-        aperture_range / aperture_mean if aperture_mean != 0 else aperture_range
-    )
+    x_range = x_values.max() - x_values.min()
+    x_mean = x_values.mean()
+    x_rel_var = x_range / x_mean if x_mean != 0 else x_range
 
     energy_range = energies.max() - energies.min()
     energy_mean = energies.mean()
     energy_rel_var = energy_range / energy_mean if energy_mean != 0 else energy_range
 
-    aperture_degenerate = aperture_rel_var < RELATIVE_VARIATION_THRESHOLD
+    x_degenerate = x_rel_var < RELATIVE_VARIATION_THRESHOLD
     energy_degenerate = energy_rel_var < RELATIVE_VARIATION_THRESHOLD
 
-    if aperture_degenerate or energy_degenerate:
+    if x_degenerate or energy_degenerate:
         # Handle degenerate case with 1D plot
+        # Validate array sizes match
+        if len(energies) != len(x_values) or len(energies) != len(percent_gains):
+            print(
+                f"Warning: Array size mismatch - energies: {len(energies)}, x_values: {len(x_values)}, gains: {len(percent_gains)}"
+            )
+            # Skip this update if data is inconsistent
+            return
+
         fig, ax = plt.subplots(figsize=(10, 6))
 
-        if aperture_degenerate and not energy_degenerate:
-            # Aperture is constant, plot gain vs energy
-            ax.plot(energies, percent_gains, "o-", linewidth=2, markersize=6)
-            ax.set_xlabel("Energy (GeV)", fontsize=12)
+        if x_degenerate and not energy_degenerate:
+            # X parameter is constant, plot gain vs energy
+            # Sort by energy for cleaner line plot
+            sort_idx = np.argsort(energies)
+            ax.plot(
+                energies[sort_idx],
+                percent_gains[sort_idx],
+                "o-",
+                linewidth=2,
+                markersize=6,
+            )
+            ax.set_xlabel(y_label, fontsize=12)
             ax.set_ylabel("Energy Gain (%)", fontsize=12)
-            title = f"Energy Gain vs Energy (aperture ≈ {aperture_mean:.3f} mm)"
-        elif energy_degenerate and not aperture_degenerate:
-            # Energy is constant, plot gain vs aperture
-            ax.plot(apertures, percent_gains, "o-", linewidth=2, markersize=6)
-            ax.set_xlabel("Aperture (mm)", fontsize=12)
+            if param_metadata:
+                title = f"Energy Gain vs Energy ({param_metadata['x_param_name']} ≈ {x_mean:.3f} {param_metadata['x_units']})"
+            else:
+                title = f"Energy Gain vs Energy (X ≈ {x_mean:.3f})"
+        elif energy_degenerate and not x_degenerate:
+            # Energy is constant, plot gain vs x parameter
+            # Sort by x_values for cleaner line plot
+            sort_idx = np.argsort(x_values)
+            ax.plot(
+                x_values[sort_idx],
+                percent_gains[sort_idx],
+                "o-",
+                linewidth=2,
+                markersize=6,
+            )
+            ax.set_xlabel(x_label, fontsize=12)
             ax.set_ylabel("Energy Gain (%)", fontsize=12)
-            title = f"Energy Gain vs Aperture (energy ≈ {energy_mean:.3f} GeV)"
+            if param_metadata:
+                title = f"Energy Gain vs {param_metadata['x_label']} (energy ≈ {energy_mean:.3f} {param_metadata['y_units']})"
+            else:
+                title = f"Energy Gain vs X Parameter (energy ≈ {energy_mean:.3f})"
         else:
             # Both degenerate - just show the data points
             ax.scatter([0] * len(percent_gains), percent_gains, s=100)
             ax.set_ylabel("Energy Gain (%)", fontsize=12)
             ax.set_xticks([])
-            title = (
-                f"Energy Gain (E ≈ {energy_mean:.3f} GeV, a ≈ {aperture_mean:.3f} mm)"
-            )
+            if param_metadata:
+                title = f"Energy Gain (E ≈ {energy_mean:.3f} {param_metadata['y_units']}, {param_metadata['x_param_name']} ≈ {x_mean:.3f} {param_metadata['x_units']})"
+            else:
+                title = f"Energy Gain (E ≈ {energy_mean:.3f}, X ≈ {x_mean:.3f})"
 
         if stats:
             title += f"\n({stats['completed']}/{stats['total']} runs)"
@@ -548,8 +659,8 @@ def create_contour_plot(
     # Create regular grid for interpolation
     n_points = 200
     energy_grid = np.linspace(energies.min(), energies.max(), n_points)
-    aperture_grid = np.linspace(apertures.min(), apertures.max(), n_points)
-    energy_mesh, aperture_mesh = np.meshgrid(energy_grid, aperture_grid)
+    x_grid = np.linspace(x_values.min(), x_values.max(), n_points)
+    energy_mesh, x_mesh = np.meshgrid(energy_grid, x_grid)
 
     # Try interpolation with fallback chain: nearest -> linear -> cubic
     # Nearest is most robust (no Qhull), linear is smoother, cubic is smoothest
@@ -559,9 +670,9 @@ def create_contour_plot(
     for method in ["nearest", "linear", "cubic"]:
         try:
             gain_interpolated = griddata(
-                (energies, apertures),
+                (energies, x_values),
                 percent_gains,
-                (energy_mesh, aperture_mesh),
+                (energy_mesh, x_mesh),
                 method=method,
             )
             method_used = method
@@ -630,9 +741,10 @@ def create_contour_plot(
 
     # Create contour plot
     try:
+        # Use viridis colormap (good for continuous data)
         contour = ax.contourf(
             energy_mesh,
-            aperture_mesh,
+            x_mesh,
             gain_interpolated,
             levels=levels,
             cmap="viridis",
@@ -665,21 +777,27 @@ def create_contour_plot(
         cbar.set_ticklabels([f"{v:.3g}" for v in tick_values])
 
     # Overlay original data points
+    # Overlay the actual data points
     ax.scatter(
         energies,
-        apertures,
+        x_values,
         c="red",
         s=20,
-        alpha=0.3,
+        alpha=0.5,
         edgecolors="white",
         linewidths=0.5,
+        label="Data points",
     )
+    ax.legend(loc="upper right", fontsize=9)
 
-    ax.set_xlabel("Energy (GeV)", fontsize=12)
-    ax.set_ylabel("Aperture (mm)", fontsize=12)
+    ax.set_xlabel(y_label, fontsize=12)
+    ax.set_ylabel(x_label, fontsize=12)
 
     # Build title
-    title = f"Energy Gain: Aperture vs Energy ({method_used} interpolation)"
+    if param_metadata:
+        title = f"Energy Gain: {param_metadata['x_label']} vs {param_metadata['y_label']} ({method_used} interpolation)"
+    else:
+        title = f"Energy Gain: X vs Y ({method_used} interpolation)"
     if stats:
         title += f"\n({stats['completed']}/{stats['total']} runs"
         if stats.get("sweep_count", 0) > 1:
@@ -739,12 +857,13 @@ def live_monitor(log_file, output_file, interval=3):
             # Parse log file
             (
                 energies_pos,
-                apertures_pos,
+                x_values_pos,
                 percent_gains_pos,
                 energies_neg,
-                apertures_neg,
+                x_values_neg,
                 percent_gains_neg,
                 stats,
+                param_metadata,
             ) = parse_sweep_log(log_file, verbose=False)
 
             current_sweep = stats.get("sweep_count", 0)
@@ -778,26 +897,32 @@ def live_monitor(log_file, output_file, interval=3):
                 # Generate updated plots (positive gains)
                 create_contour_plot(
                     energies_pos,
-                    apertures_pos,
+                    x_values_pos,
                     percent_gains_pos,
                     output_file,
                     stats=stats,
                     live_mode=True,
+                    param_metadata=param_metadata,
                 )
 
                 # Generate combined gains plot (positive + negative)
                 if energies_neg is not None and len(energies_neg) > 0:
                     combined_output = output_file.replace(".png", "_combined.png")
+                    # Generate combined plot
+                    combined_output = (
+                        str(Path(output_file).with_suffix("")) + "_combined.png"
+                    )
                     create_combined_gains_plot(
                         energies_pos,
-                        apertures_pos,
+                        x_values_pos,
                         percent_gains_pos,
                         energies_neg,
-                        apertures_neg,
+                        x_values_neg,
                         percent_gains_neg,
                         combined_output,
                         stats=stats,
                         live_mode=True,
+                        param_metadata=param_metadata,
                     )
 
                 last_completed = stats["completed"]
@@ -892,13 +1017,14 @@ def main():
         print(f"Parsing log file: {log_file}")
         (
             energies_pos,
-            apertures_pos,
+            x_values_pos,
             percent_gains_pos,
             energies_neg,
-            apertures_neg,
+            x_values_neg,
             percent_gains_neg,
             stats,
-        ) = parse_sweep_log(str(log_file))
+            param_metadata,
+        ) = parse_sweep_log(str(log_file), verbose=True)
 
         if energies_pos is None or len(energies_pos) == 0:
             print("ERROR: No positive gain data found in log file")
@@ -907,25 +1033,27 @@ def main():
         print(f"\nGenerating plots...")
         create_contour_plot(
             energies_pos,
-            apertures_pos,
+            x_values_pos,
             percent_gains_pos,
             str(output_file),
             stats=stats,
+            param_metadata=param_metadata,
         )
         print(f"Positive gains plot saved to: {output_file}")
 
         # Generate combined gains plot if we have negative data
         if energies_neg is not None and len(energies_neg) > 0:
-            combined_output = Path(str(output_file).replace(".png", "_combined.png"))
+            combined_output = output_file.replace(".png", "_combined.png")
             create_combined_gains_plot(
                 energies_pos,
-                apertures_pos,
+                x_values_pos,
                 percent_gains_pos,
                 energies_neg,
-                apertures_neg,
+                x_values_neg,
                 percent_gains_neg,
-                str(combined_output),
+                combined_output,
                 stats=stats,
+                param_metadata=param_metadata,
             )
             print(f"Combined gains plot saved to: {combined_output}")
 

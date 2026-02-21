@@ -2,6 +2,24 @@
 
 ## Recent Updates
 
+### COLD_START Gating Formula Fix (February 2026)
+
+**Critical bug fix** - The COLD_START gating mechanism had a fundamentally incorrect formula for computing when retarded forces should be applied, causing massive unphysical energy losses in relativistic simulations:
+
+- **Incorrect formula** - Used multiplication `R × (1 - β·n̂)` instead of division `R / (1 - β·n̂)`
+- **4× error** - For relativistic particles approaching sources (β·n̂ = -1), threshold was 4× too large (40km instead of 10km)
+- **Hardcoded limitation** - Used hardcoded `estimated_max_R = 10000 mm`, failing for separations > 10km
+- **Edge case handling** - Now properly handles receding particles (β·n̂ > 0) with threshold → ∞ as β·n̂ → 1
+
+**Corrected formula**: `threshold = R / (1 - β·n̂)` where:
+
+- **Approaching** (β·n̂ < 0): denominator > 1 → threshold < R (particles and light meet quickly)
+- **Perpendicular** (β·n̂ = 0): denominator = 1 → threshold = R (light travels full distance)
+- **Receding** (β·n̂ > 0): denominator < 1 → threshold > R (light takes longer to catch up)
+- **Receding at c** (β·n̂ → 1): denominator → 0 → threshold → ∞ (forces never apply)
+
+**Impact**: All relativistic simulations with β > 0.5 were affected. The bug caused forces to be gated for too long, then activate with insufficient causal history, resulting in energy losses of 250-3200 GeV (orders of magnitude larger than physical). Now scales correctly from millimeters to hundreds of meters. See `local/COLD_START_FIX.md` for detailed analysis.
+
 ### Adaptive Timestep Refactoring (February 2026)
 
 **Auto-calculated parameters** - The adaptive timestep system now automatically calculates derived parameters to prevent inconsistent configurations:
