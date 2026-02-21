@@ -464,28 +464,43 @@ def _compute_gating_threshold(
     The threshold ensures the observer particle has traveled far enough that
     light from the external source's initial position could have reached it.
 
-    For a particle moving toward a source at velocity β, light and particle
-    approach each other at relative speed c(1 + |β·n̂|). The particle must
-    travel distance R/(1 + |β·n̂|) before the light field reaches it.
+    Light propagates at speed c. For a particle moving at velocity β relative
+    to the source, the relative closing speed is c(1 - β·n̂), where n̂ points
+    from source to observer.
 
     Physical examples:
-    - Stationary observer (β=0): threshold = R (light travels full distance)
-    - Approaching at c (β·n̂=-1): threshold = R/2 (meet halfway)
-    - Receding at c (β·n̂=+1): threshold → ∞ (never catches up)
+    - Stationary observer (β·n̂=0): threshold = R (light travels full distance)
+    - Approaching at c (β·n̂=-1): threshold = R/2 (relative speed = 2c, meet halfway)
+    - Receding slowly (β·n̂=+0.5): threshold = 2R (relative speed = 0.5c, takes longer)
+    - Receding at c (β·n̂→+1): threshold → ∞ (never catches up, forces never apply)
+
+    Formula: threshold = R / (1 - β·n̂)
+
+    Special handling for β·n̂ ≥ 1 (receding at or above light speed):
+    Return very large threshold (effectively infinite) to suppress forces.
     """
     beta_avg_dot_nhat = (
         beta_avg_x * nhat["nx"] + beta_avg_y * nhat["ny"] + beta_avg_z * nhat["nz"]
     )
 
-    # For each external source, compute threshold based on relative motion
-    # threshold = R / (1 + |β·n̂|) where n̂ points from source to observer
-    # Note: β·n̂ < 0 means approaching, β·n̂ > 0 means receding
-    denominators = 1.0 + np.abs(beta_avg_dot_nhat)
+    # Compute denominator: (1 - β·n̂)
+    # β·n̂ < 0: approaching → denominator > 1 → small threshold (meet quickly)
+    # β·n̂ > 0: receding → denominator < 1 → large threshold (takes longer)
+    # β·n̂ → 1: receding at c → denominator → 0 → threshold → ∞ (never meet)
+    denominators = 1.0 - beta_avg_dot_nhat
 
-    # Avoid division by zero (though denominator >= 1.0 always)
-    denominators = np.maximum(denominators, 1e-10)
+    # Handle edge case: particles receding at or faster than light speed
+    # For β·n̂ ≥ 1, light never catches the observer, so threshold = ∞
+    # Use a very large but finite value to avoid numerical issues
+    LARGE_THRESHOLD = 1e12  # effectively infinite for simulation purposes
 
-    thresholds = nhat["R"] / denominators
+    # For denominators ≤ 0 or very small, use large threshold
+    # Also handle case where β·n̂ is very close to 1 (denominator near 0)
+    MIN_DENOMINATOR = 1e-6  # corresponds to β·n̂ = 0.999999
+
+    thresholds = np.where(
+        denominators > MIN_DENOMINATOR, nhat["R"] / denominators, LARGE_THRESHOLD
+    )
 
     if thresholds.size > 0:
         return float(np.max(np.maximum(thresholds, 0.0)))
@@ -1137,12 +1152,14 @@ def retarded_equations_of_motion(
                     # Fallback if no external particles
                     estimated_max_R = 1000.0
 
-                # Correct formula: threshold = R / (1 + |β|)
-                # Use conservative estimate (minimum threshold over all possible β·n̂)
+                # Correct formula: threshold = R / (1 - β·n̂)
+                # For early check, use conservative estimate assuming worst case
+                # (minimum threshold = particle approaching head-on)
                 # For β·n̂ = -1 (approaching): threshold = R/2
                 # For β·n̂ = 0 (perpendicular): threshold = R
-                # For β·n̂ = +1 (receding): threshold = ∞
-                # Use worst case (approaching) for early gating
+                # For β·n̂ = +1 (receding): threshold → ∞
+                # Use worst case (approaching) for conservative early gating
+                # Worst case: β·n̂ = -beta_avg_mag → denominator = 1 + beta_avg_mag
                 estimated_threshold = estimated_max_R / (1.0 + beta_avg_mag)
 
                 # Skip if travel distance is definitely below threshold
