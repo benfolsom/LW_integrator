@@ -10,6 +10,142 @@ corrections.
 February 2026 Updates
 ---------------------
 
+COLD_START Gating Formula Fix (February 20, 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Critical Bug Fix**
+
+The COLD_START gating mechanism had a fundamentally incorrect formula for
+computing when retarded forces should be applied. This caused massive unphysical
+energy losses in relativistic simulations with β > 0.5.
+
+**The Bug**
+
+Original (incorrect) formula:
+
+.. code-block:: python
+
+   threshold = R * (1.0 - beta_dot_nhat)  # WRONG: multiplication
+
+For a relativistic particle approaching a source (β·n̂ = -1):
+
+* **Buggy threshold** = R × (1 - (-1)) = 2R = 40,000 mm (4× too large!)
+* **Correct threshold** = R / (1 - (-1)) = R/2 = 10,000 mm
+
+Additional issues:
+
+* Hardcoded ``estimated_max_R = 10000.0`` mm, failing for separations > 10 km
+* Did not properly handle receding particles (β·n̂ > 0)
+
+**The Fix**
+
+Corrected formula (``core/equations.py``, lines 461-505):
+
+.. code-block:: python
+
+   # Correct: threshold = R / (1 - β·n̂)
+   denominators = 1.0 - beta_avg_dot_nhat
+
+   # Handle edge case: receding at or above light speed
+   LARGE_THRESHOLD = 1e12  # effectively infinite
+   MIN_DENOMINATOR = 1e-6  # β·n̂ ≈ 0.999999
+
+   thresholds = np.where(
+       denominators > MIN_DENOMINATOR,
+       nhat["R"] / denominators,
+       LARGE_THRESHOLD
+   )
+
+**Physical Behavior**
+
+The corrected formula properly implements causality:
+
+* **Approaching** (β·n̂ < 0): denominator > 1 → threshold < R (meet quickly)
+
+  Example: β·n̂ = -1 → threshold = R/2 (meet halfway)
+
+* **Perpendicular** (β·n̂ = 0): denominator = 1 → threshold = R (full distance)
+
+* **Receding** (β·n̂ > 0): denominator < 1 → threshold > R (longer to catch up)
+
+  Example: β·n̂ = +0.5 → threshold = 2R
+
+* **Receding at c** (β·n̂ → 1): denominator → 0 → threshold → ∞ (never meet)
+
+**Dynamic R Estimation**
+
+Removed hardcoded limit; now computes actual max R from trajectory:
+
+.. code-block:: python
+
+   # Compute actual separation from external trajectory
+   if trajectory_ext[index_traj]["x"].size > 0:
+       ext_x = trajectory_ext[index_traj]["x"]
+       ext_y = trajectory_ext[index_traj]["y"]
+       ext_z = trajectory_ext[index_traj]["z"]
+       dx = current_position[0] - ext_x
+       dy = current_position[1] - ext_y
+       dz = current_position[2] - ext_z
+       distances = np.sqrt(dx**2 + dy**2 + dz**2)
+       estimated_max_R = float(np.max(distances))
+
+**Impact**
+
+* Affected all relativistic simulations with β > 0.5
+* Bug caused forces to gate for 4× too long, then activate with insufficient causal history
+* Resulted in energy losses of 250-3200 GeV (orders of magnitude larger than physical)
+* Now scales correctly from millimeters to hundreds of meters
+
+**Test Results**
+
+All validation tests pass:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 15 20 20
+
+   * - Scenario
+     - β·n̂
+     - Threshold
+     - Expected
+     - Status
+   * - Approaching at c
+     - -1.0
+     - R/2
+     - 10,000 mm
+     - ✓
+   * - Perpendicular
+     - 0.0
+     - R
+     - 20,000 mm
+     - ✓
+   * - Receding slowly
+     - +0.5
+     - 2R
+     - 40,000 mm
+     - ✓
+   * - Receding fast
+     - +0.9
+     - 10R
+     - 200,000 mm
+     - ✓
+   * - Receding at c
+     - +1.0
+     - ∞
+     - > 1e12 mm
+     - ✓
+   * - Large separation
+     - -1.0
+     - 50,000 mm
+     - 100m case
+     - ✓
+
+**References**
+
+* Detailed analysis: ``local/COLD_START_FIX.md``
+* Test script: ``local/test_gating_fix.py``
+* Affected config: ``configs/run_configs/two_particle_demo6.json``
+
 Adaptive Timestep Auto-Calculation (February 10, 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
