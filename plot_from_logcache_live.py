@@ -177,17 +177,19 @@ def parse_sweep_log(log_file, verbose=True):
                     gain = float(match.group(1))
                     runs_with_metrics += 1
 
-                    # Separate positive and negative/zero gains
-                    if gain > 0:
-                        energies_pos.append(current_run["energy"])
-                        x_values_pos.append(current_run["x_value"])
-                        percent_gains_pos.append(gain)
-                        runs_with_positive_gains += 1
-                    else:
-                        energies_neg.append(current_run["energy"])
-                        x_values_neg.append(current_run["x_value"])
-                        percent_gains_neg.append(gain)
-                        runs_with_negative_gains += 1
+                    # Filter out gains with absolute value > 200% (unrealistic data)
+                    if abs(gain) <= 200.0:
+                        # Separate positive and negative/zero gains
+                        if gain > 0:
+                            energies_pos.append(current_run["energy"])
+                            x_values_pos.append(current_run["x_value"])
+                            percent_gains_pos.append(gain)
+                            runs_with_positive_gains += 1
+                        else:
+                            energies_neg.append(current_run["energy"])
+                            x_values_neg.append(current_run["x_value"])
+                            percent_gains_neg.append(gain)
+                            runs_with_negative_gains += 1
 
                     current_run = {}
     except FileNotFoundError:
