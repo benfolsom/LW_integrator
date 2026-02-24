@@ -13,6 +13,9 @@ Usage:
 
     # Live mode with custom refresh interval:
     ./plot_from_logcache_live.py --live --interval 5 [logfile]
+
+    # Filter out extreme gains (default: ±30%):
+    ./plot_from_logcache_live.py --max-gain 50 [logfile]
 """
 
 import argparse
@@ -43,7 +46,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def parse_sweep_log(log_file, verbose=True):
+def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
     """Parse sweep log file and extract run parameters and metrics.
 
     Only returns data from the MOST RECENT sweep in the log file.
@@ -51,6 +54,15 @@ def parse_sweep_log(log_file, verbose=True):
     all data from previous sweeps is discarded.
 
     Returns separate arrays for positive and negative/zero gains, plus metadata.
+
+    Parameters
+    ----------
+    log_file : str
+        Path to the log file
+    verbose : bool, optional
+        Whether to print verbose output (default: True)
+    max_gain_percent : float, optional
+        Maximum absolute gain percentage to include (default: 30.0)
 
     Returns
     -------
@@ -177,8 +189,8 @@ def parse_sweep_log(log_file, verbose=True):
                     gain = float(match.group(1))
                     runs_with_metrics += 1
 
-                    # Filter out gains with absolute value > 200% (unrealistic data)
-                    if abs(gain) <= 200.0:
+                    # Filter out gains with absolute value beyond threshold (unrealistic data)
+                    if abs(gain) <= max_gain_percent:
                         # Separate positive and negative/zero gains
                         if gain > 0:
                             energies_pos.append(current_run["energy"])
@@ -840,7 +852,7 @@ def find_latest_log(logcache_dir="logcache"):
     return max(sweep_logs, key=lambda p: p.stat().st_mtime)
 
 
-def live_monitor(log_file, output_file, interval=3):
+def live_monitor(log_file, output_file, interval=3, max_gain_percent=30.0):
     """Monitor log file and regenerate plot when data changes."""
     print(f"\n{'=' * 80}")
     print(f"LIVE MODE: Monitoring {log_file}")
@@ -866,7 +878,9 @@ def live_monitor(log_file, output_file, interval=3):
                 percent_gains_neg,
                 stats,
                 param_metadata,
-            ) = parse_sweep_log(log_file, verbose=False)
+            ) = parse_sweep_log(
+                log_file, verbose=False, max_gain_percent=max_gain_percent
+            )
 
             current_sweep = stats.get("sweep_count", 0)
 
@@ -984,6 +998,12 @@ def main():
         "-o",
         help="Output file path (default: logcache/latest_sweep_plot.png)",
     )
+    parser.add_argument(
+        "--max-gain",
+        type=float,
+        default=30.0,
+        help="Maximum absolute gain percentage to include in plots (default: 30.0)",
+    )
 
     args = parser.parse_args()
 
@@ -1013,7 +1033,12 @@ def main():
 
     # Run in appropriate mode
     if args.live:
-        live_monitor(str(log_file), str(output_file), interval=args.interval)
+        live_monitor(
+            str(log_file),
+            str(output_file),
+            interval=args.interval,
+            max_gain_percent=args.max_gain,
+        )
     else:
         # Single static plot
         print(f"Parsing log file: {log_file}")
@@ -1026,7 +1051,7 @@ def main():
             percent_gains_neg,
             stats,
             param_metadata,
-        ) = parse_sweep_log(str(log_file), verbose=True)
+        ) = parse_sweep_log(str(log_file), verbose=True, max_gain_percent=args.max_gain)
 
         if energies_pos is None or len(energies_pos) == 0:
             print("ERROR: No positive gain data found in log file")
