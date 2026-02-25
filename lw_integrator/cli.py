@@ -128,6 +128,34 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Path to a JSON sweep configuration file for parameter sweeps.",
     )
     parser.add_argument(
+        "--log-verbosity",
+        type=str,
+        dest="log_verbosity",
+        choices=["none", "truncated", "full"],
+        help="Override log verbosity level for sweeps (none, truncated, or full). "
+        "Default is from config. 'full' shows all SC iterations and adaptive timestep details.",
+    )
+    parser.add_argument(
+        "--sc-verbosity",
+        type=int,
+        dest="sc_verbosity",
+        choices=[0, 1, 2, 3],
+        help="Override self-consistency verbosity (0=silent, 1=summary, 2=failures, 3=full detail).",
+    )
+    parser.add_argument(
+        "--adaptive-debug",
+        dest="adaptive_debug",
+        action="store_true",
+        help="Enable adaptive timestep debug output.",
+    )
+    parser.add_argument(
+        "--no-adaptive-debug",
+        dest="adaptive_debug",
+        action="store_false",
+        help="Disable adaptive timestep debug output.",
+    )
+    parser.set_defaults(adaptive_debug=None)
+    parser.add_argument(
         "--steps",
         type=int,
         help="Total number of integration steps (overrides configuration/default).",
@@ -612,10 +640,22 @@ def run_sweep(args: argparse.Namespace) -> int:
     # Determine quiet mode from args
     quiet = getattr(args, "quiet", False)
 
+    # Build verbosity overrides dict
+    verbosity_overrides = {}
+    if hasattr(args, "log_verbosity") and args.log_verbosity is not None:
+        verbosity_overrides["log_verbosity"] = args.log_verbosity
+    if hasattr(args, "sc_verbosity") and args.sc_verbosity is not None:
+        verbosity_overrides["self_consistency_verbosity"] = args.sc_verbosity
+    if hasattr(args, "adaptive_debug") and args.adaptive_debug is not None:
+        verbosity_overrides["adaptive_timestep_debug"] = args.adaptive_debug
+
     # Run the sweep
     try:
         success = run_sweep_from_config(
-            config_path=args.sweep_config, output_dir=None, verbose=not quiet
+            config_path=args.sweep_config,
+            output_dir=None,
+            verbose=not quiet,
+            verbosity_overrides=verbosity_overrides,
         )
         return 0 if success else 1
     except Exception as exc:

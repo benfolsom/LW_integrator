@@ -74,11 +74,13 @@ class SweepRunner:
         self.log_file = None
 
     def _log(self, message: str) -> None:
-        """Log a message to stdout and log file."""
-        if self.verbose:
-            print(message)
+        """Log a message to stdout and log file with [OPTIMIZATION] prefix."""
+        # Always print to stdout with [OPTIMIZATION] prefix (captured by debug_logger to logcache)
+        print(f"[OPTIMIZATION] {message}", flush=True)
+
+        # Also write to the sweep.log file in the results directory
         if self.log_file is not None:
-            self.log_file.write(f"{message}\n")
+            self.log_file.write(f"[OPTIMIZATION] {message}\n")
             self.log_file.flush()
 
     def _generate_parameter_grids(self) -> Dict[str, List[float]]:
@@ -199,6 +201,83 @@ class SweepRunner:
         else:
             steps = self.config.steps
 
+        # Log timestep calculation details
+        AMU_TO_MEV = 931.494
+        rest_energy_mev = self.config.m_particle * AMU_TO_MEV
+        gamma = (energy_gev * 1e3) / rest_energy_mev
+        beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
+
+        print(
+            f"[OPTIMIZATION]   [TIMESTEP] Run {run_num} strategy '{self.config.timestep_strategy}':",
+            flush=True,
+        )
+        print(
+            f"[OPTIMIZATION]     E={energy_gev:.4f} GeV, m={self.config.m_particle:.4e} amu",
+            flush=True,
+        )
+        print(f"[OPTIMIZATION]     gamma={gamma:.2f}, beta={beta:.8f}", flush=True)
+        print(
+            f"[OPTIMIZATION]     timestep h={timestep:.4e} ns (proper time = dt/gamma)",
+            flush=True,
+        )
+        print(f"[OPTIMIZATION]     steps={steps}", flush=True)
+
+        if self.config.timestep_strategy == "auto_distance":
+            distance_per_step = beta * gamma * C_MMNS * timestep
+            expected_total = distance_per_step * steps
+            print(
+                f"[OPTIMIZATION]     distance_per_step = β·γ·c·h = {distance_per_step:.4f} mm",
+                flush=True,
+            )
+            print(
+                f"[OPTIMIZATION]     expected_total_distance = {expected_total:.2f} mm",
+                flush=True,
+            )
+            print(
+                f"[OPTIMIZATION]     wall_z={self.config.wall_z:.2f} mm, start_z={start_z:.2f} mm",
+                flush=True,
+            )
+            print(
+                f"[OPTIMIZATION]     distance_to_wall = {abs(self.config.wall_z - start_z):.2f} mm",
+                flush=True,
+            )
+            print(
+                f"[OPTIMIZATION]     target_distance={self.config.target_distance_mm:.2f} mm",
+                flush=True,
+            )
+
+        print(
+            f"[OPTIMIZATION]   [START] Run {run_num}/{run_num}: a={aperture:.4e}mm, E={energy_gev:.4f}GeV, z={start_z:.2f}mm, h={timestep:.4e}ns, N={steps}",
+            flush=True,
+        )
+        print(
+            f"[OPTIMIZATION]   [CONFIG] Run {run_num} stability settings:", flush=True
+        )
+        print(
+            f"[OPTIMIZATION]     smoothness_enabled: {self.config.smoothness_enabled}",
+            flush=True,
+        )
+        if self.config.smoothness_enabled:
+            print(
+                f"[OPTIMIZATION]     smoothness_window_size: {self.config.smoothness_window_size}",
+                flush=True,
+            )
+            print(
+                f"[OPTIMIZATION]     smoothness_reject_on_violation: {self.config.smoothness_reject_on_violation}",
+                flush=True,
+            )
+
+        if aperture < 0.1:
+            print(
+                f"[OPTIMIZATION]   [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)",
+                flush=True,
+            )
+
+        print(
+            f"[OPTIMIZATION]   [DEBUG] Calling run_testbed for Run {run_num}...",
+            flush=True,
+        )
+
         # Build rider params
         AMU_TO_MEV = 931.494
         rest_energy_mev = self.config.m_particle * AMU_TO_MEV
@@ -298,6 +377,48 @@ class SweepRunner:
 
         # Run core integration
         try:
+            # Create progress callback for step-by-step logging
+            def progress_callback(current_step: int, total_steps: int):
+                if current_step % 100 == 0:
+                    progress_pct = (current_step / total_steps) * 100
+                    print(
+                        f"[OPTIMIZATION]     [PROGRESS] Run {run_num}: step {current_step}/{total_steps} ({progress_pct:.0f}%)",
+                        flush=True,
+                    )
+
+            # Create logger callback for verbose messages (only if adaptive debug enabled)
+            def logger_callback(message: str):
+                if self.config.adaptive_timestep_debug:
+                    print(f"[OPTIMIZATION]     [VERBOSE] {message}", flush=True)
+
+            # Build self-consistency config
+            from core.self_consistency import SelfConsistencyConfig
+
+            sc_config = None
+            if self.config.self_consistency_enabled:
+                sc_config = SelfConsistencyConfig(
+                    enabled=True,
+                    target_ms_tolerance=self.config.self_consistency_tolerance,
+                    max_iterations=self.config.self_consistency_max_iterations,
+                    verbosity=self.config.self_consistency_verbosity,
+                    chrono_interpolate=self.config.self_consistency_chrono_interpolate,
+                    chrono_tolerance=self.config.self_consistency_chrono_tolerance,
+                    chrono_high_precision=self.config.self_consistency_chrono_high_precision,
+                    chrono_adaptive_tolerance=self.config.self_consistency_chrono_adaptive_tolerance,
+                )
+
+            # Build adaptive timestep config
+            from core.integration_runner import AdaptiveTimestepConfig
+
+            adaptive_config = None
+            if self.config.adaptive_timestep_enabled:
+                adaptive_config = AdaptiveTimestepConfig(
+                    enabled=True,
+                    energy_jump_threshold=self.config.adaptive_timestep_threshold,
+                    timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
+                    min_timestep_factor=self.config.adaptive_timestep_min_factor,
+                )
+
             rider_trajectory, driver_trajectory = retarded_integrator(
                 steps=steps,
                 h_step=timestep,
@@ -313,6 +434,22 @@ class SweepRunner:
                 startup_mode=StartupMode.COLD_START,
                 image_subcharge_count=self.config.image_subcharge_count,
                 use_conducting_image_weighting=self.config.use_image_weighting,
+                self_consistency=sc_config,
+                adaptive_timestep=adaptive_config,
+                macroparticle_charge_multiplier=self.config.macroparticle_charge_multiplier,
+                macroparticle_sigma_multiplier=self.config.macroparticle_sigma_multiplier,
+                macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
+                bunch_transv_dist=rider_params["transv_dist"],
+                bunch_transv_mom=rider_params["transv_mom"],
+                progress_callback=progress_callback
+                if self.config.log_verbosity == "full"
+                else None,
+                logger=logger_callback if self.config.log_verbosity == "full" else None,
+            )
+
+            print(
+                f"[OPTIMIZATION]   [DEBUG] run_testbed completed for Run {run_num}",
+                flush=True,
             )
 
             # Check if trajectory is valid
@@ -445,50 +582,135 @@ class SweepRunner:
         initialize_debug_logging(context="sweep_cli")
         set_logging_context("sweep_cli")
 
+        # Save original verbosity settings before any overrides
+        original_sc_verbosity = self.config.self_consistency_verbosity
+        original_adaptive_debug = self.config.adaptive_timestep_debug
+
         try:
-            self._log("=" * 80)
-            self._log("PARAMETER SWEEP")
-            self._log("=" * 80)
-            self._log(f"Output directory: {self.output_dir}")
-            self._log(f"Simulation type: {self.config.simulation_type}")
-            self._log(f"Mode: {self.config.mode}")
+            # Apply log verbosity settings (like GUI does)
+
+            if (
+                self.config.log_verbosity == "none"
+                or self.config.log_verbosity == "truncated"
+            ):
+                # Suppress detailed logging for non-full modes
+                self.config.self_consistency_verbosity = 0
+                self.config.adaptive_timestep_debug = False
+            # else: "full" mode inherits settings from config (don't override)
+
             self._log("")
+            self._log(f"Log verbosity: {self.config.log_verbosity}")
+            if self.config.log_verbosity == "full":
+                self._log("  Full debug logging enabled (inherits config settings)")
+                self._log(f"    SC verbosity: {self.config.self_consistency_verbosity}")
+                self._log(
+                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
+                )
+            elif self.config.log_verbosity == "truncated":
+                self._log("  Truncated logging (parameters + metrics + errors only)")
+                self._log("    SC verbosity: 0 (overridden)")
+                self._log("    Adaptive timestep debug: False (overridden)")
+            elif self.config.log_verbosity == "none":
+                self._log("  Debug logging disabled")
+                self._log("    SC verbosity: 0 (overridden)")
+                self._log("    Adaptive timestep debug: False (overridden)")
+            self._log(
+                f"Trajectory saving: Top N={self.config.save_top_n_trajectories}, All={self.config.save_all_trajectories}, Failed={self.config.save_failed_trajectories}"
+            )
 
             if self.config.mode == "optimization":
-                self._log("ERROR: Optimization mode not yet supported in headless CLI")
+                self._log("[ERROR] Optimization mode not yet supported in headless CLI")
                 self._log("Please use the GUI for optimization runs")
                 return False
 
             # Generate parameter grids
-            grids = self._generate_parameter_grids()
+            param_grids = self._generate_parameter_grids()
 
             # Calculate total runs
             total_runs = 1
-            for key, values in grids.items():
+            for key, values in param_grids.items():
                 total_runs *= len(values)
-                self._log(f"  {key}: {len(values)} values")
 
+            # Log sweep start with total runs
+            self._log(f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs")
+            self._log(
+                f"  aperture: {len(param_grids['aperture'])} points from {min(param_grids['aperture']):.2e} to {max(param_grids['aperture']):.2e}"
+            )
+            self._log(
+                f"  energy: {len(param_grids['energy'])} points from {min(param_grids['energy']):.2e} to {max(param_grids['energy']):.2e}"
+            )
+            self._log(
+                "  transverse_offset_fraction: {:.2e} (fixed)".format(
+                    param_grids["transv_offset_frac"][0]
+                )
+                if len(param_grids["transv_offset_frac"]) == 1
+                else f"  transverse_offset_fraction: {len(param_grids['transv_offset_frac'])} values"
+            )
+            self._log(
+                "  start_z: {:.2e} (fixed)".format(param_grids["start_z"][0])
+                if len(param_grids["start_z"]) == 1
+                else f"  start_z: {len(param_grids['start_z'])} values"
+            )
+            self._log(f"  Timestep strategy: {self.config.timestep_strategy}")
+            if self.config.timestep_strategy == "auto_distance":
+                self._log(
+                    f"    Target distance: {self.config.target_distance_mm} mm (wall_z + target)"
+                )
+                self._log(
+                    "    All particles will travel to consistent z regardless of energy"
+                )
+            self._log(f"  z_cutoff_mode: {self.config.z_cutoff_mode}")
             self._log("")
-            self._log(f"Total runs: {total_runs}")
-            self._log("=" * 80)
+            self._log(f"Output directory: {self.output_dir}")
             self._log("")
 
             # Run sweep
             start_time = time.time()
             run_num = 0
             failed_count = 0
+            result = None  # Initialize result variable
 
-            for aperture in grids["aperture"]:
-                for energy in grids["energy"]:
-                    for start_z in grids["start_z"]:
-                        for transv_offset_frac in grids["transv_offset_frac"]:
+            for aperture in param_grids["aperture"]:
+                for energy in param_grids["energy"]:
+                    for start_z in param_grids["start_z"]:
+                        for transv_offset_frac in param_grids["transv_offset_frac"]:
                             run_num += 1
 
                             self._log(
-                                f"[{run_num}/{total_runs}] aperture={aperture:.6f}mm, "
-                                f"energy={energy:.3f}GeV, start_z={start_z:.2f}mm, "
-                                f"offset_frac={transv_offset_frac:.3f}"
+                                f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:"
                             )
+                            self._log(f"    aperture: {aperture:.4e} mm")
+                            self._log(f"    energy: {energy:.4f} GeV")
+                            self._log(f"    start_z: {start_z:.4f} mm")
+                            self._log(
+                                f"    transv_offset_frac: {transv_offset_frac:.4f}"
+                            )
+                            self._log(
+                                f"    rider_m_particle: {self.config.m_particle:.4e} amu"
+                            )
+                            self._log(
+                                f"    rider_charge_sign: {self.config.charge_sign}"
+                            )
+                            self._log(f"    rider_pcount: {self.config.pcount}")
+                            self._log(
+                                f"    rider_transv_mom: {self.config.transv_mom:.4e} amu·mm/ns"
+                            )
+                            self._log(
+                                f"    rider_transv_dist: {self.config.transv_dist:.4e} mm"
+                            )
+                            if self.config.macroparticle_enabled:
+                                self._log(
+                                    f"    macroparticle_enabled: {self.config.macroparticle_enabled}"
+                                )
+                                self._log(
+                                    f"    macroparticle_charge_multiplier: {self.config.macroparticle_charge_multiplier:.4f}"
+                                )
+                                self._log(
+                                    f"    macroparticle_sigma_multiplier: {self.config.macroparticle_sigma_multiplier:.4f}"
+                                )
+                                self._log(
+                                    f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
+                                )
 
                             try:
                                 result = self._run_single_integration(
@@ -504,14 +726,21 @@ class SweepRunner:
                                 if not result["success"]:
                                     failed_count += 1
                                     error_msg = result.get("error", "Unknown error")
-                                    self._log(f"  FAILED: {error_msg}")
+                                    self._log(
+                                        f"  [FAILED] Run {run_num}/{total_runs}: {error_msg}"
+                                    )
                             except Exception as e:
                                 failed_count += 1
                                 import traceback
 
                                 error_detail = traceback.format_exc()
-                                self._log(f"  EXCEPTION: {e}")
-                                self._log(f"  Traceback:\n{error_detail}")
+                                self._log(
+                                    f"  [EXCEPTION] Run {run_num}/{total_runs}: {e}"
+                                )
+                                self._log("  Traceback:")
+                                for line in error_detail.split("\n"):
+                                    if line:
+                                        self._log(f"    {line}")
                                 self.results.append(
                                     {
                                         "success": False,
@@ -524,12 +753,21 @@ class SweepRunner:
                                         },
                                     }
                                 )
+                                result = self.results[
+                                    -1
+                                ]  # Set result to the error we just added
 
                             if result.get("success"):
                                 metrics = result.get("metrics", {})
+                                self._log(f"  [RESULT] Run {run_num}/{total_runs}:")
                                 self._log(
-                                    f"  ✓ max_energy_gain={metrics.get('max_energy_gain_gev', 0):.6f}GeV, "
-                                    f"final_gamma={metrics.get('final_gamma_mean', 1):.2f}"
+                                    f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.6e} GeV"
+                                )
+                                self._log(
+                                    f"    final_gamma: {metrics.get('final_gamma_mean', 1):.6f}"
+                                )
+                                self._log(
+                                    f"    initial_gamma: {metrics.get('initial_gamma_mean', 1):.6f}"
                                 )
 
             # Save results
@@ -538,6 +776,7 @@ class SweepRunner:
             self._log("")
             self._log("=" * 80)
             self._log("SWEEP COMPLETE")
+            self._log("=" * 80)
             self._log(f"Total runs: {total_runs}")
             self._log(f"Successful: {total_runs - failed_count}")
             self._log(f"Failed: {failed_count}")
@@ -568,20 +807,31 @@ class SweepRunner:
                     indent=2,
                 )
 
-            self._log(f"\nResults saved to: {results_path}")
+            self._log("")
+            self._log(f"Results saved to: {results_path}")
 
             return True
 
         except KeyboardInterrupt:
-            self._log("\n\nSweep interrupted by user")
+            self._log("")
+            self._log("")
+            self._log("[INFO] Sweep interrupted by user")
             return False
         except Exception as e:
-            self._log(f"\n\nERROR: {e}")
+            self._log("")
+            self._log("")
+            self._log(f"[ERROR] {e}")
             import traceback
 
-            self._log(traceback.format_exc())
+            for line in traceback.format_exc().split("\n"):
+                if line:
+                    self._log(f"  {line}")
             return False
         finally:
+            # Restore original verbosity settings
+            self.config.self_consistency_verbosity = original_sc_verbosity
+            self.config.adaptive_timestep_debug = original_adaptive_debug
+
             if self.log_file is not None:
                 self.log_file.close()
 
@@ -705,7 +955,10 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
 
 
 def run_sweep_from_config(
-    config_path: Path, output_dir: Optional[Path] = None, verbose: bool = True
+    config_path: Path,
+    output_dir: Optional[Path] = None,
+    verbose: bool = True,
+    verbosity_overrides: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Run a parameter sweep from a configuration file.
 
@@ -717,6 +970,9 @@ def run_sweep_from_config(
         Output directory. If None, auto-generated from config name and timestamp
     verbose : bool, optional
         Whether to print progress messages, by default True
+    verbosity_overrides : Dict[str, Any], optional
+        Dictionary of verbosity settings to override config values.
+        Supported keys: 'log_verbosity', 'self_consistency_verbosity', 'adaptive_timestep_debug'
 
     Returns
     -------
@@ -738,6 +994,16 @@ def run_sweep_from_config(
 
     # Create OptimizationConfig
     config = OptimizationConfig(**filtered_dict)
+
+    # Apply verbosity overrides from CLI arguments
+    if verbosity_overrides:
+        for key, value in verbosity_overrides.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+                print(
+                    f"[INFO] Overriding {key} from CLI: {value}",
+                    flush=True,
+                )
 
     # Determine output directory
     if output_dir is None:
