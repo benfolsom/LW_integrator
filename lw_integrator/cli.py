@@ -112,13 +112,20 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         description=(
             "Run Liénard–Wiechert retarded-field simulations using the modern "
             "core integrator. Provide overrides with flags or supply a JSON "
-            "configuration file for advanced scenarios."
+            "configuration file for advanced scenarios, or run parameter sweeps "
+            "with --sweep-config."
         ),
     )
     parser.add_argument(
         "--config",
         type=Path,
         help="Path to a JSON file describing the simulation parameters and bunches.",
+    )
+    parser.add_argument(
+        "--sweep-config",
+        type=Path,
+        dest="sweep_config",
+        help="Path to a JSON sweep configuration file for parameter sweeps.",
     )
     parser.add_argument(
         "--steps",
@@ -565,6 +572,12 @@ def _format_value(value: Any) -> Any:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    # Check if this is a sweep configuration
+    if args.sweep_config is not None:
+        return run_sweep(args)
+
+    # Regular single simulation
     try:
         request = build_request(args)
     except SimulationConfigError as exc:
@@ -584,6 +597,33 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"Driver trajectory generated with {len(driver)} integration steps.")
 
     return 0
+
+
+def run_sweep(args: argparse.Namespace) -> int:
+    """Execute a parameter sweep from a sweep configuration file."""
+    from lw_integrator.sweep_runner import run_sweep_from_config
+
+    if not args.sweep_config.exists():
+        print(
+            f"Error: Sweep config file not found: {args.sweep_config}", file=sys.stderr
+        )
+        return 2
+
+    # Determine quiet mode from args
+    quiet = getattr(args, "quiet", False)
+
+    # Run the sweep
+    try:
+        success = run_sweep_from_config(
+            config_path=args.sweep_config, output_dir=None, verbose=not quiet
+        )
+        return 0 if success else 1
+    except Exception as exc:
+        print(f"Error running sweep: {exc}", file=sys.stderr)
+        import traceback
+
+        traceback.print_exc()
+        return 2
 
 
 if __name__ == "__main__":  # pragma: no cover - manual invocation

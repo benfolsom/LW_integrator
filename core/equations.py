@@ -468,13 +468,14 @@ def _compute_gating_threshold(
     to the source, the relative closing speed is c(1 - β·n̂), where n̂ points
     from source to observer.
 
-    Physical examples:
-    - Stationary observer (β·n̂=0): threshold = R (light travels full distance)
-    - Approaching at c (β·n̂=-1): threshold = R/2 (relative speed = 2c, meet halfway)
-    - Receding slowly (β·n̂=+0.5): threshold = 2R (relative speed = 0.5c, takes longer)
-    - Receding at c (β·n̂→+1): threshold → ∞ (never catches up, forces never apply)
+    Physical examples (for approaching particles, β·n̂ < 0):
+    - Stationary (β=0): threshold = 0 (forces apply immediately)
+    - Low velocity (β=0.1): threshold ≈ 0.091·R
+    - Moderate (β=0.5): threshold ≈ 0.33·R
+    - Relativistic (β=0.9): threshold ≈ 0.47·R
+    - Ultra-relativistic (β→1): threshold → R/2 (approaches limit, never exceeds)
 
-    Formula: threshold = R / (1 - β·n̂)
+    Formula: threshold = β·R / (1 - β·n̂)
 
     Special handling for β·n̂ ≥ 1 (receding at or above light speed):
     Return very large threshold (effectively infinite) to suppress forces.
@@ -498,8 +499,13 @@ def _compute_gating_threshold(
     # Also handle case where β·n̂ is very close to 1 (denominator near 0)
     MIN_DENOMINATOR = 1e-6  # corresponds to β·n̂ = 0.999999
 
+    # Calculate particle speed magnitude
+    beta_magnitude = np.sqrt(beta_avg_x**2 + beta_avg_y**2 + beta_avg_z**2)
+
     thresholds = np.where(
-        denominators > MIN_DENOMINATOR, nhat["R"] / denominators, LARGE_THRESHOLD
+        denominators > MIN_DENOMINATOR,
+        beta_magnitude * nhat["R"] / denominators,
+        LARGE_THRESHOLD,
     )
 
     if thresholds.size > 0:
@@ -1152,15 +1158,17 @@ def retarded_equations_of_motion(
                     # Fallback if no external particles
                     estimated_max_R = 1000.0
 
-                # Correct formula: threshold = R / (1 - β·n̂)
+                # Correct formula: threshold = β·R / (1 - β·n̂)
                 # For early check, use conservative estimate assuming worst case
                 # (minimum threshold = particle approaching head-on)
-                # For β·n̂ = -1 (approaching): threshold = R/2
-                # For β·n̂ = 0 (perpendicular): threshold = R
+                # For β·n̂ = -1 (approaching): threshold = β·R/2
+                # For β·n̂ = 0 (perpendicular): threshold = β·R
                 # For β·n̂ = +1 (receding): threshold → ∞
                 # Use worst case (approaching) for conservative early gating
                 # Worst case: β·n̂ = -beta_avg_mag → denominator = 1 + beta_avg_mag
-                estimated_threshold = estimated_max_R / (1.0 + beta_avg_mag)
+                estimated_threshold = (
+                    beta_avg_mag * estimated_max_R / (1.0 + beta_avg_mag)
+                )
 
                 # Skip if travel distance is definitely below threshold
                 if travel_distance < estimated_threshold:

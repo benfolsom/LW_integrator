@@ -195,6 +195,132 @@ reported configurations:
   drive :math:`R` toward the micron scale so that the retarded integrator can
   report a stable pre-impact energy.
 
+COLD_START gating mechanism
+---------------------------
+
+The COLD_START startup mode suppresses retarded forces during the initial phase
+of a simulation until particles have traveled far enough from their origin for
+light from external sources to have causally reached them. This ensures physical
+causality is respected and avoids applying forces based on incomplete or
+unphysical retarded histories.
+
+Gating threshold formula
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The threshold distance a particle must travel before forces are applied is:
+
+.. math::
+
+   d_{\text{threshold}} = \frac{\beta \cdot R}{1 - \boldsymbol{\beta} \cdot \mathbf{n}},
+
+where:
+
+- :math:`\beta = |\boldsymbol{\beta}|` is the particle speed (in units of c)
+- :math:`R` is the current distance from particle to external source
+- :math:`\mathbf{n}` is the unit vector pointing from source to particle
+- :math:`\boldsymbol{\beta} \cdot \mathbf{n}` is the velocity component along the separation
+
+Physical interpretation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The threshold represents the distance the **particle** must travel before light
+from the source's initial position could reach it. The formula accounts for the
+relative closing speed between light and particle:
+
+- **Approaching** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} < 0`): particles
+  and light meet quickly, threshold < :math:`\beta R`
+
+  Example: :math:`\boldsymbol{\beta} \cdot \mathbf{n} = -\beta` (head-on) →
+  threshold = :math:`\beta R / (1 + \beta)`
+
+- **Perpendicular** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} = 0`): light
+  travels full distance, threshold = :math:`\beta R`
+
+- **Receding** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} > 0`): light takes
+  longer to catch up, threshold > :math:`\beta R`
+
+- **Receding at c** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} \rightarrow 1`):
+  light never catches particle, threshold → ∞ (forces never applied)
+
+Dynamic threshold calculation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The threshold is **recalculated every integration step** using current values of
+:math:`R` and :math:`\boldsymbol{\beta}`. This ensures causality is respected
+as geometry evolves:
+
+1. Distance :math:`R` changes as particles move and images reposition
+2. Velocity :math:`\boldsymbol{\beta}` updates as particles accelerate
+3. Threshold automatically decreases as particle approaches sources
+4. Forces "turn on" dynamically when travel distance exceeds threshold
+
+Two-stage implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For computational efficiency, the code uses a two-stage check:
+
+**Stage 1: Early conservative check** (performance optimization)
+
+- Uses estimated maximum :math:`R` from external particle bounds
+- Conservative threshold: :math:`\beta R_{\max} / (1 + \beta)` (assumes head-on approach)
+- If travel distance < estimated threshold, skip expensive retarded distance calculations
+
+**Stage 2: Precise check** (accurate gating)
+
+- Uses actual retarded distance :math:`R` to each external source
+- Per-source thresholds: :math:`\beta R / (1 - \boldsymbol{\beta} \cdot \mathbf{n})`
+- Forces applied when travel distance ≥ threshold
+
+Velocity regime behavior
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The :math:`\beta` factor in the numerator is critical for non-relativistic particles:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 15 30 35
+
+   * - Regime
+     - :math:`\beta`
+     - Threshold (approaching)
+     - Physical meaning
+   * - Non-relativistic
+     - 0.01
+     - :math:`0.01 R / 1.01 \approx 0.01 R`
+     - Forces apply almost immediately
+   * - Low velocity
+     - 0.1
+     - :math:`0.1 R / 1.1 \approx 0.09 R`
+     - Early force application
+   * - Moderate
+     - 0.5
+     - :math:`0.5 R / 1.5 \approx 0.33 R`
+     - Forces apply at 1/3 distance
+   * - Relativistic
+     - 0.9
+     - :math:`0.9 R / 1.9 \approx 0.47 R`
+     - Near half-distance
+   * - Ultra-relativistic
+     - → 1
+     - → :math:`R / 2`
+     - Approach halfway limit (never exceed)
+
+Without the :math:`\beta` factor, low-velocity particles would have forces
+suppressed for distances far exceeding physical interaction regions, producing
+incorrect physics.
+
+Implementation
+~~~~~~~~~~~~~~
+
+The gating mechanism is implemented in ``core/equations.py``:
+
+- :func:`_compute_gating_threshold` computes per-source thresholds
+- :func:`_should_apply_external_forces` performs the Stage 2 check
+- Early conservative check embedded in :func:`retarded_equations_of_motion`
+
+For conducting walls, the distance :math:`R` is computed to image charges (not
+the wall itself), ensuring correct handling of virtual source positions.
+
 Bridging back to the code
 -------------------------
 

@@ -1928,8 +1928,20 @@ class OptimizationRunMixin:
             self.config.energy_log_scale,
         )
 
-        # Lists (always swept if multiple values)
-        grids["transverse_offset_fraction"] = self.config.transverse_offset_fractions
+        # Transverse offset is ALWAYS a single (x,y) configuration, NOT a sweep parameter
+        # For both CONDUCTING_WALL and BUNCH_TO_BUNCH:
+        # - If config has [0.0, 0.0], this represents a single (x=0, y=0) configuration
+        # - If config has [0.1], this represents (x=0.1, y=0) configuration
+        # - We use only the first value as the scalar offset for this sweep configuration
+        if len(self.config.transverse_offset_fractions) > 0:
+            grids["transverse_offset_fraction"] = [
+                self.config.transverse_offset_fractions[0]
+            ]
+        else:
+            # No offset provided, default to 0.0
+            grids["transverse_offset_fraction"] = [0.0]
+
+        # Starting z positions: always swept if multiple values
         grids["start_z"] = self.config.starting_z_positions
 
         # Wall z (optional sweep)

@@ -10,14 +10,19 @@ corrections.
 February 2026 Updates
 ---------------------
 
-COLD_START Gating Formula Fix (February 20, 2026)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+COLD_START Gating Formula Fixes (February 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Critical Bug Fix**
+**Critical Bug Fixes**
 
-The COLD_START gating mechanism had a fundamentally incorrect formula for
-computing when retarded forces should be applied. This caused massive unphysical
-energy losses in relativistic simulations with β > 0.5.
+The COLD_START gating mechanism had two fundamental errors in computing when
+retarded forces should be applied.
+
+Fix 1: Division vs Multiplication (February 20, 2026)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The first bug caused massive unphysical energy losses in relativistic simulations
+with β > 0.5.
 
 **The Bug**
 
@@ -62,7 +67,7 @@ The corrected formula properly implements causality:
 
 * **Approaching** (β·n̂ < 0): denominator > 1 → threshold < R (meet quickly)
 
-  Example: β·n̂ = -1 → threshold = R/2 (meet halfway)
+  Example: β·n̂ = -1 → threshold = R/2 (approach halfway, never exceed)
 
 * **Perpendicular** (β·n̂ = 0): denominator = 1 → threshold = R (full distance)
 
@@ -145,6 +150,171 @@ All validation tests pass:
 * Detailed analysis: ``local/COLD_START_FIX.md``
 * Test script: ``local/test_gating_fix.py``
 * Affected config: ``configs/run_configs/two_particle_demo6.json``
+
+Fix 2: Missing β Factor for Low-Velocity Particles (February 25, 2026)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Critical Bug for Non-Relativistic Physics**
+
+The formula ``threshold = R / (1 - β·n̂)`` calculated the distance **light travels**,
+not the distance the **particle travels**. This caused catastrophic errors for
+low-velocity particles.
+
+**The Bug**
+
+The gating threshold lacked the β (particle velocity) factor:
+
+.. code-block:: python
+
+   # WRONG: Distance light travels
+   threshold = R / (1.0 - beta_dot_nhat)
+
+For low-velocity particles approaching a source:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 20 20 20
+
+   * - Particle Speed
+     - β
+     - Wrong Threshold
+     - Correct Threshold
+     - Error
+   * - Very low
+     - 0.01
+     - 198 mm
+     - 2 mm
+     - **100×**
+   * - Low
+     - 0.1
+     - 182 mm
+     - 18 mm
+     - **10×**
+   * - Moderate
+     - 0.5
+     - 133 mm
+     - 67 mm
+     - **2×**
+   * - Relativistic
+     - 0.9
+     - 105 mm
+     - 95 mm
+     - 1.1×
+   * - Ultra-relativistic
+     - 0.999
+     - 100 mm
+     - 100 mm
+     - ~1×
+
+**Why It Went Unnoticed**
+
+The bug was **masked in relativistic simulations**:
+
+* For β ≈ 1, the missing factor of β ≈ 1, so error was negligible
+* High-energy physics simulations typically have β > 0.9
+* Bug only became critical for non-relativistic particles (β < 0.5)
+
+**The Fix**
+
+Added the β factor to compute particle travel distance (``core/equations.py``):
+
+.. code-block:: python
+
+   # Calculate particle speed magnitude
+   beta_magnitude = np.sqrt(beta_avg_x**2 + beta_avg_y**2 + beta_avg_z**2)
+
+   # CORRECT: Distance particle travels
+   thresholds = np.where(
+       denominators > MIN_DENOMINATOR,
+       beta_magnitude * nhat["R"] / denominators,  # ← Added β factor
+       LARGE_THRESHOLD,
+   )
+
+**Physical Derivation**
+
+When particle and light approach each other:
+
+1. Initial separation: **R**
+2. Light speed: **c** (toward particle)
+3. Particle speed: **v = β·c** (toward light)
+4. Relative closing speed: **c + v = c(1 - β·n̂)** (where β·n̂ = -β for approaching)
+5. Time to meet: **t = R / [c·(1 - β·n̂)]**
+6. Distance **particle** travels: **d = v·t = β·c·t = β·R / (1 - β·n̂)** ✓
+7. Distance **light** travels: **d = c·t = R / (1 - β·n̂)** (old formula)
+
+The old formula calculated the distance light travels, not the distance the
+particle travels.
+
+**Dynamic Threshold Calculation**
+
+The threshold is **recalculated every integration step** using current values:
+
+**Stage 1: Early Conservative Check** (performance optimization)
+
+* Computed every step to avoid expensive retarded distance calculations
+* Uses estimated maximum R from external particle positions
+* Conservative threshold: ``β·R_max / (1 + β)`` (assumes worst-case approaching)
+* If travel_distance < estimated_threshold, skip all force calculations
+
+**Stage 2: Precise Check** (accurate gating)
+
+* Computed every step after retarded distances are calculated
+* Uses actual retarded distance R to each external source
+* Per-source thresholds: ``β·R / (1 - β·n̂)`` for each source
+* Forces applied when travel_distance ≥ threshold
+
+**Why Dynamic?**
+
+* Distance R changes as particles move and images reposition
+* Velocity β updates as particle accelerates/decelerates
+* Ensures causality at every step based on current conditions
+* Threshold automatically decreases as particle approaches sources
+
+**Impact**
+
+* Low-velocity simulations (β < 0.5) had severely incorrect gating
+* Non-relativistic particles had forces suppressed until far past interaction regions
+* Could produce completely wrong physics for β < 0.1
+* High-β simulations (β > 0.9) unaffected (error was negligible)
+
+**Test Results**
+
+All verification tests pass:
+
+.. code-block:: text
+
+   Case                      β        Expected        Actual          Status
+   -------------------------------------------------------------------------
+   Very low beta             0.0100   1.9802 mm       1.9802 mm       ✓ PASS
+   Low beta                  0.1000   18.1818 mm      18.1818 mm      ✓ PASS
+   Moderate beta             0.5000   66.6667 mm      66.6667 mm      ✓ PASS
+   Relativistic              0.9000   94.7368 mm      94.7368 mm      ✓ PASS
+   Ultra-relativistic        0.9990   99.9500 mm      99.9500 mm      ✓ PASS
+
+**Edge cases:**
+
+* Stationary particle (β = 0): threshold = 0 (forces apply immediately) ✓
+* Perpendicular motion (β·n̂ = 0): threshold = β·R ✓
+* Receding particle (β·n̂ ≥ 1): threshold = LARGE (effectively infinite) ✓
+
+**Backwards Compatibility**
+
+* High-β simulations (β > 0.9): results remain virtually identical
+* No API changes or breaking changes to interfaces
+* Low-β simulations: now produce correct physics (were previously wrong)
+
+**Recommended Action**
+
+Users with simulations at β < 0.9 should re-run with the corrected code to
+obtain accurate results.
+
+**References**
+
+* Implementation report: ``local/COLD_START_FIX_IMPLEMENTED.md``
+* Bug report: ``local/COLD_START_GATING_BUG_REPORT.md``
+* Fix specification: ``local/COLD_START_FIX_SPECIFICATION.md``
+* Verification test: ``local/test_gating_fix_verification.py``
+* Analytical test: ``local/test_low_beta_gating_issue.py``
 
 Adaptive Timestep Auto-Calculation (February 10, 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

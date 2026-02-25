@@ -2,23 +2,63 @@
 
 ## Recent Updates
 
-### COLD_START Gating Formula Fix (February 2026)
+### COLD_START Gating Formula Fixes (February 2026)
 
-**Critical bug fix** - The COLD_START gating mechanism had a fundamentally incorrect formula for computing when retarded forces should be applied, causing massive unphysical energy losses in relativistic simulations:
+**Critical bug fixes** - The COLD_START gating mechanism had two fundamental errors in computing when retarded forces should be applied:
+
+#### Fix 1: Division vs Multiplication (February 2026)
 
 - **Incorrect formula** - Used multiplication `R × (1 - β·n̂)` instead of division `R / (1 - β·n̂)`
 - **4× error** - For relativistic particles approaching sources (β·n̂ = -1), threshold was 4× too large (40km instead of 10km)
 - **Hardcoded limitation** - Used hardcoded `estimated_max_R = 10000 mm`, failing for separations > 10km
 - **Edge case handling** - Now properly handles receding particles (β·n̂ > 0) with threshold → ∞ as β·n̂ → 1
 
-**Corrected formula**: `threshold = R / (1 - β·n̂)` where:
+**Impact**: All relativistic simulations with β > 0.5 were affected. The bug caused forces to be gated for too long, then activate with insufficient causal history, resulting in energy losses of 250-3200 GeV (orders of magnitude larger than physical).
 
-- **Approaching** (β·n̂ < 0): denominator > 1 → threshold < R (particles and light meet quickly)
-- **Perpendicular** (β·n̂ = 0): denominator = 1 → threshold = R (light travels full distance)
-- **Receding** (β·n̂ > 0): denominator < 1 → threshold > R (light takes longer to catch up)
+#### Fix 2: Missing β Factor for Low-Velocity Particles (February 2026)
+
+**Second critical bug** - The formula `threshold = R / (1 - β·n̂)` calculated the distance **light travels**, not the distance the **particle travels**:
+
+- **Missing β factor** - Formula should be `threshold = β·R / (1 - β·n̂)` to account for particle velocity
+- **100× error for low-β** - For β = 0.01, threshold was 198mm instead of 2mm (forces suppressed until particle passed interaction region)
+- **10× error for moderate-β** - For β = 0.1, threshold was 182mm instead of 18mm
+- **Masked by relativistic cases** - For β ≈ 1, the error was negligible (factor of β ≈ 1), so bug went unnoticed in high-energy simulations
+
+**Physical Derivation**: When particle and light approach:
+
+- Initial separation: R
+- Light speed: c (toward particle)
+- Particle speed: v = β·c (toward light)
+- Relative closing speed: c(1 - β·n̂)
+- Time to meet: t = R / [c·(1 - β·n̂)]
+- Distance **particle** travels: d = v·t = β·c·t = **β·R / (1 - β·n̂)** ✓
+- Distance **light** travels: d = c·t = R / (1 - β·n̂) (old formula ✗)
+
+**Corrected formula**: `threshold = β·R / (1 - β·n̂)` where:
+
+- **Approaching** (β·n̂ < 0): denominator > 1 → threshold < β·R (particles and light meet quickly)
+- **Perpendicular** (β·n̂ = 0): denominator = 1 → threshold = β·R (light travels full distance)
+- **Receding** (β·n̂ > 0): denominator < 1 → threshold > β·R (light takes longer to catch up)
 - **Receding at c** (β·n̂ → 1): denominator → 0 → threshold → ∞ (forces never apply)
 
-**Impact**: All relativistic simulations with β > 0.5 were affected. The bug caused forces to be gated for too long, then activate with insufficient causal history, resulting in energy losses of 250-3200 GeV (orders of magnitude larger than physical). Now scales correctly from millimeters to hundreds of meters. See `local/COLD_START_FIX.md` for detailed analysis.
+**Dynamic Calculation**: The threshold is **recalculated every integration step** using current values:
+
+- Distance R updates as particles move and images reposition
+- Velocity β updates as particles accelerate/decelerate
+- Threshold automatically decreases as particle approaches sources
+- Two-stage check: (1) fast conservative estimate to skip expensive calculations, (2) precise per-source threshold
+- Ensures physical causality at every step based on evolving geometry
+
+**Example Timeline** (β = 0.5, initial R = 200mm, approaching):
+
+```
+Step 0:   travel = 0mm,   R = 200mm, threshold = 67mm  → forces OFF
+Step 50:  travel = 25mm,  R = 175mm, threshold = 58mm  → forces OFF
+Step 130: travel = 65mm,  R = 135mm, threshold = 45mm  → forces ON ✓
+Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
+```
+
+**Impact**: Low-velocity simulations (β < 0.5) had severely incorrect gating. Non-relativistic particles would have forces suppressed until far past physical interaction regions, producing wrong results. High-β simulations (β > 0.9) unaffected. See `local/COLD_START_FIX_IMPLEMENTED.md` for detailed analysis and verification.
 
 ### Adaptive Timestep Refactoring (February 2026)
 

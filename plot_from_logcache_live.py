@@ -885,7 +885,11 @@ def live_monitor(log_file, output_file, interval=3, max_gain_percent=30.0):
             current_sweep = stats.get("sweep_count", 0)
 
             # Check if we have new data OR a new sweep has started
-            if energies_pos is not None and (
+            # Allow plotting even with only negative gains
+            has_any_data = (energies_pos is not None and len(energies_pos) > 0) or (
+                energies_neg is not None and len(energies_neg) > 0
+            )
+            if has_any_data and (
                 stats["completed"] > last_completed or current_sweep > last_sweep_count
             ):
                 timestamp = datetime.now().strftime("%H:%M:%S")
@@ -910,18 +914,19 @@ def live_monitor(log_file, output_file, interval=3, max_gain_percent=30.0):
                 print(f"  Positive gains: {stats['positive_gains']}")
                 print(f"  Generating plot...")
 
-                # Generate updated plots (positive gains)
-                create_contour_plot(
-                    energies_pos,
-                    x_values_pos,
-                    percent_gains_pos,
-                    output_file,
-                    stats=stats,
-                    live_mode=True,
-                    param_metadata=param_metadata,
-                )
+                # Generate updated plots (positive gains only if available)
+                if energies_pos is not None and len(energies_pos) > 0:
+                    create_contour_plot(
+                        energies_pos,
+                        x_values_pos,
+                        percent_gains_pos,
+                        output_file,
+                        stats=stats,
+                        live_mode=True,
+                        param_metadata=param_metadata,
+                    )
 
-                # Generate combined gains plot (positive + negative)
+                # Generate combined gains plot (positive + negative, or negative-only)
                 if energies_neg is not None and len(energies_neg) > 0:
                     combined_output = output_file.replace(".png", "_combined.png")
                     # Generate combined plot
@@ -955,7 +960,7 @@ def live_monitor(log_file, output_file, interval=3, max_gain_percent=30.0):
                     print(f"Final plot: {output_file}")
                     print(f"{'=' * 80}\n")
                     break
-            elif energies_pos is None:
+            elif not has_any_data:
                 # No data yet, wait
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 print(f"[{timestamp}] Waiting for data... (checking every {interval}s)")
