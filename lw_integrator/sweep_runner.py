@@ -152,6 +152,7 @@ class SweepRunner:
         start_z: float,
         transv_offset_frac: float,
         run_num: int,
+        total_runs: int = 1,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters.
 
@@ -181,9 +182,10 @@ class SweepRunner:
             timestep = calculate_auto_timestep(
                 start_z=start_z,
                 wall_z=self.config.wall_z,
-                distance_past_wall=self.config.target_distance_mm,
+                distance_past_wall=self.config.auto_steps_distance_past_wall,
                 particle_energy_gev=energy_gev,
                 particle_mass_amu=self.config.m_particle,
+                target_steps=self.config.auto_steps_target,
             )
         else:
             timestep = self.config.timestep
@@ -242,12 +244,30 @@ class SweepRunner:
                 flush=True,
             )
             print(
-                f"[OPTIMIZATION]     target_distance={self.config.target_distance_mm:.2f} mm",
+                f"[OPTIMIZATION]     distance_past_wall={self.config.auto_steps_distance_past_wall:.2f} mm",
+                flush=True,
+            )
+            print(
+                f"[OPTIMIZATION]     target_steps={self.config.auto_steps_target}",
                 flush=True,
             )
 
+        # Log [START] line in format expected by plotting script
+        # Use appropriate precision based on aperture magnitude
+        if aperture >= 1.0:
+            aperture_str = f"{aperture:.1f}"
+        elif aperture >= 0.01:
+            aperture_str = f"{aperture:.4f}"
+        else:
+            aperture_str = f"{aperture:.6f}"
+
         print(
-            f"[OPTIMIZATION]   [START] Run {run_num}/{run_num}: a={aperture:.4e}mm, E={energy_gev:.4f}GeV, z={start_z:.2f}mm, h={timestep:.4e}ns, N={steps}",
+            f"[OPTIMIZATION] [START] Run {run_num}/{total_runs}: a={aperture_str}mm, E={energy_gev:.2f}GeV",
+            flush=True,
+        )
+        # Log additional details on separate line
+        print(
+            f"[OPTIMIZATION]   [PARAMS] z={start_z:.2f}mm, h={timestep:.4e}ns, N={steps}",
             flush=True,
         )
         print(
@@ -654,7 +674,10 @@ class SweepRunner:
             self._log(f"  Timestep strategy: {self.config.timestep_strategy}")
             if self.config.timestep_strategy == "auto_distance":
                 self._log(
-                    f"    Target distance: {self.config.target_distance_mm} mm (wall_z + target)"
+                    f"    Distance past wall: {self.config.auto_steps_distance_past_wall} mm"
+                )
+                self._log(
+                    f"    Target steps for timestep calculation: {self.config.auto_steps_target}"
                 )
                 self._log(
                     "    All particles will travel to consistent z regardless of energy"
@@ -719,6 +742,7 @@ class SweepRunner:
                                     start_z=start_z,
                                     transv_offset_frac=transv_offset_frac,
                                     run_num=run_num,
+                                    total_runs=total_runs,
                                 )
 
                                 self.results.append(result)
@@ -759,9 +783,39 @@ class SweepRunner:
 
                             if result.get("success"):
                                 metrics = result.get("metrics", {})
+                                # Log metrics in format compatible with plotting script
+                                # The plotting script expects these on individual lines for regex parsing
+                                print(
+                                    f"[OPTIMIZATION] max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.6f}%",
+                                    flush=True,
+                                )
+                                print(
+                                    f"[OPTIMIZATION] max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.6e} GeV",
+                                    flush=True,
+                                )
+                                print(
+                                    f"[OPTIMIZATION] max_relative_gain: {metrics.get('max_relative_gain', 0):.6e}",
+                                    flush=True,
+                                )
+                                print(
+                                    f"[OPTIMIZATION] final_gamma: {metrics.get('final_gamma_mean', 1):.6f}",
+                                    flush=True,
+                                )
+                                print(
+                                    f"[OPTIMIZATION] initial_gamma: {metrics.get('initial_gamma_mean', 1):.6f}",
+                                    flush=True,
+                                )
+
+                                # Also log to sweep.log in human-readable format
                                 self._log(f"  [RESULT] Run {run_num}/{total_runs}:")
                                 self._log(
                                     f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.6e} GeV"
+                                )
+                                self._log(
+                                    f"    max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.6f}%"
+                                )
+                                self._log(
+                                    f"    max_relative_gain: {metrics.get('max_relative_gain', 0):.6e}"
                                 )
                                 self._log(
                                     f"    final_gamma: {metrics.get('final_gamma_mean', 1):.6f}"
