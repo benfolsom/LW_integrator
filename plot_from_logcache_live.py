@@ -134,8 +134,9 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     total_runs = int(match.group(1))
 
                 # Match run start with parameters - CONDUCTING_WALL format
+                # Handle both GUI format and CLI format (with [OPTIMIZATION] prefix)
                 match = re.search(
-                    r"\[START\] Run (\d+)/\d+: a=([0-9.e+-]+)mm, E=([0-9.e+-]+)GeV",
+                    r"(?:\[OPTIMIZATION\]\s*)?\[START\] Run (\d+)/\d+: a=([0-9.e+-]+)mm, E=([0-9.e+-]+)GeV",
                     line,
                 )
                 if match:
@@ -181,9 +182,16 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     last_run_num = max(last_run_num, run_num)
 
                 # Match metrics - try both max_percent_energy_gain and percent_delta_e
-                match = re.search(r"max_percent_energy_gain:\s*([0-9.e+-]+)%", line)
+                # Handle optional [OPTIMIZATION] prefix from CLI logs
+                match = re.search(
+                    r"(?:\[OPTIMIZATION\]\s*)?(?:\[RESULT\]\s*)?max_percent_energy_gain:\s*([0-9.e+-]+)%",
+                    line,
+                )
                 if not match:
-                    match = re.search(r"percent_delta_e:\s*([0-9.e+-]+)%", line)
+                    match = re.search(
+                        r"(?:\[OPTIMIZATION\]\s*)?(?:\[RESULT\]\s*)?percent_delta_e:\s*([0-9.e+-]+)%",
+                        line,
+                    )
 
                 if match and current_run:
                     gain = float(match.group(1))
