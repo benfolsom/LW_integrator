@@ -182,9 +182,10 @@ class SweepRunner:
             timestep = calculate_auto_timestep(
                 start_z=start_z,
                 wall_z=self.config.wall_z,
-                distance_past_wall=self.config.target_distance_mm,
+                distance_past_wall=self.config.auto_steps_distance_past_wall,
                 particle_energy_gev=energy_gev,
                 particle_mass_amu=self.config.m_particle,
+                target_steps=self.config.auto_steps_target,
             )
         else:
             timestep = self.config.timestep
@@ -243,7 +244,11 @@ class SweepRunner:
                 flush=True,
             )
             print(
-                f"[OPTIMIZATION]     target_distance={self.config.target_distance_mm:.2f} mm",
+                f"[OPTIMIZATION]     distance_past_wall={self.config.auto_steps_distance_past_wall:.2f} mm",
+                flush=True,
+            )
+            print(
+                f"[OPTIMIZATION]     target_steps={self.config.auto_steps_target}",
                 flush=True,
             )
 
@@ -669,7 +674,10 @@ class SweepRunner:
             self._log(f"  Timestep strategy: {self.config.timestep_strategy}")
             if self.config.timestep_strategy == "auto_distance":
                 self._log(
-                    f"    Target distance: {self.config.target_distance_mm} mm (wall_z + target)"
+                    f"    Distance past wall: {self.config.auto_steps_distance_past_wall} mm"
+                )
+                self._log(
+                    f"    Target steps for timestep calculation: {self.config.auto_steps_target}"
                 )
                 self._log(
                     "    All particles will travel to consistent z regardless of energy"
