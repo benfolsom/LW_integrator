@@ -329,14 +329,15 @@ class SweepRunner:
         driver_params = None
         driver_transv_offset = 0.0
         if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            driver_mass_amu = 207.2  # Lead-208 driver mass
             driver_gamma = (self.config.driver_energy_gev * 1e3) / (
-                self.config.m_particle * AMU_TO_MEV
+                driver_mass_amu * AMU_TO_MEV
             )
             driver_params = {
                 "starting_distance": self.config.wall_z + 1000.0,
                 "transv_mom": 0.0,
                 "transv_dist": -0.07998,
-                "m_particle": 207.2,
+                "m_particle": driver_mass_amu,
                 "charge_sign": 1.0,
                 "pcount": 5,
                 "stripped_ions": self.config.driver_stripped_ions,
