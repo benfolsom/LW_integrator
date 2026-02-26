@@ -2,9 +2,15 @@
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
-## Recent Updates
+## February 2026
 
-### COLD_START Gating Formula Fixes (February 2026)
+### CLI Logging Fixes (February 25, 2026)
+
+- **Debug flag parsing** - Fixed `--debug` and `--log-level` CLI options that were not being properly parsed
+- **Logcache output** - CLI sweep runner now outputs optimization metrics to logcache files for live plotting compatibility
+- **Format alignment** - Ensured CLI log format matches GUI expectations for plotting scripts
+
+### COLD_START Gating Formula Fixes (February 20-25, 2026)
 
 **Critical bug fixes** - The COLD_START gating mechanism had two fundamental errors in computing when retarded forces should be applied:
 
@@ -62,7 +68,39 @@ Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 
 **Impact**: Low-velocity simulations (β < 0.5) had severely incorrect gating. Non-relativistic particles would have forces suppressed until far past physical interaction regions, producing wrong results. High-β simulations (β > 0.9) unaffected. See `local/COLD_START_FIX_IMPLEMENTED.md` for detailed analysis and verification.
 
-### Adaptive Timestep Refactoring (February 2026)
+### Transverse Offset Sweep Bug Fix (February 23, 2026)
+
+- **Sweep parameter handling** - Fixed transverse offset being swept over multiple values instead of using single beam position
+- **Performance impact** - Reduced sweep size by 2-3× for configs with multiple offset values
+- **Physical correctness** - Transverse offset now correctly represents beam center position, not a parameter to optimize
+- **Backward compatible** - Configs with multiple offset values now use only the first value
+
+### Live Plotting Tools (February 19-24, 2026)
+
+- **Unphysical gain filtering** - Live plotter now filters out non-physical gain values from visualization
+- **CLI log parsing** - Fixed plotting scripts to handle both GUI and CLI logcache formats
+- **Monitoring scripts** - Added tools for real-time sweep and optimization monitoring
+
+### Stripped Ion Support (February 18, 2026)
+
+- **Arbitrary ion species** - Added support for ions with configurable charge states (e.g., Ar^8+, C^6+)
+- **Sweep configurations** - Included example configs for stripped ions in sweep library
+
+### Critical Bug Fixes (February 18, 2026)
+
+- **Transverse momentum parameter** - Fixed optimization silently ignoring transverse momentum parameter
+- **Parameter logging** - Fixed only 3 of 7-9 parameters being logged during optimization runs
+- **Driver energy UI** - Improved driver bunch energy configuration interface to eliminate confusion
+- **Gamma reconciliation persistence** - Fixed gamma reconciliation settings not loading from saved configs
+- **Optimization config saving** - Fixed validation errors preventing optimization configs from being saved
+
+### GUI and Logging Improvements (February 11, 2026)
+
+- **Parameter visibility** - Fixed driver parameter sweep visibility and loading issues
+- **GUI greying** - Corrected greyout behavior for context-dependent parameters
+- **Log convergence bug** - Fixed `log_convergence` option causing crashes
+
+### Adaptive Timestep Refactoring (February 9-10, 2026)
 
 **Auto-calculated parameters** - The adaptive timestep system now automatically calculates derived parameters to prevent inconsistent configurations:
 
@@ -74,7 +112,7 @@ Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 
 **Impact**: Eliminates overdetermined parameter combinations that could cause time skipping or excessive refinement. Users only set two independent parameters (`reduction_factor` and `min_timestep_factor`), with derived values calculated automatically for consistency.
 
-### Batched Logging Implementation (February 2026)
+### Batched Logging Implementation (February 9, 2026)
 
 **Performance optimization** - Inner-loop debug logging now uses batched updates to prevent GUI unresponsiveness:
 
@@ -86,7 +124,7 @@ Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 
 **Impact**: GUI remains responsive during verbose debugging. Users can enable full adaptive timestep diagnostics without performance penalty.
 
-### Gamma Reconciliation Default Changed (February 2026)
+### Gamma Reconciliation Default Changed (February 9, 2026)
 
 **Disabled by default** - Gamma reconciliation feature now defaults to `DISABLED` for v0.4.8 compatibility:
 
@@ -97,7 +135,21 @@ Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 
 **Impact**: Eliminates silent energy non-conservation for users upgrading from v0.4.8. Feature requires redesign before safe re-enablement (see `local/GAMMA_RECONCILIATION_FIX.md`).
 
-### Verbose Logging in Sweep/Optimization (v0.4.2+)
+### Sweep Plotting and Heatmap Tools (February 5-8, 2026)
+
+- **Sweep visualization** - New plotting tools for parameter sweep results with contour plots
+- **Heatmap generation** - Automated heatmap creation with configurable color schemes
+- **Live updates** - Real-time plot updates during long-running sweeps
+- **Transparency controls** - Adjustable marker transparency for dense data visualization
+
+### Particle Tracking and Failure Handling (February 4-5, 2026)
+
+- **Blowup detection** - Improved detection and handling of particle trajectory failures
+- **Cancellation improvements** - Better graceful shutdown for interrupted simulations
+- **Death penalty scaling** - Fixed particle death penalty to use 1:1 scaling (10% lost → 10% penalty)
+- **Failure metrics** - Added particle failure tracking to optimization results
+
+### Verbose Logging in Sweep/Optimization (February 2026)
 
 When running sweeps or optimizations, verbose diagnostic logs (SC iterations, adaptive timestep refinements) are now streamed to the GUI in real-time when verbosity settings are enabled:
 
@@ -124,7 +176,101 @@ When running sweeps or optimizations, verbose diagnostic logs (SC iterations, ad
 
 This ensures that diagnostic information is always visible during runs when requested, independent of file-saving preferences.
 
-## Recent Changes (February 2026)
+## January 2026
+
+### Optimization System Enhancements (January 14-16, 2026)
+
+- **Optimization plugin refactor** - Major restructuring of optimization system for maintainability
+- **Smoothness penalties** - Refined optimizer penalties for trajectory smoothness
+- **Top-N results bug** - Fixed bug where top-N runs were using incorrect default parameters
+- **Output directory structure** - Improved organization of optimization results
+
+### GUI Usability Improvements (January 6-11, 2026)
+
+- **Trajectory output frame** - Fixed bugs in trajectory saving and display
+- **Top-N controls** - Added proper greying out of top-N trajectory options for sweep mode
+- **Pillow plot display** - Fixed issues with plot rendering in GUI
+- **View output buttons** - Corrected functionality of result viewing buttons
+- **Heatmap removal** - Removed unnecessary heatmap generation that slowed GUI
+
+### Parameter Sweep Enhancements (January 6-7, 2026)
+
+- **Wall position sweeps** - Made wall_z parameter sweepable for aperture studies
+- **Auto-timestep debugging** - Added debugging options for auto-calculated timestep issues
+- **Range parsing** - Fixed tuple/dict parsing bugs in parameter range fields
+- **Output results** - Improved results directory structure and metadata
+
+### Installation and Documentation (January 5, 2026)
+
+- **System dependencies** - Improved documentation for tkinter and system-level dependencies
+- **Bump2version integration** - Added automated version management workflow
+- **Development guide** - Created comprehensive guide for contributors
+
+## December 2025
+
+### GUI Organization and Layout (December 2025)
+
+- **Config menu persistence** - Made configuration menu a persistent pane instead of popup
+- **Vertical resizing** - Added GUI vertical resizing handles for better space management
+- **Log window sizing** - Adjusted default log window height for better visibility
+- **Non-ANSI keyboard support** - Fixed keyboard shortcuts for non-ANSI layouts
+- **Run button behavior** - Improved run button state management and feedback
+
+### Optimization Implementation (December 10-21, 2025)
+
+- **GUI optimization mode** - Implemented full optimization workflow in GUI
+- **Four optimization methods** - Genetic Algorithm, Differential Evolution, Nelder-Mead, Multi-start
+- **Convergence detection** - Early stopping when fitness plateaus (saves 40-70% computation)
+- **Top-N trajectory saving** - Automatic saving of best results from optimization runs
+- **Progress tracking** - Real-time optimization progress display
+
+### Chrono-Match Interpolation (December 17, 2025)
+
+- **Sub-timestep accuracy** - Retarded field calculations with chrono-match interpolation
+- **Time residual reduction** - 10-100× improvement for ultra-relativistic simulations (γ > 100)
+- **Advanced SC options** - Chrono-matching integrated with self-consistency iterations
+- **Configurable interpolation** - Optional feature enabled via `SelfConsistencyConfig(chrono_interpolate=True)`
+
+### Self-Consistency Improvements (December 9-16, 2025)
+
+- **Mass-shell constraint** - Enforces Pt² = P² + (mc)² through iterative projection
+- **Dual self-consistency** - Added dual weighting methods for gamma reconciliation
+- **Variable geometry SC** - Self-consistency iterations account for changing particle positions
+- **Debug logging** - Comprehensive logging of SC convergence for diagnostics
+- **Step number tracking** - Added step numbers to all log output for easier debugging
+
+### Critical Physics Corrections (December 2025)
+
+- **Scalar potential fix** - Corrected dimensional error in electromagnetic potential calculation
+- **Kinetic energy separation** - Properly subtracts potential energy (q·Φ) from conjugate energy
+- **Gamma calculation** - Fixed inconsistency between energy-derived and velocity-derived gamma
+- **Charge sign handling** - Corrected charge sign usage in field calculations
+- **Float64 precision** - Upgraded all calculations to double precision throughout
+- **k_factor threshold** - Relaxed to 1e-20 for extreme angle handling
+
+### GUI and Configuration (December 11-14, 2025)
+
+- **Config save/load** - Simplified configuration persistence behavior
+- **Directory structure** - Improved organization of configs/ and results/ directories
+- **Stability tab** - Reorganized stability controls with proper parameter greying
+- **Mass-shell tolerance** - Added configurable tolerance to GUI stability settings
+- **Graceful shutdown** - Better cleanup on Ctrl+C and GUI close events
+
+## November 2025
+
+### Image Charge Weighting (November 2025)
+
+- **Radial weighting** - Basic radially asymmetric weighting of image subcharges
+- **Distance-based attenuation** - Stricter limits for subcharge weighting distances
+- **API exposure** - Weighting options exposed to API and GUI
+- **GUI plot sizing** - Fixed window sizing issues in plot displays
+
+### License and Project Setup (November 2025)
+
+- **GPL license** - Changed project license to GPL
+- **License file** - Added LICENSE file to repository
+
+## Summary (February 2026)
 
 ### Adaptive Timestep Auto-Calculation (February 10, 2026)
 
@@ -152,7 +298,7 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Legacy behavior restored** - Default matches v0.4.8 stable version behavior
 - **Detailed documentation** - See `local/GAMMA_RECONCILIATION_FIX.md` for analysis and migration guide
 
-## Recent Changes (January 2025)
+## January 2025
 
 ### Gamma Reconciliation Configuration (January 2025)
 
@@ -205,4 +351,4 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Self-consistency enabled by default** - Essential for energy conservation in high-energy simulations
 - **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`. See `local/CHRONO_INTERPOLATION_SUMMARY.md` for details.
 
-**Impact**: Energy conservation improved by 3+ orders of magnitude in high-energy electron-wall simulations. Adaptive timestep auto-calculation eliminates parameter inconsistencies and prevents time discontinuities. Batched logging maintains GUI responsiveness during verbose debugging. Gamma reconciliation disabled by default restores v0.4.8 energy conservation behavior. Improved GUI feedback for transverse offsets reduces user confusion and makes bunch-to-bunch positioning more intuitive. Early stopping enables practical parameter optimization for computationally expensive self-consistent simulations. Macroparticle simulation enables realistic modeling of beam emittance and collective effects in conducting-wall scenarios. Transverse offset functionality enables off-axis beam studies critical for aperture tolerance analysis and beam dynamics research. Legacy code isolation ensures modern core implementation is used by default while maintaining validation capability.
+**Overall Impact**: The LW Integrator has evolved from a research prototype to a production-ready tool with comprehensive GUI, robust numerical methods, and extensive validation. Energy conservation improved by 3+ orders of magnitude. COLD_START gating fixes ensure correct physics across all velocity regimes. Optimization system enables practical parameter searches. GUI provides intuitive access to all features with real-time monitoring. Self-consistency iterations maintain physical correctness in challenging scenarios. The codebase now includes significant numerical methods and features beyond the original publication.
