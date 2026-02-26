@@ -2706,6 +2706,22 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             stripped_ions=float(
                 self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
             ),
+            driver_m_particle=float(
+                self.sweep_params["driver_m_particle"]["fixed_var"].get()
+            ),
+            driver_charge_sign=float(
+                self.sweep_params["driver_charge_sign"]["fixed_var"].get()
+            ),
+            driver_pcount=int(self.sweep_params["driver_pcount"]["fixed_var"].get()),
+            driver_transv_mom=float(
+                self.sweep_params["driver_transv_mom"]["fixed_var"].get()
+            ),
+            driver_transv_dist=float(
+                self.sweep_params["driver_transv_dist"]["fixed_var"].get()
+            ),
+            driver_starting_distance=float(
+                self.sweep_params["driver_starting_distance"]["fixed_var"].get()
+            ),
             driver_stripped_ions=float(
                 self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
             ),

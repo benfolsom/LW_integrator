@@ -158,6 +158,12 @@ class OptimizationConfig:
     pcount: int = 1
     charge_sign: float = -1.0
     stripped_ions: float = 1.0  # Rider stripped ions (charge state)
+    driver_m_particle: float = 207.2  # amu (driver particle mass, for BUNCH_TO_BUNCH)
+    driver_charge_sign: float = 1.0  # Driver charge sign (for BUNCH_TO_BUNCH)
+    driver_pcount: int = 5  # Driver particle count (for BUNCH_TO_BUNCH)
+    driver_transv_mom: float = 0.0  # amu·mm/ns (driver transverse momentum)
+    driver_transv_dist: float = -0.07998  # mm (driver transverse distance)
+    driver_starting_distance: float = 1000.0  # mm (driver starting distance)
     driver_stripped_ions: float = 54.0  # Driver stripped ions (for BUNCH_TO_BUNCH)
     driver_starting_Pz: float = -4925.0  # Fixed driver Pz (amu·mm/ns)
     driver_energy_gev: float = 112.5  # Fixed driver energy (GeV)

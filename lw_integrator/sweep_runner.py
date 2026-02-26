@@ -329,19 +329,28 @@ class SweepRunner:
         driver_params = None
         driver_transv_offset = 0.0
         if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-            driver_mass_amu = 207.2  # Lead-208 driver mass
             driver_gamma = (self.config.driver_energy_gev * 1e3) / (
-                driver_mass_amu * AMU_TO_MEV
+                self.config.driver_m_particle * AMU_TO_MEV
+            )
+            if driver_gamma < 1.0:
+                driver_gamma = 1.0
+            driver_beta = (
+                np.sqrt(1.0 - 1.0 / (driver_gamma * driver_gamma))
+                if driver_gamma > 1.0
+                else 0.0
             )
             driver_params = {
-                "starting_distance": self.config.wall_z + 1000.0,
-                "transv_mom": 0.0,
-                "transv_dist": -0.07998,
-                "m_particle": driver_mass_amu,
-                "charge_sign": 1.0,
-                "pcount": 5,
+                "starting_distance": self.config.driver_starting_distance,
+                "transv_mom": self.config.driver_transv_mom,
+                "transv_dist": self.config.driver_transv_dist,
+                "m_particle": self.config.driver_m_particle,
+                "charge_sign": self.config.driver_charge_sign,
+                "pcount": self.config.driver_pcount,
                 "stripped_ions": self.config.driver_stripped_ions,
-                "starting_Pz": C_MMNS * np.sqrt(driver_gamma * driver_gamma - 1.0),
+                "starting_Pz": driver_gamma
+                * self.config.driver_m_particle
+                * C_MMNS
+                * driver_beta,
             }
 
         # Create particle states
