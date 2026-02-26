@@ -7465,8 +7465,19 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
                 if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                    driver_m = params_dict.get("driver_m_particle", 207.2)
+
+                    # Convert driver_energy_gev to starting_Pz if present,
+                    # otherwise fall back to legacy driver_starting_Pz key
+                    if "driver_energy_gev" in params_dict:
+                        driver_pz = calculate_starting_pz_from_energy(
+                            params_dict["driver_energy_gev"], driver_m
+                        )
+                    else:
+                        driver_pz = params_dict.get("driver_starting_Pz", -4925.0)
+
                     driver_params_dict = {
-                        "m_particle": params_dict.get("driver_m_particle", 207.2),
+                        "m_particle": driver_m,
                         "charge_sign": params_dict.get("driver_charge_sign", 1.0),
                         "pcount": int(params_dict.get("driver_pcount", 5)),
                         "transv_mom": params_dict.get("driver_transv_mom", 0.0),
@@ -7474,7 +7485,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         "starting_distance": params_dict.get(
                             "driver_starting_distance", 1000.0
                         ),
-                        "starting_Pz": params_dict.get("driver_starting_Pz", -4925.0),
+                        "starting_Pz": driver_pz,
                         "stripped_ions": params_dict.get("driver_stripped_ions", 54.0),
                     }
 

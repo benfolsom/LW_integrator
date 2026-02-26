@@ -10,6 +10,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
+
+# Physical constants for energy-momentum conversion
+AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 from core.debug_logger import set_logging_context  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
@@ -26,6 +29,29 @@ from optimization.config import (  # type: ignore[import]
     calculate_auto_steps,
     calculate_auto_timestep,
 )
+
+
+def _calculate_starting_pz_from_energy(energy_gev: float, mass_amu: float) -> float:
+    """Calculate starting Pz from total energy and mass.
+
+    Parameters
+    ----------
+    energy_gev : float
+        Total energy in GeV
+    mass_amu : float
+        Particle mass in amu
+
+    Returns
+    -------
+    float
+        Starting Pz in amu·mm/ns (negative, moving in -z direction)
+    """
+    rest_energy_mev = mass_amu * AMU_TO_MEV
+    gamma = (energy_gev * 1e3) / rest_energy_mev
+    if gamma < 1.0:
+        gamma = 1.0
+    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
+    return gamma * mass_amu * C_MMNS * beta
 
 
 class OptimizationRunMixin:
@@ -470,7 +496,14 @@ class OptimizationRunMixin:
                             driver_transv_dist = x[i]
                         elif param_name == "driver_starting_distance":
                             driver_starting_distance = x[i]
+                        elif param_name == "driver_energy_gev":
+                            driver_energy_gev = x[i]
+                            # Convert energy to Pz for internal use
+                            driver_starting_Pz = _calculate_starting_pz_from_energy(
+                                driver_energy_gev, driver_m_particle
+                            )
                         elif param_name == "driver_starting_Pz":
+                            # Legacy support if old configs still use Pz
                             driver_starting_Pz = x[i]
 
                     # Calculate transverse offset in mm from fraction
@@ -1331,8 +1364,19 @@ class OptimizationRunMixin:
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
                 if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                    driver_m = params_dict.get("driver_m_particle", 207.2)
+
+                    # Convert driver_energy_gev to starting_Pz if present,
+                    # otherwise fall back to legacy driver_starting_Pz key
+                    if "driver_energy_gev" in params_dict:
+                        driver_pz = _calculate_starting_pz_from_energy(
+                            params_dict["driver_energy_gev"], driver_m
+                        )
+                    else:
+                        driver_pz = params_dict.get("driver_starting_Pz", -4925.0)
+
                     driver_params_dict = {
-                        "m_particle": params_dict.get("driver_m_particle", 207.2),
+                        "m_particle": driver_m,
                         "charge_sign": params_dict.get("driver_charge_sign", 1.0),
                         "pcount": int(params_dict.get("driver_pcount", 5)),
                         "transv_mom": params_dict.get("driver_transv_mom", 0.0),
@@ -1340,7 +1384,7 @@ class OptimizationRunMixin:
                         "starting_distance": params_dict.get(
                             "driver_starting_distance", 1000.0
                         ),
-                        "starting_Pz": params_dict.get("driver_starting_Pz", -4925.0),
+                        "starting_Pz": driver_pz,
                         "stripped_ions": params_dict.get(
                             "driver_stripped_ions", self.config.driver_stripped_ions
                         ),
