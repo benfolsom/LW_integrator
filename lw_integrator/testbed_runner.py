@@ -1516,7 +1516,7 @@ def run_testbed(
                 )
             )
             rider_delta_e = rider_delta_e_total  # For backward compatibility
-            rider_z_rel = rider_z - rider_z[0]
+            rider_z_rel = rider_z  # Use absolute z-positions for plotting
 
             # Compute transverse energy components (use alive particles only)
             rider_gamma_series = np.array(
@@ -1704,7 +1704,7 @@ def run_testbed(
                     )
                 )
                 driver_delta_e = driver_delta_e_total  # For backward compatibility
-                driver_z_rel = driver_z - driver_z[0]
+                driver_z_rel = driver_z  # Use absolute z-positions for plotting
 
                 # Compute transverse energy components
                 driver_gamma_series = np.array(
@@ -1764,7 +1764,9 @@ def run_testbed(
                     initial_states.get("rider"),
                     rest_energies.get("rider"),
                 )
-                legacy_rider_z_rel = legacy_rider_z - legacy_rider_z[0]
+                legacy_rider_z_rel = (
+                    legacy_rider_z  # Use absolute z-positions for plotting
+                )
             except Exception as exc:  # pragma: no cover - defensive guard
                 _log(f"Failed to compute legacy rider energy series: {exc}")
                 _log(
@@ -1782,7 +1784,9 @@ def run_testbed(
                             rest_energies.get("driver"),
                         )
                     )
-                    legacy_driver_z_rel = legacy_driver_z - legacy_driver_z[0]
+                    legacy_driver_z_rel = (
+                        legacy_driver_z  # Use absolute z-positions for plotting
+                    )
                 except Exception as exc:
                     _log(f"Failed to compute legacy driver energy series: {exc}")  # type: ignore[assignment]
                     _log(

@@ -4,6 +4,26 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## February 2026
 
+### Plotting Absolute Position Fix (February 26, 2026)
+
+- **Plotting issue** - Energy plots showed z-positions relative to each particle's starting position rather than absolute lab-frame positions
+- **Impact** - In BUNCH_TO_BUNCH simulations, rider starting at z=0 and driver starting at z=200mm both appeared to start from 0 in their respective plots, hiding the 200mm spatial separation
+- **Root cause** - Code computed `z_rel = z - z[0]` to make positions relative, likely inherited from single-particle scenarios
+- **Solution** - Changed to use absolute positions directly: `z_rel = z` (variable name kept for compatibility)
+- **Result** - Energy plots now show true lab-frame positions, making spatial relationships between particles visible
+- **Files modified** - `lw_integrator/testbed_runner.py` (lines ~1519, 1707, 1767, 1787)
+- **Note** - Backward compatibility: old saved PNG files show relative positions, new ones show absolute positions
+
+### GUI Button Visibility Fix (February 26, 2026)
+
+- **Layout issue** - RUN and CANCEL buttons could become completely obscured when window was resized vertically to small sizes
+- **Root cause** - Configuration panel used mixed pack() layout where scrollable canvas with expand=True could push fixed control frames below visible area
+- **Solution** - Restructured config panel to use grid layout with explicit weight distribution:
+  - Row 0 (weight=1): Scrollable canvas container - expands to fill space
+  - Row 1-3 (weight=0): Control elements (Run Mode, RUN/CANCEL buttons, Status) - fixed height, always visible
+- **Testing** - Created `local/test_gui_button_visibility.py` to verify buttons remain visible at various window sizes
+- **Files modified** - `lw_integrator/gui.py` (\_build_config_panel method, lines ~2608-2910)
+
 ### CLI Logging Fixes (February 25, 2026)
 
 - **Debug flag parsing** - Fixed `--debug` and `--log-level` CLI options that were not being properly parsed

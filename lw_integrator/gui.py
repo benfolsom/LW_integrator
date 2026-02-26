@@ -2611,11 +2611,17 @@ class IntegratorGUI:
         panel.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Create scrollable container for config sections
+        # Use a Frame to limit expansion and ensure controls stay visible
+        scroll_container = ttk.Frame(panel)
+        scroll_container.pack(fill="both", expand=True, side="top", pady=(0, 5))
+
         canvas = tk.Canvas(
-            panel,
+            scroll_container,
             highlightthickness=0,
         )
-        scrollbar = ttk.Scrollbar(panel, orient="vertical", command=canvas.yview)
+        scrollbar = ttk.Scrollbar(
+            scroll_container, orient="vertical", command=canvas.yview
+        )
         scrollable_frame = ttk.Frame(canvas)
 
         scrollable_frame.bind(
@@ -2839,31 +2845,26 @@ class IntegratorGUI:
             command=self._reset_directories_to_defaults,
         ).pack(fill="x")
 
-        # Run mode selector
-        mode_frame = ttk.LabelFrame(panel, text="Run Mode", padding=4)
-        mode_frame.pack(fill="x", pady=(0, 10))
+        # Status display - packed at bottom first (appears at true bottom)
+        status_frame = ttk.LabelFrame(panel, text="Status", padding=4)
+        status_frame.pack(side="bottom", fill="x")
 
-        self.run_mode_var = tk.StringVar(value="single")
+        # Refresh sweep config list now that widget exists
+        self._refresh_sweep_config_list()
 
-        ttk.Radiobutton(
-            mode_frame,
-            text="Single Run",
-            variable=self.run_mode_var,
-            value="single",
-            command=self._on_run_mode_changed,
-        ).pack(anchor="w", pady=2)
+        ttk.Label(status_frame, textvariable=self.status_var).pack(anchor="w", pady=2)
 
-        ttk.Radiobutton(
-            mode_frame,
-            text="Sweep/Optim",
-            variable=self.run_mode_var,
-            value="sweep",
-            command=self._on_run_mode_changed,
-        ).pack(anchor="w", pady=2)
+        self._progress_bar = ttk.Progressbar(
+            status_frame,
+            variable=self.progress_var,
+            maximum=100,
+            mode="determinate",
+        )
+        self._progress_bar.pack(fill="x", pady=5)
 
-        # Control buttons
+        # Control buttons - packed at bottom second (appears above status)
         control_frame = ttk.LabelFrame(panel, text="Controls", padding=4)
-        control_frame.pack(fill="x", pady=(0, 10))
+        control_frame.pack(side="bottom", fill="x", pady=(0, 5))
 
         # Buttons use minwidth to prevent shrinking below readable size
         # The CONFIG_PANEL_MIN_WIDTH on the paned window should prevent this,
@@ -2886,22 +2887,27 @@ class IntegratorGUI:
         self._cancel_button.pack(fill="x", pady=2)
         self._cancel_button.configure(width=12)  # minimum character width
 
-        # Status display
-        status_frame = ttk.LabelFrame(panel, text="Status", padding=4)
-        status_frame.pack(fill="both", expand=True)
+        # Run mode selector - packed at bottom third (appears above controls)
+        mode_frame = ttk.LabelFrame(panel, text="Run Mode", padding=4)
+        mode_frame.pack(side="bottom", fill="x", pady=(0, 5))
 
-        # Refresh sweep config list now that widget exists
-        self._refresh_sweep_config_list()
+        self.run_mode_var = tk.StringVar(value="single")
 
-        ttk.Label(status_frame, textvariable=self.status_var).pack(anchor="w", pady=2)
+        ttk.Radiobutton(
+            mode_frame,
+            text="Single Run",
+            variable=self.run_mode_var,
+            value="single",
+            command=self._on_run_mode_changed,
+        ).pack(anchor="w", pady=2)
 
-        self._progress_bar = ttk.Progressbar(
-            status_frame,
-            variable=self.progress_var,
-            maximum=100,
-            mode="determinate",
-        )
-        self._progress_bar.pack(fill="x", pady=5)
+        ttk.Radiobutton(
+            mode_frame,
+            text="Sweep/Optim",
+            variable=self.run_mode_var,
+            value="sweep",
+            command=self._on_run_mode_changed,
+        ).pack(anchor="w", pady=2)
 
     def _on_run_mode_changed(self):
         """Handle run mode selection change."""

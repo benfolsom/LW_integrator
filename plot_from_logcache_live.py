@@ -478,7 +478,24 @@ def create_combined_gains_plot(
     # Use log scale if dynamic range is large and values are positive
     use_log_scale = dynamic_range > 10 and vmin > 0
 
-    if not use_log_scale or dynamic_range < 1.1:
+    # Check if all values are identical or nearly identical (e.g., all zeros)
+    if vmax - vmin < 1e-8 or (vmin == 0 and vmax == 0):
+        # Create a simple filled plot with single color instead of contour
+        # Add small perturbation to avoid matplotlib errors
+        gain_interpolated_plot = gain_interpolated.copy()
+        gain_interpolated_plot[0, 0] = vmin
+        gain_interpolated_plot[-1, -1] = vmin + 1e-6 if vmin == 0 else vmin * 1.000001
+
+        contour = ax.pcolormesh(
+            energy_mesh,
+            x_mesh,
+            gain_interpolated_plot,
+            cmap="viridis",
+            shading="auto",
+            vmin=vmin,
+            vmax=vmin + 1e-6 if vmin == 0 else vmin * 1.000001,
+        )
+    elif not use_log_scale or dynamic_range < 1.1:
         # Linear scale or very small range
         norm = None
         # For very small ranges, ensure contour levels are properly spaced
@@ -486,6 +503,16 @@ def create_combined_gains_plot(
             levels = np.linspace(vmin, vmax, 10)
         else:
             levels = 20
+
+        # Use viridis colormap (same as positive-only plot)
+        contour = ax.contourf(
+            energy_mesh,
+            x_mesh,
+            gain_interpolated,
+            levels=levels,
+            cmap="viridis",
+            norm=norm,
+        )
     else:
         # Log scale
         from matplotlib.colors import LogNorm
@@ -493,15 +520,15 @@ def create_combined_gains_plot(
         norm = LogNorm(vmin=max(vmin, 1e-10), vmax=vmax)
         levels = np.logspace(np.log10(max(vmin, 1e-10)), np.log10(vmax), 20)
 
-    # Use viridis colormap (same as positive-only plot)
-    contour = ax.contourf(
-        energy_mesh,
-        x_mesh,
-        gain_interpolated,
-        levels=levels,
-        cmap="viridis",
-        norm=norm,
-    )
+        # Use viridis colormap (same as positive-only plot)
+        contour = ax.contourf(
+            energy_mesh,
+            x_mesh,
+            gain_interpolated,
+            levels=levels,
+            cmap="viridis",
+            norm=norm,
+        )
     cbar = plt.colorbar(contour, ax=ax, label="Energy Gain (% absolute)")
 
     # Set explicit colorbar ticks
@@ -1066,24 +1093,48 @@ def main():
             param_metadata,
         ) = parse_sweep_log(str(log_file), verbose=True, max_gain_percent=args.max_gain)
 
-        if energies_pos is None or len(energies_pos) == 0:
-            print("ERROR: No positive gain data found in log file")
+        # Check if we have any data at all (positive or negative)
+        has_any_data = (energies_pos is not None and len(energies_pos) > 0) or (
+            energies_neg is not None and len(energies_neg) > 0
+        )
+
+        if not has_any_data:
+            print("ERROR: No data found in log file")
             sys.exit(1)
 
         print(f"\nGenerating plots...")
-        create_contour_plot(
-            energies_pos,
-            x_values_pos,
-            percent_gains_pos,
-            str(output_file),
-            stats=stats,
-            param_metadata=param_metadata,
-        )
-        print(f"Positive gains plot saved to: {output_file}")
+
+        # If we only have negative/zero gains, use combined plot
+        if energies_pos is None or len(energies_pos) == 0:
+            print(
+                "Note: No positive gains found, plotting all data (negative/zero gains)"
+            )
+            create_combined_gains_plot(
+                energies_pos,
+                x_values_pos,
+                percent_gains_pos,
+                energies_neg,
+                x_values_neg,
+                percent_gains_neg,
+                str(output_file),
+                stats=stats,
+                param_metadata=param_metadata,
+            )
+        else:
+            # We have positive gains, use the standard contour plot
+            create_contour_plot(
+                energies_pos,
+                x_values_pos,
+                percent_gains_pos,
+                str(output_file),
+                stats=stats,
+                param_metadata=param_metadata,
+            )
+        print(f"Plot saved to: {output_file}")
 
         # Generate combined gains plot if we have negative data
         if energies_neg is not None and len(energies_neg) > 0:
-            combined_output = output_file.replace(".png", "_combined.png")
+            combined_output = str(output_file).replace(".png", "_combined.png")
             create_combined_gains_plot(
                 energies_pos,
                 x_values_pos,
