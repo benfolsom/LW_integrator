@@ -63,6 +63,49 @@ def calculate_starting_pz_from_energy(
     return pz
 
 
+def calculate_energy_from_pz(pz: float, mass_amu: float) -> float:
+    """Calculate total energy in GeV from starting Pz and mass.
+
+    Parameters
+    ----------
+    pz : float
+        Longitudinal momentum in amu·mm/ns
+    mass_amu : float
+        Particle mass in amu
+
+    Returns
+    -------
+    float
+        Total energy in GeV
+    """
+    rest_energy_mev = mass_amu * AMU_TO_MEV
+
+    # Calculate gamma from momentum
+    # pz = gamma * mass * c * beta
+    # We need to solve for gamma
+    # Use: E^2 = (pc)^2 + (m0c^2)^2
+    # where p = gamma * m0 * v = gamma * m0 * beta * c
+
+    if abs(pz) < 1e-12:
+        # At rest
+        return rest_energy_mev / 1e3  # Convert MeV to GeV
+
+    # Convert momentum to MeV/c units
+    # pz is in amu·mm/ns, need to convert to energy units
+    # p·c = pz * c (since pz already has velocity dimension)
+    pc_mev = abs(pz) * C_MMNS  # This gives momentum in amu·mm²/ns²
+
+    # Convert to MeV/c: momentum_energy = pc_mev / mass * rest_energy
+    # Actually: pc (in MeV) = (pz / mass) * mass * c * rest_mass_energy / c
+    # Simplify: pc (MeV) = pz * rest_energy / c
+    pc_mev = abs(pz) * rest_energy_mev / C_MMNS
+
+    # Total energy: E = sqrt((pc)^2 + (m0c^2)^2)
+    total_energy_mev = np.sqrt(pc_mev**2 + rest_energy_mev**2)
+
+    return total_energy_mev / 1e3  # Convert MeV to GeV
+
+
 from core.constants import C_MMNS  # type: ignore[import]
 from core.debug_logger import set_logging_context  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
@@ -452,17 +495,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             row=5, column=2, columnspan=2, sticky="w", pady=2
         )
 
-        # Starting z positions
-        ttk.Label(frame, text="Starting z Positions (mm):").grid(
+        # Starting z positions (rider only)
+        ttk.Label(frame, text="Rider Starting z (mm):").grid(
             row=6, column=0, sticky="w", pady=2
         )
-        self.start_z_var = tk.StringVar(value="0.0, 1000.0")
+        self.start_z_var = tk.StringVar(value="0.0")
         ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
             row=6, column=1, columnspan=3, sticky="ew", pady=2
         )
         ttk.Label(
             frame,
-            text="mm (comma-separated for BUNCH_TO_BUNCH: rider, driver)",
+            text="Comma-separated list for sweeps. Driver starting z uses sweepable param below.",
             font=("TkDefaultFont", 8),
             foreground="gray40",
         ).grid(row=7, column=1, columnspan=3, sticky="w", pady=(0, 5))
@@ -3232,20 +3275,23 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     self.sweep_params["driver_starting_distance"]["fixed_var"].set(
                         f"{driver.get('starting_distance', 1000.0):.2e}"
                     )
-                    self.sweep_params["driver_starting_Pz"]["fixed_var"].set(
-                        f"{driver.get('starting_Pz', -4925.0):.2e}"
+                    # Convert Pz to energy (GeV) for the new driver_energy_gev parameter
+                    driver_pz = driver.get("starting_Pz", -4925.0)
+                    driver_mass = driver.get("m_particle", 207.2)
+                    driver_energy = calculate_energy_from_pz(driver_pz, driver_mass)
+                    self.sweep_params["driver_energy_gev"]["fixed_var"].set(
+                        f"{driver_energy:.6e}"
                     )
                     self.sweep_params["driver_stripped_ions"]["fixed_var"].set(
                         str(driver.get("stripped_ions", 54.0))
                     )
                     self._log_result("[INFO] Loaded driver parameters from main GUI")
 
-                    # Update starting positions field for BUNCH_TO_BUNCH mode
+                    # Update starting position field (rider only; driver uses sweep param)
                     rider_start_z = main_options.rider_params.get(
                         "starting_distance", 0.0
                     )
-                    driver_start_z = driver.get("starting_distance", 1000.0)
-                    self.start_z_var.set(f"{rider_start_z}, {driver_start_z}")
+                    self.start_z_var.set(f"{rider_start_z}")
             else:
                 # For non-BUNCH_TO_BUNCH modes, only set rider starting position
                 rider_start_z = main_options.rider_params.get("starting_distance", 0.0)

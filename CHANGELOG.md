@@ -4,6 +4,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## February 2026
 
+### Optimization Plugin Fixes (February 26, 2026)
+
+- **KeyError on config load** - Fixed crash when loading BUNCH_TO_BUNCH configuration from main GUI into optimization plugin
+- **Root cause** - UI was updated to use `driver_energy_gev` parameter instead of `driver_starting_Pz`, but config loading code still referenced the old parameter name
+- **Solution** - Added `calculate_energy_from_pz()` conversion function and updated `_on_load_from_main_config()` to convert legacy Pz values to energy (GeV)
+- **Starting position field clarification** - Changed "Starting z Positions" field to control only rider starting position (not driver)
+- **Impact** - Eliminated redundancy where driver position could be set in two places (field vs sweepable parameter)
+- **Result** - Driver starting position now controlled exclusively by `driver_starting_distance` sweepable parameter; rider position set independently
+- **Files modified** - `lw_integrator/optimization_plugin.py` (added conversion function, fixed config loading, updated UI labels)
+- **Backward compatibility** - Old configs with `starting_Pz` values are automatically converted to energy on load
+
 ### Plotting Absolute Position Fix (February 26, 2026)
 
 - **Plotting issue** - Energy plots showed z-positions relative to each particle's starting position rather than absolute lab-frame positions
