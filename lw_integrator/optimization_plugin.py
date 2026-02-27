@@ -27,24 +27,33 @@ AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 
 
 def calculate_starting_pz_from_energy(
-    energy_gev: float, mass_amu: float, kinetic: bool = False
+    energy_gev: float, mass_amu: float, kinetic: bool = True, negative: bool = False
 ) -> float:
     """Calculate starting Pz from energy and mass.
 
     Parameters
     ----------
     energy_gev : float
-        Energy in GeV (total or kinetic, depending on kinetic parameter)
+        Energy in GeV (kinetic by default, matching the codebase convention
+        used by ``create_bunch_from_energy``).
+        Negative values are treated as their absolute value (energy is always
+        positive; use the ``negative`` flag for direction).
     mass_amu : float
         Particle mass in amu
     kinetic : bool, optional
-        If True, energy_gev is kinetic energy; if False, it's total energy (default: False)
+        If True, energy_gev is kinetic energy; if False, it's total energy.
+        Default: True (kinetic), matching the codebase convention.
+    negative : bool, optional
+        If True, return negative Pz (particle moving in -z direction, e.g. driver).
+        Default: False (positive Pz).
 
     Returns
     -------
     float
-        Starting Pz in amu·mm/ns
+        Starting Pz in amu·mm/ns (sign determined by ``negative`` flag)
     """
+    # Energy is always a positive magnitude; accept negative input gracefully
+    energy_gev = abs(energy_gev)
     rest_energy_mev = mass_amu * AMU_TO_MEV
 
     if kinetic:
@@ -60,50 +69,43 @@ def calculate_starting_pz_from_energy(
     beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
     pz = gamma * mass_amu * C_MMNS * beta
 
-    return pz
+    return -pz if negative else pz
 
 
 def calculate_energy_from_pz(pz: float, mass_amu: float) -> float:
-    """Calculate total energy in GeV from starting Pz and mass.
+    """Calculate kinetic energy in GeV from starting Pz and mass.
+
+    Uses the kinetic-energy convention (KE = (γ - 1) · E_rest) which matches
+    the convention used by ``create_bunch_from_energy`` and
+    ``calculate_starting_pz_from_energy`` throughout the codebase.
 
     Parameters
     ----------
     pz : float
-        Longitudinal momentum in amu·mm/ns
+        Longitudinal momentum in amu·mm/ns (sign is ignored)
     mass_amu : float
         Particle mass in amu
 
     Returns
     -------
     float
-        Total energy in GeV
+        Kinetic energy in GeV (always ≥ 0)
     """
     rest_energy_mev = mass_amu * AMU_TO_MEV
 
-    # Calculate gamma from momentum
-    # pz = gamma * mass * c * beta
-    # We need to solve for gamma
-    # Use: E^2 = (pc)^2 + (m0c^2)^2
-    # where p = gamma * m0 * v = gamma * m0 * beta * c
-
     if abs(pz) < 1e-12:
-        # At rest
-        return rest_energy_mev / 1e3  # Convert MeV to GeV
+        # At rest – zero kinetic energy
+        return 0.0
 
-    # Convert momentum to MeV/c units
-    # pz is in amu·mm/ns, need to convert to energy units
-    # p·c = pz * c (since pz already has velocity dimension)
-    pc_mev = abs(pz) * C_MMNS  # This gives momentum in amu·mm²/ns²
+    # γ·β = |pz| / (mass · c)
+    gamma_beta = abs(pz) / (mass_amu * C_MMNS)
+    # γ = sqrt((γβ)² + 1)
+    gamma = np.sqrt(gamma_beta**2 + 1.0)
 
-    # Convert to MeV/c: momentum_energy = pc_mev / mass * rest_energy
-    # Actually: pc (in MeV) = (pz / mass) * mass * c * rest_mass_energy / c
-    # Simplify: pc (MeV) = pz * rest_energy / c
-    pc_mev = abs(pz) * rest_energy_mev / C_MMNS
+    # Kinetic energy: KE = (γ - 1) · E_rest
+    kinetic_energy_mev = (gamma - 1.0) * rest_energy_mev
 
-    # Total energy: E = sqrt((pc)^2 + (m0c^2)^2)
-    total_energy_mev = np.sqrt(pc_mev**2 + rest_energy_mev**2)
-
-    return total_energy_mev / 1e3  # Convert MeV to GeV
+    return kinetic_energy_mev / 1e3  # Convert MeV to GeV
 
 
 from core.constants import C_MMNS  # type: ignore[import]
@@ -1204,25 +1206,33 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             mass_str = self.sweep_params["driver_m_particle"]["fixed_var"].get()
             mass_amu = float(mass_str) if mass_str else 207.2
 
-            # Check if energy is being swept
+            # Check if energy is being swept (driver moves in -z → negative Pz)
             if self.sweep_params["driver_energy_gev"]["sweep_var"].get():
-                energy_min = float(
-                    self.sweep_params["driver_energy_gev"]["min_var"].get()
+                energy_min = abs(
+                    float(self.sweep_params["driver_energy_gev"]["min_var"].get())
                 )
-                energy_max = float(
-                    self.sweep_params["driver_energy_gev"]["max_var"].get()
+                energy_max = abs(
+                    float(self.sweep_params["driver_energy_gev"]["max_var"].get())
                 )
-                pz_min = calculate_starting_pz_from_energy(energy_min, mass_amu)
-                pz_max = calculate_starting_pz_from_energy(energy_max, mass_amu)
+                pz_min = calculate_starting_pz_from_energy(
+                    energy_min, mass_amu, negative=True
+                )
+                pz_max = calculate_starting_pz_from_energy(
+                    energy_max, mass_amu, negative=True
+                )
                 self.driver_pz_helper_var.set(
-                    f"→ Starting Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu·mm/ns"
+                    f"→ Starting Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu·mm/ns (driver, -z)"
                 )
             else:
-                energy_gev = float(
-                    self.sweep_params["driver_energy_gev"]["fixed_var"].get()
+                energy_gev = abs(
+                    float(self.sweep_params["driver_energy_gev"]["fixed_var"].get())
                 )
-                pz = calculate_starting_pz_from_energy(energy_gev, mass_amu)
-                self.driver_pz_helper_var.set(f"→ Starting Pz = {pz:.2f} amu·mm/ns")
+                pz = calculate_starting_pz_from_energy(
+                    energy_gev, mass_amu, negative=True
+                )
+                self.driver_pz_helper_var.set(
+                    f"→ Starting Pz = {pz:.2f} amu·mm/ns (driver, -z)"
+                )
         except (ValueError, ZeroDivisionError):
             self.driver_pz_helper_var.set("")
 
@@ -3162,35 +3172,48 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
 
         if self.sweep_params["driver_energy_gev"]["sweep_var"].get():
-            # Get energy range and convert to Pz range
-            energy_min = float(self.sweep_params["driver_energy_gev"]["min_var"].get())
-            energy_max = float(self.sweep_params["driver_energy_gev"]["max_var"].get())
+            # Get energy range and convert to Pz range (driver moves in -z → negative Pz)
+            energy_min = abs(
+                float(self.sweep_params["driver_energy_gev"]["min_var"].get())
+            )
+            energy_max = abs(
+                float(self.sweep_params["driver_energy_gev"]["max_var"].get())
+            )
+            # Ensure min <= max after abs()
+            if energy_min > energy_max:
+                energy_min, energy_max = energy_max, energy_min
             driver_mass = float(
                 self.sweep_params["driver_m_particle"]["fixed_var"].get()
             )
 
-            pz_min = calculate_starting_pz_from_energy(energy_min, driver_mass)
-            pz_max = calculate_starting_pz_from_energy(energy_max, driver_mass)
+            pz_min = calculate_starting_pz_from_energy(
+                energy_min, driver_mass, negative=True
+            )
+            pz_max = calculate_starting_pz_from_energy(
+                energy_max, driver_mass, negative=True
+            )
 
             config.driver_starting_Pz_range = (pz_min, pz_max)
             config.driver_starting_Pz_points = int(
                 self.sweep_params["driver_energy_gev"]["points_var"].get()
             )
-            # Store energy range for save/load
+            # Store energy range for save/load (always positive magnitudes)
             config.driver_energy_range = (energy_min, energy_max)
             config.driver_energy_points = config.driver_starting_Pz_points
             print(
                 f"[DEBUG] Added driver_energy: {config.driver_energy_range} GeV -> Pz: {config.driver_starting_Pz_range} amu·mm/ns, {config.driver_starting_Pz_points} points"
             )
         else:
-            # Fixed energy - convert to Pz
-            energy_gev = float(
-                self.sweep_params["driver_energy_gev"]["fixed_var"].get()
+            # Fixed energy - convert to Pz (driver moves in -z → negative Pz)
+            energy_gev = abs(
+                float(self.sweep_params["driver_energy_gev"]["fixed_var"].get())
             )
             driver_mass = float(
                 self.sweep_params["driver_m_particle"]["fixed_var"].get()
             )
-            pz = calculate_starting_pz_from_energy(energy_gev, driver_mass)
+            pz = calculate_starting_pz_from_energy(
+                energy_gev, driver_mass, negative=True
+            )
             config.driver_starting_Pz = pz
             config.driver_energy_gev = energy_gev
 
@@ -6363,8 +6386,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         elif param_name == "driver_energy_gev":
                             driver_energy_gev = x[i]
                             # Convert energy to Pz for internal use
+                            # Driver travels in -z → negative Pz
                             driver_starting_Pz = calculate_starting_pz_from_energy(
-                                driver_energy_gev, driver_m_particle
+                                driver_energy_gev, driver_m_particle, negative=True
                             )
                         elif param_name == "driver_starting_Pz":
                             # Legacy support if old configs still use Pz
@@ -7484,10 +7508,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     driver_m = params_dict.get("driver_m_particle", 207.2)
 
                     # Convert driver_energy_gev to starting_Pz if present,
-                    # otherwise fall back to legacy driver_starting_Pz key
+                    # otherwise fall back to legacy driver_starting_Pz key.
+                    # Driver travels in -z → negative Pz.
                     if "driver_energy_gev" in params_dict:
                         driver_pz = calculate_starting_pz_from_energy(
-                            params_dict["driver_energy_gev"], driver_m
+                            abs(params_dict["driver_energy_gev"]),
+                            driver_m,
+                            negative=True,
                         )
                     else:
                         driver_pz = params_dict.get("driver_starting_Pz", -4925.0)
@@ -8219,6 +8246,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 max_val = float(controls["max_var"].get())
                 points = int(controls["points_var"].get())
                 log_scale = controls["log_var"].get()
+
+                # Energy is always a positive magnitude; accept negative
+                # input gracefully (sign encodes Pz direction, not energy)
+                if param_name == "driver_energy_gev":
+                    min_val = abs(min_val)
+                    max_val = abs(max_val)
+                    if min_val > max_val:
+                        min_val, max_val = max_val, min_val
+
                 grids[param_name] = self._generate_range(
                     min_val, max_val, points, log_scale
                 )

@@ -154,32 +154,66 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     }
                     last_run_num = max(last_run_num, current_run["run_num"])
 
-                # Match BUNCH_TO_BUNCH truncated format - capture parameters
-                # Format: Run #   1 | initial_energy_gev=1 ... driver_starting_distance=300 | ...
-                match = re.search(
-                    r"Run #\s+(\d+)\s+\|.*?initial_energy_gev=([0-9.e+-]+).*?driver_starting_distance=([0-9.e+-]+)",
-                    line,
-                )
-                if match:
-                    # Set metadata on first detection
-                    if param_metadata["sweep_type"] is None:
-                        param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
-                        param_metadata["x_param_name"] = "driver_starting_distance"
-                        param_metadata["x_label"] = "Driver Starting Distance"
-                        param_metadata["x_units"] = "mm"
-                        param_metadata["y_label"] = "Initial Energy"
+                # Match BUNCH_TO_BUNCH truncated format - generic key=value pairs
+                # Format: Run #   1 | key1=val1 key2=val2 ... | metrics | SUCCESS
+                # Auto-detect x-axis parameter from available keys.
+                if not current_run:
+                    match = re.search(
+                        r"Run #\s+(\d+)\s+\|\s*(.+?)\s*\|",
+                        line,
+                    )
+                    if match:
+                        run_num = int(match.group(1))
+                        params_str = match.group(2)
 
-                    run_num = int(match.group(1))
-                    energy = float(match.group(2))
-                    driver_dist = float(match.group(3))
+                        # Parse all key=value pairs from the params section
+                        kv_pairs = {}
+                        for kv in re.finditer(r"(\w+)=([0-9.e+-]+)", params_str):
+                            kv_pairs[kv.group(1)] = float(kv.group(2))
 
-                    # Store as current_run for subsequent metric matching
-                    current_run = {
-                        "run_num": run_num,
-                        "x_value": driver_dist,
-                        "energy": energy,
-                    }
-                    last_run_num = max(last_run_num, run_num)
+                        # Need at least initial_energy_gev to be useful
+                        if "initial_energy_gev" in kv_pairs:
+                            energy = abs(kv_pairs["initial_energy_gev"])
+
+                            # Determine x-axis parameter (priority order)
+                            # Prefer the driver parameter that is being swept
+                            x_value = None
+                            x_param = None
+                            x_label = None
+                            x_units = None
+
+                            if "driver_energy_gev" in kv_pairs:
+                                # Energy is always positive magnitude
+                                x_value = abs(kv_pairs["driver_energy_gev"])
+                                x_param = "driver_energy_gev"
+                                x_label = "Driver Energy"
+                                x_units = "GeV"
+                            elif "driver_starting_distance" in kv_pairs:
+                                x_value = kv_pairs["driver_starting_distance"]
+                                x_param = "driver_starting_distance"
+                                x_label = "Driver Starting Distance"
+                                x_units = "mm"
+                            elif "start_z" in kv_pairs:
+                                x_value = kv_pairs["start_z"]
+                                x_param = "start_z"
+                                x_label = "Starting Z Position"
+                                x_units = "mm"
+
+                            if x_value is not None:
+                                # Set metadata on first detection
+                                if param_metadata["sweep_type"] is None:
+                                    param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
+                                    param_metadata["x_param_name"] = x_param
+                                    param_metadata["x_label"] = x_label
+                                    param_metadata["x_units"] = x_units
+                                    param_metadata["y_label"] = "Initial Energy"
+
+                                current_run = {
+                                    "run_num": run_num,
+                                    "x_value": x_value,
+                                    "energy": energy,
+                                }
+                                last_run_num = max(last_run_num, run_num)
 
                 # Match metrics - try both max_percent_energy_gain and percent_delta_e
                 # Handle optional [OPTIMIZATION] prefix from CLI logs

@@ -121,6 +121,7 @@ class OptimizationConfig:
     driver_starting_Pz_points: int = 1
     driver_energy_range: Optional[Tuple[float, float]] = None  # GeV (BUNCH_TO_BUNCH)
     driver_energy_points: int = 1
+    driver_energy_log_scale: bool = False  # Use log scale for driver energy sweep
 
     # Fixed parameters
     wall_z: float = 100.0  # mm
@@ -166,7 +167,9 @@ class OptimizationConfig:
     driver_starting_distance: float = 1000.0  # mm (driver starting distance)
     driver_stripped_ions: float = 54.0  # Driver stripped ions (for BUNCH_TO_BUNCH)
     driver_starting_Pz: float = -4925.0  # Fixed driver Pz (amu·mm/ns)
-    driver_energy_gev: float = 112.5  # Fixed driver energy (GeV)
+    driver_energy_gev: float = (
+        0.6057  # Fixed driver kinetic energy (GeV), consistent with Pz=-4925 for Xe
+    )
 
     # Macroparticle simulation options (CONDUCTING_WALL only)
     macroparticle_enabled: bool = False

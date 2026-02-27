@@ -83,42 +83,56 @@ class SweepRunner:
             self.log_file.write(f"[OPTIMIZATION] {message}\n")
             self.log_file.flush()
 
+    @staticmethod
+    def _make_range(
+        min_val: float, max_val: float, points: int, log_scale: bool = False
+    ) -> List[float]:
+        """Return a list of *points* values between *min_val* and *max_val*."""
+        if points <= 1:
+            return [(min_val + max_val) / 2.0]
+        if log_scale and min_val > 0 and max_val > 0:
+            return np.logspace(np.log10(min_val), np.log10(max_val), points).tolist()
+        return np.linspace(min_val, max_val, points).tolist()
+
     def _generate_parameter_grids(self) -> Dict[str, List[float]]:
-        """Generate parameter grids for sweep."""
+        """Generate parameter grids for sweep.
+
+        In addition to the legacy aperture / energy / start_z / transv_offset
+        grids, this now also generates grids for any BUNCH_TO_BUNCH sweep
+        parameters whose ``*_range`` fields are populated on the config
+        (e.g. ``driver_energy_range``, ``driver_starting_distance_range``).
+        """
         grids = {}
 
-        # Aperture grid
-        if self.config.aperture_points > 1:
-            aper_min, aper_max = self.config.aperture_range
-            if self.config.aperture_log_scale:
-                grids["aperture"] = np.logspace(
-                    np.log10(aper_min), np.log10(aper_max), self.config.aperture_points
-                ).tolist()
+        # ── Aperture grid (not used for BUNCH_TO_BUNCH, but kept for compat) ──
+        if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
+            if self.config.aperture_points > 1:
+                aper_min, aper_max = self.config.aperture_range
+                grids["aperture"] = self._make_range(
+                    aper_min,
+                    aper_max,
+                    self.config.aperture_points,
+                    self.config.aperture_log_scale,
+                )
             else:
-                grids["aperture"] = np.linspace(
-                    aper_min, aper_max, self.config.aperture_points
-                ).tolist()
-        else:
-            grids["aperture"] = [self.config.aperture_range[0]]
+                grids["aperture"] = [self.config.aperture_range[0]]
 
-        # Energy grid
+        # ── Energy grid (rider kinetic energy) ──
         if self.config.energy_points > 1:
             e_min, e_max = self.config.energy_range
-            if self.config.energy_log_scale:
-                grids["energy"] = np.logspace(
-                    np.log10(e_min), np.log10(e_max), self.config.energy_points
-                ).tolist()
-            else:
-                grids["energy"] = np.linspace(
-                    e_min, e_max, self.config.energy_points
-                ).tolist()
+            grids["energy"] = self._make_range(
+                e_min,
+                e_max,
+                self.config.energy_points,
+                self.config.energy_log_scale,
+            )
         else:
             grids["energy"] = [self.config.energy_range[0]]
 
-        # Starting z positions
+        # ── Starting z positions ──
         if (
             self.config.starting_z_positions
-            and len(self.config.starting_z_positions) > 1
+            and len(self.config.starting_z_positions) >= 1
         ):
             grids["start_z"] = self.config.starting_z_positions
         elif (
@@ -134,14 +148,127 @@ class SweepRunner:
             # Default: particle starts before wall
             grids["start_z"] = [self.config.wall_z - 100.0]
 
-        # Transverse offsets
+        # ── Transverse offsets ──
         if (
             self.config.transverse_offset_fractions
-            and len(self.config.transverse_offset_fractions) > 1
+            and len(self.config.transverse_offset_fractions) >= 1
         ):
-            grids["transv_offset_frac"] = self.config.transverse_offset_fractions
+            # Use first value as the single scalar offset for this sweep
+            grids["transv_offset_frac"] = [self.config.transverse_offset_fractions[0]]
         else:
             grids["transv_offset_frac"] = [0.0]
+
+        # ── Wall-z sweep (optional) ──
+        if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
+            grids["wall_z"] = self._make_range(
+                self.config.wall_z_range[0],
+                self.config.wall_z_range[1],
+                self.config.wall_z_points,
+                False,
+            )
+
+        # ── BUNCH_TO_BUNCH driver/rider sweep parameters ──
+        # Each (range_attr, points_attr, grid_key, log_attr) tuple describes a
+        # sweepable parameter.  If the range is populated with more than 1
+        # point we add it to the grid; otherwise the fixed scalar value on the
+        # config is used inside ``_run_single_integration``.
+        _sweep_param_defs = [
+            # rider params
+            ("particle_mass_range", "particle_mass_points", "rider_m_particle", None),
+            (
+                "particle_charge_range",
+                "particle_charge_points",
+                "rider_charge_sign",
+                None,
+            ),
+            ("particle_count_range", "particle_count_points", "rider_pcount", None),
+            (
+                "transverse_momentum_range",
+                "transverse_momentum_points",
+                "rider_transv_mom",
+                None,
+            ),
+            (
+                "transverse_spread_range",
+                "transverse_spread_points",
+                "rider_transv_dist",
+                None,
+            ),
+            (
+                "rider_stripped_ions_range",
+                "rider_stripped_ions_points",
+                "rider_stripped_ions",
+                None,
+            ),
+            (
+                "macroparticle_charge_range",
+                "macroparticle_charge_points",
+                "macroparticle_charge_multiplier",
+                None,
+            ),
+            (
+                "macroparticle_sigma_range",
+                "macroparticle_sigma_points",
+                "macroparticle_sigma_multiplier",
+                None,
+            ),
+            # driver params
+            ("driver_mass_range", "driver_mass_points", "driver_m_particle", None),
+            (
+                "driver_charge_sign_range",
+                "driver_charge_sign_points",
+                "driver_charge_sign",
+                None,
+            ),
+            ("driver_pcount_range", "driver_pcount_points", "driver_pcount", None),
+            (
+                "driver_transv_mom_range",
+                "driver_transv_mom_points",
+                "driver_transv_mom",
+                None,
+            ),
+            (
+                "driver_transv_dist_range",
+                "driver_transv_dist_points",
+                "driver_transv_dist",
+                None,
+            ),
+            (
+                "driver_starting_distance_range",
+                "driver_starting_distance_points",
+                "driver_starting_distance",
+                None,
+            ),
+            (
+                "driver_energy_range",
+                "driver_energy_points",
+                "driver_energy_gev",
+                "driver_energy_log_scale",
+            ),
+            (
+                "driver_stripped_ions_range",
+                "driver_stripped_ions_points",
+                "driver_stripped_ions",
+                None,
+            ),
+        ]
+
+        for range_attr, points_attr, grid_key, log_attr in _sweep_param_defs:
+            rng = getattr(self.config, range_attr, None)
+            if rng is None:
+                continue
+            pts = getattr(self.config, points_attr, 1)
+            if pts <= 1:
+                continue
+            # Skip driver params if not BUNCH_TO_BUNCH
+            if (
+                grid_key.startswith("driver_")
+                and self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH
+            ):
+                continue
+            log_scale = getattr(self.config, log_attr, False) if log_attr else False
+            min_val, max_val = float(rng[0]), float(rng[1])
+            grids[grid_key] = self._make_range(min_val, max_val, pts, log_scale)
 
         return grids
 
@@ -153,6 +280,7 @@ class SweepRunner:
         transv_offset_frac: float,
         run_num: int,
         total_runs: int = 1,
+        sweep_overrides: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters.
 
@@ -168,23 +296,57 @@ class SweepRunner:
             Transverse offset as fraction of aperture
         run_num : int
             Run number for tracking
+        sweep_overrides : dict, optional
+            Per-run overrides for rider/driver sweep parameters.  Keys are
+            the grid names produced by ``_generate_parameter_grids`` (e.g.
+            ``"driver_energy_gev"``, ``"driver_starting_distance"``, etc.).
 
         Returns
         -------
         Dict[str, Any]
             Result dictionary with metrics and trajectory info
         """
+        if sweep_overrides is None:
+            sweep_overrides = {}
+
+        # ── Resolve rider parameters (sweep overrides > config) FIRST ──
+        # These must be resolved before timestep calculation so that the
+        # correct particle mass is used.
+        rider_m_particle = sweep_overrides.get(
+            "rider_m_particle", self.config.m_particle
+        )
+        rider_charge_sign = sweep_overrides.get(
+            "rider_charge_sign", self.config.charge_sign
+        )
+        rider_pcount = int(sweep_overrides.get("rider_pcount", self.config.pcount))
+        rider_transv_mom = sweep_overrides.get(
+            "rider_transv_mom", self.config.transv_mom
+        )
+        rider_transv_dist = sweep_overrides.get(
+            "rider_transv_dist", self.config.transv_dist
+        )
+        rider_stripped_ions = sweep_overrides.get(
+            "rider_stripped_ions", self.config.stripped_ions
+        )
+        macro_charge_mult = sweep_overrides.get(
+            "macroparticle_charge_multiplier",
+            self.config.macroparticle_charge_multiplier,
+        )
+        macro_sigma_mult = sweep_overrides.get(
+            "macroparticle_sigma_multiplier", self.config.macroparticle_sigma_multiplier
+        )
+
         # Calculate transverse offset
         transv_offset = transv_offset_frac * aperture
 
-        # Calculate timestep based on strategy
+        # Calculate timestep based on strategy (using resolved rider mass)
         if self.config.timestep_strategy == "auto_distance":
             timestep = calculate_auto_timestep(
                 start_z=start_z,
                 wall_z=self.config.wall_z,
                 distance_past_wall=self.config.auto_steps_distance_past_wall,
                 particle_energy_gev=energy_gev,
-                particle_mass_amu=self.config.m_particle,
+                particle_mass_amu=rider_m_particle,
                 target_steps=self.config.auto_steps_target,
             )
         else:
@@ -198,15 +360,18 @@ class SweepRunner:
                 distance_past_wall=self.config.auto_steps_distance_past_wall,
                 timestep=timestep,
                 particle_energy_gev=energy_gev,
-                particle_mass_amu=self.config.m_particle,
+                particle_mass_amu=rider_m_particle,
             )
         else:
             steps = self.config.steps
 
         # Log timestep calculation details
         AMU_TO_MEV = 931.494
-        rest_energy_mev = self.config.m_particle * AMU_TO_MEV
-        gamma = (energy_gev * 1e3) / rest_energy_mev
+        rest_energy_mev = rider_m_particle * AMU_TO_MEV
+        # Kinetic energy convention: γ = KE / E_rest + 1
+        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+        if gamma < 1.0:
+            gamma = 1.0
         beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
 
         print(
@@ -214,7 +379,7 @@ class SweepRunner:
             flush=True,
         )
         print(
-            f"[OPTIMIZATION]     E={energy_gev:.4f} GeV, m={self.config.m_particle:.4e} amu",
+            f"[OPTIMIZATION]     E={energy_gev:.4f} GeV, m={rider_m_particle:.4e} amu",
             flush=True,
         )
         print(f"[OPTIMIZATION]     gamma={gamma:.2f}, beta={beta:.8f}", flush=True)
@@ -298,20 +463,25 @@ class SweepRunner:
             flush=True,
         )
 
-        # Build rider params
+        # Build rider params (using resolved overrides)
+        # Kinetic energy convention: γ = KE / E_rest + 1
         AMU_TO_MEV = 931.494
-        rest_energy_mev = self.config.m_particle * AMU_TO_MEV
-        gamma = (energy_gev * 1e3) / rest_energy_mev
+        rest_energy_mev = rider_m_particle * AMU_TO_MEV
+        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+        if gamma < 1.0:
+            gamma = 1.0
+        rider_beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
+        rider_pz = gamma * rider_m_particle * C_MMNS * rider_beta
 
         rider_params = {
             "starting_distance": start_z,
-            "transv_mom": self.config.transv_mom,
-            "transv_dist": self.config.transv_dist,
-            "m_particle": self.config.m_particle,
-            "charge_sign": self.config.charge_sign,
-            "pcount": int(self.config.pcount),
-            "stripped_ions": self.config.stripped_ions,
-            "starting_Pz": C_MMNS * np.sqrt(gamma * gamma - 1.0),
+            "transv_mom": rider_transv_mom,
+            "transv_dist": rider_transv_dist,
+            "m_particle": rider_m_particle,
+            "charge_sign": rider_charge_sign,
+            "pcount": rider_pcount,
+            "stripped_ions": rider_stripped_ions,
+            "starting_Pz": rider_pz,
         }
 
         # Core params
@@ -325,13 +495,37 @@ class SweepRunner:
             "z_cutoff_mode": self.config.z_cutoff_mode,
         }
 
-        # Driver params (for BUNCH_TO_BUNCH)
+        # ── Resolve driver parameters (sweep overrides > config) ──
         driver_params = None
         driver_transv_offset = 0.0
         if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-            driver_gamma = (self.config.driver_energy_gev * 1e3) / (
-                self.config.driver_m_particle * AMU_TO_MEV
+            d_m = sweep_overrides.get(
+                "driver_m_particle", self.config.driver_m_particle
             )
+            d_charge = sweep_overrides.get(
+                "driver_charge_sign", self.config.driver_charge_sign
+            )
+            d_pcount = int(
+                sweep_overrides.get("driver_pcount", self.config.driver_pcount)
+            )
+            d_transv_mom = sweep_overrides.get(
+                "driver_transv_mom", self.config.driver_transv_mom
+            )
+            d_transv_dist = sweep_overrides.get(
+                "driver_transv_dist", self.config.driver_transv_dist
+            )
+            d_start_dist = sweep_overrides.get(
+                "driver_starting_distance", self.config.driver_starting_distance
+            )
+            d_stripped = sweep_overrides.get(
+                "driver_stripped_ions", self.config.driver_stripped_ions
+            )
+            d_energy_gev = sweep_overrides.get(
+                "driver_energy_gev", self.config.driver_energy_gev
+            )
+
+            # Kinetic energy convention: gamma = KE / E_rest + 1
+            driver_gamma = (abs(d_energy_gev) * 1e3) / (d_m * AMU_TO_MEV) + 1.0
             if driver_gamma < 1.0:
                 driver_gamma = 1.0
             driver_beta = (
@@ -340,18 +534,23 @@ class SweepRunner:
                 else 0.0
             )
             driver_params = {
-                "starting_distance": self.config.driver_starting_distance,
-                "transv_mom": self.config.driver_transv_mom,
-                "transv_dist": self.config.driver_transv_dist,
-                "m_particle": self.config.driver_m_particle,
-                "charge_sign": self.config.driver_charge_sign,
-                "pcount": self.config.driver_pcount,
-                "stripped_ions": self.config.driver_stripped_ions,
-                "starting_Pz": driver_gamma
-                * self.config.driver_m_particle
-                * C_MMNS
-                * driver_beta,
+                "starting_distance": d_start_dist,
+                "transv_mom": d_transv_mom,
+                "transv_dist": d_transv_dist,
+                "m_particle": d_m,
+                "charge_sign": d_charge,
+                "pcount": d_pcount,
+                "stripped_ions": d_stripped,
+                "starting_Pz": -(driver_gamma * d_m * C_MMNS * driver_beta),
             }
+
+            print(
+                f"[OPTIMIZATION]   [DRIVER] energy={d_energy_gev:.4f} GeV, "
+                f"m={d_m:.4e} amu, gamma={driver_gamma:.4f}, "
+                f"Pz={driver_params['starting_Pz']:.4e}, "
+                f"stripped={d_stripped:.2e}, pcount={d_pcount}",
+                flush=True,
+            )
 
         # Create particle states
         try:
@@ -377,7 +576,7 @@ class SweepRunner:
             driver_state = None
             if driver_params is not None:
                 driver_state, _ = create_bunch_from_energy(
-                    kinetic_energy_mev=self.config.driver_energy_gev * 1e3,
+                    kinetic_energy_mev=abs(self.config.driver_energy_gev) * 1e3,
                     mass_amu=driver_params["m_particle"],
                     charge_sign=driver_params["charge_sign"],
                     position_z=driver_params["starting_distance"],
@@ -386,6 +585,17 @@ class SweepRunner:
                     transverse_momentum=driver_params["transv_mom"],
                     transverse_offset_x=driver_transv_offset,
                     transverse_offset_y=0.0,
+                )
+                # Driver moves in -z direction: negate longitudinal momentum
+                # create_bunch_from_energy always produces positive Pz
+                driver_state["Pz"] = -driver_state["Pz"]
+                driver_state["bz"] = -driver_state["bz"]
+                # Recompute Pt (magnitude unchanged, but recalc for consistency)
+                driver_state["Pt"] = np.sqrt(
+                    driver_state["Px"] ** 2
+                    + driver_state["Py"] ** 2
+                    + driver_state["Pz"] ** 2
+                    + (driver_params["m_particle"] * C_MMNS) ** 2
                 )
                 driver_state["stripped_ions"] = np.full(
                     driver_params["pcount"], driver_params["stripped_ions"]
@@ -466,8 +676,8 @@ class SweepRunner:
                 use_conducting_image_weighting=self.config.use_image_weighting,
                 self_consistency=sc_config,
                 adaptive_timestep=adaptive_config,
-                macroparticle_charge_multiplier=self.config.macroparticle_charge_multiplier,
-                macroparticle_sigma_multiplier=self.config.macroparticle_sigma_multiplier,
+                macroparticle_charge_multiplier=macro_charge_mult,
+                macroparticle_sigma_multiplier=macro_sigma_mult,
                 macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
                 bunch_transv_dist=rider_params["transv_dist"],
                 bunch_transv_mom=rider_params["transv_mom"],
@@ -601,6 +811,8 @@ class SweepRunner:
         bool
             True if sweep completed successfully, False otherwise
         """
+        import itertools
+
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -663,24 +875,17 @@ class SweepRunner:
 
             # Log sweep start with total runs
             self._log(f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs")
-            self._log(
-                f"  aperture: {len(param_grids['aperture'])} points from {min(param_grids['aperture']):.2e} to {max(param_grids['aperture']):.2e}"
-            )
-            self._log(
-                f"  energy: {len(param_grids['energy'])} points from {min(param_grids['energy']):.2e} to {max(param_grids['energy']):.2e}"
-            )
-            self._log(
-                "  transverse_offset_fraction: {:.2e} (fixed)".format(
-                    param_grids["transv_offset_frac"][0]
-                )
-                if len(param_grids["transv_offset_frac"]) == 1
-                else f"  transverse_offset_fraction: {len(param_grids['transv_offset_frac'])} values"
-            )
-            self._log(
-                "  start_z: {:.2e} (fixed)".format(param_grids["start_z"][0])
-                if len(param_grids["start_z"]) == 1
-                else f"  start_z: {len(param_grids['start_z'])} values"
-            )
+            self._log(f"  Simulation type: {self.config.simulation_type}")
+
+            # Log each grid dimension
+            for grid_key, grid_vals in param_grids.items():
+                if len(grid_vals) > 1:
+                    self._log(
+                        f"  {grid_key}: {len(grid_vals)} points from {min(grid_vals):.4e} to {max(grid_vals):.4e}"
+                    )
+                else:
+                    self._log(f"  {grid_key}: {grid_vals[0]:.4e} (fixed)")
+
             self._log(f"  Timestep strategy: {self.config.timestep_strategy}")
             if self.config.timestep_strategy == "auto_distance":
                 self._log(
@@ -693,9 +898,37 @@ class SweepRunner:
                     "    All particles will travel to consistent z regardless of energy"
                 )
             self._log(f"  z_cutoff_mode: {self.config.z_cutoff_mode}")
+
+            # Log fixed particle parameters
+            if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                self._log("")
+                self._log("  Fixed rider parameters:")
+                self._log(f"    m_particle: {self.config.m_particle:.4e} amu")
+                self._log(f"    charge_sign: {self.config.charge_sign}")
+                self._log(f"    pcount: {self.config.pcount}")
+                self._log(f"    stripped_ions: {self.config.stripped_ions:.2e}")
+                self._log(f"    transv_mom: {self.config.transv_mom:.4e}")
+                self._log(f"    transv_dist: {self.config.transv_dist:.4e}")
+                self._log("  Fixed driver parameters:")
+                self._log(f"    m_particle: {self.config.driver_m_particle:.4e} amu")
+                self._log(f"    charge_sign: {self.config.driver_charge_sign}")
+                self._log(f"    pcount: {self.config.driver_pcount}")
+                self._log(f"    stripped_ions: {self.config.driver_stripped_ions:.2e}")
+                self._log(f"    energy_gev: {self.config.driver_energy_gev:.4f}")
+                self._log(
+                    f"    starting_distance: {self.config.driver_starting_distance:.2f}"
+                )
+
             self._log("")
             self._log(f"Output directory: {self.output_dir}")
             self._log("")
+
+            # ── Build iteration over all grid dimensions ──
+            param_names = list(param_grids.keys())
+            param_values_lists = [param_grids[name] for name in param_names]
+
+            # Names that are handled as positional args to _run_single_integration
+            _positional_keys = {"aperture", "energy", "start_z", "transv_offset_frac"}
 
             # Run sweep
             start_time = time.time()
@@ -703,136 +936,119 @@ class SweepRunner:
             failed_count = 0
             result = None  # Initialize result variable
 
-            for aperture in param_grids["aperture"]:
-                for energy in param_grids["energy"]:
-                    for start_z in param_grids["start_z"]:
-                        for transv_offset_frac in param_grids["transv_offset_frac"]:
-                            run_num += 1
+            for param_combo in itertools.product(*param_values_lists):
+                run_num += 1
+                params_dict = dict(zip(param_names, param_combo))
 
-                            self._log(
-                                f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:"
-                            )
-                            self._log(f"    aperture: {aperture:.4e} mm")
-                            self._log(f"    energy: {energy:.4f} GeV")
-                            self._log(f"    start_z: {start_z:.4f} mm")
-                            self._log(
-                                f"    transv_offset_frac: {transv_offset_frac:.4f}"
-                            )
-                            self._log(
-                                f"    rider_m_particle: {self.config.m_particle:.4e} amu"
-                            )
-                            self._log(
-                                f"    rider_charge_sign: {self.config.charge_sign}"
-                            )
-                            self._log(f"    rider_pcount: {self.config.pcount}")
-                            self._log(
-                                f"    rider_transv_mom: {self.config.transv_mom:.4e} amu·mm/ns"
-                            )
-                            self._log(
-                                f"    rider_transv_dist: {self.config.transv_dist:.4e} mm"
-                            )
-                            if self.config.macroparticle_enabled:
-                                self._log(
-                                    f"    macroparticle_enabled: {self.config.macroparticle_enabled}"
-                                )
-                                self._log(
-                                    f"    macroparticle_charge_multiplier: {self.config.macroparticle_charge_multiplier:.4f}"
-                                )
-                                self._log(
-                                    f"    macroparticle_sigma_multiplier: {self.config.macroparticle_sigma_multiplier:.4f}"
-                                )
-                                self._log(
-                                    f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
-                                )
+                # Extract positional grid values
+                aperture = params_dict.get("aperture", 1.0e-4)
+                energy = params_dict["energy"]
+                start_z = params_dict["start_z"]
+                transv_offset_frac = params_dict.get("transv_offset_frac", 0.0)
 
-                            try:
-                                result = self._run_single_integration(
-                                    aperture=aperture,
-                                    energy_gev=energy,
-                                    start_z=start_z,
-                                    transv_offset_frac=transv_offset_frac,
-                                    run_num=run_num,
-                                    total_runs=total_runs,
-                                )
+                # Everything else → sweep_overrides passed to _run_single_integration
+                sweep_overrides = {
+                    k: v for k, v in params_dict.items() if k not in _positional_keys
+                }
 
-                                self.results.append(result)
+                # Log parameter values
+                self._log(f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:")
+                for pname in param_names:
+                    pval = params_dict[pname]
+                    if isinstance(pval, float):
+                        self._log(f"    {pname}: {pval:.6e}")
+                    else:
+                        self._log(f"    {pname}: {pval}")
 
-                                if not result["success"]:
-                                    failed_count += 1
-                                    error_msg = result.get("error", "Unknown error")
-                                    self._log(
-                                        f"  [FAILED] Run {run_num}/{total_runs}: {error_msg}"
-                                    )
-                            except Exception as e:
-                                failed_count += 1
-                                import traceback
+                if self.config.macroparticle_enabled:
+                    self._log(
+                        f"    macroparticle_enabled: {self.config.macroparticle_enabled}"
+                    )
 
-                                error_detail = traceback.format_exc()
-                                self._log(
-                                    f"  [EXCEPTION] Run {run_num}/{total_runs}: {e}"
-                                )
-                                self._log("  Traceback:")
-                                for line in error_detail.split("\n"):
-                                    if line:
-                                        self._log(f"    {line}")
-                                self.results.append(
-                                    {
-                                        "success": False,
-                                        "error": f"{e}\n{error_detail}",
-                                        "parameters": {
-                                            "aperture": aperture,
-                                            "energy_gev": energy,
-                                            "start_z": start_z,
-                                            "transv_offset_frac": transv_offset_frac,
-                                        },
-                                    }
-                                )
-                                result = self.results[
-                                    -1
-                                ]  # Set result to the error we just added
+                try:
+                    result = self._run_single_integration(
+                        aperture=aperture,
+                        energy_gev=energy,
+                        start_z=start_z,
+                        transv_offset_frac=transv_offset_frac,
+                        run_num=run_num,
+                        total_runs=total_runs,
+                        sweep_overrides=sweep_overrides,
+                    )
 
-                            if result.get("success"):
-                                metrics = result.get("metrics", {})
-                                # Log metrics in format compatible with plotting script
-                                # The plotting script expects these on individual lines for regex parsing
-                                print(
-                                    f"[OPTIMIZATION] max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.6f}%",
-                                    flush=True,
-                                )
-                                print(
-                                    f"[OPTIMIZATION] max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.6e} GeV",
-                                    flush=True,
-                                )
-                                print(
-                                    f"[OPTIMIZATION] max_relative_gain: {metrics.get('max_relative_gain', 0):.6e}",
-                                    flush=True,
-                                )
-                                print(
-                                    f"[OPTIMIZATION] final_gamma: {metrics.get('final_gamma_mean', 1):.6f}",
-                                    flush=True,
-                                )
-                                print(
-                                    f"[OPTIMIZATION] initial_gamma: {metrics.get('initial_gamma_mean', 1):.6f}",
-                                    flush=True,
-                                )
+                    # Attach run number and full parameter snapshot to result
+                    result["run_number"] = run_num
+                    if result.get("parameters") is None:
+                        result["parameters"] = {}
+                    result["parameters"].update(params_dict)
 
-                                # Also log to sweep.log in human-readable format
-                                self._log(f"  [RESULT] Run {run_num}/{total_runs}:")
-                                self._log(
-                                    f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.6e} GeV"
-                                )
-                                self._log(
-                                    f"    max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.6f}%"
-                                )
-                                self._log(
-                                    f"    max_relative_gain: {metrics.get('max_relative_gain', 0):.6e}"
-                                )
-                                self._log(
-                                    f"    final_gamma: {metrics.get('final_gamma_mean', 1):.6f}"
-                                )
-                                self._log(
-                                    f"    initial_gamma: {metrics.get('initial_gamma_mean', 1):.6f}"
-                                )
+                    self.results.append(result)
+
+                    if not result["success"]:
+                        failed_count += 1
+                        error_msg = result.get("error", "Unknown error")
+                        self._log(f"  [FAILED] Run {run_num}/{total_runs}: {error_msg}")
+                except Exception as e:
+                    failed_count += 1
+                    import traceback
+
+                    error_detail = traceback.format_exc()
+                    self._log(f"  [EXCEPTION] Run {run_num}/{total_runs}: {e}")
+                    self._log("  Traceback:")
+                    for line in error_detail.split("\n"):
+                        if line:
+                            self._log(f"    {line}")
+                    self.results.append(
+                        {
+                            "run_number": run_num,
+                            "success": False,
+                            "error": f"{e}\n{error_detail}",
+                            "parameters": dict(params_dict),
+                        }
+                    )
+                    result = self.results[-1]
+
+                if result.get("success"):
+                    metrics = result.get("metrics", {})
+                    # Log metrics in format compatible with plotting script
+                    print(
+                        f"[OPTIMIZATION] max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.6f}%",
+                        flush=True,
+                    )
+                    print(
+                        f"[OPTIMIZATION] max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.6e} GeV",
+                        flush=True,
+                    )
+                    print(
+                        f"[OPTIMIZATION] max_relative_gain: {metrics.get('max_relative_gain', 0):.6e}",
+                        flush=True,
+                    )
+                    print(
+                        f"[OPTIMIZATION] final_gamma: {metrics.get('final_gamma_mean', 1):.6f}",
+                        flush=True,
+                    )
+                    print(
+                        f"[OPTIMIZATION] initial_gamma: {metrics.get('initial_gamma_mean', 1):.6f}",
+                        flush=True,
+                    )
+
+                    # Also log to sweep.log
+                    self._log(f"  [RESULT] Run {run_num}/{total_runs}:")
+                    self._log(
+                        f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.6e} GeV"
+                    )
+                    self._log(
+                        f"    max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.6f}%"
+                    )
+                    self._log(
+                        f"    max_relative_gain: {metrics.get('max_relative_gain', 0):.6e}"
+                    )
+                    self._log(
+                        f"    final_gamma: {metrics.get('final_gamma_mean', 1):.6f}"
+                    )
+                    self._log(
+                        f"    initial_gamma: {metrics.get('initial_gamma_mean', 1):.6f}"
+                    )
 
             # Save results
             elapsed_time = time.time() - start_time
@@ -856,10 +1072,11 @@ class SweepRunner:
                             "simulation_type": self.config.simulation_type.name
                             if hasattr(self.config.simulation_type, "name")
                             else str(self.config.simulation_type),
-                            "aperture_range": self.config.aperture_range,
+                            "aperture_range": list(self.config.aperture_range),
                             "aperture_points": self.config.aperture_points,
-                            "energy_range": self.config.energy_range,
+                            "energy_range": list(self.config.energy_range),
                             "energy_points": self.config.energy_points,
+                            "param_grids": {k: v for k, v in param_grids.items()},
                         },
                         "total_runs": total_runs,
                         "successful": total_runs - failed_count,
@@ -905,6 +1122,10 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
 
     JSON uses separate min/max/points fields (e.g., aperture_min, aperture_max),
     while OptimizationConfig uses tuple ranges (e.g., aperture_range).
+
+    This also maps *fixed* (non-swept) sweep_parameters to the corresponding
+    OptimizationConfig scalar fields so that the CLI sweep runner uses the
+    correct particle parameters instead of hard-coded defaults.
     """
     converted = dict(config_dict)
 
@@ -938,79 +1159,115 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         if isinstance(wall_z_range, list) and len(wall_z_range) == 2:
             converted["wall_z_range"] = tuple(wall_z_range)
 
-    # Convert sweep_parameters to appropriate ranges
+    # Map rider_stripped_ions top-level key -> stripped_ions (OptimizationConfig name)
+    if "rider_stripped_ions" in converted and "stripped_ions" not in converted:
+        converted["stripped_ions"] = float(converted.pop("rider_stripped_ions"))
+    elif "rider_stripped_ions" in converted:
+        converted.pop("rider_stripped_ions")
+
+    # Map rider_offset / driver_offset top-level keys
+    if "rider_offset_x" in converted:
+        converted["transv_offset_x"] = float(converted.pop("rider_offset_x"))
+    if "rider_offset_y" in converted:
+        converted["transv_offset_y"] = float(converted.pop("rider_offset_y"))
+    if "driver_offset_x" in converted:
+        converted["driver_transv_offset_x"] = float(converted.pop("driver_offset_x"))
+    if "driver_offset_y" in converted:
+        converted["driver_transv_offset_y"] = float(converted.pop("driver_offset_y"))
+
+    # Convert sweep_parameters to appropriate ranges and fixed values
     sweep_params = converted.get("sweep_parameters", {})
 
-    # Handle rider parameters
-    for param_name in [
-        "rider_m_particle",
-        "rider_charge_sign",
-        "rider_pcount",
-        "rider_transv_mom",
-        "rider_transv_dist",
-        "rider_stripped_ions",
-        "macroparticle_charge_multiplier",
-        "macroparticle_sigma_multiplier",
-    ]:
-        if param_name in sweep_params:
-            param_config = sweep_params[param_name]
-            if (
-                param_config.get("enabled")
-                and "min" in param_config
-                and "max" in param_config
-            ):
-                # Map to OptimizationConfig field names
-                field_map = {
-                    "rider_m_particle": "particle_mass_range",
-                    "rider_charge_sign": "particle_charge_range",
-                    "rider_pcount": "particle_count_range",
-                    "rider_transv_mom": "transverse_momentum_range",
-                    "rider_transv_dist": "transverse_spread_range",
-                    "rider_stripped_ions": "rider_stripped_ions_range",
-                    "macroparticle_charge_multiplier": "macroparticle_charge_range",
-                    "macroparticle_sigma_multiplier": "macroparticle_sigma_range",
-                }
-                if param_name in field_map:
-                    field_name = field_map[param_name]
-                    converted[field_name] = (param_config["min"], param_config["max"])
-                    points_field = field_name.replace("_range", "_points")
-                    if "points" in param_config:
-                        converted[points_field] = param_config["points"]
+    # ── Mapping from sweep_parameter names to OptimizationConfig scalar fields ──
+    _fixed_field_map_rider = {
+        "rider_m_particle": "m_particle",
+        "rider_charge_sign": "charge_sign",
+        "rider_pcount": "pcount",
+        "rider_transv_mom": "transv_mom",
+        "rider_transv_dist": "transv_dist",
+        "rider_stripped_ions": "stripped_ions",
+        "macroparticle_charge_multiplier": "macroparticle_charge_multiplier",
+        "macroparticle_sigma_multiplier": "macroparticle_sigma_multiplier",
+    }
+    _fixed_field_map_driver = {
+        "driver_m_particle": "driver_m_particle",
+        "driver_charge_sign": "driver_charge_sign",
+        "driver_pcount": "driver_pcount",
+        "driver_transv_mom": "driver_transv_mom",
+        "driver_transv_dist": "driver_transv_dist",
+        "driver_starting_distance": "driver_starting_distance",
+        "driver_energy_gev": "driver_energy_gev",
+        "driver_stripped_ions": "driver_stripped_ions",
+    }
 
-    # Handle driver parameters (for BUNCH_TO_BUNCH)
-    for param_name in [
-        "driver_m_particle",
-        "driver_charge_sign",
-        "driver_pcount",
-        "driver_transv_mom",
-        "driver_transv_dist",
-        "driver_starting_distance",
-        "driver_energy_gev",
-        "driver_stripped_ions",
-    ]:
-        if param_name in sweep_params:
-            param_config = sweep_params[param_name]
-            if (
-                param_config.get("enabled")
-                and "min" in param_config
-                and "max" in param_config
-            ):
-                field_map = {
-                    "driver_m_particle": "driver_mass_range",
-                    "driver_charge_sign": "driver_charge_sign_range",
-                    "driver_pcount": "driver_pcount_range",
-                    "driver_transv_mom": "driver_transv_mom_range",
-                    "driver_transv_dist": "driver_transv_dist_range",
-                    "driver_starting_distance": "driver_starting_distance_range",
-                    "driver_energy_gev": "driver_energy_range",
-                    "driver_stripped_ions": "driver_stripped_ions_range",
-                }
-                if param_name in field_map:
-                    field_name = field_map[param_name]
-                    converted[field_name] = (param_config["min"], param_config["max"])
-                    points_field = field_name.replace("_range", "_points")
-                    if "points" in param_config:
-                        converted[points_field] = param_config["points"]
+    # ── Mapping from sweep_parameter names to OptimizationConfig range fields ──
+    _range_field_map_rider = {
+        "rider_m_particle": "particle_mass_range",
+        "rider_charge_sign": "particle_charge_range",
+        "rider_pcount": "particle_count_range",
+        "rider_transv_mom": "transverse_momentum_range",
+        "rider_transv_dist": "transverse_spread_range",
+        "rider_stripped_ions": "rider_stripped_ions_range",
+        "macroparticle_charge_multiplier": "macroparticle_charge_range",
+        "macroparticle_sigma_multiplier": "macroparticle_sigma_range",
+    }
+    _range_field_map_driver = {
+        "driver_m_particle": "driver_mass_range",
+        "driver_charge_sign": "driver_charge_sign_range",
+        "driver_pcount": "driver_pcount_range",
+        "driver_transv_mom": "driver_transv_mom_range",
+        "driver_transv_dist": "driver_transv_dist_range",
+        "driver_starting_distance": "driver_starting_distance_range",
+        "driver_energy_gev": "driver_energy_range",
+        "driver_stripped_ions": "driver_stripped_ions_range",
+    }
+
+    # Process ALL sweep_parameters (both enabled=swept and disabled=fixed)
+    all_param_names = list(_fixed_field_map_rider.keys()) + list(
+        _fixed_field_map_driver.keys()
+    )
+    all_range_maps = {**_range_field_map_rider, **_range_field_map_driver}
+    all_fixed_maps = {**_fixed_field_map_rider, **_fixed_field_map_driver}
+
+    for param_name in all_param_names:
+        if param_name not in sweep_params:
+            continue
+        param_config = sweep_params[param_name]
+
+        if (
+            param_config.get("enabled")
+            and "min" in param_config
+            and "max" in param_config
+        ):
+            # ── Swept parameter → range + points ──
+            if param_name in all_range_maps:
+                field_name = all_range_maps[param_name]
+                min_val = float(param_config["min"])
+                max_val = float(param_config["max"])
+                # Energy magnitude is always positive
+                if param_name == "driver_energy_gev":
+                    min_val = abs(min_val)
+                    max_val = abs(max_val)
+                    if min_val > max_val:
+                        min_val, max_val = max_val, min_val
+                converted[field_name] = (min_val, max_val)
+                points_field = field_name.replace("_range", "_points")
+                if "points" in param_config:
+                    converted[points_field] = int(param_config["points"])
+                # Also store log-scale flag for this sweep param
+                if "log" in param_config:
+                    log_field = field_name.replace("_range", "_log_scale")
+                    converted[log_field] = bool(param_config["log"])
+        else:
+            # ── Fixed (disabled) parameter → scalar field ──
+            if "fixed_value" in param_config and param_name in all_fixed_maps:
+                scalar_field = all_fixed_maps[param_name]
+                raw_val = param_config["fixed_value"]
+                # pcount fields must be int
+                if param_name in ("rider_pcount", "driver_pcount"):
+                    converted[scalar_field] = int(float(raw_val))
+                else:
+                    converted[scalar_field] = float(raw_val)
 
     # Remove sweep_parameters from converted dict as it's been processed
     converted.pop("sweep_parameters", None)

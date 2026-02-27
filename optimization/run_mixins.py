@@ -31,27 +31,41 @@ from optimization.config import (  # type: ignore[import]
 )
 
 
-def _calculate_starting_pz_from_energy(energy_gev: float, mass_amu: float) -> float:
-    """Calculate starting Pz from total energy and mass.
+def _calculate_starting_pz_from_energy(
+    energy_gev: float, mass_amu: float, negative: bool = False
+) -> float:
+    """Calculate starting Pz from kinetic energy and mass.
+
+    Uses the kinetic-energy convention (γ = KE / E_rest + 1) which matches
+    the convention used by ``create_bunch_from_energy`` throughout the
+    codebase.
 
     Parameters
     ----------
     energy_gev : float
-        Total energy in GeV
+        Kinetic energy in GeV.  Negative values are treated as their
+        absolute value (energy is always positive; use the ``negative``
+        flag for direction).
     mass_amu : float
         Particle mass in amu
+    negative : bool, optional
+        If True, return negative Pz (particle moving in -z direction,
+        e.g. driver).  Default: False.
 
     Returns
     -------
     float
-        Starting Pz in amu·mm/ns (negative, moving in -z direction)
+        Starting Pz in amu·mm/ns (sign determined by ``negative`` flag)
     """
+    energy_gev = abs(energy_gev)  # energy is always a positive magnitude
     rest_energy_mev = mass_amu * AMU_TO_MEV
-    gamma = (energy_gev * 1e3) / rest_energy_mev
+    # Kinetic energy convention: γ = KE / E_rest + 1
+    gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
     if gamma < 1.0:
         gamma = 1.0
     beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
-    return gamma * mass_amu * C_MMNS * beta
+    pz = gamma * mass_amu * C_MMNS * beta
+    return -pz if negative else pz
 
 
 class OptimizationRunMixin:
@@ -1367,10 +1381,13 @@ class OptimizationRunMixin:
                     driver_m = params_dict.get("driver_m_particle", 207.2)
 
                     # Convert driver_energy_gev to starting_Pz if present,
-                    # otherwise fall back to legacy driver_starting_Pz key
+                    # otherwise fall back to legacy driver_starting_Pz key.
+                    # Driver travels in -z → negative Pz.
                     if "driver_energy_gev" in params_dict:
                         driver_pz = _calculate_starting_pz_from_energy(
-                            params_dict["driver_energy_gev"], driver_m
+                            params_dict["driver_energy_gev"],
+                            driver_m,
+                            negative=True,
                         )
                     else:
                         driver_pz = params_dict.get("driver_starting_Pz", -4925.0)
@@ -2012,6 +2029,15 @@ class OptimizationRunMixin:
                 max_val = float(controls["max_var"].get())
                 points = int(controls["points_var"].get())
                 log_scale = controls["log_var"].get()
+
+                # Energy is always a positive magnitude; accept negative
+                # input gracefully (sign encodes Pz direction, not energy)
+                if param_name == "driver_energy_gev":
+                    min_val = abs(min_val)
+                    max_val = abs(max_val)
+                    if min_val > max_val:
+                        min_val, max_val = max_val, min_val
+
                 grids[param_name] = self._generate_range(
                     min_val, max_val, points, log_scale
                 )
