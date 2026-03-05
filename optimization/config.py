@@ -123,6 +123,10 @@ class OptimizationConfig:
     driver_energy_points: int = 1
     driver_energy_log_scale: bool = False  # Use log scale for driver energy sweep
 
+    # Linked energy sweep: when True, driver energy is locked to rider energy values
+    # This results in a 1D sweep where both particles have the same kinetic energy
+    linked_energy_sweep: bool = False
+
     # Fixed parameters
     wall_z: float = 100.0  # mm
     cavity_spacing: float = 1e5  # mm (for SWITCHING_WALL)
@@ -169,6 +173,9 @@ class OptimizationConfig:
     driver_starting_Pz: float = -4925.0  # Fixed driver Pz (amu·mm/ns)
     driver_energy_gev: float = (
         0.6057  # Fixed driver kinetic energy (GeV), consistent with Pz=-4925 for Xe
+    )
+    driver_direction: str = (
+        "-z"  # Driver momentum direction: "-z" (toward rider) or "+z" (away from rider)
     )
 
     # Macroparticle simulation options (CONDUCTING_WALL only)

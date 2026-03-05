@@ -84,6 +84,29 @@ class SweepRunner:
             self.log_file.flush()
 
     @staticmethod
+    def _driver_ke_from_params(driver_params: Dict[str, Any]) -> float:
+        """Derive driver kinetic energy in GeV from a driver_params dict.
+
+        Uses the inverse of the kinetic-energy Pz formula:
+            Pz = gamma * m * c * beta
+            gamma*beta = |Pz| / (m * c)
+            gamma = sqrt((gamma*beta)^2 + 1)
+            KE = (gamma - 1) * m * c^2
+
+        Returns
+        -------
+        float
+            Kinetic energy in GeV (always positive).
+        """
+        m = driver_params["m_particle"]  # amu
+        pz = abs(driver_params["starting_Pz"])  # amu·mm/ns
+        AMU_TO_MEV = 931.494
+        gamma_beta = pz / (m * C_MMNS) if m > 0 else 0.0
+        gamma = np.sqrt(gamma_beta**2 + 1.0)
+        ke_mev = (gamma - 1.0) * m * AMU_TO_MEV
+        return ke_mev / 1e3  # GeV
+
+    @staticmethod
     def _make_range(
         min_val: float, max_val: float, points: int, log_scale: bool = False
     ) -> List[float]:
@@ -524,6 +547,12 @@ class SweepRunner:
                 "driver_energy_gev", self.config.driver_energy_gev
             )
 
+            # Determine Pz sign from config direction setting
+            # "-z" → negative Pz (driver moves toward rider, conventional)
+            # "+z" → positive Pz (driver moves away from rider)
+            driver_negative = getattr(self.config, "driver_direction", "-z") == "-z"
+            pz_sign = -1.0 if driver_negative else 1.0
+
             # Kinetic energy convention: gamma = KE / E_rest + 1
             driver_gamma = (abs(d_energy_gev) * 1e3) / (d_m * AMU_TO_MEV) + 1.0
             if driver_gamma < 1.0:
@@ -533,6 +562,7 @@ class SweepRunner:
                 if driver_gamma > 1.0
                 else 0.0
             )
+            driver_pz_mag = driver_gamma * d_m * C_MMNS * driver_beta
             driver_params = {
                 "starting_distance": d_start_dist,
                 "transv_mom": d_transv_mom,
@@ -541,13 +571,14 @@ class SweepRunner:
                 "charge_sign": d_charge,
                 "pcount": d_pcount,
                 "stripped_ions": d_stripped,
-                "starting_Pz": -(driver_gamma * d_m * C_MMNS * driver_beta),
+                "starting_Pz": pz_sign * driver_pz_mag,
             }
 
+            dir_label = "\u2212\u1e91" if driver_negative else "+\u1e91"
             print(
                 f"[OPTIMIZATION]   [DRIVER] energy={d_energy_gev:.4f} GeV, "
                 f"m={d_m:.4e} amu, gamma={driver_gamma:.4f}, "
-                f"Pz={driver_params['starting_Pz']:.4e}, "
+                f"Pz={driver_params['starting_Pz']:.4e} ({dir_label}), "
                 f"stripped={d_stripped:.2e}, pcount={d_pcount}",
                 flush=True,
             )
@@ -575,8 +606,15 @@ class SweepRunner:
             # Create driver bunch if needed
             driver_state = None
             if driver_params is not None:
+                # Recover energy magnitude and direction sign from the
+                # already-built driver_params dict so these variables are
+                # always in scope (avoids "possibly unbound" warnings).
+                _driver_pz = driver_params["starting_Pz"]
+                _driver_pz_sign = -1.0 if _driver_pz < 0 else 1.0
+                _driver_ke_gev = self._driver_ke_from_params(driver_params)
+
                 driver_state, _ = create_bunch_from_energy(
-                    kinetic_energy_mev=abs(self.config.driver_energy_gev) * 1e3,
+                    kinetic_energy_mev=_driver_ke_gev * 1e3,
                     mass_amu=driver_params["m_particle"],
                     charge_sign=driver_params["charge_sign"],
                     position_z=driver_params["starting_distance"],
@@ -586,10 +624,10 @@ class SweepRunner:
                     transverse_offset_x=driver_transv_offset,
                     transverse_offset_y=0.0,
                 )
-                # Driver moves in -z direction: negate longitudinal momentum
-                # create_bunch_from_energy always produces positive Pz
-                driver_state["Pz"] = -driver_state["Pz"]
-                driver_state["bz"] = -driver_state["bz"]
+                # create_bunch_from_energy always produces positive Pz.
+                # Apply direction derived from the driver_params starting_Pz sign.
+                driver_state["Pz"] = _driver_pz_sign * np.abs(driver_state["Pz"])
+                driver_state["bz"] = _driver_pz_sign * np.abs(driver_state["bz"])
                 # Recompute Pt (magnitude unchanged, but recalc for consistency)
                 driver_state["Pt"] = np.sqrt(
                     driver_state["Px"] ** 2

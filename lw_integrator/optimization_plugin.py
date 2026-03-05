@@ -497,20 +497,20 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             row=5, column=2, columnspan=2, sticky="w", pady=2
         )
 
-        # Starting z positions (rider only)
+        # Starting z position (rider only)
         ttk.Label(frame, text="Rider Starting z (mm):").grid(
             row=6, column=0, sticky="w", pady=2
         )
         self.start_z_var = tk.StringVar(value="0.0")
-        ttk.Entry(frame, textvariable=self.start_z_var, width=30).grid(
-            row=6, column=1, columnspan=3, sticky="ew", pady=2
+        ttk.Entry(frame, textvariable=self.start_z_var, width=15).grid(
+            row=6, column=1, sticky="w", pady=2
         )
         ttk.Label(
             frame,
-            text="Comma-separated list for sweeps. Driver starting z uses sweepable param below.",
+            text="Driver starting z uses sweepable param below.",
             font=("TkDefaultFont", 8),
             foreground="gray40",
-        ).grid(row=7, column=1, columnspan=3, sticky="w", pady=(0, 5))
+        ).grid(row=6, column=2, columnspan=2, sticky="w", pady=2, padx=(10, 0))
 
         # Wall Position (sweepable)
         self._param_widgets["wall_z_label"] = ttk.Label(frame, text="Wall Position:")
@@ -1053,10 +1053,66 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.driver_frame,
             row,
             "driver_energy_gev",
-            "Energy (GeV):",
+            "Kinetic Energy (GeV):",
             "112.5",
             width=15,
         )
+        row += 1
+
+        # Link to Rider Energy checkbox - when checked, driver energy follows rider energy
+        link_frame = ttk.Frame(self.driver_frame)
+        link_frame.grid(
+            row=row, column=0, columnspan=6, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        self.link_driver_rider_energy_var = tk.BooleanVar(value=False)
+        self.link_energy_checkbox = ttk.Checkbutton(
+            link_frame,
+            text="Link to Rider Energy (sweep both at same value)",
+            variable=self.link_driver_rider_energy_var,
+            command=self._on_link_energy_toggled,
+        )
+        self.link_energy_checkbox.pack(side="left")
+
+        # Help text for linked energy mode
+        self.link_energy_help_label = ttk.Label(
+            link_frame,
+            text="",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        )
+        self.link_energy_help_label.pack(side="left", padx=(10, 0))
+
+        row += 1
+
+        # Driver momentum direction selector (−ẑ or +ẑ)
+        dir_frame = ttk.Frame(self.driver_frame)
+        dir_frame.grid(
+            row=row, column=0, columnspan=6, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        ttk.Label(dir_frame, text="Momentum direction:").pack(side="left", padx=(0, 6))
+
+        self.driver_direction_var = tk.StringVar(value="-z")
+
+        rb_minus = ttk.Radiobutton(
+            dir_frame,
+            text="\u2212\u1e91  (toward rider)",
+            variable=self.driver_direction_var,
+            value="-z",
+            command=self._update_driver_pz_helper,
+        )
+        rb_minus.pack(side="left", padx=(0, 12))
+
+        rb_plus = ttk.Radiobutton(
+            dir_frame,
+            text="+\u1e91  (away from rider)",
+            variable=self.driver_direction_var,
+            value="+z",
+            command=self._update_driver_pz_helper,
+        )
+        rb_plus.pack(side="left")
+
         row += 1
 
         # Helper text showing calculated starting Pz for driver
@@ -1068,7 +1124,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             foreground="gray",
         )
         self.driver_pz_helper_label.grid(
-            row=row, column=0, columnspan=4, sticky="w", pady=(0, 5), padx=(20, 0)
+            row=row, column=0, columnspan=6, sticky="w", pady=(0, 5), padx=(20, 0)
         )
         row += 1
 
@@ -1085,6 +1141,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         self.sweep_params["driver_m_particle"]["fixed_var"].trace_add(
             "write", lambda *_: self._update_driver_pz_helper()
         )
+
+        # Store references to driver energy widgets for enable/disable
+        self._driver_energy_widgets = [
+            self.sweep_params["driver_energy_gev"]["fixed_entry"],
+            self.sweep_params["driver_energy_gev"]["range_frame"],
+        ]
 
         # Stripped Ions (sweepable)
         self._add_sweepable_param(
@@ -1177,6 +1239,61 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             controls["range_frame"].grid_remove()
             controls["fixed_entry"].config(state="normal")
 
+    def _on_link_energy_toggled(self):
+        """Handle toggling of the 'Link to Rider Energy' checkbox."""
+        linked = self.link_driver_rider_energy_var.get()
+
+        # Get driver energy controls
+        driver_energy_controls = self.sweep_params["driver_energy_gev"]
+
+        if linked:
+            # Disable driver energy input fields (rider energy will be used for both)
+            driver_energy_controls["fixed_entry"].config(state="disabled")
+            driver_energy_controls["sweep_var"].set(False)
+            self._toggle_sweep_controls("driver_energy_gev")
+
+            # Disable the sweep checkbox itself
+            # Find the sweep checkbox widget in the driver frame
+            for widget in self.driver_frame.winfo_children():
+                if isinstance(widget, ttk.Checkbutton):
+                    # Check if this is the driver_energy_gev sweep checkbox
+                    try:
+                        if widget.cget("variable") == str(
+                            driver_energy_controls["sweep_var"]
+                        ):
+                            widget.config(state="disabled")
+                    except Exception:
+                        pass
+
+            # Update help text
+            self.link_energy_help_label.config(
+                text="(Driver energy = Rider energy for each sweep point)"
+            )
+            self._update_driver_pz_helper()
+        else:
+            # Re-enable driver energy input fields
+            driver_energy_controls["fixed_entry"].config(state="normal")
+
+            # Re-enable the sweep checkbox
+            for widget in self.driver_frame.winfo_children():
+                if isinstance(widget, ttk.Checkbutton):
+                    try:
+                        if widget.cget("variable") == str(
+                            driver_energy_controls["sweep_var"]
+                        ):
+                            widget.config(state="normal")
+                    except Exception:
+                        pass
+
+            # Clear help text
+            self.link_energy_help_label.config(text="")
+            self._update_driver_pz_helper()
+
+    def _update_driver_energy_link_state(self):
+        """Update driver energy controls based on link state (called during load)."""
+        if hasattr(self, "link_driver_rider_energy_var"):
+            self._on_link_energy_toggled()
+
     def _update_rider_pz_helper(self):
         """Update helper text showing rider starting Pz calculated from energy."""
         try:
@@ -1206,8 +1323,32 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             mass_str = self.sweep_params["driver_m_particle"]["fixed_var"].get()
             mass_amu = float(mass_str) if mass_str else 207.2
 
-            # Check if energy is being swept (driver moves in -z → negative Pz)
-            if self.sweep_params["driver_energy_gev"]["sweep_var"].get():
+            # Determine sign from direction selector
+            negative = (
+                getattr(self, "driver_direction_var", None) is None
+                or getattr(self, "driver_direction_var").get() == "-z"
+            )
+            sign_label = "\u2212\u1e91" if negative else "+\u1e91"
+
+            # Check if linked energy mode is active
+            if (
+                getattr(self, "link_driver_rider_energy_var", None)
+                and self.link_driver_rider_energy_var.get()
+            ):
+                # In linked mode, show that driver follows rider energy
+                energy_min = float(self.energy_min_var.get())
+                energy_max = float(self.energy_max_var.get())
+                pz_min = calculate_starting_pz_from_energy(
+                    energy_min, mass_amu, negative=negative
+                )
+                pz_max = calculate_starting_pz_from_energy(
+                    energy_max, mass_amu, negative=negative
+                )
+                self.driver_pz_helper_var.set(
+                    f"\u2192 [LINKED] Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu\u00b7mm/ns ({sign_label})"
+                )
+            # Check if energy is being swept
+            elif self.sweep_params["driver_energy_gev"]["sweep_var"].get():
                 energy_min = abs(
                     float(self.sweep_params["driver_energy_gev"]["min_var"].get())
                 )
@@ -1215,23 +1356,23 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     float(self.sweep_params["driver_energy_gev"]["max_var"].get())
                 )
                 pz_min = calculate_starting_pz_from_energy(
-                    energy_min, mass_amu, negative=True
+                    energy_min, mass_amu, negative=negative
                 )
                 pz_max = calculate_starting_pz_from_energy(
-                    energy_max, mass_amu, negative=True
+                    energy_max, mass_amu, negative=negative
                 )
                 self.driver_pz_helper_var.set(
-                    f"→ Starting Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu·mm/ns (driver, -z)"
+                    f"\u2192 Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu\u00b7mm/ns ({sign_label})"
                 )
             else:
                 energy_gev = abs(
                     float(self.sweep_params["driver_energy_gev"]["fixed_var"].get())
                 )
                 pz = calculate_starting_pz_from_energy(
-                    energy_gev, mass_amu, negative=True
+                    energy_gev, mass_amu, negative=negative
                 )
                 self.driver_pz_helper_var.set(
-                    f"→ Starting Pz = {pz:.2f} amu·mm/ns (driver, -z)"
+                    f"\u2192 Pz = {pz:.2f} amu\u00b7mm/ns ({sign_label})"
                 )
         except (ValueError, ZeroDivisionError):
             self.driver_pz_helper_var.set("")
@@ -2450,27 +2591,38 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 if aperture_min <= 0:
                     return "Aperture min must be positive"
 
-            # Energy range
+            # Energy range (rider kinetic energy)
             energy_min = float(self.energy_min_var.get())
             energy_max = float(self.energy_max_var.get())
-            if energy_min >= energy_max:
-                return "Energy min must be less than max"
-            if energy_min <= 0:
-                return "Energy min must be positive"
-
-            # Points - only validate if in sweep mode (optimization can have 1 point for fixed params)
             energy_points = int(self.energy_points_var.get())
+
+            # For BUNCH_TO_BUNCH the rider energy can be fixed (1 point,
+            # min==max) when the sweep is purely over driver parameters.
+            if is_bunch_to_bunch and energy_points == 1:
+                # Single-point rider energy: just needs to be positive
+                if energy_min <= 0:
+                    return "Rider energy must be positive"
+            else:
+                if energy_min >= energy_max:
+                    return "Energy min must be less than max"
+                if energy_min <= 0:
+                    return "Energy min must be positive"
+
             mode = self.mode_var.get()
 
             if mode == "blind_sweep":
                 # Sweep mode requires at least 2 points for main parameters
-                # Only validate aperture for CONDUCTING_WALL modes
+                # UNLESS there is at least one swept driver/rider sub-parameter
+                has_swept_sub_param = any(
+                    controls["sweep_var"].get()
+                    for controls in self.sweep_params.values()
+                )
                 if not is_bunch_to_bunch:
                     aperture_points = int(self.aperture_points_var.get())
                     if aperture_points < 2:
                         return "Sweep mode: Aperture must have at least 2 points"
-                if energy_points < 2:
-                    return "Sweep mode: Energy must have at least 2 points"
+                if energy_points < 2 and not has_swept_sub_param:
+                    return "Sweep mode: Energy must have at least 2 points (or enable a swept sub-parameter)"
             else:
                 # Optimization mode allows 1 point (fixed) for any parameter
                 if not is_bunch_to_bunch:
@@ -2482,7 +2634,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Lists
             self._parse_list_field(self.offset_fractions_var.get())
-            self._parse_list_field(self.start_z_var.get())
+            # Single float for rider starting z
+            float(self.start_z_var.get())
 
             # Wall and steps
             wall_z = float(self.wall_z_var.get())
@@ -2652,7 +2805,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             transverse_offset_fractions=self._parse_list_field(
                 self.offset_fractions_var.get()
             ),
-            starting_z_positions=self._parse_list_field(self.start_z_var.get()),
+            starting_z_positions=[float(self.start_z_var.get())],
             wall_z=float(self.wall_z_var.get()),
             wall_z_range=(
                 (
@@ -2966,6 +3119,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         # Dynamically add sweepable parameter ranges after config creation
         config = config_obj
 
+        # Set linked energy sweep flag from GUI
+        config.linked_energy_sweep = getattr(
+            self, "link_driver_rider_energy_var", tk.BooleanVar(value=False)
+        ).get()
+        if config.linked_energy_sweep:
+            print(
+                "[DEBUG] _gather_config: Linked energy sweep ENABLED - driver energy will follow rider energy"
+            )
+
         # Debug: Log which sweep parameters are enabled
         print("[DEBUG] _gather_config: Checking sweep parameters...")
         for param_key in self.sweep_params.keys():
@@ -3171,14 +3333,24 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 f"[DEBUG] Added driver_starting_distance: {config.driver_starting_distance_range}, {config.driver_starting_distance_points} points"
             )
 
+        # Determine driver direction from UI selector
+        driver_negative = (
+            getattr(self, "driver_direction_var", None) is None
+            or getattr(self, "driver_direction_var").get() == "-z"
+        )
+
         if self.sweep_params["driver_energy_gev"]["sweep_var"].get():
-            # Get energy range and convert to Pz range (driver moves in -z → negative Pz)
+            # Get energy range and convert to Pz range
             energy_min = abs(
                 float(self.sweep_params["driver_energy_gev"]["min_var"].get())
             )
             energy_max = abs(
                 float(self.sweep_params["driver_energy_gev"]["max_var"].get())
             )
+
+            # Swap if user put them backwards
+            if energy_min > energy_max:
+                energy_min, energy_max = energy_max, energy_min
             # Ensure min <= max after abs()
             if energy_min > energy_max:
                 energy_min, energy_max = energy_max, energy_min
@@ -3197,6 +3369,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             config.driver_starting_Pz_points = int(
                 self.sweep_params["driver_energy_gev"]["points_var"].get()
             )
+
+            # Store direction on config so sweep runner uses correct sign
+            config.driver_direction = "-z" if driver_negative else "+z"
             # Store energy range for save/load (always positive magnitudes)
             config.driver_energy_range = (energy_min, energy_max)
             config.driver_energy_points = config.driver_starting_Pz_points
@@ -3212,7 +3387,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 self.sweep_params["driver_m_particle"]["fixed_var"].get()
             )
             pz = calculate_starting_pz_from_energy(
-                energy_gev, driver_mass, negative=True
+                energy_gev, driver_mass, negative=driver_negative
             )
             config.driver_starting_Pz = pz
             config.driver_energy_gev = energy_gev
@@ -4015,9 +4190,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     map(str, data.get("transverse_offset_fractions", [0.1, 0.3, 0.5]))
                 )
             )
-            self.start_z_var.set(
-                ", ".join(map(str, data.get("starting_z_positions", [0.0])))
-            )
+            # Load first value from starting_z_positions list (single float input)
+            start_z_list = data.get("starting_z_positions", [0.0])
+            self.start_z_var.set(str(start_z_list[0] if start_z_list else 0.0))
             self.wall_z_var.set(str(data.get("wall_z", 100.0)))
 
             # Load wall_z sweep config if present
@@ -4366,6 +4541,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Load sweep parameter states dynamically
             sweep_state = data.get("sweep_parameters", {})
+            # Restore driver direction selector if present in config
+            if hasattr(self, "driver_direction_var"):
+                direction = data.get("driver_direction", "-z")
+                self.driver_direction_var.set(
+                    direction if direction in ("-z", "+z") else "-z"
+                )
+
             for param_name, controls in self.sweep_params.items():
                 # Handle legacy driver_starting_Pz -> driver_energy_gev conversion
                 if (
@@ -4401,6 +4583,17 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     fixed_val = state.get("fixed_value", controls["fixed_var"].get())
                     controls["fixed_var"].set(str(fixed_val))
                     self._toggle_sweep_controls(param_name)
+
+            # Load linked energy sweep setting
+            if hasattr(self, "link_driver_rider_energy_var"):
+                linked_energy = data.get("linked_energy_sweep", False)
+                self.link_driver_rider_energy_var.set(linked_energy)
+                # Trigger the toggle handler to update UI state
+                self._on_link_energy_toggled()
+                if linked_energy:
+                    self._log_result(
+                        "[INFO] Linked energy sweep mode enabled - driver energy follows rider energy"
+                    )
 
             # Update helper texts
             self._update_driver_visibility()
@@ -4665,6 +4858,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "rider_offset_y": config.transv_offset_y,
                 "driver_offset_x": config.driver_transv_offset_x,
                 "driver_offset_y": config.driver_transv_offset_y,
+                # Driver momentum direction
+                "driver_direction": getattr(
+                    self, "driver_direction_var", tk.StringVar(value="-z")
+                ).get(),
+                # Linked energy sweep (driver energy follows rider energy)
+                "linked_energy_sweep": config.linked_energy_sweep,
             }
 
             # Dynamically save all sweep parameter states
@@ -6331,14 +6530,16 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     rider_charge_sign = self.config.charge_sign  # default
                     rider_pcount = self.config.pcount  # default
                     rider_transv_mom = self.config.transv_mom  # default
-                    driver_m_particle = 207.2  # default
-                    driver_charge_sign = 1.0  # default
-                    driver_pcount = 5  # default
-                    driver_transv_mom = 0.0  # default
-                    driver_transv_dist = -0.07998  # default
-                    driver_starting_distance = 1000.0  # default
-                    driver_starting_Pz = -4925.0  # default
-                    driver_energy_gev = 112.5  # default
+                    driver_m_particle = self.config.driver_m_particle  # default
+                    driver_charge_sign = self.config.driver_charge_sign  # default
+                    driver_pcount = self.config.driver_pcount  # default
+                    driver_transv_mom = self.config.driver_transv_mom  # default
+                    driver_transv_dist = self.config.driver_transv_dist  # default
+                    driver_starting_distance = (
+                        self.config.driver_starting_distance
+                    )  # default
+                    driver_starting_Pz = self.config.driver_starting_Pz  # default
+                    driver_energy_gev = self.config.driver_energy_gev  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -6385,10 +6586,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                             driver_starting_distance = x[i]
                         elif param_name == "driver_energy_gev":
                             driver_energy_gev = x[i]
-                            # Convert energy to Pz for internal use
-                            # Driver travels in -z → negative Pz
+                            # Convert energy to Pz using configured direction
+                            _drv_neg = (
+                                getattr(self.config, "driver_direction", "-z") == "-z"
+                            )
                             driver_starting_Pz = calculate_starting_pz_from_energy(
-                                driver_energy_gev, driver_m_particle, negative=True
+                                driver_energy_gev, driver_m_particle, negative=_drv_neg
                             )
                         elif param_name == "driver_starting_Pz":
                             # Legacy support if old configs still use Pz
@@ -6956,16 +7159,14 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             driver_params_dict = None
             if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
                 driver_params_dict = {
-                    "m_particle": 207.2,
-                    "charge_sign": 1.0,
-                    "pcount": 5,
-                    "transv_mom": 0.0,
-                    "transv_dist": -0.07998,
-                    "starting_distance": 1000.0,
-                    "starting_Pz": -4925.0,
-                    "stripped_ions": float(
-                        self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
-                    ),
+                    "m_particle": self.config.driver_m_particle,
+                    "charge_sign": self.config.driver_charge_sign,
+                    "pcount": self.config.driver_pcount,
+                    "transv_mom": self.config.driver_transv_mom,
+                    "transv_dist": self.config.driver_transv_dist,
+                    "starting_distance": self.config.driver_starting_distance,
+                    "starting_Pz": self.config.driver_starting_Pz,
+                    "stripped_ions": self.config.driver_stripped_ions,
                     "transv_offset_x": self.config.driver_transv_offset_x,
                     "transv_offset_y": self.config.driver_transv_offset_y,
                 }
@@ -7505,31 +7706,46 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
                 if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-                    driver_m = params_dict.get("driver_m_particle", 207.2)
+                    driver_m = params_dict.get(
+                        "driver_m_particle", self.config.driver_m_particle
+                    )
 
                     # Convert driver_energy_gev to starting_Pz if present,
                     # otherwise fall back to legacy driver_starting_Pz key.
-                    # Driver travels in -z → negative Pz.
+                    driver_neg = getattr(self.config, "driver_direction", "-z") == "-z"
                     if "driver_energy_gev" in params_dict:
                         driver_pz = calculate_starting_pz_from_energy(
                             abs(params_dict["driver_energy_gev"]),
                             driver_m,
-                            negative=True,
+                            negative=driver_neg,
                         )
                     else:
-                        driver_pz = params_dict.get("driver_starting_Pz", -4925.0)
+                        driver_pz = params_dict.get(
+                            "driver_starting_Pz", self.config.driver_starting_Pz
+                        )
 
                     driver_params_dict = {
                         "m_particle": driver_m,
-                        "charge_sign": params_dict.get("driver_charge_sign", 1.0),
-                        "pcount": int(params_dict.get("driver_pcount", 5)),
-                        "transv_mom": params_dict.get("driver_transv_mom", 0.0),
-                        "transv_dist": params_dict.get("driver_transv_dist", -0.07998),
+                        "charge_sign": params_dict.get(
+                            "driver_charge_sign", self.config.driver_charge_sign
+                        ),
+                        "pcount": int(
+                            params_dict.get("driver_pcount", self.config.driver_pcount)
+                        ),
+                        "transv_mom": params_dict.get(
+                            "driver_transv_mom", self.config.driver_transv_mom
+                        ),
+                        "transv_dist": params_dict.get(
+                            "driver_transv_dist", self.config.driver_transv_dist
+                        ),
                         "starting_distance": params_dict.get(
-                            "driver_starting_distance", 1000.0
+                            "driver_starting_distance",
+                            self.config.driver_starting_distance,
                         ),
                         "starting_Pz": driver_pz,
-                        "stripped_ions": params_dict.get("driver_stripped_ions", 54.0),
+                        "stripped_ions": params_dict.get(
+                            "driver_stripped_ions", self.config.driver_stripped_ions
+                        ),
                     }
 
                 # Calculate transverse offset in mm
@@ -8247,8 +8463,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 points = int(controls["points_var"].get())
                 log_scale = controls["log_var"].get()
 
-                # Energy is always a positive magnitude; accept negative
-                # input gracefully (sign encodes Pz direction, not energy)
+                # Energy is always a positive magnitude; direction is
+                # controlled by the driver_direction radio buttons.
                 if param_name == "driver_energy_gev":
                     min_val = abs(min_val)
                     max_val = abs(max_val)

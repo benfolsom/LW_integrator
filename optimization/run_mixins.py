@@ -459,13 +459,15 @@ class OptimizationRunMixin:
                     rider_charge_sign = self.config.charge_sign  # default
                     rider_pcount = self.config.pcount  # default
                     rider_transv_mom = self.config.transv_mom  # default
-                    driver_m_particle = 207.2  # default
-                    driver_charge_sign = 1.0  # default
-                    driver_pcount = 5  # default
-                    driver_transv_mom = 0.0  # default
-                    driver_transv_dist = -0.07998  # default
-                    driver_starting_distance = 1000.0  # default
-                    driver_starting_Pz = -4925.0  # default
+                    driver_m_particle = self.config.driver_m_particle  # default
+                    driver_charge_sign = self.config.driver_charge_sign  # default
+                    driver_pcount = self.config.driver_pcount  # default
+                    driver_transv_mom = self.config.driver_transv_mom  # default
+                    driver_transv_dist = self.config.driver_transv_dist  # default
+                    driver_starting_distance = (
+                        self.config.driver_starting_distance
+                    )  # default
+                    driver_starting_Pz = self.config.driver_starting_Pz  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -1202,6 +1204,18 @@ class OptimizationRunMixin:
             )
             self._log_result(f"Log verbosity: {self.config.log_verbosity}")
 
+            # Log linked energy sweep mode if enabled
+            if getattr(self.config, "linked_energy_sweep", False):
+                self._log_result(
+                    "[LINKED ENERGY MODE] Driver energy will follow rider energy for each sweep point"
+                )
+                self._log_result(
+                    f"  Energy range: {self.config.energy_range[0]:.4f} - {self.config.energy_range[1]:.4f} GeV"
+                )
+                self._log_result(
+                    f"  Both rider and driver particles will have matching kinetic energy"
+                )
+
             # Log inherited stability settings in full debug mode
             if use_full_debug:
                 self._log_result(
@@ -1378,28 +1392,57 @@ class OptimizationRunMixin:
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
                 if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-                    driver_m = params_dict.get("driver_m_particle", 207.2)
+                    driver_m = params_dict.get(
+                        "driver_m_particle", self.config.driver_m_particle
+                    )
 
-                    # Convert driver_energy_gev to starting_Pz if present,
-                    # otherwise fall back to legacy driver_starting_Pz key.
-                    # Driver travels in -z → negative Pz.
-                    if "driver_energy_gev" in params_dict:
+                    # Determine driver energy based on linked_energy_sweep mode
+                    # When linked, driver energy follows rider energy (from 'energy' key)
+                    if getattr(self.config, "linked_energy_sweep", False):
+                        # Use rider energy for driver (linked sweep mode)
+                        driver_energy_gev = (
+                            energy  # 'energy' is rider energy from params_dict
+                        )
+                        driver_pz = _calculate_starting_pz_from_energy(
+                            driver_energy_gev,
+                            driver_m,
+                            negative=True,
+                        )
+                        if use_full_debug:
+                            self._log_result(
+                                f"    [LINKED ENERGY] driver_energy_gev = rider_energy = {driver_energy_gev:.4f} GeV"
+                            )
+                    elif "driver_energy_gev" in params_dict:
+                        # Convert driver_energy_gev to starting_Pz if present,
+                        # otherwise fall back to legacy driver_starting_Pz key.
+                        # Driver travels in -z → negative Pz.
                         driver_pz = _calculate_starting_pz_from_energy(
                             params_dict["driver_energy_gev"],
                             driver_m,
                             negative=True,
                         )
                     else:
-                        driver_pz = params_dict.get("driver_starting_Pz", -4925.0)
+                        driver_pz = params_dict.get(
+                            "driver_starting_Pz", self.config.driver_starting_Pz
+                        )
 
                     driver_params_dict = {
                         "m_particle": driver_m,
-                        "charge_sign": params_dict.get("driver_charge_sign", 1.0),
-                        "pcount": int(params_dict.get("driver_pcount", 5)),
-                        "transv_mom": params_dict.get("driver_transv_mom", 0.0),
-                        "transv_dist": params_dict.get("driver_transv_dist", -0.07998),
+                        "charge_sign": params_dict.get(
+                            "driver_charge_sign", self.config.driver_charge_sign
+                        ),
+                        "pcount": int(
+                            params_dict.get("driver_pcount", self.config.driver_pcount)
+                        ),
+                        "transv_mom": params_dict.get(
+                            "driver_transv_mom", self.config.driver_transv_mom
+                        ),
+                        "transv_dist": params_dict.get(
+                            "driver_transv_dist", self.config.driver_transv_dist
+                        ),
                         "starting_distance": params_dict.get(
-                            "driver_starting_distance", 1000.0
+                            "driver_starting_distance",
+                            self.config.driver_starting_distance,
                         ),
                         "starting_Pz": driver_pz,
                         "stripped_ions": params_dict.get(
@@ -1794,38 +1837,40 @@ class OptimizationRunMixin:
                     # Add driver particle parameters if BUNCH_TO_BUNCH (always include, may be swept)
                     if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
                         if driver_params_dict is not None:
-                            if "driver_m_particle" in params_dict:
-                                result_data["parameters"]["driver_m_particle"] = (
-                                    driver_params_dict["m_particle"]
+                            # Always store all driver parameters (whether swept or fixed)
+                            result_data["parameters"]["driver_m_particle"] = (
+                                driver_params_dict["m_particle"]
+                            )
+                            result_data["parameters"]["driver_charge_sign"] = (
+                                driver_params_dict["charge_sign"]
+                            )
+                            result_data["parameters"]["driver_pcount"] = (
+                                driver_params_dict["pcount"]
+                            )
+                            result_data["parameters"]["driver_transv_mom"] = (
+                                driver_params_dict["transv_mom"]
+                            )
+                            result_data["parameters"]["driver_transv_dist"] = (
+                                driver_params_dict["transv_dist"]
+                            )
+                            result_data["parameters"]["driver_starting_distance"] = (
+                                driver_params_dict["starting_distance"]
+                            )
+                            result_data["parameters"]["driver_starting_Pz"] = (
+                                driver_params_dict["starting_Pz"]
+                            )
+                            result_data["parameters"]["driver_stripped_ions"] = (
+                                driver_params_dict["stripped_ions"]
+                            )
+                            # Store driver_energy_gev if it was in the sweep or linked mode
+                            if "driver_energy_gev" in params_dict:
+                                result_data["parameters"]["driver_energy_gev"] = (
+                                    params_dict["driver_energy_gev"]
                                 )
-                            if "driver_charge_sign" in params_dict:
-                                result_data["parameters"]["driver_charge_sign"] = (
-                                    driver_params_dict["charge_sign"]
-                                )
-                            if "driver_pcount" in params_dict:
-                                result_data["parameters"]["driver_pcount"] = (
-                                    driver_params_dict["pcount"]
-                                )
-                            if "driver_transv_mom" in params_dict:
-                                result_data["parameters"]["driver_transv_mom"] = (
-                                    driver_params_dict["transv_mom"]
-                                )
-                            if "driver_transv_dist" in params_dict:
-                                result_data["parameters"]["driver_transv_dist"] = (
-                                    driver_params_dict["transv_dist"]
-                                )
-                            if "driver_starting_distance" in params_dict:
-                                result_data["parameters"][
-                                    "driver_starting_distance"
-                                ] = driver_params_dict["starting_distance"]
-                            if "driver_starting_Pz" in params_dict:
-                                result_data["parameters"]["driver_starting_Pz"] = (
-                                    driver_params_dict["starting_Pz"]
-                                )
-                            if "driver_stripped_ions" in params_dict:
-                                result_data["parameters"]["driver_stripped_ions"] = (
-                                    driver_params_dict["stripped_ions"]
-                                )
+                            elif getattr(self.config, "linked_energy_sweep", False):
+                                # In linked mode, driver energy = rider energy
+                                result_data["parameters"]["driver_energy_gev"] = energy
+                                result_data["parameters"]["linked_energy_sweep"] = True
 
                     if self.config.macroparticle_enabled:
                         result_data["parameters"]["macroparticle_charge_multiplier"] = (

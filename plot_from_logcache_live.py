@@ -155,8 +155,99 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     last_run_num = max(last_run_num, current_run["run_num"])
 
                 # Match BUNCH_TO_BUNCH truncated format - generic key=value pairs
-                # Format: Run #   1 | key1=val1 key2=val2 ... | metrics | SUCCESS
-                # Auto-detect x-axis parameter from available keys.
+                # Format: Run #   1 | key1=val1 key2=val2 ... | ΔE=X.XX ... | SUCCESS
+                # This format contains BOTH parameters AND metrics on the same line.
+                # The metrics (percent_delta_e) appear BEFORE this line in the log,
+                # so we extract the gain directly from the ΔE field here.
+                truncated_match = re.search(
+                    r"Run #\s*(\d+)\s*\|\s*(.+?)\s*\|\s*ΔE=([0-9.e+-]+).*\|\s*(SUCCESS|FAILED)",
+                    line,
+                )
+                if truncated_match:
+                    run_num = int(truncated_match.group(1))
+                    params_str = truncated_match.group(2)
+                    delta_e_mev = float(truncated_match.group(3))
+                    status = truncated_match.group(4)
+
+                    # Parse all key=value pairs from the params section
+                    kv_pairs = {}
+                    for kv in re.finditer(r"(\w+)=([0-9.e+-]+)", params_str):
+                        kv_pairs[kv.group(1)] = float(kv.group(2))
+
+                    # Need at least initial_energy_gev to be useful
+                    if "initial_energy_gev" in kv_pairs:
+                        energy = abs(kv_pairs["initial_energy_gev"])
+
+                        # Determine x-axis parameter (priority order)
+                        # Prefer the driver parameter that is being swept
+                        x_value = None
+                        x_param = None
+                        x_label = None
+                        x_units = None
+
+                        if "driver_energy_gev" in kv_pairs:
+                            # Energy is always positive magnitude
+                            x_value = abs(kv_pairs["driver_energy_gev"])
+                            x_param = "driver_energy_gev"
+                            x_label = "Driver Energy"
+                            x_units = "GeV"
+                        elif "driver_starting_distance" in kv_pairs:
+                            x_value = kv_pairs["driver_starting_distance"]
+                            x_param = "driver_starting_distance"
+                            x_label = "Driver Starting Distance"
+                            x_units = "mm"
+                        elif "start_z" in kv_pairs:
+                            x_value = kv_pairs["start_z"]
+                            x_param = "start_z"
+                            x_label = "Starting Z Position"
+                            x_units = "mm"
+
+                        # Handle linked energy sweeps (1D) - use energy as x_value if no other param
+                        if x_value is None:
+                            # Linked energy sweep - only initial_energy_gev present
+                            x_value = energy
+                            x_param = "initial_energy_gev"
+                            x_label = "Particle Energy (Linked)"
+                            x_units = "GeV"
+
+                        # Set metadata on first detection
+                        if param_metadata["sweep_type"] is None:
+                            param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
+                            param_metadata["x_param_name"] = x_param
+                            param_metadata["x_label"] = x_label
+                            param_metadata["x_units"] = x_units
+                            param_metadata["y_label"] = "Initial Energy"
+                            if x_param == "initial_energy_gev":
+                                param_metadata["is_1d_sweep"] = True
+
+                        # Calculate percent gain from delta_e_mev
+                        # Initial energy in MeV = energy (GeV) * 1000
+                        initial_energy_mev = energy * 1000.0
+                        if initial_energy_mev > 0:
+                            gain = (delta_e_mev / initial_energy_mev) * 100.0
+                        else:
+                            gain = 0.0
+
+                        runs_with_metrics += 1
+                        last_run_num = max(last_run_num, run_num)
+
+                        # Filter out gains with absolute value beyond threshold
+                        if abs(gain) <= max_gain_percent:
+                            if gain > 0:
+                                energies_pos.append(energy)
+                                x_values_pos.append(x_value)
+                                percent_gains_pos.append(gain)
+                                runs_with_positive_gains += 1
+                            else:
+                                energies_neg.append(energy)
+                                x_values_neg.append(x_value)
+                                percent_gains_neg.append(gain)
+                                runs_with_negative_gains += 1
+
+                        # Don't set current_run - we've already processed this run completely
+                        continue
+
+                # Legacy format: Match run start first, then metrics on separate line
                 if not current_run:
                     match = re.search(
                         r"Run #\s+(\d+)\s+\|\s*(.+?)\s*\|",
@@ -176,14 +267,12 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                             energy = abs(kv_pairs["initial_energy_gev"])
 
                             # Determine x-axis parameter (priority order)
-                            # Prefer the driver parameter that is being swept
                             x_value = None
                             x_param = None
                             x_label = None
                             x_units = None
 
                             if "driver_energy_gev" in kv_pairs:
-                                # Energy is always positive magnitude
                                 x_value = abs(kv_pairs["driver_energy_gev"])
                                 x_param = "driver_energy_gev"
                                 x_label = "Driver Energy"
@@ -199,21 +288,27 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                                 x_label = "Starting Z Position"
                                 x_units = "mm"
 
-                            if x_value is not None:
-                                # Set metadata on first detection
-                                if param_metadata["sweep_type"] is None:
-                                    param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
-                                    param_metadata["x_param_name"] = x_param
-                                    param_metadata["x_label"] = x_label
-                                    param_metadata["x_units"] = x_units
-                                    param_metadata["y_label"] = "Initial Energy"
+                            if x_value is None:
+                                x_value = energy
+                                x_param = "initial_energy_gev"
+                                x_label = "Particle Energy (Linked)"
+                                x_units = "GeV"
 
-                                current_run = {
-                                    "run_num": run_num,
-                                    "x_value": x_value,
-                                    "energy": energy,
-                                }
-                                last_run_num = max(last_run_num, run_num)
+                            if param_metadata["sweep_type"] is None:
+                                param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
+                                param_metadata["x_param_name"] = x_param
+                                param_metadata["x_label"] = x_label
+                                param_metadata["x_units"] = x_units
+                                param_metadata["y_label"] = "Initial Energy"
+                                if x_param == "initial_energy_gev":
+                                    param_metadata["is_1d_sweep"] = True
+
+                            current_run = {
+                                "run_num": run_num,
+                                "x_value": x_value,
+                                "energy": energy,
+                            }
+                            last_run_num = max(last_run_num, run_num)
 
                 # Match metrics - try both max_percent_energy_gain and percent_delta_e
                 # Handle optional [OPTIMIZATION] prefix from CLI logs
@@ -657,6 +752,81 @@ def create_contour_plot(
         # Fallback to generic labels
         x_label = "X Parameter"
         y_label = "Energy (GeV)"
+
+    # Check for linked energy 1D sweep (x_value == energy for all points)
+    is_1d_linked_sweep = param_metadata and param_metadata.get("is_1d_sweep", False)
+
+    # Also detect if x_values and energies are essentially the same (linked energy case)
+    if not is_1d_linked_sweep and len(energies) > 0:
+        # Check if x_values and energies are nearly identical
+        if np.allclose(x_values, energies, rtol=1e-6):
+            is_1d_linked_sweep = True
+
+    if is_1d_linked_sweep:
+        # Linked energy sweep: create simple 1D plot of gain vs energy
+        fig, ax = plt.subplots(figsize=(12, 7))
+
+        # Sort by energy for cleaner line plot
+        sort_idx = np.argsort(energies)
+        sorted_energies = energies[sort_idx]
+        sorted_gains = percent_gains[sort_idx]
+
+        # Plot with markers and lines
+        ax.plot(
+            sorted_energies,
+            sorted_gains,
+            "o-",
+            linewidth=1.5,
+            markersize=4,
+            color="blue",
+            alpha=0.7,
+            label="Energy Gain",
+        )
+
+        # Add a horizontal line at y=0 for reference
+        ax.axhline(y=0, color="gray", linestyle="--", linewidth=1, alpha=0.5)
+
+        ax.set_xlabel("Initial Energy (GeV)", fontsize=12)
+        ax.set_ylabel("Energy Gain (%)", fontsize=12)
+
+        # Use log scale for x-axis if energy spans multiple orders of magnitude
+        if sorted_energies.max() / sorted_energies.min() > 10:
+            ax.set_xscale("log")
+
+        title = "Linked Energy Sweep: Energy Gain vs Initial Energy"
+        if stats:
+            title += f"\n({stats['completed']}/{stats['total']} runs"
+            if stats.get("positive_gains", 0) > 0:
+                title += f", {stats['positive_gains']} positive"
+            title += ")"
+
+        ax.set_title(title, fontsize=14)
+        ax.grid(True, alpha=0.3, which="both")
+        ax.legend(loc="best")
+
+        # Add stats annotation
+        if len(sorted_gains) > 0:
+            max_gain = sorted_gains.max()
+            min_gain = sorted_gains.min()
+            max_idx = sorted_gains.argmax()
+            energy_at_max = sorted_energies[max_idx]
+
+            stats_text = f"Max gain: {max_gain:.2f}% at E={energy_at_max:.3g} GeV\nMin gain: {min_gain:.2f}%"
+            ax.annotate(
+                stats_text,
+                xy=(0.02, 0.98),
+                xycoords="axes fraction",
+                fontsize=9,
+                verticalalignment="top",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+            )
+
+        plt.tight_layout()
+        plt.savefig(output_file, dpi=150, bbox_inches="tight")
+        if live_mode:
+            print(f"  [1D Linked] Saved: {output_file}")
+        plt.close()
+        return
 
     # Detect degenerate dimensions (very small relative variation)
     RELATIVE_VARIATION_THRESHOLD = 0.01  # 1% variation threshold
