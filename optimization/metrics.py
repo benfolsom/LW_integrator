@@ -55,13 +55,19 @@ def compute_max_energy_gain(
     return max_gain
 
 
-def compute_delta_energy_components(trajectory: ParticleState) -> Tuple[float, float]:
+def compute_delta_energy_components(
+    trajectory: ParticleState,
+    rest_energy_gev: float = 0.000510999,
+) -> Tuple[float, float]:
     """Compute total and longitudinal energy changes from trajectory.
 
     Parameters
     ----------
     trajectory : ParticleState
         Particle trajectory state (structured array or dict with arrays)
+    rest_energy_gev : float, optional
+        Particle rest energy in GeV (default: electron mass 0.000510999 GeV/c²).
+        For other species pass ``m_particle_amu * 931.494 * 1e-3``.
 
     Returns
     -------
@@ -70,14 +76,11 @@ def compute_delta_energy_components(trajectory: ParticleState) -> Tuple[float, f
         - delta_E_total: Total energy change from Δγ
         - delta_E_z: Longitudinal energy change from γ·βz
     """
-    # Electron rest mass in GeV
-    m_e = 0.000510999  # GeV/c²
-
     gamma = np.asarray(trajectory["gamma"])
     pz = np.asarray(trajectory["Pz"])
 
     # Total energy change from gamma
-    delta_E_total = (gamma[-1] - gamma[0]) * m_e
+    delta_E_total = (gamma[-1] - gamma[0]) * rest_energy_gev
 
     # Longitudinal energy (E_z = γ·m·c²·βz)
     # β_z = P_z / (γ·m·c)
@@ -359,6 +362,14 @@ def compute_trajectory_metrics(
         if "_dead_particles" in final_state:
             num_dead = int(np.sum(final_state["_dead_particles"]))
     metrics["num_particles_dead"] = num_dead
+
+    # Add initial and final gamma values for logging
+    metrics["initial_gamma_mean"] = initial_gamma
+    if len(trajectory) > 0:
+        final_gamma = compute_alive_particle_average(trajectory[-1], "gamma")
+        metrics["final_gamma_mean"] = final_gamma if final_gamma is not None else 1.0
+    else:
+        metrics["final_gamma_mean"] = 1.0
 
     return metrics
 

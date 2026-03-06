@@ -9,6 +9,8 @@ from typing import Any, List
 
 import numpy as np
 
+AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
+
 
 def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     """Save optimization results to file in timestamped directory."""
@@ -277,16 +279,22 @@ def save_top_trajectories_summary_table(
             if "percent" in plugin.config.objective.lower():
                 percent_delta_e = metric_value
                 initial_energy_gev = params_dict.get("initial_energy_gev", 100.0)
-                gamma_initial = initial_energy_gev * 1e3 / 0.511
-                delta_e_mev = (percent_delta_e / 100.0) * gamma_initial * 0.511
+                _rest_mev = (
+                    getattr(plugin.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+                )
+                gamma_initial = initial_energy_gev * 1e3 / _rest_mev
+                delta_e_mev = (percent_delta_e / 100.0) * gamma_initial * _rest_mev
             elif (
                 "energy_gain" in plugin.config.objective.lower()
                 or "delta_e" in plugin.config.objective.lower()
             ):
                 delta_e_mev = metric_value
                 initial_energy_gev = params_dict.get("initial_energy_gev", 100.0)
-                gamma_initial = initial_energy_gev * 1e3 / 0.511
-                percent_delta_e = (delta_e_mev / (gamma_initial * 0.511)) * 100.0
+                _rest_mev = (
+                    getattr(plugin.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+                )
+                gamma_initial = initial_energy_gev * 1e3 / _rest_mev
+                percent_delta_e = (delta_e_mev / (gamma_initial * _rest_mev)) * 100.0
             else:
                 delta_e_mev = float("nan")
                 percent_delta_e = float("nan")
@@ -708,7 +716,11 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
             if len(gamma) > 0:
                 gamma_initial = gamma[0]
                 delta_gamma = gamma - gamma_initial
-                delta_e_mev = delta_gamma * 0.511
+                # Use actual particle rest energy (not hardcoded electron mass)
+                rest_energy_mev = (
+                    getattr(plugin.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+                )
+                delta_e_mev = delta_gamma * rest_energy_mev
                 percent_delta_e = (delta_gamma / gamma_initial) * 100.0
                 all_gamma_values.extend(gamma.tolist())
             else:

@@ -5411,7 +5411,10 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         if gamma_hist:
             gamma_initial = gamma_hist[0] if len(gamma_hist) > 0 else 1.0
             gamma_final = gamma_hist[-1] if len(gamma_hist) > 0 else 1.0
-            delta_e_mev = (gamma_final - gamma_initial) * 0.511  # For electrons
+            rest_energy_mev = (
+                getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+            )
+            delta_e_mev = (gamma_final - gamma_initial) * rest_energy_mev
         else:
             gamma_initial = 1.0
             gamma_final = 1.0
@@ -5423,7 +5426,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             "parameters": {
                 "aperture_radius": data.get("aperture_radius", 0),
                 "particle_energy_gev": (gamma_initial - 1)
-                * 0.511
+                * rest_energy_mev
                 / 1000.0,  # Convert to GeV
                 "start_z": z_pos[0] if z_pos else 0,
                 "wall_z": data.get("wall_z", 0),
@@ -6041,10 +6044,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 label = f"Run #{run_num} (a={aperture:.2e}mm, E={energy:.1f}GeV)"
                 color = plt.cm.tab10(idx % 10)
 
-                # Calculate energy from gamma (E = (gamma - 1) * m * c^2)
-                # For electrons: m*c^2 = 0.511 MeV
-                energy_mev_initial = (gamma_initial - 1) * 0.511
-                energy_mev_final = (gamma_final - 1) * 0.511
+                # Calculate energy from gamma: KE = (γ - 1) · mc²
+                _rest_mev = (
+                    getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+                )
+                energy_mev_initial = (gamma_initial - 1) * _rest_mev
+                energy_mev_final = (gamma_final - 1) * _rest_mev
 
                 # Calculate energy at each point along trajectory
                 # Approximate: E(z) ≈ E_initial + ΔE * (z - z_0) / (z_final - z_0)
@@ -7218,11 +7223,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 pr = np.array(traj.get("pr", []))
 
                 # Calculate delta_e and percent_delta_e from gamma
+                # Use actual particle rest energy (not hardcoded electron mass)
+                rest_energy_mev = self.config.m_particle * AMU_TO_MEV
                 if len(gamma_arr) > 0:
                     gamma_initial = gamma_arr[0]
                     delta_gamma = gamma_arr - gamma_initial
-                    # Energy in MeV for electrons
-                    delta_e_mev = delta_gamma * 0.511
+                    delta_e_mev = delta_gamma * rest_energy_mev
                     percent_delta_e = (delta_gamma / gamma_initial) * 100.0
                 else:
                     delta_e_mev = np.zeros_like(z)
@@ -8935,8 +8941,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 delta_gamma = gamma_final - gamma_initial
                 energy_gain_percent = delta_gamma / gamma_initial * 100.0
                 energy_gain_ppm = delta_gamma / gamma_initial * 1e6  # parts per million
-                # Calculate delta_e in MeV (for electrons: ΔE = Δγ * m_e*c^2 = Δγ * 0.511 MeV)
-                delta_e_mev = delta_gamma * 0.511
+                # ΔE = Δγ · mc² where mc² = m_particle(amu) · 931.494 MeV
+                rest_energy_mev = rider_m_particle * AMU_TO_MEV
+                delta_e_mev = delta_gamma * rest_energy_mev
 
                 metrics["max_percent_energy_gain"] = energy_gain_percent
                 metrics["percent_delta_e"] = energy_gain_percent
@@ -8986,7 +8993,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                                 energy_gain_ppm = (
                                     delta_gamma_fallback / gamma_initial_fallback * 1e6
                                 )
-                                delta_e_mev_fallback = delta_gamma_fallback * 0.511
+                                delta_e_mev_fallback = delta_gamma_fallback * (
+                                    rider_m_particle * AMU_TO_MEV
+                                )
 
                                 metrics["max_percent_energy_gain"] = energy_gain_percent
                                 metrics["percent_delta_e"] = energy_gain_percent
@@ -9436,9 +9445,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             gamma_initial = metrics.get("rider_gamma_initial", 1)
             gamma_final = metrics.get("rider_gamma_final", 1)
 
-            # Calculate energy evolution
-            energy_mev_initial = (gamma_initial - 1) * 0.511
-            energy_mev_final = (gamma_final - 1) * 0.511
+            # Calculate energy evolution: KE = (γ - 1) · mc²
+            _rest_mev = (
+                getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+            )
+            energy_mev_initial = (gamma_initial - 1) * _rest_mev
+            energy_mev_final = (gamma_final - 1) * _rest_mev
 
             if len(z) > 1 and abs(z[-1] - z[0]) > 1e-6:
                 energy_mev = energy_mev_initial + delta_e * (z - z[0]) / (z[-1] - z[0])
@@ -9737,8 +9749,11 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 ax_pr.plot(z, pr, color=colors[idx], alpha=0.7)
                 ax_gamma.plot(z, gamma, color=colors[idx], alpha=0.7)
 
-                # Energy in MeV (for electrons: E = (γ - 1) * 0.511 MeV)
-                energy_mev = (gamma - 1) * 0.511
+                # Energy in MeV: KE = (γ - 1) · mc²
+                _rest_mev = (
+                    getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+                )
+                energy_mev = (gamma - 1) * _rest_mev
                 ax_energy.plot(z, energy_mev, color=colors[idx], alpha=0.7, label=label)
 
             # Formatting

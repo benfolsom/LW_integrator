@@ -11,6 +11,9 @@ from typing import Any, Dict, List
 import matplotlib.patheffects as PathEffects
 import numpy as np
 from matplotlib.colors import LogNorm
+
+AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
+
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import KDTree
@@ -164,10 +167,14 @@ class OptimizationResultsMixin:
                 gamma_arr = np.array(traj.get("gamma", []))
                 pr = np.array(traj.get("pr", []))
 
+                # Use actual particle rest energy (not hardcoded electron mass)
+                rest_energy_mev = (
+                    getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+                )
                 if len(gamma_arr) > 0:
                     gamma_initial = gamma_arr[0]
                     delta_gamma = gamma_arr - gamma_initial
-                    delta_e_mev = delta_gamma * 0.511
+                    delta_e_mev = delta_gamma * rest_energy_mev
                     percent_delta_e = (delta_gamma / gamma_initial) * 100.0
                 else:
                     delta_e_mev = np.zeros_like(z)
@@ -764,8 +771,12 @@ class OptimizationResultsMixin:
             gamma_initial = metrics.get("rider_gamma_initial", 1)
             gamma_final = metrics.get("rider_gamma_final", 1)
 
-            energy_mev_initial = (gamma_initial - 1) * 0.511
-            energy_mev_final = (gamma_final - 1) * 0.511
+            # KE = (γ - 1) · mc² — use actual particle rest energy
+            _rest_mev = (
+                getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+            )
+            energy_mev_initial = (gamma_initial - 1) * _rest_mev
+            energy_mev_final = (gamma_final - 1) * _rest_mev
 
             if len(z) > 1 and abs(z[-1] - z[0]) > 1e-6:
                 energy_mev = energy_mev_initial + delta_e * (z - z[0]) / (z[-1] - z[0])
@@ -1001,7 +1012,11 @@ class OptimizationResultsMixin:
                 ax_pr.plot(z, pr, color=colors[idx], alpha=0.7)
                 ax_gamma.plot(z, gamma, color=colors[idx], alpha=0.7)
 
-                energy_mev = (gamma - 1) * 0.511
+                # KE = (γ - 1) · mc²
+                _rest_mev = (
+                    getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
+                )
+                energy_mev = (gamma - 1) * _rest_mev
                 ax_energy.plot(z, energy_mev, color=colors[idx], alpha=0.7, label=label)
 
             ax_r.set_xlabel("z (mm)")

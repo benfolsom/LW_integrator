@@ -69,8 +69,10 @@ class OptimizationConfig:
     # Sweepable parameters (can be added to grid)
     transverse_momentum_range: Optional[Tuple[float, float]] = None  # amu·mm/ns
     transverse_momentum_points: int = 1
+    transverse_momentum_log_scale: bool = False
     transverse_spread_range: Optional[Tuple[float, float]] = None  # mm (transv_dist)
     transverse_spread_points: int = 1
+    transverse_spread_log_scale: bool = False
     timestep_range: Optional[Tuple[float, float]] = None  # ns (proper time)
     timestep_points: int = 1
     starting_z_range: Optional[Tuple[float, float]] = None  # mm
@@ -107,10 +109,12 @@ class OptimizationConfig:
         None  # amu·mm/ns (BUNCH_TO_BUNCH)
     )
     driver_transv_mom_points: int = 1
+    driver_transv_mom_log_scale: bool = False
     driver_transv_dist_range: Optional[Tuple[float, float]] = (
         None  # mm (BUNCH_TO_BUNCH)
     )
     driver_transv_dist_points: int = 1
+    driver_transv_dist_log_scale: bool = False
     driver_starting_distance_range: Optional[Tuple[float, float]] = (
         None  # mm (BUNCH_TO_BUNCH)
     )
@@ -421,7 +425,7 @@ def calculate_auto_timestep(
     total_distance = abs(wall_z - start_z) + distance_past_wall
     AMU_TO_MEV = 931.494
     rest_energy_mev = particle_mass_amu * AMU_TO_MEV
-    gamma = (particle_energy_gev * 1e3) / rest_energy_mev
+    gamma = (particle_energy_gev * 1e3) / rest_energy_mev + 1.0
     beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
     timestep = total_distance / (target_steps * beta * gamma * C_MMNS)
     return timestep
@@ -439,7 +443,7 @@ def calculate_auto_steps(
     total_distance = abs(wall_z - start_z) + distance_past_wall
     AMU_TO_MEV = 931.494
     rest_energy_mev = particle_mass_amu * AMU_TO_MEV
-    gamma = (particle_energy_gev * 1e3) / rest_energy_mev
+    gamma = (particle_energy_gev * 1e3) / rest_energy_mev + 1.0
     beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
     distance_per_step = beta * gamma * C_MMNS * timestep
     steps = int(np.ceil(total_distance / distance_per_step * 1.1))
