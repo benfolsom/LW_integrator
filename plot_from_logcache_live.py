@@ -89,6 +89,10 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
 
     current_run = {}
 
+    # Store the most recent percent_delta_e from detailed metrics
+    # This will be associated with the next truncated summary line
+    pending_percent_delta_e = None
+
     # Metadata about the sweep parameters
     param_metadata = {
         "sweep_type": None,  # "CONDUCTING_WALL" or "BUNCH_TO_BUNCH"
@@ -129,6 +133,18 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     runs_with_negative_gains = 0
                     last_run_num = 0
                     current_run = {}
+                    pending_percent_delta_e = None
+
+                    # Reset param_metadata for the new sweep
+                    param_metadata = {
+                        "sweep_type": None,
+                        "x_param_name": None,
+                        "x_label": None,
+                        "x_units": None,
+                        "y_param_name": "energy",
+                        "y_label": "Initial Energy",
+                        "y_units": "GeV",
+                    }
 
                     # Update total runs for this new sweep
                     total_runs = int(match.group(1))
@@ -154,20 +170,30 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     }
                     last_run_num = max(last_run_num, current_run["run_num"])
 
+                # Capture percent_delta_e from detailed metrics (appears before truncated summary)
+                percent_match = re.search(
+                    r"percent_delta_e:\s*([0-9.e+-]+)%",
+                    line,
+                )
+                if percent_match:
+                    pending_percent_delta_e = float(percent_match.group(1))
+                    continue  # This line doesn't have the run parameters, wait for summary
+
                 # Match BUNCH_TO_BUNCH truncated format - generic key=value pairs
                 # Format: Run #   1 | key1=val1 key2=val2 ... | ΔE=X.XX ... | SUCCESS
                 # This format contains BOTH parameters AND metrics on the same line.
-                # The metrics (percent_delta_e) appear BEFORE this line in the log,
-                # so we extract the gain directly from the ΔE field here.
+                # We prefer percent_delta_e from detailed metrics if available (more precise).
                 truncated_match = re.search(
-                    r"Run #\s*(\d+)\s*\|\s*(.+?)\s*\|\s*ΔE=([0-9.e+-]+).*\|\s*(SUCCESS|FAILED)",
+                    r"Run #\s*(\d+)\s*\|\s*(.+?)\s*\|\s*ΔE=([0-9.e+-]+).*?γ_i=([0-9.e+-]+)\s+γ_f=([0-9.e+-]+)\s*\|\s*(SUCCESS|FAILED)",
                     line,
                 )
                 if truncated_match:
                     run_num = int(truncated_match.group(1))
                     params_str = truncated_match.group(2)
                     delta_e_mev = float(truncated_match.group(3))
-                    status = truncated_match.group(4)
+                    gamma_i_parsed = float(truncated_match.group(4))
+                    gamma_f_parsed = float(truncated_match.group(5))
+                    status = truncated_match.group(6)
 
                     # Parse all key=value pairs from the params section
                     kv_pairs = {}
@@ -179,7 +205,7 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                         energy = abs(kv_pairs["initial_energy_gev"])
 
                         # Determine x-axis parameter (priority order)
-                        # Prefer the driver parameter that is being swept
+                        # Prefer swept parameters that represent physically meaningful variations
                         x_value = None
                         x_param = None
                         x_label = None
@@ -191,6 +217,16 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                             x_param = "driver_energy_gev"
                             x_label = "Driver Energy"
                             x_units = "GeV"
+                        elif "driver_transv_dist" in kv_pairs:
+                            x_value = kv_pairs["driver_transv_dist"]
+                            x_param = "driver_transv_dist"
+                            x_label = "Driver Transverse Spread"
+                            x_units = "mm"
+                        elif "rider_transv_dist" in kv_pairs:
+                            x_value = kv_pairs["rider_transv_dist"]
+                            x_param = "rider_transv_dist"
+                            x_label = "Rider Transverse Spread"
+                            x_units = "mm"
                         elif "driver_starting_distance" in kv_pairs:
                             x_value = kv_pairs["driver_starting_distance"]
                             x_param = "driver_starting_distance"
@@ -220,11 +256,18 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                             if x_param == "initial_energy_gev":
                                 param_metadata["is_1d_sweep"] = True
 
-                        # Calculate percent gain from delta_e_mev
-                        # Initial energy in MeV = energy (GeV) * 1000
-                        initial_energy_mev = energy * 1000.0
-                        if initial_energy_mev > 0:
-                            gain = (delta_e_mev / initial_energy_mev) * 100.0
+                        # Use percent_delta_e from detailed metrics if available (more precise)
+                        # Otherwise fall back to computing from truncated gamma values
+                        if pending_percent_delta_e is not None:
+                            gain = pending_percent_delta_e
+                            pending_percent_delta_e = None  # Consume it
+                        elif gamma_i_parsed > 0:
+                            # Fallback: compute from truncated gamma values
+                            gain = (
+                                (gamma_f_parsed - gamma_i_parsed)
+                                / gamma_i_parsed
+                                * 100.0
+                            )
                         else:
                             gain = 0.0
 
@@ -277,6 +320,16 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                                 x_param = "driver_energy_gev"
                                 x_label = "Driver Energy"
                                 x_units = "GeV"
+                            elif "driver_transv_dist" in kv_pairs:
+                                x_value = kv_pairs["driver_transv_dist"]
+                                x_param = "driver_transv_dist"
+                                x_label = "Driver Transverse Spread"
+                                x_units = "mm"
+                            elif "rider_transv_dist" in kv_pairs:
+                                x_value = kv_pairs["rider_transv_dist"]
+                                x_param = "rider_transv_dist"
+                                x_label = "Rider Transverse Spread"
+                                x_units = "mm"
                             elif "driver_starting_distance" in kv_pairs:
                                 x_value = kv_pairs["driver_starting_distance"]
                                 x_param = "driver_starting_distance"
@@ -532,6 +585,8 @@ def create_combined_gains_plot(
     stats=None,
     live_mode=False,
     param_metadata=None,
+    log_x=False,
+    log_y=False,
 ):
     """Create heatmap showing both positive and negative energy gains.
 
@@ -704,6 +759,12 @@ def create_combined_gains_plot(
     ax.set_xlabel(y_label, fontsize=12)
     ax.set_ylabel(x_label, fontsize=12)
 
+    # Apply log scale if requested
+    if log_x:
+        ax.set_xscale("log")
+    if log_y:
+        ax.set_yscale("log")
+
     # Build title
     n_pos = len(energies_pos) if energies_pos is not None else 0
     n_neg = len(energies_neg) if energies_neg is not None else 0
@@ -732,6 +793,8 @@ def create_contour_plot(
     stats=None,
     live_mode=False,
     param_metadata=None,
+    log_x=False,
+    log_y=False,
 ):
     """Create a contour plot of energy gains vs energy and x parameter.
 
@@ -789,9 +852,10 @@ def create_contour_plot(
         ax.set_xlabel("Initial Energy (GeV)", fontsize=12)
         ax.set_ylabel("Energy Gain (%)", fontsize=12)
 
-        # Use log scale for x-axis if energy spans multiple orders of magnitude
-        if sorted_energies.max() / sorted_energies.min() > 10:
+        # Use log scale for x-axis if requested or if energy spans multiple orders of magnitude
+        if log_x or (sorted_energies.max() / sorted_energies.min() > 10):
             ax.set_xscale("log")
+        # Note: log_y doesn't apply to 1D plots (y-axis is gain %, can be negative)
 
         title = "Linked Energy Sweep: Energy Gain vs Initial Energy"
         if stats:
@@ -867,6 +931,8 @@ def create_contour_plot(
             )
             ax.set_xlabel(y_label, fontsize=12)
             ax.set_ylabel("Energy Gain (%)", fontsize=12)
+            if log_x:
+                ax.set_xscale("log")
             if param_metadata:
                 title = f"Energy Gain vs Energy ({param_metadata['x_param_name']} ≈ {x_mean:.3f} {param_metadata['x_units']})"
             else:
@@ -884,6 +950,8 @@ def create_contour_plot(
             )
             ax.set_xlabel(x_label, fontsize=12)
             ax.set_ylabel("Energy Gain (%)", fontsize=12)
+            if log_y:
+                ax.set_xscale("log")  # x_values on x-axis in this case
             if param_metadata:
                 title = f"Energy Gain vs {param_metadata['x_label']} (energy ≈ {energy_mean:.3f} {param_metadata['y_units']})"
             else:
@@ -1046,7 +1114,12 @@ def create_contour_plot(
     ax.set_xlabel(y_label, fontsize=12)
     ax.set_ylabel(x_label, fontsize=12)
 
-    # Build title
+    # Apply log scale if requested
+    if log_x:
+        ax.set_xscale("log")
+    if log_y:
+        ax.set_yscale("log")
+
     if param_metadata:
         title = f"Energy Gain: {param_metadata['x_label']} vs {param_metadata['y_label']} ({method_used} interpolation)"
     else:
@@ -1091,7 +1164,9 @@ def find_latest_log(logcache_dir="logcache"):
     return max(sweep_logs, key=lambda p: p.stat().st_mtime)
 
 
-def live_monitor(log_file, output_file, interval=3, max_gain_percent=30.0):
+def live_monitor(
+    log_file, output_file, interval=3, max_gain_percent=30.0, log_x=False, log_y=False
+):
     """Monitor log file and regenerate plot when data changes."""
     print(f"\n{'=' * 80}")
     print(f"LIVE MODE: Monitoring {log_file}")
@@ -1163,6 +1238,8 @@ def live_monitor(log_file, output_file, interval=3, max_gain_percent=30.0):
                         stats=stats,
                         live_mode=True,
                         param_metadata=param_metadata,
+                        log_x=log_x,
+                        log_y=log_y,
                     )
 
                 # Generate combined gains plot (positive + negative, or negative-only)
@@ -1183,6 +1260,8 @@ def live_monitor(log_file, output_file, interval=3, max_gain_percent=30.0):
                         stats=stats,
                         live_mode=True,
                         param_metadata=param_metadata,
+                        log_x=log_x,
+                        log_y=log_y,
                     )
 
                 last_completed = stats["completed"]
@@ -1248,6 +1327,16 @@ def main():
         default=30.0,
         help="Maximum absolute gain percentage to include in plots (default: 30.0)",
     )
+    parser.add_argument(
+        "--log-x",
+        action="store_true",
+        help="Use logarithmic scale for x-axis (energy)",
+    )
+    parser.add_argument(
+        "--log-y",
+        action="store_true",
+        help="Use logarithmic scale for y-axis (swept parameter)",
+    )
 
     args = parser.parse_args()
 
@@ -1282,6 +1371,8 @@ def main():
             str(output_file),
             interval=args.interval,
             max_gain_percent=args.max_gain,
+            log_x=args.log_x,
+            log_y=args.log_y,
         )
     else:
         # Single static plot
@@ -1323,6 +1414,8 @@ def main():
                 str(output_file),
                 stats=stats,
                 param_metadata=param_metadata,
+                log_x=args.log_x,
+                log_y=args.log_y,
             )
         else:
             # We have positive gains, use the standard contour plot
@@ -1333,6 +1426,8 @@ def main():
                 str(output_file),
                 stats=stats,
                 param_metadata=param_metadata,
+                log_x=args.log_x,
+                log_y=args.log_y,
             )
         print(f"Plot saved to: {output_file}")
 
@@ -1349,6 +1444,8 @@ def main():
                 combined_output,
                 stats=stats,
                 param_metadata=param_metadata,
+                log_x=args.log_x,
+                log_y=args.log_y,
             )
             print(f"Combined gains plot saved to: {combined_output}")
 

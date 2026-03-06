@@ -55,12 +55,40 @@ def detect_swept_parameters(data):
     Returns:
     --------
     swept_params : list of str
-        List of parameter names that have more than one unique value
+        List of parameter names that have more than one unique value,
+        excluding derived parameters (timestep, retry_attempts, etc.)
     param_labels : dict
         Mapping of parameter names to display labels
     """
     if not data.get("results"):
         return [], {}
+
+    # Parameters that are derived/computed rather than directly swept
+    # These should be excluded from swept parameter detection
+    DERIVED_PARAMETERS = {
+        "timestep",  # Computed from energy
+        "retry_attempts",  # Internal tracking
+        "steps",  # May vary with auto_steps
+        "run_number",  # Sequential counter
+        "driver_starting_Pz",  # Computed from driver energy
+    }
+
+    # Priority order for parameter selection (most important first)
+    # When auto-detecting, prefer these parameters as the second axis
+    PARAM_PRIORITY = [
+        "driver_transv_dist",
+        "rider_transv_dist",
+        "driver_starting_distance",
+        "aperture_radius",
+        "wall_z",
+        "start_z",
+        "driver_stripped_ions",
+        "rider_stripped_ions",
+        "driver_pcount",
+        "rider_pcount",
+        "driver_transv_mom",
+        "rider_transv_mom",
+    ]
 
     # Collect all parameter values
     all_param_values = {}
@@ -71,12 +99,28 @@ def detect_swept_parameters(data):
                 all_param_values[key] = []
             all_param_values[key].append(value)
 
-    # Find parameters with more than one unique value
+    # Find parameters with more than one unique value, excluding derived params
     swept_params = []
     for param_name, values in all_param_values.items():
+        # Skip derived parameters
+        if param_name in DERIVED_PARAMETERS:
+            continue
         unique_values = set(values)
         if len(unique_values) > 1:
             swept_params.append(param_name)
+
+    # Sort swept_params by priority (energy first, then by PARAM_PRIORITY)
+    def param_sort_key(param):
+        # Energy parameters get highest priority (lowest sort key)
+        if param in ("particle_energy_gev", "initial_energy_gev"):
+            return (-1000, param)
+        # Check if in priority list
+        if param in PARAM_PRIORITY:
+            return (PARAM_PRIORITY.index(param), param)
+        # Unknown params go last, sorted alphabetically
+        return (1000, param)
+
+    swept_params.sort(key=param_sort_key)
 
     # Define display labels for common parameters
     param_labels = {
@@ -93,8 +137,11 @@ def detect_swept_parameters(data):
         "driver_stripped_ions": "Driver Stripped Ions",
         "rider_transverse_momentum": "Rider Transverse Momentum",
         "driver_transverse_momentum": "Driver Transverse Momentum",
-        "rider_transv_dist": "Rider Transverse Distribution",
-        "driver_transv_dist": "Driver Transverse Distribution",
+        "rider_transv_dist": "Rider Transverse Spread (mm)",
+        "driver_transv_dist": "Driver Transverse Spread (mm)",
+        "rider_transv_mom": "Rider Transverse Momentum (amu·mm/ns)",
+        "driver_transv_mom": "Driver Transverse Momentum (amu·mm/ns)",
+        "start_z": "Starting Z Position (mm)",
     }
 
     return swept_params, param_labels

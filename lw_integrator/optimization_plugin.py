@@ -1026,12 +1026,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         )
         row += 1
 
-        # Transverse Distance
+        # Transverse Spread
         self._add_sweepable_param(
             self.driver_frame,
             row,
             "driver_transv_dist",
-            "Transverse Distance (mm):",
+            "Transverse Spread (mm):",
             "-0.07998",
             width=15,
         )
