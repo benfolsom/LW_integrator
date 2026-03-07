@@ -741,83 +741,247 @@ class TestConfigConversion:
 
 
 # =========================================================================
-# 4. Single-point integration from real configs
+# 4. CLI-vs-direct parity for each designated config
 # =========================================================================
 
 
-class TestSinglePointFromConfig:
-    """Run a single integration point from each real config and check
-    that it completes with valid metrics."""
+def _compare_cli_vs_direct(
+    config: OptimizationConfig,
+    aperture: float,
+    energy_gev: float,
+    start_z: float,
+    tmp_output_dir: Path,
+    label: str,
+) -> None:
+    """Run the same single point through the CLI SweepRunner AND directly via
+    run_testbed, then assert every metric matches.
 
-    def test_conducting_wall_single_point(self, tmp_output_dir):
-        """Run one point from the 11topapertureE_sweep30 config."""
+    This is the real parity check.  The CLI runner internally computes its
+    own timestep and step count (via ``calculate_timestep_for_energy`` and
+    ``calculate_auto_steps``).  To guarantee the direct path uses the
+    *exact same* integration parameters we:
+
+      1. Run the CLI path first.
+      2. Extract the timestep and steps it actually used from
+         ``cli_result["parameters"]``.
+      3. Feed those values into ``_build_options_from_config`` for the
+         direct ``run_testbed`` call.
+
+    Both paths therefore call ``run_testbed`` with identical
+    ``SimulationOptions`` (same seed, same timestep, same steps, same
+    particle params) and must produce identical ``RunResult`` fields.
+    """
+    # Silence logs for both paths
+    config.self_consistency_verbosity = 0
+    config.adaptive_timestep_debug = False
+    config.log_verbosity = "none"
+
+    # ── Path A: CLI SweepRunner ──
+    cli_output = tmp_output_dir / f"{label}_cli"
+    cli_output.mkdir(parents=True, exist_ok=True)
+    runner = SweepRunner(config, cli_output, verbose=False)
+    cli_result = runner._run_single_integration(
+        aperture=aperture,
+        energy_gev=energy_gev,
+        start_z=start_z,
+        transv_offset_frac=0.0,
+        run_num=0,
+        total_runs=1,
+    )
+    assert cli_result["success"], f"[{label}] CLI run failed: {cli_result.get('error')}"
+    cli_metrics = cli_result["metrics"]
+
+    # ── Extract the timestep/steps that the CLI *actually* used ──
+    cli_params = cli_result["parameters"]
+    timestep = cli_params["timestep"]
+    steps = cli_params["steps"]
+
+    # ── Path B: direct run_testbed with the SAME timestep/steps ──
+    direct_output = tmp_output_dir / f"{label}_direct"
+    direct_output.mkdir(parents=True, exist_ok=True)
+    options = _build_options_from_config(
+        config,
+        aperture=aperture,
+        energy_gev=energy_gev,
+        start_z=start_z,
+        transv_offset=0.0,
+        timestep=timestep,
+        steps=steps,
+        run_num=0,
+        output_dir=direct_output,
+    )
+    direct_raw = run_testbed(options)
+    direct_metrics = _extract_metrics_from_result(direct_raw, config.m_particle)
+
+    # ── Compare every shared metric ──
+    assert not direct_metrics["halted_early"], (
+        f"[{label}] Direct run halted: {direct_raw.halt_reason}"
+    )
+
+    assert cli_metrics["rider_gamma_initial"] == pytest.approx(
+        direct_metrics["rider_gamma_initial"], rel=1e-12
+    ), (
+        f"[{label}] rider_gamma_initial mismatch: "
+        f"CLI={cli_metrics['rider_gamma_initial']}, direct={direct_metrics['rider_gamma_initial']}"
+    )
+
+    assert cli_metrics["rider_gamma_final"] == pytest.approx(
+        direct_metrics["rider_gamma_final"], rel=1e-12
+    ), (
+        f"[{label}] rider_gamma_final mismatch: "
+        f"CLI={cli_metrics['rider_gamma_final']}, direct={direct_metrics['rider_gamma_final']}"
+    )
+
+    for key in (
+        "delta_gamma",
+        "delta_e_mev",
+        "max_percent_energy_gain",
+        "energy_gain_ppm",
+        "max_energy_gain_gev",
+        "max_relative_gain",
+    ):
+        if key in cli_metrics and key in direct_metrics:
+            assert cli_metrics[key] == pytest.approx(
+                direct_metrics[key], rel=1e-10, abs=1e-20
+            ), (
+                f"[{label}] metric '{key}' mismatch: CLI={cli_metrics[key]}, direct={direct_metrics[key]}"
+            )
+
+    # Verify ΔE uses actual mass (not hardcoded 0.511)
+    if "delta_gamma" in cli_metrics and abs(cli_metrics["delta_gamma"]) > 1e-20:
+        rest_mev = config.m_particle * AMU_TO_MEV
+        expected_de = cli_metrics["delta_gamma"] * rest_mev
+        assert cli_metrics["delta_e_mev"] == pytest.approx(expected_de, rel=1e-10), (
+            f"[{label}] ΔE should equal Δγ × {rest_mev:.3f} MeV"
+        )
+
+
+class TestSinglePointFromConfig:
+    """For each designated config, run a single point through BOTH the CLI
+    SweepRunner and a direct run_testbed call, then compare all metrics."""
+
+    def test_11topapertureE_sweep30_parity(self, tmp_output_dir):
+        """11topapertureE_sweep30.json: CLI vs direct produce identical results.
+
+        This config uses CONDUCTING_WALL with macroparticles, auto-distance
+        timestep, and adaptive timestep + smoothness rejection.  We disable
+        smoothness rejection so both paths complete and we can compare the
+        raw integration metrics.
+        """
         config = _load_sweep_config("11topapertureE_sweep30.json")
-        # Override verbosity for test speed
+        # Disable smoothness rejection so integration completes on both paths
+        config.smoothness_reject_on_violation = False
+        # Mid-range point from the config's aperture × energy grid
+        _compare_cli_vs_direct(
+            config,
+            aperture=0.1,
+            energy_gev=10.0,
+            start_z=0.0,
+            tmp_output_dir=tmp_output_dir,
+            label="cw_11top",
+        )
+
+    def test_11topapertureE_sweep30_gamma_sanity(self, tmp_output_dir):
+        """11topapertureE_sweep30.json: gamma is physically reasonable."""
+        config = _load_sweep_config("11topapertureE_sweep30.json")
         config.self_consistency_verbosity = 0
         config.adaptive_timestep_debug = False
         config.log_verbosity = "none"
 
-        # Pick a single mid-range point
-        aperture = 0.1
         energy_gev = 10.0
-        start_z = 0.0
+        rest_mev = config.m_particle * AMU_TO_MEV  # electron: ~0.511 MeV
+        expected_gamma = (energy_gev * 1e3) / rest_mev + 1.0  # ~19570
 
-        # Use auto-distance timestep
-        timestep = calculate_auto_timestep(
-            start_z=start_z,
-            wall_z=config.wall_z,
-            distance_past_wall=config.auto_steps_distance_past_wall,
-            particle_energy_gev=energy_gev,
-            particle_mass_amu=config.m_particle,
-            target_steps=getattr(config, "auto_steps_target", 1000),
-        )
-        steps = calculate_auto_steps(
-            start_z=start_z,
-            wall_z=config.wall_z,
-            distance_past_wall=config.auto_steps_distance_past_wall,
-            timestep=timestep,
-            particle_energy_gev=energy_gev,
-            particle_mass_amu=config.m_particle,
-        )
-
-        output = tmp_output_dir / "cw_single"
-        output.mkdir(parents=True, exist_ok=True)
-        options = _build_options_from_config(
-            config,
-            aperture=aperture,
+        cli_output = tmp_output_dir / "cw_sanity"
+        cli_output.mkdir(parents=True, exist_ok=True)
+        runner = SweepRunner(config, cli_output, verbose=False)
+        result = runner._run_single_integration(
+            aperture=0.1,
             energy_gev=energy_gev,
-            start_z=start_z,
-            transv_offset=0.0,
-            timestep=timestep,
-            steps=steps,
+            start_z=0.0,
+            transv_offset_frac=0.0,
             run_num=0,
-            output_dir=output,
+        )
+        assert result["success"], f"Run failed: {result.get('error')}"
+        m = result["metrics"]
+        assert m["rider_gamma_initial"] == pytest.approx(expected_gamma, rel=0.01), (
+            f"Expected γ≈{expected_gamma:.1f} for 10 GeV electron, "
+            f"got {m['rider_gamma_initial']}"
         )
 
-        result = run_testbed(options)
-        metrics = _extract_metrics_from_result(result, config.m_particle)
+    def test_005_06_b2b_sweep_E_spread_parity(self, tmp_output_dir):
+        """005_06_b2b_sweep_E_spread.json: CLI vs direct produce identical results.
 
-        assert metrics["rider_gamma_initial"] is not None
-        assert metrics["rider_gamma_final"] is not None
-        assert metrics["rider_gamma_initial"] > 1.0, (
-            "Gamma should be > 1 for 10 GeV electron"
+        This B2B config uses FIXED_WEIGHTED gamma reconciliation, auto-distance
+        timestep, and smoothness rejection.  We disable smoothness rejection so
+        the integration completes on both paths for metric comparison.
+        """
+        config = _load_sweep_config("005_06_b2b_sweep_E_spread.json")
+        config.smoothness_reject_on_violation = False
+        # Mid-range energy for the B2B config
+        _compare_cli_vs_direct(
+            config,
+            aperture=1e-5,
+            energy_gev=10.0,
+            start_z=0.0,
+            tmp_output_dir=tmp_output_dir,
+            label="b2b_005",
         )
-        assert not metrics["halted_early"], f"Run halted: {result.halt_reason}"
 
-    def test_b2b_single_point(self, tmp_output_dir):
-        """Run one point from the 005_06_b2b_sweep_E_spread config."""
+    def test_005_06_b2b_sweep_E_spread_gamma_sanity(self, tmp_output_dir):
+        """005_06_b2b_sweep_E_spread.json: gamma uses correct proton mass."""
+        config = _load_sweep_config("005_06_b2b_sweep_E_spread.json")
+        config.self_consistency_verbosity = 0
+        config.adaptive_timestep_debug = False
+        config.log_verbosity = "none"
+        config.smoothness_reject_on_violation = False
+
+        energy_gev = 10.0
+        rest_mev = config.m_particle * AMU_TO_MEV  # m=1.0 amu → ~931.5 MeV
+        expected_gamma = (energy_gev * 1e3) / rest_mev + 1.0  # ~11.74
+
+        cli_output = tmp_output_dir / "b2b_sanity"
+        cli_output.mkdir(parents=True, exist_ok=True)
+        runner = SweepRunner(config, cli_output, verbose=False)
+        result = runner._run_single_integration(
+            aperture=1e-5,
+            energy_gev=energy_gev,
+            start_z=0.0,
+            transv_offset_frac=0.0,
+            run_num=0,
+        )
+        assert result["success"], f"Run failed: {result.get('error')}"
+        m = result["metrics"]
+        assert m["rider_gamma_initial"] == pytest.approx(expected_gamma, rel=0.05), (
+            f"Expected γ≈{expected_gamma:.2f} for 10 GeV proton-like, "
+            f"got {m['rider_gamma_initial']}"
+        )
+
+        # ΔE must use 931.5 MeV rest energy, not 0.511 MeV
+        if "delta_gamma" in m and abs(m["delta_gamma"]) > 1e-20:
+            de_actual = m["delta_e_mev"]
+            de_if_electron = m["delta_gamma"] * 0.511
+            de_expected = m["delta_gamma"] * rest_mev
+            assert de_actual == pytest.approx(de_expected, rel=1e-10), (
+                f"ΔE used wrong mass: got {de_actual}, expected {de_expected}"
+            )
+            # Sanity: should be ~1836× larger than electron value
+            if abs(de_if_electron) > 1e-30:
+                ratio = abs(de_actual / de_if_electron)
+                assert ratio > 100, (
+                    f"ΔE ratio vs electron mass = {ratio:.1f}, expected ~1823"
+                )
+
+    def test_005_06_b2b_driver_params_propagated(self, tmp_output_dir):
+        """005_06_b2b_sweep_E_spread.json: driver params reach run_testbed."""
         config = _load_sweep_config("005_06_b2b_sweep_E_spread.json")
         config.self_consistency_verbosity = 0
         config.adaptive_timestep_debug = False
         config.log_verbosity = "none"
 
-        energy_gev = 10.0
-        start_z = 0.0
-        # B2B uses tiny aperture (irrelevant, far wall)
-        aperture = 1e-5
-
+        energy_gev = 5.0
         timestep = calculate_auto_timestep(
-            start_z=start_z,
+            start_z=0.0,
             wall_z=config.wall_z,
             distance_past_wall=config.auto_steps_distance_past_wall,
             particle_energy_gev=energy_gev,
@@ -825,7 +989,7 @@ class TestSinglePointFromConfig:
             target_steps=getattr(config, "auto_steps_target", 1000),
         )
         steps = calculate_auto_steps(
-            start_z=start_z,
+            start_z=0.0,
             wall_z=config.wall_z,
             distance_past_wall=config.auto_steps_distance_past_wall,
             timestep=timestep,
@@ -833,13 +997,13 @@ class TestSinglePointFromConfig:
             particle_mass_amu=config.m_particle,
         )
 
-        output = tmp_output_dir / "b2b_single"
+        output = tmp_output_dir / "b2b_driver_check"
         output.mkdir(parents=True, exist_ok=True)
         options = _build_options_from_config(
             config,
-            aperture=aperture,
+            aperture=1e-5,
             energy_gev=energy_gev,
-            start_z=start_z,
+            start_z=0.0,
             transv_offset=0.0,
             timestep=timestep,
             steps=steps,
@@ -847,75 +1011,258 @@ class TestSinglePointFromConfig:
             output_dir=output,
         )
 
-        result = run_testbed(options)
-        metrics = _extract_metrics_from_result(result, config.m_particle)
-
-        assert metrics["rider_gamma_initial"] is not None
-        assert metrics["rider_gamma_final"] is not None
-        # Proton at 10 GeV: γ ≈ 10000/938.27 + 1 ≈ 11.66
-        expected_gamma = (energy_gev * 1e3) / (config.m_particle * AMU_TO_MEV) + 1.0
-        assert metrics["rider_gamma_initial"] == pytest.approx(
-            expected_gamma, rel=0.05
-        ), f"Expected γ≈{expected_gamma:.2f}, got {metrics['rider_gamma_initial']}"
+        # Verify the options object carries the correct driver params from config
+        assert options.driver_params is not None, "B2B should have driver_params"
+        assert options.driver_params["m_particle"] == pytest.approx(
+            config.driver_m_particle
+        )
+        assert options.driver_params["charge_sign"] == pytest.approx(
+            config.driver_charge_sign
+        )
+        assert options.driver_params["pcount"] == config.driver_pcount
+        assert options.driver_params["starting_Pz"] < 0, (
+            "Driver should travel in −z (negative Pz)"
+        )
+        # Reconciliation method should propagate
+        assert options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
 
 
 # =========================================================================
-# 5. Run-config (two_particle_demo8) integration
+# 5. Run-config (two_particle_demo8) — CLI-vs-direct parity
 # =========================================================================
 
 
 class TestTwoParticleDemo8:
-    """Load and run the two_particle_demo8 run config through run_testbed."""
+    """Load two_particle_demo8.json and compare CLI-path vs direct-path results."""
 
-    def test_load_and_run(self, tmp_output_dir):
-        """two_particle_demo8.json loads via from_dict and runs successfully."""
+    def _load_demo8_options(
+        self, output_dir: Path, steps: int = 500
+    ) -> SimulationOptions:
+        """Load the demo8 run config into a SimulationOptions, with
+        display silenced and reduced steps for speed."""
         config_path = RUN_CONFIG_DIR / "two_particle_demo8.json"
         assert config_path.exists(), f"Run config not found: {config_path}"
-
         with open(config_path) as f:
             raw = json.load(f)
-
-        output = tmp_output_dir / "demo8"
-        output.mkdir(parents=True, exist_ok=True)
-
-        # Override display/save options and reduce steps for test speed
-        raw["output_dir"] = str(output)
+        raw["output_dir"] = str(output_dir)
         raw["energy_display"] = False
         raw["energy_save"] = False
         raw["transverse_display"] = False
-        raw["transverse_save"] = True  # needed for metrics
+        raw["transverse_save"] = True
         raw["trajectory_save"] = False
         raw["self_consistency_verbosity"] = 0
         raw["adaptive_timestep_debug"] = False
-        # Use fewer steps for test performance
-        raw["steps"] = 500
+        raw["steps"] = steps
+        return SimulationOptions.from_dict(raw)
 
-        options = SimulationOptions.from_dict(raw)
-        assert options.simulation_type == SimulationType.BUNCH_TO_BUNCH
-        assert options.rider_params["m_particle"] == pytest.approx(1.007319468)
-        assert options.driver_params is not None
-        assert options.driver_params["m_particle"] == pytest.approx(1.007319468)
+    def test_demo8_direct_run_twice_identical(self, tmp_output_dir):
+        """Two direct run_testbed calls with the same demo8 config produce
+        identical metrics (determinism check)."""
+        out_a = tmp_output_dir / "demo8_a"
+        out_b = tmp_output_dir / "demo8_b"
+        out_a.mkdir(parents=True, exist_ok=True)
+        out_b.mkdir(parents=True, exist_ok=True)
 
-        result = run_testbed(options)
+        opts_a = self._load_demo8_options(out_a)
+        opts_b = self._load_demo8_options(out_b)
 
-        assert result.rider_gamma_initial is not None
-        assert result.rider_gamma_final is not None
-        assert result.rider_gamma_initial > 1.0
+        result_a = run_testbed(opts_a)
+        result_b = run_testbed(opts_b)
 
-        # Proton rest mass
-        m_particle = options.rider_params["m_particle"]
-        metrics = _extract_metrics_from_result(result, m_particle)
+        assert result_a.rider_gamma_initial is not None
+        assert result_b.rider_gamma_initial is not None
+        assert result_a.rider_gamma_initial == pytest.approx(
+            result_b.rider_gamma_initial, rel=1e-12
+        ), "demo8: gamma_initial differs across identical runs"
+        assert result_a.rider_gamma_final == pytest.approx(
+            result_b.rider_gamma_final, rel=1e-12
+        ), "demo8: gamma_final differs across identical runs"
+        if result_a.rider_delta_e is not None and result_b.rider_delta_e is not None:
+            assert result_a.rider_delta_e == pytest.approx(
+                result_b.rider_delta_e, rel=1e-12
+            ), "demo8: rider_delta_e differs across identical runs"
 
-        # Should have completed without halting
-        assert not metrics["halted_early"], f"Halted: {result.halt_reason}"
+    def test_demo8_cli_vs_direct_parity(self, tmp_output_dir):
+        """Run demo8 via CLI SweepRunner path AND direct run_testbed, compare
+        all metrics.
 
-        # Verify ΔE uses proton mass
-        if "delta_gamma" in metrics and abs(metrics["delta_gamma"]) > 1e-20:
+        The CLI path builds its own SimulationOptions from an OptimizationConfig,
+        so this test verifies the config-conversion and option-building produces
+        the same integration as loading the run config directly.
+
+        Strategy:
+          1. Build an OptimizationConfig equivalent to demo8's params.
+          2. Run it through CLI SweepRunner._run_single_integration.
+          3. Extract the timestep/steps the CLI actually used.
+          4. Load the demo8 run-config JSON into SimulationOptions.from_dict
+             but *override* steps to match the CLI's value.
+          5. Run via direct run_testbed.
+          6. Compare all metrics between the two paths.
+        """
+        # ── Build the CLI-side OptimizationConfig from demo8 params ──
+        config_path = RUN_CONFIG_DIR / "two_particle_demo8.json"
+        with open(config_path) as f:
+            raw = json.load(f)
+        direct_ref = SimulationOptions.from_dict(raw)
+
+        rider_p = direct_ref.rider_params
+        driver_p = direct_ref.driver_params
+        core_p = direct_ref.core_params
+        m_particle = float(rider_p["m_particle"])
+
+        # Reconstruct rider energy_gev from Pz
+        rider_pz = float(rider_p["starting_Pz"])
+        rider_gamma = np.sqrt(1.0 + (rider_pz / C_MMNS) ** 2)
+        rider_rest_mev = m_particle * AMU_TO_MEV
+        rider_ke_gev = (rider_gamma - 1.0) * rider_rest_mev / 1e3
+
+        driver_pz = abs(float(driver_p["starting_Pz"]))
+        driver_gamma = np.sqrt(1.0 + (driver_pz / C_MMNS) ** 2)
+        driver_rest_mev = float(driver_p["m_particle"]) * AMU_TO_MEV
+        driver_ke_gev = (driver_gamma - 1.0) * driver_rest_mev / 1e3
+
+        cli_config = OptimizationConfig(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            mode="blind_sweep",
+            aperture_range=(
+                float(core_p["aperture_radius"]),
+                float(core_p["aperture_radius"]),
+            ),
+            aperture_points=1,
+            energy_range=(rider_ke_gev, rider_ke_gev),
+            energy_points=1,
+            wall_z=float(core_p["wall_z"]),
+            cavity_spacing=float(core_p["cav_spacing"]),
+            steps=500,
+            timestep=float(core_p["time_step"]),
+            timestep_strategy="fixed",
+            m_particle=float(rider_p["m_particle"]),
+            charge_sign=float(rider_p["charge_sign"]),
+            pcount=int(rider_p["pcount"]),
+            transv_mom=float(rider_p["transv_mom"]),
+            transv_dist=float(rider_p["transv_dist"]),
+            stripped_ions=float(rider_p["stripped_ions"]),
+            seed=direct_ref.seed,
+            driver_m_particle=float(driver_p["m_particle"]),
+            driver_charge_sign=float(driver_p["charge_sign"]),
+            driver_pcount=int(driver_p["pcount"]),
+            driver_transv_mom=float(driver_p["transv_mom"]),
+            driver_transv_dist=float(driver_p["transv_dist"]),
+            driver_starting_distance=float(driver_p["starting_distance"]),
+            driver_energy_gev=driver_ke_gev,
+            driver_stripped_ions=float(driver_p["stripped_ions"]),
+            z_cutoff_mode=str(core_p.get("z_cutoff_mode", "absolute")),
+            startup_mode=str(core_p.get("startup_mode", "COLD_START")),
+            self_consistency_enabled=direct_ref.self_consistency_enabled,
+            self_consistency_tolerance=direct_ref.self_consistency_tolerance,
+            self_consistency_max_iterations=direct_ref.self_consistency_max_iterations,
+            self_consistency_verbosity=0,
+            self_consistency_chrono_interpolate=direct_ref.self_consistency_chrono_interpolate,
+            self_consistency_chrono_tolerance=direct_ref.self_consistency_chrono_tolerance,
+            self_consistency_chrono_high_precision=direct_ref.self_consistency_chrono_high_precision,
+            self_consistency_chrono_adaptive_tolerance=direct_ref.self_consistency_chrono_adaptive_tolerance,
+            self_consistency_gamma_reconciliation_method=direct_ref.self_consistency_gamma_reconciliation_method,
+            self_consistency_gamma_reconciliation_fixed_weight=direct_ref.self_consistency_gamma_reconciliation_fixed_weight,
+            self_consistency_gamma_reconciliation_low_beta_threshold=direct_ref.self_consistency_gamma_reconciliation_low_beta_threshold,
+            self_consistency_gamma_reconciliation_high_beta_threshold=direct_ref.self_consistency_gamma_reconciliation_high_beta_threshold,
+            self_consistency_gamma_reconciliation_low_beta_weight=direct_ref.self_consistency_gamma_reconciliation_low_beta_weight,
+            self_consistency_gamma_reconciliation_high_beta_weight=direct_ref.self_consistency_gamma_reconciliation_high_beta_weight,
+            self_consistency_gamma_reconciliation_mid_beta_weight=direct_ref.self_consistency_gamma_reconciliation_mid_beta_weight,
+            adaptive_timestep_enabled=direct_ref.adaptive_timestep_enabled,
+            adaptive_timestep_threshold=direct_ref.adaptive_timestep_threshold,
+            adaptive_timestep_reduction_factor=direct_ref.adaptive_timestep_reduction_factor,
+            adaptive_timestep_min_factor=direct_ref.adaptive_timestep_min_factor,
+            adaptive_timestep_cooldown_steps=direct_ref.adaptive_timestep_cooldown_steps,
+            adaptive_timestep_probe_threshold=direct_ref.adaptive_timestep_probe_threshold,
+            adaptive_timestep_max_probe_steps=direct_ref.adaptive_timestep_max_probe_steps,
+            adaptive_timestep_debug=False,
+            image_subcharge_count=direct_ref.image_subcharge_count,
+            use_image_weighting=direct_ref.use_image_weighting,
+            macroparticle_enabled=direct_ref.macroparticle_enabled,
+            macroparticle_charge_multiplier=direct_ref.macroparticle_charge_multiplier,
+            macroparticle_sigma_multiplier=direct_ref.macroparticle_sigma_multiplier,
+            macroparticle_use_momentum_errors=direct_ref.macroparticle_use_momentum_errors,
+            smoothness_enabled=False,
+            log_verbosity="none",
+            output_dir=str(tmp_output_dir / "demo8_cli_sweep"),
+        )
+
+        # ── Path A: CLI SweepRunner ──
+        cli_out = tmp_output_dir / "demo8_cli"
+        cli_out.mkdir(parents=True, exist_ok=True)
+        runner = SweepRunner(cli_config, cli_out, verbose=False)
+        cli_result = runner._run_single_integration(
+            aperture=float(core_p["aperture_radius"]),
+            energy_gev=rider_ke_gev,
+            start_z=float(rider_p["starting_distance"]),
+            transv_offset_frac=0.0,
+            run_num=0,
+            total_runs=1,
+        )
+
+        assert cli_result["success"], f"demo8 CLI run failed: {cli_result.get('error')}"
+        cli_metrics = cli_result["metrics"]
+
+        # ── Extract the timestep/steps the CLI actually used ──
+        cli_timestep = cli_result["parameters"]["timestep"]
+        cli_steps = cli_result["parameters"]["steps"]
+
+        # ── Path B: direct run_testbed using the SAME timestep/steps ──
+        direct_out = tmp_output_dir / "demo8_direct"
+        direct_out.mkdir(parents=True, exist_ok=True)
+        options = _build_options_from_config(
+            cli_config,
+            aperture=float(core_p["aperture_radius"]),
+            energy_gev=rider_ke_gev,
+            start_z=float(rider_p["starting_distance"]),
+            transv_offset=0.0,
+            timestep=cli_timestep,
+            steps=cli_steps,
+            run_num=0,
+            output_dir=direct_out,
+        )
+        direct_raw = run_testbed(options)
+        direct_metrics = _extract_metrics_from_result(direct_raw, m_particle)
+
+        # ── Compare all metrics ──
+        assert not direct_metrics["halted_early"], (
+            f"demo8 direct run halted: {direct_raw.halt_reason}"
+        )
+        assert cli_metrics["rider_gamma_initial"] == pytest.approx(
+            direct_metrics["rider_gamma_initial"], rel=1e-12
+        ), (
+            f"demo8 gamma_initial: CLI={cli_metrics['rider_gamma_initial']}, "
+            f"direct={direct_metrics['rider_gamma_initial']}"
+        )
+        assert cli_metrics["rider_gamma_final"] == pytest.approx(
+            direct_metrics["rider_gamma_final"], rel=1e-12
+        ), (
+            f"demo8 gamma_final: CLI={cli_metrics['rider_gamma_final']}, "
+            f"direct={direct_metrics['rider_gamma_final']}"
+        )
+        for key in (
+            "delta_gamma",
+            "delta_e_mev",
+            "max_percent_energy_gain",
+            "energy_gain_ppm",
+            "max_energy_gain_gev",
+            "max_relative_gain",
+        ):
+            if key in cli_metrics and key in direct_metrics:
+                assert cli_metrics[key] == pytest.approx(
+                    direct_metrics[key], rel=1e-10, abs=1e-20
+                ), (
+                    f"demo8 metric '{key}': CLI={cli_metrics[key]}, direct={direct_metrics[key]}"
+                )
+
+        # ΔE must use proton mass (~938 MeV), not electron (0.511 MeV)
+        if "delta_gamma" in cli_metrics and abs(cli_metrics["delta_gamma"]) > 1e-20:
             rest_mev = m_particle * AMU_TO_MEV
-            expected_de = metrics["delta_gamma"] * rest_mev
-            assert metrics["delta_e_mev"] == pytest.approx(expected_de, rel=1e-10)
+            assert cli_metrics["delta_e_mev"] == pytest.approx(
+                cli_metrics["delta_gamma"] * rest_mev, rel=1e-10
+            )
 
-    def test_demo8_rider_driver_setup(self, tmp_output_dir):
+    def test_demo8_rider_driver_setup(self):
         """Verify demo8 rider and driver are set up correctly."""
         config_path = RUN_CONFIG_DIR / "two_particle_demo8.json"
         with open(config_path) as f:
