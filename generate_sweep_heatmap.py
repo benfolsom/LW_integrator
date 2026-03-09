@@ -99,12 +99,28 @@ def detect_swept_parameters(data):
                 all_param_values[key] = []
             all_param_values[key].append(value)
 
+    # Energy parameter aliases - when multiple are present (e.g. "energy" and
+    # "energy_gev" from the CLI runner), keep only the first one found so the
+    # swept-parameter list doesn't contain two perfectly-correlated energy axes.
+    _ENERGY_ALIASES = (
+        "initial_energy_gev",
+        "particle_energy_gev",
+        "energy_gev",
+        "energy",
+    )
+
     # Find parameters with more than one unique value, excluding derived params
     swept_params = []
+    _energy_param_seen = False  # only admit one energy alias
     for param_name, values in all_param_values.items():
         # Skip derived parameters
         if param_name in DERIVED_PARAMETERS:
             continue
+        # Collapse all energy aliases to a single representative
+        if param_name in _ENERGY_ALIASES:
+            if _energy_param_seen:
+                continue  # skip duplicate energy alias
+            _energy_param_seen = True
         unique_values = set(values)
         if len(unique_values) > 1:
             swept_params.append(param_name)
@@ -112,7 +128,12 @@ def detect_swept_parameters(data):
     # Sort swept_params by priority (energy first, then by PARAM_PRIORITY)
     def param_sort_key(param):
         # Energy parameters get highest priority (lowest sort key)
-        if param in ("particle_energy_gev", "initial_energy_gev"):
+        if param in (
+            "particle_energy_gev",
+            "initial_energy_gev",
+            "energy",
+            "energy_gev",
+        ):
             return (-1000, param)
         # Check if in priority list
         if param in PARAM_PRIORITY:
@@ -216,12 +237,19 @@ def extract_data(
             continue
 
         # Get parameter values - handle both old and new naming
+        _energy_aliases = (
+            "particle_energy_gev",
+            "initial_energy_gev",
+            "energy",
+            "energy_gev",
+        )
         if param1_name in params:
             param1 = params[param1_name]
-        elif param1_name == "particle_energy_gev" and "initial_energy_gev" in params:
-            param1 = params["initial_energy_gev"]
-        elif param1_name == "initial_energy_gev" and "particle_energy_gev" in params:
-            param1 = params["particle_energy_gev"]
+        elif param1_name in _energy_aliases:
+            # Try all energy alias names
+            param1 = next((params[k] for k in _energy_aliases if k in params), None)
+            if param1 is None:
+                continue
         else:
             continue  # Skip if parameter not found
 
@@ -800,7 +828,12 @@ def generate_heatmap(
             sys.exit(1)
 
         # Prioritize energy as param1
-        energy_params = ["initial_energy_gev", "particle_energy_gev"]
+        energy_params = [
+            "initial_energy_gev",
+            "particle_energy_gev",
+            "energy",
+            "energy_gev",
+        ]
         param1_name = None
         for ep in energy_params:
             if ep in swept_params:
@@ -822,6 +855,16 @@ def generate_heatmap(
     if param1_name is None or param2_name is None:
         print("Error: Could not determine parameters to plot")
         sys.exit(1)
+
+    # Normalise energy param label regardless of which alias was detected
+    _energy_aliases = (
+        "particle_energy_gev",
+        "initial_energy_gev",
+        "energy",
+        "energy_gev",
+    )
+    if param1_name in _energy_aliases:
+        param_labels.setdefault(param1_name, "Initial Energy (GeV)")
 
     # Get display labels (with fallback to parameter name)
     param1_label = str(param_labels.get(param1_name, param1_name))

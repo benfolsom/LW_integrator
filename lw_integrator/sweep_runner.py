@@ -14,7 +14,7 @@ Output Locations
 When running sweeps via CLI, output is written to two locations:
 
 1. **Results directory** (e.g., results/sweeps/YYYYMMDD_HHMMSS_configname/)
-   - results.json: Parameter combinations and metrics
+   - sweep_results.json: Parameter combinations and metrics
    - sweep.log: High-level progress summary
 
 2. **logcache/** directory (same as GUI sweeps)
@@ -1287,7 +1287,7 @@ class SweepRunner:
             self._log("=" * 80)
 
             # Save results to JSON
-            results_path = self.output_dir / "results.json"
+            results_path = self.output_dir / "sweep_results.json"
             with open(results_path, "w") as f:
                 json.dump(
                     {
