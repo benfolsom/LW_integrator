@@ -265,7 +265,7 @@ class SweepRunner:
                 "driver_starting_distance_range",
                 "driver_starting_distance_points",
                 "driver_starting_distance",
-                None,
+                "driver_starting_distance_log_scale",
             ),
             (
                 "driver_energy_range",

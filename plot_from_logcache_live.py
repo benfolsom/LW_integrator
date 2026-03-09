@@ -93,6 +93,15 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
     # This will be associated with the next truncated summary line
     pending_percent_delta_e = None
 
+    # State for accumulating [PARAMS] block from CLI B2B logs
+    # These logs emit all run parameters as multi-line "key: value" entries
+    # under a "[PARAMS] Run N/Total - All parameters:" header, rather than
+    # the compact "Run # | key=val ... | SUCCESS" format the parser was
+    # originally written for.
+    in_params_block = False
+    params_block_run_num = None
+    params_block = {}  # raw key -> float value
+
     # Metadata about the sweep parameters
     param_metadata = {
         "sweep_type": None,  # "CONDUCTING_WALL" or "BUNCH_TO_BUNCH"
@@ -134,6 +143,9 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     last_run_num = 0
                     current_run = {}
                     pending_percent_delta_e = None
+                    in_params_block = False
+                    params_block_run_num = None
+                    params_block = {}
 
                     # Reset param_metadata for the new sweep
                     param_metadata = {
@@ -149,6 +161,100 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     # Update total runs for this new sweep
                     total_runs = int(match.group(1))
 
+                # ── CLI B2B [PARAMS] block handling ────────────────────────
+                # Detect start of a multi-line "[PARAMS] Run N/Total - All parameters:" block
+                params_header_match = re.search(
+                    r"(?:\[OPTIMIZATION\]\s*)?\[PARAMS\] Run (\d+)/\d+ - All parameters:",
+                    line,
+                )
+                if params_header_match:
+                    in_params_block = True
+                    params_block_run_num = int(params_header_match.group(1))
+                    params_block = {}
+                    continue
+
+                # While inside a [PARAMS] block, accumulate "    key: value [units]" lines
+                if in_params_block:
+                    # Strip the [OPTIMIZATION] prefix (present on every CLI log line) so we
+                    # can detect the meaningful nested tags that signal end of the block.
+                    stripped_line = re.sub(r"^\s*\[OPTIMIZATION\]\s*", "", line)
+                    tag_match = re.search(
+                        r"\[(?:TIMESTEP|START|RESULT|FAILED|DEBUG|CONFIG|DRIVER|PROGRESS|WARNING|REJECT|DIAGNOSTIC|PARAMS)\]",
+                        stripped_line,
+                    )
+                    if tag_match:
+                        # Finalize block: build current_run from accumulated params
+                        if params_block and "energy" in params_block:
+                            energy = params_block["energy"]
+
+                            # Determine x-axis parameter (priority order for B2B sweeps)
+                            x_value = None
+                            x_param = None
+                            x_label = None
+                            x_units = None
+
+                            if "driver_starting_distance" in params_block:
+                                x_value = params_block["driver_starting_distance"]
+                                x_param = "driver_starting_distance"
+                                x_label = "Driver Starting Distance"
+                                x_units = "mm"
+                            elif "driver_energy_gev" in params_block:
+                                x_value = abs(params_block["driver_energy_gev"])
+                                x_param = "driver_energy_gev"
+                                x_label = "Driver Energy"
+                                x_units = "GeV"
+                            elif "driver_transv_dist" in params_block:
+                                x_value = params_block["driver_transv_dist"]
+                                x_param = "driver_transv_dist"
+                                x_label = "Driver Transverse Spread"
+                                x_units = "mm"
+                            elif "rider_transv_dist" in params_block:
+                                x_value = params_block["rider_transv_dist"]
+                                x_param = "rider_transv_dist"
+                                x_label = "Rider Transverse Spread"
+                                x_units = "mm"
+                            elif "start_z" in params_block:
+                                x_value = params_block["start_z"]
+                                x_param = "start_z"
+                                x_label = "Starting Z Position"
+                                x_units = "mm"
+
+                            if x_value is None:
+                                x_value = energy
+                                x_param = "initial_energy_gev"
+                                x_label = "Particle Energy (Linked)"
+                                x_units = "GeV"
+
+                            if param_metadata["sweep_type"] is None:
+                                param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
+                                param_metadata["x_param_name"] = x_param
+                                param_metadata["x_label"] = x_label
+                                param_metadata["x_units"] = x_units
+                                param_metadata["y_label"] = "Initial Energy"
+                                if x_param == "initial_energy_gev":
+                                    param_metadata["is_1d_sweep"] = True
+
+                            current_run = {
+                                "run_num": params_block_run_num,
+                                "x_value": x_value,
+                                "energy": energy,
+                            }
+                            last_run_num = max(last_run_num, params_block_run_num or 0)
+
+                        in_params_block = False
+                        params_block_run_num = None
+                        params_block = {}
+                        # Fall through so the current line is processed normally below
+                    else:
+                        # Parse "    key: numeric_value [optional_units]"
+                        kv_match = re.search(
+                            r"(?:\[OPTIMIZATION\]\s+)?(\w+):\s*([0-9.e+-]+)",
+                            line,
+                        )
+                        if kv_match:
+                            params_block[kv_match.group(1)] = float(kv_match.group(2))
+                        continue
+
                 # Match run start with parameters - CONDUCTING_WALL format
                 # Handle both GUI format and CLI format (with [OPTIMIZATION] prefix)
                 match = re.search(
@@ -163,12 +269,15 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                         param_metadata["x_label"] = "Aperture Radius"
                         param_metadata["x_units"] = "mm"
 
-                    current_run = {
-                        "run_num": int(match.group(1)),
-                        "x_value": float(match.group(2)),
-                        "energy": float(match.group(3)),
-                    }
-                    last_run_num = max(last_run_num, current_run["run_num"])
+                    # Only override current_run if not already set from a [PARAMS] block
+                    # (B2B sweeps set current_run from [PARAMS]; conducting-wall sweeps set it here)
+                    if not current_run:
+                        current_run = {
+                            "run_num": int(match.group(1)),
+                            "x_value": float(match.group(2)),
+                            "energy": float(match.group(3)),
+                        }
+                    last_run_num = max(last_run_num, int(match.group(1)))
 
                 # Capture percent_delta_e from detailed metrics (appears before truncated summary)
                 percent_match = re.search(

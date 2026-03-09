@@ -3329,8 +3329,11 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             config.driver_starting_distance_points = int(
                 self.sweep_params["driver_starting_distance"]["points_var"].get()
             )
+            config.driver_starting_distance_log_scale = bool(
+                self.sweep_params["driver_starting_distance"]["log_var"].get()
+            )
             print(
-                f"[DEBUG] Added driver_starting_distance: {config.driver_starting_distance_range}, {config.driver_starting_distance_points} points"
+                f"[DEBUG] Added driver_starting_distance: {config.driver_starting_distance_range}, {config.driver_starting_distance_points} points, log={config.driver_starting_distance_log_scale}"
             )
 
         # Determine driver direction from UI selector

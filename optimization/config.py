@@ -119,6 +119,9 @@ class OptimizationConfig:
         None  # mm (BUNCH_TO_BUNCH)
     )
     driver_starting_distance_points: int = 1
+    driver_starting_distance_log_scale: bool = (
+        False  # Use log scale for driver starting distance sweep
+    )
     driver_starting_Pz_range: Optional[Tuple[float, float]] = (
         None  # amu·mm/ns (BUNCH_TO_BUNCH)
     )
