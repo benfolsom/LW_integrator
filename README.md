@@ -1,8 +1,21 @@
 # LW Integrator
 
-## Recent Updates
+## Recent Updates (v0.6.0 — March 2026)
 
-For detailed information about recent updates, changes, and bug fixes, see [CHANGELOG.md](CHANGELOG.md).
+- **CLI/GUI parity** — the CLI sweep runner now calls the same core code paths
+  as the GUI (`run_testbed()`, `SimulationOptions`), eliminating divergent
+  behaviour between the two entry points.
+- **Incomplete-sweep archiving** — sweeps with fewer than 100 completed runs
+  are automatically relocated to `results/archive/incomplete/` on save
+  (CLI, GUI, and library API).
+- **Heatmap contour improvements** — reduced contour-line alpha, added
+  edge-aware label clamping, and overlap culling so contour labels no longer
+  clip at plot boundaries or stack on top of each other.
+- **Driver energy sweep fix** — `driver_energy_gev` is now correctly converted
+  to starting Pz in all sweep paths, fixing a bug where driver energy sweeps
+  had no effect on BUNCH_TO_BUNCH simulations.
+
+For the full history see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -25,11 +38,12 @@ residual-wake acceleration with a covariant retarded-potential integrator_
 1. [Project overview](#project-overview)
 2. [Repository layout](#repository-layout)
 3. [Environment setup](#environment-setup)
-4. [Running validation workloads](#running-validation-workloads)
-5. [Documentation workflow](#documentation-workflow)
-6. [Versioning and release notes](#versioning-and-release-notes)
-7. [Development guidelines](#development-guidelines)
-8. [Support](#support)
+4. [Running simulations](#running-simulations)
+5. [Validation and testing](#validation-and-testing)
+6. [Documentation workflow](#documentation-workflow)
+7. [Versioning and release notes](#versioning-and-release-notes)
+8. [Development guidelines](#development-guidelines)
+9. [Support](#support)
 
 ---
 
@@ -126,16 +140,19 @@ residual-wake acceleration with a covariant retarded-potential integrator_
 ## Repository layout
 
 ```
-LW_windows/
+LW_integrator/
 ├── core/                 # Maintained integrator implementation and helpers
+├── configs/              # JSON run and sweep configuration files
 ├── docs/                 # Sphinx configuration, sources, and build script
 ├── examples/
 │   └── validation/       # CLI and notebook-based comparison studies
 ├── input_output/         # Particle bunch initialisation utilities
 ├── legacy/               # Archived original solver and notebooks
-│                         # The historical "static" integrator remains here for
-│                         # completeness; it is deprecated and not used by the
-│                         # modern docs or validation workflows.
+│                         # (deprecated — kept for regression comparisons)
+├── lw_integrator/        # CLI, GUI, sweep runner, and testbed runner
+├── optimization/         # Sweep/optimization engine, metrics, result I/O
+├── results/              # Sweep and optimization output (git-ignored)
+├── scripts/              # Monitoring and helper scripts
 ├── tests/                # Pytest suite covering physics and helper modules
 ├── .github/workflows/    # Continuous-integration pipelines (docs publishing)
 ├── core/_version.py      # Single source of truth for the project version
@@ -258,6 +275,10 @@ The project includes a Tkinter-based GUI for single runs, parameter sweeps, and 
 python -m lw_integrator.gui
 ```
 
+> **Note:** The GUI and CLI now share the same core integration code paths
+> (`run_testbed()` / `SimulationOptions`), so results are identical regardless
+> of which interface you use.
+
 The GUI provides three operational modes:
 
 **Single Run Mode** (Main tab):
@@ -307,8 +328,9 @@ Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergen
 ### Command-line entry point
 
 Installing the project (`pip install -e .` or via a wheel) exposes the
-`lw-simulate` executable. The CLI uses sensible defaults (35 MeV electron approaching
-a conducting aperture) but accepts both inline parameter overrides and JSON configuration files.
+`lw-simulate` executable. The CLI uses sensible defaults (35 MeV electron
+approaching a conducting aperture) but accepts both inline parameter overrides
+and JSON configuration files.
 
 **Basic usage with defaults:**
 
@@ -328,8 +350,18 @@ lw-simulate --steps 250 --time-step 5e-4 --aperture-radius 0.5 --output run.json
 lw-simulate --config my_scenario.json --output results.json
 ```
 
-The JSON configuration file allows complete specification of simulation parameters, particle bunches,
-and physics options. Example structure:
+**Run a parameter sweep from a sweep configuration:**
+
+```bash
+lw-simulate --sweep-config configs/sweep_configs/005_08_b2b_sweep_E_spread.json
+```
+
+The sweep runner writes results to `results/sweeps/YYYYMMDD_HHMMSS_configname/`
+and detailed debug logs to `logcache/`. Sweeps with fewer than 100 completed
+runs are automatically relocated to `results/archive/incomplete/`.
+
+The JSON configuration file allows complete specification of simulation
+parameters, particle bunches, and physics options. Example structure:
 
 ```json
 {
@@ -357,6 +389,10 @@ Additional CLI options include:
 - `--startup-mode`: Early-step handling (`cold-start` or `approximate-back-history`)
 - `--image-weighting` / `--no-image-weighting`: Control image charge distribution
 - `--self-consistency`: Enable self-consistency iterations for ultra-relativistic particles
+- `--sweep-config`: Path to a JSON sweep configuration (runs a full parameter sweep)
+- `--log-verbosity`: Override sweep log verbosity (`none`, `truncated`, or `full`)
+- `--sc-verbosity`: Override self-consistency verbosity (0–3)
+- `--adaptive-debug` / `--no-adaptive-debug`: Toggle adaptive timestep debug output
 
 Run `lw-simulate --help` for complete option listing.
 
@@ -368,6 +404,22 @@ Programmatic usage mirrors the console invocation: call
 `lw_integrator.cli.main` with a list of CLI-style arguments. See
 `examples/entrypoint_demo.py` for a ready-to-run demonstration that exercises
 both patterns.
+
+### Sweep heatmap generation
+
+After a sweep completes you can generate publication-quality heatmaps with
+`generate_sweep_heatmap.py`:
+
+```bash
+python generate_sweep_heatmap.py results/sweeps/<sweep_dir> \
+    --no-title --output gains.png --absolute-gains --log-param2 \
+    --energy-max 1000 --num-contours 8 --no-markers --grey-zero \
+    --grey-centre 0 --gain-max 200 --energy-min 1 --log-colorbar
+```
+
+Contour lines use reduced alpha (0.18) and labels are automatically clamped
+to stay within the axes. Overlapping labels are culled after the final
+layout pass so they never stack on top of each other.
 
 ---
 
@@ -431,19 +483,19 @@ branches can download the output for review.
 ## Versioning and release notes
 
 The project version is defined exactly once in `core/_version.py`. Both
-`setup.py` and `docs/source/conf.py` import that value, ensuring the wheel
-metadata and Sphinx footer remain consistent.
+`pyproject.toml` (via `setuptools.dynamic`) and `docs/source/conf.py` import
+that value, ensuring the wheel metadata and Sphinx footer remain consistent.
 
 This project uses **bump2version** for automated version management. To cut a new release:
 
 ```bash
-# Bump patch version (0.4.1 → 0.4.2)
+# Bump patch version (0.6.0 → 0.6.1)
 bump2version patch
 
-# Bump minor version (0.4.1 → 0.5.0)
+# Bump minor version (0.6.0 → 0.7.0)
 bump2version minor
 
-# Bump major version (0.4.1 → 1.0.0)
+# Bump major version (0.6.0 → 1.0.0)
 bump2version major
 
 # Push release

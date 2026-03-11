@@ -25,7 +25,7 @@ sys.path.insert(0, str(project_root))
 # -- Project information -----------------------------------------------------
 
 project = "LW Integrator"
-copyright = "2025, LW Integrator Development Team"
+copyright = "2025-2026, LW Integrator Development Team"
 author = "LW Integrator Development Team"
 release = _load_version()
 version = ".".join(release.split(".")[:2])

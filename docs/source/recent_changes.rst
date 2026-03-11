@@ -1,11 +1,101 @@
 Recent Changes
 ==============
 
-*Last updated: February 2026*
+*Last updated: March 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+March 2026 Updates (v0.6.0)
+----------------------------
+
+CLI / GUI Parity (March 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The CLI sweep runner (``lw_integrator/sweep_runner.py``) now calls the **same
+core code paths** as the GUI:
+
+* ``run_testbed()`` for integration (identical particle initialisation and
+  integrator invocation).
+* ``SimulationOptions`` dataclass for configuration, so every physics option
+  available in the GUI is also available from the command line.
+* Metric extraction uses the same ``RunResult`` object, eliminating subtle
+  differences in gain/loss calculations between interfaces.
+
+This means results produced by ``lw-simulate --sweep-config …`` are identical
+to those produced by the GUI's Blind Sweep mode for the same configuration.
+
+Incomplete-Sweep Archiving (March 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sweeps that complete with fewer than 100 runs (e.g. cancelled early or running
+a small test grid) are now **automatically relocated** to
+``results/archive/incomplete/<sweep_dir_name>`` immediately after saving.
+
+The logic lives in ``optimization.result_io.relocate_incomplete_sweep()`` and is
+wired into all save points:
+
+* CLI sweep runner (``sweep_runner.py``) — after successful save *and* on
+  ``KeyboardInterrupt``.
+* GUI mixin (``optimization/results_mixins.py``) — after
+  ``_save_sweep_results``.
+* GUI plugin (``lw_integrator/optimization_plugin.py``) — after saving results.
+* Library API (``optimization/parameter_sweep.py``) — after
+  ``_save_sweep_results`` in ``run_parameter_sweep``.
+
+The threshold (``min_runs=100``) is currently hard-coded at each call site.
+Directory-name collisions are resolved by appending ``_1``, ``_2``, etc.
+
+Heatmap Contour Improvements (March 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``generate_sweep_heatmap.py`` received several visual-quality fixes:
+
+* **Contour line alpha** reduced from 0.35 → 0.18 for less visual clutter.
+* **Edge-aware label clamping** — labels whose centres fall outside the axes
+  data limits are hidden, and a one-shot ``draw_event`` callback shifts any
+  remaining labels that overflow the axes boundary inward after the final
+  Matplotlib layout pass.
+* **Overlap culling** — after clamping, a second pass hides labels that
+  genuinely intersect previously-accepted labels (using a negative pixel
+  padding of −4 px so that merely-touching labels are kept).
+
+These changes prevent contour labels from being clipped by ``tight_layout`` /
+``savefig`` redraws and avoid label stacking in dense contour regions.
+
+Driver Energy Sweep Fix (February–March 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sweeping ``driver_energy_gev`` in BUNCH_TO_BUNCH mode previously had **no
+effect** — every run used the hard-coded default Pz of −4925.0.  The fix
+checks for ``driver_energy_gev`` in the parameter dictionary first and converts
+it to starting Pz via ``calculate_starting_pz_from_energy()``, falling back to
+the legacy ``driver_starting_Pz`` key only when the energy key is absent.
+Affected files: ``optimization_plugin.py`` and ``optimization/run_mixins.py``.
+
+Driver Pz / KE Calculation Fix (March 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The sweep runner's driver momentum calculation was using the **rider** mass
+instead of the **driver** mass when converting energy to Pz, producing
+incorrect results for ion-driver / electron-rider configurations.  Fixed in
+``sweep_runner.py`` and ``optimization_plugin.py``.
+
+CLI Sweep Verbosity Overrides (March 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Three new CLI flags allow fine-grained control of diagnostic output during
+sweeps without editing the JSON configuration:
+
+* ``--log-verbosity {none,truncated,full}`` — override the config's
+  ``log_verbosity`` field.
+* ``--sc-verbosity {0,1,2,3}`` — override self-consistency verbosity.
+* ``--adaptive-debug`` / ``--no-adaptive-debug`` — toggle adaptive-timestep
+  debug output.
+
+These are passed through to ``run_sweep_from_config()`` as a
+``verbosity_overrides`` dictionary.
 
 February 2026 Updates
 ---------------------

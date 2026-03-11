@@ -2,6 +2,61 @@
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
+## v0.6.0 — March 2026
+
+### CLI / GUI Parity (March 2026)
+
+- **Unified code paths** — The CLI sweep runner (`sweep_runner.py`) now calls the same `run_testbed()` / `SimulationOptions` code paths as the GUI, eliminating divergent particle initialisation, integrator invocation, and metric extraction between the two interfaces
+- **Identical results** — `lw-simulate --sweep-config …` produces the same output as the GUI's Blind Sweep mode for a given configuration
+- **Files modified** — `lw_integrator/sweep_runner.py` (major refactor), `lw_integrator/cli.py`
+
+### Incomplete-Sweep Archiving (March 2026)
+
+- **Automatic relocation** — Sweeps with fewer than 100 completed runs are moved to `results/archive/incomplete/<sweep_dir_name>` immediately after saving
+- **All save points wired** — CLI runner (after save and on `KeyboardInterrupt`), GUI mixin (`results_mixins.py`), GUI plugin (`optimization_plugin.py`), and library API (`parameter_sweep.py`)
+- **Collision handling** — If the destination already exists, a `_1`, `_2`, … suffix is appended
+- **New function** — `optimization.result_io.relocate_incomplete_sweep(sweep_dir, min_runs=100, log_fn=None)`
+
+### Heatmap Contour Improvements (March 2026)
+
+- **Contour alpha** reduced from 0.35 → 0.18 for less visual clutter
+- **Edge-aware label clamping** — Labels whose centres fall outside the axes data limits are hidden; a one-shot `draw_event` callback shifts overflowing labels inward after the final Matplotlib layout pass
+- **Overlap culling** — A second pass hides labels that genuinely intersect previously-accepted labels (negative pixel padding of −4 px, so merely-touching labels are kept)
+- **Files modified** — `generate_sweep_heatmap.py`
+
+### Driver Energy Sweep Fix (February–March 2026)
+
+- **Bug** — Sweeping `driver_energy_gev` in BUNCH_TO_BUNCH mode had no effect; all runs used the hard-coded default Pz of −4925.0
+- **Fix** — Check for `driver_energy_gev` in the parameter dictionary first and convert to Pz via `calculate_starting_pz_from_energy()`, falling back to legacy `driver_starting_Pz` key
+- **Files modified** — `lw_integrator/optimization_plugin.py`, `optimization/run_mixins.py`
+
+### Driver Pz / KE Calculation Fix (March 2026)
+
+- **Bug** — Sweep runner used rider mass instead of driver mass when converting energy to Pz, producing incorrect results for ion-driver / electron-rider configurations
+- **Files modified** — `lw_integrator/sweep_runner.py`, `lw_integrator/optimization_plugin.py`
+
+### CLI Sweep Verbosity Overrides (March 2026)
+
+- **`--log-verbosity {none,truncated,full}`** — Override the config's `log_verbosity` field from the command line
+- **`--sc-verbosity {0,1,2,3}`** — Override self-consistency verbosity
+- **`--adaptive-debug` / `--no-adaptive-debug`** — Toggle adaptive-timestep debug output
+- Passed through to `run_sweep_from_config()` as a `verbosity_overrides` dictionary
+
+### CLI / GUI Parity Tests (March 2026)
+
+- **New test suite** — `tests/test_cli_gui_parity.py` (1 582 lines) verifying that CLI and GUI sweep paths produce identical configurations and results for real sweep configs
+
+### Plot Generator CLI Sweep Bug Fix (March 2026)
+
+- Fixed a bug in the sweep heatmap plot generator that caused incorrect parameter axis labelling when invoked from the CLI
+
+### Version Bump
+
+- Version bumped from 0.5.8 → **0.6.0**
+- `.bumpversion.cfg` and `core/_version.py` updated
+
+---
+
 ## February 2026
 
 ### Critical: Driver Energy Sweep Not Applied (February 26, 2026)

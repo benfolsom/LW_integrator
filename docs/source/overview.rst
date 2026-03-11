@@ -27,6 +27,11 @@ High-level anatomy
     generation with optional macroparticle simulation support, applying stochastic
     position and momentum spread errors to model beam emittance effects.
 
+``configs/``
+    JSON configuration files for single runs (``run_configs/``) and parameter
+    sweeps (``sweep_configs/``).  Sweep configs specify parameter grids, physics
+    options, and verbosity settings consumed by both the CLI and GUI runners.
+
 ``legacy/``
   Archived notebooks and scripts from the original codebase.  They are kept
   for regression comparisons and historical reference.  Production workflows
@@ -51,14 +56,35 @@ High-level anatomy
     integrator expects.  ``bunch_initialization.py`` is the main entry point and
     is documented in the API section below.
 
-``lw_integrator/gui/``
-    Tkinter-based graphical user interface for single runs, parameter sweeps,
-    and optimization. Launch with ``python -m lw_integrator.gui`` to access
-    three operational modes: Single Run (Main tab) for individual simulations
-    with real-time visualization, Blind Sweep for parameter space exploration,
-    and Optimization for global search using Genetic Algorithm, Differential
-    Evolution, Nelder-Mead, or Multi-start methods. Includes convergence
-    detection, top-N result saving, and comprehensive trajectory export options.
+``lw_integrator/``
+    CLI entry point (``cli.py``), GUI application (``gui.py``), headless sweep
+    runner (``sweep_runner.py``), testbed runner (``testbed_runner.py``), and the
+    optimization GUI plugin (``optimization_plugin.py``).  As of v0.6.0 the CLI
+    sweep runner calls the **same** ``run_testbed()`` / ``SimulationOptions``
+    code paths as the GUI, so results are identical between interfaces.  Launch
+    the GUI with ``python -m lw_integrator.gui`` to access three operational
+    modes: Single Run (Main tab) for individual simulations with real-time
+    visualization, Blind Sweep for parameter space exploration, and Optimization
+    for global search using Genetic Algorithm, Differential Evolution,
+    Nelder-Mead, or Multi-start methods.  Includes convergence detection, top-N
+    result saving, and comprehensive trajectory export options.
+
+``optimization/``
+    Sweep and optimization engine shared by CLI and GUI.  Contains the parameter
+    grid builder (``parameter_sweep.py``), metrics extraction (``metrics.py``),
+    result I/O (``result_io.py``), and UI/run/results mixins that the GUI plugin
+    composes.  ``result_io.relocate_incomplete_sweep()`` automatically moves
+    sweep directories with fewer than 100 completed runs to
+    ``results/archive/incomplete/``.
+
+``scripts/``
+    Monitoring helpers, smooth-heatmap generation utilities, and other
+    operational scripts used during long-running sweeps.
+
+``results/``
+    Output location for sweep and optimization runs (git-ignored).  Completed
+    sweeps land in ``results/sweeps/``; incomplete or cancelled sweeps are
+    relocated to ``results/archive/incomplete/`` automatically.
 
 ``docs/``
     The refreshed documentation that you are currently reading.  Sphinx builds
@@ -87,6 +113,16 @@ Key ideas to keep in mind
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
   mirrors the legacy solver's behaviour).  CLI commands, scripts, and notebooks
   surface the enum so you can pick the right transient treatment per study.
+* **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
+  (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
+  same ``run_testbed()`` function with the same ``SimulationOptions`` dataclass.
+  This eliminates subtle differences in particle initialisation, metric
+  extraction, or physics option handling between the two interfaces.
+* **Incomplete-sweep archiving.**  Sweeps that finish with fewer than 100
+  completed runs are automatically relocated to
+  ``results/archive/incomplete/<sweep_dir_name>`` on save.  This applies to all
+  save paths (CLI, GUI mixin, GUI plugin, library API) and also fires on
+  ``KeyboardInterrupt`` in the CLI runner.
 * **Self-consistency is enabled by default.**  As of December 2025, self-
   consistency iterations are enabled by default to ensure energy conservation in
   high-energy simulations. These iterations verify that gamma derived from
@@ -118,8 +154,13 @@ Key ideas to keep in mind
   with real-time progress tracking and trajectory visualization. It provides
   full control over particle properties, boundary conditions, physics parameters,
   and numerical methods. Results can be exported in CSV, JSON, or NPZ formats.
-  The GUI is the recommended interface for most users, with CLI and notebook
-  options available for scripting and batch processing.
+  The GUI is the recommended interface for interactive work, with the CLI
+  (``lw-simulate``) and notebook options available for scripting and batch
+  processing.
+* **Heatmap and contour tools.**  ``generate_sweep_heatmap.py`` produces
+  publication-quality heatmaps from sweep results.  Contour lines use a low
+  alpha (0.18), labels are clamped to stay inside the axes after the final
+  layout pass, and overlapping labels are culled automatically.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to

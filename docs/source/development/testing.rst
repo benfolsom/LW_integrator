@@ -10,6 +10,10 @@ The repository uses ``pytest`` for both unit and integration coverage.  The
   legacy and validating the self-consistency wrapper.
 * ``tests/physics`` retains legacy-style regression checks for specific physics
   invariants (charge conservation, relativistic momentum, etc.).
+* ``tests/test_cli_gui_parity.py`` verifies that the CLI sweep runner and the
+  GUI's Blind Sweep mode produce identical configurations and results when given
+  the same input.  Added in v0.6.0 alongside the CLI/GUI code-path
+  unification.
 
 Running tests
 -------------

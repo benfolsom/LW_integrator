@@ -106,6 +106,33 @@ simulation, and confirm that the regression tooling works on your machine.
    ``--image-weighting``, and ``--self-consistency``. Run ``lw-simulate --help``
    for the complete list.
 
+   **Running a parameter sweep from the CLI:**
+
+   .. code-block:: bash
+
+      lw-simulate --sweep-config configs/sweep_configs/005_08_b2b_sweep_E_spread.json
+
+   Sweep results are written to ``results/sweeps/YYYYMMDD_HHMMSS_configname/``
+   with detailed debug logs in ``logcache/``.  Sweeps with fewer than 100
+   completed runs are automatically relocated to
+   ``results/archive/incomplete/``.
+
+   Fine-tune diagnostic output during sweeps without editing the JSON config:
+
+   .. code-block:: bash
+
+      lw-simulate --sweep-config my_sweep.json --log-verbosity full --sc-verbosity 2 --adaptive-debug
+
+   * ``--log-verbosity {none,truncated,full}`` — controls what is saved to disk.
+   * ``--sc-verbosity {0,1,2,3}`` — self-consistency iteration detail level.
+   * ``--adaptive-debug`` / ``--no-adaptive-debug`` — adaptive timestep diagnostics.
+
+   .. note::
+
+      As of v0.6.0 the CLI sweep runner calls the **same** ``run_testbed()`` /
+      ``SimulationOptions`` code paths as the GUI, so results are identical
+      between the two interfaces.
+
    You can replicate the same behaviour programmatically by calling
    ``lw_integrator.cli.main`` with a list of CLI-style arguments; see
    ``examples/entrypoint_demo.py`` for a minimal example.
