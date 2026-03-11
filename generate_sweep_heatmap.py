@@ -954,6 +954,8 @@ def create_smooth_heatmap(
         _clamped[0] = True
         inv = ax.transData.inverted()
         ax_bbox_disp = ax.get_window_extent()
+
+        # Pass 1 — edge clamping: shift labels that overflow the axes boundary.
         for label in labels:
             if not label.get_visible():
                 continue
@@ -973,6 +975,34 @@ def create_smooth_heatmap(
                 cy_disp = (lbl_bbox.y0 + lbl_bbox.y1) / 2.0
                 cx_data, cy_data = inv.transform((cx_disp + shift_x, cy_disp + shift_y))
                 label.set_position((cx_data, cy_data))
+
+        # Re-render so bounding boxes reflect the clamped positions before
+        # we use them for overlap testing.
+        fig.canvas.draw()
+
+        # Pass 2 — overlap culling: hide any label whose bbox intersects a
+        # previously-accepted label.  We add a small padding (in display pixels)
+        # so labels that are merely touching are also suppressed.
+        _PAD = -4.0  # shrink test bbox so only genuine overlaps are caught
+        accepted_bboxes = []
+        for label in labels:
+            if not label.get_visible():
+                continue
+            b = label.get_window_extent()
+            # Shrink the test bbox slightly so labels must substantially
+            # overlap before one is culled.
+            bx0, by0, bx1, by1 = b.x0 - _PAD, b.y0 - _PAD, b.x1 + _PAD, b.y1 + _PAD
+            overlaps = any(
+                bx0 < ab.x1 + _PAD
+                and bx1 > ab.x0 - _PAD
+                and by0 < ab.y1 + _PAD
+                and by1 > ab.y0 - _PAD
+                for ab in accepted_bboxes
+            )
+            if overlaps:
+                label.set_visible(False)
+            else:
+                accepted_bboxes.append(b)
 
     cid = fig.canvas.mpl_connect("draw_event", _clamp_labels)
     plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
