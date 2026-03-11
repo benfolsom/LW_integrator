@@ -30,7 +30,7 @@ from pathlib import Path
 import matplotlib.patheffects as PathEffects
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, TwoSlopeNorm
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import KDTree
@@ -309,6 +309,107 @@ def extract_data(
         return np.array(param1_values), np.array(param2_values), np.array(gains)
 
 
+def build_grey_zero_cmap(vmin, vmax, grey_centre=-10.0, n=512):
+    """Build a colormap where:
+      - value=0 maps exactly to viridis dark purple (colormap position 0.5)
+      - values > 0 use full viridis (purple → yellow)
+      - values < grey_centre use a red-orange ramp
+      - a grey band is centred on grey_centre within the negative half
+
+    TwoSlopeNorm(vcenter=0) is always used so that zero = cmap(0.5) exactly.
+    The grey band is embedded in the negative half of the colormap at the
+    fractional position corresponding to grey_centre.
+
+    Parameters
+    ----------
+    vmin, vmax : float
+        Data extremes. vmin must be < 0 < vmax for the mixed path.
+    grey_centre : float
+        Value inside [vmin, 0) that shows as grey (default -10%).
+    n : int
+        Number of colour-table entries.
+
+    Returns
+    -------
+    cmap : LinearSegmentedColormap
+    norm : matplotlib Normalize
+    """
+    from matplotlib.colors import Normalize
+
+    grey = np.array([0.35, 0.35, 0.35, 1.0])  # kept for all-pos/all-neg paths
+
+    if vmin >= 0:
+        # All non-negative: viridis with a thin grey band at the start
+        colors = plt.cm.viridis(np.linspace(0, 1, n))
+        colors[0] = grey
+        cmap = LinearSegmentedColormap.from_list("viridis_grey0", colors, N=n)
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        return cmap, norm
+
+    if vmax <= 0:
+        # All non-positive: red-orange ramp with grey at top
+        neg_anchors = np.array(
+            [
+                [0.55, 0.00, 0.00, 1.0],
+                [0.85, 0.18, 0.00, 1.0],
+                [0.95, 0.45, 0.10, 1.0],
+                [0.55, 0.55, 0.55, 1.0],
+            ]
+        )
+        t = np.linspace(0, 1, n)
+        colors = np.zeros((n, 4))
+        for ch in range(4):
+            colors[:, ch] = np.interp(
+                t, np.linspace(0, 1, len(neg_anchors)), neg_anchors[:, ch]
+            )
+        cmap = LinearSegmentedColormap.from_list("red_grey", colors, N=n)
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        return cmap, norm
+
+    # ── Mixed (vmin < 0 < vmax) ───────────────────────────────────────────
+    # TwoSlopeNorm(vcenter=0) maps:
+    #   vmin  → 0.0  in colormap space
+    #   0     → 0.5  in colormap space  (exact, regardless of asymmetry)
+    #   vmax  → 1.0  in colormap space
+    # So the colormap is split 50/50: first half = negative, second half = positive.
+
+    n_half = n // 2
+
+    viridis_purple = np.array(plt.cm.viridis(0.0))
+
+    # ── Magenta-pink ramp for the negative half ───────────────────────────
+    # Colorblind-friendly: uses the pink/magenta axis which is perceptually
+    # distinct from viridis (blue-green-yellow) and safe for deuteranopia /
+    # protanopia.  Ramp goes from deep magenta at vmin → pale pink → viridis
+    # purple at zero so it joins the positive side smoothly.
+    red_anchors = np.array(
+        [
+            [0.50, 0.00, 0.30, 1.0],  # deep magenta  (vmin)
+            [0.70, 0.10, 0.45, 1.0],  # magenta-pink
+            [0.80, 0.30, 0.60, 1.0],  # pale pink
+            viridis_purple,  # joins viridis purple exactly at zero
+        ]
+    )
+    n_pos = n - n_half
+    t_neg = np.linspace(0, 1, n_half)
+    neg_colors = np.zeros((n_half, 4))
+    for ch in range(4):
+        neg_colors[:, ch] = np.interp(
+            t_neg, np.linspace(0, 1, len(red_anchors)), red_anchors[:, ch]
+        )
+
+    # ── Positive half: full viridis ───────────────────────────────────────
+    pos_colors = plt.cm.viridis(np.linspace(0, 1.0, n_pos))
+
+    # No grey band in the colormap — a contour line is drawn at zero instead.
+    combined = np.vstack([neg_colors, pos_colors])
+    cmap = LinearSegmentedColormap.from_list(
+        "diverging_grey_viridis", combined, N=len(combined)
+    )
+    norm = TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
+    return cmap, norm
+
+
 def create_smooth_heatmap(
     param1_values,
     param2_values,
@@ -319,6 +420,8 @@ def create_smooth_heatmap(
     log_param1=True,
     log_param2=False,
     log_colorbar=False,
+    grey_zero=False,
+    grey_centre=-10.0,
     grid_resolution=800,
     smoothing_sigma=3.0,
     edge_blur_iterations=5,
@@ -569,10 +672,17 @@ def create_smooth_heatmap(
     vmin = np.nanmin(gain_grid_final)
     vmax = np.nanmax(gain_grid_final)
 
-    if log_colorbar and vmin > 0:
+    if grey_zero:
+        # Build custom cmap: grey band at grey_centre, viridis for positives, red-orange for negatives
+        cmap_use, norm = build_grey_zero_cmap(
+            float(vmin), float(vmax), grey_centre=grey_centre
+        )
+        color_label = "Energy Gain (%)"
+    elif log_colorbar and vmin > 0:
         # User explicitly requested log scale and all values are positive
         vmin = max(vmin, 0.001)
         norm = LogNorm(vmin=vmin, vmax=vmax)
+        cmap_use = "viridis"
         color_label = (
             "Energy Gain (% absolute)" if show_all_gains else "Energy Gain (%)"
         )
@@ -592,16 +702,19 @@ def create_smooth_heatmap(
                 "         Using linear scale instead. Use --absolute-gains for log scale with mixed signs."
             )
         norm = None
+        cmap_use = "viridis"
         color_label = (
             "Energy Gain (% absolute)" if show_all_gains else "Energy Gain (%)"
         )
     elif show_all_gains and has_negative:
         # Mixed positive/negative with absolute values - use linear scale
         norm = None
+        cmap_use = "viridis"
         color_label = "Energy Gain (% absolute)"
     else:
         # Linear scale
         norm = None
+        cmap_use = "viridis"
         color_label = "Energy Gain (%)"
 
     # Convert back to linear scale for plotting if needed
@@ -620,7 +733,7 @@ def create_smooth_heatmap(
         X_plot,
         Y_plot,
         gain_grid_final,
-        cmap="viridis",
+        cmap=cmap_use,
         norm=norm,
         shading="gouraud",
         edgecolors="none",
@@ -631,7 +744,24 @@ def create_smooth_heatmap(
     cbar.set_label(color_label, fontsize=14)
 
     # Create contour levels
-    if log_colorbar and vmin > 0:
+    if grey_zero:
+        # Negative side: linear spacing (losses are already compressed visually)
+        neg_levels = np.linspace(vmin, 0.0, num_contours_low + 2)[1:-1]
+
+        # Positive side: log spacing so dense high-value regions don't get
+        # too many contours.  Start from ~5% of vmax to skip the noisy
+        # near-zero region where the interpolated surface crosses zero many
+        # times and produces distracting islands.
+        pos_min = max(float(vmax) * 0.05, 0.1)
+        if vmax > pos_min:
+            pos_levels = np.logspace(
+                np.log10(pos_min), np.log10(vmax), num_contours_high + 2
+            )[:-1]  # exclude vmax endpoint
+        else:
+            pos_levels = np.array([])
+
+        contour_levels = np.unique(np.concatenate([neg_levels, pos_levels]))
+    elif log_colorbar and vmin > 0:
         # Logarithmic contour levels
         low_levels = np.logspace(
             np.log10(vmin), np.log10(contour_threshold), num_contours_low
@@ -645,14 +775,14 @@ def create_smooth_heatmap(
         # Linear contour levels
         contour_levels = np.linspace(vmin, vmax, num_contours_low + num_contours_high)
 
-    # Draw contours
+    # Draw regular contours
     contours = ax.contour(
         X_plot,
         Y_plot,
         gain_grid_final,
         levels=contour_levels,
         colors="white",
-        alpha=0.35,
+        alpha=0.18,
         linewidths=0.5,
     )
 
@@ -667,20 +797,54 @@ def create_smooth_heatmap(
             return f"$10^{{{exponent:.1f}}}$"
 
         labels = ax.clabel(
-            contours, inline=True, fontsize=14, fmt=fmt_log, inline_spacing=10
+            contours,
+            inline=True,
+            fontsize=14,
+            fmt=fmt_log,
+            inline_spacing=40,
+            manual=False,
         )
+        for coll in contours.collections:
+            coll.set_label("")
     elif vmax < 0.01:
         # Exponential notation for very small values
         labels = ax.clabel(
-            contours, inline=True, fontsize=14, fmt="%.2e%%", inline_spacing=10
+            contours,
+            inline=True,
+            fontsize=14,
+            fmt="%.2e%%",
+            inline_spacing=40,
+            manual=False,
         )
     else:
         # Standard notation for linear scale with reasonable values
+        # Limit to one label per contour line by subsampling the paths
         labels = ax.clabel(
-            contours, inline=True, fontsize=14, fmt="%.2f%%", inline_spacing=10
+            contours,
+            inline=True,
+            fontsize=12,
+            fmt="%.1f%%",
+            inline_spacing=40,
+            manual=False,
         )
+        # Remove duplicate labels on the same level by keeping only the
+        # longest path's label for each level
+        seen = set()
+        for txt in labels:
+            val = round(float(txt.get_text().replace("%", "").strip()), 1)
+            if val in seen:
+                txt.set_visible(False)
+            else:
+                seen.add(val)
 
+    # Style all labels first.
     for label in labels:
+        lx, ly = label.get_position()
+        x_min, x_max = ax.get_xlim()
+        y_min, y_max = ax.get_ylim()
+        if not (x_min <= lx <= x_max and y_min <= ly <= y_max):
+            label.set_visible(False)
+            continue
         label.set_path_effects(
             [
                 PathEffects.withStroke(linewidth=1.2, foreground="black", alpha=0.3),
@@ -778,7 +942,41 @@ def create_smooth_heatmap(
                 handle.set_alpha(0.95)  # High opacity for legend markers
 
     plt.tight_layout()
+
+    # Clamp contour labels that overflow the axes edges.  This must run after
+    # tight_layout (and after savefig's own layout pass), so we register a
+    # one-shot draw_event callback which fires with the final geometry.
+    _clamped = [False]  # mutable flag so the closure can mark itself done
+
+    def _clamp_labels(event):
+        if _clamped[0]:
+            return
+        _clamped[0] = True
+        inv = ax.transData.inverted()
+        ax_bbox_disp = ax.get_window_extent()
+        for label in labels:
+            if not label.get_visible():
+                continue
+            lbl_bbox = label.get_window_extent()
+            shift_x = 0.0
+            shift_y = 0.0
+            if lbl_bbox.x0 < ax_bbox_disp.x0:
+                shift_x = ax_bbox_disp.x0 - lbl_bbox.x0
+            elif lbl_bbox.x1 > ax_bbox_disp.x1:
+                shift_x = ax_bbox_disp.x1 - lbl_bbox.x1
+            if lbl_bbox.y0 < ax_bbox_disp.y0:
+                shift_y = ax_bbox_disp.y0 - lbl_bbox.y0
+            elif lbl_bbox.y1 > ax_bbox_disp.y1:
+                shift_y = ax_bbox_disp.y1 - lbl_bbox.y1
+            if shift_x != 0.0 or shift_y != 0.0:
+                cx_disp = (lbl_bbox.x0 + lbl_bbox.x1) / 2.0
+                cy_disp = (lbl_bbox.y0 + lbl_bbox.y1) / 2.0
+                cx_data, cy_data = inv.transform((cx_disp + shift_x, cy_disp + shift_y))
+                label.set_position((cx_data, cy_data))
+
+    cid = fig.canvas.mpl_connect("draw_event", _clamp_labels)
     plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    fig.canvas.mpl_disconnect(cid)
     print(f"✓ Heatmap saved to: {output_path}")
     plt.close()
 
@@ -807,6 +1005,9 @@ def generate_heatmap(
     num_contours_low=4,
     num_contours_high=7,
     contour_threshold=1.0,
+    grey_zero=False,
+    grey_centre=-10.0,
+    show_markers=True,
 ):
     """Generate publication-quality smooth heatmap from sweep results.
 
@@ -908,7 +1109,8 @@ def generate_heatmap(
         if len(gains_neg) > 0:
             param1_vals.extend(param1_neg)
             param2_vals.extend(param2_neg)
-            gains.extend(np.abs(gains_neg))  # Use absolute values
+            # Keep sign when grey_zero is active so zero is the true neutral point
+            gains.extend(gains_neg if grey_zero else np.abs(gains_neg))
 
         param1_vals = np.array(param1_vals)
         param2_vals = np.array(param2_vals)
@@ -1011,20 +1213,22 @@ def generate_heatmap(
         dpi=dpi,
         show_all_gains=(gain_filter == "all" or absolute_gains),
         show_gridlines=show_gridlines,
+        grey_zero=grey_zero,
+        grey_centre=grey_centre,
         marker_alpha=marker_alpha,
         num_contours_low=num_contours_low,
         num_contours_high=num_contours_high,
         contour_threshold=contour_threshold,
-        param1_pos=param1_pos if absolute_gains else None,
-        param2_pos=param2_pos if absolute_gains else None,
-        gains_pos=gains_pos if absolute_gains else None,
-        param1_neg=param1_neg if absolute_gains else None,
-        param2_neg=param2_neg if absolute_gains else None,
-        gains_neg=gains_neg if absolute_gains else None,
+        param1_pos=param1_pos if (absolute_gains and show_markers) else None,
+        param2_pos=param2_pos if (absolute_gains and show_markers) else None,
+        gains_pos=gains_pos if (absolute_gains and show_markers) else None,
+        param1_neg=param1_neg if (absolute_gains and show_markers) else None,
+        param2_neg=param2_neg if (absolute_gains and show_markers) else None,
+        gains_neg=gains_neg if (absolute_gains and show_markers) else None,
     )
 
 
-def main():
+def main():  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Generate publication-quality smooth heatmap from sweep results"
     )
@@ -1227,6 +1431,29 @@ def main():
         default=True,
         help="Hide the plot title (preserves headspace)",
     )
+    parser.add_argument(
+        "--no-markers",
+        action="store_true",
+        default=False,
+        help="Suppress data-point marker overlays (scatter dots) on the heatmap",
+    )
+    parser.add_argument(
+        "--grey-zero",
+        action="store_true",
+        default=False,
+        help=(
+            "Use a custom colormap where --grey-centre is grey, positives use viridis "
+            "(purple→yellow), and negatives use red-orange tones. "
+            "Useful with --absolute-gains to distinguish gains from losses."
+        ),
+    )
+    parser.add_argument(
+        "--grey-centre",
+        type=float,
+        default=-10.0,
+        dest="grey_centre",
+        help="Gain value (%%%%) that maps to grey in --grey-zero mode (default: -10.0)",
+    )
 
     args = parser.parse_args()
 
@@ -1238,9 +1465,14 @@ def main():
 
     # Handle contour arguments
     if args.num_contours is not None:
-        # If --num-contours is specified, split it roughly 40/60 between low/high
-        num_contours_low = max(1, int(args.num_contours * 0.4))
-        num_contours_high = max(1, args.num_contours - num_contours_low)
+        if args.grey_zero:
+            # Fewer contours below grey_centre (losses), more above (gains)
+            num_contours_low = max(1, int(args.num_contours * 0.25))
+            num_contours_high = max(1, args.num_contours - num_contours_low)
+        else:
+            # Default split: roughly 40/60 between low/high
+            num_contours_low = max(1, int(args.num_contours * 0.4))
+            num_contours_high = max(1, args.num_contours - num_contours_low)
     else:
         num_contours_low = args.num_contours_low
         num_contours_high = args.num_contours_high
@@ -1265,6 +1497,9 @@ def main():
         dpi=args.dpi,
         absolute_gains=args.absolute_gains,
         show_gridlines=args.gridlines,
+        grey_zero=args.grey_zero,
+        grey_centre=args.grey_centre,
+        show_markers=not args.no_markers,
         marker_alpha=args.marker_alpha,
         num_contours_low=num_contours_low,
         num_contours_high=num_contours_high,

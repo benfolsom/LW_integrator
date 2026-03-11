@@ -943,6 +943,8 @@ class SweepRunner:
 
         Returns True if sweep completed successfully.
         """
+        start_time = None  # initialised early so KeyboardInterrupt handler can use it
+
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1274,7 +1276,7 @@ class SweepRunner:
                     )
 
             # ── Save results ──
-            elapsed_time = time.time() - start_time
+            elapsed_time = (time.time() - start_time) if start_time is not None else 0.0
 
             self._log("")
             self._log("=" * 80)
@@ -1316,11 +1318,62 @@ class SweepRunner:
             self._log("")
             self._log(f"Results saved to: {results_path}")
 
+            # Move to archive/incomplete if below minimum run threshold
+            from optimization.result_io import relocate_incomplete_sweep
+
+            relocated = relocate_incomplete_sweep(
+                self.output_dir,
+                min_runs=100,
+                log_fn=self._log,
+            )
+            if relocated:
+                self.output_dir = relocated
+
             return True
 
         except KeyboardInterrupt:
             self._log("")
             self._log("[INFO] Sweep interrupted by user")
+
+            # Save partial results before relocating
+            partial_path = self.output_dir / "sweep_results.json"
+            if not partial_path.exists() and self.results:
+                try:
+                    elapsed_time = (
+                        (time.time() - start_time) if start_time is not None else 0.0
+                    )
+                    with open(partial_path, "w") as f:
+                        json.dump(
+                            {
+                                "config": {
+                                    "simulation_type": (
+                                        self.config.simulation_type.name
+                                        if hasattr(self.config.simulation_type, "name")
+                                        else str(self.config.simulation_type)
+                                    ),
+                                },
+                                "total_runs": len(self.results),
+                                "successful": len(self.results),
+                                "failed": 0,
+                                "elapsed_time_seconds": elapsed_time,
+                                "interrupted": True,
+                                "results": self.results,
+                            },
+                            f,
+                            indent=2,
+                        )
+                    self._log(f"[INFO] Partial results saved to: {partial_path}")
+                except Exception:
+                    pass
+
+            # Move to archive/incomplete if below minimum run threshold
+            from optimization.result_io import relocate_incomplete_sweep
+
+            relocate_incomplete_sweep(
+                self.output_dir,
+                min_runs=100,
+                log_fn=self._log,
+            )
             return False
         except Exception as e:
             self._log("")

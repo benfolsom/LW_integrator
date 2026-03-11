@@ -442,6 +442,17 @@ class OptimizationResultsMixin:
         if len(results) > 0:
             self._generate_summary_plots(results, sweep_dir)
 
+        # Move to archive/incomplete if below minimum run threshold
+        from optimization.result_io import relocate_incomplete_sweep
+
+        relocated = relocate_incomplete_sweep(
+            sweep_dir,
+            min_runs=100,
+            log_fn=self._log_result,
+        )
+        if relocated:
+            sweep_dir = relocated
+
     def _generate_summary_plots(
         self, results: List[Dict[str, Any]], output_dir: Path
     ) -> None:

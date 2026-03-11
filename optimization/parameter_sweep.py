@@ -174,6 +174,11 @@ def run_parameter_sweep(
     if output_dir is not None:
         _save_sweep_results(results, output_dir)
 
+        # Move to archive/incomplete if below minimum run threshold
+        from optimization.result_io import relocate_incomplete_sweep
+
+        relocate_incomplete_sweep(output_dir, min_runs=100)
+
     logger.info(f"Parameter sweep complete. {len(results['metrics'])} runs finished.")
 
     return results

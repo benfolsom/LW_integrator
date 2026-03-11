@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 
@@ -911,11 +915,83 @@ def save_partial_optimization_results(
     plugin._log_result(f"[OK] Summary saved to: {summary_path}")
 
     if plugin._log_file_path is not None and plugin._log_file_path.exists():
-        import shutil
-
         dest_log = output_dir / plugin._log_file_path.name
         shutil.copy2(plugin._log_file_path, dest_log)
         plugin._log_result(f"[OK] Log file saved to: {dest_log}")
+
+
+def relocate_incomplete_sweep(
+    sweep_dir: Path,
+    min_runs: int = 100,
+    log_fn: Optional[Any] = None,
+) -> Optional[Path]:
+    """Move a sweep directory to archive/incomplete if it has fewer than *min_runs*.
+
+    The incomplete directory is placed as a sibling of the sweep output root::
+
+        results/sweeps/20260309_...  ->  results/archive/incomplete/20260309_...
+
+    The function inspects ``sweep_results.json`` inside *sweep_dir*.  If the
+    file is missing or the recorded ``total_runs`` (falling back to
+    ``len(results)``) is below *min_runs*, the entire directory is relocated.
+
+    Parameters
+    ----------
+    sweep_dir : Path
+        Fully-resolved path to a single sweep output directory
+        (e.g. ``results/sweeps/20260309_121938_config_name``).
+    min_runs : int, optional
+        Minimum number of completed runs to keep a sweep in its original
+        location.  Defaults to 100.
+    log_fn : callable, optional
+        Logging callable (e.g. ``print`` or ``self._log``).  If *None*, uses
+        the module-level logger at INFO level.
+
+    Returns
+    -------
+    Path or None
+        The new path if the directory was moved, or *None* if it was kept
+        in place (i.e. it met the threshold).
+    """
+    if log_fn is None:
+        log_fn = logger.info
+
+    sweep_dir = Path(sweep_dir)
+    results_file = sweep_dir / "sweep_results.json"
+
+    # Determine run count
+    num_runs = 0
+    if results_file.exists():
+        try:
+            with open(results_file, "r") as f:
+                data = json.load(f)
+            num_runs = data.get("total_runs", len(data.get("results", [])))
+        except (json.JSONDecodeError, OSError) as exc:
+            log_fn(f"[WARN] Could not read {results_file}: {exc}")
+    else:
+        log_fn(f"[WARN] No sweep_results.json in {sweep_dir}")
+
+    if num_runs >= min_runs:
+        return None
+
+    # Build the incomplete destination:
+    #   <sweep_root>/../archive/incomplete/<dir_name>
+    # e.g. results/sweeps/ABC  ->  results/archive/incomplete/ABC
+    sweep_root = sweep_dir.parent  # e.g. results/sweeps
+    incomplete_dir = sweep_root.parent / "archive" / "incomplete"
+    incomplete_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = incomplete_dir / sweep_dir.name
+    if dest.exists():
+        # Avoid collision — append a counter
+        counter = 1
+        while dest.exists():
+            dest = incomplete_dir / f"{sweep_dir.name}_{counter}"
+            counter += 1
+
+    shutil.move(str(sweep_dir), str(dest))
+    log_fn(f"[INFO] Sweep has {num_runs} runs (< {min_runs}); moved to {dest}")
+    return dest
 
 
 __all__ = [
@@ -926,4 +1002,5 @@ __all__ = [
     "save_top_n_optimization_trajectories",
     "generate_trajectory_comparison_plot",
     "save_partial_optimization_results",
+    "relocate_incomplete_sweep",
 ]
