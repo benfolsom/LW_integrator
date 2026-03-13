@@ -512,6 +512,7 @@ def create_smooth_heatmap(
 
     # Check if param1 should be converted to MeV (if in GeV and values are small)
     convert_param1_to_mev = False
+    convert_param1_to_metres = False
     if "gev" in param1_label.lower() and np.max(param1_values) < 1.0:
         # Convert from GeV to MeV
         convert_param1_to_mev = True
@@ -522,12 +523,26 @@ def create_smooth_heatmap(
             param1_pos = param1_pos * 1000
         if param1_neg is not None and len(param1_neg) > 0:
             param1_neg = param1_neg * 1000
+    elif "mm" in param1_label.lower() and np.max(param1_values) > 1000:
+        # Convert from mm to metres
+        convert_param1_to_metres = True
+        param1_values_plot = param1_values / 1000  # mm to m
+        param1_label_plot = param1_label.replace("(mm)", "(m)").replace(" mm", " m")
+        print(
+            f"Converting param1 to metres (max value: {np.max(param1_values):.1f} mm)"
+        )
+        if param1_pos is not None and len(param1_pos) > 0:
+            param1_pos = param1_pos / 1000
+        if param1_neg is not None and len(param1_neg) > 0:
+            param1_neg = param1_neg / 1000
     else:
         param1_values_plot = param1_values
         param1_label_plot = param1_label
 
     # Check if param2 should be converted to microns (if in mm and values are small)
+    # or to metres (if in mm and values are large)
     convert_param2_to_microns = False
+    convert_param2_to_metres = False
     if "mm" in param2_label.lower() and np.max(param2_values) < 0.1:
         # Convert from mm to microns
         convert_param2_to_microns = True
@@ -540,6 +555,18 @@ def create_smooth_heatmap(
             param2_pos = param2_pos * 1000
         if param2_neg is not None and len(param2_neg) > 0:
             param2_neg = param2_neg * 1000
+    elif "mm" in param2_label.lower() and np.max(param2_values) > 1000:
+        # Convert from mm to metres
+        convert_param2_to_metres = True
+        param2_values_plot = param2_values / 1000  # mm to m
+        param2_label_plot = param2_label.replace("(mm)", "(m)").replace(" mm", " m")
+        print(
+            f"Converting param2 to metres (max value: {np.max(param2_values):.1f} mm)"
+        )
+        if param2_pos is not None and len(param2_pos) > 0:
+            param2_pos = param2_pos / 1000
+        if param2_neg is not None and len(param2_neg) > 0:
+            param2_neg = param2_neg / 1000
     else:
         param2_values_plot = param2_values
         param2_label_plot = param2_label
