@@ -1,4 +1,4 @@
-LW Integrator Guide (v0.6.0)
+LW Integrator Guide (v0.6.1)
 =============================
 
 The LW (Liénard–Wiechert) Integrator is a first-principles electromagnetic particle tracking code that computes retarded Liénard–Wiechert potentials directly from the covariant equations of motion. Unlike conventional tracking codes that rely on field maps or wake function tabulations, this solver evaluates exact electromagnetic fields from moving charged particles and their image charges, making it particularly suited for studying beam-aperture interactions where relativistic particles pass within microns of conducting surfaces.
@@ -15,8 +15,6 @@ The LW (Liénard–Wiechert) Integrator is a first-principles electromagnetic pa
 * **Adaptive timestep control** – Automatic refinement near conducting surfaces or particle-particle close approaches
 * **Parameter optimization** – Built-in genetic algorithm, differential evolution, and gradient-free methods for finding optimal geometries
 * **Self-consistency iterations** – Iterative solver enforcing the relativistic mass-shell constraint (Pt² = P² + (mc)²) by projecting particle four-momentum onto the correct energy surface at each timestep
-* **CLI / GUI parity** – As of v0.6.0 the command-line sweep runner and the GUI's Blind Sweep mode call the same ``run_testbed()`` / ``SimulationOptions`` code paths, producing identical results
-* **Incomplete-sweep archiving** – Sweeps with fewer than 100 completed runs are automatically relocated to ``results/archive/incomplete/`` on save (CLI, GUI, and library API)
 
 The underlying physics approach and covariant equations of motion are described in *Relativistic beam loading, recoil-reduction, and residual-wake acceleration with a covariant retarded-potential integrator* (`Nucl. Instrum. Methods Phys. Res. A 1069 (2024) 169988 <https://doi.org/10.1016/j.nima.2024.169988>`_ / `arXiv:2310.03850 <https://arxiv.org/abs/2310.03850>`_). The codebase includes significant numerical methods and features developed since publication.
 
