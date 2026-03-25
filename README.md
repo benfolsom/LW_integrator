@@ -52,12 +52,6 @@ residual-wake acceleration with a covariant retarded-potential integrator_
   retarded-vector potentials and conjugate-momentum dynamics. The `core`
   package is a faithful transcription of the proven legacy solver and is kept in
   numerical lockstep by an integration test suite.
-- **Startup strategies.** The integrator now exposes
-  :class:`core.types.StartupMode`, allowing cold-start runs that suppress
-  retarded forces during the short-history transient (default) or an
-  `APPROXIMATE_BACK_HISTORY` mode that reconstructs a constant-velocity past
-  for better legacy alignment. All entry points—CLI, scripts, and notebooks—take
-  the new enum so you can toggle behaviour without patching call sites.
 - **Self-consistency and energy conservation.** The integrator enforces the
   relativistic mass-shell constraint Pt² = P² + (mc)² through iterative
   projection during each timestep. Two modes are available:
@@ -113,26 +107,12 @@ residual-wake acceleration with a covariant retarded-potential integrator_
   calculations to accurately model beam emittance effects. Configured via GUI
   controls in the Particles tab (single runs) and optimization/sweep parameter
   sections. Only active for CONDUCTING_WALL simulation type.
-- **Reference publication.** For the scientific context, derivations, and
-  benchmark scenarios, see the project paper referenced above; the codebase
-  tracks the configurations described there.
-- **Documentation.** The refreshed Sphinx site under `docs/` explains the
-  theoretical background, quick-start workflows, validation procedures, and
-  contributor guidance. A new `theory` page summarises the covariant
-  derivations drawn from the in-repo technical note.
-- **Validation assets.** The `examples/validation` tree provides both Python
-  scripts and notebooks for reproducing benchmark comparisons between the
-  modern and legacy implementations. The refreshed `integrator_testbed`
-  notebook surfaces legacy overlays, difference plots, and live initial-state
-  summaries so physics regressions are immediately visible while you tweak
-  parameters. Its widget scaffolding now lives in
-  `examples/validation/testbed_ui.py` so you can import
-  `IntegratorTestbedApp` into other notebooks or scripts without duplicating
-  the layout logic.
-- **CLI entry point.** The `lw-simulate` console command (see the
-  [Command-line entry point](#command-line-entry-point) section below) runs the
-  core integrator with JSON-configurable inputs. A minimal demonstration lives
-  in `examples/entrypoint_demo.py`.
+- **GUI and CLI entry points.** The GUI (`python -m lw_integrator.gui`) provides
+  an interactive interface for single runs, parameter sweeps, and optimization,
+  with real-time logging and an initial-state summary panel. The `lw-simulate`
+  console command (see [Command-line entry point](#command-line-entry-point)
+  below) runs the same core code paths with JSON-configurable inputs. A minimal
+  CLI demonstration lives in `examples/entrypoint_demo.py`.
 
 ---
 
@@ -436,6 +416,7 @@ Simple example configs live under `configs/`. Load them via the GUI
 
 ### Sweep examples (`configs/sweep_configs/`)
 
-| File                                                | Description                                                                                                                                                                                                                 |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `example_b2b_linked_energy_vs_driver_distance.json` | 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton bunches with linked rider/driver energy. Reproduces the energy-gain heatmap shown above. |
+| File                                                   | Description                                                                                                                                                                                                                 |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `example_b2b_linked_energy_vs_driver_distance.json`    | 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton bunches with linked rider/driver energy. Reproduces the energy-gain heatmap shown above. |
+| `example_conducting_wall_electron_aperture_sweep.json` | 50×50 log-spaced sweep of initial energy (1–500 GeV) vs aperture radius (15–75 µm) for a single electron rider approaching a conducting wall. Macroparticle mode enabled (charge multiplier ×1000, sigma multiplier ×2).    |
