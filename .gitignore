@@ -126,6 +126,7 @@ local/
 *.pdf
 *.eps
 *.svg
+!docs/assets/*.png
 !1-s2.0-S0168900224009148-main.pdf  # Keep the reference paper
 
 # Temporary files
@@ -201,7 +202,9 @@ configs/testbed_runs/
 configs/sweep_configs/*.json
 configs/run_configs/*.json
 !configs/sweep_configs/.gitkeep
+!configs/sweep_configs/example_*.json
 !configs/run_configs/.gitkeep
+!configs/run_configs/example_*.json
 
 # Legacy config locations (deprecated)
 configs/optimization/*.json

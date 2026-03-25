@@ -33,6 +33,10 @@ residual-wake acceleration with a covariant retarded-potential integrator_
 
 ---
 
+![LW Integrator GUI](docs/assets/gui_screenshot.png)
+
+---
+
 ## Contents
 
 1. [Project overview](#project-overview)
@@ -348,7 +352,7 @@ lw-simulate --config my_scenario.json --output results.json
 **Run a parameter sweep from a sweep configuration:**
 
 ```bash
-lw-simulate --sweep-config configs/sweep_configs/005_08_b2b_sweep_E_spread.json
+lw-simulate --sweep-config configs/sweep_configs/example_b2b_linked_energy_vs_driver_distance.json
 ```
 
 The sweep runner writes results to `results/sweeps/YYYYMMDD_HHMMSS_configname/`
@@ -415,3 +419,23 @@ python generate_sweep_heatmap.py results/sweeps/<sweep_dir> \
 Contour lines use reduced alpha (0.18) and labels are automatically clamped
 to stay within the axes. Overlapping labels are culled after the final
 layout pass so they never stack on top of each other.
+
+---
+
+## Example configurations
+
+Simple example configs live under `configs/`. Load them via the GUI
+(**Configuration & Control → Load**) or pass them directly to the CLI.
+
+### Single-run examples (`configs/run_configs/`)
+
+| File                                                   | Description                                                                                                                                                                                                        |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `example_b2b_counter_propagating_proton_bunches.json`  | Two counter-propagating proton bunches (5+5 particles, 300 M stripped ions each), cold start. Demonstrates bunch-to-bunch energy exchange at non-relativistic energies.                                            |
+| `example_b2b_relativistic_proton_stationary_muon.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary muon driver (1 T stripped ions). Uses `APPROXIMATE_BACK_HISTORY` startup for accurate retarded-field initialisation. |
+
+### Sweep examples (`configs/sweep_configs/`)
+
+| File                                                | Description                                                                                                                                                                                                                 |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `example_b2b_linked_energy_vs_driver_distance.json` | 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton bunches with linked rider/driver energy. Reproduces the energy-gain heatmap shown above. |
