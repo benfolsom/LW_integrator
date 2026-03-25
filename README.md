@@ -412,7 +412,7 @@ Simple example configs live under `configs/`. Load them via the GUI
 | File                                                       | Description                                                                                                                                                                                                                           |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `example_b2b_counter_propagating_proton_bunches.json`      | Two counter-propagating proton bunches (5+5 particles, 300 M stripped ions each), cold start. Demonstrates bunch-to-bunch energy exchange at non-relativistic energies.                                                               |
-| `example_b2b_relativistic_proton_stationary_gold_ion.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary gold ion driver (1 T stripped ions, m = 207.2 amu). Uses `APPROXIMATE_BACK_HISTORY` startup for accurate retarded-field initialisation. |
+| `example_b2b_relativistic_proton_stationary_lead_ion.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary lead ion driver (1 T stripped ions, m = 207.2 amu). Uses `APPROXIMATE_BACK_HISTORY` startup for accurate retarded-field initialisation. |
 
 ### Sweep examples (`configs/sweep_configs/`)
 
