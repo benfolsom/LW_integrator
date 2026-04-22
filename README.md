@@ -416,7 +416,24 @@ Simple example configs live under `configs/`. Load them via the GUI
 
 ### Sweep examples (`configs/sweep_configs/`)
 
-| File                                                   | Description                                                                                                                                                                                                                 |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `example_b2b_linked_energy_vs_driver_distance.json`    | 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton bunches with linked rider/driver energy. Reproduces the energy-gain heatmap shown above. |
-| `example_conducting_wall_electron_aperture_sweep.json` | 50×50 log-spaced sweep of initial energy (1–500 GeV) vs aperture radius (15–75 µm) for a single electron rider approaching a conducting wall. Macroparticle mode enabled (charge multiplier ×1000, sigma multiplier ×2).    |
+**`example_b2b_linked_energy_vs_driver_distance.json`** — 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton bunches with linked rider/driver energy. Rider and driver each have 1 µm transverse spot size.
+
+![B2B 1 µm spot size](docs/assets/proton_proton_1micron.png)
+
+---
+
+**`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** — Same sweep geometry but with an asymmetric spot size: rider 35 µm, driver 0.1 µm. The larger rider spot reduces near-collision blowups.
+
+![B2B 35 µm rider spot size](docs/assets/proton_proton_35micron.png)
+
+---
+
+**`example_conducting_wall_electron_aperture_sweep.json`** — 50×50 log-spaced sweep of initial energy (1–500 GeV) vs aperture radius (15–75 µm) for a single electron rider approaching a conducting wall. Rider transverse spot size 1 µm. Macroparticle mode enabled (charge multiplier ×1000, sigma multiplier ×2).
+
+![Conducting wall electron sweep, 1 µm spot size](docs/assets/electron_aperture_0.001micron_spotsize.png)
+
+---
+
+**`example_conducting_wall_electron_aperture_sweep_10um_spotsize.json`** — 100×100 log-spaced sweep of initial energy (1.8–90 GeV) vs aperture radius (40–550 µm) for a single electron rider with 10 µm transverse spot size approaching a conducting wall. Macroparticle mode enabled.
+
+![Conducting wall electron sweep, 10 µm spot size](docs/assets/electron_aperture_0.01micron_spotsize.png)
