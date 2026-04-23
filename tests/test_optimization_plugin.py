@@ -10,6 +10,7 @@ import pytest
 from core.types import SimulationType
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.results_mixins import OptimizationResultsMixin
+from optimization.run_mixins import OptimizationRunMixin
 
 
 @pytest.fixture
@@ -69,6 +70,16 @@ class TestOptimizationPluginIntegration:
         assert (
             OptimizationPlugin._plot_npz_trajectories
             is OptimizationResultsMixin._plot_npz_trajectories
+        )
+
+    def test_plugin_inherits_run_helpers_from_run_mixin(self):
+        assert (
+            OptimizationPlugin._run_single_integration
+            is OptimizationRunMixin._run_single_integration
+        )
+        assert (
+            OptimizationPlugin._cleanup_orphaned_temp_dirs
+            is OptimizationRunMixin._cleanup_orphaned_temp_dirs
         )
 
     def test_run_single_integration_completes(self, mock_config, mock_run_result):
