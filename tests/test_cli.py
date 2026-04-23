@@ -425,6 +425,68 @@ class TestCliMain:
         assert "LW Integrator simulation summary:" in output
         assert "Driver trajectory generated with 3 integration steps." in output
 
+    def test_build_report_includes_driver_summary_when_present(self):
+        trajectory = [
+            {
+                "t": np.array([0.0]),
+                "z": np.array([1.0]),
+                "gamma": np.array([2.0]),
+                "bz": np.array([0.25]),
+            }
+        ]
+        driver = [
+            {
+                "t": np.array([0.0]),
+                "z": np.array([5.0]),
+                "gamma": np.array([3.0]),
+                "bz": np.array([0.5]),
+            }
+        ]
+
+        report = cli.build_report(trajectory, driver)
+
+        assert report["steps_completed"] == 1
+        assert report["driver_summary"]["steps_completed"] == 1
+        assert report["driver_summary"]["initial_z_mm"] == pytest.approx(5.0)
+
+    def test_main_writes_driver_summary_to_output_json(
+        self, monkeypatch, tmp_path: Path
+    ):
+        output_path = tmp_path / "summary.json"
+        fake_request = object()
+        monkeypatch.setattr(cli, "build_request", lambda args: fake_request)
+
+        monkeypatch.setattr(
+            cli,
+            "run_simulation",
+            lambda request: (
+                [
+                    {
+                        "gamma": np.array([1.0]),
+                        "z": np.array([0.0]),
+                        "t": np.array([0.0]),
+                        "bz": np.array([0.0]),
+                    }
+                ],
+                [
+                    {
+                        "gamma": np.array([2.0]),
+                        "z": np.array([3.0]),
+                        "t": np.array([0.5]),
+                        "bz": np.array([0.2]),
+                    }
+                ],
+            ),
+        )
+
+        result = cli.main(["--output", str(output_path), "--quiet"])
+
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert result == 0
+        assert payload["steps_completed"] == 1
+        assert payload["driver_summary"]["steps_completed"] == 1
+        assert payload["driver_summary"]["initial_z_mm"] == pytest.approx(3.0)
+
     def test_main_returns_2_for_invalid_config(self, monkeypatch, capsys):
         monkeypatch.setattr(
             cli,

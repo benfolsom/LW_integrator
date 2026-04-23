@@ -619,6 +619,16 @@ def _format_value(value: Any) -> Any:
     return value
 
 
+def build_report(
+    trajectory: Trajectory, driver: Optional[Trajectory] = None
+) -> Dict[str, Any]:
+    """Build the CLI report payload for rider and optional driver trajectories."""
+    report = dict(summarise_trajectory(trajectory))
+    if driver is not None:
+        report["driver_summary"] = summarise_trajectory(driver)
+    return report
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -639,16 +649,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     trajectory, driver = run_simulation(request)
-    summary = summarise_trajectory(trajectory)
+    report = build_report(trajectory, driver)
 
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     if not args.quiet:
-        print_summary(summary)
+        print_summary(report)
         if driver is not None:
-            print(f"Driver trajectory generated with {len(driver)} integration steps.")
+            print(
+                "Driver trajectory generated with "
+                f"{len(driver)} integration steps."
+            )
 
     return 0
 
