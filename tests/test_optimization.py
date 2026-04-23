@@ -22,6 +22,12 @@ from optimization.plugin_config_helpers import (
     parse_float_range,
     parse_offset_pair,
 )
+from optimization.plugin_persistence_helpers import (
+    apply_persisted_config_overrides,
+    build_saved_config_payload,
+    metrics_export_settings_from_data,
+    resolve_loaded_sweep_state,
+)
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.sweep_helpers import (
@@ -454,6 +460,97 @@ class TestPluginConfigHelpers:
 
         assert config.driver_energy_gev == 1.25
         assert config.driver_starting_Pz < 0
+
+
+class TestPluginPersistenceHelpers:
+    """Test extracted optimization plugin persistence helpers."""
+
+    def test_metrics_export_settings_handles_legacy_keys(self):
+        export_format, export_scope = metrics_export_settings_from_data(
+            {
+                "export_evaluation_csv": False,
+                "export_top_n_metrics_csv": True,
+            }
+        )
+
+        assert export_format == "none"
+        assert export_scope == "top_n"
+
+    def test_apply_persisted_config_overrides_sets_saved_values_and_defaults(self):
+        config = OptimizationConfig()
+
+        apply_persisted_config_overrides(
+            config,
+            {
+                "self_consistency_enabled": False,
+                "adaptive_timestep_threshold": 0.25,
+                "per_run_timeout": 12.5,
+            },
+        )
+
+        assert config.self_consistency_enabled is False
+        assert config.adaptive_timestep_threshold == pytest.approx(0.25)
+        assert config.per_run_timeout == pytest.approx(12.5)
+        assert config.smoothness_enabled is True
+        assert config.energy_monitor_enabled is False
+        assert config.energy_monitor_threshold == pytest.approx(2.0)
+
+    def test_build_saved_config_payload_captures_config_and_ui_fields(self):
+        config = OptimizationConfig(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            mode="optimization",
+            aperture_range=(0.1, 0.2),
+            energy_range=(1.0, 2.0),
+            transverse_offset_fractions=[0.3],
+            starting_z_positions=[5.0],
+            save_top_n_trajectories=True,
+            linked_energy_sweep=True,
+            transv_offset_x=1.2,
+            transv_offset_y=-1.3,
+            driver_transv_offset_x=2.4,
+            driver_transv_offset_y=-2.5,
+        )
+
+        payload = build_saved_config_payload(
+            config,
+            timestep_mode="duration",
+            auto_steps_distance=42.0,
+            rider_stripped_ions=3.0,
+            driver_stripped_ions=54.0,
+            driver_direction="+z",
+            sweep_state={"driver_energy_gev": {"enabled": False, "fixed_value": "7"}},
+        )
+
+        assert payload["simulation_type"] == "BUNCH_TO_BUNCH"
+        assert payload["mode"] == "optimization"
+        assert payload["save_top_n_trajectories"] is True
+        assert payload["driver_direction"] == "+z"
+        assert payload["linked_energy_sweep"] is True
+        assert payload["auto_steps_distance"] == pytest.approx(42.0)
+        assert payload["rider_offset_x"] == pytest.approx(1.2)
+        assert payload["driver_offset_y"] == pytest.approx(-2.5)
+        assert payload["sweep_parameters"]["driver_energy_gev"]["fixed_value"] == "7"
+
+    def test_resolve_loaded_sweep_state_converts_legacy_driver_pz(self):
+        state = resolve_loaded_sweep_state(
+            {
+                "driver_starting_Pz": {
+                    "enabled": True,
+                    "points": "5",
+                    "log": True,
+                }
+            },
+            "driver_energy_gev",
+        )
+
+        assert state == {
+            "enabled": True,
+            "min": "50.0",
+            "max": "200.0",
+            "points": "5",
+            "log": True,
+            "fixed_value": "112.5",
+        }
 
 
 class TestOptimizationResultsMixin:

@@ -28,6 +28,12 @@ from optimization.plugin_config_helpers import (
     parse_float_list,
     parse_offset_pair,
 )
+from optimization.plugin_persistence_helpers import (
+    apply_persisted_config_overrides,
+    build_saved_config_payload,
+    metrics_export_settings_from_data,
+    resolve_loaded_sweep_state,
+)
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
 from optimization.sweep_helpers import (
@@ -2514,7 +2520,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             float(self.start_z_var.get())
 
             # Wall and steps
-            wall_z = float(self.wall_z_var.get())
+            float(self.wall_z_var.get())
             steps = int(self.steps_var.get())
             if steps < 100:
                 return "Steps must be at least 100"
@@ -2545,13 +2551,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         return f"{param_name}: Particle count must be at least 1"
 
             # Stripped ions (always fixed)
-            rider_stripped = float(
-                self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
-            )
+            float(self.sweep_params["rider_stripped_ions"]["fixed_var"].get())
             if self.sim_type_var.get() == "BUNCH_TO_BUNCH":
-                driver_stripped = float(
-                    self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
-                )
+                float(self.sweep_params["driver_stripped_ions"]["fixed_var"].get())
 
             return None
         except ValueError as e:
@@ -2611,20 +2613,20 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         print(f"[DEBUG] _gather_config: Main GUI available: {has_gui}")
         if existing_config:
             print(
-                f"[DEBUG] _gather_config: Existing config available (will be used as fallback)"
+                "[DEBUG] _gather_config: Existing config available (will be used as fallback)"
             )
         else:
             print(
-                f"[DEBUG] _gather_config: No existing config, using defaults as fallback"
+                "[DEBUG] _gather_config: No existing config, using defaults as fallback"
             )
 
         if has_gui:
             print(
-                f"[DEBUG] _gather_config: Reading stability settings from main GUI Stability tab"
+                "[DEBUG] _gather_config: Reading stability settings from main GUI Stability tab"
             )
         else:
             print(
-                f"[DEBUG] _gather_config: No GUI available, using existing config or defaults"
+                "[DEBUG] _gather_config: No GUI available, using existing config or defaults"
             )
 
         rider_offset = parse_offset_pair(self.offset_fractions_var.get())
@@ -3107,7 +3109,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self._log_result(f"  Wall z: {opt_config.wall_z} mm")
             self._log_result(f"  Cavity spacing: {opt_config.cavity_spacing} mm")
             self._log_result(
-                f"  Timestep mode: auto-calc duration (user provides count)"
+                "  Timestep mode: auto-calc duration (user provides count)"
             )
             self._log_result(f"  Steps: {opt_config.steps}")
             self._log_result(f"  Duration: {opt_config.timestep:.2e} ns")
@@ -3805,31 +3807,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.save_failed_traj_var.set(data.get("save_failed_trajectories", False))
             self.trajectory_stride_var.set(str(data.get("trajectory_stride", 10)))
 
-            # Load metrics export options (with backward compatibility)
-            # Map old boolean settings to new format/scope settings
-            if "metrics_export_format" in data:
-                self.metrics_format_var.set(data.get("metrics_export_format", "both"))
-            else:
-                # Backward compatibility: convert old CSV checkboxes to new format
-                export_full = data.get(
-                    "export_full_metrics_csv",
-                    data.get(
-                        "export_evaluation_csv", data.get("export_eval_csv", True)
-                    ),
-                )
-                if export_full:
-                    self.metrics_format_var.set(
-                        "both"
-                    )  # Default to both for backward compat
-                else:
-                    self.metrics_format_var.set("none")
-
-            if "metrics_export_scope" in data:
-                self.metrics_scope_var.set(data.get("metrics_export_scope", "all"))
-            else:
-                # Backward compatibility: check old top_n setting
-                export_top_n = data.get("export_top_n_metrics_csv", False)
-                self.metrics_scope_var.set("top_n" if export_top_n else "all")
+            metrics_format, metrics_scope = metrics_export_settings_from_data(data)
+            self.metrics_format_var.set(metrics_format)
+            self.metrics_scope_var.set(metrics_scope)
 
             # Load log verbosity
             self.log_verbosity_var.set(data.get("log_verbosity", "truncated"))
@@ -3867,145 +3847,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Don't use _gather_config() here because it copies from existing self.config
             loaded_config = self._gather_config()
 
-            # Override ALL stability settings from file (don't use existing config)
-            loaded_config.self_consistency_enabled = data.get(
-                "self_consistency_enabled", True
-            )
-            loaded_config.self_consistency_tolerance = data.get(
-                "self_consistency_tolerance", 1e-4
-            )
-            loaded_config.self_consistency_max_iterations = data.get(
-                "self_consistency_max_iterations", 5
-            )
-            loaded_config.self_consistency_verbosity = data.get(
-                "self_consistency_verbosity", 0
-            )
-            loaded_config.self_consistency_chrono_interpolate = data.get(
-                "self_consistency_chrono_interpolate", False
-            )
-            loaded_config.self_consistency_chrono_tolerance = data.get(
-                "self_consistency_chrono_tolerance", 1e-3
-            )
-            loaded_config.self_consistency_chrono_high_precision = data.get(
-                "self_consistency_chrono_high_precision", False
-            )
-            loaded_config.self_consistency_chrono_adaptive_tolerance = data.get(
-                "self_consistency_chrono_adaptive_tolerance", False
-            )
-            # Energy monitoring removed - functionality in adaptive timestep
-            loaded_config.energy_monitor_enabled = False
-            loaded_config.energy_monitor_threshold = 2.0
-            loaded_config.energy_monitor_check_interval = 10
-            loaded_config.energy_monitor_halt_on_jump = data.get(
-                "energy_monitor_halt_on_jump", False
-            )
-            loaded_config.energy_monitor_debug = False
-            loaded_config.adaptive_timestep_enabled = data.get(
-                "adaptive_timestep_enabled", True
-            )
-            loaded_config.adaptive_timestep_threshold = data.get(
-                "adaptive_timestep_threshold", 0.10
-            )
-            loaded_config.adaptive_timestep_reduction_factor = data.get(
-                "adaptive_timestep_reduction_factor", 10
-            )
-            # max_refinement_attempts removed - now auto-calculated from reduction_factor and min_timestep_factor
-            loaded_config.adaptive_timestep_min_factor = data.get(
-                "adaptive_timestep_min_factor", 1e-4
-            )
-            loaded_config.adaptive_timestep_cooldown_steps = data.get(
-                "adaptive_timestep_cooldown_steps", 10
-            )
-            loaded_config.adaptive_timestep_probe_threshold = data.get(
-                "adaptive_timestep_probe_threshold", 0.01
-            )
-            loaded_config.adaptive_timestep_max_probe_steps = data.get(
-                "adaptive_timestep_max_probe_steps", 3
-            )
-            loaded_config.adaptive_timestep_debug = data.get(
-                "adaptive_timestep_debug", False
-            )
-            # Gamma reconciliation parameters
-            loaded_config.self_consistency_gamma_reconciliation_method = data.get(
-                "self_consistency_gamma_reconciliation_method", "DISABLED"
-            )
-            loaded_config.self_consistency_gamma_reconciliation_low_beta_threshold = (
-                data.get(
-                    "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
-                )
-            )
-            loaded_config.self_consistency_gamma_reconciliation_high_beta_threshold = (
-                data.get(
-                    "self_consistency_gamma_reconciliation_high_beta_threshold", 0.99
-                )
-            )
-            loaded_config.self_consistency_gamma_reconciliation_low_beta_weight = (
-                data.get("self_consistency_gamma_reconciliation_low_beta_weight", 0.8)
-            )
-            loaded_config.self_consistency_gamma_reconciliation_high_beta_weight = (
-                data.get("self_consistency_gamma_reconciliation_high_beta_weight", 0.2)
-            )
-            loaded_config.self_consistency_gamma_reconciliation_mid_beta_weight = (
-                data.get("self_consistency_gamma_reconciliation_mid_beta_weight", 0.5)
-            )
-            loaded_config.self_consistency_gamma_reconciliation_fixed_weight = data.get(
-                "self_consistency_gamma_reconciliation_fixed_weight", 0.5
-            )
-            # Sweep robustness options
-            loaded_config.per_run_timeout = data.get("per_run_timeout", 300.0)
-            loaded_config.skip_failed_runs = data.get("skip_failed_runs", True)
-            loaded_config.failed_run_retry_attempts = data.get(
-                "failed_run_retry_attempts", 1
-            )
-            # Trajectory stability checking options
-            loaded_config.smoothness_enabled = data.get("smoothness_enabled", True)
-            loaded_config.smoothness_window_size = data.get(
-                "smoothness_window_size", 20
-            )
-            loaded_config.smoothness_oscillation_threshold = data.get(
-                "smoothness_oscillation_threshold", 0.5
-            )
-            loaded_config.smoothness_trend_threshold = data.get(
-                "smoothness_trend_threshold", 0.30
-            )
-            loaded_config.smoothness_reject_on_violation = data.get(
-                "smoothness_reject_on_violation", True
-            )
-            loaded_config.smoothness_max_violations = data.get(
-                "smoothness_max_violations", 3
-            )
-            # Macroparticle parameters
-            loaded_config.macroparticle_enabled = data.get(
-                "macroparticle_enabled", False
-            )
-            loaded_config.macroparticle_charge_multiplier = data.get(
-                "macroparticle_charge_multiplier", 1.0
-            )
-            loaded_config.macroparticle_sigma_multiplier = data.get(
-                "macroparticle_sigma_multiplier", 1.0
-            )
-            loaded_config.macroparticle_use_momentum_errors = data.get(
-                "macroparticle_use_momentum_errors", True
-            )
+            loaded_config = apply_persisted_config_overrides(loaded_config, data)
 
-            # Conducting wall image parameters
-            loaded_config.image_subcharge_count = data.get("image_subcharge_count", 12)
-            loaded_config.use_image_weighting = data.get("use_image_weighting", True)
-
-            # Load timestep strategy and related parameters
-            # Default to auto_distance for sweeps/optimizations
-            loaded_config.timestep_strategy = data.get(
-                "timestep_strategy", "auto_distance"
-            )
-            loaded_config.z_cutoff_mode = data.get("z_cutoff_mode", "absolute")
-            loaded_config.startup_mode = data.get("startup_mode", "COLD_START")
-            loaded_config.target_distance_mm = data.get("target_distance_mm", 100.0)
-            loaded_config.timestep = data.get("timestep", 3e-7)
-            loaded_config.energy_scale_exponent = data.get("energy_scale_exponent", 1.0)
-
-            print(
-                f"[DEBUG] _load_config_from_path: Assigning loaded_config to self.config"
-            )
+            print("[DEBUG] _load_config_from_path: Assigning loaded_config to self.config")
             print(f"  SC enabled: {loaded_config.self_consistency_enabled}")
             print(f"  SC tolerance: {loaded_config.self_consistency_tolerance}")
             print(f"  AT enabled: {loaded_config.adaptive_timestep_enabled}")
@@ -4128,26 +3972,8 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 )
 
             for param_name, controls in self.sweep_params.items():
-                # Handle legacy driver_starting_Pz -> driver_energy_gev conversion
-                if (
-                    param_name == "driver_energy_gev"
-                    and param_name not in sweep_state
-                    and "driver_starting_Pz" in sweep_state
-                ):
-                    # Convert old Pz format to new energy format
-                    old_state = sweep_state["driver_starting_Pz"]
-                    # Use default energy values as approximation
-                    state = {
-                        "enabled": old_state.get("enabled", False),
-                        "min": "50.0",
-                        "max": "200.0",
-                        "points": old_state.get("points", "3"),
-                        "log": old_state.get("log", False),
-                        "fixed_value": "112.5",
-                    }
-                elif param_name in sweep_state:
-                    state = sweep_state[param_name]
-                else:
+                state = resolve_loaded_sweep_state(sweep_state, param_name)
+                if state is None:
                     continue
 
                 if state.get("enabled", False):
@@ -4314,9 +4140,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             return False
 
         try:
-            print(f"[DEBUG] _save_config_to_path: Gathering config for save")
+            print("[DEBUG] _save_config_to_path: Gathering config for save")
             config = self._gather_config()
-            print(f"[DEBUG] After _gather_config:")
+            print("[DEBUG] After _gather_config:")
             print(f"  SC enabled: {config.self_consistency_enabled}")
             print(f"  SC tolerance: {config.self_consistency_tolerance}")
             print(
@@ -4331,120 +4157,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
             print(f"  AT enabled: {config.adaptive_timestep_enabled}")
             print(f"  AT debug: {config.adaptive_timestep_debug}")
-            data = {
-                "simulation_type": config.simulation_type.name,
-                "mode": config.mode,
-                "aperture_min": config.aperture_range[0],
-                "aperture_max": config.aperture_range[1],
-                "aperture_points": config.aperture_points,
-                "aperture_log_scale": config.aperture_log_scale,
-                "energy_min": config.energy_range[0],
-                "energy_max": config.energy_range[1],
-                "energy_points": config.energy_points,
-                "energy_log_scale": config.energy_log_scale,
-                "transverse_offset_fractions": config.transverse_offset_fractions,
-                "starting_z_positions": config.starting_z_positions,
-                "wall_z": config.wall_z,
-                "wall_z_range": config.wall_z_range,
-                "wall_z_points": config.wall_z_points,
-                "cavity_spacing": config.cavity_spacing,
-                "steps": config.steps,
-                "objective": config.objective,
-                # Trajectory saving options
-                "save_top_n_trajectories": config.save_top_n_trajectories,
-                "save_all_trajectories": config.save_all_trajectories,
-                "save_failed_trajectories": config.save_failed_trajectories,
-                "trajectory_stride": config.trajectory_stride,
-                # Metrics export options
-                "metrics_export_format": config.metrics_export_format,
-                "metrics_export_scope": config.metrics_export_scope,
-                # Log verbosity
-                "log_verbosity": config.log_verbosity,
-                # Optimization parameters
-                "optimization_method": config.optimization_method,
-                "optimization_maxiter": config.optimization_maxiter,
-                "optimization_population_size": config.optimization_population_size,
-                "optimization_mutation_rate": config.optimization_mutation_rate,
-                "optimization_crossover_rate": config.optimization_crossover_rate,
-                "optimization_n_starts": config.optimization_n_starts,
-                "optimization_save_top_n": config.optimization_save_top_n,
-                "optimization_convergence_tol": config.optimization_convergence_tol,
-                "optimization_convergence_patience": config.optimization_convergence_patience,
-                # Stability options
-                "self_consistency_enabled": config.self_consistency_enabled,
-                "self_consistency_tolerance": config.self_consistency_tolerance,
-                "self_consistency_max_iterations": config.self_consistency_max_iterations,
-                "self_consistency_verbosity": config.self_consistency_verbosity,
-                "self_consistency_chrono_interpolate": config.self_consistency_chrono_interpolate,
-                "self_consistency_chrono_tolerance": config.self_consistency_chrono_tolerance,
-                "self_consistency_chrono_high_precision": config.self_consistency_chrono_high_precision,
-                "self_consistency_chrono_adaptive_tolerance": config.self_consistency_chrono_adaptive_tolerance,
-                # Gamma reconciliation parameters
-                "self_consistency_gamma_reconciliation_method": config.self_consistency_gamma_reconciliation_method,
-                "self_consistency_gamma_reconciliation_low_beta_threshold": config.self_consistency_gamma_reconciliation_low_beta_threshold,
-                "self_consistency_gamma_reconciliation_high_beta_threshold": config.self_consistency_gamma_reconciliation_high_beta_threshold,
-                "self_consistency_gamma_reconciliation_low_beta_weight": config.self_consistency_gamma_reconciliation_low_beta_weight,
-                "self_consistency_gamma_reconciliation_high_beta_weight": config.self_consistency_gamma_reconciliation_high_beta_weight,
-                "self_consistency_gamma_reconciliation_mid_beta_weight": config.self_consistency_gamma_reconciliation_mid_beta_weight,
-                "self_consistency_gamma_reconciliation_fixed_weight": config.self_consistency_gamma_reconciliation_fixed_weight,
-                # Energy monitoring removed - halt option in adaptive timestep
-                "energy_monitor_halt_on_jump": config.energy_monitor_halt_on_jump,
-                "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
-                "adaptive_timestep_threshold": config.adaptive_timestep_threshold,
-                "adaptive_timestep_reduction_factor": config.adaptive_timestep_reduction_factor,
-                "adaptive_timestep_min_factor": config.adaptive_timestep_min_factor,
-                "adaptive_timestep_cooldown_steps": config.adaptive_timestep_cooldown_steps,
-                "adaptive_timestep_probe_threshold": config.adaptive_timestep_probe_threshold,
-                "adaptive_timestep_max_probe_steps": config.adaptive_timestep_max_probe_steps,
-                "adaptive_timestep_debug": config.adaptive_timestep_debug,
-                # Sweep robustness options
-                "per_run_timeout": config.per_run_timeout,
-                "skip_failed_runs": config.skip_failed_runs,
-                "failed_run_retry_attempts": config.failed_run_retry_attempts,
-                # Trajectory stability checking
-                "smoothness_enabled": config.smoothness_enabled,
-                "smoothness_window_size": config.smoothness_window_size,
-                "smoothness_oscillation_threshold": config.smoothness_oscillation_threshold,
-                "smoothness_trend_threshold": config.smoothness_trend_threshold,
-                "smoothness_reject_on_violation": config.smoothness_reject_on_violation,
-                "smoothness_max_violations": config.smoothness_max_violations,
-                # Macroparticle parameters
-                "macroparticle_enabled": config.macroparticle_enabled,
-                "macroparticle_charge_multiplier": config.macroparticle_charge_multiplier,
-                "macroparticle_sigma_multiplier": config.macroparticle_sigma_multiplier,
-                "macroparticle_use_momentum_errors": config.macroparticle_use_momentum_errors,
-                # Conducting wall image parameters
-                "image_subcharge_count": config.image_subcharge_count,
-                "use_image_weighting": config.use_image_weighting,
-                # Timestep strategy parameters
-                "timestep_strategy": config.timestep_strategy,
-                "target_distance_mm": config.target_distance_mm,
-                "timestep": config.timestep,
-                "energy_scale_exponent": config.energy_scale_exponent,
-                "z_cutoff_mode": config.z_cutoff_mode,
-                "startup_mode": config.startup_mode,
-                # UI-specific fields
-                "timestep_mode": self.timestep_mode_var.get(),
-                "auto_steps_distance": float(self.auto_steps_distance_var.get()),
-                "rider_stripped_ions": float(
-                    self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
-                ),
-                "driver_stripped_ions": float(
-                    self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
-                ),
-                # Store rider/driver offset pairs
-                "rider_offset_x": config.transv_offset_x,
-                "rider_offset_y": config.transv_offset_y,
-                "driver_offset_x": config.driver_transv_offset_x,
-                "driver_offset_y": config.driver_transv_offset_y,
-                # Driver momentum direction
-                "driver_direction": getattr(
-                    self, "driver_direction_var", tk.StringVar(value="-z")
-                ).get(),
-                # Linked energy sweep (driver energy follows rider energy)
-                "linked_energy_sweep": config.linked_energy_sweep,
-            }
-
             # Dynamically save all sweep parameter states
             sweep_state = {}
             for param_name, controls in self.sweep_params.items():
@@ -4461,7 +4173,22 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                         "enabled": False,
                         "fixed_value": controls["fixed_var"].get(),
                     }
-            data["sweep_parameters"] = sweep_state
+
+            data = build_saved_config_payload(
+                config,
+                timestep_mode=self.timestep_mode_var.get(),
+                auto_steps_distance=float(self.auto_steps_distance_var.get()),
+                rider_stripped_ions=float(
+                    self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
+                ),
+                driver_stripped_ions=float(
+                    self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
+                ),
+                driver_direction=getattr(
+                    self, "driver_direction_var", tk.StringVar(value="-z")
+                ).get(),
+                sweep_state=sweep_state,
+            )
 
             with open(filepath, "w") as f:
                 json.dump(data, f, indent=2)
@@ -4470,7 +4197,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.last_loaded_config = filepath
 
             self._log_result(f"[OK] Configuration saved to {filepath}")
-            print(f"[DEBUG] Chrono settings saved to config:")
+            print("[DEBUG] Chrono settings saved to config:")
             print(f"  chrono_interpolate: {config.self_consistency_chrono_interpolate}")
             print(f"  chrono_tolerance: {config.self_consistency_chrono_tolerance}")
             print(
@@ -5216,11 +4943,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 # 2D sweep - make heatmap
                 ax = fig.add_subplot(111)
 
-                # Reshape data
-                apertures_arr = np.array(apertures)
-                energies_arr = np.array(energies)
-                delta_es_arr = np.array(delta_es)
-
                 # Create grid
                 unique_a = sorted(set(apertures))
                 unique_e = sorted(set(energies))
@@ -5607,8 +5329,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
                 z = np.array(traj.get("z", []))
                 r = np.array(traj.get("r", []))
-                pz = np.array(traj.get("pz", []))
-                t = np.array(traj.get("t", []))
 
                 if len(z) == 0:
                     continue
@@ -5617,7 +5337,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 energy = params.get("particle_energy_gev", 0)
                 delta_e_mev = metrics.get("rider_delta_e_mev", 0)
                 gamma_initial = metrics.get("rider_gamma_initial", 1)
-                gamma_final = metrics.get("rider_gamma_final", 1)
 
                 label = f"Run #{run_num} (a={aperture:.2e}mm, E={energy:.1f}GeV)"
                 color = plt.cm.tab10(idx % 10)
@@ -5627,7 +5346,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
                 )
                 energy_mev_initial = (gamma_initial - 1) * _rest_mev
-                energy_mev_final = (gamma_final - 1) * _rest_mev
 
                 # Calculate energy at each point along trajectory
                 # Approximate: E(z) ≈ E_initial + ΔE * (z - z_0) / (z_final - z_0)
