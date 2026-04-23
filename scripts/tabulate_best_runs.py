@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Tabulate best runs from optimization results.
 
-This script reads optimization_results.json and displays the best runs
-in a formatted table, including full metrics for diagnostics.
+This compatibility wrapper reads optimization_results.json and displays the
+best runs using the shared optimization-result summary helpers.
+
+The preferred interface for saved-result inspection is now:
+
+    python -m lw_integrator --results-file <optimization_results.json>
 
 Usage:
     python scripts/tabulate_best_runs.py <path_to_optimization_results.json> [--top N]
