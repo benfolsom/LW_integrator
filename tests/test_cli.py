@@ -41,6 +41,21 @@ def _make_args(**overrides) -> argparse.Namespace:
 
 
 class TestCliConfigParsing:
+    def test_parse_args_applies_boolean_flags(self):
+        args = cli.parse_args(
+            ["--adaptive-debug", "--image-weighting", "--simulation-type", "wall"]
+        )
+
+        assert args.adaptive_debug is True
+        assert args.use_image_weighting is True
+        assert args.simulation_type == "wall"
+
+    def test_parse_args_allows_disabling_boolean_flags(self):
+        args = cli.parse_args(["--no-adaptive-debug", "--no-image-weighting"])
+
+        assert args.adaptive_debug is False
+        assert args.use_image_weighting is False
+
     def test_parse_simulation_type_accepts_aliases(self):
         assert cli._parse_simulation_type("wall") == SimulationType.CONDUCTING_WALL
         assert cli._parse_simulation_type("bunch-to-bunch") == (
@@ -95,6 +110,15 @@ class TestCliConfigParsing:
 
 
 class TestCliBuildRequest:
+    def test_merge_simulation_payload_applies_cli_overrides(self):
+        args = _make_args(steps=77, simulation_type="switching-wall", z_cutoff=4.5)
+
+        payload = cli._merge_simulation_payload({"steps": 12, "z_cutoff": 1.0}, args)
+
+        assert payload["steps"] == 77
+        assert payload["simulation_type"] == "switching-wall"
+        assert payload["z_cutoff"] == 4.5
+
     def test_build_request_clones_driver_from_rider(self):
         args = _make_args(
             simulation_type="bunch-to-bunch",
@@ -191,6 +215,29 @@ class TestCliSweepEntryPoint:
             "adaptive_timestep_debug": True,
         }
 
+    def test_run_sweep_returns_2_for_missing_config(self, tmp_path: Path, capsys):
+        result = cli.run_sweep(_make_args(sweep_config=tmp_path / "missing.json"))
+
+        assert result == 2
+        assert "Sweep config file not found" in capsys.readouterr().err
+
+    def test_run_sweep_returns_2_on_exception(self, monkeypatch, tmp_path: Path, capsys):
+        config_path = tmp_path / "sweep.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def fake_run_sweep_from_config(**kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            "lw_integrator.sweep_runner.run_sweep_from_config",
+            fake_run_sweep_from_config,
+        )
+
+        result = cli.run_sweep(_make_args(sweep_config=config_path))
+
+        assert result == 2
+        assert "Error running sweep: boom" in capsys.readouterr().err
+
 
 class TestCliMain:
     def test_main_writes_output_json(self, monkeypatch, tmp_path: Path):
@@ -224,6 +271,27 @@ class TestCliMain:
             "delta_gamma_mean": 0.0,
         }
 
+    def test_main_prints_driver_summary_when_present(self, monkeypatch, capsys):
+        fake_request = object()
+        monkeypatch.setattr(cli, "build_request", lambda args: fake_request)
+        monkeypatch.setattr(
+            cli,
+            "run_simulation",
+            lambda request: ([{"gamma": np.array([1.0]), "z": np.array([0.0]), "t": np.array([0.0]), "bz": np.array([0.0])}], [1, 2, 3]),
+        )
+        monkeypatch.setattr(
+            cli,
+            "summarise_trajectory",
+            lambda trajectory: {"steps_completed": 1, "delta_gamma_mean": 0.0},
+        )
+
+        result = cli.main([])
+
+        output = capsys.readouterr().out
+        assert result == 0
+        assert "LW Integrator simulation summary:" in output
+        assert "Driver trajectory generated with 3 integration steps." in output
+
     def test_main_returns_2_for_invalid_config(self, monkeypatch, capsys):
         monkeypatch.setattr(
             cli,
@@ -235,3 +303,70 @@ class TestCliMain:
 
         assert result == 2
         assert "Error: bad config" in capsys.readouterr().err
+
+
+class TestCliRuntimeHelpers:
+    def test_run_simulation_forwards_request_to_retarded_integrator(self, monkeypatch):
+        request = cli.build_request(_make_args())
+        captured = {}
+
+        def fake_retarded_integrator(**kwargs):
+            captured.update(kwargs)
+            return ["rider"], None
+
+        monkeypatch.setattr(cli, "retarded_integrator", fake_retarded_integrator)
+
+        rider, driver = cli.run_simulation(request)
+
+        assert rider == ["rider"]
+        assert driver is None
+        assert captured["steps"] == request.config.steps
+        assert captured["h_step"] == request.config.time_step
+        assert captured["wall_z"] == request.config.wall_position
+        assert captured["aperture_radius"] == request.config.aperture_radius
+        assert captured["sim_type"] == request.config.simulation_type
+        assert captured["init_rider"] is request.rider
+        assert captured["init_driver"] is request.driver
+        assert captured["image_subcharge_count"] == request.config.image_subcharge_count
+        assert (
+            captured["use_conducting_image_weighting"]
+            == request.config.use_image_weighting
+        )
+
+    def test_summarise_trajectory_uses_means_and_max_abs(self):
+        trajectory = [
+            {
+                "t": np.array([0.0, 1.0]),
+                "z": np.array([-2.0, 2.0]),
+                "gamma": np.array([2.0, 4.0]),
+                "bz": np.array([-0.5, 0.25]),
+            },
+            {
+                "t": np.array([2.0, 4.0]),
+                "z": np.array([10.0, 14.0]),
+                "gamma": np.array([5.0, 7.0]),
+                "bz": np.array([-0.75, 0.6]),
+            },
+        ]
+
+        summary = cli.summarise_trajectory(trajectory)
+
+        assert summary == {
+            "steps_completed": 2,
+            "initial_time_ns": pytest.approx(0.5),
+            "final_time_ns": pytest.approx(3.0),
+            "initial_z_mm": pytest.approx(0.0),
+            "final_z_mm": pytest.approx(12.0),
+            "initial_gamma_mean": pytest.approx(3.0),
+            "final_gamma_mean": pytest.approx(6.0),
+            "delta_gamma_mean": pytest.approx(3.0),
+            "max_absolute_velocity": pytest.approx(0.75),
+        }
+
+    def test_print_summary_formats_human_readable_output(self, capsys):
+        cli.print_summary({"steps_completed": 5, "delta_gamma_mean": 1.23456789})
+
+        output = capsys.readouterr().out
+        assert "LW Integrator simulation summary:" in output
+        assert "Steps Completed: 5" in output
+        assert "Delta Gamma Mean: 1.23457" in output
