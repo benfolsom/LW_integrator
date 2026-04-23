@@ -18,6 +18,7 @@ from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import KDTree
 
+from core.types import SimulationType  # type: ignore[import]
 from optimization.result_io import (  # type: ignore[import]
     generate_optimization_heatmap,
     generate_optimization_plots,
@@ -119,7 +120,23 @@ class OptimizationResultsMixin:
                 elif param_name == "macroparticle_sigma_multiplier":
                     macroparticle_sigma_mult = value
 
-            transv_offset = offset_frac * aperture
+            if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                transv_offset = offset_frac
+                driver_params_dict = {
+                    "m_particle": self.config.driver_m_particle,
+                    "charge_sign": self.config.driver_charge_sign,
+                    "pcount": self.config.driver_pcount,
+                    "transv_mom": self.config.driver_transv_mom,
+                    "transv_dist": self.config.driver_transv_dist,
+                    "starting_distance": self.config.driver_starting_distance,
+                    "starting_Pz": self.config.driver_starting_Pz,
+                    "stripped_ions": self.config.driver_stripped_ions,
+                    "transv_offset_x": self.config.driver_transv_offset_x,
+                    "transv_offset_y": self.config.driver_transv_offset_y,
+                }
+            else:
+                transv_offset = offset_frac * aperture
+                driver_params_dict = None
 
             # Temporarily enable trajectory saving
             save_all_backup = self.config.save_all_trajectories
@@ -140,7 +157,7 @@ class OptimizationResultsMixin:
                 rider_transv_dist=rider_transv_dist,
                 macroparticle_charge_multiplier=macroparticle_charge_mult,
                 macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                driver_params=None,
+                driver_params=driver_params_dict,
                 wall_z=wall_z,
                 run_num=9999 + rank,
             )

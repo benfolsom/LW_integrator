@@ -3,16 +3,32 @@
 Basic tests to verify optimization functionality works correctly.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
+from core.types import SimulationType
+from optimization.config import OptimizationConfig
 from optimization.metrics import (
     compute_energy_at_position,
     compute_max_energy_gain,
     compute_relative_energy_gain,
     detect_transverse_deflection,
 )
+from optimization.plugin_config_helpers import (
+    apply_sweep_parameter_overrides,
+    parse_float_list,
+    parse_float_range,
+    parse_offset_pair,
+)
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
+from optimization.sweep_helpers import (
+    build_parameter_grids,
+    calculate_energy_from_pz,
+    calculate_starting_pz_from_energy,
+    generate_parameter_range,
+)
 
 
 def create_mock_trajectory(n_steps=10, gamma_values=None):
@@ -217,6 +233,245 @@ class TestParameterMapping:
         configs = list(grid)
         assert len(configs) == 1
         assert configs[0]["initial_energy_gev"] == 10.0
+
+
+class _MockVar:
+    def __init__(self, value):
+        self._value = value
+
+    def get(self):
+        return self._value
+
+
+class TestSweepHelpers:
+    """Test extracted optimization sweep helpers."""
+
+    def test_calculate_starting_pz_round_trip(self):
+        """Energy and Pz conversions should round-trip for kinetic energy."""
+        energy_gev = 2.5
+        mass_amu = 1.0
+
+        pz = calculate_starting_pz_from_energy(energy_gev, mass_amu)
+
+        assert calculate_energy_from_pz(pz, mass_amu) == pytest.approx(energy_gev)
+        assert calculate_energy_from_pz(-pz, mass_amu) == pytest.approx(energy_gev)
+
+    def test_calculate_starting_pz_respects_negative_direction(self):
+        """Negative direction should only flip the Pz sign."""
+        positive = calculate_starting_pz_from_energy(1.0, 1.0, negative=False)
+        negative = calculate_starting_pz_from_energy(1.0, 1.0, negative=True)
+
+        assert positive == pytest.approx(-negative)
+
+    def test_generate_parameter_range_linear_and_log(self):
+        """Parameter range generation should support midpoint, linear, and log modes."""
+        assert generate_parameter_range(2.0, 6.0, 1, False) == [4.0]
+        assert generate_parameter_range(1.0, 3.0, 3, False) == pytest.approx(
+            [1.0, 2.0, 3.0]
+        )
+        assert generate_parameter_range(1e-3, 1e1, 3, True) == pytest.approx(
+            [1e-3, 1e-1, 1e1]
+        )
+
+    def test_build_parameter_grids_for_bunch_to_bunch(self):
+        """Bunch-to-bunch sweeps should omit aperture and normalize driver energy."""
+        config = SimpleNamespace(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            aperture_range=(0.01, 0.1),
+            aperture_points=3,
+            aperture_log_scale=False,
+            energy_range=(1.0, 3.0),
+            energy_points=3,
+            energy_log_scale=False,
+            transverse_offset_fractions=[],
+            starting_z_positions=[10.0, 20.0],
+            wall_z_range=None,
+            wall_z_points=1,
+        )
+        sweep_params = {
+            "driver_energy_gev": {
+                "sweep_var": _MockVar(True),
+                "min_var": _MockVar(-4.0),
+                "max_var": _MockVar(-1.0),
+                "points_var": _MockVar(4),
+                "log_var": _MockVar(False),
+            },
+            "driver_transv_mom": {
+                "sweep_var": _MockVar(True),
+                "min_var": _MockVar(0.0),
+                "max_var": _MockVar(2.0),
+                "points_var": _MockVar(3),
+                "log_var": _MockVar(False),
+            },
+        }
+
+        grids = build_parameter_grids(config, sweep_params)
+
+        assert "aperture" not in grids
+        assert grids["initial_energy_gev"] == pytest.approx([1.0, 2.0, 3.0])
+        assert grids["transverse_offset_fraction"] == [0.0]
+        assert grids["start_z"] == [10.0, 20.0]
+        assert grids["driver_energy_gev"] == pytest.approx([1.0, 2.0, 3.0, 4.0])
+        assert grids["driver_transv_mom"] == pytest.approx([0.0, 1.0, 2.0])
+
+    def test_build_parameter_grids_skips_driver_controls_outside_b2b(self):
+        """Driver-specific sweep controls should be ignored for wall simulations."""
+        config = SimpleNamespace(
+            simulation_type=SimulationType.CONDUCTING_WALL,
+            aperture_range=(0.01, 0.1),
+            aperture_points=2,
+            aperture_log_scale=False,
+            energy_range=(5.0, 10.0),
+            energy_points=2,
+            energy_log_scale=False,
+            transverse_offset_fractions=[0.25],
+            starting_z_positions=[0.0],
+            wall_z_range=(50.0, 70.0),
+            wall_z_points=3,
+        )
+        sweep_params = {
+            "driver_energy_gev": {
+                "sweep_var": _MockVar(True),
+                "min_var": _MockVar(1.0),
+                "max_var": _MockVar(2.0),
+                "points_var": _MockVar(2),
+                "log_var": _MockVar(False),
+            }
+        }
+
+        grids = build_parameter_grids(config, sweep_params)
+
+        assert grids["aperture"] == pytest.approx([0.01, 0.1])
+        assert grids["energy"] == pytest.approx([5.0, 10.0])
+        assert grids["transverse_offset_fraction"] == [0.25]
+        assert grids["wall_z"] == pytest.approx([50.0, 60.0, 70.0])
+        assert "driver_energy_gev" not in grids
+
+
+class TestPluginConfigHelpers:
+    """Test extracted optimization plugin config helpers."""
+
+    def test_parse_float_list(self):
+        assert parse_float_list("1, 2.5, -3") == [1.0, 2.5, -3.0]
+
+    def test_parse_float_list_rejects_invalid_input(self):
+        with pytest.raises(ValueError, match="Invalid list format"):
+            parse_float_list("1, two")
+
+    def test_parse_float_range(self):
+        assert parse_float_range("1, 3") == (1.0, 3.0)
+        assert parse_float_range("  ") is None
+
+    def test_parse_offset_pair(self):
+        assert parse_offset_pair("1.5, -2.0") == (1.5, -2.0)
+        assert parse_offset_pair("4.0") == (4.0, 0.0)
+        assert parse_offset_pair("bad") == (0.0, 0.0)
+
+    def test_apply_sweep_parameter_overrides(self):
+        config = OptimizationConfig()
+        debug_messages = []
+        sweep_params = {
+            "rider_transv_mom": _make_sweep_controls(
+                enabled=True, min_val=1.0, max_val=3.0, points=5
+            ),
+            "rider_transv_dist": _make_sweep_controls(enabled=False),
+            "macroparticle_charge_multiplier": _make_sweep_controls(enabled=False),
+            "macroparticle_sigma_multiplier": _make_sweep_controls(enabled=False),
+            "rider_m_particle": _make_sweep_controls(enabled=False),
+            "rider_charge_sign": _make_sweep_controls(enabled=False),
+            "rider_pcount": _make_sweep_controls(
+                enabled=True, min_val=2, max_val=8, points=4
+            ),
+            "rider_stripped_ions": _make_sweep_controls(enabled=False),
+            "driver_m_particle": _make_sweep_controls(enabled=False, fixed_val=131.0),
+            "driver_charge_sign": _make_sweep_controls(enabled=False),
+            "driver_pcount": _make_sweep_controls(enabled=False),
+            "driver_transv_mom": _make_sweep_controls(enabled=False),
+            "driver_transv_dist": _make_sweep_controls(enabled=False),
+            "driver_starting_distance": _make_sweep_controls(
+                enabled=True, min_val=50.0, max_val=500.0, points=3, log=True
+            ),
+            "driver_energy_gev": _make_sweep_controls(
+                enabled=True, min_val=-8.0, max_val=-2.0, points=4
+            ),
+            "driver_stripped_ions": _make_sweep_controls(enabled=False),
+        }
+
+        updated = apply_sweep_parameter_overrides(
+            config,
+            sweep_params,
+            driver_negative=False,
+            linked_energy_sweep=True,
+            debug=debug_messages.append,
+        )
+
+        assert updated is config
+        assert config.linked_energy_sweep is True
+        assert config.transverse_momentum_range == (1.0, 3.0)
+        assert config.transverse_momentum_points == 5
+        assert config.particle_count_range == (2, 8)
+        assert config.particle_count_points == 4
+        assert config.driver_starting_distance_range == (50.0, 500.0)
+        assert config.driver_starting_distance_points == 3
+        assert config.driver_starting_distance_log_scale is True
+        assert config.driver_direction == "+z"
+        assert config.driver_energy_range == (2.0, 8.0)
+        assert config.driver_energy_points == 4
+        assert config.driver_starting_Pz_range[0] < 0
+        assert config.driver_starting_Pz_range[1] < 0
+        assert any("Linked energy sweep ENABLED" in msg for msg in debug_messages)
+
+    def test_apply_sweep_parameter_overrides_fixed_driver_energy(self):
+        config = OptimizationConfig()
+        sweep_params = {
+            "rider_transv_mom": _make_sweep_controls(enabled=False),
+            "rider_transv_dist": _make_sweep_controls(enabled=False),
+            "macroparticle_charge_multiplier": _make_sweep_controls(enabled=False),
+            "macroparticle_sigma_multiplier": _make_sweep_controls(enabled=False),
+            "rider_m_particle": _make_sweep_controls(enabled=False),
+            "rider_charge_sign": _make_sweep_controls(enabled=False),
+            "rider_pcount": _make_sweep_controls(enabled=False),
+            "rider_stripped_ions": _make_sweep_controls(enabled=False),
+            "driver_m_particle": _make_sweep_controls(enabled=False, fixed_val=10.0),
+            "driver_charge_sign": _make_sweep_controls(enabled=False),
+            "driver_pcount": _make_sweep_controls(enabled=False),
+            "driver_transv_mom": _make_sweep_controls(enabled=False),
+            "driver_transv_dist": _make_sweep_controls(enabled=False),
+            "driver_starting_distance": _make_sweep_controls(enabled=False),
+            "driver_energy_gev": _make_sweep_controls(
+                enabled=False, fixed_val=-1.25
+            ),
+            "driver_stripped_ions": _make_sweep_controls(enabled=False),
+        }
+
+        apply_sweep_parameter_overrides(
+            config,
+            sweep_params,
+            driver_negative=True,
+            linked_energy_sweep=False,
+        )
+
+        assert config.driver_energy_gev == 1.25
+        assert config.driver_starting_Pz < 0
+
+
+def _make_sweep_controls(
+    *,
+    enabled: bool,
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+    points: int = 2,
+    fixed_val: float = 0.0,
+    log: bool = False,
+):
+    return {
+        "sweep_var": _MockVar(enabled),
+        "min_var": _MockVar(min_val),
+        "max_var": _MockVar(max_val),
+        "points_var": _MockVar(points),
+        "fixed_var": _MockVar(fixed_val),
+        "log_var": _MockVar(log),
+    }
 
 
 if __name__ == "__main__":

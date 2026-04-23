@@ -17,107 +17,18 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
-
-# Physical constants
-C_MMNS = 299.792458  # Speed of light in mm/ns
-AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
-
-
-def calculate_starting_pz_from_energy(
-    energy_gev: float, mass_amu: float, kinetic: bool = True, negative: bool = False
-) -> float:
-    """Calculate starting Pz from energy and mass.
-
-    Parameters
-    ----------
-    energy_gev : float
-        Energy in GeV (kinetic by default, matching the codebase convention
-        used by ``create_bunch_from_energy``).
-        Negative values are treated as their absolute value (energy is always
-        positive; use the ``negative`` flag for direction).
-    mass_amu : float
-        Particle mass in amu
-    kinetic : bool, optional
-        If True, energy_gev is kinetic energy; if False, it's total energy.
-        Default: True (kinetic), matching the codebase convention.
-    negative : bool, optional
-        If True, return negative Pz (particle moving in -z direction, e.g. driver).
-        Default: False (positive Pz).
-
-    Returns
-    -------
-    float
-        Starting Pz in amu·mm/ns (sign determined by ``negative`` flag)
-    """
-    # Energy is always a positive magnitude; accept negative input gracefully
-    energy_gev = abs(energy_gev)
-    rest_energy_mev = mass_amu * AMU_TO_MEV
-
-    if kinetic:
-        # Kinetic energy: γ = (KE / E_rest) + 1
-        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-    else:
-        # Total energy: γ = E_total / E_rest
-        gamma = (energy_gev * 1e3) / rest_energy_mev
-
-    if gamma < 1.0:
-        gamma = 1.0  # Non-relativistic limit
-
-    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
-    pz = gamma * mass_amu * C_MMNS * beta
-
-    return -pz if negative else pz
-
-
-def calculate_energy_from_pz(pz: float, mass_amu: float) -> float:
-    """Calculate kinetic energy in GeV from starting Pz and mass.
-
-    Uses the kinetic-energy convention (KE = (γ - 1) · E_rest) which matches
-    the convention used by ``create_bunch_from_energy`` and
-    ``calculate_starting_pz_from_energy`` throughout the codebase.
-
-    Parameters
-    ----------
-    pz : float
-        Longitudinal momentum in amu·mm/ns (sign is ignored)
-    mass_amu : float
-        Particle mass in amu
-
-    Returns
-    -------
-    float
-        Kinetic energy in GeV (always ≥ 0)
-    """
-    rest_energy_mev = mass_amu * AMU_TO_MEV
-
-    if abs(pz) < 1e-12:
-        # At rest – zero kinetic energy
-        return 0.0
-
-    # γ·β = |pz| / (mass · c)
-    gamma_beta = abs(pz) / (mass_amu * C_MMNS)
-    # γ = sqrt((γβ)² + 1)
-    gamma = np.sqrt(gamma_beta**2 + 1.0)
-
-    # Kinetic energy: KE = (γ - 1) · E_rest
-    kinetic_energy_mev = (gamma - 1.0) * rest_energy_mev
-
-    return kinetic_energy_mev / 1e3  # Convert MeV to GeV
-
 
 from core.constants import C_MMNS  # type: ignore[import]
 from core.debug_logger import set_logging_context  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
     analyze_trajectory_smoothness,
-    filter_stable_trajectories,
 )
 from core.types import SimulationType  # type: ignore[import]
 from lw_integrator.testbed_runner import (  # type: ignore[import]
-    RunResult,
     SimulationOptions,
     run_testbed,
 )
@@ -125,19 +36,19 @@ from optimization.config import (
     OptimizationConfig,
     calculate_auto_steps,
     calculate_auto_timestep,
-    calculate_steps_from_duration,
 )
-from optimization.result_io import (
-    generate_optimization_heatmap,
-    generate_optimization_plots,
-    generate_trajectory_comparison_plot,
-    save_optimization_results,
-    save_partial_optimization_results,
-    save_top_n_optimization_trajectories,
-    save_top_trajectories_summary_table,
+from optimization.plugin_config_helpers import (
+    apply_sweep_parameter_overrides,
+    parse_float_list,
+    parse_offset_pair,
 )
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
+from optimization.sweep_helpers import (
+    AMU_TO_MEV,
+    calculate_energy_from_pz,
+    calculate_starting_pz_from_energy,
+)
 from optimization.ui_helpers import (
     ToolTip,
 )
@@ -2555,27 +2466,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         return False
 
-    def _parse_list_field(self, value: str) -> List[float]:
-        """Parse comma-separated list of floats."""
-        try:
-            return [float(x.strip()) for x in value.split(",") if x.strip()]
-        except ValueError:
-            raise ValueError(f"Invalid list format: {value}")
-
-    def _parse_range_field(self, value: str) -> Optional[Tuple[float, float]]:
-        """Parse range field (min, max) or return None if empty."""
-        if not value or not value.strip():
-            return None
-        try:
-            parts = [float(x.strip()) for x in value.split(",") if x.strip()]
-            if len(parts) != 2:
-                raise ValueError(f"Range must have exactly 2 values (min, max)")
-            if parts[0] >= parts[1]:
-                raise ValueError(f"Range min must be less than max")
-            return (parts[0], parts[1])
-        except ValueError as e:
-            raise ValueError(f"Invalid range format: {value} - {e}")
-
     def _validate_inputs(self) -> Optional[str]:
         """Validate user inputs. Returns error message or None."""
         try:
@@ -2633,7 +2523,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     return "Energy must have at least 1 point"
 
             # Lists
-            self._parse_list_field(self.offset_fractions_var.get())
+            parse_float_list(self.offset_fractions_var.get())
             # Single float for rider starting z
             float(self.start_z_var.get())
 
@@ -2725,23 +2615,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             return value
         return default_value
 
-    def _parse_offset_pair(self, offset_str: str) -> tuple:
-        """Parse x,y offset pair from string like '0.0, 0.0'.
-
-        Returns (x, y) tuple. Defaults to (0.0, 0.0) if parsing fails.
-        """
-        try:
-            values = [float(x.strip()) for x in offset_str.split(",")]
-            if len(values) >= 2:
-                return (values[0], values[1])
-            elif len(values) == 1:
-                # Single value - use for x, set y=0
-                return (values[0], 0.0)
-            else:
-                return (0.0, 0.0)
-        except (ValueError, AttributeError):
-            return (0.0, 0.0)
-
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
         # Stability settings are read from main GUI if available, otherwise from existing config
@@ -2767,6 +2640,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             print(
                 f"[DEBUG] _gather_config: No GUI available, using existing config or defaults"
             )
+
+        rider_offset = parse_offset_pair(self.offset_fractions_var.get())
+        driver_offset = parse_offset_pair(self.driver_offset_var.get())
 
         config_obj = OptimizationConfig(
             simulation_type=SimulationType[self.sim_type_var.get()],
@@ -2802,9 +2678,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             ),
             energy_points=int(self.energy_points_var.get()),
             energy_log_scale=self.energy_log_var.get(),
-            transverse_offset_fractions=self._parse_list_field(
-                self.offset_fractions_var.get()
-            ),
+            transverse_offset_fractions=parse_float_list(self.offset_fractions_var.get()),
             starting_z_positions=[float(self.start_z_var.get())],
             wall_z=float(self.wall_z_var.get()),
             wall_z_range=(
@@ -2841,16 +2715,10 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             transv_dist=float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
-            # Parse rider transverse offset (x, y)
-            transv_offset_x=self._parse_offset_pair(self.offset_fractions_var.get())[0],
-            transv_offset_y=self._parse_offset_pair(self.offset_fractions_var.get())[1],
-            # Parse driver transverse offset (x, y)
-            driver_transv_offset_x=self._parse_offset_pair(
-                self.driver_offset_var.get()
-            )[0],
-            driver_transv_offset_y=self._parse_offset_pair(
-                self.driver_offset_var.get()
-            )[1],
+            transv_offset_x=rider_offset[0],
+            transv_offset_y=rider_offset[1],
+            driver_transv_offset_x=driver_offset[0],
+            driver_transv_offset_y=driver_offset[1],
             macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
             macroparticle_charge_multiplier=float(
                 self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].get()
@@ -3116,299 +2984,21 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             ),
         )
 
-        # Dynamically add sweepable parameter ranges after config creation
-        config = config_obj
-
-        # Set linked energy sweep flag from GUI
-        config.linked_energy_sweep = getattr(
-            self, "link_driver_rider_energy_var", tk.BooleanVar(value=False)
-        ).get()
-        if config.linked_energy_sweep:
-            print(
-                "[DEBUG] _gather_config: Linked energy sweep ENABLED - driver energy will follow rider energy"
-            )
-
-        # Debug: Log which sweep parameters are enabled
-        print("[DEBUG] _gather_config: Checking sweep parameters...")
-        for param_key in self.sweep_params.keys():
-            is_enabled = self.sweep_params[param_key]["sweep_var"].get()
-            print(f"  {param_key}: sweep_var={is_enabled}")
-            if is_enabled:
-                try:
-                    min_val = self.sweep_params[param_key]["min_var"].get()
-                    max_val = self.sweep_params[param_key]["max_var"].get()
-                    points = self.sweep_params[param_key]["points_var"].get()
-                    print(f"    Range: [{min_val}, {max_val}], points={points}")
-                except Exception as e:
-                    print(f"    ERROR reading values: {e}")
-
-        if self.sweep_params["rider_transv_mom"]["sweep_var"].get():
-            config.transverse_momentum_range = (
-                float(self.sweep_params["rider_transv_mom"]["min_var"].get()),
-                float(self.sweep_params["rider_transv_mom"]["max_var"].get()),
-            )
-            config.transverse_momentum_points = int(
-                self.sweep_params["rider_transv_mom"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added rider_transv_mom: {config.transverse_momentum_range}, {config.transverse_momentum_points} points"
-            )
-
-        if self.sweep_params["rider_transv_dist"]["sweep_var"].get():
-            config.transverse_spread_range = (
-                float(self.sweep_params["rider_transv_dist"]["min_var"].get()),
-                float(self.sweep_params["rider_transv_dist"]["max_var"].get()),
-            )
-            config.transverse_spread_points = int(
-                self.sweep_params["rider_transv_dist"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added rider_transv_dist: {config.transverse_spread_range}, {config.transverse_spread_points} points"
-            )
-
-        # Add macroparticle sweeps if enabled
-        if self.sweep_params["macroparticle_charge_multiplier"]["sweep_var"].get():
-            config.macroparticle_charge_range = (
-                float(
-                    self.sweep_params["macroparticle_charge_multiplier"][
-                        "min_var"
-                    ].get()
-                ),
-                float(
-                    self.sweep_params["macroparticle_charge_multiplier"][
-                        "max_var"
-                    ].get()
-                ),
-            )
-            config.macroparticle_charge_points = int(
-                self.sweep_params["macroparticle_charge_multiplier"]["points_var"].get()
-            )
-
-        if self.sweep_params["macroparticle_sigma_multiplier"]["sweep_var"].get():
-            config.macroparticle_sigma_range = (
-                float(
-                    self.sweep_params["macroparticle_sigma_multiplier"]["min_var"].get()
-                ),
-                float(
-                    self.sweep_params["macroparticle_sigma_multiplier"]["max_var"].get()
-                ),
-            )
-            config.macroparticle_sigma_points = int(
-                self.sweep_params["macroparticle_sigma_multiplier"]["points_var"].get()
-            )
-
-        # Add rider particle parameter sweeps if enabled
-        if self.sweep_params["rider_m_particle"]["sweep_var"].get():
-            config.particle_mass_range = (
-                float(self.sweep_params["rider_m_particle"]["min_var"].get()),
-                float(self.sweep_params["rider_m_particle"]["max_var"].get()),
-            )
-            config.particle_mass_points = int(
-                self.sweep_params["rider_m_particle"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added rider_m_particle: {config.particle_mass_range}, {config.particle_mass_points} points"
-            )
-
-        if self.sweep_params["rider_charge_sign"]["sweep_var"].get():
-            config.particle_charge_range = (
-                float(self.sweep_params["rider_charge_sign"]["min_var"].get()),
-                float(self.sweep_params["rider_charge_sign"]["max_var"].get()),
-            )
-            config.particle_charge_points = int(
-                self.sweep_params["rider_charge_sign"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added rider_charge_sign: {config.particle_charge_range}, {config.particle_charge_points} points"
-            )
-
-        if self.sweep_params["rider_pcount"]["sweep_var"].get():
-            pcount_min = float(self.sweep_params["rider_pcount"]["min_var"].get())
-            pcount_max = float(self.sweep_params["rider_pcount"]["max_var"].get())
-            pcount_points = int(self.sweep_params["rider_pcount"]["points_var"].get())
-            # pcount must be integer, so create integer range
-            import numpy as np
-
-            if pcount_points > 1:
-                pcount_values = np.linspace(
-                    pcount_min, pcount_max, pcount_points
-                ).astype(int)
-                # Store as range for compatibility, but will need special handling
-                config.particle_count_range = (int(pcount_min), int(pcount_max))
-                config.particle_count_points = pcount_points
-                print(
-                    f"[DEBUG] Added rider_pcount: {config.particle_count_range}, {config.particle_count_points} points"
-                )
-
-        # Add stripped ions sweeps if enabled
-        if self.sweep_params["rider_stripped_ions"]["sweep_var"].get():
-            config.rider_stripped_ions_range = (
-                float(self.sweep_params["rider_stripped_ions"]["min_var"].get()),
-                float(self.sweep_params["rider_stripped_ions"]["max_var"].get()),
-            )
-            config.rider_stripped_ions_points = int(
-                self.sweep_params["rider_stripped_ions"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added rider_stripped_ions: {config.rider_stripped_ions_range}, {config.rider_stripped_ions_points} points"
-            )
-
-        # Add driver particle parameter sweeps if enabled (BUNCH_TO_BUNCH only)
-        if self.sweep_params["driver_m_particle"]["sweep_var"].get():
-            config.driver_mass_range = (
-                float(self.sweep_params["driver_m_particle"]["min_var"].get()),
-                float(self.sweep_params["driver_m_particle"]["max_var"].get()),
-            )
-            config.driver_mass_points = int(
-                self.sweep_params["driver_m_particle"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added driver_m_particle: {config.driver_mass_range}, {config.driver_mass_points} points"
-            )
-
-        if self.sweep_params["driver_charge_sign"]["sweep_var"].get():
-            config.driver_charge_sign_range = (
-                float(self.sweep_params["driver_charge_sign"]["min_var"].get()),
-                float(self.sweep_params["driver_charge_sign"]["max_var"].get()),
-            )
-            config.driver_charge_sign_points = int(
-                self.sweep_params["driver_charge_sign"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added driver_charge_sign: {config.driver_charge_sign_range}, {config.driver_charge_sign_points} points"
-            )
-
-        if self.sweep_params["driver_pcount"]["sweep_var"].get():
-            driver_pcount_min = float(
-                self.sweep_params["driver_pcount"]["min_var"].get()
-            )
-            driver_pcount_max = float(
-                self.sweep_params["driver_pcount"]["max_var"].get()
-            )
-            driver_pcount_points = int(
-                self.sweep_params["driver_pcount"]["points_var"].get()
-            )
-            config.driver_pcount_range = (
-                int(driver_pcount_min),
-                int(driver_pcount_max),
-            )
-            config.driver_pcount_points = driver_pcount_points
-            print(
-                f"[DEBUG] Added driver_pcount: {config.driver_pcount_range}, {config.driver_pcount_points} points"
-            )
-
-        if self.sweep_params["driver_transv_mom"]["sweep_var"].get():
-            config.driver_transv_mom_range = (
-                float(self.sweep_params["driver_transv_mom"]["min_var"].get()),
-                float(self.sweep_params["driver_transv_mom"]["max_var"].get()),
-            )
-            config.driver_transv_mom_points = int(
-                self.sweep_params["driver_transv_mom"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added driver_transv_mom: {config.driver_transv_mom_range}, {config.driver_transv_mom_points} points"
-            )
-
-        if self.sweep_params["driver_transv_dist"]["sweep_var"].get():
-            config.driver_transv_dist_range = (
-                float(self.sweep_params["driver_transv_dist"]["min_var"].get()),
-                float(self.sweep_params["driver_transv_dist"]["max_var"].get()),
-            )
-            config.driver_transv_dist_points = int(
-                self.sweep_params["driver_transv_dist"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added driver_transv_dist: {config.driver_transv_dist_range}, {config.driver_transv_dist_points} points"
-            )
-
-        if self.sweep_params["driver_starting_distance"]["sweep_var"].get():
-            config.driver_starting_distance_range = (
-                float(self.sweep_params["driver_starting_distance"]["min_var"].get()),
-                float(self.sweep_params["driver_starting_distance"]["max_var"].get()),
-            )
-            config.driver_starting_distance_points = int(
-                self.sweep_params["driver_starting_distance"]["points_var"].get()
-            )
-            config.driver_starting_distance_log_scale = bool(
-                self.sweep_params["driver_starting_distance"]["log_var"].get()
-            )
-            print(
-                f"[DEBUG] Added driver_starting_distance: {config.driver_starting_distance_range}, {config.driver_starting_distance_points} points, log={config.driver_starting_distance_log_scale}"
-            )
-
-        # Determine driver direction from UI selector
         driver_negative = (
             getattr(self, "driver_direction_var", None) is None
             or getattr(self, "driver_direction_var").get() == "-z"
         )
+        linked_energy_sweep = getattr(
+            self, "link_driver_rider_energy_var", tk.BooleanVar(value=False)
+        ).get()
 
-        if self.sweep_params["driver_energy_gev"]["sweep_var"].get():
-            # Get energy range and convert to Pz range
-            energy_min = abs(
-                float(self.sweep_params["driver_energy_gev"]["min_var"].get())
-            )
-            energy_max = abs(
-                float(self.sweep_params["driver_energy_gev"]["max_var"].get())
-            )
-
-            # Swap if user put them backwards
-            if energy_min > energy_max:
-                energy_min, energy_max = energy_max, energy_min
-            # Ensure min <= max after abs()
-            if energy_min > energy_max:
-                energy_min, energy_max = energy_max, energy_min
-            driver_mass = float(
-                self.sweep_params["driver_m_particle"]["fixed_var"].get()
-            )
-
-            pz_min = calculate_starting_pz_from_energy(
-                energy_min, driver_mass, negative=True
-            )
-            pz_max = calculate_starting_pz_from_energy(
-                energy_max, driver_mass, negative=True
-            )
-
-            config.driver_starting_Pz_range = (pz_min, pz_max)
-            config.driver_starting_Pz_points = int(
-                self.sweep_params["driver_energy_gev"]["points_var"].get()
-            )
-
-            # Store direction on config so sweep runner uses correct sign
-            config.driver_direction = "-z" if driver_negative else "+z"
-            # Store energy range for save/load (always positive magnitudes)
-            config.driver_energy_range = (energy_min, energy_max)
-            config.driver_energy_points = config.driver_starting_Pz_points
-            print(
-                f"[DEBUG] Added driver_energy: {config.driver_energy_range} GeV -> Pz: {config.driver_starting_Pz_range} amu·mm/ns, {config.driver_starting_Pz_points} points"
-            )
-        else:
-            # Fixed energy - convert to Pz (driver moves in -z → negative Pz)
-            energy_gev = abs(
-                float(self.sweep_params["driver_energy_gev"]["fixed_var"].get())
-            )
-            driver_mass = float(
-                self.sweep_params["driver_m_particle"]["fixed_var"].get()
-            )
-            pz = calculate_starting_pz_from_energy(
-                energy_gev, driver_mass, negative=driver_negative
-            )
-            config.driver_starting_Pz = pz
-            config.driver_energy_gev = energy_gev
-
-        if self.sweep_params["driver_stripped_ions"]["sweep_var"].get():
-            config.driver_stripped_ions_range = (
-                float(self.sweep_params["driver_stripped_ions"]["min_var"].get()),
-                float(self.sweep_params["driver_stripped_ions"]["max_var"].get()),
-            )
-            config.driver_stripped_ions_points = int(
-                self.sweep_params["driver_stripped_ions"]["points_var"].get()
-            )
-            print(
-                f"[DEBUG] Added driver_stripped_ions: {config.driver_stripped_ions_range}, {config.driver_stripped_ions_points} points"
-            )
-
-        print("[DEBUG] _gather_config: Config building complete")
-        return config
+        return apply_sweep_parameter_overrides(
+            config_obj,
+            self.sweep_params,
+            driver_negative=driver_negative,
+            linked_energy_sweep=linked_energy_sweep,
+            debug=print,
+        )
 
     def _on_load_from_main_config(self):
         """Load parameters from main GUI configuration."""
@@ -7072,406 +6662,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             if self._log_file is not None:
                 self._close_log_file()
 
-    def _save_optimization_results(self, result, param_names):
-        """Save optimization results to file via shared helper."""
-        return save_optimization_results(self, result, param_names)
-
-    def _save_top_trajectories_summary_table(self, result, param_names, output_dir):
-        """Generate and save top trajectories summary via helper."""
-        return save_top_trajectories_summary_table(
-            self, result, param_names, output_dir
-        )
-
-    def _generate_optimization_plots(self, result, param_names, output_dir):
-        """Generate optimization plots via shared helper."""
-        return generate_optimization_plots(self, result, param_names, output_dir)
-
-    def _generate_optimization_heatmap(self, all_evaluations, param_names, output_dir):
-        """Generate optimization heatmap via shared helper."""
-        return generate_optimization_heatmap(
-            self, all_evaluations, param_names, output_dir
-        )
-
-    def _save_top_n_optimization_trajectories(self, result, param_names):
-        """Re-run top N parameter sets and save trajectories via helper."""
-        return save_top_n_optimization_trajectories(self, result, param_names)
-
-    def _save_single_optimization_trajectory(
-        self, params_dict, param_names, rank, fitness
-    ):
-        """Re-run a single parameter set and save its trajectory.
-
-        Parameters
-        ----------
-        params_dict : dict
-            Dictionary of parameter names to values
-        param_names : list
-            List of parameter names
-        rank : int
-            Rank of this parameter set (1 = best, 2 = second best, etc.)
-        fitness : float
-            Fitness value (objective function value to minimize)
-
-        Returns
-        -------
-        dict or None
-            Trajectory data dictionary if successful, None otherwise
-        """
-        from pathlib import Path
-
-        import numpy as np
-
-        try:
-            # Set up run parameters (similar to evaluate_params)
-            aperture = self.config.aperture_range[0]
-            energy = self.config.energy_range[0]
-            start_z = (
-                self.config.starting_z_positions[0]
-                if self.config.starting_z_positions
-                else 0.0
-            )
-            offset_frac = (
-                self.config.transverse_offset_fractions[0]
-                if self.config.transverse_offset_fractions
-                else 0.0
-            )
-            timestep = self.config.timestep
-            steps = self.config.steps
-            wall_z = self.config.wall_z
-
-            # Map parameters
-            for param_name, value in params_dict.items():
-                if param_name == "aperture_radius":
-                    aperture = value
-                elif param_name == "initial_energy_gev":
-                    energy = value
-                elif param_name == "start_z":
-                    start_z = value
-                elif param_name == "transverse_offset":
-                    offset_frac = value
-                elif param_name == "timestep":
-                    timestep = value
-                elif param_name == "wall_z":
-                    wall_z = value
-
-            # Calculate transverse offset in mm
-            # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
-            # For BUNCH_TO_BUNCH: absolute distance in mm
-            sim_type_str = self.config.simulation_type
-            if sim_type_str == "BUNCH_TO_BUNCH":
-                transv_offset = offset_frac  # Direct mm value for bunch-to-bunch
-            else:
-                transv_offset = offset_frac * aperture  # Fraction for conducting wall
-
-            # Get driver particle parameters if BUNCH_TO_BUNCH
-            driver_params_dict = None
-            if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-                driver_params_dict = {
-                    "m_particle": self.config.driver_m_particle,
-                    "charge_sign": self.config.driver_charge_sign,
-                    "pcount": self.config.driver_pcount,
-                    "transv_mom": self.config.driver_transv_mom,
-                    "transv_dist": self.config.driver_transv_dist,
-                    "starting_distance": self.config.driver_starting_distance,
-                    "starting_Pz": self.config.driver_starting_Pz,
-                    "stripped_ions": self.config.driver_stripped_ions,
-                    "transv_offset_x": self.config.driver_transv_offset_x,
-                    "transv_offset_y": self.config.driver_transv_offset_y,
-                }
-
-            # Temporarily enable trajectory saving
-            save_all_backup = self.config.save_all_trajectories
-            self.config.save_all_trajectories = True
-
-            # Run integration
-            result_data = self._run_single_integration(
-                aperture=aperture,
-                energy_gev=energy,
-                start_z=start_z,
-                transv_offset=transv_offset,
-                timestep=timestep,
-                steps=steps,
-                rider_m_particle=self.config.m_particle,
-                rider_charge_sign=self.config.charge_sign,
-                rider_pcount=int(self.config.pcount),
-                rider_transv_mom=self.config.transv_mom,
-                driver_params=driver_params_dict,
-                wall_z=wall_z,
-                run_num=9999 + rank,  # Special run number for trajectory
-            )
-
-            # Restore trajectory setting
-            self.config.save_all_trajectories = save_all_backup
-
-            if result_data and "trajectory" in result_data:
-                # Use the timestamped directory from _save_optimization_results
-                output_dir = getattr(
-                    self, "_last_optimization_dir", Path(self.config.output_dir)
-                )
-                output_dir.mkdir(parents=True, exist_ok=True)
-
-                # Plot trajectory
-                import matplotlib.pyplot as plt
-
-                traj = result_data["trajectory"]
-                metrics = result_data.get("metrics", {})
-
-                fig, axes = plt.subplots(3, 2, figsize=(14, 14))
-
-                # Extract trajectory arrays
-                z = np.array(traj["z"])
-                t = np.array(traj["t"])
-                r = np.array(traj["r"])
-                gamma_arr = np.array(traj.get("gamma", []))
-                pr = np.array(traj.get("pr", []))
-
-                # Calculate delta_e and percent_delta_e from gamma
-                # Use actual particle rest energy (not hardcoded electron mass)
-                rest_energy_mev = self.config.m_particle * AMU_TO_MEV
-                if len(gamma_arr) > 0:
-                    gamma_initial = gamma_arr[0]
-                    delta_gamma = gamma_arr - gamma_initial
-                    delta_e_mev = delta_gamma * rest_energy_mev
-                    percent_delta_e = (delta_gamma / gamma_initial) * 100.0
-                else:
-                    delta_e_mev = np.zeros_like(z)
-                    percent_delta_e = np.zeros_like(z)
-
-                # Row 1, Col 1: z vs t
-                axes[0, 0].plot(t, z, "b-", linewidth=1.5)
-                axes[0, 0].set_xlabel("Time (ns)", fontsize=10)
-                axes[0, 0].set_ylabel("z (mm)", fontsize=10)
-                axes[0, 0].set_title(
-                    "Longitudinal Position", fontsize=11, fontweight="bold"
-                )
-                axes[0, 0].grid(True, alpha=0.3)
-
-                # Row 1, Col 2: r vs z
-                axes[0, 1].plot(z, r * 1e3, "r-", linewidth=1.5)
-                axes[0, 1].set_xlabel("z (mm)", fontsize=10)
-                axes[0, 1].set_ylabel("r (μm)", fontsize=10)
-                axes[0, 1].set_title(
-                    "Transverse Position (Radial)", fontsize=11, fontweight="bold"
-                )
-                axes[0, 1].grid(True, alpha=0.3)
-
-                # Row 2, Col 1: gamma vs z (with adaptive scaling)
-                if len(gamma_arr) > 0:
-                    axes[1, 0].plot(z, gamma_arr, "g-", linewidth=1.5)
-                    axes[1, 0].set_xlabel("z (mm)", fontsize=10)
-                    axes[1, 0].set_ylabel("γ", fontsize=10)
-                    axes[1, 0].set_title(
-                        "Lorentz Factor", fontsize=11, fontweight="bold"
-                    )
-                    axes[1, 0].grid(True, alpha=0.3)
-                    # Auto-scale y-axis to show variations
-                    gamma_mean = np.mean(gamma_arr)
-                    gamma_range = np.max(gamma_arr) - np.min(gamma_arr)
-                    if gamma_range > 0:
-                        margin = max(gamma_range * 0.1, gamma_mean * 0.001)
-                        axes[1, 0].set_ylim(
-                            [np.min(gamma_arr) - margin, np.max(gamma_arr) + margin]
-                        )
-
-                # Row 2, Col 2: Delta E (MeV) vs z
-                axes[1, 1].plot(z, delta_e_mev, "orange", linewidth=1.5)
-                axes[1, 1].set_xlabel("z (mm)", fontsize=10)
-                axes[1, 1].set_ylabel("ΔE (MeV)", fontsize=10)
-                axes[1, 1].set_title("Energy Change", fontsize=11, fontweight="bold")
-                axes[1, 1].grid(True, alpha=0.3)
-                axes[1, 1].axhline(
-                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
-                )
-
-                # Row 3, Col 1: Percent Delta E vs z
-                axes[2, 0].plot(z, percent_delta_e, "purple", linewidth=1.5)
-                axes[2, 0].set_xlabel("z (mm)", fontsize=10)
-                axes[2, 0].set_ylabel("ΔE/E (%)", fontsize=10)
-                axes[2, 0].set_title(
-                    "Percent Energy Change", fontsize=11, fontweight="bold"
-                )
-                axes[2, 0].grid(True, alpha=0.3)
-                axes[2, 0].axhline(
-                    y=0, color="k", linestyle="--", linewidth=0.5, alpha=0.5
-                )
-
-                # Row 3, Col 2: pr vs z
-                if len(pr) > 0:
-                    axes[2, 1].plot(z, pr, "m-", linewidth=1.5)
-                    axes[2, 1].set_xlabel("z (mm)", fontsize=10)
-                    axes[2, 1].set_ylabel("pr (amu·mm/ns)", fontsize=10)
-                    axes[2, 1].set_title(
-                        "Transverse Momentum (Radial)", fontsize=11, fontweight="bold"
-                    )
-                    axes[2, 1].grid(True, alpha=0.3)
-
-                # Create title with rank, fitness, and key metrics
-                rank_str = f"Rank #{rank}" if rank > 1 else "Best"
-                delta_e_final = delta_e_mev[-1] if len(delta_e_mev) > 0 else 0
-                percent_final = percent_delta_e[-1] if len(percent_delta_e) > 0 else 0
-                title = f"{rank_str} Trajectory (fitness={fitness:.6e})\n"
-                title += f"ΔE={delta_e_final:.6f} MeV, ΔE/E={percent_final:.6f}%"
-                plt.suptitle(title, fontsize=12, fontweight="bold")
-                plt.tight_layout()
-
-                # Save with rank in filename
-                if rank == 1:
-                    traj_plot = output_dir / "trajectory_rank1_best.png"
-                    traj_data = output_dir / "trajectory_rank1_best.npz"
-                else:
-                    traj_plot = output_dir / f"trajectory_rank{rank}.png"
-                    traj_data = output_dir / f"trajectory_rank{rank}.npz"
-
-                plt.savefig(traj_plot, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-
-                self._log_result(
-                    f"  Rank #{rank} trajectory plot saved to: {traj_plot}"
-                )
-
-                # Also save trajectory data as numpy archive
-                np.savez(traj_data, **traj)
-                self._log_result(
-                    f"  Rank #{rank} trajectory data saved to: {traj_data}"
-                )
-
-            else:
-                self._log_result(
-                    f"[WARNING] Could not generate rank #{rank} trajectory (integration failed)"
-                )
-                return None
-
-            # Return trajectory data for comparison plot
-            return result_data.get("trajectory")
-
-        except Exception as e:
-            import traceback
-
-            self._log_result(f"[WARNING] Failed to save trajectory: {e}")
-            self._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
-            return None
-
-    def _generate_trajectory_comparison_plot(self, trajectory_data_list):
-        """Generate comparison plot for top trajectories via helper."""
-        return generate_trajectory_comparison_plot(self, trajectory_data_list)
-
-    def _save_partial_optimization_results(
-        self, all_evaluations, param_names, status="PARTIAL"
-    ):
-        """Save partial optimization results when cancelled or failed.
-
-        Parameters
-        ----------
-        all_evaluations : list
-            List of completed evaluations
-        param_names : list
-            Parameter names
-        status : str
-            Status string ("CANCELLED", "FAILED", "PARTIAL")
-        """
-        import json
-        from datetime import datetime
-        from pathlib import Path
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # Create results directory
-        if self.config.mode == "optimization":
-            method = self.config.optimization_method
-            output_dir = (
-                Path(self.config.output_dir)
-                / "optimizations"
-                / f"{timestamp}_{method}_{status}"
-            )
-        else:
-            output_dir = Path(self.config.output_dir) / f"{timestamp}_{status}"
-
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save evaluations to CSV
-        csv_path = output_dir / "all_evaluations.csv"
-        successful_evals = [
-            e
-            for e in all_evaluations
-            if not e.get("failed", False) and not e.get("halted_early", False)
-        ]
-        halted_evals = [e for e in all_evaluations if e.get("halted_early", False)]
-
-        if len(all_evaluations) > 0:
-            import csv
-
-            with open(csv_path, "w", newline="") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=["evaluation"]
-                    + param_names
-                    + ["objective_value", "failed", "halted_early", "halt_reason"],
-                )
-                writer.writeheader()
-                for e in all_evaluations:
-                    row = {
-                        "evaluation": e["evaluation"],
-                        "failed": e.get("failed", False),
-                        "halted_early": e.get("halted_early", False),
-                        "halt_reason": e.get("halt_reason", ""),
-                    }
-                    row.update(e["parameters"])
-                    row["objective_value"] = e.get("objective_value", float("nan"))
-                    writer.writerow(row)
-            self._log_result(f"[OK] Partial results saved to: {csv_path}")
-
-        # Save JSON summary
-        summary = {
-            "status": status,
-            "timestamp": timestamp,
-            "total_evaluations": len(all_evaluations),
-            "successful_evaluations": len(successful_evals),
-            "halted_evaluations": len(halted_evals),
-            "failed_evaluations": len(all_evaluations)
-            - len(successful_evals)
-            - len(halted_evals),
-            "parameters": param_names,
-            "objective": self.config.objective,
-        }
-
-        if len(successful_evals) > 0:
-            # Find best (filter out inf values)
-            maximize = "max" in self.config.objective.lower()
-            finite_evals = [
-                e
-                for e in successful_evals
-                if np.isfinite(e.get("objective_value", np.inf))
-            ]
-
-            if len(finite_evals) > 0:
-                if maximize:
-                    best = max(
-                        finite_evals,
-                        key=lambda x: x.get("objective_value", -float("inf")),
-                    )
-                else:
-                    best = min(
-                        finite_evals,
-                        key=lambda x: x.get("objective_value", float("inf")),
-                    )
-                summary["best_parameters"] = best["parameters"]
-                summary["best_value"] = best["objective_value"]
-            else:
-                summary["note"] = "No finite objective values found"
-
-        summary_path = output_dir / "partial_summary.json"
-        with open(summary_path, "w") as f:
-            json.dump(summary, f, indent=2)
-        self._log_result(f"[OK] Summary saved to: {summary_path}")
-
-        # Move log file to results directory
-        if self._log_file_path is not None and self._log_file_path.exists():
-            import shutil
-
-            dest_log = output_dir / self._log_file_path.name
-            shutil.copy2(self._log_file_path, dest_log)
-            self._log_result(f"[OK] Log file saved to: {dest_log}")
-
     def _run_sweep_background(self, is_finetune=False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
 
@@ -8404,98 +7594,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             plt.close("all")
             # Update UI back to ready state
             self.after(100, self._reset_ui_state)
-
-    def _generate_parameter_grids(self):
-        """Generate all parameter grids including sweepable parameters."""
-        grids = {}
-
-        sim_type = self.config.simulation_type
-
-        # Aperture - only for CONDUCTING_WALL/SWITCHING_WALL modes
-        if sim_type != SimulationType.BUNCH_TO_BUNCH:
-            grids["aperture"] = self._generate_range(
-                self.config.aperture_range[0],
-                self.config.aperture_range[1],
-                self.config.aperture_points,
-                self.config.aperture_log_scale,
-            )
-
-        # Energy parameter (named differently for BUNCH_TO_BUNCH)
-        energy_key = (
-            "initial_energy_gev"
-            if sim_type == SimulationType.BUNCH_TO_BUNCH
-            else "energy"
-        )
-        grids[energy_key] = self._generate_range(
-            self.config.energy_range[0],
-            self.config.energy_range[1],
-            self.config.energy_points,
-            self.config.energy_log_scale,
-        )
-
-        # Transverse offset is ALWAYS a single (x,y) configuration, NOT a sweep parameter
-        # For both CONDUCTING_WALL and BUNCH_TO_BUNCH:
-        # - If config has [0.0, 0.0], this represents a single (x=0, y=0) configuration
-        # - If config has [0.1], this represents (x=0.1, y=0) configuration
-        # - We use only the first value as the scalar offset for this sweep configuration
-        if len(self.config.transverse_offset_fractions) > 0:
-            grids["transverse_offset_fraction"] = [
-                self.config.transverse_offset_fractions[0]
-            ]
-        else:
-            # No offset provided, default to 0.0
-            grids["transverse_offset_fraction"] = [0.0]
-
-        grids["start_z"] = self.config.starting_z_positions
-
-        # Wall z (optional sweep)
-        if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
-            grids["wall_z"] = self._generate_range(
-                self.config.wall_z_range[0],
-                self.config.wall_z_range[1],
-                self.config.wall_z_points,
-                False,  # wall_z doesn't need log scale
-            )
-
-        # Optional sweeps for rider and driver particle parameters
-        for param_name, controls in self.sweep_params.items():
-            # Skip driver params if not BUNCH_TO_BUNCH
-            if (
-                param_name.startswith("driver_")
-                and sim_type != SimulationType.BUNCH_TO_BUNCH
-            ):
-                continue
-
-            if controls["sweep_var"].get():
-                min_val = float(controls["min_var"].get())
-                max_val = float(controls["max_var"].get())
-                points = int(controls["points_var"].get())
-                log_scale = controls["log_var"].get()
-
-                # Energy is always a positive magnitude; direction is
-                # controlled by the driver_direction radio buttons.
-                if param_name == "driver_energy_gev":
-                    min_val = abs(min_val)
-                    max_val = abs(max_val)
-                    if min_val > max_val:
-                        min_val, max_val = max_val, min_val
-
-                grids[param_name] = self._generate_range(
-                    min_val, max_val, points, log_scale
-                )
-
-        return grids
-
-    def _generate_range(
-        self, min_val: float, max_val: float, points: int, log_scale: bool
-    ) -> List[float]:
-        """Generate parameter range (linear or log scale)."""
-        if points == 1:
-            return [(min_val + max_val) / 2.0]
-        if log_scale:
-            return np.logspace(np.log10(min_val), np.log10(max_val), points).tolist()
-        else:
-            return np.linspace(min_val, max_val, points).tolist()
 
     def _run_single_integration(
         self,
@@ -9533,73 +8631,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         """Update only the progress label text (thread-safe)."""
         self.after(0, lambda: self.progress_label.config(text=text))
 
-    def _export_evaluations_csv(self, all_evaluations, param_names, output_dir):
-        """Export all evaluations to CSV file.
-
-        Parameters
-        ----------
-        all_evaluations : list
-            List of evaluation records
-        param_names : list
-            List of parameter names
-        output_dir : Path
-            Output directory
-        """
-        import csv
-        from pathlib import Path
-
-        try:
-            output_path = Path(output_dir)
-            csv_file = output_path / "all_evaluations.csv"
-
-            with open(csv_file, "w", newline="", encoding="utf-8") as f:
-                # Determine all possible metric names from evaluations
-                metric_names = set()
-                for eval_rec in all_evaluations:
-                    if not eval_rec.get("failed", True) and "metrics" in eval_rec:
-                        metric_names.update(eval_rec["metrics"].keys())
-
-                metric_names = sorted(metric_names)
-
-                # Create header
-                header = (
-                    ["evaluation", "failed", "halted_early", "halt_reason"]
-                    + param_names
-                    + metric_names
-                    + ["objective_value", "fitness"]
-                )
-                writer = csv.DictWriter(f, fieldnames=header)
-                writer.writeheader()
-
-                # Write rows
-                for eval_rec in all_evaluations:
-                    row = {
-                        "evaluation": eval_rec["evaluation"],
-                        "failed": eval_rec.get("failed", True),
-                        "halted_early": eval_rec.get("halted_early", False),
-                        "halt_reason": eval_rec.get("halt_reason", ""),
-                        "objective_value": eval_rec.get("objective_value", ""),
-                        "fitness": eval_rec.get("fitness", ""),
-                    }
-
-                    # Add parameters
-                    for param_name in param_names:
-                        row[param_name] = eval_rec.get("parameters", {}).get(
-                            param_name, ""
-                        )
-
-                    # Add metrics
-                    if not eval_rec.get("failed", True) and "metrics" in eval_rec:
-                        for metric_name in metric_names:
-                            row[metric_name] = eval_rec["metrics"].get(metric_name, "")
-
-                    writer.writerow(row)
-
-            self._log_result(f"Evaluation CSV exported to: {csv_file}")
-
-        except Exception as e:
-            self._log_result(f"[WARNING] Failed to export evaluations CSV: {e}")
-
     def _view_npz_trajectories(self, results_dir):
         """View NPZ trajectory files from an optimization run.
 
@@ -9843,51 +8874,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "Plotting Error",
                 f"Failed to plot NPZ trajectories:\n{e}\n\n{traceback.format_exc()}",
             )
-
-    def _save_evaluation_trajectory(self, eval_num, trajectory_data, output_dir):
-        """Save a single evaluation trajectory to NPZ file.
-
-        Parameters
-        ----------
-        eval_num : int
-            Evaluation number
-        trajectory_data : dict
-            Dictionary containing trajectory arrays (z, r, pz, pr, t, gamma)
-        output_dir : Path
-            Directory to save the trajectory file
-
-        Returns
-        -------
-        str or None
-            Path to saved file, or None if save failed
-        """
-        try:
-            from pathlib import Path
-
-            import numpy as np
-
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-
-            trajectory_file = output_path / f"evaluation_{eval_num:04d}_trajectory.npz"
-
-            # Convert lists to numpy arrays and save
-            np.savez(
-                trajectory_file,
-                z=np.array(trajectory_data["z"]),
-                r=np.array(trajectory_data["r"]),
-                pz=np.array(trajectory_data["pz"]),
-                pr=np.array(trajectory_data["pr"]),
-                t=np.array(trajectory_data["t"]),
-                gamma=np.array(trajectory_data["gamma"]),
-            )
-
-            return str(trajectory_file)
-        except Exception as e:
-            self._log_result(
-                f"  [WARNING] Failed to save evaluation {eval_num} trajectory: {e}"
-            )
-            return None
 
     def _log_result(self, message: str):
         """Log message to main GUI logs window (thread-safe)."""

@@ -10,9 +10,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
-
-# Physical constants for energy-momentum conversion
-AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 from core.debug_logger import set_logging_context  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
@@ -29,43 +26,11 @@ from optimization.config import (  # type: ignore[import]
     calculate_auto_steps,
     calculate_auto_timestep,
 )
-
-
-def _calculate_starting_pz_from_energy(
-    energy_gev: float, mass_amu: float, negative: bool = False
-) -> float:
-    """Calculate starting Pz from kinetic energy and mass.
-
-    Uses the kinetic-energy convention (γ = KE / E_rest + 1) which matches
-    the convention used by ``create_bunch_from_energy`` throughout the
-    codebase.
-
-    Parameters
-    ----------
-    energy_gev : float
-        Kinetic energy in GeV.  Negative values are treated as their
-        absolute value (energy is always positive; use the ``negative``
-        flag for direction).
-    mass_amu : float
-        Particle mass in amu
-    negative : bool, optional
-        If True, return negative Pz (particle moving in -z direction,
-        e.g. driver).  Default: False.
-
-    Returns
-    -------
-    float
-        Starting Pz in amu·mm/ns (sign determined by ``negative`` flag)
-    """
-    energy_gev = abs(energy_gev)  # energy is always a positive magnitude
-    rest_energy_mev = mass_amu * AMU_TO_MEV
-    # Kinetic energy convention: γ = KE / E_rest + 1
-    gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-    if gamma < 1.0:
-        gamma = 1.0
-    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
-    pz = gamma * mass_amu * C_MMNS * beta
-    return -pz if negative else pz
+from optimization.sweep_helpers import (
+    build_parameter_grids,
+    calculate_starting_pz_from_energy,
+    generate_parameter_range,
+)
 
 
 class OptimizationRunMixin:
@@ -515,7 +480,7 @@ class OptimizationRunMixin:
                         elif param_name == "driver_energy_gev":
                             driver_energy_gev = x[i]
                             # Convert energy to Pz for internal use
-                            driver_starting_Pz = _calculate_starting_pz_from_energy(
+                            driver_starting_Pz = calculate_starting_pz_from_energy(
                                 driver_energy_gev, driver_m_particle
                             )
                         elif param_name == "driver_starting_Pz":
@@ -1403,7 +1368,7 @@ class OptimizationRunMixin:
                         driver_energy_gev = (
                             energy  # 'energy' is rider energy from params_dict
                         )
-                        driver_pz = _calculate_starting_pz_from_energy(
+                        driver_pz = calculate_starting_pz_from_energy(
                             driver_energy_gev,
                             driver_m,
                             negative=True,
@@ -1416,7 +1381,7 @@ class OptimizationRunMixin:
                         # Convert driver_energy_gev to starting_Pz if present,
                         # otherwise fall back to legacy driver_starting_Pz key.
                         # Driver travels in -z → negative Pz.
-                        driver_pz = _calculate_starting_pz_from_energy(
+                        driver_pz = calculate_starting_pz_from_energy(
                             params_dict["driver_energy_gev"],
                             driver_m,
                             negative=True,
@@ -2015,89 +1980,13 @@ class OptimizationRunMixin:
 
     def _generate_parameter_grids(self):
         """Generate all parameter grids including sweepable parameters."""
-        grids = {}
-
-        # Aperture: only for non-BUNCH_TO_BUNCH modes
-        if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
-            grids["aperture"] = self._generate_range(
-                self.config.aperture_range[0],
-                self.config.aperture_range[1],
-                self.config.aperture_points,
-                self.config.aperture_log_scale,
-            )
-
-        # Energy: always swept
-        grids["energy"] = self._generate_range(
-            self.config.energy_range[0],
-            self.config.energy_range[1],
-            self.config.energy_points,
-            self.config.energy_log_scale,
-        )
-
-        # Transverse offset is ALWAYS a single (x,y) configuration, NOT a sweep parameter
-        # For both CONDUCTING_WALL and BUNCH_TO_BUNCH:
-        # - If config has [0.0, 0.0], this represents a single (x=0, y=0) configuration
-        # - If config has [0.1], this represents (x=0.1, y=0) configuration
-        # - We use only the first value as the scalar offset for this sweep configuration
-        if len(self.config.transverse_offset_fractions) > 0:
-            grids["transverse_offset_fraction"] = [
-                self.config.transverse_offset_fractions[0]
-            ]
-        else:
-            # No offset provided, default to 0.0
-            grids["transverse_offset_fraction"] = [0.0]
-
-        # Starting z positions: always swept if multiple values
-        grids["start_z"] = self.config.starting_z_positions
-
-        # Wall z (optional sweep)
-        if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
-            grids["wall_z"] = self._generate_range(
-                self.config.wall_z_range[0],
-                self.config.wall_z_range[1],
-                self.config.wall_z_points,
-                False,  # wall_z doesn't need log scale
-            )
-
-        # Optional sweeps for rider and driver particle parameters
-        sim_type = self.config.simulation_type
-        for param_name, controls in self.sweep_params.items():
-            # Skip driver params if not BUNCH_TO_BUNCH
-            if (
-                param_name.startswith("driver_")
-                and sim_type != SimulationType.BUNCH_TO_BUNCH
-            ):
-                continue
-
-            if controls["sweep_var"].get():
-                min_val = float(controls["min_var"].get())
-                max_val = float(controls["max_var"].get())
-                points = int(controls["points_var"].get())
-                log_scale = controls["log_var"].get()
-
-                # Energy is always a positive magnitude; accept negative
-                # input gracefully (sign encodes Pz direction, not energy)
-                if param_name == "driver_energy_gev":
-                    min_val = abs(min_val)
-                    max_val = abs(max_val)
-                    if min_val > max_val:
-                        min_val, max_val = max_val, min_val
-
-                grids[param_name] = self._generate_range(
-                    min_val, max_val, points, log_scale
-                )
-
-        return grids
+        return build_parameter_grids(self.config, self.sweep_params)
 
     def _generate_range(
         self, min_val: float, max_val: float, points: int, log_scale: bool
     ) -> List[float]:
         """Generate parameter range (linear or log scale)."""
-        if points == 1:
-            return [(min_val + max_val) / 2.0]
-        if log_scale:
-            return np.logspace(np.log10(min_val), np.log10(max_val), points).tolist()
-        return np.linspace(min_val, max_val, points).tolist()
+        return generate_parameter_range(min_val, max_val, points, log_scale)
 
     def _run_single_integration(
         self,
