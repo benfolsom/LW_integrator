@@ -74,6 +74,10 @@ class TestOptimizationPluginIntegration:
 
     def test_plugin_inherits_run_helpers_from_run_mixin(self):
         assert (
+            OptimizationPlugin._run_optimization_background
+            is OptimizationRunMixin._run_optimization_background
+        )
+        assert (
             OptimizationPlugin._run_sweep_background
             is OptimizationRunMixin._run_sweep_background
         )

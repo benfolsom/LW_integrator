@@ -118,27 +118,10 @@ class OptimizationRunMixin:
             param_names = []
             param_bounds = []
 
-            # Debug logging for aperture decision
-            self._log_result("[DEBUG] Optimization parameter setup:")
-            self._log_result(f"  simulation_type = {self.config.simulation_type}")
-            self._log_result(f"  aperture_points = {self.config.aperture_points}")
-            self._log_result(
-                f"  Is BUNCH_TO_BUNCH? {self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH}"
-            )
-
-            # Aperture (not used in BUNCH_TO_BUNCH mode)
-            if (
-                self.config.aperture_points > 1
-                and self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH
-            ):
+            # Aperture
+            if self.config.aperture_points > 1:
                 param_names.append("aperture_radius")
                 param_bounds.append(self.config.aperture_range)
-                self._log_result(f"  → Aperture INCLUDED in optimization")
-                self._log_result(
-                    f"    Added: aperture_radius, range={self.config.aperture_range}"
-                )
-            else:
-                self._log_result(f"  → Aperture EXCLUDED from optimization")
 
             # Energy
             if self.config.energy_points > 1:
@@ -305,13 +288,14 @@ class OptimizationRunMixin:
                 param_names.append("driver_starting_distance")
                 param_bounds.append(self.config.driver_starting_distance_range)
 
-            # Driver starting Pz - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            # Driver energy - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
+            # Note: Internally uses Pz, but optimizer varies energy for user convenience
             if (
-                self.config.driver_starting_Pz_range is not None
-                and self.config.driver_starting_Pz_points > 1
+                self.config.driver_energy_range is not None
+                and self.config.driver_energy_points > 1
             ):
-                param_names.append("driver_starting_Pz")
-                param_bounds.append(self.config.driver_starting_Pz_range)
+                param_names.append("driver_energy_gev")
+                param_bounds.append(self.config.driver_energy_range)
 
             if len(param_names) == 0:
                 self._log_result(
@@ -389,12 +373,7 @@ class OptimizationRunMixin:
 
                 try:
                     # Map parameters
-                    # For BUNCH_TO_BUNCH, aperture is not used (set dummy value)
-                    aperture = (
-                        1.0e-4
-                        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
-                        else self.config.aperture_range[0]
-                    )
+                    aperture = self.config.aperture_range[0]  # default
                     energy = self.config.energy_range[0]  # default
                     start_z = (
                         self.config.starting_z_positions[0]
@@ -431,6 +410,7 @@ class OptimizationRunMixin:
                         self.config.driver_starting_distance
                     )  # default
                     driver_starting_Pz = self.config.driver_starting_Pz  # default
+                    driver_energy_gev = self.config.driver_energy_gev  # default
 
                     for i, param_name in enumerate(param_names):
                         if param_name == "aperture_radius":
@@ -477,18 +457,31 @@ class OptimizationRunMixin:
                             driver_starting_distance = x[i]
                         elif param_name == "driver_energy_gev":
                             driver_energy_gev = x[i]
-                            # Convert energy to Pz for internal use
+                            # Convert energy to Pz using configured direction
+                            _drv_neg = (
+                                getattr(self.config, "driver_direction", "-z") == "-z"
+                            )
                             driver_starting_Pz = calculate_starting_pz_from_energy(
-                                driver_energy_gev, driver_m_particle
+                                driver_energy_gev, driver_m_particle, negative=_drv_neg
                             )
                         elif param_name == "driver_starting_Pz":
                             # Legacy support if old configs still use Pz
                             driver_starting_Pz = x[i]
 
-                    # Calculate transverse offset in mm from fraction
-                    transv_offset = offset_frac * aperture
+                    # Calculate transverse offset in mm
+                    # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
+                    # For BUNCH_TO_BUNCH: absolute distance in mm
+                    sim_type_str = self.config.simulation_type
+                    if sim_type_str == "BUNCH_TO_BUNCH":
+                        transv_offset = (
+                            offset_frac  # Direct mm value for bunch-to-bunch
+                        )
+                    else:
+                        transv_offset = (
+                            offset_frac * aperture
+                        )  # Fraction for conducting wall
 
-                    # Build driver_params if BUNCH_TO_BUNCH mode
+                    # Get driver particle parameters if BUNCH_TO_BUNCH (needed before timestep calc)
                     driver_params_dict = None
                     if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
                         driver_params_dict = {
@@ -500,15 +493,25 @@ class OptimizationRunMixin:
                             "starting_distance": driver_starting_distance,
                             "starting_Pz": driver_starting_Pz,
                             "stripped_ions": driver_stripped_ions,
+                            "transv_offset_x": self.config.driver_transv_offset_x,
+                            "transv_offset_y": self.config.driver_transv_offset_y,
                         }
 
                     # Calculate timestep if using auto_distance strategy
                     if self.config.timestep_strategy == "auto_distance":
+                        # Get driver starting position for BUNCH_TO_BUNCH mode
+                        driver_start_z = 1000.0  # Default driver starting position
+                        if driver_params_dict is not None:
+                            driver_start_z = driver_params_dict.get(
+                                "starting_distance", 1000.0
+                            )
+
                         timestep = self.config.calculate_timestep_for_energy(
                             energy,
                             self.config.m_particle,
                             wall_z=wall_z,
                             start_z=start_z,
+                            driver_start_z=driver_start_z,
                         )
                         steps = self.config.steps
 
@@ -543,7 +546,7 @@ class OptimizationRunMixin:
                                     run_num=eval_num,
                                     cancel_flag=cancel_flag,
                                 )
-                            except Exception as e:  # pragma: no cover - passthrough
+                            except Exception as e:
                                 error_container[0] = e
 
                         thread = threading.Thread(target=run_integration)
@@ -631,59 +634,6 @@ class OptimizationRunMixin:
                     metrics = result["metrics"]
                     value = metrics.get(metric_name, np.nan)
 
-                    # Hard rejection for unphysical energy gains > 100%
-                    if "max_percent_energy_gain" in metrics:
-                        pct_gain = metrics["max_percent_energy_gain"]
-                        if pct_gain > 100.0:
-                            self._log_result(
-                                f"[REJECT] Evaluation {eval_num} DISQUALIFIED: "
-                                f"energy gain {pct_gain:.1f}% > 100% (unphysical)"
-                            )
-                            # Store rejected evaluation
-                            eval_record = {
-                                "evaluation": eval_num,
-                                "parameters": dict(zip(param_names, x)),
-                                "failed": True,
-                                "halted_early": False,
-                                "reject_reason": f"Unphysical energy gain: {pct_gain:.1f}% > 100%",
-                                "objective_value": float("inf"),
-                                "metrics": result.get("metrics", {}),
-                            }
-                            all_evaluations.append(eval_record)
-                            return np.inf
-
-                        # Penalize negative energy gains (deceleration)
-                        # Make them worse than minimal positive gains but better than failures
-                        if pct_gain < 0.0:
-                            # Map negative gains to large positive penalty values
-                            # Worse deceleration → larger penalty, but still finite (unlike blowups)
-                            # Scale: -0.001% → penalty ~1.0, -1.0% → penalty ~1000, -10% → penalty ~10000
-                            penalty_magnitude = (
-                                abs(pct_gain) * 1000.0
-                            )  # Scale to reasonable range
-
-                            self._log_result(
-                                f"[PENALTY] Evaluation {eval_num}: Negative energy gain "
-                                f"({pct_gain:.6f}%) → penalty {penalty_magnitude:.3e}"
-                            )
-
-                            # Store evaluation with large penalty
-                            eval_record = {
-                                "evaluation": eval_num,
-                                "parameters": dict(zip(param_names, x)),
-                                "failed": False,
-                                "halted_early": False,
-                                "negative_gain": True,
-                                "objective_value": penalty_magnitude,  # Large positive = bad for minimization
-                                "raw_objective_value": pct_gain,
-                                "metrics": result.get("metrics", {}),
-                            }
-                            all_evaluations.append(eval_record)
-
-                            # Return penalty that's worse than any positive gain but better than inf
-                            # For maximization, we'll return large positive value (gets negated later)
-                            return penalty_magnitude
-
                     if np.isnan(value) or np.isinf(value):
                         self._log_result(
                             f"[WARNING] Evaluation {eval_num} returned {'NaN' if np.isnan(value) else 'inf'} for metric '{metric_name}'"
@@ -715,128 +665,16 @@ class OptimizationRunMixin:
                         initial_energy_gev=energy,
                     )
 
-                    # Add stability-based penalty using continuous sliding scale
-                    stability_penalty = 0.0
-                    if "smoothness_metrics" in result:
-                        smoothness = result["smoothness_metrics"]
-                        quality = smoothness.get("quality_summary", "")
-
-                        # Get quantitative metrics for sliding scale
-                        max_oscillation = smoothness.get("oscillation_score", 0.0)
-                        max_trend_residual = smoothness.get(
-                            "trend_smoothness_score", 0.0
-                        )
-
-                        # Compute penalty factor based on continuous scale (0.0 = no penalty, 1.0 = full penalty)
-                        # Oscillation contribution (0.7+ is severe, 0.3-0.7 is concerning, <0.3 is acceptable)
-                        osc_factor = 0.0
-                        if max_oscillation > 0.7:
-                            osc_factor = 1.0  # Severe
-                        elif max_oscillation > 0.3:
-                            # Linear scale from 0.3 (0.0 penalty) to 0.7 (1.0 penalty)
-                            osc_factor = (max_oscillation - 0.3) / 0.4
-
-                        # Trend residual contribution (0.5+ is highly erratic, 0.2-0.5 is concerning, <0.2 is acceptable)
-                        trend_factor = 0.0
-                        if max_trend_residual > 0.5:
-                            trend_factor = 1.0  # Highly erratic
-                        elif max_trend_residual > 0.2:
-                            # Linear scale from 0.2 (0.0 penalty) to 0.5 (1.0 penalty)
-                            trend_factor = (max_trend_residual - 0.2) / 0.3
-
-                        # Combined penalty factor (take worst of the two)
-                        penalty_factor = max(osc_factor, trend_factor)
-
-                        # Apply penalty with scaling: 0% penalty at factor=0, 99% penalty at factor=1
-                        if penalty_factor > 0.0:
-                            # Exponential scaling for more aggressive penalties at higher factors
-                            # penalty_factor^2 gives: 0.25 → 6.25%, 0.5 → 25%, 0.75 → 56%, 1.0 → 99%
-                            scaled_penalty = penalty_factor**2
-                            stability_penalty = value * min(0.99, scaled_penalty)
-
-                            # Log penalty with details
-                            if penalty_factor > 0.8:
-                                self._log_result(
-                                    f"[WARNING] Heavy stability penalty: {stability_penalty:.3e} "
-                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f}, "
-                                    f"factor={penalty_factor:.3f}, quality: {quality})"
-                                )
-                            elif penalty_factor > 0.4:
-                                self._log_result(
-                                    f"[INFO] Moderate stability penalty: {stability_penalty:.3e} "
-                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f}, "
-                                    f"factor={penalty_factor:.3f})"
-                                )
-                            elif penalty_factor > 0.1:
-                                self._log_result(
-                                    f"[INFO] Light stability penalty: {stability_penalty:.3e} "
-                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f})"
-                                )
-                        # penalty_factor = 0 → no penalty (Good quality)
-
-                    # Also add penalty for unphysically high energy gains
-                    energy_gain_penalty = 0.0
-                    if "max_percent_energy_gain" in metrics:
-                        pct_gain = metrics["max_percent_energy_gain"]
-                        if pct_gain > 500.0:  # >500% likely unphysical
-                            # Scale penalty with how extreme the gain is
-                            excess = (pct_gain - 500.0) / 500.0
-                            energy_gain_penalty = (
-                                value * min(0.95, excess * 0.5)
-                                if maximize
-                                else value * min(0.95, excess * 0.5)
-                            )
-                            self._log_result(
-                                f"[WARNING] Unphysical energy gain penalty: {energy_gain_penalty:.3e} "
-                                f"(gain: {pct_gain:.1f}% > 500% threshold)"
-                            )
-
-                    # Add penalty for particle deaths (scales by fraction lost)
-                    particle_death_penalty = 0.0
-                    if "num_particles_dead" in metrics:
-                        num_dead = metrics["num_particles_dead"]
-                        if num_dead > 0:
-                            # Get total particle count from config
-                            total_particles = int(self.config.pcount)
-                            if total_particles > 0:
-                                # Penalty scales 1:1 with fraction lost: 10% lost → 10% penalty
-                                # particle_death_penalty_fraction is a multiplier (default 1.0)
-                                # Examples with default 1.0:
-                                #   10% particles lost → 10% penalty
-                                #   50% particles lost → 50% penalty
-                                #   100% particles lost → 100% penalty
-                                # Set to 0.5 for gentler: 10% lost → 5% penalty
-                                # Set to 2.0 for stricter: 10% lost → 20% penalty
-                                penalty_multiplier = getattr(
-                                    self.config, "particle_death_penalty_fraction", 1.0
-                                )
-                                fraction_lost = num_dead / total_particles
-                                particle_death_penalty = (
-                                    value * fraction_lost * penalty_multiplier
-                                )
-                                self._log_result(
-                                    f"[INFO] Particle death penalty: {particle_death_penalty:.3e} "
-                                    f"({num_dead}/{total_particles} = {fraction_lost * 100:.1f}% lost, "
-                                    f"penalty = {fraction_lost * penalty_multiplier * 100:.1f}% of objective)"
-                                )
-
-                    total_penalty = (
-                        penalty
-                        + stability_penalty
-                        + energy_gain_penalty
-                        + particle_death_penalty
-                    )
                     adjusted_value = value
-                    if total_penalty > 0:
+                    if penalty > 0:
                         if maximize:
-                            adjusted_value = value - total_penalty
+                            adjusted_value = value - penalty
                         else:
-                            adjusted_value = value + total_penalty
-                        if penalty > 0:
-                            self._log_result(
-                                "[INFO] Applied parameter soft penalty of "
-                                f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
-                            )
+                            adjusted_value = value + penalty
+                        self._log_result(
+                            "[INFO] Applied soft penalty of "
+                            f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
+                        )
 
                     # Return value to minimize (negate if maximizing)
                     result_value = -adjusted_value if maximize else adjusted_value
@@ -848,21 +686,11 @@ class OptimizationRunMixin:
                         "objective_value": adjusted_value,
                         "raw_objective_value": value,
                         "soft_penalty": penalty,
-                        "stability_penalty": stability_penalty,
-                        "energy_gain_penalty": energy_gain_penalty,
-                        "particle_death_penalty": particle_death_penalty,
-                        "total_penalty": total_penalty,
                         "fitness": result_value,  # Store fitness (for minimization)
                         "failed": False,
                         "halted_early": False,
                         "metrics": result.get("metrics", {}),
                     }
-
-                    # Store stability quality if available
-                    if "smoothness_metrics" in result:
-                        eval_record["stability_quality"] = result[
-                            "smoothness_metrics"
-                        ].get("quality_summary", "Unknown")
 
                     # Save trajectory if requested and available
                     if self.config.save_all_trajectories and "trajectory" in result:
@@ -896,39 +724,40 @@ class OptimizationRunMixin:
 
                     return np.inf
 
-            if method == "genetic_algorithm":
-
-                def log_convergence_progress(
-                    generation,
-                    best_value,
-                    improvement,
-                    tolerance,
-                    patience_remaining,
-                    converged,
-                ):
-                    """Log convergence progress after each generation."""
-                    # Filter out inf values in logging
-                    if np.isfinite(best_value):
+            # Define progress callback for convergence monitoring (used by all methods)
+            def log_convergence_progress(
+                generation,
+                best_value,
+                improvement,
+                tolerance,
+                patience_remaining,
+                converged,
+            ):
+                """Log convergence progress after each generation."""
+                # Filter out inf values in logging
+                if np.isfinite(best_value):
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                else:
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                if generation >= self.config.optimization_convergence_patience:
+                    if converged:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
+                            f"< tolerance ({tolerance:.6e})"
                         )
                     else:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Progress: {patience_remaining} generations "
+                            f"remaining before early stop check"
                         )
-                    if generation >= self.config.optimization_convergence_patience:
-                        if converged:
-                            self._log_result(
-                                f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
-                                f"< tolerance ({tolerance:.6e})"
-                            )
-                        else:
-                            self._log_result(
-                                f"[CONVERGENCE] Progress: {patience_remaining} generations "
-                                f"remaining before early stop check"
-                            )
+
+            if method == "genetic_algorithm":
 
                 result = genetic_algorithm(
                     config_template=config_template,
@@ -957,19 +786,6 @@ class OptimizationRunMixin:
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
                     popsize=self.config.optimization_population_size,
-                    objective_function=evaluate_params,
-                    progress_callback=log_convergence_progress,
-                )
-
-            elif method == "nelder_mead":
-                result = optimize_parameters(
-                    config_template=config_template,
-                    parameter_names=param_names,
-                    parameter_bounds=param_bounds,
-                    metric_name=metric_name,
-                    method="nelder_mead",
-                    maximize=maximize,
-                    maxiter=self.config.optimization_maxiter,
                     objective_function=evaluate_params,
                     progress_callback=log_convergence_progress,
                 )
