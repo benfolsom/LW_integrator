@@ -34,6 +34,7 @@ from optimization.plugin_results_helpers import (
     collect_summary_plot_data,
     convert_legacy_trajectory_data,
     parse_results_payload,
+    summarize_optimization_evaluation_counts,
     summarize_result_row,
     summarize_optimization_top_results,
     summarize_saved_results,
@@ -759,6 +760,9 @@ class TestPluginResultsHelpers:
         assert optimization_summary["result_type"] == "optimization"
         assert optimization_summary["evaluation_count"] == 3
         assert optimization_summary["finite_evaluation_count"] == 1
+        assert optimization_summary["successful_evaluation_count"] == 2
+        assert optimization_summary["halted_evaluation_count"] == 0
+        assert optimization_summary["failed_evaluation_count"] == 0
         assert optimization_summary["best_delta_e_mev"] == pytest.approx(4.0)
         assert optimization_summary["best_parameters"] == {"initial_energy_gev": 6.0}
         assert optimization_summary["top_results"][0]["rank"] == 1
@@ -827,6 +831,23 @@ class TestPluginResultsHelpers:
                 },
             },
         ]
+
+    def test_summarize_optimization_evaluation_counts_tracks_outcomes(self):
+        counts = summarize_optimization_evaluation_counts(
+            {
+                "all_evaluations": [
+                    {"evaluation": 1, "failed": False, "halted_early": False},
+                    {"evaluation": 2, "failed": False, "halted_early": True},
+                    {"evaluation": 3, "failed": True, "halted_early": False},
+                ]
+            }
+        )
+
+        assert counts == {
+            "successful_evaluation_count": 1,
+            "halted_evaluation_count": 1,
+            "failed_evaluation_count": 1,
+        }
 
 
 class TestOptimizationResultsMixin:

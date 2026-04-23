@@ -434,6 +434,9 @@ class TestCliMain:
         assert payload["optimization_method"] == "genetic_algorithm"
         assert payload["evaluation_count"] == 2
         assert payload["finite_evaluation_count"] == 1
+        assert payload["successful_evaluation_count"] == 2
+        assert payload["halted_evaluation_count"] == 0
+        assert payload["failed_evaluation_count"] == 0
         assert payload["best_delta_e_mev"] == pytest.approx(3.0)
         assert payload["best_parameters"] == {"initial_energy_gev": 5.0}
         assert payload["top_results"] == [
@@ -477,6 +480,7 @@ class TestCliMain:
         output = capsys.readouterr().out
         assert result == 0
         assert "Top Results:" in output
+        assert "Successful Evaluation Count: 1" in output
         assert "rank=1, metric=2.5, delta_e_mev=4, percent_gain=1.5" in output
 
     def test_main_returns_2_for_unknown_results_file_format(

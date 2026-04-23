@@ -254,6 +254,7 @@ def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
         for evaluation in all_evaluations
         if np.isfinite(evaluation.get("objective_value", float("inf")))
     ]
+    evaluation_counts = summarize_optimization_evaluation_counts(payload)
     top_results = summarize_optimization_top_results(payload)
     summary = {
         "result_type": "optimization",
@@ -267,6 +268,7 @@ def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "success": payload.get("success"),
         "top_results": top_results,
+        **evaluation_counts,
     }
     if payload.get("best_parameters") is not None:
         summary["best_parameters"] = payload["best_parameters"]
@@ -276,6 +278,24 @@ def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
         if "rider_delta_e_mev" in top_metrics:
             summary["best_delta_e_mev"] = top_metrics["rider_delta_e_mev"]
     return summary
+
+
+def summarize_optimization_evaluation_counts(payload: Dict[str, Any]) -> Dict[str, int]:
+    """Summarize optimization evaluation outcomes from saved JSON payloads."""
+    all_evaluations = payload.get("all_evaluations", []) or []
+    successful = [
+        evaluation
+        for evaluation in all_evaluations
+        if not evaluation.get("failed", False)
+        and not evaluation.get("halted_early", False)
+    ]
+    halted = [evaluation for evaluation in all_evaluations if evaluation.get("halted_early", False)]
+    failed = [evaluation for evaluation in all_evaluations if evaluation.get("failed", False)]
+    return {
+        "successful_evaluation_count": len(successful),
+        "halted_evaluation_count": len(halted),
+        "failed_evaluation_count": len(failed),
+    }
 
 
 def summarize_optimization_top_results(
@@ -357,6 +377,7 @@ __all__ = [
     "collect_summary_plot_data",
     "convert_legacy_trajectory_data",
     "parse_results_payload",
+    "summarize_optimization_evaluation_counts",
     "summarize_result_row",
     "summarize_optimization_top_results",
     "summarize_saved_results",
