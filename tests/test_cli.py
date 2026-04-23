@@ -1,0 +1,185 @@
+"""Focused tests for the CLI request-building and config parsing path."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from core.types import ChronoMatchingMode, SimulationType, StartupMode
+from lw_integrator import cli
+
+
+def _make_args(**overrides) -> argparse.Namespace:
+    defaults = {
+        "config": None,
+        "sweep_config": None,
+        "log_verbosity": None,
+        "sc_verbosity": None,
+        "adaptive_debug": None,
+        "steps": None,
+        "time_step": None,
+        "simulation_type": None,
+        "wall_position": None,
+        "aperture_radius": None,
+        "bunch_mean": None,
+        "cavity_spacing": None,
+        "z_cutoff": None,
+        "chrono_mode": None,
+        "startup_mode": None,
+        "image_subcharge_count": None,
+        "use_image_weighting": None,
+        "driver_from_rider": False,
+        "output": None,
+        "quiet": False,
+    }
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+class TestCliConfigParsing:
+    def test_parse_simulation_type_accepts_aliases(self):
+        assert cli._parse_simulation_type("wall") == SimulationType.CONDUCTING_WALL
+        assert cli._parse_simulation_type("bunch-to-bunch") == (
+            SimulationType.BUNCH_TO_BUNCH
+        )
+
+    def test_parse_chrono_mode_accepts_aliases(self):
+        assert cli._parse_chrono_mode("legacy") == ChronoMatchingMode.FAST
+        assert cli._parse_chrono_mode("blended") == ChronoMatchingMode.AVERAGED
+
+    def test_parse_startup_mode_accepts_enum_or_alias(self):
+        assert cli._parse_startup_mode("approximate") == (
+            StartupMode.APPROXIMATE_BACK_HISTORY
+        )
+        assert cli._parse_startup_mode(StartupMode.COLD_START) == (
+            StartupMode.COLD_START
+        )
+
+    def test_parse_image_subcharge_count_validates_range(self):
+        assert cli._parse_image_subcharge_count("12") == 12
+        with pytest.raises(cli.SimulationConfigError, match="between 4 and 128"):
+            cli._parse_image_subcharge_count(3)
+
+    def test_parse_image_weighting_accepts_truthy_and_falsey_strings(self):
+        assert cli._parse_image_weighting("yes") is True
+        assert cli._parse_image_weighting("off") is False
+        with pytest.raises(cli.SimulationConfigError, match="truthy/falsey string"):
+            cli._parse_image_weighting("maybe")
+
+    def test_build_integrator_config_uses_extracted_parsers(self):
+        config = cli._build_integrator_config(
+            {
+                "steps": "12",
+                "time_step": "0.25",
+                "wall_position": "1.5",
+                "aperture_radius": "0.002",
+                "simulation_type": "switching-wall",
+                "chrono_mode": "legacy",
+                "startup_mode": "approximate",
+                "image_subcharge_count": "16",
+                "use_image_weighting": "no",
+            }
+        )
+
+        assert config.steps == 12
+        assert config.time_step == pytest.approx(0.25)
+        assert config.simulation_type == SimulationType.SWITCHING_WALL
+        assert config.chrono_mode == ChronoMatchingMode.FAST
+        assert config.startup_mode == StartupMode.APPROXIMATE_BACK_HISTORY
+        assert config.image_subcharge_count == 16
+        assert config.use_image_weighting is False
+
+
+class TestCliBuildRequest:
+    def test_build_request_clones_driver_from_rider(self):
+        args = _make_args(
+            simulation_type="bunch-to-bunch",
+            driver_from_rider=True,
+        )
+
+        request = cli.build_request(args)
+
+        assert request.driver is not None
+        for key, rider_value in request.rider.items():
+            assert np.array_equal(request.driver[key], rider_value)
+            assert request.driver[key] is not rider_value
+
+    def test_build_request_requires_driver_for_bunch_to_bunch(self):
+        args = _make_args(simulation_type="bunch-to-bunch")
+
+        with pytest.raises(cli.SimulationConfigError, match="require a driver bunch"):
+            cli.build_request(args)
+
+    def test_build_request_loads_driver_from_file(self, tmp_path: Path):
+        config_path = tmp_path / "b2b.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "simulation_type": "bunch-to-bunch",
+                    "driver": {
+                        "kinetic_energy_mev": 50.0,
+                        "mass_amu": 1.0,
+                        "charge_sign": 1.0,
+                        "position_z": 10.0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = _make_args(config=config_path)
+
+        request = cli.build_request(args)
+
+        assert request.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
+        assert request.driver is not None
+        assert float(request.driver["z"][0]) == pytest.approx(10.0)
+
+    def test_load_config_rejects_non_object_json(self, tmp_path: Path):
+        path = tmp_path / "bad.json"
+        path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+        with pytest.raises(cli.SimulationConfigError, match="top level"):
+            cli._load_config(path)
+
+
+class TestCliSweepEntryPoint:
+    def test_run_sweep_forwards_verbosity_overrides(self, monkeypatch, tmp_path: Path):
+        config_path = tmp_path / "sweep.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured = {}
+
+        def fake_run_sweep_from_config(*, config_path, output_dir, verbose, verbosity_overrides):
+            captured["config_path"] = config_path
+            captured["output_dir"] = output_dir
+            captured["verbose"] = verbose
+            captured["verbosity_overrides"] = verbosity_overrides
+            return True
+
+        monkeypatch.setattr(
+            "lw_integrator.sweep_runner.run_sweep_from_config",
+            fake_run_sweep_from_config,
+        )
+
+        result = cli.run_sweep(
+            _make_args(
+                sweep_config=config_path,
+                quiet=True,
+                log_verbosity="full",
+                sc_verbosity=3,
+                adaptive_debug=True,
+            )
+        )
+
+        assert result == 0
+        assert captured["config_path"] == config_path
+        assert captured["output_dir"] is None
+        assert captured["verbose"] is False
+        assert captured["verbosity_overrides"] == {
+            "log_verbosity": "full",
+            "self_consistency_verbosity": 3,
+            "adaptive_timestep_debug": True,
+        }

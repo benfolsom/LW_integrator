@@ -401,71 +401,16 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             f"Simulation configuration missing required fields: {', '.join(missing)}"
         )
 
-    chrono_mode_raw = payload.get("chrono_mode", ChronoMatchingMode.AVERAGED)
-    if isinstance(chrono_mode_raw, str):
-        key = chrono_mode_raw.strip().lower()
-        if key in {"fast", "legacy"}:
-            chrono_mode = ChronoMatchingMode.FAST
-        elif key in {"averaged", "average", "blended"}:
-            chrono_mode = ChronoMatchingMode.AVERAGED
-        else:  # pragma: no cover - defensive parsing
-            raise SimulationConfigError(
-                f"Unknown chrono_mode value: {chrono_mode_raw!r}. Expected 'fast' or 'averaged'."
-            )
-    elif isinstance(chrono_mode_raw, ChronoMatchingMode):
-        chrono_mode = chrono_mode_raw
-    else:  # pragma: no cover - defensive parsing
-        raise SimulationConfigError(
-            "chrono_mode must be a string or ChronoMatchingMode instance"
-        )
-
-    startup_mode_raw = payload.get("startup_mode", StartupMode.COLD_START)
-    if isinstance(startup_mode_raw, str):
-        key = startup_mode_raw.strip().lower()
-        if key in STARTUP_MODE_ALIASES:
-            startup_mode = STARTUP_MODE_ALIASES[key]
-        else:  # pragma: no cover - defensive parsing
-            raise SimulationConfigError(
-                f"Unknown startup_mode value: {startup_mode_raw!r}. Expected 'cold-start' or 'approximate-back-history'."
-            )
-    elif isinstance(startup_mode_raw, StartupMode):
-        startup_mode = startup_mode_raw
-    else:  # pragma: no cover - defensive parsing
-        raise SimulationConfigError(
-            "startup_mode must be a string or StartupMode instance"
-        )
-
-    try:
-        image_subcharge_count = int(
-            payload.get(
-                "image_subcharge_count", DEFAULT_SIMULATION["image_subcharge_count"]
-            )
-        )
-    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
-        raise SimulationConfigError("image_subcharge_count must be an integer") from exc
-
-    if not 4 <= image_subcharge_count <= 128:
-        raise SimulationConfigError(
-            "image_subcharge_count must be between 4 and 128 inclusive"
-        )
-
-    raw_weighting = payload.get(
-        "use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"]
+    chrono_mode = _parse_chrono_mode(
+        payload.get("chrono_mode", ChronoMatchingMode.AVERAGED)
     )
-    if raw_weighting is None:
-        use_image_weighting = DEFAULT_SIMULATION["use_image_weighting"]
-    elif isinstance(raw_weighting, str):
-        key = raw_weighting.strip().lower()
-        if key in {"1", "true", "yes", "on"}:
-            use_image_weighting = True
-        elif key in {"0", "false", "no", "off"}:
-            use_image_weighting = False
-        else:  # pragma: no cover - defensive parsing
-            raise SimulationConfigError(
-                "use_image_weighting must be a boolean or truthy/falsey string"
-            )
-    else:
-        use_image_weighting = bool(raw_weighting)
+    startup_mode = _parse_startup_mode(payload.get("startup_mode", StartupMode.COLD_START))
+    image_subcharge_count = _parse_image_subcharge_count(
+        payload.get("image_subcharge_count", DEFAULT_SIMULATION["image_subcharge_count"])
+    )
+    use_image_weighting = _parse_image_weighting(
+        payload.get("use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"])
+    )
 
     return IntegratorConfig(
         steps=int(payload["steps"]),
@@ -500,6 +445,66 @@ def _parse_simulation_type(value: Any) -> SimulationType:
         if key in SIMULATION_TYPE_ALIASES:
             return SIMULATION_TYPE_ALIASES[key]
     raise SimulationConfigError(f"Unknown simulation type: {value!r}")
+
+
+def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
+    if isinstance(value, ChronoMatchingMode):
+        return value
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in {"fast", "legacy"}:
+            return ChronoMatchingMode.FAST
+        if key in {"averaged", "average", "blended"}:
+            return ChronoMatchingMode.AVERAGED
+        raise SimulationConfigError(
+            f"Unknown chrono_mode value: {value!r}. Expected 'fast' or 'averaged'."
+        )
+    raise SimulationConfigError(
+        "chrono_mode must be a string or ChronoMatchingMode instance"
+    )
+
+
+def _parse_startup_mode(value: Any) -> StartupMode:
+    if isinstance(value, StartupMode):
+        return value
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in STARTUP_MODE_ALIASES:
+            return STARTUP_MODE_ALIASES[key]
+        raise SimulationConfigError(
+            f"Unknown startup_mode value: {value!r}. Expected 'cold-start' or 'approximate-back-history'."
+        )
+    raise SimulationConfigError(
+        "startup_mode must be a string or StartupMode instance"
+    )
+
+
+def _parse_image_subcharge_count(value: Any) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError("image_subcharge_count must be an integer") from exc
+
+    if not 4 <= count <= 128:
+        raise SimulationConfigError(
+            "image_subcharge_count must be between 4 and 128 inclusive"
+        )
+    return count
+
+
+def _parse_image_weighting(value: Any) -> bool:
+    if value is None:
+        return bool(DEFAULT_SIMULATION["use_image_weighting"])
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in {"1", "true", "yes", "on"}:
+            return True
+        if key in {"0", "false", "no", "off"}:
+            return False
+        raise SimulationConfigError(
+            "use_image_weighting must be a boolean or truthy/falsey string"
+        )
+    return bool(value)
 
 
 def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
