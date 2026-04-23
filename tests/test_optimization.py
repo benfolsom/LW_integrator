@@ -23,6 +23,7 @@ from optimization.plugin_config_helpers import (
     parse_offset_pair,
 )
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
+from optimization.results_mixins import OptimizationResultsMixin
 from optimization.sweep_helpers import (
     build_parameter_grids,
     calculate_energy_from_pz,
@@ -455,6 +456,62 @@ class TestPluginConfigHelpers:
         assert config.driver_starting_Pz < 0
 
 
+class TestOptimizationResultsMixin:
+    """Test extracted optimization results helpers."""
+
+    def test_save_single_trajectory_handles_bunch_to_bunch_driver_params(
+        self, tmp_path
+    ):
+        config = OptimizationConfig(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            output_dir=str(tmp_path),
+            aperture_range=(0.1, 0.2),
+            energy_range=(1.0, 2.0),
+            starting_z_positions=[5.0],
+            transverse_offset_fractions=[0.25],
+            m_particle=1.0,
+            charge_sign=-1.0,
+            pcount=3,
+            transv_mom=0.01,
+            transv_dist=0.02,
+            driver_m_particle=10.0,
+            driver_charge_sign=1.0,
+            driver_pcount=4,
+            driver_transv_mom=0.03,
+            driver_transv_dist=0.04,
+            driver_starting_distance=123.0,
+            driver_starting_Pz=-456.0,
+            driver_stripped_ions=5.0,
+            driver_transv_offset_x=0.6,
+            driver_transv_offset_y=-0.7,
+        )
+        harness = _ResultsMixinHarness(config, tmp_path)
+
+        trajectory = harness._save_single_optimization_trajectory(
+            {"transverse_offset": 0.5, "initial_energy_gev": 1.5},
+            ["transverse_offset", "initial_energy_gev"],
+            rank=1,
+            fitness=0.123,
+        )
+
+        assert trajectory is not None
+        assert harness.captured_run["transv_offset"] == pytest.approx(0.5)
+        assert harness.captured_run["driver_params"] == {
+            "m_particle": 10.0,
+            "charge_sign": 1.0,
+            "pcount": 4,
+            "transv_mom": 0.03,
+            "transv_dist": 0.04,
+            "starting_distance": 123.0,
+            "starting_Pz": -456.0,
+            "stripped_ions": 5.0,
+            "transv_offset_x": 0.6,
+            "transv_offset_y": -0.7,
+        }
+        assert (tmp_path / "trajectory_rank1_best.npz").exists()
+        assert (tmp_path / "trajectory_rank1_best.png").exists()
+
+
 def _make_sweep_controls(
     *,
     enabled: bool,
@@ -472,6 +529,30 @@ def _make_sweep_controls(
         "fixed_var": _MockVar(fixed_val),
         "log_var": _MockVar(log),
     }
+
+
+class _ResultsMixinHarness(OptimizationResultsMixin):
+    def __init__(self, config, output_dir):
+        self.config = config
+        self._last_optimization_dir = output_dir
+        self.captured_run = None
+        self.logged_messages = []
+
+    def _run_single_integration(self, **kwargs):
+        self.captured_run = kwargs
+        return {
+            "trajectory": {
+                "z": [0.0, 1.0],
+                "t": [0.0, 0.1],
+                "r": [0.0, 0.2],
+                "gamma": [2.0, 2.5],
+                "pr": [0.0, 0.01],
+            },
+            "metrics": {},
+        }
+
+    def _log_result(self, message: str):
+        self.logged_messages.append(message)
 
 
 if __name__ == "__main__":

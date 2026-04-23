@@ -11,9 +11,6 @@ from typing import Any, Dict, List
 import matplotlib.patheffects as PathEffects
 import numpy as np
 from matplotlib.colors import LogNorm
-
-AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
-
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import KDTree
@@ -24,7 +21,6 @@ from optimization.result_io import (  # type: ignore[import]
     generate_optimization_plots,
     generate_trajectory_comparison_plot,
     save_optimization_results,
-    save_partial_optimization_results,
     save_top_n_optimization_trajectories,
     save_top_trajectories_summary_table,
 )
@@ -34,6 +30,8 @@ from optimization.ui_helpers import (  # type: ignore[import]
 from optimization.ui_helpers import (
     show_info_dialog as _show_info_dialog,
 )
+
+AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 
 
 class OptimizationResultsMixin:
@@ -174,8 +172,6 @@ class OptimizationResultsMixin:
                 import matplotlib.pyplot as plt
 
                 traj = result_data["trajectory"]
-                metrics = result_data.get("metrics", {})
-
                 fig, axes = plt.subplots(3, 2, figsize=(14, 14))
 
                 z = np.array(traj["z"])
@@ -716,7 +712,7 @@ class OptimizationResultsMixin:
             edgecolors="none",
             linewidth=0,
         )
-        cbar = plt.colorbar(im, ax=ax, label=color_label)
+        plt.colorbar(im, ax=ax, label=color_label)
 
         # Create contour levels
         if has_positive and not has_negative:
@@ -797,15 +793,12 @@ class OptimizationResultsMixin:
             energy = params.get("particle_energy_gev", 0)
             delta_e = metrics.get("rider_delta_e_mev", 0)
             gamma_initial = metrics.get("rider_gamma_initial", 1)
-            gamma_final = metrics.get("rider_gamma_final", 1)
 
             # KE = (γ - 1) · mc² — use actual particle rest energy
             _rest_mev = (
                 getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
             )
             energy_mev_initial = (gamma_initial - 1) * _rest_mev
-            energy_mev_final = (gamma_final - 1) * _rest_mev
-
             if len(z) > 1 and abs(z[-1] - z[0]) > 1e-6:
                 energy_mev = energy_mev_initial + delta_e * (z - z[0]) / (z[-1] - z[0])
             else:
