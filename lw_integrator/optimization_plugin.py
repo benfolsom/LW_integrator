@@ -37,7 +37,9 @@ from optimization.plugin_results_helpers import (
     build_trajectory_plot_data,
     collect_summary_plot_data,
     convert_legacy_trajectory_data,
+    parse_results_payload,
     summarize_result_row,
+    UNKNOWN_RESULTS_FORMAT_MESSAGE,
 )
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
@@ -4531,52 +4533,41 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             with open(file_path, "r") as f:
                 data = json.load(f)
 
-            # Try to detect file format
-            results = None
+            parsed = parse_results_payload(
+                data,
+                m_particle_amu=getattr(self.config, "m_particle", 0.00054857990907),
+                amu_to_mev=AMU_TO_MEV,
+            )
 
-            if "results" in data:
-                # Sweep format: sweep_results.json
-                results = data.get("results", [])
+            if parsed["kind"] == "sweep":
+                results = parsed["results"]
                 if not results:
                     _show_info_dialog(self, "No Results", "No results found in file.")
                     return
 
-                # Check if we have trajectory data for plotting
-                results_with_traj = [r for r in results if "trajectory" in r]
-
+                results_with_traj = parsed["results_with_trajectories"]
                 if not results_with_traj:
-                    # Show metrics summary even without trajectories
                     self._show_results_summary(results, file_path)
                     return
 
-            elif "all_evaluations" in data or "best_parameters" in data:
-                # Optimization format: optimization_results.json
-                # Check for NPZ trajectory files in the same directory
+            elif parsed["kind"] == "optimization":
                 import os
 
                 results_dir = os.path.dirname(file_path)
                 self._view_npz_trajectories(results_dir)
                 return
 
-            elif "core" in data and "rider" in data["core"]:
-                # Legacy format: single trajectory file
-                results_with_traj = [self._convert_legacy_trajectory(data)]
-
             else:
-                _show_info_dialog(
-                    self,
-                    "Unknown Format",
-                    "Cannot parse this file format.\n\n"
-                    "Expected either:\n"
-                    "- sweep_results.json with 'results' array\n"
-                    "- optimization_results.json with 'all_evaluations'\n"
-                    "- Legacy trajectory file with 'core'/'rider' structure",
-                )
-                return
+                results_with_traj = parsed["results_with_trajectories"]
 
             # Create trajectory viewer dialog and automatically plot
             self._show_trajectory_viewer(results_with_traj, file_path, auto_plot=True)
 
+        except ValueError as e:
+            if str(e) == UNKNOWN_RESULTS_FORMAT_MESSAGE:
+                _show_info_dialog(self, "Unknown Format", UNKNOWN_RESULTS_FORMAT_MESSAGE)
+                return
+            raise
         except Exception as e:
             import traceback
 
@@ -4647,18 +4638,19 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             with open(file_path, "r") as f:
                 data = json.load(f)
 
-            # Try to detect file format
-            results = None
+            parsed = parse_results_payload(
+                data,
+                m_particle_amu=getattr(self.config, "m_particle", 0.00054857990907),
+                amu_to_mev=AMU_TO_MEV,
+            )
 
-            if "results" in data:
-                # Sweep format: sweep_results.json with "results" array
-                results = data.get("results", [])
+            if parsed["kind"] == "sweep":
+                results = parsed["results"]
                 if not results:
                     _show_info_dialog(self, "No Results", "No results found in file.")
                     return
 
-                # Filter results with trajectories
-                results_with_traj = [r for r in results if "trajectory" in r]
+                results_with_traj = parsed["results_with_trajectories"]
 
                 if not results_with_traj:
                     _show_info_dialog(
@@ -4671,36 +4663,29 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                     )
                     return
 
-            elif "all_evaluations" in data or "best_parameters" in data:
-                # Optimization format: optimization_results.json
-                # This file contains metrics only, not trajectories
-                # Load NPZ trajectory files from the same directory
+            elif parsed["kind"] == "optimization":
                 import os
 
                 results_dir = os.path.dirname(file_path)
                 self._view_npz_trajectories(results_dir)
                 return
 
-            elif "core" in data and "rider" in data["core"]:
-                # Legacy format: single trajectory file
-                results_with_traj = [self._convert_legacy_trajectory(data)]
-
             else:
-                _show_info_dialog(
-                    self,
-                    "Unknown Format",
-                    "Cannot parse this file format.\n\n"
-                    "Expected either:\n"
-                    "- sweep_results.json with 'results' array\n"
-                    "- optimization_results.json with 'all_evaluations'\n"
-                    "- Legacy trajectory file with 'core'/'rider' structure\n\n"
-                    "Note: CSV files only contain metrics, not trajectory data.",
-                )
-                return
+                results_with_traj = parsed["results_with_trajectories"]
 
             # Create trajectory viewer dialog
             self._show_trajectory_viewer(results_with_traj, file_path)
 
+        except ValueError as e:
+            if str(e) == UNKNOWN_RESULTS_FORMAT_MESSAGE:
+                _show_info_dialog(
+                    self,
+                    "Unknown Format",
+                    f"{UNKNOWN_RESULTS_FORMAT_MESSAGE}\n\n"
+                    "Note: CSV files only contain metrics, not trajectory data.",
+                )
+                return
+            raise
         except Exception as e:
             import traceback
 

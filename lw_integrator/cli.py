@@ -28,7 +28,11 @@ from core.types import (
     Trajectory,
 )
 from input_output.bunch_initialization import create_bunch_from_energy
-from optimization.plugin_results_helpers import summarize_result_row
+from optimization.plugin_results_helpers import (
+    parse_results_payload,
+    summarize_result_row,
+    summarize_saved_results,
+)
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -127,6 +131,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         type=Path,
         dest="sweep_config",
         help="Path to a JSON sweep configuration file for parameter sweeps.",
+    )
+    parser.add_argument(
+        "--results-file",
+        type=Path,
+        dest="results_file",
+        help="Path to a saved sweep/optimization/legacy results JSON file to summarize.",
     )
     parser.add_argument(
         "--log-verbosity",
@@ -629,6 +639,45 @@ def build_report(
     return report
 
 
+def load_results_report(path: Path) -> Dict[str, Any]:
+    """Load a saved results JSON file and build a normalized summary report."""
+    payload = _load_config(path)
+    parsed = parse_results_payload(
+        payload, m_particle_amu=ELECTRON_MASS_AMU, amu_to_mev=931.494
+    )
+    report = summarize_saved_results(parsed)
+    report["source"] = str(path)
+    return report
+
+
+def print_results_report(report: Mapping[str, Any]) -> None:
+    """Print a human-readable summary for a saved results file."""
+    lines = ["LW Integrator saved-results summary:"]
+    for key in (
+        "result_type",
+        "source",
+        "config_name",
+        "run_count",
+        "trajectory_count",
+        "optimization_method",
+        "objective",
+        "evaluation_count",
+        "finite_evaluation_count",
+        "top_result_count",
+        "success",
+        "best_run_number",
+        "best_delta_e_mev",
+        "best_energy_gev",
+        "best_aperture_mm",
+        "best_value",
+    ):
+        if key in report:
+            lines.append(
+                f"  {key.replace('_', ' ').title()}: {_format_value(report[key])}"
+            )
+    print("\n".join(lines))
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -636,6 +685,21 @@ def build_report(
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.results_file is not None:
+        try:
+            report = load_results_report(args.results_file)
+        except (SimulationConfigError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+        if not args.quiet:
+            print_results_report(report)
+        return 0
 
     # Check if this is a sweep configuration
     if args.sweep_config is not None:

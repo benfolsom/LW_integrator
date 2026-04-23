@@ -17,6 +17,7 @@ def _make_args(**overrides) -> argparse.Namespace:
     defaults = {
         "config": None,
         "sweep_config": None,
+        "results_file": None,
         "log_verbosity": None,
         "sc_verbosity": None,
         "adaptive_debug": None,
@@ -41,6 +42,11 @@ def _make_args(**overrides) -> argparse.Namespace:
 
 
 class TestCliConfigParsing:
+    def test_parse_args_accepts_results_file(self):
+        args = cli.parse_args(["--results-file", "results/sweep_results.json"])
+
+        assert args.results_file == Path("results/sweep_results.json")
+
     def test_parse_args_applies_boolean_flags(self):
         args = cli.parse_args(
             ["--adaptive-debug", "--image-weighting", "--simulation-type", "wall"]
@@ -359,6 +365,89 @@ class TestCliSweepEntryPoint:
 
 
 class TestCliMain:
+    def test_main_prints_saved_sweep_results_summary(self, tmp_path: Path, capsys):
+        results_path = tmp_path / "sweep_results.json"
+        results_path.write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "run_number": 2,
+                            "parameters": {
+                                "aperture_radius": 0.1,
+                                "particle_energy_gev": 5.0,
+                            },
+                            "metrics": {"rider_delta_e_mev": 1.25},
+                            "trajectory": {"z": [0.0, 1.0], "r": [0.0, 0.0]},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = cli.main(["--results-file", str(results_path)])
+
+        output = capsys.readouterr().out
+        assert result == 0
+        assert "LW Integrator saved-results summary:" in output
+        assert "Result Type: sweep" in output
+        assert "Run Count: 1" in output
+        assert "Best Delta E Mev: 1.25" in output
+
+    def test_main_writes_saved_optimization_results_summary_json(
+        self, tmp_path: Path
+    ):
+        results_path = tmp_path / "optimization_results.json"
+        output_path = tmp_path / "summary.json"
+        results_path.write_text(
+            json.dumps(
+                {
+                    "optimization_method": "genetic_algorithm",
+                    "objective": "max_energy_gain",
+                    "best_value": 2.5,
+                    "success": True,
+                    "all_evaluations": [
+                        {"objective_value": 1.0},
+                        {"objective_value": float("inf")},
+                    ],
+                    "total_evaluations": 2,
+                    "top_n_results": [
+                        {
+                            "metrics": {"rider_delta_e_mev": 3.0},
+                        }
+                    ],
+                    "top_n_count": 1,
+                    "best_parameters": {"initial_energy_gev": 5.0},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = cli.main(
+            ["--results-file", str(results_path), "--output", str(output_path), "--quiet"]
+        )
+
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert result == 0
+        assert payload["result_type"] == "optimization"
+        assert payload["optimization_method"] == "genetic_algorithm"
+        assert payload["evaluation_count"] == 2
+        assert payload["finite_evaluation_count"] == 1
+        assert payload["best_delta_e_mev"] == pytest.approx(3.0)
+        assert payload["best_parameters"] == {"initial_energy_gev": 5.0}
+
+    def test_main_returns_2_for_unknown_results_file_format(
+        self, tmp_path: Path, capsys
+    ):
+        results_path = tmp_path / "unknown.json"
+        results_path.write_text(json.dumps({"unexpected": []}), encoding="utf-8")
+
+        result = cli.main(["--results-file", str(results_path)])
+
+        assert result == 2
+        assert "Cannot parse this file format." in capsys.readouterr().err
+
     def test_main_dispatches_to_sweep_runner(self, monkeypatch):
         captured = {}
 

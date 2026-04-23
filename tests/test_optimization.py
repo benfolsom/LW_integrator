@@ -33,7 +33,9 @@ from optimization.plugin_results_helpers import (
     build_trajectory_plot_data,
     collect_summary_plot_data,
     convert_legacy_trajectory_data,
+    parse_results_payload,
     summarize_result_row,
+    summarize_saved_results,
 )
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
 from optimization.results_mixins import OptimizationResultsMixin
@@ -678,6 +680,86 @@ class TestPluginResultsHelpers:
             "energies": [15.0],
             "delta_es": [2.0],
         }
+
+    def test_parse_results_payload_classifies_saved_formats(self):
+        sweep = parse_results_payload(
+            {"results": [{"trajectory": {"z": [0.0]}}]},
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+        optimization = parse_results_payload(
+            {"all_evaluations": []},
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+        legacy = parse_results_payload(
+            {"core": {"rider": {"positions_mm": {}, "conjugate_momenta": {}}}},
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+
+        assert sweep["kind"] == "sweep"
+        assert len(sweep["results_with_trajectories"]) == 1
+        assert optimization["kind"] == "optimization"
+        assert legacy["kind"] == "legacy"
+        assert len(legacy["results"]) == 1
+
+    def test_summarize_saved_results_handles_sweep_and_optimization_payloads(self):
+        sweep_summary = summarize_saved_results(
+            {
+                "kind": "sweep",
+                "results": [
+                    {
+                        "run_number": 2,
+                        "parameters": {
+                            "aperture_radius": 0.1,
+                            "particle_energy_gev": 5.0,
+                        },
+                        "metrics": {"rider_delta_e_mev": 1.5},
+                        "trajectory": {"z": [0.0]},
+                    }
+                ],
+                "results_with_trajectories": [{"trajectory": {"z": [0.0]}}],
+            }
+        )
+        optimization_summary = summarize_saved_results(
+            {
+                "kind": "optimization",
+                "payload": {
+                    "objective": "max_energy_gain",
+                    "optimization_method": "genetic_algorithm",
+                    "best_value": 2.5,
+                    "success": True,
+                    "total_evaluations": 3,
+                    "all_evaluations": [
+                        {"objective_value": 1.0},
+                        {"objective_value": float("inf")},
+                    ],
+                    "top_n_count": 1,
+                    "top_n_results": [
+                        {"metrics": {"rider_delta_e_mev": 4.0}},
+                    ],
+                    "best_parameters": {"initial_energy_gev": 6.0},
+                },
+                "results": [],
+                "results_with_trajectories": [],
+            }
+        )
+
+        assert sweep_summary == {
+            "result_type": "sweep",
+            "run_count": 1,
+            "trajectory_count": 1,
+            "best_run_number": 2,
+            "best_delta_e_mev": 1.5,
+            "best_energy_gev": 5.0,
+            "best_aperture_mm": 0.1,
+        }
+        assert optimization_summary["result_type"] == "optimization"
+        assert optimization_summary["evaluation_count"] == 3
+        assert optimization_summary["finite_evaluation_count"] == 1
+        assert optimization_summary["best_delta_e_mev"] == pytest.approx(4.0)
+        assert optimization_summary["best_parameters"] == {"initial_energy_gev": 6.0}
 
 
 class TestOptimizationResultsMixin:

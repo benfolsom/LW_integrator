@@ -7,6 +7,15 @@ from typing import Any, Dict
 import numpy as np
 
 
+UNKNOWN_RESULTS_FORMAT_MESSAGE = (
+    "Cannot parse this file format.\n\n"
+    "Expected either:\n"
+    "- sweep_results.json with 'results' array\n"
+    "- optimization_results.json with 'all_evaluations'\n"
+    "- Legacy trajectory file with 'core'/'rider' structure"
+)
+
+
 def convert_legacy_trajectory_data(
     data: Dict[str, Any], m_particle_amu: float, amu_to_mev: float
 ) -> Dict[str, Any]:
@@ -178,10 +187,102 @@ def build_trajectory_plot_data(
     return {"series": series, "heatmap": heatmap}
 
 
+def parse_results_payload(
+    data: Dict[str, Any], *, m_particle_amu: float, amu_to_mev: float
+) -> Dict[str, Any]:
+    """Classify saved results payloads and normalize legacy trajectories."""
+    if "results" in data:
+        results = data.get("results", [])
+        return {
+            "kind": "sweep",
+            "results": results,
+            "results_with_trajectories": [r for r in results if "trajectory" in r],
+        }
+
+    if "all_evaluations" in data or "best_parameters" in data:
+        return {
+            "kind": "optimization",
+            "payload": data,
+            "results": [],
+            "results_with_trajectories": [],
+        }
+
+    if "core" in data and "rider" in data["core"]:
+        result = convert_legacy_trajectory_data(
+            data, m_particle_amu=m_particle_amu, amu_to_mev=amu_to_mev
+        )
+        return {
+            "kind": "legacy",
+            "results": [result],
+            "results_with_trajectories": [result],
+        }
+
+    raise ValueError(UNKNOWN_RESULTS_FORMAT_MESSAGE)
+
+
+def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """Summarize a parsed saved-results payload for CLI or GUI reporting."""
+    kind = parsed["kind"]
+
+    if kind in {"sweep", "legacy"}:
+        rows = [summarize_result_row(result) for result in parsed["results"]]
+        best_row = max(rows, key=lambda row: row["delta_e"], default=None)
+        summary = {
+            "result_type": kind,
+            "run_count": len(rows),
+            "trajectory_count": len(parsed["results_with_trajectories"]),
+        }
+        if best_row is not None:
+            summary.update(
+                {
+                    "best_run_number": best_row["run_num"],
+                    "best_delta_e_mev": best_row["delta_e"],
+                    "best_energy_gev": best_row["energy"],
+                    "best_aperture_mm": best_row["aperture"],
+                }
+            )
+        if rows and parsed["results"]:
+            sweep_info = parsed["results"][0].get("sweep_info", {})
+            if sweep_info.get("config_name"):
+                summary["config_name"] = sweep_info["config_name"]
+        return summary
+
+    payload = parsed["payload"]
+    all_evaluations = payload.get("all_evaluations", []) or []
+    finite_evaluations = [
+        evaluation
+        for evaluation in all_evaluations
+        if np.isfinite(evaluation.get("objective_value", float("inf")))
+    ]
+    summary = {
+        "result_type": "optimization",
+        "objective": payload.get("objective"),
+        "optimization_method": payload.get("optimization_method"),
+        "evaluation_count": payload.get("total_evaluations", len(all_evaluations)),
+        "finite_evaluation_count": len(finite_evaluations),
+        "best_value": payload.get("best_value"),
+        "top_result_count": payload.get(
+            "top_n_count", len(payload.get("top_n_results", []) or [])
+        ),
+        "success": payload.get("success"),
+    }
+    if payload.get("best_parameters") is not None:
+        summary["best_parameters"] = payload["best_parameters"]
+    top_results = payload.get("top_n_results", []) or []
+    if top_results:
+        top_metrics = top_results[0].get("metrics", {})
+        if "rider_delta_e_mev" in top_metrics:
+            summary["best_delta_e_mev"] = top_metrics["rider_delta_e_mev"]
+    return summary
+
+
 __all__ = [
     "build_summary_heatmap_grid",
     "build_trajectory_plot_data",
     "collect_summary_plot_data",
     "convert_legacy_trajectory_data",
+    "parse_results_payload",
     "summarize_result_row",
+    "summarize_saved_results",
+    "UNKNOWN_RESULTS_FORMAT_MESSAGE",
 ]
