@@ -2,15 +2,14 @@
 
 import threading
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
 from core.types import SimulationType
-from lw_integrator.optimization_plugin import OptimizationConfig
-from lw_integrator.testbed_runner import RunResult
+from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
+from optimization.results_mixins import OptimizationResultsMixin
 
 
 @pytest.fixture
@@ -61,6 +60,16 @@ def mock_run_result():
 
 class TestOptimizationPluginIntegration:
     """Test optimization plugin integration functionality."""
+
+    def test_plugin_inherits_npz_viewer_helpers_from_results_mixin(self):
+        assert (
+            OptimizationPlugin._view_npz_trajectories
+            is OptimizationResultsMixin._view_npz_trajectories
+        )
+        assert (
+            OptimizationPlugin._plot_npz_trajectories
+            is OptimizationResultsMixin._plot_npz_trajectories
+        )
 
     def test_run_single_integration_completes(self, mock_config, mock_run_result):
         """Test that _run_single_integration completes without hanging."""
@@ -148,7 +157,6 @@ class TestOptimizationPluginIntegration:
             return {"metrics": {"value": 1.0}}
 
         # Simulate the timeout wrapper from evaluate_params
-        result = None
         timed_out = False
 
         result_container = [None]
@@ -173,7 +181,7 @@ class TestOptimizationPluginIntegration:
         elif error_container[0] is not None:
             raise error_container[0]
         else:
-            result = result_container[0]
+            _ = result_container[0]
             value = -1.0
 
         elapsed = time.time() - start_time
