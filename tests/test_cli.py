@@ -436,6 +436,48 @@ class TestCliMain:
         assert payload["finite_evaluation_count"] == 1
         assert payload["best_delta_e_mev"] == pytest.approx(3.0)
         assert payload["best_parameters"] == {"initial_energy_gev": 5.0}
+        assert payload["top_results"] == [
+            {
+                "rank": 1,
+                "metric_value": None,
+                "fitness": None,
+                "parameters": {},
+                "delta_e_mev": 3.0,
+                "percent_energy_gain": None,
+                "metrics": {"rider_delta_e_mev": 3.0},
+            }
+        ]
+
+    def test_main_prints_saved_optimization_top_results(self, tmp_path: Path, capsys):
+        results_path = tmp_path / "optimization_results.json"
+        results_path.write_text(
+            json.dumps(
+                {
+                    "objective": "max_energy_gain",
+                    "all_evaluations": [
+                        {
+                            "evaluation": 8,
+                            "failed": False,
+                            "halted_early": False,
+                            "raw_objective_value": 2.5,
+                            "fitness": -2.5,
+                            "metrics": {
+                                "rider_delta_e_mev": 4.0,
+                                "max_percent_energy_gain": 1.5,
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = cli.main(["--results-file", str(results_path)])
+
+        output = capsys.readouterr().out
+        assert result == 0
+        assert "Top Results:" in output
+        assert "rank=1, metric=2.5, delta_e_mev=4, percent_gain=1.5" in output
 
     def test_main_returns_2_for_unknown_results_file_format(
         self, tmp_path: Path, capsys

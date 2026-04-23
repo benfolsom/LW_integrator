@@ -675,6 +675,21 @@ def print_results_report(report: Mapping[str, Any]) -> None:
             lines.append(
                 f"  {key.replace('_', ' ').title()}: {_format_value(report[key])}"
             )
+
+    top_results = report.get("top_results", [])
+    if top_results:
+        lines.append("  Top Results:")
+        for result in top_results:
+            parts = [f"rank={result.get('rank')}"]
+            if result.get("metric_value") is not None:
+                parts.append(f"metric={_format_value(result['metric_value'])}")
+            if result.get("delta_e_mev") is not None:
+                parts.append(f"delta_e_mev={_format_value(result['delta_e_mev'])}")
+            if result.get("percent_energy_gain") is not None:
+                parts.append(
+                    f"percent_gain={_format_value(result['percent_energy_gain'])}"
+                )
+            lines.append("    " + ", ".join(parts))
     print("\n".join(lines))
 
 

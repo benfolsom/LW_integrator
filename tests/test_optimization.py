@@ -35,6 +35,7 @@ from optimization.plugin_results_helpers import (
     convert_legacy_trajectory_data,
     parse_results_payload,
     summarize_result_row,
+    summarize_optimization_top_results,
     summarize_saved_results,
 )
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
@@ -760,6 +761,72 @@ class TestPluginResultsHelpers:
         assert optimization_summary["finite_evaluation_count"] == 1
         assert optimization_summary["best_delta_e_mev"] == pytest.approx(4.0)
         assert optimization_summary["best_parameters"] == {"initial_energy_gev": 6.0}
+        assert optimization_summary["top_results"][0]["rank"] == 1
+        assert optimization_summary["top_results"][0]["delta_e_mev"] == pytest.approx(
+            4.0
+        )
+
+    def test_summarize_optimization_top_results_falls_back_to_all_evaluations(self):
+        top_results = summarize_optimization_top_results(
+            {
+                "objective": "max_energy_gain",
+                "all_evaluations": [
+                    {
+                        "evaluation": 5,
+                        "failed": False,
+                        "halted_early": False,
+                        "raw_objective_value": 2.5,
+                        "fitness": -2.5,
+                        "parameters": {"initial_energy_gev": 7.0},
+                        "metrics": {
+                            "rider_delta_e_mev": 3.0,
+                            "max_percent_energy_gain": 1.2,
+                        },
+                    },
+                    {
+                        "evaluation": 6,
+                        "failed": False,
+                        "halted_early": False,
+                        "raw_objective_value": 1.5,
+                        "fitness": -1.5,
+                        "parameters": {"initial_energy_gev": 6.0},
+                        "metrics": {
+                            "rider_delta_e_mev": 2.0,
+                            "max_percent_energy_gain": 1.0,
+                        },
+                    },
+                ],
+            }
+        )
+
+        assert top_results == [
+            {
+                "rank": 1,
+                "evaluation": 5,
+                "metric_value": 2.5,
+                "fitness": -2.5,
+                "parameters": {"initial_energy_gev": 7.0},
+                "delta_e_mev": 3.0,
+                "percent_energy_gain": 1.2,
+                "metrics": {
+                    "rider_delta_e_mev": 3.0,
+                    "max_percent_energy_gain": 1.2,
+                },
+            },
+            {
+                "rank": 2,
+                "evaluation": 6,
+                "metric_value": 1.5,
+                "fitness": -1.5,
+                "parameters": {"initial_energy_gev": 6.0},
+                "delta_e_mev": 2.0,
+                "percent_energy_gain": 1.0,
+                "metrics": {
+                    "rider_delta_e_mev": 2.0,
+                    "max_percent_energy_gain": 1.0,
+                },
+            },
+        ]
 
 
 class TestOptimizationResultsMixin:

@@ -254,6 +254,7 @@ def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
         for evaluation in all_evaluations
         if np.isfinite(evaluation.get("objective_value", float("inf")))
     ]
+    top_results = summarize_optimization_top_results(payload)
     summary = {
         "result_type": "optimization",
         "objective": payload.get("objective"),
@@ -265,6 +266,7 @@ def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
             "top_n_count", len(payload.get("top_n_results", []) or [])
         ),
         "success": payload.get("success"),
+        "top_results": top_results,
     }
     if payload.get("best_parameters") is not None:
         summary["best_parameters"] = payload["best_parameters"]
@@ -276,6 +278,79 @@ def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
     return summary
 
 
+def summarize_optimization_top_results(
+    payload: Dict[str, Any], limit: int = 3
+) -> list[Dict[str, Any]]:
+    """Normalize top optimization results from saved JSON payloads."""
+    top_n_results = payload.get("top_n_results", []) or []
+    if top_n_results:
+        normalized = []
+        for index, entry in enumerate(top_n_results[:limit], start=1):
+            metrics = entry.get("metrics", {}) or {}
+            normalized.append(
+                {
+                    "rank": entry.get("rank", index),
+                    "metric_value": entry.get("metric_value"),
+                    "fitness": entry.get("fitness"),
+                    "parameters": entry.get("parameters", {}),
+                    "delta_e_mev": metrics.get("rider_delta_e_mev"),
+                    "percent_energy_gain": metrics.get(
+                        "max_percent_energy_gain",
+                        metrics.get("percent_delta_e"),
+                    ),
+                    "metrics": metrics,
+                }
+            )
+        return normalized
+
+    all_evaluations = payload.get("all_evaluations", []) or []
+    if not all_evaluations:
+        return []
+
+    objective = str(payload.get("objective", ""))
+    maximize = "max" in objective.lower()
+    successful = [
+        evaluation
+        for evaluation in all_evaluations
+        if not evaluation.get("failed", False)
+        and not evaluation.get("halted_early", False)
+    ]
+    if not successful:
+        return []
+
+    def sort_key(evaluation: Dict[str, Any]) -> float:
+        if "raw_objective_value" in evaluation:
+            return float(evaluation["raw_objective_value"])
+        if "objective_value" in evaluation:
+            return float(evaluation["objective_value"])
+        return float("-inf") if maximize else float("inf")
+
+    sorted_evaluations = sorted(successful, key=sort_key, reverse=maximize)
+    normalized = []
+    for index, evaluation in enumerate(sorted_evaluations[:limit], start=1):
+        metrics = evaluation.get("metrics", {}) or {}
+        normalized.append(
+            {
+                "rank": index,
+                "evaluation": evaluation.get("evaluation"),
+                "metric_value": evaluation.get(
+                    "raw_objective_value", evaluation.get("objective_value")
+                ),
+                "fitness": evaluation.get("fitness"),
+                "parameters": evaluation.get("parameters", {}),
+                "delta_e_mev": metrics.get(
+                    "rider_delta_e_mev", metrics.get("delta_e_mev")
+                ),
+                "percent_energy_gain": metrics.get(
+                    "max_percent_energy_gain",
+                    metrics.get("percent_delta_e"),
+                ),
+                "metrics": metrics,
+            }
+        )
+    return normalized
+
+
 __all__ = [
     "build_summary_heatmap_grid",
     "build_trajectory_plot_data",
@@ -283,6 +358,7 @@ __all__ = [
     "convert_legacy_trajectory_data",
     "parse_results_payload",
     "summarize_result_row",
+    "summarize_optimization_top_results",
     "summarize_saved_results",
     "UNKNOWN_RESULTS_FORMAT_MESSAGE",
 ]
