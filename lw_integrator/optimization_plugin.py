@@ -3007,6 +3007,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Update UI fields
             self.sim_type_var.set(opt_config.simulation_type.name)
+            self._sync_main_gui_simulation_type(opt_config.simulation_type.name)
             self.wall_z_var.set(str(opt_config.wall_z))
             self.cavity_spacing_var.set(str(opt_config.cavity_spacing))
 
@@ -3016,70 +3017,36 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.steps_var.set(str(opt_config.steps))
             self.duration_var.set(f"{opt_config.timestep:.2e}")
             self._toggle_timestep_mode()  # Update UI state
-            self.sweep_params["rider_m_particle"]["fixed_var"].set(
-                f"{opt_config.m_particle:.14e}"
+            self._set_fixed_sweep_value(
+                "rider_m_particle", f"{opt_config.m_particle:.14e}"
             )
-            self.sweep_params["rider_charge_sign"]["fixed_var"].set(
-                str(opt_config.charge_sign)
+            self._set_fixed_sweep_value(
+                "rider_charge_sign", str(opt_config.charge_sign)
             )
-            self.sweep_params["rider_pcount"]["fixed_var"].set(str(opt_config.pcount))
-            self.sweep_params["rider_stripped_ions"]["fixed_var"].set(
-                str(opt_config.stripped_ions)
+            self._set_fixed_sweep_value("rider_pcount", str(opt_config.pcount))
+            self._set_fixed_sweep_value(
+                "rider_stripped_ions", str(opt_config.stripped_ions)
             )
-            self.sweep_params["rider_transv_mom"]["fixed_var"].set(
-                f"{opt_config.transv_mom:.2e}"
+            self._set_fixed_sweep_value(
+                "rider_transv_mom", f"{opt_config.transv_mom:.2e}"
             )
-            self.sweep_params["rider_transv_dist"]["fixed_var"].set(
-                f"{opt_config.transv_dist:.2e}"
+            self._set_fixed_sweep_value(
+                "rider_transv_dist", f"{opt_config.transv_dist:.2e}"
             )
-            self.macroparticle_enabled_var.set(
-                getattr(opt_config, "macroparticle_enabled", False)
+            self._apply_macroparticle_ui_state(
+                enabled=getattr(opt_config, "macroparticle_enabled", False),
+                charge_multiplier=f"{getattr(opt_config, 'macroparticle_charge_multiplier', 1.0):.2e}",
+                sigma_multiplier=f"{getattr(opt_config, 'macroparticle_sigma_multiplier', 1.0):.2e}",
+                momentum_errors=getattr(
+                    opt_config, "macroparticle_use_momentum_errors", True
+                ),
+                refresh_state=True,
             )
-            self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].set(
-                f"{getattr(opt_config, 'macroparticle_charge_multiplier', 1.0):.2e}"
-            )
-            self.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].set(
-                f"{getattr(opt_config, 'macroparticle_sigma_multiplier', 1.0):.2e}"
-            )
-            self.macroparticle_momentum_errors_var.set(
-                getattr(opt_config, "macroparticle_use_momentum_errors", True)
-            )
-            self._toggle_macroparticle_controls()
-            self._update_macroparticle_state()
             self.main_timestep_display_var.set(f"{opt_config.timestep:.2e}")
 
             # Load driver parameters if BUNCH_TO_BUNCH
             if main_options.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-                driver = main_options.driver_params
-                if driver:
-                    self.sweep_params["driver_m_particle"]["fixed_var"].set(
-                        f"{driver.get('m_particle', 207.2):.6e}"
-                    )
-                    self.sweep_params["driver_charge_sign"]["fixed_var"].set(
-                        str(driver.get("charge_sign", 1.0))
-                    )
-                    self.sweep_params["driver_pcount"]["fixed_var"].set(
-                        str(driver.get("pcount", 5))
-                    )
-                    self.sweep_params["driver_transv_mom"]["fixed_var"].set(
-                        f"{driver.get('transv_mom', 0.0):.2e}"
-                    )
-                    self.sweep_params["driver_transv_dist"]["fixed_var"].set(
-                        f"{driver.get('transv_dist', -0.07998):.6e}"
-                    )
-                    self.sweep_params["driver_starting_distance"]["fixed_var"].set(
-                        f"{driver.get('starting_distance', 1000.0):.2e}"
-                    )
-                    # Convert Pz to energy (GeV) for the new driver_energy_gev parameter
-                    driver_pz = driver.get("starting_Pz", -4925.0)
-                    driver_mass = driver.get("m_particle", 207.2)
-                    driver_energy = calculate_energy_from_pz(driver_pz, driver_mass)
-                    self.sweep_params["driver_energy_gev"]["fixed_var"].set(
-                        f"{driver_energy:.6e}"
-                    )
-                    self.sweep_params["driver_stripped_ions"]["fixed_var"].set(
-                        str(driver.get("stripped_ions", 54.0))
-                    )
+                if self._apply_driver_sweep_values(main_options.driver_params):
                     self._log_result("[INFO] Loaded driver parameters from main GUI")
 
                     # Update starting position field (rider only; driver uses sweep param)
@@ -3094,15 +3061,14 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Update stability options if they exist in config
             if hasattr(opt_config, "smoothness_enabled"):
-                self.smoothness_enabled_var.set(opt_config.smoothness_enabled)
-                self.smoothness_window_var.set(str(opt_config.smoothness_window_size))
-                self.smoothness_oscillation_var.set(
-                    str(opt_config.smoothness_oscillation_threshold)
+                self._apply_smoothness_ui_state(
+                    enabled=opt_config.smoothness_enabled,
+                    window_size=str(opt_config.smoothness_window_size),
+                    oscillation_threshold=str(
+                        opt_config.smoothness_oscillation_threshold
+                    ),
+                    reject_on_violation=opt_config.smoothness_reject_on_violation,
                 )
-                self.smoothness_reject_var.set(
-                    opt_config.smoothness_reject_on_violation
-                )
-                self._toggle_smoothness_controls()
 
             self._log_result("[OK] Loaded parameters from main GUI configuration")
             self._log_result(f"  Simulation type: {opt_config.simulation_type.name}")
@@ -3123,24 +3089,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Update GUI controller's simulation type and driver visibility
             # This ensures the main GUI shows the correct simulation mode and driver parameters
             if self.gui_controller:
-                self.gui_controller.sim_type_var.set(opt_config.simulation_type.name)
-                # Force update of simulation type combobox display
-                if hasattr(self.gui_controller, "sim_type_combo"):
-                    try:
-                        values_list = list(self.gui_controller.sim_type_combo["values"])
-                        sim_type_name = opt_config.simulation_type.name
-                        if sim_type_name in values_list:
-                            idx = values_list.index(sim_type_name)
-                            self.gui_controller.sim_type_combo.current(idx)
-                            self.gui_controller.root.update_idletasks()
-                    except Exception:
-                        pass
-                # Update driver visibility (shows driver params for BUNCH_TO_BUNCH)
-                if hasattr(self.gui_controller, "_update_driver_visibility"):
-                    self.gui_controller._update_driver_visibility()
-                # Update image subcharge state (greys out for BUNCH_TO_BUNCH)
-                if hasattr(self.gui_controller, "_update_image_subcharge_state"):
-                    self.gui_controller._update_image_subcharge_state()
+                self._sync_main_gui_visibility_state()
 
             # Update sweep optimizer's own driver visibility based on loaded simulation type
             self._update_driver_visibility()
@@ -3715,6 +3664,104 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
         return max(0.0, penalty * penalty_scale)
 
+    def _set_fixed_sweep_value(self, param_name: str, value: str):
+        """Update a fixed-value sweep control."""
+        self.sweep_params[param_name]["fixed_var"].set(value)
+
+    def _apply_macroparticle_ui_state(
+        self,
+        *,
+        enabled: bool,
+        charge_multiplier: str,
+        sigma_multiplier: str,
+        momentum_errors: bool,
+        refresh_state: bool = False,
+    ):
+        """Apply macroparticle-related UI state."""
+        self.macroparticle_enabled_var.set(enabled)
+        self._set_fixed_sweep_value(
+            "macroparticle_charge_multiplier", charge_multiplier
+        )
+        self._set_fixed_sweep_value("macroparticle_sigma_multiplier", sigma_multiplier)
+        self.macroparticle_momentum_errors_var.set(momentum_errors)
+        if refresh_state:
+            self._toggle_macroparticle_controls()
+            self._update_macroparticle_state()
+
+    def _apply_smoothness_ui_state(
+        self,
+        *,
+        enabled: bool,
+        window_size: str,
+        oscillation_threshold: str,
+        reject_on_violation: bool,
+    ):
+        """Apply smoothness-related UI state."""
+        self.smoothness_enabled_var.set(enabled)
+        self.smoothness_window_var.set(window_size)
+        self.smoothness_oscillation_var.set(oscillation_threshold)
+        self.smoothness_reject_var.set(reject_on_violation)
+        self._toggle_smoothness_controls()
+
+    def _apply_driver_sweep_values(self, driver_params: dict[str, Any] | None) -> bool:
+        """Populate driver sweep controls from driver parameters."""
+        if not driver_params:
+            return False
+
+        self._set_fixed_sweep_value(
+            "driver_m_particle", f"{driver_params.get('m_particle', 207.2):.6e}"
+        )
+        self._set_fixed_sweep_value(
+            "driver_charge_sign", str(driver_params.get("charge_sign", 1.0))
+        )
+        self._set_fixed_sweep_value(
+            "driver_pcount", str(driver_params.get("pcount", 5))
+        )
+        self._set_fixed_sweep_value(
+            "driver_transv_mom", f"{driver_params.get('transv_mom', 0.0):.2e}"
+        )
+        self._set_fixed_sweep_value(
+            "driver_transv_dist", f"{driver_params.get('transv_dist', -0.07998):.6e}"
+        )
+        self._set_fixed_sweep_value(
+            "driver_starting_distance",
+            f"{driver_params.get('starting_distance', 1000.0):.2e}",
+        )
+        driver_pz = driver_params.get("starting_Pz", -4925.0)
+        driver_mass = driver_params.get("m_particle", 207.2)
+        driver_energy = calculate_energy_from_pz(driver_pz, driver_mass)
+        self._set_fixed_sweep_value("driver_energy_gev", f"{driver_energy:.6e}")
+        self._set_fixed_sweep_value(
+            "driver_stripped_ions", str(driver_params.get("stripped_ions", 54.0))
+        )
+        return True
+
+    def _sync_main_gui_simulation_type(self, sim_type_value: str):
+        """Sync the selected simulation type back to the main GUI, if available."""
+        if not (self.gui_controller and hasattr(self.gui_controller, "sim_type_var")):
+            return
+
+        self.gui_controller.sim_type_var.set(sim_type_value)
+        if hasattr(self.gui_controller, "sim_type_combo"):
+            try:
+                values_list = list(self.gui_controller.sim_type_combo["values"])
+                if sim_type_value in values_list:
+                    idx = values_list.index(sim_type_value)
+                    self.gui_controller.sim_type_combo.current(idx)
+                    self.gui_controller.root.update_idletasks()
+            except Exception:
+                pass
+
+    def _sync_main_gui_visibility_state(self):
+        """Refresh main GUI visibility state affected by simulation type."""
+        if not self.gui_controller:
+            return
+
+        if hasattr(self.gui_controller, "_update_driver_visibility"):
+            self.gui_controller._update_driver_visibility()
+        if hasattr(self.gui_controller, "_update_image_subcharge_state"):
+            self.gui_controller._update_image_subcharge_state()
+
     def _load_config_from_path(self, filepath: str) -> None:
         """Load configuration from a specific file path.
 
@@ -3742,20 +3789,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             # Populate UI fields
             sim_type_value = data.get("simulation_type", "CONDUCTING_WALL")
             self.sim_type_var.set(sim_type_value)
-
-            # Sync simulation type to main GUI
-            if self.gui_controller and hasattr(self.gui_controller, "sim_type_var"):
-                self.gui_controller.sim_type_var.set(sim_type_value)
-                # Force update of main GUI's simulation type combobox display
-                if hasattr(self.gui_controller, "sim_type_combo"):
-                    try:
-                        values_list = list(self.gui_controller.sim_type_combo["values"])
-                        if sim_type_value in values_list:
-                            idx = values_list.index(sim_type_value)
-                            self.gui_controller.sim_type_combo.current(idx)
-                            self.gui_controller.root.update_idletasks()
-                    except Exception:
-                        pass
+            self._sync_main_gui_simulation_type(sim_type_value)
 
             self.mode_var.set(data.get("mode", "blind_sweep"))
             self.aperture_min_var.set(str(data.get("aperture_min", 1e-5)))
@@ -3883,13 +3917,14 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self._toggle_timestep_mode()
 
             # Update stability controls (smoothness has UI variables)
-            self.smoothness_enabled_var.set(loaded_config.smoothness_enabled)
-            self.smoothness_window_var.set(str(loaded_config.smoothness_window_size))
-            self.smoothness_oscillation_var.set(
-                str(loaded_config.smoothness_oscillation_threshold)
+            self._apply_smoothness_ui_state(
+                enabled=loaded_config.smoothness_enabled,
+                window_size=str(loaded_config.smoothness_window_size),
+                oscillation_threshold=str(
+                    loaded_config.smoothness_oscillation_threshold
+                ),
+                reject_on_violation=loaded_config.smoothness_reject_on_violation,
             )
-            self.smoothness_reject_var.set(loaded_config.smoothness_reject_on_violation)
-            self._toggle_smoothness_controls()
 
             # Update main GUI stability tab if available
             if self.gui_controller:
@@ -3950,17 +3985,13 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             )
 
             # Update macroparticle controls
-            self.macroparticle_enabled_var.set(loaded_config.macroparticle_enabled)
-            self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].set(
-                str(loaded_config.macroparticle_charge_multiplier)
+            self._apply_macroparticle_ui_state(
+                enabled=loaded_config.macroparticle_enabled,
+                charge_multiplier=str(loaded_config.macroparticle_charge_multiplier),
+                sigma_multiplier=str(loaded_config.macroparticle_sigma_multiplier),
+                momentum_errors=loaded_config.macroparticle_use_momentum_errors,
+                refresh_state=True,
             )
-            self.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].set(
-                str(loaded_config.macroparticle_sigma_multiplier)
-            )
-            self.macroparticle_momentum_errors_var.set(
-                loaded_config.macroparticle_use_momentum_errors
-            )
-            self._toggle_macroparticle_controls()
 
             # Load sweep parameter states dynamically
             sweep_state = data.get("sweep_parameters", {})
@@ -4095,10 +4126,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
                 # Update driver visibility and image subcharge state based on simulation type
                 # This ensures driver parameters are shown for BUNCH_TO_BUNCH and hidden otherwise
-                if hasattr(self.gui_controller, "_update_driver_visibility"):
-                    self.gui_controller._update_driver_visibility()
-                if hasattr(self.gui_controller, "_update_image_subcharge_state"):
-                    self.gui_controller._update_image_subcharge_state()
+                self._sync_main_gui_visibility_state()
 
         except Exception as e:
             _show_error_dialog(self, "Load Error", f"Failed to load config: {e}")

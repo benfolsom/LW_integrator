@@ -1,5 +1,6 @@
 """Tests for optimization plugin integration."""
 
+from types import SimpleNamespace
 import threading
 import time
 from unittest.mock import Mock
@@ -11,6 +12,28 @@ from core.types import SimulationType
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
+from optimization.sweep_helpers import calculate_energy_from_pz
+
+
+class _MockVar:
+    def __init__(self, value=None):
+        self.value = value
+
+    def set(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+
+def _build_sweep_harness(sweep_params):
+    harness = SimpleNamespace(sweep_params=sweep_params)
+
+    def set_fixed_sweep_value(param_name, value):
+        harness.sweep_params[param_name]["fixed_var"].set(value)
+
+    harness._set_fixed_sweep_value = set_fixed_sweep_value
+    return harness
 
 
 @pytest.fixture
@@ -89,6 +112,128 @@ class TestOptimizationPluginIntegration:
             OptimizationPlugin._cleanup_orphaned_temp_dirs
             is OptimizationRunMixin._cleanup_orphaned_temp_dirs
         )
+
+    def test_apply_macroparticle_ui_state_updates_controls(self):
+        harness = _build_sweep_harness(
+            {
+            "macroparticle_charge_multiplier": {"fixed_var": _MockVar()},
+            "macroparticle_sigma_multiplier": {"fixed_var": _MockVar()},
+            }
+        )
+        harness.macroparticle_enabled_var = _MockVar()
+        harness.macroparticle_momentum_errors_var = _MockVar()
+        harness._toggle_macroparticle_controls = Mock()
+        harness._update_macroparticle_state = Mock()
+
+        OptimizationPlugin._apply_macroparticle_ui_state(
+            harness,
+            enabled=True,
+            charge_multiplier="1.23e+00",
+            sigma_multiplier="4.56e+00",
+            momentum_errors=False,
+            refresh_state=True,
+        )
+
+        assert harness.macroparticle_enabled_var.get() is True
+        assert (
+            harness.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].get()
+            == "1.23e+00"
+        )
+        assert (
+            harness.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].get()
+            == "4.56e+00"
+        )
+        assert harness.macroparticle_momentum_errors_var.get() is False
+        harness._toggle_macroparticle_controls.assert_called_once_with()
+        harness._update_macroparticle_state.assert_called_once_with()
+
+    def test_apply_smoothness_ui_state_updates_controls(self):
+        harness = SimpleNamespace()
+        harness.smoothness_enabled_var = _MockVar()
+        harness.smoothness_window_var = _MockVar()
+        harness.smoothness_oscillation_var = _MockVar()
+        harness.smoothness_reject_var = _MockVar()
+        harness._toggle_smoothness_controls = Mock()
+
+        OptimizationPlugin._apply_smoothness_ui_state(
+            harness,
+            enabled=False,
+            window_size="12",
+            oscillation_threshold="0.75",
+            reject_on_violation=True,
+        )
+
+        assert harness.smoothness_enabled_var.get() is False
+        assert harness.smoothness_window_var.get() == "12"
+        assert harness.smoothness_oscillation_var.get() == "0.75"
+        assert harness.smoothness_reject_var.get() is True
+        harness._toggle_smoothness_controls.assert_called_once_with()
+
+    def test_apply_driver_sweep_values_sets_driver_fields(self):
+        harness = _build_sweep_harness(
+            {
+            "driver_m_particle": {"fixed_var": _MockVar()},
+            "driver_charge_sign": {"fixed_var": _MockVar()},
+            "driver_pcount": {"fixed_var": _MockVar()},
+            "driver_transv_mom": {"fixed_var": _MockVar()},
+            "driver_transv_dist": {"fixed_var": _MockVar()},
+            "driver_starting_distance": {"fixed_var": _MockVar()},
+            "driver_energy_gev": {"fixed_var": _MockVar()},
+            "driver_stripped_ions": {"fixed_var": _MockVar()},
+            }
+        )
+
+        updated = OptimizationPlugin._apply_driver_sweep_values(
+            harness,
+            {
+                "m_particle": 207.2,
+                "charge_sign": 1.0,
+                "pcount": 5,
+                "transv_mom": 0.0,
+                "transv_dist": -0.07998,
+                "starting_distance": 1000.0,
+                "starting_Pz": -4925.0,
+                "stripped_ions": 54.0,
+            },
+        )
+
+        assert updated is True
+        assert harness.sweep_params["driver_m_particle"]["fixed_var"].get() == "2.072000e+02"
+        assert harness.sweep_params["driver_charge_sign"]["fixed_var"].get() == "1.0"
+        assert harness.sweep_params["driver_pcount"]["fixed_var"].get() == "5"
+        assert (
+            float(harness.sweep_params["driver_energy_gev"]["fixed_var"].get())
+            == pytest.approx(calculate_energy_from_pz(-4925.0, 207.2))
+        )
+        assert harness.sweep_params["driver_stripped_ions"]["fixed_var"].get() == "54.0"
+
+    def test_sync_main_gui_simulation_type_updates_controller(self):
+        sim_type_var = _MockVar()
+        class _Combo:
+            def __init__(self):
+                self.current = Mock()
+
+            def __getitem__(self, key):
+                assert key == "values"
+                return ("CONDUCTING_WALL", "BUNCH_TO_BUNCH")
+
+        combo = _Combo()
+        root = Mock()
+        harness = SimpleNamespace(
+            gui_controller=SimpleNamespace(
+                sim_type_var=sim_type_var,
+                sim_type_combo=combo,
+                root=root,
+            )
+        )
+
+        OptimizationPlugin._sync_main_gui_simulation_type(
+            harness, "BUNCH_TO_BUNCH"
+        )
+
+        assert sim_type_var.get() == "BUNCH_TO_BUNCH"
+        combo.current.assert_called_once_with(1)
+        root.update_idletasks.assert_called_once_with()
 
     def test_run_single_integration_completes(self, mock_config, mock_run_result):
         """Test that _run_single_integration completes without hanging."""
