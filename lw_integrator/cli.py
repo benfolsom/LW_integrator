@@ -642,17 +642,8 @@ def run_sweep(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # Determine quiet mode from args
     quiet = getattr(args, "quiet", False)
-
-    # Build verbosity overrides dict
-    verbosity_overrides = {}
-    if hasattr(args, "log_verbosity") and args.log_verbosity is not None:
-        verbosity_overrides["log_verbosity"] = args.log_verbosity
-    if hasattr(args, "sc_verbosity") and args.sc_verbosity is not None:
-        verbosity_overrides["self_consistency_verbosity"] = args.sc_verbosity
-    if hasattr(args, "adaptive_debug") and args.adaptive_debug is not None:
-        verbosity_overrides["adaptive_timestep_debug"] = args.adaptive_debug
+    verbosity_overrides = _build_sweep_verbosity_overrides(args)
 
     # Run the sweep
     try:
@@ -669,6 +660,20 @@ def run_sweep(args: argparse.Namespace) -> int:
 
         traceback.print_exc()
         return 2
+
+
+def _build_sweep_verbosity_overrides(
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    """Collect sweep verbosity-related overrides from CLI arguments."""
+    overrides: Dict[str, Any] = {}
+    if getattr(args, "log_verbosity", None) is not None:
+        overrides["log_verbosity"] = args.log_verbosity
+    if getattr(args, "sc_verbosity", None) is not None:
+        overrides["self_consistency_verbosity"] = args.sc_verbosity
+    if getattr(args, "adaptive_debug", None) is not None:
+        overrides["adaptive_timestep_debug"] = args.adaptive_debug
+    return overrides
 
 
 if __name__ == "__main__":  # pragma: no cover - manual invocation

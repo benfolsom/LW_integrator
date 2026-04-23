@@ -147,6 +147,13 @@ class TestCliBuildRequest:
 
 
 class TestCliSweepEntryPoint:
+    def test_build_sweep_verbosity_overrides_ignores_none_values(self):
+        overrides = cli._build_sweep_verbosity_overrides(
+            _make_args(log_verbosity=None, sc_verbosity=2, adaptive_debug=None)
+        )
+
+        assert overrides == {"self_consistency_verbosity": 2}
+
     def test_run_sweep_forwards_verbosity_overrides(self, monkeypatch, tmp_path: Path):
         config_path = tmp_path / "sweep.json"
         config_path.write_text("{}", encoding="utf-8")
@@ -183,3 +190,48 @@ class TestCliSweepEntryPoint:
             "self_consistency_verbosity": 3,
             "adaptive_timestep_debug": True,
         }
+
+
+class TestCliMain:
+    def test_main_writes_output_json(self, monkeypatch, tmp_path: Path):
+        output_path = tmp_path / "summary.json"
+        fake_request = object()
+        monkeypatch.setattr(cli, "build_request", lambda args: fake_request)
+
+        def fake_run_simulation(request):
+            trajectory = [
+                {
+                    "gamma": np.array([1.0]),
+                    "z": np.array([0.0]),
+                    "t": np.array([0.0]),
+                    "bz": np.array([0.0]),
+                }
+            ]
+            return trajectory, None
+
+        monkeypatch.setattr(cli, "run_simulation", fake_run_simulation)
+        monkeypatch.setattr(
+            cli,
+            "summarise_trajectory",
+            lambda trajectory: {"steps_completed": 1, "delta_gamma_mean": 0.0},
+        )
+
+        result = cli.main(["--output", str(output_path), "--quiet"])
+
+        assert result == 0
+        assert json.loads(output_path.read_text(encoding="utf-8")) == {
+            "steps_completed": 1,
+            "delta_gamma_mean": 0.0,
+        }
+
+    def test_main_returns_2_for_invalid_config(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            cli,
+            "build_request",
+            lambda args: (_ for _ in ()).throw(cli.SimulationConfigError("bad config")),
+        )
+
+        result = cli.main([])
+
+        assert result == 2
+        assert "Error: bad config" in capsys.readouterr().err
