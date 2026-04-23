@@ -28,6 +28,13 @@ from optimization.plugin_persistence_helpers import (
     metrics_export_settings_from_data,
     resolve_loaded_sweep_state,
 )
+from optimization.plugin_results_helpers import (
+    build_summary_heatmap_grid,
+    build_trajectory_plot_data,
+    collect_summary_plot_data,
+    convert_legacy_trajectory_data,
+    summarize_result_row,
+)
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.sweep_helpers import (
@@ -550,6 +557,126 @@ class TestPluginPersistenceHelpers:
             "points": "5",
             "log": True,
             "fixed_value": "112.5",
+        }
+
+
+class TestPluginResultsHelpers:
+    """Test extracted optimization plugin result helpers."""
+
+    def test_convert_legacy_trajectory_data_handles_missing_gamma_history(self):
+        result = convert_legacy_trajectory_data(
+            {
+                "core": {
+                    "rider": {
+                        "positions_mm": {"x": [3.0], "y": [4.0], "z": [5.0]},
+                        "conjugate_momenta": {"Px": [6.0], "Py": [8.0], "Pz": [9.0]},
+                        "time_ns": [0.1],
+                    }
+                },
+                "aperture_radius": 0.2,
+                "wall_z": 10.0,
+            },
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+
+        assert result["parameters"]["particle_energy_gev"] == pytest.approx(0.0)
+        assert result["trajectory"]["r"] == pytest.approx([5.0])
+        assert result["trajectory"]["pr"] == pytest.approx([10.0])
+        assert result["metrics"]["rider_delta_e_mev"] == pytest.approx(0.0)
+
+    def test_summarize_result_row_normalizes_distance_and_metrics(self):
+        row = summarize_result_row(
+            {
+                "run_number": 7,
+                "parameters": {
+                    "aperture_radius": 0.03,
+                    "particle_energy_gev": 12.0,
+                    "starting_z": 4.0,
+                },
+                "metrics": {
+                    "rider_delta_e_mev": 1.5,
+                    "rider_gamma_initial": 100.0,
+                    "rider_gamma_final": 101.0,
+                },
+                "_distance_info": {"z_start": 20.0, "z_end": 5.0},
+            }
+        )
+
+        assert row["run_num"] == 7
+        assert row["aperture"] == pytest.approx(0.03)
+        assert row["energy"] == pytest.approx(12.0)
+        assert row["start_z"] == pytest.approx(4.0)
+        assert row["delta_e"] == pytest.approx(1.5)
+        assert row["traveled"] == pytest.approx(15.0)
+        assert row["gamma_initial"] == pytest.approx(100.0)
+        assert row["gamma_final"] == pytest.approx(101.0)
+
+    def test_build_summary_heatmap_grid_maps_results_to_grid(self):
+        results = [
+            {
+                "parameters": {"aperture_radius": 0.1, "particle_energy_gev": 1.0},
+                "metrics": {"rider_delta_e_mev": 10.0},
+            },
+            {
+                "parameters": {"aperture_radius": 0.2, "particle_energy_gev": 1.0},
+                "metrics": {"rider_delta_e_mev": 20.0},
+            },
+            {
+                "parameters": {"aperture_radius": 0.1, "particle_energy_gev": 2.0},
+                "metrics": {"rider_delta_e_mev": 30.0},
+            },
+            {
+                "parameters": {"aperture_radius": 0.2, "particle_energy_gev": 2.0},
+                "metrics": {"rider_delta_e_mev": 40.0},
+            },
+        ]
+
+        plot_data = collect_summary_plot_data(results)
+        assert plot_data == {
+            "apertures": [0.1, 0.2, 0.1, 0.2],
+            "energies": [1.0, 1.0, 2.0, 2.0],
+            "delta_es": [10.0, 20.0, 30.0, 40.0],
+        }
+
+        unique_a, unique_e, grid = build_summary_heatmap_grid(results)
+        assert unique_a == [0.1, 0.2]
+        assert unique_e == [1.0, 2.0]
+        assert grid.tolist() == [[10.0, 20.0], [30.0, 40.0]]
+
+    def test_build_trajectory_plot_data_prepares_energy_delta_series(self):
+        plot_data = build_trajectory_plot_data(
+            [
+                {
+                    "run_number": 3,
+                    "parameters": {
+                        "aperture_radius": 0.05,
+                        "particle_energy_gev": 15.0,
+                    },
+                    "metrics": {
+                        "rider_delta_e_mev": 2.0,
+                        "rider_gamma_initial": 10.0,
+                    },
+                    "trajectory": {
+                        "z": [0.0, 5.0, 10.0],
+                        "r": [0.1, 0.2, 0.3],
+                    },
+                }
+            ],
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+
+        assert len(plot_data["series"]) == 1
+        series = plot_data["series"][0]
+        assert series["run_num"] == 3
+        assert series["aperture"] == pytest.approx(0.05)
+        assert series["energy"] == pytest.approx(15.0)
+        assert series["energy_delta"].tolist() == pytest.approx([0.0, 1.0, 2.0])
+        assert plot_data["heatmap"] == {
+            "apertures": [0.05],
+            "energies": [15.0],
+            "delta_es": [2.0],
         }
 
 

@@ -19,8 +19,6 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, Optional
 
-import numpy as np
-
 from core.types import SimulationType  # type: ignore[import]
 from optimization.config import OptimizationConfig
 from optimization.plugin_config_helpers import (
@@ -33,6 +31,13 @@ from optimization.plugin_persistence_helpers import (
     build_saved_config_payload,
     metrics_export_settings_from_data,
     resolve_loaded_sweep_state,
+)
+from optimization.plugin_results_helpers import (
+    build_summary_heatmap_grid,
+    build_trajectory_plot_data,
+    collect_summary_plot_data,
+    convert_legacy_trajectory_data,
+    summarize_result_row,
 )
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
@@ -4707,79 +4712,11 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
     def _convert_legacy_trajectory(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Convert legacy trajectory format to sweep results format."""
-        # Extract trajectory data from legacy format
-        rider_data = data.get("core", {}).get("rider", {})
-
-        # Get positions
-        positions = rider_data.get("positions_mm", {})
-        x = positions.get("x", [])
-        y = positions.get("y", [])
-        z_pos = positions.get("z", [])
-
-        # Calculate r from x and y
-        if x and y:
-            r = [np.sqrt(xi**2 + yi**2) for xi, yi in zip(x, y)]
-        else:
-            r = []
-
-        # Get momenta
-        momenta = rider_data.get("conjugate_momenta", {})
-        pz = momenta.get("Pz", [])
-        px = momenta.get("Px", [])
-        py = momenta.get("Py", [])
-
-        # Calculate pr from px and py
-        if px and py:
-            pr = [np.sqrt(pxi**2 + pyi**2) for pxi, pyi in zip(px, py)]
-        else:
-            pr = []
-
-        # Get time
-        t = rider_data.get("time_ns", [])
-
-        # Get gamma history for energy calculation
-        gamma_hist = rider_data.get("gamma_hist", [])
-
-        # Calculate metrics
-        if gamma_hist:
-            gamma_initial = gamma_hist[0] if len(gamma_hist) > 0 else 1.0
-            gamma_final = gamma_hist[-1] if len(gamma_hist) > 0 else 1.0
-            rest_energy_mev = (
-                getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
-            )
-            delta_e_mev = (gamma_final - gamma_initial) * rest_energy_mev
-        else:
-            gamma_initial = 1.0
-            gamma_final = 1.0
-            delta_e_mev = 0.0
-
-        # Build result in sweep format
-        result = {
-            "run_number": 1,
-            "parameters": {
-                "aperture_radius": data.get("aperture_radius", 0),
-                "particle_energy_gev": (gamma_initial - 1)
-                * rest_energy_mev
-                / 1000.0,  # Convert to GeV
-                "start_z": z_pos[0] if z_pos else 0,
-                "wall_z": data.get("wall_z", 0),
-                "simulation_type": data.get("simulation_type", "UNKNOWN"),
-            },
-            "metrics": {
-                "rider_delta_e_mev": delta_e_mev,
-                "rider_gamma_initial": gamma_initial,
-                "rider_gamma_final": gamma_final,
-            },
-            "trajectory": {
-                "z": z_pos,
-                "r": r,
-                "pz": pz,
-                "pr": pr,
-                "t": t,
-            },
-        }
-
-        return result
+        return convert_legacy_trajectory_data(
+            data,
+            m_particle_amu=getattr(self.config, "m_particle", 0.00054857990907),
+            amu_to_mev=AMU_TO_MEV,
+        )
 
     def _show_results_summary(self, results, file_path):
         """Show metrics-first results summary (works without trajectory data).
@@ -4866,32 +4803,24 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Data rows
             for r in results:
-                params = r.get("parameters", {})
-                metrics = r.get("metrics", {})
-                dist_info = r.get("_distance_info", {})
-
-                run_num = r.get("run_number", "?")
-                aperture = params.get("aperture_radius", 0)
-                energy = params.get("particle_energy_gev", 0)
-                start_z = params.get("starting_z", 0)
-                delta_e = metrics.get("rider_delta_e_mev", 0)
-
-                # Calculate traveled distance
-                z_start = dist_info.get("z_start", 0)
-                z_end = dist_info.get("z_end", 0)
-                traveled = abs(z_end - z_start)
-
-                # Get gamma from metrics
-                gamma = metrics.get("rider_gamma_initial", 0)
+                row_data = summarize_result_row(r)
 
                 if has_beam_optics:
-                    # Include beam optics columns
-                    emit_x = metrics.get("rider_emittance_x_mm_mrad", 0)
-                    norm_emit_x = metrics.get("rider_norm_emittance_x_mm_mrad", 0)
-                    beta_x = metrics.get("rider_beta_x_m", 0)
-                    row = f"{run_num:<5} {aperture:<15.3e} {energy:<15.2f} {start_z:<15.1f} {delta_e:<12.3f} {traveled:<15.1f} {gamma:<12.1f} {emit_x:<15.3e} {norm_emit_x:<16.3e} {beta_x:<12.3e}\n"
+                    row = (
+                        f"{row_data['run_num']:<5} {row_data['aperture']:<15.3e} "
+                        f"{row_data['energy']:<15.2f} {row_data['start_z']:<15.1f} "
+                        f"{row_data['delta_e']:<12.3f} {row_data['traveled']:<15.1f} "
+                        f"{row_data['gamma_initial']:<12.1f} "
+                        f"{row_data['emit_x']:<15.3e} {row_data['norm_emit_x']:<16.3e} "
+                        f"{row_data['beta_x']:<12.3e}\n"
+                    )
                 else:
-                    row = f"{run_num:<5} {aperture:<15.3e} {energy:<15.2f} {start_z:<15.1f} {delta_e:<12.3f} {traveled:<15.1f} {gamma:<12.1f}\n"
+                    row = (
+                        f"{row_data['run_num']:<5} {row_data['aperture']:<15.3e} "
+                        f"{row_data['energy']:<15.2f} {row_data['start_z']:<15.1f} "
+                        f"{row_data['delta_e']:<12.3f} {row_data['traveled']:<15.1f} "
+                        f"{row_data['gamma_initial']:<12.1f}\n"
+                    )
                 metrics_text.insert("end", row)
 
         metrics_text.config(state="disabled")
@@ -4942,23 +4871,15 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         """Create parameter sweep visualization plots."""
         try:
             import matplotlib.pyplot as plt
-            import numpy as np
             from matplotlib.backends.backend_tkagg import (
                 FigureCanvasTkAgg,
                 NavigationToolbar2Tk,
             )
 
-            # Extract data
-            apertures = []
-            energies = []
-            delta_es = []
-
-            for r in results:
-                params = r.get("parameters", {})
-                metrics = r.get("metrics", {})
-                apertures.append(params.get("aperture_radius", 0))
-                energies.append(params.get("particle_energy_gev", 0))
-                delta_es.append(metrics.get("rider_delta_e_mev", 0))
+            plot_data = collect_summary_plot_data(results)
+            apertures = plot_data["apertures"]
+            energies = plot_data["energies"]
+            delta_es = plot_data["delta_es"]
 
             # Create figure
             fig = plt.figure(figsize=(10, 6))
@@ -4970,21 +4891,7 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             if unique_apertures > 1 and unique_energies > 1:
                 # 2D sweep - make heatmap
                 ax = fig.add_subplot(111)
-
-                # Create grid
-                unique_a = sorted(set(apertures))
-                unique_e = sorted(set(energies))
-                grid = np.zeros((len(unique_e), len(unique_a)))
-
-                for i, r in enumerate(results):
-                    params = r.get("parameters", {})
-                    a_val = params.get("aperture_radius", 0)
-                    e_val = params.get("particle_energy_gev", 0)
-                    de_val = delta_es[i]
-
-                    a_idx = unique_a.index(a_val)
-                    e_idx = unique_e.index(e_val)
-                    grid[e_idx, a_idx] = de_val
+                unique_a, unique_e, grid = build_summary_heatmap_grid(results)
 
                 im = ax.imshow(grid, aspect="auto", origin="lower", cmap="RdYlGn_r")
                 ax.set_xticks(range(len(unique_a)))
@@ -5091,47 +4998,24 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
                 # Data
                 for r in results:
-                    params = r.get("parameters", {})
-                    metrics = r.get("metrics", {})
-                    dist_info = r.get("_distance_info", {})
-
-                    run_num = r.get("run_number", "")
-                    aperture = params.get("aperture_radius", 0)
-                    energy = params.get("particle_energy_gev", 0)
-                    start_z = params.get("starting_z", 0)
-                    delta_e = metrics.get("rider_delta_e_mev", 0)
-
-                    z_start = dist_info.get("z_start", 0)
-                    z_end = dist_info.get("z_end", 0)
-                    traveled = abs(z_end - z_start)
-
-                    gamma_i = metrics.get("rider_gamma_initial", 0)
-                    gamma_f = metrics.get("rider_gamma_final", 0)
-
-                    # Beam optics metrics
-                    emit_x = metrics.get("rider_emittance_x_mm_mrad", "")
-                    emit_y = metrics.get("rider_emittance_y_mm_mrad", "")
-                    norm_emit_x = metrics.get("rider_norm_emittance_x_mm_mrad", "")
-                    norm_emit_y = metrics.get("rider_norm_emittance_y_mm_mrad", "")
-                    beta_x = metrics.get("rider_beta_x_m", "")
-                    beta_y = metrics.get("rider_beta_y_m", "")
+                    row = summarize_result_row(r)
 
                     writer.writerow(
                         [
-                            run_num,
-                            aperture,
-                            energy,
-                            start_z,
-                            delta_e,
-                            traveled,
-                            gamma_i,
-                            gamma_f,
-                            emit_x,
-                            emit_y,
-                            norm_emit_x,
-                            norm_emit_y,
-                            beta_x,
-                            beta_y,
+                            row["run_num"],
+                            row["aperture"],
+                            row["energy"],
+                            row["start_z"],
+                            row["delta_e"],
+                            row["traveled"],
+                            row["gamma_initial"],
+                            row["gamma_final"],
+                            row["emit_x"],
+                            row["emit_y"],
+                            row["norm_emit_x"],
+                            row["norm_emit_y"],
+                            row["beta_x"],
+                            row["beta_y"],
                         ]
                     )
 
@@ -5343,55 +5227,24 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 fontweight="bold",
             )
 
-            # Collect data for heatmap
-            apertures = []
-            energies = []
-            delta_es = []
+            plot_data = build_trajectory_plot_data(
+                selected_results,
+                m_particle_amu=getattr(self.config, "m_particle", 0.00054857990907),
+                amu_to_mev=AMU_TO_MEV,
+            )
+            heatmap = plot_data["heatmap"]
 
             # Plot each selected trajectory
-            for idx, result in enumerate(selected_results):
-                traj = result.get("trajectory", {})
-                params = result.get("parameters", {})
-                metrics = result.get("metrics", {})
-                run_num = result.get("run_number", "?")
-
-                z = np.array(traj.get("z", []))
-                r = np.array(traj.get("r", []))
-
-                if len(z) == 0:
-                    continue
-
-                aperture = params.get("aperture_radius", 0)
-                energy = params.get("particle_energy_gev", 0)
-                delta_e_mev = metrics.get("rider_delta_e_mev", 0)
-                gamma_initial = metrics.get("rider_gamma_initial", 1)
-
-                label = f"Run #{run_num} (a={aperture:.2e}mm, E={energy:.1f}GeV)"
+            for idx, series in enumerate(plot_data["series"]):
+                label = (
+                    f"Run #{series['run_num']} "
+                    f"(a={series['aperture']:.2e}mm, E={series['energy']:.1f}GeV)"
+                )
                 color = plt.cm.tab10(idx % 10)
 
-                # Calculate energy from gamma: KE = (γ - 1) · mc²
-                _rest_mev = (
-                    getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
-                )
-                energy_mev_initial = (gamma_initial - 1) * _rest_mev
-
-                # Calculate energy at each point along trajectory
-                # Approximate: E(z) ≈ E_initial + ΔE * (z - z_0) / (z_final - z_0)
-                if len(z) > 1:
-                    z_range = z[-1] - z[0]
-                    if abs(z_range) > 1e-6:
-                        energy_mev = (
-                            energy_mev_initial + delta_e_mev * (z - z[0]) / z_range
-                        )
-                    else:
-                        energy_mev = np.full_like(z, energy_mev_initial)
-                else:
-                    energy_mev = np.array([energy_mev_initial])
-
-                # Plot 1: Delta E versus z
                 ax_delta_e.plot(
-                    z,
-                    energy_mev - energy_mev_initial,
+                    series["z"],
+                    series["energy_delta"],
                     label=label,
                     alpha=0.7,
                     color=color,
@@ -5402,16 +5255,21 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 # Since we only have r (radial distance), we'll plot r and -r to show transverse extent
                 # In a real case, you'd have separate x and y coordinates
                 ax_transverse.plot(
-                    z, r, label=f"{label} (+r)", alpha=0.6, color=color, linewidth=1.5
+                    series["z"],
+                    series["r"],
+                    label=f"{label} (+r)",
+                    alpha=0.6,
+                    color=color,
+                    linewidth=1.5,
                 )
                 ax_transverse.plot(
-                    z, -r, alpha=0.3, color=color, linewidth=1.0, linestyle="--"
+                    series["z"],
+                    -series["r"],
+                    alpha=0.3,
+                    color=color,
+                    linewidth=1.0,
+                    linestyle="--",
                 )
-
-                # Collect data for heatmap
-                apertures.append(aperture)
-                energies.append(energy)
-                delta_es.append(delta_e_mev)
 
             # Set labels and styling for Plot 1
             ax_delta_e.set_xlabel("z position (mm)", fontsize=10)
@@ -5436,6 +5294,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
             # Plot 3: Heatmap (aperture vs energy, colored by delta_e)
             # Only show heatmap if both aperture and energy were swept
+            apertures = heatmap["apertures"]
+            energies = heatmap["energies"]
+            delta_es = heatmap["delta_es"]
             unique_apertures = len(set(apertures))
             unique_energies = len(set(energies))
 
