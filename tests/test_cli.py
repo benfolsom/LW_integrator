@@ -490,6 +490,7 @@ class TestCliRuntimeHelpers:
             "final_time_ns": pytest.approx(3.0),
             "initial_z_mm": pytest.approx(0.0),
             "final_z_mm": pytest.approx(12.0),
+            "traveled_distance_mm": pytest.approx(12.0),
             "initial_gamma_mean": pytest.approx(3.0),
             "final_gamma_mean": pytest.approx(6.0),
             "delta_gamma_mean": pytest.approx(3.0),
@@ -497,9 +498,16 @@ class TestCliRuntimeHelpers:
         }
 
     def test_print_summary_formats_human_readable_output(self, capsys):
-        cli.print_summary({"steps_completed": 5, "delta_gamma_mean": 1.23456789})
+        cli.print_summary(
+            {
+                "steps_completed": 5,
+                "traveled_distance_mm": 12.3456789,
+                "delta_gamma_mean": 1.23456789,
+            }
+        )
 
         output = capsys.readouterr().out
         assert "LW Integrator simulation summary:" in output
         assert "Steps Completed: 5" in output
+        assert "Traveled Distance Mm: 12.3457" in output
         assert "Delta Gamma Mean: 1.23457" in output

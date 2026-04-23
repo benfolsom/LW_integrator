@@ -28,6 +28,7 @@ from core.types import (
     Trajectory,
 )
 from input_output.bunch_initialization import create_bunch_from_energy
+from optimization.plugin_results_helpers import summarize_result_row
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -558,16 +559,35 @@ def summarise_trajectory(trajectory: Trajectory) -> Dict[str, Any]:
     def _max_abs(value: np.ndarray) -> float:
         return float(np.max(np.abs(np.asarray(value, dtype=float))))
 
+    initial_z = _mean(initial.get("z", np.array([0.0])))
+    final_z = _mean(final.get("z", np.array([0.0])))
+    initial_gamma = _mean(initial.get("gamma", np.array([1.0])))
+    final_gamma = _mean(final.get("gamma", np.array([1.0])))
+    summary_row = summarize_result_row(
+        {
+            "parameters": {"start_z": initial_z},
+            "metrics": {
+                "rider_gamma_initial": initial_gamma,
+                "rider_gamma_final": final_gamma,
+            },
+            "_distance_info": {
+                "z_start": initial_z,
+                "z_end": final_z,
+            },
+        }
+    )
+
     return {
         "steps_completed": len(trajectory),
         "initial_time_ns": _mean(initial.get("t", np.array([0.0]))),
         "final_time_ns": _mean(final.get("t", np.array([0.0]))),
-        "initial_z_mm": _mean(initial.get("z", np.array([0.0]))),
-        "final_z_mm": _mean(final.get("z", np.array([0.0]))),
-        "initial_gamma_mean": _mean(initial.get("gamma", np.array([1.0]))),
-        "final_gamma_mean": _mean(final.get("gamma", np.array([1.0]))),
-        "delta_gamma_mean": _mean(final.get("gamma", np.array([1.0])))
-        - _mean(initial.get("gamma", np.array([1.0]))),
+        "initial_z_mm": initial_z,
+        "final_z_mm": final_z,
+        "traveled_distance_mm": summary_row["traveled"],
+        "initial_gamma_mean": summary_row["gamma_initial"],
+        "final_gamma_mean": summary_row["gamma_final"],
+        "delta_gamma_mean": summary_row["gamma_final"]
+        - summary_row["gamma_initial"],
         "max_absolute_velocity": _max_abs(final.get("bz", np.array([0.0]))),
     }
 
@@ -580,6 +600,7 @@ def print_summary(summary: Mapping[str, Any]) -> None:
         "final_time_ns",
         "initial_z_mm",
         "final_z_mm",
+        "traveled_distance_mm",
         "initial_gamma_mean",
         "final_gamma_mean",
         "delta_gamma_mean",
