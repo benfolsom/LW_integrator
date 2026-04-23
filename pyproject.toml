@@ -54,6 +54,7 @@ docs = [
 
 [project.scripts]
 lw-simulate = "lw_integrator.cli:main"
+lw-monitor-optimization = "lw_integrator.optimization_monitor:main"
 
 [project.urls]
 Homepage = "https://github.com/username/LW_integrator"
