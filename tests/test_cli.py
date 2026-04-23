@@ -62,9 +62,35 @@ class TestCliConfigParsing:
             SimulationType.BUNCH_TO_BUNCH
         )
 
+    def test_parse_simulation_type_accepts_enum_and_integer_values(self):
+        assert cli._parse_simulation_type(SimulationType.SWITCHING_WALL) == (
+            SimulationType.SWITCHING_WALL
+        )
+        assert cli._parse_simulation_type(SimulationType.BUNCH_TO_BUNCH.value) == (
+            SimulationType.BUNCH_TO_BUNCH
+        )
+
+    def test_parse_simulation_type_rejects_unknown_value(self):
+        with pytest.raises(cli.SimulationConfigError, match="Unknown simulation type"):
+            cli._parse_simulation_type("not-a-mode")
+
     def test_parse_chrono_mode_accepts_aliases(self):
         assert cli._parse_chrono_mode("legacy") == ChronoMatchingMode.FAST
         assert cli._parse_chrono_mode("blended") == ChronoMatchingMode.AVERAGED
+
+    def test_parse_chrono_mode_accepts_enum_instance(self):
+        assert cli._parse_chrono_mode(ChronoMatchingMode.AVERAGED) == (
+            ChronoMatchingMode.AVERAGED
+        )
+
+    def test_parse_chrono_mode_rejects_invalid_values(self):
+        with pytest.raises(cli.SimulationConfigError, match="Unknown chrono_mode"):
+            cli._parse_chrono_mode("slow")
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="chrono_mode must be a string or ChronoMatchingMode instance",
+        ):
+            cli._parse_chrono_mode(123)
 
     def test_parse_startup_mode_accepts_enum_or_alias(self):
         assert cli._parse_startup_mode("approximate") == (
@@ -74,16 +100,35 @@ class TestCliConfigParsing:
             StartupMode.COLD_START
         )
 
+    def test_parse_startup_mode_rejects_invalid_values(self):
+        with pytest.raises(cli.SimulationConfigError, match="Unknown startup_mode"):
+            cli._parse_startup_mode("warm")
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="startup_mode must be a string or StartupMode instance",
+        ):
+            cli._parse_startup_mode(123)
+
     def test_parse_image_subcharge_count_validates_range(self):
         assert cli._parse_image_subcharge_count("12") == 12
         with pytest.raises(cli.SimulationConfigError, match="between 4 and 128"):
             cli._parse_image_subcharge_count(3)
+
+    def test_parse_image_subcharge_count_rejects_non_integer(self):
+        with pytest.raises(cli.SimulationConfigError, match="must be an integer"):
+            cli._parse_image_subcharge_count("many")
 
     def test_parse_image_weighting_accepts_truthy_and_falsey_strings(self):
         assert cli._parse_image_weighting("yes") is True
         assert cli._parse_image_weighting("off") is False
         with pytest.raises(cli.SimulationConfigError, match="truthy/falsey string"):
             cli._parse_image_weighting("maybe")
+
+    def test_parse_image_weighting_defaults_when_none(self):
+        assert (
+            cli._parse_image_weighting(None)
+            == cli.DEFAULT_SIMULATION["use_image_weighting"]
+        )
 
     def test_build_integrator_config_uses_extracted_parsers(self):
         config = cli._build_integrator_config(
@@ -108,8 +153,31 @@ class TestCliConfigParsing:
         assert config.image_subcharge_count == 16
         assert config.use_image_weighting is False
 
+    def test_build_integrator_config_requires_simulation_type(self):
+        with pytest.raises(
+            cli.SimulationConfigError, match="missing 'simulation_type'"
+        ):
+            cli._build_integrator_config(
+                {"steps": 1, "time_step": 0.1, "wall_position": 0.0, "aperture_radius": 1.0}
+            )
+
+    def test_build_integrator_config_requires_core_fields(self):
+        with pytest.raises(cli.SimulationConfigError, match="missing required fields"):
+            cli._build_integrator_config({"simulation_type": "wall", "steps": 1})
+
 
 class TestCliBuildRequest:
+    def test_merge_particle_payload_applies_overrides(self):
+        payload = cli._merge_particle_payload(
+            {"position_z": 5.0},
+            overrides={"position_z": 7.5, "particle_count": 4},
+            defaults=cli.DEFAULT_RIDER,
+        )
+
+        assert payload["position_z"] == 7.5
+        assert payload["particle_count"] == 4
+        assert payload["kinetic_energy_mev"] == cli.DEFAULT_RIDER["kinetic_energy_mev"]
+
     def test_merge_simulation_payload_applies_cli_overrides(self):
         args = _make_args(steps=77, simulation_type="switching-wall", z_cutoff=4.5)
 
@@ -162,12 +230,63 @@ class TestCliBuildRequest:
         assert request.driver is not None
         assert float(request.driver["z"][0]) == pytest.approx(10.0)
 
+    def test_build_request_keeps_optional_driver_for_non_b2b(self, tmp_path: Path):
+        config_path = tmp_path / "wall.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "simulation_type": "wall",
+                    "driver": {
+                        "kinetic_energy_mev": 40.0,
+                        "mass_amu": 1.0,
+                        "charge_sign": -1.0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+
+        assert request.config.simulation_type == SimulationType.CONDUCTING_WALL
+        assert request.driver is not None
+
     def test_load_config_rejects_non_object_json(self, tmp_path: Path):
         path = tmp_path / "bad.json"
         path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
 
         with pytest.raises(cli.SimulationConfigError, match="top level"):
             cli._load_config(path)
+
+    def test_load_config_reports_missing_file(self, tmp_path: Path):
+        with pytest.raises(cli.SimulationConfigError, match="Configuration file not found"):
+            cli._load_config(tmp_path / "missing.json")
+
+    def test_load_config_rejects_invalid_json(self, tmp_path: Path):
+        path = tmp_path / "bad.json"
+        path.write_text("{not-json", encoding="utf-8")
+
+        with pytest.raises(cli.SimulationConfigError, match="not valid JSON"):
+            cli._load_config(path)
+
+    def test_build_particle_state_requires_core_fields(self):
+        with pytest.raises(
+            cli.SimulationConfigError, match="missing required fields"
+        ):
+            cli._build_particle_state({"kinetic_energy_mev": 10.0, "mass_amu": 1.0})
+
+    def test_build_particle_state_rejects_unsupported_options(self):
+        with pytest.raises(
+            cli.SimulationConfigError, match="includes unsupported options"
+        ):
+            cli._build_particle_state(
+                {
+                    "kinetic_energy_mev": 10.0,
+                    "mass_amu": 1.0,
+                    "charge_sign": -1.0,
+                    "unsupported_flag": True,
+                }
+            )
 
 
 class TestCliSweepEntryPoint:
@@ -240,6 +359,20 @@ class TestCliSweepEntryPoint:
 
 
 class TestCliMain:
+    def test_main_dispatches_to_sweep_runner(self, monkeypatch):
+        captured = {}
+
+        def fake_run_sweep(args):
+            captured["args"] = args
+            return 1
+
+        monkeypatch.setattr(cli, "run_sweep", fake_run_sweep)
+
+        result = cli.main(["--sweep-config", "configs/example.json"])
+
+        assert result == 1
+        assert captured["args"].sweep_config == Path("configs/example.json")
+
     def test_main_writes_output_json(self, monkeypatch, tmp_path: Path):
         output_path = tmp_path / "summary.json"
         fake_request = object()
