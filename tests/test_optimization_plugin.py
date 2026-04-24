@@ -1,5 +1,6 @@
 """Tests for optimization plugin integration."""
 
+from pathlib import Path
 from types import SimpleNamespace
 import threading
 import time
@@ -9,6 +10,7 @@ import numpy as np
 import pytest
 
 from core.types import SimulationType
+import lw_integrator.optimization_plugin as plugin_module
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
@@ -217,6 +219,34 @@ class TestOptimizationPluginIntegration:
         assert harness.smoothness_oscillation_var.get() == "0.75"
         assert harness.smoothness_reject_var.get() is True
         harness._toggle_smoothness_controls.assert_called_once_with()
+
+    def test_plot_trajectories_uses_current_results_directories(
+        self, tmp_path, monkeypatch
+    ):
+        sweep_dir = tmp_path / "sweeps"
+        sweep_dir.mkdir()
+        latest_dir = sweep_dir / "latest"
+        latest_dir.mkdir()
+        config_output_dir = tmp_path / "config_output"
+        config_output_dir.mkdir()
+
+        captured = {}
+
+        def fake_askopenfilename(**kwargs):
+            captured["initialdir"] = kwargs["initialdir"]
+            return ""
+
+        monkeypatch.setattr(plugin_module.filedialog, "askopenfilename", fake_askopenfilename)
+        monkeypatch.setattr(plugin_module.messagebox, "askyesno", lambda *args, **kwargs: False)
+
+        harness = SimpleNamespace(
+            sweep_output_dir=str(sweep_dir),
+            config=SimpleNamespace(output_dir=str(config_output_dir)),
+        )
+
+        OptimizationPlugin._on_plot_trajectories(harness)
+
+        assert Path(captured["initialdir"]) == latest_dir
 
     def test_apply_driver_sweep_values_sets_driver_fields(self):
         harness = _build_sweep_harness(

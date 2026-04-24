@@ -5,7 +5,7 @@ Generate publication-quality smooth heatmaps directly from sweep results.
 This script creates ultra-smooth interpolated heatmaps with:
 - 5-pass edge blur filtering
 - Optional logarithmic color scale for gain values (--log-colorbar)
-- Optional logarithmic energy/parameter axes (--log-param1, --log-param2)
+- Optional logarithmic parameter axes (--log-param1, --log-param2)
 - Adaptive contour levels with enhanced visibility
 - Density-based region filtering
 - Combined positive/negative gains mode (--absolute-gains)
@@ -19,7 +19,7 @@ Usage:
     # Combined gains with absolute values and log colorbar
     python -m lw_integrator.sweep_heatmap results/sweeps/sweep_dir --absolute-gains --log-colorbar
 
-    # Linear energy axis
+    # Linear first parameter axis
     python -m lw_integrator.sweep_heatmap results/sweeps/sweep_dir --linear-param1
 """
 
@@ -1328,31 +1328,6 @@ def main(argv=None):  # noqa: C901
         default=None,
         help="Maximum threshold for second parameter",
     )
-    # Keep legacy arguments for backward compatibility
-    parser.add_argument(
-        "--energy-min",
-        type=float,
-        default=None,
-        help="(Legacy) Minimum energy threshold - use --param1-min instead",
-    )
-    parser.add_argument(
-        "--energy-max",
-        type=float,
-        default=None,
-        help="(Legacy) Maximum energy threshold - use --param1-max instead",
-    )
-    parser.add_argument(
-        "--aperture-min",
-        type=float,
-        default=None,
-        help="(Legacy) Minimum aperture threshold - use --param2-min instead",
-    )
-    parser.add_argument(
-        "--aperture-max",
-        type=float,
-        default=None,
-        help="(Legacy) Maximum aperture threshold - use --param2-max instead",
-    )
     parser.add_argument(
         "--gain-filter",
         choices=["positive", "negative", "all"],
@@ -1388,31 +1363,6 @@ def main(argv=None):  # noqa: C901
         action="store_true",
         default=False,
         help="Use logarithmic scale for second parameter",
-    )
-    # Keep legacy arguments
-    parser.add_argument(
-        "--log-energy",
-        action="store_true",
-        dest="log_param1",
-        help="(Legacy) Use logarithmic energy axis - use --log-param1",
-    )
-    parser.add_argument(
-        "--linear-energy",
-        action="store_false",
-        dest="log_param1",
-        help="(Legacy) Use linear energy axis - use --linear-param1",
-    )
-    parser.add_argument(
-        "--log-aperture",
-        action="store_true",
-        dest="log_param2",
-        help="(Legacy) Use logarithmic aperture axis - use --log-param2",
-    )
-    parser.add_argument(
-        "--linear-aperture",
-        action="store_false",
-        dest="log_aperture",
-        help="Use linear scale for aperture axis (default)",
     )
     parser.add_argument(
         "--log-colorbar",
@@ -1507,12 +1457,6 @@ def main(argv=None):  # noqa: C901
 
     args = parser.parse_args(argv)
 
-    # Handle legacy arguments
-    param1_min = args.param1_min if args.param1_min is not None else args.energy_min
-    param1_max = args.param1_max if args.param1_max is not None else args.energy_max
-    param2_min = args.param2_min if args.param2_min is not None else args.aperture_min
-    param2_max = args.param2_max if args.param2_max is not None else args.aperture_max
-
     # Handle contour arguments
     if args.num_contours is not None:
         if args.grey_zero:
@@ -1531,10 +1475,10 @@ def main(argv=None):  # noqa: C901
         sweep_dir=args.sweep_dir,
         param1_name=args.param1,
         param2_name=args.param2,
-        param1_min=param1_min,
-        param1_max=param1_max,
-        param2_min=param2_min,
-        param2_max=param2_max,
+        param1_min=args.param1_min,
+        param1_max=args.param1_max,
+        param2_min=args.param2_min,
+        param2_max=args.param2_max,
         gain_filter=args.gain_filter,
         gain_min=args.gain_min,
         gain_max=args.gain_max,

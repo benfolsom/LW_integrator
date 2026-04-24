@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import lw_integrator.sweep_heatmap as sweep_heatmap
+import pytest
 from lw_integrator import plot_latest_live
 from optimization.results_mixins import OptimizationResultsMixin
 
@@ -33,6 +34,13 @@ def test_generate_sweep_heatmap_main_accepts_argv(monkeypatch):
     assert exit_code == 0
     assert captured["sweep_dir"] == "results/sweeps/example"
     assert captured["gain_filter"] == "all"
+
+
+def test_generate_sweep_heatmap_rejects_removed_legacy_aliases():
+    with pytest.raises(SystemExit) as excinfo:
+        sweep_heatmap.main(["results/sweeps/example", "--energy-min", "1.0"])
+
+    assert excinfo.value.code == 2
 
 
 def test_plot_latest_live_resolves_newest_log(tmp_path: Path):

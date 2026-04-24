@@ -4302,17 +4302,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
         else:
             result_dirs = []
 
-        # Also check legacy location
-        legacy_dir = "optimization_results"
-        if os.path.exists(legacy_dir):
-            result_dirs.extend(
-                [
-                    d
-                    for d in glob.glob(os.path.join(legacy_dir, "*"))
-                    if os.path.isdir(d)
-                ]
-            )
-
         if result_dirs:
             # Sort by modification time, most recent first
             result_dirs.sort(key=os.path.getmtime, reverse=True)
@@ -4578,18 +4567,12 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
 
     def _on_plot_trajectories(self):
         """Open trajectory plotting dialog to visualize saved results."""
-        # Default to optimization_results directory
         import glob
         import os
 
-        # Use sweep output directory from GUI preferences, then fall back to legacy
-        legacy_results_dir = "optimization_results"
-
-        # Start with base directory
+        # Start with the configured sweep output directory when it has results.
         if os.path.exists(self.sweep_output_dir) and os.listdir(self.sweep_output_dir):
             base_dir = self.sweep_output_dir
-        elif os.path.exists(legacy_results_dir):
-            base_dir = legacy_results_dir
         else:
             base_dir = self.config.output_dir
 
