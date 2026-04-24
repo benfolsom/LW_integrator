@@ -22,7 +22,7 @@ TrajectoryView = Sequence[ParticleState]
 
 
 class SimulationType(IntEnum):
-    """Supported simulation modes (mirrors the legacy integer flags).
+    """Supported simulation modes.
 
     The enum inherits from :class:`int` so that existing code using literal
     values (``0``, ``1``, ``2``) continues to work.  When writing new code,
@@ -80,7 +80,7 @@ class GammaReconciliationMethod(Enum):
 
     Reconciliation methods:
 
-    ``DISABLED`` - No reconciliation; use γ_energy directly (legacy behavior).
+    ``DISABLED`` - No reconciliation; use γ_energy directly.
         May cause dual-gamma inconsistency and energy blowups.
 
     ``ADAPTIVE_WEIGHTED`` - Weighted average with velocity-dependent α (default).

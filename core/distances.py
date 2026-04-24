@@ -2,14 +2,14 @@
 
 The helpers in this module translate particle positions into geometric
 quantities (distance, direction cosines, retarded indices) that feed the
-covariant equations of motion.  They intentionally mirror the behaviour of
-the legacy implementation so that validation data remains comparable.
+covariant equations of motion. They preserve the validated reference behavior
+used by the current solver so historical regression data remains comparable.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional
 
 import numpy as np
 
@@ -76,7 +76,7 @@ def _compute_delta_t(
     For numerical stability at ultra-relativistic energies, this is computed using
     the factored form: delta_t = R * (1 + β·n̂) / (c * (1 - (β·n̂)²))
 
-    ``FAST`` mode mirrors the legacy code path by evaluating the causal delay
+    ``FAST`` mode uses the validated single-sample delay by evaluating the causal delay
     once using the instantaneous line-of-sight projection ``β·n̂``.  ``AVERAGED``
     samples two physical extremes for the emission time: ``R / c`` (a
     stationary source particle) and ``2R / c`` (a source moving at the speed of
@@ -267,7 +267,7 @@ def chrono_match_indices(
         Particle within ``trajectory[index_traj]`` to match against the entire
         external bunch.
     mode:
-        ``ChronoMatchingMode.FAST`` reproduces the historical single-sample
+        ``ChronoMatchingMode.FAST`` uses the validated single-sample
         delay ``Δt = R (1 + β·n̂) / c``. ``ChronoMatchingMode.AVERAGED`` blends
         two samples corresponding to emission after ``R / c`` (stationary
         source) and ``2R / c`` (ultrarelativistic source), which can provide a
@@ -291,7 +291,7 @@ def chrono_match_indices(
     Returns
     -------
     numpy.ndarray or ChronoMatchResult
-        If interpolate=False: indices array (legacy behavior).
+        If interpolate=False: indices array without interpolation metadata.
         If interpolate=True: ChronoMatchResult with interpolation data.
     """
 
@@ -394,10 +394,8 @@ def chrono_match_indices(
                     idx_0 = matched_idx
                     idx_p1 = min(matched_idx + 1, index_traj)
 
-                    t_m2 = trajectory_ext[idx_m2]["t"][sample_index]
                     t_m1 = trajectory_ext[idx_m1]["t"][sample_index]
                     t_0 = trajectory_ext[idx_0]["t"][sample_index]
-                    t_p1 = trajectory_ext[idx_p1]["t"][sample_index]
 
                     # Store all 4 indices for cubic interpolation
                     index_traj_prev[sample_index] = idx_m2

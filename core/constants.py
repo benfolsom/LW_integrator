@@ -1,16 +1,16 @@
 """Shared physical constants for the LW integrator core.
 
-All values use the historical ``mm/ns`` system adopted by the legacy
-codebase, which keeps compatibility with archived benchmark data and notebook
-derivations.  Constants are surfaced here so that tests, examples, and
-downstream tools can rely on a single source of truth when performing unit
-conversions or asserting physics invariants.
+All values use the historical ``mm/ns`` system retained by the modern solver
+so archived benchmark data and notebook derivations remain comparable.
+Constants are surfaced here so tests, examples, and downstream tools can rely
+on a single source of truth when performing unit conversions or asserting
+physics invariants.
 """
 
 from __future__ import annotations
 
 C_MMNS: float = 299.792458
-"""Speed of light in mm/ns (exact value used by the legacy solver)."""
+"""Speed of light in mm/ns (exact value used by the maintained solver)."""
 
 ELEMENTARY_CHARGE: float = 1.178734e-5
 """Elementary charge in Gaussian units (amu·mm/ns)."""

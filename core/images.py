@@ -1,8 +1,8 @@
 """Mirror-image computations used by the retarded integrator.
 
 Conducting boundaries can be represented via image charges. The helpers here
-construct those synthetic bunches while preserving the exact behaviour of the
-legacy solver (including its stochastic aperture spill model).
+construct those synthetic bunches while preserving the validated reference
+behavior, including the stochastic aperture spill model.
 """
 
 from __future__ import annotations

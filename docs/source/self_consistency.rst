@@ -22,7 +22,7 @@ high-energy close-approach scenarios where mass-shell alone is insufficient.
    Without self-consistency iterations, the integrator can produce energy jumps
    exceeding 1000% in challenging scenarios (high-energy particles, close approaches,
    narrow apertures). **Always enable self-consistency** unless benchmarking or
-   testing legacy behavior.
+   testing reference behavior.
 
 Physical Motivation
 ===================
@@ -230,7 +230,7 @@ How Working Variables Are Calculated
          \beta^2 &= (\beta_x^{(k)})^2 + (\beta_y^{(k)})^2 + (\beta_z^{(k)})^2 \\
          \gamma_{\text{velocity}}^{(k)} &= \frac{1}{\sqrt{1 - \beta^2}}
 
-   9. **Check dual convergence** (see next section)
+   9. **Check both convergence criteria** (see next section)
 
    10. If **not converged**, update working variables for next iteration:
 
@@ -302,7 +302,7 @@ Flowchart
      ├─ [9] Compute gamma from velocity (kinematics)
      │       γ_velocity^(k) = 1 / √(1 - β²)
      │
-     └─ [10] Check dual convergence (if k > 0)
+     └─ [10] Check both convergence criteria (if k > 0)
               │
               ├─ Compute mass-shell error:
               │  E_ms = |Pt² - P² - (mc)²| / (mc)²
@@ -359,7 +359,7 @@ For a low-energy particle (γ=2, separation=10mm):
 Example: High Energy Close Approach
 ------------------------------------
 
-For a challenging case (γ=200, separation=1mm) **with dual convergence**:
+For a challenging case (γ=200, separation=1mm) **with both convergence criteria**:
 
 .. code-block:: text
 
@@ -408,7 +408,7 @@ For a challenging case (γ=200, separation=1mm) **with dual convergence**:
    Subsequent steps:
      → Gamma error grows to 10⁶ (catastrophic failure)
 
-This demonstrates why dual convergence is essential for extreme regimes.
+This demonstrates why checking both convergence criteria is essential for extreme regimes.
 
 Safety Nets
 ===========
