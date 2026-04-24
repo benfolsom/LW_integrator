@@ -83,7 +83,6 @@ from .distances import (
     compute_instantaneous_distance,
     compute_retarded_distance,
 )
-from .particle_status import mark_particle_dead
 from .self_consistency import SelfConsistencyConfig
 from .types import (
     ChronoMatchingMode,
@@ -175,7 +174,7 @@ def _extract_self_consistency_params(
     convergence_mode = (
         self_consistency.convergence_mode
         if self_consistency is not None
-        else "mass_shell_only"
+        else "fixed_geometry"
     )
     target_ms_tolerance = (
         self_consistency.target_ms_tolerance if self_consistency is not None else 1e-6
@@ -821,7 +820,7 @@ def _print_convergence_info(
     max_iterations: int,
     verbosity: int = 1,
     step_idx: Optional[int] = None,
-    convergence_mode: str = "mass_shell_only",
+    convergence_mode: str = "fixed_geometry",
     particle_position: Optional[tuple[float, float, float]] = None,
     particle_time: Optional[float] = None,
 ) -> None:
@@ -849,7 +848,7 @@ def _print_convergence_info(
     step_idx : Optional[int]
         Integration step number for context in error messages
     convergence_mode : str
-        Convergence mode: "mass_shell_only" or "dual"
+        Convergence mode: "fixed_geometry" or "variable_geometry"
     """
     if verbosity == 0:
         return
@@ -866,7 +865,7 @@ def _print_convergence_info(
     # Adjust output based on convergence mode
     if verbosity == 1:
         # Summary: one line per particle
-        if convergence_mode == "mass_shell_only":
+        if convergence_mode == "fixed_geometry":
             print(
                 f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}"
             )
@@ -891,7 +890,7 @@ def _print_convergence_info(
             print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
         else:
             # For converged steps at verbosity 2, just show summary
-            if convergence_mode == "mass_shell_only":
+            if convergence_mode == "fixed_geometry":
                 print(
                     f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}"
                 )
@@ -1042,10 +1041,6 @@ def retarded_equations_of_motion(
         working_beta_y = current_state["by"][particle_idx]
         working_beta_z = current_state["bz"][particle_idx]
         working_gamma = current_state["gamma"][particle_idx]
-        working_Px = current_state["Px"][particle_idx]
-        working_Py = current_state["Py"][particle_idx]
-        working_Pz = current_state["Pz"][particle_idx]
-        working_Pt = current_state["Pt"][particle_idx]
         working_x = current_state["x"][particle_idx]
         working_y = current_state["y"][particle_idx]
         working_z = current_state["z"][particle_idx]
@@ -1855,10 +1850,6 @@ def retarded_equations_of_motion(
             working_beta_y = new_working_beta_y
             working_beta_z = new_working_beta_z
             working_gamma = new_working_gamma
-            working_Px = result["Px"][particle_idx]
-            working_Py = result["Py"][particle_idx]
-            working_Pz = result["Pz"][particle_idx]
-            working_Pt = result["Pt"][particle_idx]
             working_x = result["x"][particle_idx]
             working_y = result["y"][particle_idx]
             working_z = result["z"][particle_idx]

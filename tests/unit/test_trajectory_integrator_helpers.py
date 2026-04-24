@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from core.distances import _compute_delta_t
+from core.equations import _extract_self_consistency_params
 from core.self_consistency import SelfConsistencyConfig
 from core.trajectory_integrator import (
     C_MMNS,
@@ -94,6 +95,13 @@ def test_compute_delta_t_fast_matches_legacy_formula():
 
     expected = distance * (1.0 + b_nhat) / C_MMNS
     assert delta_t == pytest.approx(expected)
+
+
+def test_extract_self_consistency_params_defaults_to_fixed_geometry():
+    enabled, convergence_mode, *_rest = _extract_self_consistency_params(None)
+
+    assert enabled is False
+    assert convergence_mode == "fixed_geometry"
 
 
 def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
