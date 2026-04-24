@@ -496,7 +496,9 @@ class OptimizationResultsMixin:
             # Only generate heatmap if exactly 2 parameters were swept
             if num_swept_params == 2:
                 try:
-                    from generate_sweep_heatmap import main as generate_heatmap_main
+                    from lw_integrator.sweep_heatmap import (
+                        main as generate_heatmap_main,
+                    )
 
                     exit_code = generate_heatmap_main(
                         [

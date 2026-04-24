@@ -6,7 +6,10 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from plot_from_logcache_live import find_latest_log, main as plot_from_logcache_main
+from lw_integrator.logcache_plotter import (
+    find_latest_log,
+    main as plot_from_logcache_main,
+)
 
 
 def parse_args(argv: Optional[list[str]] = None) -> tuple[argparse.Namespace, list[str]]:

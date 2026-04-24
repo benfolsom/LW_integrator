@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import generate_sweep_heatmap as sweep_heatmap
+import lw_integrator.sweep_heatmap as sweep_heatmap
 from lw_integrator import plot_latest_live
 from optimization.results_mixins import OptimizationResultsMixin
 

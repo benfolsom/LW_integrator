@@ -13,7 +13,7 @@ if [ -z "$LATEST_LOG" ]; then
     echo "❌ No sweep logs found in logcache/"
     echo ""
     echo "Please run a sweep first or specify a log file:"
-    echo "  ./plot_from_logcache_live.py --live logcache/your_sweep.log"
+    echo "  lw-plot-from-logcache-live --live logcache/your_sweep.log"
     exit 1
 fi
 

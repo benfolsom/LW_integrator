@@ -156,14 +156,16 @@ Key ideas to keep in mind
   The GUI is the recommended interface for interactive work, with the CLI
   (``lw-simulate``) and notebook options available for scripting and batch
   processing.
-* **Heatmap and contour tools.**  ``lw-generate-sweep-heatmap`` (and the
-  compatibility script ``generate_sweep_heatmap.py``) produce
+* **Heatmap and contour tools.**  ``lw-generate-sweep-heatmap`` is the
+  maintained packaged command; the compatibility script
+  ``generate_sweep_heatmap.py`` remains available for older workflows. Both produce
   publication-quality heatmaps from sweep results. Contour lines use a low
   alpha (0.18), labels are clamped to stay inside the axes after the final
   layout pass, and overlapping labels are culled automatically.
 * **Live sweep plotting.**  ``lw-plot-latest-live`` follows the newest sweep
   log automatically, while ``lw-plot-from-logcache-live`` can watch a specific
-  log file or render a one-shot static plot from it.
+  log file or render a one-shot static plot from it. The repo-root
+  ``plot_from_logcache_live.py`` file is retained as a compatibility wrapper.
 * **Saved trajectory plotting.**  ``lw-plot-trajectory`` turns saved single-run
   JSON or NPZ trajectory files into publication-ready PNG summaries, including
   rider/driver views for JSON payloads and compact momentum/gamma panels for
