@@ -338,9 +338,6 @@ def generate_conducting_image(
 
     if charges_suppressed:
         result["q"].fill(0.0)
-    elif macroparticle_charge_multiplier != 1.0 and not charges_suppressed:
-        # Also scale any remaining charges if multiplier is active
-        result["q"] = result["q"] * macroparticle_charge_multiplier
 
     return result
 

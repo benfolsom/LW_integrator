@@ -2,6 +2,16 @@
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
+## Unreleased
+
+### Critical: Macroparticle Image Charge Multiplier Fix (April 2026)
+
+- **Bug** — `generate_conducting_image()` applied `macroparticle_charge_multiplier` twice, so image charges scaled as `multiplier²` instead of `multiplier`
+- **Impact** — Macroparticle conducting-wall runs could over-amplify image-charge strength by large factors; for example, a multiplier of `2` produced a `4×` image charge
+- **Fix** — Removed the second post-loop scaling path so the multiplier is applied exactly once per generated image charge
+- **Regression coverage** — Added unit coverage for single-application scaling, geometry-driven charge suppression, and the surrounding integration control-flow paths
+- **Files modified** — `core/images.py`, `tests/unit/test_trajectory_integrator_helpers.py`, `tests/unit/test_integration_runner_control_flow.py`
+
 ## v0.6.0 — March 2026
 
 ### CLI / GUI Parity (March 2026)

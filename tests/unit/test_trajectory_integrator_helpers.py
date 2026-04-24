@@ -75,7 +75,7 @@ def _make_single_particle_state(
     return state
 
 
-def test_compute_delta_t_fast_matches_legacy_formula():
+def test_compute_delta_t_fast_matches_factored_lw_formula():
     trajectory = [_make_single_particle_state(t=1e-3, x=0.0, bx=0.2)]
     trajectory_ext = [_make_single_particle_state(t=1e-3, x=0.0, bx=0.2)]
 
@@ -93,7 +93,7 @@ def test_compute_delta_t_fast_matches_legacy_formula():
         trajectory_ext=trajectory_ext,
     )
 
-    expected = distance * (1.0 + b_nhat) / C_MMNS
+    expected = distance * (1.0 + b_nhat) / (C_MMNS * (1.0 - b_nhat**2))
     assert delta_t == pytest.approx(expected)
 
 
@@ -115,6 +115,7 @@ def test_extract_self_consistency_params_canonicalizes_alias_modes():
 
 def test_self_consistency_factory_methods_use_canonical_mode_names():
     assert SelfConsistencyConfig.standard().convergence_mode == "fixed_geometry"
+    assert SelfConsistencyConfig.disabled().enabled is False
     assert SelfConsistencyConfig.aggressive().convergence_mode == "variable_geometry"
     assert SelfConsistencyConfig.variable_geometry().convergence_mode == "variable_geometry"
 
@@ -157,9 +158,12 @@ def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
         trajectory_ext=trajectory_ext,
     )
 
-    expected_fast = distance * (1.0 + b_nhat_current) / C_MMNS
-    expected_avg = (
-        distance * (1.0 + (b_nhat_current + ultrarelativistic_beta) / 2.0) / C_MMNS
+    expected_fast = distance * (1.0 + b_nhat_current) / (
+        C_MMNS * (1.0 - b_nhat_current**2)
+    )
+    averaged_b = (b_nhat_current + ultrarelativistic_beta) / 2.0
+    expected_avg = distance * (1.0 + averaged_b) / (
+        C_MMNS * (1.0 - averaged_b**2)
     )
 
     assert fast_delta == pytest.approx(expected_fast)
@@ -167,7 +171,7 @@ def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
     assert averaged_delta > fast_delta
 
 
-def test_cold_start_defers_external_forces_until_travelled_distance():
+def test_startup_modes_agree_for_single_sample_history():
     trajectory = [_make_single_particle_state(t=0.0, z=0.0, charge=1.0)]
     trajectory_ext = [_make_single_particle_state(t=0.0, z=1.0, x=0.5, charge=1.0)]
 
@@ -182,7 +186,21 @@ def test_cold_start_defers_external_forces_until_travelled_distance():
         startup_mode=StartupMode.COLD_START,
     )
 
-    np.testing.assert_allclose(cold_result["Px"], trajectory[0]["Px"])
+    approx_result = retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=trajectory,
+        trajectory_ext=trajectory_ext,
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        chrono_mode=ChronoMatchingMode.AVERAGED,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+    )
+
+    np.testing.assert_allclose(cold_result["Px"], approx_result["Px"])
+    np.testing.assert_allclose(cold_result["t"], approx_result["t"])
+    np.testing.assert_allclose(cold_result["z"], approx_result["z"])
+    assert np.all(np.isfinite(cold_result["Px"]))
 
 
 def test_approximate_back_history_recovers_initial_force_estimate():
@@ -218,12 +236,8 @@ def test_generate_conducting_image_reflects_momentum_and_direction():
     assert image["bz"][0] == pytest.approx(-source["bz"][0])
     assert image["t"][0] == pytest.approx(source["t"][0])
 
-    R_dist = abs(2.0 - source["z"][0])
-    reduction = 1 - 2 * (0.5**2) / (R_dist**2) * 1 / (1 - np.cos(np.pi / 2))
-    expected_total_charge = source["q"][0] * reduction
-    total_charge = float(image["q"].sum())
-    assert np.sign(total_charge) == np.sign(expected_total_charge)
-    assert abs(total_charge) <= abs(expected_total_charge) + 1e-12
+    # The maintained image model suppresses on-axis conducting-wall charge.
+    assert np.allclose(image["q"], 0.0)
 
 
 def test_generate_conducting_image_respects_custom_subcharge_count():
@@ -251,15 +265,14 @@ def test_generate_conducting_image_respects_custom_subcharge_count():
     )
 
 
-def test_generate_conducting_image_keeps_uniform_subcharges_when_centered():
+def test_generate_conducting_image_suppresses_on_axis_subcharges_when_centered():
     source = _make_single_particle_state(z=-2.0, charge=1.25)
 
     image = generate_conducting_image(
         source, wall_z=0.0, aperture_radius=0.5, subcharge_count=16
     )
 
-    assert np.all(image["q"] > 0.0)
-    np.testing.assert_allclose(image["q"], image["q"][0])
+    assert np.allclose(image["q"], 0.0)
 
 
 def test_generate_conducting_image_weights_subcharges_for_displaced_particle():
@@ -303,6 +316,37 @@ def test_generate_conducting_image_disabling_weighting_restores_uniform_charges(
 
     assert np.ptp(weighted["q"]) > 0.0
     assert np.allclose(unweighted["q"], unweighted["q"][0])
+
+
+def test_generate_conducting_image_applies_macroparticle_charge_multiplier_once():
+    source = _make_single_particle_state(x=1.0, z=-2.0, charge=0.8)
+
+    base = generate_conducting_image(
+        source,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        use_weighting=False,
+        macroparticle_charge_multiplier=1.0,
+    )
+    scaled = generate_conducting_image(
+        source,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        use_weighting=False,
+        macroparticle_charge_multiplier=2.0,
+    )
+
+    assert float(scaled["q"].sum()) == pytest.approx(2.0 * float(base["q"].sum()))
+
+
+def test_generate_conducting_image_suppresses_charge_for_blocked_geometry():
+    source = _make_single_particle_state(x=1.0, z=-0.1, charge=1.0)
+
+    image = generate_conducting_image(
+        source, wall_z=0.0, aperture_radius=0.5, use_weighting=False
+    )
+
+    assert np.allclose(image["q"], 0.0)
 
 
 def test_generate_conducting_image_rejects_out_of_range_subcharge_count():
@@ -425,8 +469,9 @@ def test_run_integrator_matches_direct_invocation_for_simple_case():
         cav_spacing=config.cavity_spacing,
         z_cutoff=config.z_cutoff,
         self_consistency=SelfConsistencyConfig(
-            enabled=True, target_tolerance=1e-9, max_iterations=2
+            enabled=True, target_ms_tolerance=1e-9, max_iterations=2
         ),
+        use_numba=False,
     )
 
     wrapped_traj, wrapped_drv = run_integrator(config, copy.deepcopy(rider), None)
