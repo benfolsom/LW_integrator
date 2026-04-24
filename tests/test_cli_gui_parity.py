@@ -1263,6 +1263,29 @@ class TestTwoParticleDemo8:
             == pytest.approx(0.9)
         )
 
+    def test_run_config_loader_ignores_removed_extra_fields(self, tmp_path: Path):
+        """Run-config loading should ignore stale keys removed from SimulationOptions."""
+        config_path = RUN_CONFIG_DIR / "two_particle_demo8.json"
+        with open(config_path) as f:
+            raw = json.load(f)
+
+        raw.update(
+            {
+                "legacy_enabled": False,
+                "overlay_display": False,
+                "overlay_save": False,
+                "difference_display": False,
+                "difference_save": False,
+                "metrics_save": False,
+            }
+        )
+        raw["output_dir"] = str(tmp_path)
+
+        options = SimulationOptions.from_dict(raw)
+
+        assert options.output_dir == tmp_path
+        assert options.simulation_type == SimulationType.BUNCH_TO_BUNCH
+
         # Adaptive timestep
         assert options.adaptive_timestep_enabled is True
         assert options.adaptive_timestep_threshold == pytest.approx(0.1)
