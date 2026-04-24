@@ -14,6 +14,7 @@ import lw_integrator.optimization_plugin as plugin_module
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
+from optimization.plugin_ui_mixins import OptimizationPluginUIMixin
 import optimization.run_mixins as run_mixins_module
 from optimization.sweep_helpers import calculate_energy_from_pz
 
@@ -114,6 +115,25 @@ class TestOptimizationPluginIntegration:
         assert (
             OptimizationPlugin._cleanup_orphaned_temp_dirs
             is OptimizationRunMixin._cleanup_orphaned_temp_dirs
+        )
+
+    def test_plugin_inherits_section_builders_from_ui_mixin(self):
+        assert OptimizationPlugin._build_ui is OptimizationPluginUIMixin._build_ui
+        assert (
+            OptimizationPlugin._build_simulation_section
+            is OptimizationPluginUIMixin._build_simulation_section
+        )
+        assert (
+            OptimizationPlugin._build_mode_section
+            is OptimizationPluginUIMixin._build_mode_section
+        )
+        assert (
+            OptimizationPlugin._build_optimization_section
+            is OptimizationPluginUIMixin._build_optimization_section
+        )
+        assert (
+            OptimizationPlugin._build_results_output_section
+            is OptimizationPluginUIMixin._build_results_output_section
         )
 
     def test_run_single_integration_uses_current_simulation_options_fields(
