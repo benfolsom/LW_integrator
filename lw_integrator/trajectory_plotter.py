@@ -38,7 +38,7 @@ def infer_rest_energy_mev(
     return default_mass_amu * AMU_TO_MEV
 
 
-def extract_particle_series(
+def _extract_particle_series(
     particle_payload: Dict[str, Any],
     *,
     default_mass_amu: float = ELECTRON_MASS_AMU,
@@ -110,7 +110,7 @@ def plot_saved_json_trajectory(
         if not particle_payload:
             continue
 
-        series = extract_particle_series(
+        series = _extract_particle_series(
             particle_payload, default_mass_amu=default_mass_amu
         )
         z = series["z"]
@@ -279,7 +279,6 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 __all__ = [
     "AMU_TO_MEV",
-    "extract_particle_series",
     "infer_rest_energy_mev",
     "main",
     "plot_saved_json_trajectory",

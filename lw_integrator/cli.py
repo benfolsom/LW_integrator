@@ -630,7 +630,7 @@ def build_report(
     return report
 
 
-def load_results_report(path: Path) -> Dict[str, Any]:
+def _load_results_report(path: Path) -> Dict[str, Any]:
     """Load a saved results JSON file and build a normalized summary report."""
     payload = _load_config(path)
     parsed = parse_results_payload(
@@ -641,7 +641,7 @@ def load_results_report(path: Path) -> Dict[str, Any]:
     return report
 
 
-def print_results_report(report: Mapping[str, Any]) -> None:
+def _print_results_report(report: Mapping[str, Any]) -> None:
     """Print a human-readable summary for a saved results file."""
     lines = ["LW Integrator saved-results summary:"]
     for key in (
@@ -697,7 +697,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.results_file is not None:
         try:
-            report = load_results_report(args.results_file)
+            report = _load_results_report(args.results_file)
         except (SimulationConfigError, ValueError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
@@ -707,7 +707,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
         if not args.quiet:
-            print_results_report(report)
+            _print_results_report(report)
         return 0
 
     # Check if this is a sweep configuration

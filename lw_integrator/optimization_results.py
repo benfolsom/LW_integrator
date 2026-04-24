@@ -23,7 +23,7 @@ def format_value(value: Any, precision: int = 4) -> str:
     return str(value)
 
 
-def print_top_results(data: Dict[str, Any], *, top_n: int = 20) -> None:
+def _print_top_results(data: Dict[str, Any], *, top_n: int = 20) -> None:
     """Print normalized top optimization results from saved JSON."""
     top_results = summarize_optimization_top_results(data, limit=top_n)
     if not top_results:
@@ -92,7 +92,7 @@ def print_top_results(data: Dict[str, Any], *, top_n: int = 20) -> None:
         print()
 
 
-def print_summary_statistics(data: Dict[str, Any]) -> None:
+def _print_summary_statistics(data: Dict[str, Any]) -> None:
     """Print aggregate optimization evaluation statistics when available."""
     if "all_evaluations" not in data:
         return
@@ -152,7 +152,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def load_optimization_results(results_path: Path) -> Dict[str, Any]:
+def _load_optimization_results(results_path: Path) -> Dict[str, Any]:
     """Load and validate an optimization results file."""
     if not results_path.exists():
         raise FileNotFoundError(f"File not found: {results_path}")
@@ -175,7 +175,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
 
     try:
-        data = load_optimization_results(args.results_file)
+        data = _load_optimization_results(args.results_file)
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
         return 1
@@ -199,6 +199,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif "top_n_results" in data:
             print("Using top_n_results data\n")
 
-    print_top_results(data, top_n=args.top)
-    print_summary_statistics(data)
+    _print_top_results(data, top_n=args.top)
+    _print_summary_statistics(data)
     return 0

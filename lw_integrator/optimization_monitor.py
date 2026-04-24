@@ -349,7 +349,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def resolve_logcache_dir(logcache: Optional[Path]) -> Path:
+def _resolve_logcache_dir(logcache: Optional[Path]) -> Path:
     """Resolve the logcache directory used by the packaged monitor."""
     if logcache is not None:
         return logcache
@@ -359,7 +359,7 @@ def resolve_logcache_dir(logcache: Optional[Path]) -> Path:
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point for the packaged optimization monitor CLI."""
     args = parse_args(argv)
-    logcache_dir = resolve_logcache_dir(args.logcache)
+    logcache_dir = _resolve_logcache_dir(args.logcache)
     if not logcache_dir.exists():
         print(f"Error: logcache directory not found at {logcache_dir}")
         print("Please specify the correct path with --logcache")
