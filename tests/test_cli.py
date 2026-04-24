@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import lw_integrator
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 from lw_integrator import cli
 
@@ -57,6 +58,21 @@ class TestCliConfigParsing:
         args = cli.parse_args(["--results-file", "results/sweep_results.json"])
 
         assert args.results_file == Path("results/sweep_results.json")
+
+    def test_package_exports_only_maintained_entry_points(self):
+        assert lw_integrator.__all__ == ["cli_main", "__version__", "VERSION"]
+        for name in [
+            "IntegratorConfig",
+            "SimulationType",
+            "ParticleState",
+            "Trajectory",
+            "retarded_integrator",
+            "run_integrator",
+            "trajectory_integrator",
+            "C_MMNS",
+        ]:
+            with pytest.raises(AttributeError):
+                getattr(lw_integrator, name)
 
     def test_parse_args_applies_boolean_flags(self):
         args = cli.parse_args(
