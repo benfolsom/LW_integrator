@@ -12,6 +12,14 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Regression coverage** — Added unit coverage for single-application scaling, geometry-driven charge suppression, and the surrounding integration control-flow paths
 - **Files modified** — `core/images.py`, `tests/unit/test_trajectory_integrator_helpers.py`, `tests/unit/test_integration_runner_control_flow.py`
 
+### Critical: Equation State Copy Isolation Fix (April 2026)
+
+- **Bug** — `_initialize_result_state()` in `core.equations` reused the previous state's `q` array instead of copying it
+- **Impact** — Marking a particle dead in the new step could silently mutate the previous step as well, corrupting trajectory history and retry logic by retroactively zeroing old charges
+- **Fix** — Copy `q`, `m`, and `char_time` when building the next-step state so dead-particle handling and later mutations remain isolated to the new state
+- **Regression coverage** — Added helper and control-flow coverage for state copying, scalar extractors, retarded-distance helpers, gamma reconciliation, convergence logging, cancellation, blowup handling, and final mass-shell projection
+- **Files modified** — `core/equations.py`, `tests/unit/test_equations_helpers.py`
+
 ## v0.6.0 — March 2026
 
 ### CLI / GUI Parity (March 2026)
