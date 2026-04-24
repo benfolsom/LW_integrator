@@ -140,6 +140,81 @@ def test_gather_external_samples_supports_cubic_interpolation() -> None:
     assert samples.bdotx.tolist() == pytest.approx([15.0])
 
 
+def test_gather_external_samples_skips_negative_and_out_of_range_indices() -> None:
+    trajectory_ext = [
+        _make_external_state(
+            1.0,
+            charge=np.array([1.0, 2.0, 3.0], dtype=float),
+            gamma=np.array([1.0, 1.5, 2.0], dtype=float),
+            particle_count=3,
+        )
+    ]
+
+    samples = vectorized_interactions.gather_external_samples(
+        trajectory_ext,
+        indices=np.array([-1, 1, 0]),
+    )
+
+    assert samples.valid_mask.tolist() == [False, False, True]
+    assert samples.charge.tolist() == pytest.approx([0.0, 0.0, 3.0])
+    assert samples.gamma.tolist() == pytest.approx([0.0, 0.0, 2.0])
+    assert samples.bx.tolist() == pytest.approx([0.0, 0.0, 1.0])
+
+
+def test_gather_external_samples_linearly_interpolates_array_gamma_with_positions() -> None:
+    trajectory_ext = [
+        _make_external_state(
+            0.0,
+            charge=np.array([2.0], dtype=float),
+            gamma=np.array([1.0], dtype=float),
+        ),
+        _make_external_state(
+            2.0,
+            charge=np.array([2.0], dtype=float),
+            gamma=np.array([3.0], dtype=float),
+        ),
+    ]
+
+    samples = vectorized_interactions.gather_external_samples(
+        trajectory_ext,
+        indices=np.array([1]),
+        indices_next=np.array([0]),
+        weights=np.array([0.25]),
+        interpolate_positions=True,
+    )
+
+    assert samples.valid_mask.tolist() == [True]
+    assert samples.charge.tolist() == pytest.approx([2.0])
+    assert samples.gamma.tolist() == pytest.approx([1.5])
+    assert samples.bx.tolist() == pytest.approx([0.5])
+    assert samples.bdotx.tolist() == pytest.approx([5.0])
+
+
+def test_gather_external_samples_supports_cubic_position_interpolation() -> None:
+    trajectory_ext = [
+        _make_external_state(0.0, gamma=np.array([1.0], dtype=float)),
+        _make_external_state(1.0, gamma=np.array([2.0], dtype=float)),
+        _make_external_state(2.0, gamma=np.array([3.0], dtype=float)),
+        _make_external_state(3.0, gamma=np.array([4.0], dtype=float)),
+    ]
+
+    samples = vectorized_interactions.gather_external_samples(
+        trajectory_ext,
+        indices=np.array([2]),
+        indices_next=np.array([1]),
+        weights=np.array([0.5]),
+        indices_prev=np.array([0]),
+        indices_next2=np.array([3]),
+        use_cubic=True,
+        interpolate_positions=True,
+    )
+
+    assert samples.valid_mask.tolist() == [True]
+    assert samples.gamma.tolist() == pytest.approx([2.5])
+    assert samples.bx.tolist() == pytest.approx([1.5])
+    assert samples.bdotx.tolist() == pytest.approx([15.0])
+
+
 def test_compute_vectorized_contributions_returns_zero_for_guard_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -171,6 +246,42 @@ def test_compute_vectorized_contributions_returns_zero_for_guard_paths(
         nhat_nz=np.array([0.0]),
         R_separation=np.array([1.0]),
         samples=samples,
+        apply_external=True,
+    ) == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def test_compute_vectorized_contributions_returns_zero_for_empty_and_filtered_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", False)
+
+    empty_samples = _make_samples(charge=[], valid_mask=[])
+    assert vectorized_interactions.compute_vectorized_contributions(
+        h=1.0,
+        charge_i=1.0,
+        mass_i=1.0,
+        gamma_i=1.0,
+        beta_vec=(0.0, 0.0, 0.0),
+        nhat_nx=np.array([], dtype=float),
+        nhat_ny=np.array([], dtype=float),
+        nhat_nz=np.array([], dtype=float),
+        R_separation=np.array([], dtype=float),
+        samples=empty_samples,
+        apply_external=True,
+    ) == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    filtered_samples = _make_samples(charge=[1.0], gamma=[1.0], bx=[0.0], valid_mask=[True])
+    assert vectorized_interactions.compute_vectorized_contributions(
+        h=1.0,
+        charge_i=1.0,
+        mass_i=1.0,
+        gamma_i=1.0,
+        beta_vec=(0.0, 0.0, 0.0),
+        nhat_nx=np.array([1.0]),
+        nhat_ny=np.array([0.0]),
+        nhat_nz=np.array([0.0]),
+        R_separation=np.array([0.0]),
+        samples=filtered_samples,
         apply_external=True,
     ) == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
@@ -279,3 +390,155 @@ def test_compute_vectorized_contributions_filters_hard_k_cutoff(
     )
 
     assert result == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    python_kernel = getattr(
+        vectorized_interactions._compute_forces_numba_kernel,
+        "py_func",
+        vectorized_interactions._compute_forces_numba_kernel,
+    )
+    kernel_result = python_kernel(
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        np.array([1.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([1.0]),
+        np.array([1.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([2.0]),
+        np.array([1.0]),
+        C_MMNS,
+    )
+
+    assert kernel_result == pytest.approx((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+
+
+def test_compute_vectorized_contributions_reports_verbose_k_regimes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", False)
+    samples = _make_samples(
+        charge=[1.0, 1.0, 1.0],
+        gamma=[1.0, 1.0, 1.0],
+        bx=[0.0, 1.0 - 5e-4, 1.0],
+        valid_mask=[True, True, True],
+    )
+
+    result = vectorized_interactions.compute_vectorized_contributions(
+        h=1.0,
+        charge_i=1.0,
+        mass_i=1.0,
+        gamma_i=1.0,
+        beta_vec=(0.0, 0.0, 0.0),
+        nhat_nx=np.array([1.0, 1.0, 1.0]),
+        nhat_ny=np.array([0.0, 0.0, 0.0]),
+        nhat_nz=np.array([0.0, 0.0, 0.0]),
+        R_separation=np.array([1.0, 1.0, 1.0]),
+        samples=samples,
+        apply_external=True,
+        verbosity=4,
+    )
+
+    output = capsys.readouterr().out
+    assert "compute_vectorized_contributions called" in output
+    assert "k-factor hard cutoff triggered" in output
+    assert "series approximation" in output
+    assert "Force calculation (normal k regime)" in output
+    assert "Force components (normal k regime)" in output
+    assert np.all(np.isfinite(result))
+
+
+def test_numba_force_kernel_matches_numpy_path_for_nonzero_acceleration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", False)
+    samples = _make_samples(
+        charge=[2.0],
+        gamma=[2.5],
+        bx=[0.6],
+        by=[0.3],
+        bz=[0.2],
+        bdotx=[0.5],
+        bdoty=[0.4],
+        bdotz=[0.3],
+        valid_mask=[True],
+    )
+
+    expected = vectorized_interactions.compute_vectorized_contributions(
+        h=0.5,
+        charge_i=1.0,
+        mass_i=2.0,
+        gamma_i=1.7,
+        beta_vec=(0.5, 0.2, 0.1),
+        nhat_nx=np.array([0.6]),
+        nhat_ny=np.array([0.3]),
+        nhat_nz=np.array([0.2]),
+        R_separation=np.array([4.0]),
+        samples=samples,
+        apply_external=True,
+    )
+
+    actual = vectorized_interactions._compute_forces_numba_kernel(
+        0.5,
+        1.0,
+        2.0,
+        1.7,
+        0.5,
+        0.2,
+        0.1,
+        np.array([0.6]),
+        np.array([0.3]),
+        np.array([0.2]),
+        np.array([4.0]),
+        np.array([0.6]),
+        np.array([0.3]),
+        np.array([0.2]),
+        np.array([0.5]),
+        np.array([0.4]),
+        np.array([0.3]),
+        np.array([2.0]),
+        np.array([2.5]),
+        C_MMNS,
+    )
+
+    assert actual == pytest.approx(expected, rel=1e-12, abs=1e-12)
+
+    python_kernel = getattr(
+        vectorized_interactions._compute_forces_numba_kernel,
+        "py_func",
+        vectorized_interactions._compute_forces_numba_kernel,
+    )
+    py_func_result = python_kernel(
+        0.5,
+        1.0,
+        2.0,
+        1.7,
+        0.5,
+        0.2,
+        0.1,
+        np.array([0.6]),
+        np.array([0.3]),
+        np.array([0.2]),
+        np.array([4.0]),
+        np.array([0.6]),
+        np.array([0.3]),
+        np.array([0.2]),
+        np.array([0.5]),
+        np.array([0.4]),
+        np.array([0.3]),
+        np.array([2.0]),
+        np.array([2.5]),
+        C_MMNS,
+    )
+
+    assert py_func_result == pytest.approx(expected, rel=1e-12, abs=1e-12)

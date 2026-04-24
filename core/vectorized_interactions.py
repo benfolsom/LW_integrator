@@ -330,7 +330,6 @@ def gather_external_samples(
                 # Get all 4 trajectory states
                 idx_prev = indices_prev[j]
                 idx_next = indices_next[j]
-                idx_curr = ext_idx
                 idx_next2 = indices_next2[j]
 
                 if (
@@ -536,7 +535,7 @@ def compute_vectorized_contributions(
 
     # DEBUG: Log input parameters for force sign debugging
     if verbosity >= 4:
-        print(f"\n  [DEBUG] compute_vectorized_contributions called:")
+        print("\n  [DEBUG] compute_vectorized_contributions called:")
         print(f"    charge_i = {charge_i:.6e}")
         print(f"    mass_i = {mass_i:.6e}")
         print(f"    gamma_i = {gamma_i:.6e}")
@@ -762,7 +761,7 @@ def compute_vectorized_contributions(
 
         # DEBUG: Log charge factor sign
         if verbosity >= 4:
-            print(f"\n  [DEBUG] Force calculation (normal k regime):")
+            print("\n  [DEBUG] Force calculation (normal k regime):")
             print(f"    k_normal = {k_normal}")
             print(f"    charge_i = {charge_i:.6e}")
             print(f"    charge_ext = {charge_ext[normal_k_mask]}")
@@ -868,7 +867,7 @@ def compute_vectorized_contributions(
 
         # DEBUG: Log computed force components
         if verbosity >= 4:
-            print(f"\n  [DEBUG] Force components (normal k regime):")
+            print("\n  [DEBUG] Force components (normal k regime):")
             print(f"    term_px_normal = {term_px_normal}")
             print(f"    term_py_normal = {term_py_normal}")
             print(f"    term_pz_normal = {term_pz_normal}")
@@ -1026,9 +1025,9 @@ def _compute_forces_numba_kernel(
 
         # Scalar products
         bdot_scalar = (
-            bdotx_ext[j] * bdotx_ext[j]
-            + bdoty_ext[j] * bdoty_ext[j]
-            + bdotz_ext[j] * bdotz_ext[j]
+            bx_ext[j] * bdotx_ext[j]
+            + by_ext[j] * bdoty_ext[j]
+            + bz_ext[j] * bdotz_ext[j]
         )
         betas_scalar = bx_ext[j] * bx_i + by_ext[j] * by_i + bz_ext[j] * bz_i
 

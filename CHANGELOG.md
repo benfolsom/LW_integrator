@@ -20,6 +20,13 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Regression coverage** — Added helper and control-flow coverage for state copying, scalar extractors, retarded-distance helpers, gamma reconciliation, convergence logging, cancellation, blowup handling, and final mass-shell projection
 - **Files modified** — `core/equations.py`, `tests/unit/test_equations_helpers.py`
 
+### Numba Force-Kernel Parity Fix (April 2026)
+
+- **Bug** — `_compute_forces_numba_kernel()` in `core.vectorized_interactions` used `bdot·bdot` where the maintained NumPy path uses `beta·bdot`
+- **Impact** — The default JIT-accelerated force path could drift from the validated Python implementation on nonzero-acceleration trajectories, producing inconsistent momentum updates depending on whether Numba was active
+- **Fix** — Aligned the Numba kernel with the NumPy implementation and added parity coverage for hard-cutoff, small-k, verbose diagnostics, interpolation branches, and nonzero-acceleration kernels
+- **Files modified** — `core/vectorized_interactions.py`, `tests/unit/test_vectorized_interactions_helpers.py`, `tests/unit/test_images_helpers.py`
+
 ## v0.6.0 — March 2026
 
 ### CLI / GUI Parity (March 2026)
