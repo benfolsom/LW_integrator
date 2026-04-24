@@ -830,6 +830,7 @@ class TestPluginResultsHelpers:
 
 
 def test_optimization_package_exposes_only_maintained_lazy_exports():
+    assert optimization.__all__ == ["__version__"]
     retired_exports = [
         "run_parameter_sweep",
         "load_sweep_results",
@@ -838,6 +839,12 @@ def test_optimization_package_exposes_only_maintained_lazy_exports():
         "plot_energy_heatmap",
         "plot_optimization_summary",
         "plot_parameter_slice",
+        "ParameterGrid",
+        "create_energy_aperture_grid",
+        "compute_energy_at_position",
+        "compute_max_energy_gain",
+        "compute_trajectory_metrics",
+        "optimize_parameters",
     ]
 
     for name in retired_exports:
