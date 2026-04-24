@@ -203,6 +203,8 @@ def _extract_self_consistency_params(
         max_iterations,
         verbosity,
     )
+
+
 def _initialize_result_state(current_state: ParticleState) -> ParticleState:
     """Create a copy of the current particle state for the next time step.
 
@@ -232,9 +234,11 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "bdotx": np.copy(current_state["bdotx"]),
         "bdoty": np.copy(current_state["bdoty"]),
         "bdotz": np.copy(current_state["bdotz"]),
-        "q": current_state["q"],
-        "char_time": current_state.get("char_time", np.zeros_like(current_state["x"])),
-        "m": current_state.get("m", np.ones_like(current_state["x"])),
+        "q": np.copy(current_state["q"]),
+        "char_time": np.copy(
+            current_state.get("char_time", np.zeros_like(current_state["x"]))
+        ),
+        "m": np.copy(current_state.get("m", np.ones_like(current_state["x"]))),
         "dummy": np.zeros_like(current_state["bdotz"]),
         "origin_x": np.copy(current_state["origin_x"]),
         "origin_y": np.copy(current_state["origin_y"]),
