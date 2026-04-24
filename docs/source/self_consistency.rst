@@ -492,7 +492,7 @@ For comparison with legacy code or benchmarking:
 
    config = SelfConsistencyConfig(
        enabled=True,
-       convergence_mode="mass_shell_only",  # Only mass-shell criterion
+       convergence_mode="fixed_geometry",  # Fixed geometry, Pt projection
        target_ms_tolerance=1e-6,
        max_iterations=5,
        verbosity=0

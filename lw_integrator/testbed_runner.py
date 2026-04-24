@@ -167,6 +167,17 @@ plt.rcParams.update(
     }
 )
 
+
+def _canonicalize_self_consistency_mode(mode: object) -> str:
+    """Return the maintained self-consistency mode name."""
+
+    mode_str = str(mode)
+    aliases = {
+        "mass_shell_only": "fixed_geometry",
+        "full_iteration": "variable_geometry",
+    }
+    return aliases.get(mode_str, mode_str)
+
 # ---------------------------------------------------------------------------
 # Helper classes
 # ---------------------------------------------------------------------------
@@ -523,8 +534,8 @@ class SimulationOptions:
             ),
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
-            self_consistency_convergence_mode=str(
-                payload.get("self_consistency_convergence_mode", "mass_shell_only")
+            self_consistency_convergence_mode=_canonicalize_self_consistency_mode(
+                payload.get("self_consistency_convergence_mode", "fixed_geometry")
             ),
             self_consistency_target_ms_tolerance=_float(
                 "self_consistency_target_ms_tolerance", 1e-6
@@ -1180,17 +1191,8 @@ def run_testbed(
             f"    Bunch transv_dist: {options.rider_params.get('transv_dist', 0.0)} mm"
         )
         _log(f"    Bunch transv_mom: {options.rider_params.get('transv_mom', 0.0)}")
-    # Normalize mode name for display (handle legacy aliases)
-    mode_aliases = {
-        "mass_shell_only": "fixed_geometry",
-        "full_iteration": "variable_geometry",
-    }
-    display_mode = mode_aliases.get(
-        options.self_consistency_convergence_mode,
-        options.self_consistency_convergence_mode,
-    )
     _log(
-        f"  Self-consistency: {options.self_consistency_enabled} (mode={display_mode}, "
+        f"  Self-consistency: {options.self_consistency_enabled} (mode={options.self_consistency_convergence_mode}, "
         f"ms_tol={options.self_consistency_target_ms_tolerance:.1e}, "
         f"max_iter={options.self_consistency_max_iterations}, safety_net={options.self_consistency_mass_shell_tolerance:.1e}, "
         f"relaxation={options.self_consistency_mass_shell_relaxation:.1f})"

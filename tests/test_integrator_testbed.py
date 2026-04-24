@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from core.types import ParticleState  # noqa: E402
+from lw_integrator.testbed_runner import SimulationOptions  # noqa: E402
 from lw_integrator.trajectory_metrics import (  # noqa: E402
     compute_delta_energy_series,
     normalize_state,
@@ -178,6 +179,24 @@ class TestPlotValidation:
 
 class TestConfigManagement:
     """Test configuration save/load functionality."""
+
+    @pytest.mark.parametrize(
+        ("raw_mode", "expected_mode"),
+        [
+            ("fixed_geometry", "fixed_geometry"),
+            ("variable_geometry", "variable_geometry"),
+            ("mass_shell_only", "fixed_geometry"),
+            ("full_iteration", "variable_geometry"),
+        ],
+    )
+    def test_simulation_options_canonicalizes_self_consistency_mode(
+        self, raw_mode, expected_mode
+    ):
+        options = SimulationOptions.from_dict(
+            {"self_consistency_convergence_mode": raw_mode}
+        )
+
+        assert options.self_consistency_convergence_mode == expected_mode
 
     def test_config_snapshot_structure(self):
         """Test that config snapshot has all required fields."""

@@ -55,9 +55,9 @@ residual-wake acceleration with a covariant retarded-potential integrator_
 - **Self-consistency and energy conservation.** The integrator enforces the
   relativistic mass-shell constraint Pt² = P² + (mc)² through iterative
   projection during each timestep. Two modes are available:
-  - **mass_shell_only (default)**: Fast iteration with fixed geometry—retarded
+  - **fixed_geometry (default)**: Fast iteration with fixed geometry—retarded
     distances computed once per step. Suitable for most simulations.
-  - **full_iteration**: Updates particle positions and recomputes retarded
+  - **variable_geometry**: Updates particle positions and recomputes retarded
     distances each iteration for maximum accuracy when particles move
     significantly (|Δx| ~ 0.1×R_separation). Computationally expensive but
     accounts for geometric changes during the timestep.
