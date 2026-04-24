@@ -26,9 +26,11 @@ echo ""
 echo "────────────────────────────────────────────────────────────────"
 echo ""
 
-# Run the live plotter with venv Python if available, otherwise use system Python
-if [ -f ".venv/bin/python" ]; then
-    .venv/bin/python ./plot_from_logcache_live.py --live "$LATEST_LOG" "$@"
+# Run the packaged launcher if available, otherwise fall back to Python module
+if command -v lw-plot-latest-live >/dev/null 2>&1; then
+    lw-plot-latest-live "$@"
+elif [ -f ".venv/bin/python" ]; then
+    .venv/bin/python -m lw_integrator.plot_latest_live "$@"
 else
-    ./plot_from_logcache_live.py --live "$LATEST_LOG" "$@"
+    python3 -m lw_integrator.plot_latest_live "$@"
 fi

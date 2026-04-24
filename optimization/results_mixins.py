@@ -8,12 +8,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Any, Dict, List
 
-import matplotlib.patheffects as PathEffects
 import numpy as np
-from matplotlib.colors import LogNorm
-from scipy.interpolate import griddata
-from scipy.ndimage import gaussian_filter
-from scipy.spatial import KDTree
 
 from core.types import SimulationType  # type: ignore[import]
 from optimization.result_io import (  # type: ignore[import]
@@ -471,9 +466,6 @@ class OptimizationResultsMixin:
     ) -> None:
         """Generate summary plots for the sweep results."""
         try:
-            import subprocess
-            import sys
-
             # Count how many parameters were actually swept
             # (have more than 1 unique value across all results)
             # Collect all unique parameter values across all results
@@ -503,37 +495,27 @@ class OptimizationResultsMixin:
 
             # Only generate heatmap if exactly 2 parameters were swept
             if num_swept_params == 2:
-                # Use the new smooth heatmap generator script
-                script_path = Path(__file__).parent.parent / "generate_sweep_heatmap.py"
-
                 try:
-                    # Call the script with --gain-filter all to show both positive and negative gains
-                    result = subprocess.run(
+                    from generate_sweep_heatmap import main as generate_heatmap_main
+
+                    exit_code = generate_heatmap_main(
                         [
-                            sys.executable,
-                            str(script_path),
                             str(output_dir),
                             "--gain-filter",
                             "all",
                             "--output",
                             "sweep_heatmap.png",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=120,  # 2 minute timeout
+                        ]
                     )
 
-                    if result.returncode == 0:
+                    if exit_code == 0:
                         self._log_result(
                             f"[OK] Heatmap saved to: {output_dir / 'sweep_heatmap.png'}"
                         )
                     else:
                         self._log_result(
-                            f"[WARNING] Heatmap generation failed: {result.stderr}"
+                            "[WARNING] Heatmap generation failed with a non-zero exit code"
                         )
-
-                except subprocess.TimeoutExpired:
-                    self._log_result("[WARNING] Heatmap generation timed out")
                 except Exception as e:
                     self._log_result(f"[WARNING] Failed to generate heatmap: {e}")
             else:
@@ -562,215 +544,6 @@ class OptimizationResultsMixin:
 
         except Exception as e:  # pragma: no cover - plotting path
             self._log_result(f"[WARNING] Failed to generate summary plots: {e}")
-
-    def _generate_smooth_sweep_heatmap(
-        self,
-        energies: List[float],
-        apertures: List[float],
-        percent_gains: List[float],
-        output_dir: Path,
-    ) -> None:
-        """Generate smooth interpolated heatmap for sweep results."""
-        import matplotlib.pyplot as plt
-
-        # Filter out points without valid gains
-        valid_data = [
-            (e, a, g) for e, a, g in zip(energies, apertures, percent_gains) if g != 0
-        ]
-
-        if len(valid_data) < 10:
-            self._log_result(
-                "[INFO] Not enough valid data points for smooth heatmap (need at least 10)"
-            )
-            return
-
-        energies_filt, apertures_filt, gains_filt = zip(*valid_data)
-
-        self._log_result(
-            f"Creating smooth heatmap with {len(gains_filt)} data points..."
-        )
-
-        # Determine if log scale is appropriate for energy
-        log_energy = (
-            max(energies_filt) / min(energies_filt) > 10
-            if min(energies_filt) > 0
-            else False
-        )
-
-        # Work in log space for energy if appropriate
-        if log_energy:
-            x_data = np.log10(energies_filt)
-        else:
-            x_data = np.array(energies_filt)
-
-        y_data = np.array(apertures_filt)
-
-        # Create fine grid
-        grid_resolution = 800
-        x_grid_1d = np.linspace(min(x_data), max(x_data), grid_resolution)
-        y_grid_1d = np.linspace(min(y_data), max(y_data), grid_resolution)
-        X_grid, Y_grid = np.meshgrid(x_grid_1d, y_grid_1d)
-
-        # Interpolate gains onto grid
-        points = np.array([x_data, y_data]).T
-        values = np.array(gains_filt)
-
-        # Cubic interpolation
-        gain_grid = griddata(points, values, (X_grid, Y_grid), method="cubic")
-
-        # Fill NaN values with nearest neighbor
-        nan_mask = np.isnan(gain_grid)
-        if nan_mask.any():
-            gain_grid_nearest = griddata(
-                points, values, (X_grid, Y_grid), method="nearest"
-            )
-            gain_grid[nan_mask] = gain_grid_nearest[nan_mask]
-
-        # Build KDTree for density checking
-        x_range = max(x_data) - min(x_data)
-        y_range = max(y_data) - min(y_data)
-
-        grid_points = np.array([X_grid.flatten(), Y_grid.flatten()]).T
-        grid_points_normalized = grid_points.copy()
-        grid_points_normalized[:, 0] = (grid_points[:, 0] - min(x_data)) / x_range
-        grid_points_normalized[:, 1] = (grid_points[:, 1] - min(y_data)) / y_range
-
-        points_normalized = points.copy()
-        points_normalized[:, 0] = (points[:, 0] - min(x_data)) / x_range
-        points_normalized[:, 1] = (points[:, 1] - min(y_data)) / y_range
-
-        tree_normalized = KDTree(points_normalized)
-
-        # Calculate distances and neighbor counts
-        distances, _ = tree_normalized.query(grid_points_normalized)
-        distances_2d = distances.reshape(X_grid.shape)
-
-        neighbor_radius = 0.12
-        neighbor_counts = tree_normalized.query_ball_point(
-            grid_points_normalized, neighbor_radius, return_length=True
-        )
-        neighbor_counts_2d = neighbor_counts.reshape(X_grid.shape)
-
-        # Create smooth alpha channel
-        max_distance = 0.10
-        alpha_dist = 1.0 - (distances_2d / max_distance)
-        alpha_dist = np.clip(alpha_dist, 0, 1)
-
-        min_neighbors = 2
-        alpha_neighbors = neighbor_counts_2d / (min_neighbors * 2.0)
-        alpha_neighbors = np.clip(alpha_neighbors, 0, 1)
-
-        alpha = np.maximum(alpha_dist, alpha_neighbors)
-
-        # Apply multiple blur passes for ultra-smooth edges
-        for _ in range(5):
-            alpha = gaussian_filter(alpha, sigma=4.0)
-
-        # Smooth gain data
-        gain_grid_smooth = gaussian_filter(gain_grid, sigma=3.0)
-
-        # Apply alpha mask
-        alpha_threshold = 0.02
-        gain_grid_final = np.ma.masked_where(alpha < alpha_threshold, gain_grid_smooth)
-
-        # Handle negative/zero values for log scale
-        has_positive = np.any(np.array(gains_filt) > 0)
-        has_negative = np.any(np.array(gains_filt) < 0)
-
-        if has_positive and not has_negative:
-            gain_grid_final = np.ma.masked_where(gain_grid_final <= 0, gain_grid_final)
-
-        # Create figure
-        fig, ax = plt.subplots(figsize=(12, 8))
-
-        # Determine color scale
-        if has_positive and not has_negative:
-            vmin = max(np.min(gains_filt), 0.001)
-            vmax = np.max(gains_filt)
-            norm = LogNorm(vmin=vmin, vmax=vmax)
-            color_label = "Energy Gain (%)"
-        else:
-            vmin = np.min(gains_filt)
-            vmax = np.max(gains_filt)
-            norm = None
-            color_label = "Energy Gain (%)"
-
-        # Convert back to linear energy for plotting if needed
-        if log_energy:
-            X_plot = 10**X_grid
-        else:
-            X_plot = X_grid
-
-        # Plot with pcolormesh for smooth continuous colorbar
-        im = ax.pcolormesh(
-            X_plot,
-            Y_grid,
-            gain_grid_final,
-            cmap="viridis",
-            norm=norm,
-            shading="gouraud",
-            edgecolors="none",
-            linewidth=0,
-        )
-        plt.colorbar(im, ax=ax, label=color_label)
-
-        # Create contour levels
-        if has_positive and not has_negative:
-            contour_threshold = 1.0
-            low_levels = np.logspace(np.log10(vmin), np.log10(contour_threshold), 4)
-            high_levels = np.logspace(np.log10(contour_threshold), np.log10(vmax), 7)
-            high_levels = high_levels[high_levels <= vmax]
-            contour_levels = np.sort(
-                np.unique(np.concatenate([low_levels, high_levels]))
-            )
-        else:
-            contour_levels = np.linspace(vmin, vmax, 11)
-
-        # Draw contours
-        contours = ax.contour(
-            X_plot,
-            Y_grid,
-            gain_grid_final,
-            levels=contour_levels,
-            colors="white",
-            alpha=0.35,
-            linewidths=0.5,
-        )
-
-        # Add contour labels with subtle outline
-        labels = ax.clabel(
-            contours, inline=True, fontsize=8, fmt="%.2f%%", inline_spacing=10
-        )
-
-        for label in labels:
-            label.set_path_effects(
-                [
-                    PathEffects.withStroke(
-                        linewidth=1.2, foreground="black", alpha=0.3
-                    ),
-                    PathEffects.Normal(),
-                ]
-            )
-            label.set_color("#CCCCCC")
-
-        # Set scales and labels
-        if log_energy:
-            ax.set_xscale("log")
-
-        ax.set_xlabel("Initial Energy (GeV)", fontsize=12)
-        ax.set_ylabel("Aperture Radius (mm)", fontsize=12)
-        ax.set_title(
-            "Parameter Space Exploration: Energy Gain", fontsize=14, fontweight="bold"
-        )
-        ax.grid(True, alpha=0.2, which="both")
-
-        plt.tight_layout()
-
-        heatmap_file = output_dir / "sweep_heatmap.png"
-        plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
-        plt.close(fig)
-
-        self._log_result(f"[OK] Smooth heatmap saved to: {heatmap_file}")
 
     def _plot_single_trajectory(
         self, result: Dict[str, Any], output_file: Path

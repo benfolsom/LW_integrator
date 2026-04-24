@@ -511,11 +511,8 @@ def create_smooth_heatmap(
     print(f"Creating smooth heatmap with {len(gains)} data points...")
 
     # Check if param1 should be converted to MeV (if in GeV and values are small)
-    convert_param1_to_mev = False
-    convert_param1_to_metres = False
     if "gev" in param1_label.lower() and np.max(param1_values) < 1.0:
         # Convert from GeV to MeV
-        convert_param1_to_mev = True
         param1_values_plot = param1_values * 1000  # GeV to MeV
         param1_label_plot = param1_label.replace("GeV", "MeV").replace("(GeV)", "(MeV)")
         print(f"Converting param1 to MeV (max value: {np.max(param1_values):.4f} GeV)")
@@ -525,7 +522,6 @@ def create_smooth_heatmap(
             param1_neg = param1_neg * 1000
     elif "mm" in param1_label.lower() and np.max(param1_values) > 1000:
         # Convert from mm to metres
-        convert_param1_to_metres = True
         param1_values_plot = param1_values / 1000  # mm to m
         param1_label_plot = param1_label.replace("(mm)", "(m)").replace(" mm", " m")
         print(
@@ -541,11 +537,8 @@ def create_smooth_heatmap(
 
     # Check if param2 should be converted to microns (if in mm and values are small)
     # or to metres (if in mm and values are large)
-    convert_param2_to_microns = False
-    convert_param2_to_metres = False
     if "mm" in param2_label.lower() and np.max(param2_values) < 0.1:
         # Convert from mm to microns
-        convert_param2_to_microns = True
         param2_values_plot = param2_values * 1000  # mm to microns
         param2_label_plot = param2_label.replace("mm", "μm").replace("(mm)", "(μm)")
         print(
@@ -557,7 +550,6 @@ def create_smooth_heatmap(
             param2_neg = param2_neg * 1000
     elif "mm" in param2_label.lower() and np.max(param2_values) > 1000:
         # Convert from mm to metres
-        convert_param2_to_metres = True
         param2_values_plot = param2_values / 1000  # mm to m
         param2_label_plot = param2_label.replace("(mm)", "(m)").replace(" mm", " m")
         print(
@@ -1285,7 +1277,7 @@ def generate_heatmap(
     )
 
 
-def main():  # noqa: C901
+def main(argv=None):  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Generate publication-quality smooth heatmap from sweep results"
     )
@@ -1512,7 +1504,7 @@ def main():  # noqa: C901
         help="Gain value (%%%%) that maps to grey in --grey-zero mode (default: -10.0)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Handle legacy arguments
     param1_min = args.param1_min if args.param1_min is not None else args.energy_min
@@ -1562,7 +1554,8 @@ def main():  # noqa: C901
         num_contours_high=num_contours_high,
         contour_threshold=args.contour_threshold,
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

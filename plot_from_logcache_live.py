@@ -27,7 +27,6 @@ from pathlib import Path
 
 # Check for required dependencies
 try:
-    import matplotlib
     import matplotlib.pyplot as plt
     import numpy as np
     from scipy.interpolate import griddata
@@ -299,10 +298,8 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                 if truncated_match:
                     run_num = int(truncated_match.group(1))
                     params_str = truncated_match.group(2)
-                    delta_e_mev = float(truncated_match.group(3))
                     gamma_i_parsed = float(truncated_match.group(4))
                     gamma_f_parsed = float(truncated_match.group(5))
-                    status = truncated_match.group(6)
 
                     # Parse all key=value pairs from the params section
                     kv_pairs = {}
@@ -742,8 +739,6 @@ def create_combined_gains_plot(
 
     # Try interpolation with fallback chain
     gain_interpolated = None
-    method_used = None
-
     for method in ["nearest", "linear", "cubic"]:
         try:
             gain_interpolated = griddata(
@@ -752,7 +747,6 @@ def create_combined_gains_plot(
                 (energy_mesh, x_mesh),
                 method=method,
             )
-            method_used = method
             break
         except Exception:
             if method == "cubic":
@@ -1107,7 +1101,7 @@ def create_contour_plot(
             )
             method_used = method
             break
-        except Exception as e:
+        except Exception:
             if method == "cubic":
                 # Last resort failed, stick with whatever we got from earlier methods
                 pass
@@ -1115,15 +1109,15 @@ def create_contour_plot(
 
     if gain_interpolated is None:
         print(
-            f"ERROR: All interpolation methods failed. Cannot create 2D plot. Falling back to scatter."
+            "ERROR: All interpolation methods failed. Cannot create 2D plot. Falling back to scatter."
         )
         # Last resort: just scatter plot the raw data
         fig, ax = plt.subplots(figsize=(12, 8))
         scatter = ax.scatter(
-            energies, apertures, c=percent_gains, s=100, cmap="viridis", edgecolors="k"
+            energies, x_values, c=percent_gains, s=100, cmap="viridis", edgecolors="k"
         )
         ax.set_xlabel("Energy (GeV)", fontsize=12)
-        ax.set_ylabel("Aperture (mm)", fontsize=12)
+        ax.set_ylabel(x_label, fontsize=12)
         title = "Energy Gain (scatter plot - interpolation failed)"
         if stats:
             title += f"\n({stats['completed']}/{stats['total']} runs)"
@@ -1134,11 +1128,11 @@ def create_contour_plot(
         plt.close()
 
         # Also create 1D multi-curve plot if we have multiple apertures
-        if not aperture_degenerate:
+        if not x_degenerate:
             curves_output = output_file.replace(".png", "_1d_curves.png")
             try:
                 create_1d_curves_plot(
-                    energies, apertures, percent_gains, curves_output, stats, live_mode
+                    energies, x_values, percent_gains, curves_output, stats, live_mode
                 )
             except Exception as e:
                 print(f"Note: Could not create 1D curves plot: {e}")
@@ -1194,10 +1188,10 @@ def create_contour_plot(
             cbar.set_ticks(tick_values)
             cbar.set_ticklabels([f"{v:.3g}" for v in tick_values])
 
-    except ValueError as e:
+    except ValueError:
         # Fallback if contouring fails (e.g., non-increasing levels)
         contour = ax.contourf(
-            energy_mesh, aperture_mesh, gain_interpolated, cmap="viridis"
+            energy_mesh, x_mesh, gain_interpolated, cmap="viridis"
         )
         cbar = plt.colorbar(contour, ax=ax, label="Energy Gain (%)")
 
@@ -1252,10 +1246,10 @@ def create_contour_plot(
     curves_output = output_file.replace(".png", "_1d_curves.png")
     try:
         create_1d_curves_plot(
-            energies, apertures, percent_gains, curves_output, stats, live_mode
+            energies, x_values, percent_gains, curves_output, stats, live_mode
         )
         print(f"  Also created 1D curves plot: {curves_output}")
-    except Exception as e:
+    except Exception:
         # Don't fail if 1D plot creation fails
         pass
 
@@ -1281,7 +1275,7 @@ def live_monitor(
     print(f"LIVE MODE: Monitoring {log_file}")
     print(f"Plot will update every {interval} seconds when new data arrives")
     print(f"Output: {output_file}")
-    print(f"Press Ctrl+C to stop")
+    print("Press Ctrl+C to stop")
     print(f"{'=' * 80}\n")
 
     last_completed = 0
@@ -1321,7 +1315,7 @@ def live_monitor(
                     print(
                         f"\n[{timestamp}] 🔄 NEW SWEEP DETECTED (sweep #{current_sweep})!"
                     )
-                    print(f"  Previous sweep data has been discarded.")
+                    print("  Previous sweep data has been discarded.")
                     last_sweep_count = current_sweep
                     update_count = 0  # Reset update counter for new sweep
 
@@ -1335,7 +1329,7 @@ def live_monitor(
                         f"  Completed runs: {stats['completed']} (total not yet determined)"
                     )
                 print(f"  Positive gains: {stats['positive_gains']}")
-                print(f"  Generating plot...")
+                print("  Generating plot...")
 
                 # Generate updated plots (positive gains only if available)
                 if energies_pos is not None and len(energies_pos) > 0:
@@ -1382,7 +1376,7 @@ def live_monitor(
                 # Check if sweep is complete
                 if stats["total"] > 0 and stats["completed"] >= stats["total"]:
                     print(f"\n{'=' * 80}")
-                    print(f"SWEEP COMPLETE!")
+                    print("SWEEP COMPLETE!")
                     print(f"Total updates: {update_count}")
                     print(f"Final plot: {output_file}")
                     print(f"{'=' * 80}\n")
@@ -1397,7 +1391,7 @@ def live_monitor(
 
     except KeyboardInterrupt:
         print(f"\n\n{'=' * 80}")
-        print(f"MONITORING STOPPED BY USER")
+        print("MONITORING STOPPED BY USER")
         print(f"Total updates: {update_count}")
         if last_update_time:
             print(f"Last update: {last_update_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1405,7 +1399,7 @@ def live_monitor(
         print(f"{'=' * 80}\n")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Plot energy gains from logcache sweep data (static or live mode)"
     )
@@ -1447,7 +1441,7 @@ def main():
         help="Use logarithmic scale for y-axis (swept parameter)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Determine log file
     if args.logfile:
@@ -1457,12 +1451,12 @@ def main():
         if log_file is None:
             print("ERROR: No sweep log files found in logcache/")
             print("Please specify a log file explicitly.")
-            sys.exit(1)
+            return 1
         print(f"Auto-detected latest sweep log: {log_file}")
 
     if not log_file.exists():
         print(f"ERROR: Log file not found: {log_file}")
-        sys.exit(1)
+        return 1
 
     # Determine output file
     if args.output:
@@ -1504,9 +1498,9 @@ def main():
 
         if not has_any_data:
             print("ERROR: No data found in log file")
-            sys.exit(1)
+            return 1
 
-        print(f"\nGenerating plots...")
+        print("\nGenerating plots...")
 
         # If we only have negative/zero gains, use combined plot
         if energies_pos is None or len(energies_pos) == 0:
@@ -1558,6 +1552,8 @@ def main():
             )
             print(f"Combined gains plot saved to: {combined_output}")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

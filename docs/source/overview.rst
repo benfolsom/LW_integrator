@@ -157,8 +157,9 @@ Key ideas to keep in mind
   The GUI is the recommended interface for interactive work, with the CLI
   (``lw-simulate``) and notebook options available for scripting and batch
   processing.
-* **Heatmap and contour tools.**  ``generate_sweep_heatmap.py`` produces
-  publication-quality heatmaps from sweep results.  Contour lines use a low
+* **Heatmap and contour tools.**  ``lw-generate-sweep-heatmap`` (and the
+  compatibility script ``generate_sweep_heatmap.py``) produce
+  publication-quality heatmaps from sweep results. Contour lines use a low
   alpha (0.18), labels are clamped to stay inside the axes after the final
   layout pass, and overlapping labels are culled automatically.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in

@@ -387,10 +387,11 @@ both patterns.
 ### Sweep heatmap generation
 
 After a sweep completes you can generate publication-quality heatmaps with
+`lw-generate-sweep-heatmap` or the compatibility script
 `generate_sweep_heatmap.py`:
 
 ```bash
-python generate_sweep_heatmap.py results/sweeps/<sweep_dir> \
+lw-generate-sweep-heatmap results/sweeps/<sweep_dir> \
     --no-title --output gains.png --absolute-gains --log-param2 \
     --energy-max 1000 --num-contours 8 --no-markers --grey-zero \
     --grey-centre 0 --gain-max 200 --energy-min 1 --log-colorbar
