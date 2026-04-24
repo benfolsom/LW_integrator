@@ -567,12 +567,6 @@ class TestPluginPersistenceHelpers:
 class TestPluginResultsHelpers:
     """Test extracted optimization plugin result helpers."""
 
-
-def test_optimization_package_no_longer_exports_broken_run_parameter_sweep():
-    assert "run_parameter_sweep" not in optimization.__all__
-    with pytest.raises(AttributeError):
-        optimization.run_parameter_sweep
-
     def test_summarize_result_row_normalizes_distance_and_metrics(self):
         row = summarize_result_row(
             {
@@ -833,6 +827,23 @@ def test_optimization_package_no_longer_exports_broken_run_parameter_sweep():
             "halted_evaluation_count": 1,
             "failed_evaluation_count": 1,
         }
+
+
+def test_optimization_package_exposes_only_maintained_lazy_exports():
+    retired_exports = [
+        "run_parameter_sweep",
+        "load_sweep_results",
+        "create_interactive_plot",
+        "plot_dual_energy_curves",
+        "plot_energy_heatmap",
+        "plot_optimization_summary",
+        "plot_parameter_slice",
+    ]
+
+    for name in retired_exports:
+        assert name not in optimization.__all__
+        with pytest.raises(AttributeError):
+            getattr(optimization, name)
 
 
 class TestOptimizationResultsMixin:

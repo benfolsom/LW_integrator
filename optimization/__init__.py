@@ -20,15 +20,9 @@ __all__ = [
     "compute_relative_energy_gain",
     "compute_trajectory_metrics",
     "create_energy_aperture_grid",
-    "create_interactive_plot",
     "detect_transverse_deflection",
-    "load_sweep_results",
     "multi_start_optimize",
     "optimize_parameters",
-    "plot_dual_energy_curves",
-    "plot_energy_heatmap",
-    "plot_optimization_summary",
-    "plot_parameter_slice",
 ]
 
 _EXPORTS = {
@@ -63,21 +57,6 @@ _EXPORTS = {
         "optimization.parameter_sweep",
         "create_energy_aperture_grid",
     ),
-    "load_sweep_results": ("optimization.parameter_sweep", "load_sweep_results"),
-    "create_interactive_plot": (
-        "optimization.visualization",
-        "create_interactive_plot",
-    ),
-    "plot_dual_energy_curves": (
-        "optimization.visualization",
-        "plot_dual_energy_curves",
-    ),
-    "plot_energy_heatmap": ("optimization.visualization", "plot_energy_heatmap"),
-    "plot_optimization_summary": (
-        "optimization.visualization",
-        "plot_optimization_summary",
-    ),
-    "plot_parameter_slice": ("optimization.visualization", "plot_parameter_slice"),
 }
 
 
