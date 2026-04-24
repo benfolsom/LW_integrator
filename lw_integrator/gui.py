@@ -1336,11 +1336,11 @@ class IntegratorGUI:
             "APPROXIMATE_BACK_HISTORY (experimental, benchmarking only):\n"
             "  • Assumes particles had constant velocity since t = -∞\n"
             "  • Enables immediate force calculation (no gating)\n"
-            "  • Use ONLY for comparison with legacy solvers\n"
+            "  • Intended only for benchmark/reference studies\n"
             "  • Not validated for production physics\n"
             "  • May introduce unphysical initial conditions\n\n"
             "For production: use COLD_START\n"
-            "For legacy benchmarking: use APPROXIMATE_BACK_HISTORY",
+            "For reference benchmarking: use APPROXIMATE_BACK_HISTORY",
         )
         row += 1
 
@@ -1892,7 +1892,7 @@ class IntegratorGUI:
             "  • Self-consistency failures related to field discontinuities\n"
             "  • Image-charge singularities\n\n"
             "Performance impact: ~1-2% overhead (minimal)\n\n"
-            "Default: OFF (preserves legacy behavior)",
+            "Default: OFF",
         )
 
         # Chrono tolerance with help icon
@@ -1988,7 +1988,7 @@ class IntegratorGUI:
         )
 
         # Note: chrono_matching_mode removed from GUI
-        # Always uses FAST mode (legacy behavior)
+        # Always uses FAST mode for the maintained GUI path.
         # AVERAGED mode reserved for future APPROXIMATE_BACK_HISTORY implementation
 
         # Gamma reconciliation
@@ -2025,13 +2025,13 @@ class IntegratorGUI:
         Tooltip(
             method_help,
             "Gamma Reconciliation Method:\n\n"
-            "DISABLED - No reconciliation (legacy, may cause blowups)\n\n"
+            "DISABLED - No reconciliation (not recommended; may cause blowups)\n\n"
             "ADAPTIVE_WEIGHTED - Velocity-dependent weighting (recommended)\n"
             "  • β < 0.9: Trust energy (weight=0.8)\n"
             "  • β > 0.99: Trust velocity (weight=0.2)\n"
             "  • Mid-range: Balanced (weight=0.5)\n\n"
             "USE_VELOCITY - Always use γ from β (breaks energy)\n\n"
-            "USE_ENERGY - Always use γ from Pt (legacy)\n\n"
+            "USE_ENERGY - Always use γ from Pt\n\n"
             "FIXED_WEIGHTED - Fixed 50/50 blend\n\n"
             "Recommended: ADAPTIVE_WEIGHTED",
         )
@@ -4416,7 +4416,7 @@ class IntegratorGUI:
         self.root.after(0, partial(self._on_success, result))
 
     def _queue_log(self, text: str) -> None:
-        """Legacy log queuing (kept for compatibility, but batched logger preferred)."""
+        """Queue a UI log line; batched logging remains the preferred path."""
         self.root.after(0, partial(self._append_log, text))
 
     def _replot_with_new_axis(

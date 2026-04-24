@@ -42,6 +42,17 @@ def _make_args(**overrides) -> argparse.Namespace:
 
 
 class TestCliConfigParsing:
+    def test_help_text_describes_maintained_results_and_chrono_modes(
+        self, capsys
+    ):
+        with pytest.raises(SystemExit, match="0"):
+            cli.parse_args(["--help"])
+
+        help_text = capsys.readouterr().out
+        assert "--results-file RESULTS_FILE" in help_text
+        assert "saved sweep or optimization results JSON" in help_text
+        assert "Historical configs may still use 'legacy'." in help_text
+
     def test_parse_args_accepts_results_file(self):
         args = cli.parse_args(["--results-file", "results/sweep_results.json"])
 
