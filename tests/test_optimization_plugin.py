@@ -12,6 +12,7 @@ import pytest
 from core.types import SimulationType
 import lw_integrator.optimization_plugin as plugin_module
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
+from optimization.plugin_config_mixins import OptimizationPluginConfigMixin
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
 from optimization.results_mixins import OptimizationResultsMixin
@@ -172,6 +173,24 @@ class TestOptimizationPluginIntegration:
         assert (
             OptimizationPlugin._build_driver_particle_section
             is OptimizationPluginParameterMixin._build_driver_particle_section
+        )
+
+    def test_plugin_inherits_config_helpers_from_config_mixin(self):
+        assert (
+            OptimizationPlugin._sync_stability_to_main_gui
+            is OptimizationPluginConfigMixin._sync_stability_to_main_gui
+        )
+        assert (
+            OptimizationPlugin._on_load_from_main_config
+            is OptimizationPluginConfigMixin._on_load_from_main_config
+        )
+        assert (
+            OptimizationPlugin._load_config_from_path
+            is OptimizationPluginConfigMixin._load_config_from_path
+        )
+        assert (
+            OptimizationPlugin._save_config_to_path
+            is OptimizationPluginConfigMixin._save_config_to_path
         )
 
     def test_run_single_integration_uses_current_simulation_options_fields(
