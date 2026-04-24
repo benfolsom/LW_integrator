@@ -30,11 +30,6 @@ from core.batched_logger import BatchedLogger, ThrottledProgressCallback
 from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
-from lw_integrator.testbed_runner import (
-    COLOR_DRIVER,
-    COLOR_RIDER,
-)
-
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
@@ -123,7 +118,7 @@ def _show_warning_dialog(parent: tk.Tk | tk.Toplevel, title: str, message: str) 
         bg_color = dialog.tk.eval("ttk::style lookup TFrame -background")
         if not bg_color:
             bg_color = dialog.cget("background")
-    except:
+    except Exception:
         bg_color = "white"
     text.configure(state="disabled", bg=bg_color)
     text.pack(side="top", fill="both", expand=True, pady=(0, 10))
@@ -249,13 +244,11 @@ class _ScrollableNotebookPage:
     def _on_canvas_configure(self, event: Any) -> None:
         # Update scroll region but don't force width - let horizontal scrollbar work
         canvas_width = event.width
-        canvas_height = event.height
 
         # Get the actual content size
         bbox = self.canvas.bbox("all")
         if bbox:
             content_width = bbox[2] - bbox[0]
-            content_height = bbox[3] - bbox[1]
 
             # Only set width if canvas is wider than content (prevents horizontal scroll when not needed)
             if canvas_width >= content_width:
@@ -679,7 +672,7 @@ class IntegratorGUI:
                 self._main_horizontal_paned.sash_place(0, min_left, 0)
             elif sash_pos > max_left:
                 self._main_horizontal_paned.sash_place(0, max_left, 0)
-        except:
+        except Exception:
             pass  # Ignore errors during layout
 
     def _create_scrollable_tab(
@@ -2974,8 +2967,6 @@ class IntegratorGUI:
                 r"Pt ([\d.e+-]+) → ([\d.e+-]+).*error was ([\d.e+-]+)", text
             )
             if match:
-                pt_old = float(match.group(1))
-                pt_new = float(match.group(2))
                 error = float(match.group(3))
                 self._log_summary.append(
                     f"[MASS-SHELL] Pt corrected (error={error:.2e})"
@@ -3177,7 +3168,6 @@ class IntegratorGUI:
         # Refresh config list to update highlighting
         self._refresh_config_list(selected=filename)
         self._refresh_initial_summary()
-        self._update_legacy_state()
         self._update_driver_visibility()
         self._update_image_subcharge_state()
         self._update_cavity_spacing_state()
@@ -4698,7 +4688,7 @@ class IntegratorGUI:
                                 else gamma_mean * 0.001
                             )
                             ax.set_ylim(gamma_min - buffer, gamma_max + buffer)
-                except Exception as e:
+                except Exception:
                     # Silently ignore errors in y-axis scaling
                     pass
 
@@ -4774,7 +4764,7 @@ class IntegratorGUI:
         # Auto-load verbose logs into GUI for post-run analysis
         if hasattr(result, "verbose_logs") and result.verbose_logs:
             verbose_line_count = len(
-                [l for l in result.verbose_logs.splitlines() if l.strip()]
+                [line for line in result.verbose_logs.splitlines() if line.strip()]
             )
             self._append_log(
                 f"Loading {verbose_line_count:,} verbose log lines into GUI..."
@@ -4867,7 +4857,6 @@ class IntegratorGUI:
 
         def toggle_log_scale() -> None:
             try:
-                import numpy as np
                 from matplotlib.ticker import LogFormatterSciNotation, ScalarFormatter
 
                 for ax in figure.get_axes():
@@ -4988,7 +4977,7 @@ class IntegratorGUI:
                     current_xaxis = "z"
                 elif "time" in xlabel:
                     current_xaxis = "t"
-            except:
+            except Exception:
                 pass
 
             xaxis_var = tk.StringVar(value=current_xaxis)
