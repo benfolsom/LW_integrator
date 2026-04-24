@@ -387,9 +387,7 @@ both patterns.
 ### Sweep heatmap generation
 
 After a sweep completes you can generate publication-quality heatmaps with
-the maintained packaged command `lw-generate-sweep-heatmap`
-(the repo-root `generate_sweep_heatmap.py` file remains as a compatibility
-wrapper):
+the maintained packaged command `lw-generate-sweep-heatmap`:
 
 ```bash
 lw-generate-sweep-heatmap results/sweeps/<sweep_dir> \
@@ -413,8 +411,7 @@ lw-plot-from-logcache-live logcache/<sweep_log>.log
 
 `lw-plot-latest-live` follows the most recent sweep log automatically.
 `lw-plot-from-logcache-live` can run in static mode by default or in live mode
-with `--live`. The repo-root `plot_from_logcache_live.py` file remains as a
-compatibility wrapper around the packaged implementation.
+with `--live`.
 
 ### Saved trajectory plotting
 

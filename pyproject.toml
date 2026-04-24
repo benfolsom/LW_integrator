@@ -69,7 +69,6 @@ Repository = "https://github.com/username/LW_integrator"
 
 [tool.setuptools]
 packages = {find = {}}
-py-modules = ["generate_sweep_heatmap", "plot_from_logcache_live"]
 
 [tool.setuptools.dynamic]
 version = {attr = "core._version.__version__"}
