@@ -12,6 +12,7 @@ import pytest
 from core.types import SimulationType
 import lw_integrator.optimization_plugin as plugin_module
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
+from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
 from optimization.plugin_ui_mixins import OptimizationPluginUIMixin
@@ -134,6 +135,24 @@ class TestOptimizationPluginIntegration:
         assert (
             OptimizationPlugin._build_results_output_section
             is OptimizationPluginUIMixin._build_results_output_section
+        )
+
+    def test_plugin_inherits_form_helpers_from_form_mixin(self):
+        assert (
+            OptimizationPlugin._add_sweepable_param
+            is OptimizationPluginFormMixin._add_sweepable_param
+        )
+        assert (
+            OptimizationPlugin._update_rider_pz_helper
+            is OptimizationPluginFormMixin._update_rider_pz_helper
+        )
+        assert (
+            OptimizationPlugin._on_sim_type_changed
+            is OptimizationPluginFormMixin._on_sim_type_changed
+        )
+        assert (
+            OptimizationPlugin._update_parameter_visibility
+            is OptimizationPluginFormMixin._update_parameter_visibility
         )
 
     def test_run_single_integration_uses_current_simulation_options_fields(
