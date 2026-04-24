@@ -502,7 +502,6 @@ See Also
 
 * :ref:`self_consistency` - Self-consistency convergence system
 * :ref:`recent_changes` - Recent changes and updates
-* ``local/MAX_ATTEMPTS_FIX.md`` - Detailed migration guide
 * ``core/integration_runner.py`` - Implementation source code
 
 References

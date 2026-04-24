@@ -235,8 +235,6 @@ All validation tests pass:
 
 **References**
 
-* Detailed analysis: ``local/COLD_START_FIX.md``
-* Test script: ``local/test_gating_fix.py``
 * Affected config: ``configs/run_configs/two_particle_demo6.json``
 
 Fix 2: Missing β Factor for Low-Velocity Particles (February 25, 2026)
@@ -398,11 +396,8 @@ obtain accurate results.
 
 **References**
 
-* Implementation report: ``local/COLD_START_FIX_IMPLEMENTED.md``
-* Bug report: ``local/COLD_START_GATING_BUG_REPORT.md``
-* Fix specification: ``local/COLD_START_FIX_SPECIFICATION.md``
-* Verification test: ``local/test_gating_fix_verification.py``
-* Analytical test: ``local/test_low_beta_gating_issue.py``
+Implementation details were recorded during development; the maintained docs
+capture the final corrected behavior.
 
 Adaptive Timestep Auto-Calculation (February 10, 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -557,12 +552,8 @@ Analysis revealed the original implementation violated energy conservation:
 
 **Detailed Analysis**
 
-See ``local/GAMMA_RECONCILIATION_FIX.md`` for:
-
-* Root cause analysis
-* Comparison with v0.4.8 stable results
-* Migration guide
-* Future redesign recommendations
+The maintained self-consistency and gamma-reconciliation documentation reflects
+the current supported configuration surface.
 
 Optimization Plugin Fix (February 10, 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1010,8 +1001,7 @@ The GUI now provides comprehensive optimization capabilities:
 * **Real-time logging**: Progress tracking with convergence monitoring
 * **Timestep requirements**: Critical timestep ≤ 3e-7 ns for radiation reaction physics with stripped_ions > 10
 
-See ``local/SWEEP_AND_OPTIMIZATION_GUIDE.md`` for detailed usage and
-``local/EARLY_STOPPING_IMPLEMENTATION.md`` for technical details.
+See the README and sweep/optimization CLI help for maintained usage details.
 
 Physics Corrections (December 2024)
 ------------------------------------
@@ -1239,11 +1229,8 @@ Validation and Testing
 Test Scripts
 ~~~~~~~~~~~~
 
-Comprehensive validation scripts are available in ``local/``:
-
-* ``test_precision_fix.py`` - Beta precision, k_factor, gamma self-consistency
-* ``calculate_clamping_energy.py`` - Energy thresholds for beta clamping
-* ``calculate_kfactor_limit.py`` - k_factor threshold exploration
+Validation coverage for these changes lives in the tracked test suite under
+``tests/``.
 
 Canonical Test Case
 ~~~~~~~~~~~~~~~~~~~
@@ -1363,9 +1350,6 @@ Updating Existing Code
 Further Reading
 ---------------
 
-* Optimization guide: ``local/SWEEP_AND_OPTIMIZATION_GUIDE.md``
-* Early stopping implementation: ``local/EARLY_STOPPING_IMPLEMENTATION.md``
-* Optimization status: ``local/OPTIMIZATION_GUI_STATUS.md``
 * Theoretical background: :doc:`theory`
 * API reference: :doc:`api/index`
 * Validation workflows: :doc:`validation`

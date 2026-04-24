@@ -55,8 +55,6 @@ simulation, and confirm that the regression tooling works on your machine.
      Genetic Algorithm, Differential Evolution, Nelder-Mead, or Multi-start
      methods with convergence detection and top-N result saving.
 
-   For detailed optimization workflows, see ``local/SWEEP_AND_OPTIMIZATION_GUIDE.md``.
-
 6. Exercise the command-line entry point:
 
    .. code-block:: bash

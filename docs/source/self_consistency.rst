@@ -808,8 +808,6 @@ References
 
 - :ref:`equations_of_motion` - Full equations of motion documentation
 - :ref:`integration_runner` - Integration loop and timestep management
-- Local documentation: ``local/GAMMA_CHECK_DECISION.md`` - Test results justifying the two-criterion convergence check
-- Local documentation: ``local/WEIGHTED_CONVERGENCE_PROPOSAL.md`` - Design rationale
 
 See Also
 ========
@@ -818,5 +816,3 @@ See Also
 - :py:class:`core.types.GammaReconciliationMethod` - Reconciliation method enum
 - :py:func:`core.equations.retarded_equations_of_motion` - Main equations implementation
 - :py:func:`core.self_consistency.self_consistent_step` - Wrapper function
-- Local documentation: ``local/gamma_reconciliation_config.md`` - Comprehensive reconciliation guide
-- Local documentation: ``local/gamma_reconciliation_quickref.md`` - Quick parameter reference

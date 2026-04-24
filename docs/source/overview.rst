@@ -77,11 +77,6 @@ High-level anatomy
     sweep directories with fewer than 100 completed runs to
     ``results/archive/incomplete/``.
 
-``local/archive/``
-    Month-bucketed archive for local scratch material and retired helper
-    scripts. Supported command-line entry points live in ``lw_integrator/``
-    rather than a top-level ``scripts/`` directory.
-
 ``results/``
     Output location for sweep and optimization runs (git-ignored).  Completed
     sweeps land in ``results/sweeps/``; incomplete or cancelled sweeps are

@@ -75,7 +75,6 @@ residual-wake acceleration with a covariant retarded-potential integrator_
     current solver path.
     Configurable via API (`self_consistency_gamma_reconciliation_method` and related
     parameters) and GUI (Stability → Self-Consistency → Gamma Reconciliation).
-    See `local/gamma_reconciliation_config.md` for detailed usage.
 - **Adaptive timestep and beta clamping.** The integrator includes numerical
   safety features for extreme relativistic regimes (γ > 10⁶):
   - **Beta clamping** prevents particle velocities from reaching the speed of
@@ -97,7 +96,7 @@ residual-wake acceleration with a covariant retarded-potential integrator_
   from physical behavior and is essential for unattended sweep and optimization
   runs. Configured via `SmoothnessConfig` with presets for strict,
   balanced, and permissive validation. See `core/smoothness_analyzer.py`
-  and `local/smoothness_checking_implementation.md` for details.
+  for implementation details.
 - **Macroparticle simulation.** For conducting-wall simulations, the integrator
   supports macroparticle mode where test particle charges are scaled by a
   configurable multiplier and image subcharge positions receive stochastic errors
@@ -129,8 +128,6 @@ LW_integrator/
 ├── input_output/         # Particle bunch initialisation utilities
 ├── legacy/               # Archived original solver and notebooks
 │                         # (deprecated — kept for regression comparisons)
-├── local/                # Ignored local archive for scratch material and
-│                         # retired helper scripts
 ├── lw_integrator/        # CLI, GUI, sweep runner, and testbed runner
 ├── optimization/         # Sweep/optimization engine, metrics, result I/O
 ├── results/              # Sweep and optimization output (git-ignored)
@@ -304,7 +301,7 @@ The GUI provides three operational modes:
 - For radiation reaction physics (stripped_ions > 10), use timestep ≤ 3e-7 ns with self-consistency enabled
 - Nelder-Mead is fastest for local optimization (~15-50 min), GA/DE are thorough but slower (~1-3 hours)
 
-Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergence history, best parameters, and optional trajectory data. See `local/SWEEP_AND_OPTIMIZATION_GUIDE.md` for detailed usage.
+Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergence history, best parameters, and optional trajectory data.
 
 ### Command-line entry point
 
