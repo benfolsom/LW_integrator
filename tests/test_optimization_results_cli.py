@@ -63,7 +63,7 @@ class TestOptimizationResultsCli:
         assert exit_code == 1
         assert "only supports optimization_results.json files" in captured.out
 
-    def test_legacy_wrapper_delegates_modern_payload(self, tmp_path: Path, monkeypatch):
+    def test_wrapper_delegates_modern_payload(self, tmp_path: Path, monkeypatch):
         results_path = tmp_path / "optimization_results.json"
         results_path.write_text(
             json.dumps({"objective": "maximize_energy_gain", "all_evaluations": []}),
@@ -82,7 +82,7 @@ class TestOptimizationResultsCli:
         assert exit_code == 0
         assert captured["argv"] == [str(results_path)]
 
-    def test_legacy_wrapper_supports_list_payload(self, tmp_path: Path):
+    def test_wrapper_rejects_list_payload(self, tmp_path: Path, capsys):
         results_path = tmp_path / "legacy_results.json"
         results_path.write_text(
             json.dumps(
@@ -107,11 +107,9 @@ class TestOptimizationResultsCli:
             ),
             encoding="utf-8",
         )
-        output_path = tmp_path / "heatmap.png"
 
-        exit_code = plot_optimization_results.main(
-            [str(results_path), "--output", str(output_path)]
-        )
+        exit_code = plot_optimization_results.main([str(results_path)])
+        captured = capsys.readouterr()
 
-        assert exit_code == 0
-        assert output_path.exists()
+        assert exit_code == 1
+        assert "no longer supported" in captured.out

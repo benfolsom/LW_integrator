@@ -181,12 +181,6 @@ class TestConfigManagement:
             "steps": 1000,
             "seed": 12345,
             "simulation_type": "BUNCH_TO_BUNCH",
-            "legacy_enabled": False,
-            "overlay_display": False,
-            "overlay_save": False,
-            "difference_display": False,
-            "difference_save": False,
-            "metrics_save": False,
             "energy_save": True,
             "energy_display": True,
             "transverse_display": False,
@@ -226,28 +220,5 @@ class TestConfigManagement:
         assert loaded["steps"] == 1000
         assert loaded["seed"] == 12345
         assert loaded["energy_save"] is True
-
-
-class TestLegacyOverlayPlots:
-    """Test legacy overlay plot functionality."""
-
-    def test_overlay_requires_legacy_enabled(self):
-        """Test that overlay plots require legacy to be enabled."""
-        legacy_enabled = False
-        overlay_display = True
-
-        # Overlay should only work if legacy is enabled
-        should_show_overlay = legacy_enabled and overlay_display
-        assert should_show_overlay is False
-
-    def test_overlay_with_legacy(self):
-        """Test overlay plots when legacy is enabled."""
-        legacy_enabled = True
-        overlay_display = True
-
-        should_show_overlay = legacy_enabled and overlay_display
-        assert should_show_overlay is True
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -1,11 +1,10 @@
 """Helper utilities mirroring the notebook testbed inside a desktop GUI.
 
 The original ``integrator_testbed.ipynb`` notebook wires dozens of ipywidgets
-around the benchmarking helpers in ``examples/validation/core_vs_legacy_benchmark``.
-This module repackages that behaviour behind plain Python data structures so a
-Tkinter GUI (or any other front-end) can drive the same workflows: generating
-energy plots, exporting metrics, saving down-sampled trajectories, and managing
-JSON snapshot files.
+around single-run simulation helpers. This module repackages that behaviour
+behind plain Python data structures so a Tkinter GUI (or any other front-end)
+can drive the same workflows: generating plots, saving down-sampled
+trajectories, and managing JSON snapshot files.
 
 All strings deliberately use ASCII to keep packaging simple when rendered in
 terminals that do not default to UTF-8.
@@ -47,9 +46,6 @@ from core.particle_status import (
 from core.types import SimulationType
 from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
     compute_delta_energy_components,
-    compute_delta_energy_series,
-    prepare_two_particle_demo,
-    run_benchmark,
 )
 from input_output.bunch_initialization import create_bunch_from_params
 
@@ -59,10 +55,6 @@ from input_output.bunch_initialization import create_bunch_from_params
 
 COLOR_RIDER = "#0072B2"
 COLOR_DRIVER = "#D55E00"
-COLOR_LEGACY_RIDER = "#56B4E9"
-COLOR_LEGACY_DRIVER = "#E69F00"
-COLOR_DIFF_RIDER = "#009E73"
-COLOR_DIFF_DRIVER = "#CC79A7"
 SCATTER_STYLE = {"s": 140, "alpha": 0.78, "linewidth": 0, "edgecolors": "none"}
 AVAILABLE_DPI_CHOICES: Tuple[int, ...] = (150, 300, 450, 600)
 DEFAULT_PLOT_DPI = 300
@@ -216,12 +208,6 @@ class SimulationOptions:
     steps: int = 1000
     seed: int = 12345
     simulation_type: SimulationType = SimulationType.BUNCH_TO_BUNCH
-    legacy_enabled: bool = False
-    overlay_display: bool = False
-    overlay_save: bool = False
-    difference_display: bool = False
-    difference_save: bool = False
-    metrics_save: bool = False
     energy_display: bool = True
     energy_save: bool = True
     energy_xaxis: str = "z"  # "z", "t", or "dual"
@@ -357,12 +343,6 @@ class SimulationOptions:
             "steps": self.steps,
             "seed": self.seed,
             "simulation_type": self.simulation_type.name,
-            "legacy_enabled": self.legacy_enabled,
-            "overlay_display": self.overlay_display,
-            "overlay_save": self.overlay_save,
-            "difference_display": self.difference_display,
-            "difference_save": self.difference_save,
-            "metrics_save": self.metrics_save,
             "energy_display": self.energy_display,
             "energy_save": self.energy_save,
             "energy_xaxis": self.energy_xaxis,
@@ -501,12 +481,6 @@ class SimulationOptions:
             steps=_int("steps", 1000),
             seed=_int("seed", 12345),
             simulation_type=simulation_type,
-            legacy_enabled=_bool("legacy_enabled", False),
-            overlay_display=_bool("overlay_display", False),
-            overlay_save=_bool("overlay_save", False),
-            difference_display=_bool("difference_display", False),
-            difference_save=_bool("difference_save", False),
-            metrics_save=_bool("metrics_save", False),
             energy_display=_bool("energy_display", True),
             energy_save=_bool("energy_save", True),
             energy_xaxis=str(payload.get("energy_xaxis", "z")),
@@ -698,8 +672,6 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     Px = state["Px"]
     Py = state["Py"]
     Pz = state["Pz"]
-    mass = state["m"]
-
     # For small-angle approximation: x' ≈ tan(θ) ≈ Px/Pz
     # This is exact for the divergence angle in the paraxial limit
     xp = Px / Pz  # dimensionless (mm/ns / mm/ns)
@@ -708,9 +680,6 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     # Calculate RMS quantities
     x_rms = np.sqrt(np.mean(x**2))  # mm
     y_rms = np.sqrt(np.mean(y**2))  # mm
-    xp_rms = np.sqrt(np.mean(xp**2))  # rad
-    yp_rms = np.sqrt(np.mean(yp**2))  # rad
-
     xxp_mean = np.mean(x * xp)  # mm·rad
     yyp_mean = np.mean(y * yp)  # mm·rad
 
@@ -845,7 +814,6 @@ def prepare_particle_bunches(
     *,
     rider_params: Dict[str, Any],
     driver_params: Dict[str, Any] | None = None,
-    use_legacy: bool = False,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray] | None, float, float | None]:
     """Prepare rider and driver particle bunches.
 
@@ -857,9 +825,6 @@ def prepare_particle_bunches(
         Rider particle parameters
     driver_params : dict, optional
         Driver particle parameters (None for single-bunch modes)
-    use_legacy : bool, optional
-        If True, use legacy init_bunch. Otherwise use core initialization.
-
     Returns
     -------
     rider_state : dict
@@ -871,29 +836,6 @@ def prepare_particle_bunches(
     driver_rest_mev : float or None
         Driver rest energy in MeV (None if not provided)
     """
-    if use_legacy:
-        # Use legacy benchmark function
-        # Filter out offset parameters (legacy doesn't support them)
-        legacy_rider = {
-            k: v
-            for k, v in rider_params.items()
-            if k not in ("transv_offset_x", "transv_offset_y")
-        }
-        legacy_driver = None
-        if driver_params is not None:
-            legacy_driver = {
-                k: v
-                for k, v in driver_params.items()
-                if k not in ("transv_offset_x", "transv_offset_y")
-            }
-
-        return prepare_two_particle_demo(
-            seed=seed,
-            rider_params=legacy_rider,
-            driver_params=legacy_driver,
-        )
-
-    # Use core (non-legacy) initialization
     rider_state, rider_rest_mev = create_bunch_from_params(
         seed=seed,
         **rider_params,
@@ -943,7 +885,6 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
             seed=options.seed,
             rider_params=rider_params_for_twiss,
             driver_params=driver_params_for_twiss,
-            use_legacy=False,
         )
     )
 
@@ -1186,33 +1127,28 @@ def run_testbed(
     required_params = CORE_REQUIRED_PARAMS.get(sim_type, set())
     filtered_core_params = {name: core_params[name] for name in required_params}
 
-    legacy_enabled = bool(options.legacy_enabled)
-    if not legacy_enabled:
-        overlay_display = False
-        overlay_save = False
-        difference_display = False
-        difference_save = False
-        metrics_save = False
-    else:
-        overlay_display = bool(options.overlay_display)
-        overlay_save = bool(options.overlay_save)
-        difference_display = bool(options.difference_display)
-        difference_save = bool(options.difference_save)
-        metrics_save = bool(options.metrics_save)
-
     energy_display = bool(options.energy_display)
     energy_save = bool(options.energy_save)
     transverse_display = bool(options.transverse_display)
     transverse_save = bool(options.transverse_save)
+    beta_display = bool(options.beta_display)
+    beta_save = bool(options.beta_save)
+    momentum_display = bool(options.momentum_display)
+    momentum_save = bool(options.momentum_save)
+    gamma_display = bool(options.gamma_display)
+    gamma_save = bool(options.gamma_save)
+    zposition_display = bool(options.zposition_display)
+    zposition_save = bool(options.zposition_save)
     trajectory_save = bool(options.trajectory_save)
 
     should_save = any(
         [
-            overlay_save,
-            difference_save,
-            metrics_save,
             energy_save,
             transverse_save,
+            beta_save,
+            momentum_save,
+            gamma_save,
+            zposition_save,
             trajectory_save,
         ]
     )
@@ -1234,11 +1170,10 @@ def run_testbed(
     _log(f"  Steps: {options.steps}")
     _log(f"  Seed: {options.seed}")
     _log(f"  Core params: {filtered_core_params}")
-    _log(f"  Legacy enabled: {legacy_enabled}")
     _log(f"  Image subcharge count: {options.image_subcharge_count}")
     _log(f"  Image weighting: {options.use_image_weighting}")
     if options.macroparticle_enabled and sim_type == SimulationType.CONDUCTING_WALL:
-        _log(f"  Macroparticle simulation: ENABLED")
+        _log("  Macroparticle simulation: ENABLED")
         _log(f"    Charge multiplier: {options.macroparticle_charge_multiplier}")
         _log(f"    Sigma multiplier: {options.macroparticle_sigma_multiplier}")
         _log(f"    Use momentum errors: {options.macroparticle_use_momentum_errors}")
@@ -1269,18 +1204,6 @@ def run_testbed(
     )
     _log("")
 
-    return_traj_flag = any(
-        [
-            trajectory_save,
-            transverse_display,
-            transverse_save,
-            energy_save,
-            energy_display,
-            overlay_display,
-            overlay_save,
-        ]
-    )
-
     # Capture stdout/stderr to get verbose SC and adaptive timestep logs
     # Use TeeStringIO to also print to console in real-time
     import sys
@@ -1307,13 +1230,12 @@ def run_testbed(
     )
 
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-        # Prepare initial states (use legacy only if enabled)
+        # Prepare initial states using the maintained bunch initialization path.
         rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
             prepare_particle_bunches(
                 seed=options.seed,
                 rider_params=rider_params,
                 driver_params=driver_params,
-                use_legacy=legacy_enabled,
             )
         )
 
@@ -1331,21 +1253,6 @@ def run_testbed(
             if driver_state is not None
             else None
         )
-
-        # Run legacy if requested
-        legacy_traj_rider = None
-        legacy_traj_driver = None
-        if legacy_enabled:
-            from legacy.covariant_integrator_library import (
-                retarded_integrator as legacy_retarded_integrator,
-            )
-
-            legacy_traj_rider, legacy_traj_driver = legacy_retarded_integrator(
-                copy.deepcopy(rider_state),
-                copy.deepcopy(driver_state),
-                options.steps,
-                **filtered_core_params,
-            )
 
         # Run core integrator directly
         core_traj_rider, core_traj_driver = retarded_integrator(
@@ -1388,7 +1295,7 @@ def run_testbed(
             use_numba=getattr(options, "use_numba", True),
         )
 
-        # Build result in same format as run_benchmark
+        # Build a normalized payload shared by the GUI and CLI surfaces.
         payload = {
             "core": {
                 "rider": [_normalize_state(s) for s in core_traj_rider],
@@ -1404,12 +1311,6 @@ def run_testbed(
             },
         }
 
-        if legacy_enabled and legacy_traj_rider and legacy_traj_driver:
-            payload["legacy"] = {
-                "rider": [_normalize_state(s) for s in legacy_traj_rider],
-                "driver": [_normalize_state(s) for s in legacy_traj_driver],
-            }
-
         result = ({}, payload)  # Empty metrics dict, payload with trajectories
 
     # Store captured stdout/stderr separately for verbose logs button
@@ -1417,8 +1318,8 @@ def run_testbed(
     captured_stderr = stderr_capture.getvalue()
 
     # Log a summary
-    stdout_lines = len([l for l in captured_stdout.splitlines() if l.strip()])
-    stderr_lines = len([l for l in captured_stderr.splitlines() if l.strip()])
+    stdout_lines = len([line for line in captured_stdout.splitlines() if line.strip()])
+    stderr_lines = len([line for line in captured_stderr.splitlines() if line.strip()])
 
     if stdout_lines > 0:
         _log(
@@ -1427,24 +1328,16 @@ def run_testbed(
     if stderr_lines > 0:
         _log(f"Stderr: {stderr_lines} lines")
 
+    metrics: Optional[Dict[str, Dict[str, float]]] = None
     if isinstance(result, tuple) and len(result) == 2:
-        metrics, payload = result
+        _, payload = result
     else:
-        metrics = result
         payload = {}
 
     saved_paths: Dict[str, Path] = {}
     figures: Dict[str, plt.Figure] = {}
 
-    if legacy_enabled and metrics_save and metrics is not None:
-        metrics_path = output_dir / f"{filename_base}_metrics.json"
-        with metrics_path.open("w", encoding="utf-8") as handle:
-            json.dump(metrics, handle, indent=2, default=str)
-        saved_paths["metrics"] = metrics_path
-        _log(f"Saved metrics to: {metrics_path}")
-
     core_traj = payload.get("core")
-    legacy_traj = payload.get("legacy") if legacy_enabled else None
     initial_states = payload.get("initial_states", {})
     rest_energies = payload.get("rest_energy_mev", {})
 
@@ -1475,7 +1368,7 @@ def run_testbed(
         # Then gamma = sqrt(1 + p^2)
         p_init = P_init / (mass * C_MMNS)
         rider_gamma_initial = float(np.sqrt(1 + p_init**2))
-        _log(f"[DEBUG] Initial state gamma calculation:")
+        _log("[DEBUG] Initial state gamma calculation:")
         _log(
             f"  Pz={Pz_init:.3f}, Px={Px_init:.3f}, Py={Py_init:.3f}, P_total={P_init:.3f}, mass={mass:.6f}, p={p_init:.3f}, gamma={rider_gamma_initial:.1f}"
         )
@@ -1491,7 +1384,7 @@ def run_testbed(
                 rider_norm_emittance_y = beam_optics.get("norm_emittance_y_mm_mrad")
                 rider_beta_x = beam_optics.get("beta_x_m")
                 rider_beta_y = beam_optics.get("beta_y_m")
-                _log(f"[DEBUG] Initial beam optics:")
+                _log("[DEBUG] Initial beam optics:")
                 _log(
                     f"  εx={rider_emittance_x:.3e} mm·mrad, εy={rider_emittance_y:.3e} mm·mrad"
                 )
@@ -1756,53 +1649,6 @@ def run_testbed(
             driver_delta_e = None
             driver_z_rel = None
 
-        if legacy_traj and legacy_enabled:
-            legacy_rider_states = legacy_traj.get("rider", [])
-            try:
-                legacy_rider_delta_e, legacy_rider_z = compute_delta_energy_series(
-                    legacy_rider_states,
-                    initial_states.get("rider"),
-                    rest_energies.get("rider"),
-                )
-                legacy_rider_z_rel = (
-                    legacy_rider_z  # Use absolute z-positions for plotting
-                )
-            except Exception as exc:  # pragma: no cover - defensive guard
-                _log(f"Failed to compute legacy rider energy series: {exc}")
-                _log(
-                    f"Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
-                )
-                legacy_rider_delta_e = None
-                legacy_rider_z_rel = None
-
-            if driver_allowed and legacy_traj.get("driver") is not None:
-                try:
-                    legacy_driver_delta_e, legacy_driver_z = (
-                        compute_delta_energy_series(
-                            legacy_traj["driver"],
-                            initial_states.get("driver"),
-                            rest_energies.get("driver"),
-                        )
-                    )
-                    legacy_driver_z_rel = (
-                        legacy_driver_z  # Use absolute z-positions for plotting
-                    )
-                except Exception as exc:
-                    _log(f"Failed to compute legacy driver energy series: {exc}")  # type: ignore[assignment]
-                    _log(
-                        f"Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
-                    )
-                    legacy_driver_delta_e = None
-                    legacy_driver_z_rel = None
-            else:
-                legacy_driver_delta_e = None
-                legacy_driver_z_rel = None
-        else:
-            legacy_rider_delta_e = None
-            legacy_rider_z_rel = None
-            legacy_driver_delta_e = None
-            legacy_driver_z_rel = None
-
         if (
             (energy_save or energy_display)
             and rider_delta_e is not None
@@ -1836,30 +1682,14 @@ def run_testbed(
                 else:
                     axes = list(axes_energy)
 
-                show_legend = legacy_enabled
-
                 # Plot total ΔE
                 axes[0].scatter(
                     rider_z_rel[valid_mask],
                     rider_delta_e[valid_mask],
                     color=COLOR_RIDER,
-                    label="Core" if show_legend else None,
+                    label="Rider",
                     **SCATTER_STYLE,
                 )
-
-                # Note: ΔE_z plotting removed - use energy_yaxis dropdown instead
-                if legacy_rider_delta_e is not None and legacy_rider_z_rel is not None:
-                    legacy_valid = np.isfinite(legacy_rider_delta_e) & np.isfinite(
-                        legacy_rider_z_rel
-                    )
-                    if np.any(legacy_valid):
-                        axes[0].scatter(
-                            legacy_rider_z_rel[legacy_valid],
-                            legacy_rider_delta_e[legacy_valid],
-                            color=COLOR_LEGACY_RIDER,
-                            label="Legacy",
-                            **SCATTER_STYLE,
-                        )
                 axes[0].set_xlabel("z position (mm)")
                 axes[0].set_ylabel("ΔE (GeV)")
                 axes[0].set_title("Rider ΔE vs z", pad=10)
@@ -1872,9 +1702,9 @@ def run_testbed(
                 axes[0].yaxis.set_major_formatter(ScalarFormatter())
                 axes[0].yaxis.get_major_formatter().set_scientific(False)
                 axes[0].yaxis.get_major_formatter().set_useOffset(False)
-                if show_legend:
-                    axes[0].legend()
+                axes[0].legend()
 
+                driver_valid = np.array([], dtype=bool)
                 if (
                     driver_delta_e is not None
                     and driver_z_rel is not None
@@ -1888,28 +1718,11 @@ def run_testbed(
                             driver_z_rel[driver_valid],
                             driver_delta_e[driver_valid],
                             color=COLOR_DRIVER,
-                            label="Core" if legacy_enabled else None,
+                            label="Driver",
                             **SCATTER_STYLE,
                         )
-
-                        # Note: ΔE_z plotting removed - use energy_yaxis dropdown instead
                     else:
                         _log("Warning: All driver energy data points are invalid")
-                    if (
-                        legacy_driver_delta_e is not None
-                        and legacy_driver_z_rel is not None
-                    ):
-                        legacy_driver_valid = np.isfinite(
-                            legacy_driver_delta_e
-                        ) & np.isfinite(legacy_driver_z_rel)
-                        if np.any(legacy_driver_valid):
-                            axes[1].scatter(
-                                legacy_driver_z_rel[legacy_driver_valid],
-                                legacy_driver_delta_e[legacy_driver_valid],
-                                color=COLOR_LEGACY_DRIVER,
-                                label="Legacy",
-                                **SCATTER_STYLE,
-                            )
                     axes[1].set_xlabel("z position (mm)")
                     axes[1].set_ylabel("ΔE (GeV)")
                     axes[1].set_title("Driver ΔE vs z", pad=10)
@@ -1922,8 +1735,7 @@ def run_testbed(
                     axes[1].yaxis.set_major_formatter(ScalarFormatter())
                     axes[1].yaxis.get_major_formatter().set_scientific(False)
                     axes[1].yaxis.get_major_formatter().set_useOffset(False)
-                    if legacy_enabled:
-                        axes[1].legend()
+                    axes[1].legend()
 
                 # Attach metadata for interactive replotting
                 # Extract time data from rider states
@@ -1942,28 +1754,13 @@ def run_testbed(
                     "z_mm_driver": driver_z_rel[driver_valid]
                     if driver_delta_e is not None and np.any(driver_valid)
                     else None,
-                    "z_mm_legacy": legacy_rider_z_rel[legacy_valid]
-                    if legacy_rider_z_rel is not None and np.any(legacy_valid)
-                    else None,
-                    "z_mm_legacy_driver": legacy_driver_z_rel[legacy_driver_valid]
-                    if legacy_driver_z_rel is not None and np.any(legacy_driver_valid)
-                    else None,
                     "core_r_energy_changes": rider_delta_e[valid_mask]
                     if np.any(valid_mask)
                     else np.array([]),
                     "core_d_energy_changes": driver_delta_e[driver_valid]
                     if driver_delta_e is not None and np.any(driver_valid)
                     else None,
-                    "legacy_r_energy_changes": legacy_rider_delta_e[legacy_valid]
-                    if legacy_rider_delta_e is not None and np.any(legacy_valid)
-                    else None,
-                    "legacy_d_energy_changes": legacy_driver_delta_e[
-                        legacy_driver_valid
-                    ]
-                    if legacy_driver_delta_e is not None and np.any(legacy_driver_valid)
-                    else None,
                     "driver_allowed": driver_allowed,
-                    "legacy_enabled": legacy_enabled,
                     # Energy components for Y-axis switching
                     "energy_components": {
                         "delta_total_r": rider_delta_e_total[valid_mask]
@@ -2010,95 +1807,6 @@ def run_testbed(
                 else:
                     plt.close(fig_energy)
 
-        if (
-            legacy_enabled
-            and (overlay_display or overlay_save)
-            and rider_delta_e is not None
-            and rider_z_rel is not None
-            and legacy_rider_delta_e is not None
-            and legacy_rider_z_rel is not None
-        ):
-            fig_overlay, axes_overlay = plt.subplots(
-                1,
-                (
-                    2
-                    if driver_delta_e is not None and legacy_driver_delta_e is not None
-                    else 1
-                ),
-                figsize=(
-                    (
-                        16
-                        if driver_delta_e is not None
-                        and legacy_driver_delta_e is not None
-                        else 8
-                    ),
-                    6,
-                ),
-                dpi=options.plot_dpi,
-            )
-            if not isinstance(axes_overlay, np.ndarray):
-                axes = [axes_overlay]
-            else:
-                axes = list(axes_overlay)
-
-            axes[0].scatter(
-                rider_z_rel,
-                rider_delta_e,
-                color=COLOR_RIDER,
-                label="Core",
-                **SCATTER_STYLE,
-            )
-            axes[0].scatter(
-                legacy_rider_z_rel,
-                legacy_rider_delta_e,
-                color=COLOR_LEGACY_RIDER,
-                label="Legacy",
-                **SCATTER_STYLE,
-            )
-            axes[0].set_xlabel("Δz (mm)")
-            axes[0].set_ylabel("ΔE (GeV)")
-            axes[0].set_title("Rider ΔE Comparison")
-            axes[0].legend()
-            axes[0].grid(True, alpha=0.3)
-
-            if (
-                driver_delta_e is not None
-                and driver_z_rel is not None
-                and legacy_driver_delta_e is not None
-                and legacy_driver_z_rel is not None
-                and len(axes) > 1
-            ):
-                axes[1].scatter(
-                    driver_z_rel,
-                    driver_delta_e,
-                    color=COLOR_DRIVER,
-                    label="Core",
-                    **SCATTER_STYLE,
-                )
-                axes[1].scatter(
-                    legacy_driver_z_rel,
-                    legacy_driver_delta_e,
-                    color=COLOR_LEGACY_DRIVER,
-                    label="Legacy",
-                    **SCATTER_STYLE,
-                )
-                axes[1].set_xlabel("Δz (mm)")
-                axes[1].set_ylabel("ΔE (GeV)")
-                axes[1].set_title("Driver ΔE Comparison")
-                axes[1].legend()
-                axes[1].grid(True, alpha=0.3)
-
-            fig_overlay.tight_layout()
-            if overlay_save and should_save:
-                overlay_path = output_dir / f"{filename_base}_overlay.png"
-                fig_overlay.savefig(overlay_path)
-                saved_paths["overlay"] = overlay_path
-                _log(f"Saved overlay plot to: {overlay_path}")
-            if overlay_display:
-                figures["overlay"] = fig_overlay
-            else:
-                plt.close(fig_overlay)
-
         core_r_hist = np.array(
             [[s["t"][0], s["x"][0], s["y"][0], s["z"][0]] for s in rider_states]
         )
@@ -2130,173 +1838,6 @@ def run_testbed(
             core_d_pt = None
             core_d_beta = None
             core_d_betadot = None
-
-        if legacy_enabled and legacy_traj:
-            legacy_r_hist = np.array(
-                [
-                    [s["t"][0], s["x"][0], s["y"][0], s["z"][0]]
-                    for s in legacy_traj.get("rider", [])
-                ]
-            )
-            legacy_r_momentum = _extract_vector_series(
-                legacy_traj.get("rider", []), ("Px", "Py", "Pz")
-            )
-            legacy_r_beta = _extract_vector_series(
-                legacy_traj.get("rider", []), ("bx", "by", "bz")
-            )
-            legacy_r_betadot = _extract_vector_series(
-                legacy_traj.get("rider", []), ("bdotx", "bdoty", "bdotz")
-            )
-            legacy_r_pt = _extract_scalar_series(legacy_traj.get("rider", []), "Pt")
-            if driver_allowed and legacy_traj.get("driver") is not None:
-                legacy_d_hist = np.array(
-                    [
-                        [s["t"][0], s["x"][0], s["y"][0], s["z"][0]]
-                        for s in legacy_traj.get("driver", [])
-                    ]
-                )
-                legacy_d_momentum = _extract_vector_series(
-                    legacy_traj.get("driver", []), ("Px", "Py", "Pz")
-                )
-                legacy_d_beta = _extract_vector_series(
-                    legacy_traj.get("driver", []), ("bx", "by", "bz")
-                )
-                legacy_d_betadot = _extract_vector_series(
-                    legacy_traj.get("driver", []), ("bdotx", "bdoty", "bdotz")
-                )
-                legacy_d_pt = _extract_scalar_series(
-                    legacy_traj.get("driver", []), "Pt"
-                )
-            else:
-                legacy_d_hist = None
-                legacy_d_momentum = None
-                legacy_d_beta = None
-                legacy_d_betadot = None
-                legacy_d_pt = None
-        else:
-            legacy_r_hist = None
-            legacy_r_momentum = None
-            legacy_r_beta = None
-            legacy_r_betadot = None
-            legacy_r_pt = None
-            legacy_d_hist = None
-            legacy_d_momentum = None
-            legacy_d_beta = None
-            legacy_d_betadot = None
-            legacy_d_pt = None
-
-        if (
-            legacy_enabled
-            and (difference_save or difference_display)
-            and legacy_r_hist is not None
-        ):
-            fig_diff, axes_diff = plt.subplots(
-                1,
-                (
-                    2
-                    if driver_allowed
-                    and core_d_hist is not None
-                    and legacy_d_hist is not None
-                    else 1
-                ),
-                figsize=(
-                    (
-                        16
-                        if driver_allowed
-                        and core_d_hist is not None
-                        and legacy_d_hist is not None
-                        else 8
-                    ),
-                    6,
-                ),
-                dpi=options.plot_dpi,
-            )
-            if not isinstance(axes_diff, np.ndarray):
-                axes = [axes_diff]
-            else:
-                axes = list(axes_diff)
-
-            r_delta_x = (core_r_hist[:, 1] - legacy_r_hist[:, 1]) * 1e3
-            r_delta_y = (core_r_hist[:, 2] - legacy_r_hist[:, 2]) * 1e3
-            r_delta_z = (core_r_hist[:, 3] - legacy_r_hist[:, 3]) * 1e3
-            axes[0].scatter(
-                plot_times_ns,
-                r_delta_x,
-                label="Delta x (mm)",
-                color=COLOR_DIFF_RIDER,
-                **SCATTER_STYLE,
-            )
-            axes[0].scatter(
-                plot_times_ns,
-                r_delta_y,
-                label="Delta y (mm)",
-                color=COLOR_DIFF_RIDER,
-                marker="^",
-                **SCATTER_STYLE,
-            )
-            axes[0].scatter(
-                plot_times_ns,
-                r_delta_z,
-                label="Delta z (mm)",
-                color=COLOR_DIFF_RIDER,
-                marker="s",
-                **SCATTER_STYLE,
-            )
-            axes[0].set_xlabel("Time (ns)")
-            axes[0].set_ylabel("Δ position (mm)")
-            axes[0].set_title("Rider Δ (core - legacy)")
-            axes[0].legend()
-            axes[0].grid(True, alpha=0.3)
-
-            if (
-                driver_allowed
-                and core_d_hist is not None
-                and legacy_d_hist is not None
-                and len(axes) > 1
-            ):
-                d_delta_x = (core_d_hist[:, 1] - legacy_d_hist[:, 1]) * 1e3
-                d_delta_y = (core_d_hist[:, 2] - legacy_d_hist[:, 2]) * 1e3
-                d_delta_z = (core_d_hist[:, 3] - legacy_d_hist[:, 3]) * 1e3
-                axes[1].scatter(
-                    plot_times_ns,
-                    d_delta_x,
-                    label="Delta x (mm)",
-                    color=COLOR_DIFF_DRIVER,
-                    **SCATTER_STYLE,
-                )
-                axes[1].scatter(
-                    plot_times_ns,
-                    d_delta_y,
-                    label="Delta y (mm)",
-                    color=COLOR_DIFF_DRIVER,
-                    marker="^",
-                    **SCATTER_STYLE,
-                )
-                axes[1].scatter(
-                    plot_times_ns,
-                    d_delta_z,
-                    label="Delta z (mm)",
-                    color=COLOR_DIFF_DRIVER,
-                    marker="s",
-                    **SCATTER_STYLE,
-                )
-                axes[1].set_xlabel("Time (ns)")
-                axes[1].set_ylabel("Δ position (mm)")
-                axes[1].set_title("Driver Δ (core - legacy)")
-                axes[1].legend()
-                axes[1].grid(True, alpha=0.3)
-
-            fig_diff.tight_layout()
-            if difference_save and should_save:
-                diff_path = output_dir / f"{filename_base}_difference.png"
-                fig_diff.savefig(diff_path)
-                saved_paths["difference"] = diff_path
-                _log(f"Saved difference plot to: {diff_path}")
-            if difference_display:
-                figures["difference"] = fig_diff
-            else:
-                plt.close(fig_diff)
-
         transverse_xaxis = getattr(options, "transverse_xaxis", "t")
         if transverse_display or transverse_save:
             fig_transverse, (ax_x, ax_y) = plt.subplots(
@@ -2311,20 +1852,9 @@ def run_testbed(
                 "z_mm_driver": core_d_hist[:, 3]
                 if driver_allowed and core_d_hist is not None
                 else None,
-                "z_mm_legacy": legacy_r_hist[:, 3]
-                if legacy_enabled and legacy_r_hist is not None
-                else None,
-                "z_mm_legacy_driver": legacy_d_hist[:, 3]
-                if legacy_enabled and driver_allowed and legacy_d_hist is not None
-                else None,
                 "core_r_hist": core_r_hist,
                 "core_d_hist": core_d_hist if driver_allowed else None,
-                "legacy_r_hist": legacy_r_hist if legacy_enabled else None,
-                "legacy_d_hist": legacy_d_hist
-                if legacy_enabled and driver_allowed
-                else None,
                 "driver_allowed": driver_allowed,
-                "legacy_enabled": legacy_enabled,
             }
 
             # Determine x-axis data
@@ -2368,44 +1898,6 @@ def run_testbed(
                     label="Driver (Core)",
                     **SCATTER_STYLE,
                 )
-            if legacy_enabled and legacy_r_hist is not None:
-                if transverse_xaxis == "z":
-                    xdata_leg = legacy_r_hist[:, 3]
-                else:
-                    xdata_leg = plot_times_ns
-                ax_x.scatter(
-                    xdata_leg,
-                    legacy_r_hist[:, 1] * 1e3,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
-                ax_y.scatter(
-                    xdata_leg,
-                    legacy_r_hist[:, 2] * 1e3,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
-                if driver_allowed and legacy_d_hist is not None:
-                    if transverse_xaxis == "z":
-                        xdata_leg_d = legacy_d_hist[:, 3]
-                    else:
-                        xdata_leg_d = plot_times_ns
-                    ax_x.scatter(
-                        xdata_leg_d,
-                        legacy_d_hist[:, 1] * 1e3,
-                        color=COLOR_LEGACY_DRIVER,
-                        label="Driver (Legacy)",
-                        **SCATTER_STYLE,
-                    )
-                    ax_y.scatter(
-                        xdata_leg_d,
-                        legacy_d_hist[:, 2] * 1e3,
-                        color=COLOR_LEGACY_DRIVER,
-                        label="Driver (Legacy)",
-                        **SCATTER_STYLE,
-                    )
             ax_x.set_xlabel(xlabel)
             ax_x.set_ylabel("Average x (mm)")
             ax_x.set_title("Average X Position", pad=12)
@@ -2447,17 +1939,9 @@ def run_testbed(
                 "z_mm_driver": core_d_hist[:, 3]
                 if driver_allowed and core_d_hist is not None
                 else None,
-                "z_mm_legacy": legacy_r_hist[:, 3]
-                if legacy_enabled and legacy_r_hist is not None
-                else None,
                 "core_r_beta": core_r_beta,
                 "core_d_beta": core_d_beta if driver_allowed else None,
-                "legacy_r_beta": legacy_r_beta if legacy_enabled else None,
-                "legacy_d_beta": legacy_d_beta
-                if legacy_enabled and driver_allowed
-                else None,
                 "driver_allowed": driver_allowed,
-                "legacy_enabled": legacy_enabled,
             }
 
             # Determine x-axis data for beta plots
@@ -2490,20 +1974,6 @@ def run_testbed(
                     label="Driver (Core)",
                     **SCATTER_STYLE,
                 )
-            if legacy_enabled and legacy_r_beta is not None:
-                if beta_xaxis == "z":
-                    xdata_beta_leg = (
-                        legacy_r_hist[:, 3] if legacy_r_hist is not None else plot_z_mm
-                    )
-                else:
-                    xdata_beta_leg = plot_times_ns
-                axes_beta[0].scatter(
-                    xdata_beta_leg,
-                    legacy_r_beta[:, 0],
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
             axes_beta[0].set_xlabel(xlabel_beta)
             axes_beta[0].set_ylabel("β⟨x⟩")
             axes_beta[0].set_title("Beta X Component", pad=10)
@@ -2524,14 +1994,6 @@ def run_testbed(
                     core_d_beta[:, 1],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
-                    **SCATTER_STYLE,
-                )
-            if legacy_enabled and legacy_r_beta is not None:
-                axes_beta[1].scatter(
-                    xdata_beta_leg,
-                    legacy_r_beta[:, 1],
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
                     **SCATTER_STYLE,
                 )
             axes_beta[1].set_xlabel(xlabel_beta)
@@ -2556,14 +2018,6 @@ def run_testbed(
                     label="Driver (Core)",
                     **SCATTER_STYLE,
                 )
-            if legacy_enabled and legacy_r_beta is not None:
-                axes_beta[2].scatter(
-                    xdata_beta_leg,
-                    legacy_r_beta[:, 2],
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
             axes_beta[2].set_xlabel(xlabel_beta)
             axes_beta[2].set_ylabel("β⟨z⟩")
             axes_beta[2].set_title("Beta Z Component", pad=10)
@@ -2586,15 +2040,6 @@ def run_testbed(
                     driver_beta_mag,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
-                    **SCATTER_STYLE,
-                )
-            if legacy_enabled and legacy_r_beta is not None:
-                legacy_beta_mag = np.sqrt(np.sum(legacy_r_beta**2, axis=1))
-                axes_beta[3].scatter(
-                    xdata_beta_leg,
-                    legacy_beta_mag,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
                     **SCATTER_STYLE,
                 )
             axes_beta[3].set_xlabel(xlabel_beta)
@@ -2631,23 +2076,11 @@ def run_testbed(
                 "z_mm_driver": core_d_hist[:, 3]
                 if driver_allowed and core_d_hist is not None
                 else None,
-                "z_mm_legacy": legacy_r_hist[:, 3]
-                if legacy_enabled and legacy_r_hist is not None
-                else None,
                 "core_r_momentum": core_r_momentum,
                 "core_r_pt": core_r_pt,
                 "core_d_momentum": core_d_momentum if driver_allowed else None,
                 "core_d_pt": core_d_pt if driver_allowed else None,
-                "legacy_r_momentum": legacy_r_momentum if legacy_enabled else None,
-                "legacy_r_pt": legacy_r_pt if legacy_enabled else None,
-                "legacy_d_momentum": legacy_d_momentum
-                if legacy_enabled and driver_allowed
-                else None,
-                "legacy_d_pt": legacy_d_pt
-                if legacy_enabled and driver_allowed
-                else None,
                 "driver_allowed": driver_allowed,
-                "legacy_enabled": legacy_enabled,
             }
 
             # Determine x-axis data for momentum plots
@@ -2680,20 +2113,6 @@ def run_testbed(
                     label="Driver (Core)",
                     **SCATTER_STYLE,
                 )
-            if legacy_enabled and legacy_r_momentum is not None:
-                if momentum_xaxis == "z":
-                    xdata_mom_leg = (
-                        legacy_r_hist[:, 3] if legacy_r_hist is not None else plot_z_mm
-                    )
-                else:
-                    xdata_mom_leg = plot_times_ns
-                axes_mom[0].scatter(
-                    xdata_mom_leg,
-                    legacy_r_momentum[:, 0],
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
             axes_mom[0].set_xlabel(xlabel_mom)
             axes_mom[0].set_ylabel("Pˣ (amu·mm/ns)")
             axes_mom[0].set_title("Conjugate Momentum Pˣ", pad=10)
@@ -2716,14 +2135,6 @@ def run_testbed(
                     label="Driver (Core)",
                     **SCATTER_STYLE,
                 )
-            if legacy_enabled and legacy_r_momentum is not None:
-                axes_mom[1].scatter(
-                    xdata_mom_leg,
-                    legacy_r_momentum[:, 1],
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
             axes_mom[1].set_xlabel(xlabel_mom)
             axes_mom[1].set_ylabel("Pʸ (amu·mm/ns)")
             axes_mom[1].set_title("Conjugate Momentum Pʸ", pad=10)
@@ -2744,14 +2155,6 @@ def run_testbed(
                     core_d_momentum[:, 2],
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
-                    **SCATTER_STYLE,
-                )
-            if legacy_enabled and legacy_r_momentum is not None:
-                axes_mom[2].scatter(
-                    xdata_mom_leg,
-                    legacy_r_momentum[:, 2],
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
                     **SCATTER_STYLE,
                 )
             axes_mom[2].set_xlabel(xlabel_mom)
@@ -2782,17 +2185,6 @@ def run_testbed(
                     label="Driver (Core)",
                     **SCATTER_STYLE,
                 )
-            if legacy_enabled and legacy_r_momentum is not None:
-                legacy_pt_mag = np.sqrt(
-                    legacy_r_momentum[:, 0] ** 2 + legacy_r_momentum[:, 1] ** 2
-                )
-                axes_mom[3].scatter(
-                    xdata_mom_leg,
-                    legacy_pt_mag,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
             axes_mom[3].set_xlabel(xlabel_mom)
             axes_mom[3].set_ylabel("|P⊥| (amu·mm/ns)")
             axes_mom[3].set_title("Transverse Momentum |P⊥|", pad=10)
@@ -2813,14 +2205,6 @@ def run_testbed(
                     core_d_pt,
                     color=COLOR_DRIVER,
                     label="Driver (Core)",
-                    **SCATTER_STYLE,
-                )
-            if legacy_enabled and legacy_r_pt is not None:
-                axes_mom[4].scatter(
-                    xdata_mom_leg,
-                    legacy_r_pt,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
                     **SCATTER_STYLE,
                 )
             axes_mom[4].set_xlabel(xlabel_mom)
@@ -2855,19 +2239,6 @@ def run_testbed(
                     label="Driver (Core)",
                     **SCATTER_STYLE,
                 )
-            if legacy_enabled and legacy_r_momentum is not None:
-                legacy_p_mag = np.sqrt(
-                    legacy_r_momentum[:, 0] ** 2
-                    + legacy_r_momentum[:, 1] ** 2
-                    + legacy_r_momentum[:, 2] ** 2
-                )
-                axes_mom[5].scatter(
-                    xdata_mom_leg,
-                    legacy_p_mag,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
             axes_mom[5].set_xlabel(xlabel_mom)
             axes_mom[5].set_ylabel("|P| (amu·mm/ns)")
             axes_mom[5].set_title("Total Spatial Momentum |P|", pad=10)
@@ -2885,8 +2256,6 @@ def run_testbed(
                 plt.close(fig_momentum)
 
         # Gamma (Lorentz factor) plot
-        gamma_display = getattr(options, "gamma_display", False)
-        gamma_save = getattr(options, "gamma_save", False)
         gamma_xaxis = getattr(options, "gamma_xaxis", "t")
         if (gamma_display or gamma_save) and core_r_hist is not None:
             _log(f"Generating gamma plot (display={gamma_display}, save={gamma_save})")
@@ -2897,23 +2266,6 @@ def run_testbed(
             core_d_gamma = None
             if driver_allowed and driver_states is not None:
                 core_d_gamma = np.array([float(s["gamma"][0]) for s in driver_states])
-
-            legacy_r_gamma = None
-            if legacy_enabled and legacy_rider_states is not None:
-                legacy_r_gamma = np.array(
-                    [float(s["gamma"][0]) for s in legacy_rider_states]
-                )
-
-            legacy_d_gamma = None
-            if (
-                legacy_enabled
-                and driver_allowed
-                and legacy_traj
-                and "driver" in legacy_traj
-            ):
-                legacy_d_gamma = np.array(
-                    [float(s["gamma"][0]) for s in legacy_traj["driver"]]
-                )
 
             fig_gamma, axes_gamma = plt.subplots(
                 1,
@@ -2958,21 +2310,6 @@ def run_testbed(
                     **SCATTER_STYLE,
                 )
 
-            if legacy_enabled and legacy_r_gamma is not None:
-                if gamma_xaxis == "z":
-                    xdata_gamma_leg = (
-                        legacy_r_hist[:, 3] if legacy_r_hist is not None else plot_z_mm
-                    )
-                else:
-                    xdata_gamma_leg = plot_times_ns
-                axes_gamma[0].scatter(
-                    xdata_gamma_leg,
-                    legacy_r_gamma,
-                    color=COLOR_LEGACY_RIDER,
-                    label="Rider (Legacy)",
-                    **SCATTER_STYLE,
-                )
-
             axes_gamma[0].set_xlabel(xlabel_gamma)
             axes_gamma[0].set_ylabel("γ (Lorentz factor)")
             axes_gamma[0].set_title("Rider Lorentz Factor γ", pad=10)
@@ -2987,23 +2324,6 @@ def run_testbed(
                         core_d_gamma,
                         color=COLOR_DRIVER,
                         label="Core",
-                        **SCATTER_STYLE,
-                    )
-
-                if legacy_enabled and legacy_d_gamma is not None:
-                    if gamma_xaxis == "z":
-                        xdata_gamma_leg_d = (
-                            legacy_d_hist[:, 3]
-                            if legacy_d_hist is not None
-                            else plot_z_mm
-                        )
-                    else:
-                        xdata_gamma_leg_d = plot_times_ns
-                    axes_gamma[1].scatter(
-                        xdata_gamma_leg_d,
-                        legacy_d_gamma,
-                        color=COLOR_LEGACY_DRIVER,
-                        label="Legacy",
                         **SCATTER_STYLE,
                     )
 
@@ -3027,21 +2347,9 @@ def run_testbed(
                             and len(core_d_gamma) > 0
                         ):
                             all_gamma.extend(core_d_gamma)
-                        if (
-                            legacy_enabled
-                            and legacy_r_gamma is not None
-                            and len(legacy_r_gamma) > 0
-                        ):
-                            all_gamma.extend(legacy_r_gamma)
                     elif i == 1 and driver_allowed:  # Driver axis
                         if core_d_gamma is not None and len(core_d_gamma) > 0:
                             all_gamma.extend(core_d_gamma)
-                        if (
-                            legacy_enabled
-                            and legacy_d_gamma is not None
-                            and len(legacy_d_gamma) > 0
-                        ):
-                            all_gamma.extend(legacy_d_gamma)
 
                     if len(all_gamma) > 0:
                         gamma_array = np.array(all_gamma)
@@ -3066,7 +2374,7 @@ def run_testbed(
                             _log(
                                 f"Applied y-axis scaling for gamma subplot {i + 1} (Δγ/γ = {relative_variation * 100:.3f}%)"
                             )
-                except Exception as e:
+                except Exception:
                     # Silently ignore errors in y-axis scaling
                     pass
 
@@ -3078,18 +2386,9 @@ def run_testbed(
                 "z_mm_driver": core_d_hist[:, 3]
                 if driver_allowed and core_d_hist is not None
                 else None,
-                "z_mm_legacy": legacy_r_hist[:, 3]
-                if legacy_enabled and legacy_r_hist is not None
-                else None,
-                "z_mm_legacy_driver": legacy_d_hist[:, 3]
-                if legacy_enabled and driver_allowed and legacy_d_hist is not None
-                else None,
                 "core_r_gamma": core_r_gamma,
                 "core_d_gamma": core_d_gamma,
-                "legacy_r_gamma": legacy_r_gamma,
-                "legacy_d_gamma": legacy_d_gamma,
                 "driver_allowed": driver_allowed,
-                "legacy_enabled": legacy_enabled,
             }
 
             fig_gamma.tight_layout(pad=2.5, w_pad=3.0, h_pad=2.5)
@@ -3104,8 +2403,6 @@ def run_testbed(
                 plt.close(fig_gamma)
 
         # Z-position vs time plot
-        zposition_display = getattr(options, "zposition_display", False)
-        zposition_save = getattr(options, "zposition_save", False)
         if zposition_display or zposition_save:
             _log(
                 f"Generating z-position vs time plot (display={zposition_display}, save={zposition_save})"
@@ -3129,25 +2426,6 @@ def run_testbed(
                     label="Driver (Core)",
                     linewidth=2.0,
                 )
-
-            if legacy_enabled and legacy_r_hist is not None:
-                ax_zpos.plot(
-                    plot_times_ns,
-                    legacy_r_hist[:, 3],
-                    color=COLOR_LEGACY_RIDER,
-                    linestyle="--",
-                    label="Rider (Legacy)",
-                    linewidth=2.0,
-                )
-                if driver_allowed and legacy_d_hist is not None:
-                    ax_zpos.plot(
-                        plot_times_ns,
-                        legacy_d_hist[:, 3],
-                        color=COLOR_LEGACY_DRIVER,
-                        linestyle="--",
-                        label="Driver (Legacy)",
-                        linewidth=2.0,
-                    )
 
             ax_zpos.set_xlabel("Time (ns)")
             ax_zpos.set_ylabel("z position (mm)")
@@ -3242,39 +2520,9 @@ def run_testbed(
                 "image_subcharge_count": options.image_subcharge_count,
             }
 
-            if (
-                legacy_enabled
-                and legacy_r_hist is not None
-                and legacy_r_momentum is not None
-            ):
-                legacy_payload: Dict[str, object] = {
-                    "rider": _build_particle_payload(
-                        legacy_r_hist,
-                        _extract_scalar_series(legacy_traj.get("rider", []), "gamma"),
-                        legacy_r_momentum,
-                        legacy_r_beta,
-                        legacy_r_betadot,
-                        legacy_r_pt,
-                    )
-                }
-                if (
-                    driver_allowed
-                    and legacy_d_hist is not None
-                    and legacy_d_momentum is not None
-                ):
-                    legacy_payload["driver"] = _build_particle_payload(
-                        legacy_d_hist,
-                        _extract_scalar_series(legacy_traj.get("driver", []), "gamma"),
-                        legacy_d_momentum,
-                        legacy_d_beta,
-                        legacy_d_betadot,
-                        legacy_d_pt,
-                    )
-                traj_data["legacy"] = legacy_payload
-
             label_prefix = config_label if config_label else "trajectory"
 
-            # Save as JSON (legacy format for backwards compatibility)
+            # Save as JSON for the maintained single-run plotting toolchain.
             traj_path_json = (
                 output_dir / f"{label_prefix}_trajectory_data_{timestamp_token}.json"
             )
@@ -3353,8 +2601,6 @@ def run_testbed(
                 _log(f"Failed to save verbose log: {exc}")
 
         # Copy debug log from logcache to output directory
-        import glob
-
         logcache_dir = Path("logcache")
         if logcache_dir.exists():
             # Find most recent testbed log

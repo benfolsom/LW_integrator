@@ -100,27 +100,26 @@ def plot_saved_json_trajectory(
     if axes.shape[0] == 1:
         axes = axes.reshape(3, len(particles))
 
+    core_source = data.get("core", {})
+
     for column, particle_name in enumerate(particles):
         energy_ax = axes[0, column]
         radial_ax = axes[1, column]
         gamma_ax = axes[2, column]
+        particle_payload = core_source.get(particle_name)
+        if not particle_payload:
+            continue
 
-        for source_name, source_label in (("core", "Core"), ("legacy", "Legacy")):
-            source = data.get(source_name, {})
-            particle_payload = source.get(particle_name)
-            if not particle_payload:
-                continue
+        series = extract_particle_series(
+            particle_payload, default_mass_amu=default_mass_amu
+        )
+        z = series["z"]
+        if z.size == 0:
+            continue
 
-            series = extract_particle_series(
-                particle_payload, default_mass_amu=default_mass_amu
-            )
-            z = series["z"]
-            if z.size == 0:
-                continue
-
-            energy_ax.plot(z, series["delta_e_mev"], label=source_label, linewidth=1.8)
-            radial_ax.plot(z, series["r"], label=source_label, linewidth=1.8)
-            gamma_ax.plot(z, series["gamma"], label=source_label, linewidth=1.8)
+        energy_ax.plot(z, series["delta_e_mev"], label=particle_name.title(), linewidth=1.8)
+        radial_ax.plot(z, series["r"], label=particle_name.title(), linewidth=1.8)
+        gamma_ax.plot(z, series["gamma"], label=particle_name.title(), linewidth=1.8)
 
         title = particle_name.capitalize()
         energy_ax.set_title(f"{title} ΔE vs z", fontsize=11, fontweight="bold")
@@ -136,8 +135,7 @@ def plot_saved_json_trajectory(
 
         for axis in (energy_ax, radial_ax, gamma_ax):
             axis.grid(True, alpha=0.3)
-            if len(axis.lines) > 1:
-                axis.legend()
+            axis.legend()
 
     title_parts = []
     if data.get("config_label"):

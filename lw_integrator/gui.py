@@ -32,8 +32,6 @@ from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
 from lw_integrator.testbed_runner import (
     COLOR_DRIVER,
-    COLOR_LEGACY_DRIVER,
-    COLOR_LEGACY_RIDER,
     COLOR_RIDER,
 )
 
@@ -364,7 +362,6 @@ class IntegratorGUI:
         self._apply_options_to_ui(self.options, preserve_directories=True)
         self._refresh_config_list()
         self._refresh_initial_summary()
-        self._update_legacy_state()
         self._update_driver_visibility()
         self._update_image_subcharge_state()
 
@@ -398,7 +395,6 @@ class IntegratorGUI:
         self.steps_var = tk.IntVar(value=self.options.steps)
         self.seed_var = tk.IntVar(value=self.options.seed)
         self.random_seed_var = tk.BooleanVar(value=False)
-        self.legacy_var = tk.BooleanVar(value=self.options.legacy_enabled)
 
         self._species_by_label = {label: key for label, key in SPECIES_OPTIONS}
         self._species_label_by_key = {key: label for label, key in SPECIES_OPTIONS}
@@ -442,13 +438,6 @@ class IntegratorGUI:
             "write", lambda *_: self._toggle_z_cutoff_controls()
         )
 
-        self.overlay_display_var = tk.BooleanVar(value=self.options.overlay_display)
-        self.overlay_save_var = tk.BooleanVar(value=self.options.overlay_save)
-        self.difference_display_var = tk.BooleanVar(
-            value=self.options.difference_display
-        )
-        self.difference_save_var = tk.BooleanVar(value=self.options.difference_save)
-        self.metrics_save_var = tk.BooleanVar(value=self.options.metrics_save)
         self.energy_display_var = tk.BooleanVar(value=self.options.energy_display)
         self.energy_save_var = tk.BooleanVar(value=self.options.energy_save)
         self.energy_xaxis_var = tk.StringVar(
@@ -660,7 +649,6 @@ class IntegratorGUI:
         self.progress_var = tk.DoubleVar(value=0.0)
 
         self.sim_type_var.trace_add("write", lambda *_: self._on_sim_type_change())
-        self.legacy_var.trace_add("write", lambda *_: self._update_legacy_state())
 
         for var in [self.seed_var, self.rider_species_var, self.driver_species_var]:
             var.trace_add("write", lambda *_: self._refresh_initial_summary())
@@ -1460,45 +1448,13 @@ class IntegratorGUI:
         )
         notice_label.pack(anchor="w")
 
-        # Legacy comparison toggle (moved from header)
-        ttk.Checkbutton(
-            output_frame, text="Enable legacy comparison", variable=self.legacy_var
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
-
-        # Trajectory comparison outputs (grouped and dependent on legacy)
-        comparison_frame = ttk.LabelFrame(
-            output_frame, text="Trajectory Comparison (requires legacy)", padding=8
-        )
-        comparison_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        comparison_frame.columnconfigure(1, weight=1)
-
-        self._add_output_toggle(
-            comparison_frame,
-            "Overlay plot",
-            self.overlay_display_var,
-            self.overlay_save_var,
-            row=0,
-        )
-        self._add_output_toggle(
-            comparison_frame,
-            "Difference plot",
-            self.difference_display_var,
-            self.difference_save_var,
-            row=1,
-        )
-        ttk.Checkbutton(
-            comparison_frame, text="Save metrics JSON", variable=self.metrics_save_var
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-
-        self._comparison_frame = comparison_frame
-
         # Other outputs
         self._add_output_toggle(
             output_frame,
             "Energy plot",
             self.energy_display_var,
             self.energy_save_var,
-            row=2,
+            row=1,
         )
         # Energy plot x-axis configuration
         ttk.Label(output_frame, text="  ↳ X-axis:").grid(
@@ -3251,12 +3207,6 @@ class IntegratorGUI:
         self.sim_type_var.set(options.simulation_type.name)
         self.steps_var.set(options.steps)
         self.seed_var.set(options.seed)
-        self.legacy_var.set(options.legacy_enabled)
-        self.overlay_display_var.set(options.overlay_display)
-        self.overlay_save_var.set(options.overlay_save)
-        self.difference_display_var.set(options.difference_display)
-        self.difference_save_var.set(options.difference_save)
-        self.metrics_save_var.set(options.metrics_save)
         self.energy_display_var.set(options.energy_display)
         self.energy_save_var.set(options.energy_save)
         self.energy_xaxis_var.set(getattr(options, "energy_xaxis", "z"))
@@ -3493,12 +3443,6 @@ class IntegratorGUI:
             rider_params=rider_params,
             driver_params=driver_params,
             core_params=core_params,
-            legacy_enabled=bool(self.legacy_var.get()),
-            overlay_display=bool(self.overlay_display_var.get()),
-            overlay_save=bool(self.overlay_save_var.get()),
-            difference_display=bool(self.difference_display_var.get()),
-            difference_save=bool(self.difference_save_var.get()),
-            metrics_save=bool(self.metrics_save_var.get()),
             energy_display=bool(self.energy_display_var.get()),
             energy_save=bool(self.energy_save_var.get()),
             energy_xaxis=str(self.energy_xaxis_var.get()),
@@ -4070,23 +4014,6 @@ class IntegratorGUI:
             if "wall_z" in self.core_param_widgets:
                 self.core_param_widgets["wall_z"].configure(state=entry_state)
 
-    def _update_legacy_state(self) -> None:
-        enabled = self.legacy_var.get()
-        state = "normal" if enabled else "disabled"
-
-        # Update the comparison frame state
-        if hasattr(self, "_comparison_frame"):
-            for child in self._comparison_frame.winfo_children():
-                if isinstance(child, (ttk.Checkbutton, ttk.Button)):
-                    child.configure(state=state)
-
-        if not enabled:
-            self.overlay_display_var.set(False)
-            self.overlay_save_var.set(False)
-            self.difference_display_var.set(False)
-            self.difference_save_var.set(False)
-            self.metrics_save_var.set(False)
-
     def _update_cavity_spacing_state(self) -> None:
         """Grey out cavity_spacing unless simulation type is SWITCHING_WALL."""
         is_switching = self.sim_type_var.get() == "SWITCHING_WALL"
@@ -4588,18 +4515,6 @@ class IntegratorGUI:
             if len(collections) > 0:
                 # Update core rider scatter
                 collections[0].set_offsets(np.c_[xdata, ydata_r])
-                if (
-                    len(collections) > 1
-                    and data["legacy_enabled"]
-                    and data.get("legacy_r_energy_changes") is not None
-                ):
-                    # Update legacy rider scatter (use same y-data for now)
-                    xdata_leg = (
-                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                    )
-                    collections[1].set_offsets(
-                        np.c_[xdata_leg, data["legacy_r_energy_changes"]]
-                    )
 
             axes[0].set_xlabel(xlabel, fontsize=10)
             axes[0].set_ylabel(ylabel, fontsize=10)
@@ -4627,20 +4542,6 @@ class IntegratorGUI:
                 if len(collections_d) > 0:
                     # Update core driver scatter
                     collections_d[0].set_offsets(np.c_[xdata_d, ydata_d])
-                    if (
-                        len(collections_d) > 1
-                        and data["legacy_enabled"]
-                        and data.get("legacy_d_energy_changes") is not None
-                    ):
-                        # Update legacy driver scatter
-                        xdata_leg_d = (
-                            data["z_mm_legacy_driver"]
-                            if new_xaxis == "z"
-                            else data["times_ns"]
-                        )
-                        collections_d[1].set_offsets(
-                            np.c_[xdata_leg_d, data["legacy_d_energy_changes"]]
-                        )
 
                 axes[1].set_xlabel(xlabel, fontsize=10)
                 axes[1].set_ylabel(ylabel, fontsize=10)
@@ -4679,22 +4580,6 @@ class IntegratorGUI:
                     )
                     if len(lines_x) > idx:
                         lines_x[idx].set_xdata(xdata_d)
-                        idx += 1
-                if data["legacy_enabled"] and data["legacy_r_hist"] is not None:
-                    xdata_leg = (
-                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                    )
-                    if len(lines_x) > idx:
-                        lines_x[idx].set_xdata(xdata_leg)
-                        idx += 1
-                    if data["driver_allowed"] and data["legacy_d_hist"] is not None:
-                        xdata_leg_d = (
-                            data["z_mm_legacy_driver"]
-                            if new_xaxis == "z"
-                            else data["times_ns"]
-                        )
-                        if len(lines_x) > idx:
-                            lines_x[idx].set_xdata(xdata_leg_d)
 
             ax_x.set_xlabel(xlabel, fontsize=10)
             ax_x.relim()
@@ -4711,22 +4596,6 @@ class IntegratorGUI:
                     )
                     if len(lines_y) > idx:
                         lines_y[idx].set_xdata(xdata_d)
-                        idx += 1
-                if data["legacy_enabled"] and data["legacy_r_hist"] is not None:
-                    xdata_leg = (
-                        data["z_mm_legacy"] if new_xaxis == "z" else data["times_ns"]
-                    )
-                    if len(lines_y) > idx:
-                        lines_y[idx].set_xdata(xdata_leg)
-                        idx += 1
-                    if data["driver_allowed"] and data["legacy_d_hist"] is not None:
-                        xdata_leg_d = (
-                            data["z_mm_legacy_driver"]
-                            if new_xaxis == "z"
-                            else data["times_ns"]
-                        )
-                        if len(lines_y) > idx:
-                            lines_y[idx].set_xdata(xdata_leg_d)
 
             ax_y.set_xlabel(xlabel, fontsize=10)
             ax_y.relim()
@@ -4747,15 +4616,6 @@ class IntegratorGUI:
                         )
                         if len(lines) > idx:
                             lines[idx].set_xdata(xdata_d)
-                            idx += 1
-                    if data["legacy_enabled"] and data["legacy_r_beta"] is not None:
-                        xdata_leg = (
-                            data["z_mm_legacy"]
-                            if new_xaxis == "z"
-                            else data["times_ns"]
-                        )
-                        if len(lines) > idx:
-                            lines[idx].set_xdata(xdata_leg)
 
                 ax.set_xlabel(xlabel, fontsize=10)
                 ax.relim()
@@ -4776,15 +4636,6 @@ class IntegratorGUI:
                         )
                         if len(lines) > idx:
                             lines[idx].set_xdata(xdata_d)
-                            idx += 1
-                    if data["legacy_enabled"] and data["legacy_r_momentum"] is not None:
-                        xdata_leg = (
-                            data["z_mm_legacy"]
-                            if new_xaxis == "z"
-                            else data["times_ns"]
-                        )
-                        if len(lines) > idx:
-                            lines[idx].set_xdata(xdata_leg)
 
                 ax.set_xlabel(xlabel, fontsize=10)
                 ax.relim()
@@ -4808,35 +4659,6 @@ class IntegratorGUI:
                             collections[idx].set_offsets(
                                 np.c_[xdata_d, data["core_d_gamma"]]
                             )
-                            idx += 1
-                    if (
-                        data["legacy_enabled"]
-                        and data.get("legacy_r_gamma") is not None
-                    ):
-                        xdata_leg = (
-                            data["z_mm_legacy"]
-                            if new_xaxis == "z"
-                            else data["times_ns"]
-                        )
-                        if len(collections) > idx:
-                            collections[idx].set_offsets(
-                                np.c_[xdata_leg, data["legacy_r_gamma"]]
-                            )
-                            idx += 1
-                        if (
-                            data["driver_allowed"]
-                            and data.get("legacy_d_gamma") is not None
-                            and i == 1
-                        ):
-                            xdata_leg_d = (
-                                data["z_mm_legacy_driver"]
-                                if new_xaxis == "z"
-                                else data["times_ns"]
-                            )
-                            if len(collections) > idx:
-                                collections[idx].set_offsets(
-                                    np.c_[xdata_leg_d, data["legacy_d_gamma"]]
-                                )
 
                 ax.set_xlabel(xlabel, fontsize=10)
                 ax.relim()
@@ -4855,19 +4677,6 @@ class IntegratorGUI:
                     ):
                         if len(data["core_d_gamma"]) > 0:
                             all_gamma.extend(data["core_d_gamma"])
-                    if (
-                        data["legacy_enabled"]
-                        and data.get("legacy_r_gamma") is not None
-                    ):
-                        if len(data["legacy_r_gamma"]) > 0:
-                            all_gamma.extend(data["legacy_r_gamma"])
-                    if (
-                        i == 1
-                        and data["driver_allowed"]
-                        and data.get("legacy_d_gamma") is not None
-                    ):
-                        if len(data["legacy_d_gamma"]) > 0:
-                            all_gamma.extend(data["legacy_d_gamma"])
 
                     if len(all_gamma) > 0:
                         gamma_array = np.array(all_gamma)

@@ -31,7 +31,6 @@ from core.types import SimulationType
 from lw_integrator.sweep_runner import (
     SweepRunner,
     _convert_json_config_to_dataclass,
-    run_sweep_from_config,
 )
 from lw_integrator.testbed_runner import RunResult, SimulationOptions, run_testbed
 from optimization.config import (
@@ -172,7 +171,6 @@ def _build_options_from_config(
         rider_params=rider_params,
         driver_params=driver_params,
         core_params=core_params,
-        legacy_enabled=False,
         trajectory_save=False,
         trajectory_interval=config.trajectory_stride,
         energy_display=False,
@@ -193,11 +191,6 @@ def _build_options_from_config(
         macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,
         image_subcharge_count=config.image_subcharge_count,
         use_image_weighting=config.use_image_weighting,
-        overlay_display=False,
-        overlay_save=False,
-        difference_display=False,
-        difference_save=False,
-        metrics_save=False,
         output_dir=output_dir,
         self_consistency_enabled=config.self_consistency_enabled,
         self_consistency_tolerance=config.self_consistency_tolerance,
@@ -344,16 +337,10 @@ class TestCoreRunTestbedParity:
                 "z_cutoff_mode": "absolute",
                 "startup_mode": "COLD_START",
             },
-            legacy_enabled=False,
             energy_display=False,
             energy_save=False,
             transverse_display=False,
             transverse_save=True,
-            overlay_display=False,
-            overlay_save=False,
-            difference_display=False,
-            difference_save=False,
-            metrics_save=False,
             output_dir=tmp_output_dir / "run_a",
             self_consistency_enabled=True,
             self_consistency_tolerance=1e-4,
@@ -377,16 +364,10 @@ class TestCoreRunTestbedParity:
             rider_params=dict(opts.rider_params),
             driver_params=None,
             core_params=dict(opts.core_params),
-            legacy_enabled=False,
             energy_display=False,
             energy_save=False,
             transverse_display=False,
             transverse_save=True,
-            overlay_display=False,
-            overlay_save=False,
-            difference_display=False,
-            difference_save=False,
-            metrics_save=False,
             output_dir=tmp_output_dir / "run_b",
             self_consistency_enabled=opts.self_consistency_enabled,
             self_consistency_tolerance=opts.self_consistency_tolerance,
@@ -452,16 +433,10 @@ class TestCoreRunTestbedParity:
                 "z_cutoff_mode": "absolute",
                 "startup_mode": "COLD_START",
             },
-            legacy_enabled=False,
             energy_display=False,
             energy_save=False,
             transverse_display=False,
             transverse_save=True,
-            overlay_display=False,
-            overlay_save=False,
-            difference_display=False,
-            difference_save=False,
-            metrics_save=False,
             self_consistency_enabled=True,
             self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=5,
@@ -1343,9 +1318,9 @@ class TestCliSweepRunnerE2E:
             f"Expected 4 runs (2×2), got {len(runner.results)}"
         )
 
-        # Check results.json was written
-        results_path = sweep_output / "results.json"
-        assert results_path.exists(), "results.json should exist"
+        # Small sweeps are archived after save, so use the runner's final output dir.
+        results_path = runner.output_dir / "sweep_results.json"
+        assert results_path.exists(), "sweep_results.json should exist"
 
         with open(results_path) as f:
             saved = json.load(f)
@@ -1421,7 +1396,7 @@ class TestCliSweepRunnerE2E:
                 ):
                     expected = m["delta_gamma"] * (1.0 * AMU_TO_MEV)
                     assert m["delta_e_mev"] == pytest.approx(expected, rel=1e-10), (
-                        f"ΔE should use rest mass 931.5 MeV, not 0.511 MeV"
+                        "ΔE should use rest mass 931.5 MeV, not 0.511 MeV"
                     )
 
 

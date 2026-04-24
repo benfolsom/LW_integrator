@@ -424,7 +424,8 @@ lw-plot-trajectory results/testbed_runs/<run_dir>/trajectory_data_<timestamp>.js
 lw-plot-trajectory results/testbed_runs/<run_dir>/trajectory_data_<timestamp>.npz
 ```
 
-JSON trajectory files preserve core/legacy overlays and rider/driver separation.
+JSON trajectory files preserve rider/driver separation and the full core-state
+history needed by the maintained plotting tools.
 NPZ files use the standard compact `z/r/pz/pr/gamma` format shared with the
 optimization tooling.
 

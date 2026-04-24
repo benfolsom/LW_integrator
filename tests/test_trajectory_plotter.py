@@ -45,15 +45,6 @@ def test_plot_saved_json_trajectory_writes_png(tmp_path: Path):
                         "time_ns": [0.0, 0.1],
                     },
                 },
-                "legacy": {
-                    "rider": {
-                        "gamma_hist": [1.9, 2.1],
-                        "pt_hist": [0.95, 1.05],
-                        "positions_mm": {"x": [0.0, 0.8], "y": [0.0, 0.0], "z": [0.0, 2.0]},
-                        "conjugate_momenta": {"Px": [0.0, 0.08], "Py": [0.0, 0.0], "Pz": [0.9, 1.0]},
-                        "time_ns": [0.0, 0.1],
-                    }
-                },
             }
         ),
         encoding="utf-8",
