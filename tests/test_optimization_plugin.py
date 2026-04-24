@@ -13,6 +13,7 @@ from core.types import SimulationType
 import lw_integrator.optimization_plugin as plugin_module
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
+from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
 from optimization.plugin_ui_mixins import OptimizationPluginUIMixin
@@ -153,6 +154,24 @@ class TestOptimizationPluginIntegration:
         assert (
             OptimizationPlugin._update_parameter_visibility
             is OptimizationPluginFormMixin._update_parameter_visibility
+        )
+
+    def test_plugin_inherits_parameter_section_builders_from_parameter_mixin(self):
+        assert (
+            OptimizationPlugin._build_parameter_section
+            is OptimizationPluginParameterMixin._build_parameter_section
+        )
+        assert (
+            OptimizationPlugin._build_particle_section
+            is OptimizationPluginParameterMixin._build_particle_section
+        )
+        assert (
+            OptimizationPlugin._build_rider_particle_section
+            is OptimizationPluginParameterMixin._build_rider_particle_section
+        )
+        assert (
+            OptimizationPlugin._build_driver_particle_section
+            is OptimizationPluginParameterMixin._build_driver_particle_section
         )
 
     def test_run_single_integration_uses_current_simulation_options_fields(
