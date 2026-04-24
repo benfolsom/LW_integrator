@@ -300,7 +300,7 @@ def generate_conducting_image(
                 # Perfectly on-axis: enforce zero weight
                 weights = np.zeros(count, dtype=float)
 
-            # Combine legacy solid-angle reduction (in base_charge_per_sub)
+            # Combine the archived-reference solid-angle reduction (in base_charge_per_sub)
             # with rho-shift weighting that emphasizes off-axis behaviour.
             charge_values = (base_charge_per_sub * weights).astype(
                 result["q"].dtype, copy=False

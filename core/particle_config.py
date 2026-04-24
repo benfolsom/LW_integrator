@@ -35,7 +35,7 @@ DEFAULT_RIDER_PARAMS: Dict[str, float | int] = {
     "transv_mom": 0.0,  # Transverse momentum in amu·mm/ns
     "starting_Pz": 1.01e6,  # Longitudinal momentum in amu·mm/ns
     "stripped_ions": 1.0,  # Charge state (1 for electrons)
-    "m_particle": 1.007319468,  # Particle mass in amu (~proton mass for legacy reasons)
+    "m_particle": 1.007319468,  # Particle mass in amu (~proton-mass default)
     "transv_dist": 2.0e-4,  # Transverse distribution size in mm
     "transv_offset_x": 0.0,  # Transverse offset x in mm
     "transv_offset_y": 0.0,  # Transverse offset y in mm

@@ -146,7 +146,7 @@ Key ideas to keep in mind
   optimization plugin's "Transverse Offset" fractions are converted to absolute
   positions (offset = fraction × aperture_radius). Maintained GUI and CLI
   workflows always use the modern core initialization path in
-  ``input_output.bunch_initialization.create_bunch_from_params``; legacy
+  ``input_output.bunch_initialization.create_bunch_from_params``; archived
   notebooks remain in the repository only as historical reference material.
 * **GUI application for all workflows.**  The Tkinter-based GUI (``python -m
   lw_integrator.gui``) supports single runs, parameter sweeps, and optimization
