@@ -162,6 +162,10 @@ Key ideas to keep in mind
   publication-quality heatmaps from sweep results. Contour lines use a low
   alpha (0.18), labels are clamped to stay inside the axes after the final
   layout pass, and overlapping labels are culled automatically.
+* **Saved trajectory plotting.**  ``lw-plot-trajectory`` turns saved single-run
+  JSON or NPZ trajectory files into publication-ready PNG summaries, including
+  core/legacy overlays for JSON payloads and compact momentum/gamma panels for
+  NPZ payloads.
 * **Notebook tooling is first-class.**  The validation notebooks are kept in
   sync with the scripts and expose colourblind-friendly plots, high-DPI export,
   and configuration widgets.  Use them to explore scenarios before committing to

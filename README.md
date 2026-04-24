@@ -401,6 +401,20 @@ Contour lines use reduced alpha (0.18) and labels are automatically clamped
 to stay within the axes. Overlapping labels are culled after the final
 layout pass so they never stack on top of each other.
 
+### Saved trajectory plotting
+
+Saved single-run trajectory files from the GUI/testbed can be plotted from the
+CLI with `lw-plot-trajectory`:
+
+```bash
+lw-plot-trajectory results/testbed_runs/<run_dir>/trajectory_data_<timestamp>.json
+lw-plot-trajectory results/testbed_runs/<run_dir>/trajectory_data_<timestamp>.npz
+```
+
+JSON trajectory files preserve core/legacy overlays and rider/driver separation.
+NPZ files use the standard compact `z/r/pz/pr/gamma` format shared with the
+optimization tooling.
+
 ---
 
 ## Example configurations

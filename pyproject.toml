@@ -59,6 +59,7 @@ lw-tabulate-best-runs = "lw_integrator.optimization_results:main"
 lw-generate-sweep-heatmap = "generate_sweep_heatmap:main"
 lw-plot-from-logcache-live = "plot_from_logcache_live:main"
 lw-plot-latest-live = "lw_integrator.plot_latest_live:main"
+lw-plot-trajectory = "lw_integrator.trajectory_plotter:main"
 
 [project.urls]
 Homepage = "https://github.com/username/LW_integrator"
