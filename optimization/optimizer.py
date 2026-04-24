@@ -1,185 +1,33 @@
-"""Optimization algorithms for finding optimal LW integrator configurations.
-
-This module provides gradient-free optimization methods to find parameter
-configurations that maximize energy gain or other metrics. Uses scipy.optimize
-for robust optimization algorithms.
-"""
+"""Optimization algorithms used by the maintained sweep/optimization workflow."""
 
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# Genetic algorithm utilities
-from typing import Tuple as TypingTuple
-
 import numpy as np
 from scipy.optimize import OptimizeResult, differential_evolution, minimize
-
-from core.integration_runner import run_integrator
-from optimization.metrics import compute_trajectory_metrics
 
 logger = logging.getLogger(__name__)
 
 
-class ObjectiveFunction:
-    """Wrapper for objective functions to be minimized.
+ObjectiveFunction = Callable[[np.ndarray], float]
 
-    Parameters
-    ----------
-    config_template : Dict[str, Any]
-        Base configuration template
-    parameter_names : List[str]
-        Names of parameters to optimize
-    parameter_bounds : List[Tuple[float, float]]
-        Bounds for each parameter (min, max)
-    metric_name : str, optional
-        Name of metric to optimize (default: 'max_energy_gain_gev')
-    maximize : bool, optional
-        If True, maximizes metric; if False, minimizes (default: True)
+
+def _require_objective_function(
+    objective_function: Optional[ObjectiveFunction], api_name: str
+) -> ObjectiveFunction:
+    """Return the maintained objective callback or fail fast.
+
+    The generic config-template optimization path is no longer maintained. The
+    GUI/CLI optimization flow supplies an explicit callback from
+    ``optimization.run_mixins`` that evaluates one parameter vector.
     """
 
-    def __init__(
-        self,
-        config_template: Dict[str, Any],
-        parameter_names: List[str],
-        parameter_bounds: List[Tuple[float, float]],
-        metric_name: str = "max_energy_gain_gev",
-        maximize: bool = True,
-    ):
-        self.config_template = config_template
-        self.parameter_names = parameter_names
-        self.parameter_bounds = parameter_bounds
-        self.metric_name = metric_name
-        self.maximize = maximize
-
-        self.n_calls = 0
-        self.best_value = -np.inf if maximize else np.inf
-        self.best_params = None
-        self.history = []
-
-    def __call__(self, x: np.ndarray) -> float:
-        """Evaluate objective function at parameter vector x.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Parameter vector to evaluate
-
-        Returns
-        -------
-        float
-            Objective function value (negated if maximizing)
-        """
-        self.n_calls += 1
-
-        # Create config with these parameters
-        config = self._create_config(x)
-
-        try:
-            # Run simulation
-            trajectory = self._run_simulation(config)
-
-            # Compute metrics
-            metrics = self._compute_metrics(trajectory, config)
-
-            # Get objective value
-            value = metrics.get(self.metric_name, np.nan)
-
-            if np.isnan(value):
-                logger.warning(f"NaN metric value for params {x}")
-                return np.inf if not self.maximize else -np.inf
-
-            # Track best (filter out inf/-inf values)
-            if self.maximize:
-                if np.isfinite(value) and value > self.best_value:
-                    self.best_value = value
-                    self.best_params = x.copy()
-                objective_value = -value  # Minimize negative
-            else:
-                if np.isfinite(value) and value < self.best_value:
-                    self.best_value = value
-                    self.best_params = x.copy()
-                objective_value = value
-
-            # Record history
-            self.history.append(
-                {
-                    "params": x.copy(),
-                    "value": value,
-                    "objective": objective_value,
-                    "metrics": metrics,
-                }
-            )
-
-            logger.info(
-                f"Evaluation {self.n_calls}: {self.metric_name} = {value:.6f} "
-                f"(params: {dict(zip(self.parameter_names, x))})"
-            )
-
-            return objective_value
-
-        except Exception as e:
-            logger.error(f"Simulation failed for params {x}: {e}")
-            return np.inf if not self.maximize else -np.inf
-
-    def _create_config(self, x: np.ndarray) -> Dict[str, Any]:
-        """Create configuration from parameter vector."""
-        config = self.config_template.copy()
-
-        for param_name, param_value in zip(self.parameter_names, x):
-            # Map parameter names to config structure
-            if param_name == "aperture_radius":
-                if "aperture" not in config:
-                    config["aperture"] = {}
-                config["aperture"]["radius"] = float(param_value)
-            elif param_name == "initial_energy_gev":
-                # Convert to gamma
-                rest_energy_mev = config.get("rest_energy_mev", 0.511)
-                gamma = float(param_value) * 1e3 / rest_energy_mev
-                config["initial_gamma"] = gamma
-            elif param_name == "timestep":
-                config["timestep"] = float(param_value)
-            elif param_name == "start_z":
-                config["initial_z"] = float(param_value)
-            elif param_name == "transverse_momentum":
-                config["initial_transverse_momentum"] = float(param_value)
-            elif param_name == "position_spread":
-                config["initial_position_spread"] = float(param_value)
-            else:
-                # Direct mapping
-                config[param_name] = float(param_value)
-
-        return config
-
-    def _run_simulation(self, config: Dict[str, Any]) -> List:
-        """Run simulation with given config."""
-        # NOTE: This is a placeholder implementation
-        # The actual run_integrator function requires IntegratorConfig and ParticleState objects
-        # This would need to be adapted based on your specific configuration structure
-        # For now, this serves as a template that users can customize
-
+    if objective_function is None:
         raise NotImplementedError(
-            "run_simulation needs to be adapted to your specific configuration structure. "
-            "Please see the example script for how to properly call run_integrator with "
-            "IntegratorConfig and ParticleState objects."
+            f"{api_name} requires an explicit objective_function callback. "
+            "The generic config-template optimization path is no longer maintained."
         )
-
-    def _compute_metrics(
-        self, trajectory: List, config: Dict[str, Any]
-    ) -> Dict[str, float]:
-        """Compute metrics from trajectory."""
-        if len(trajectory) == 0:
-            return {self.metric_name: np.nan}
-
-        initial_state = trajectory[0]
-        rest_energy_mev = config.get("rest_energy_mev", 0.511)
-
-        aperture_z = None
-        if "aperture" in config and "z" in config["aperture"]:
-            aperture_z = config["aperture"]["z"]
-
-        return compute_trajectory_metrics(
-            trajectory, initial_state, rest_energy_mev, aperture_z=aperture_z
-        )
+    return objective_function
 
 
 def optimize_parameters(
@@ -219,8 +67,8 @@ def optimize_parameters(
     maxiter : int, optional
         Maximum number of iterations (default: 100)
     objective_function : Callable, optional
-        Custom objective function that takes parameter array and returns scalar
-        to minimize. If None, uses default ObjectiveFunction class.
+        Objective callback that evaluates one parameter vector and returns the
+        scalar value to minimize. Required by the maintained optimization path.
     progress_callback : Callable, optional
         Callback function called during optimization progress.
         For differential_evolution: called with (xk, convergence) after each generation.
@@ -233,24 +81,14 @@ def optimize_parameters(
     OptimizeResult
         Scipy optimization result with additional attributes:
         - best_params_dict: Dictionary of best parameters
-        - objective_function: ObjectiveFunction instance with history
+        - objective_function: Objective callback used during optimization
     """
     logger.info(f"Starting optimization of {metric_name}")
     logger.info(f"Parameters: {parameter_names}")
     logger.info(f"Bounds: {parameter_bounds}")
     logger.info(f"Method: {method}")
 
-    # Create or use provided objective function
-    if objective_function is None:
-        objective = ObjectiveFunction(
-            config_template=config_template,
-            parameter_names=parameter_names,
-            parameter_bounds=parameter_bounds,
-            metric_name=metric_name,
-            maximize=maximize,
-        )
-    else:
-        objective = objective_function
+    objective = _require_objective_function(objective_function, "optimize_parameters")
 
     # Run optimization
     if method == "differential_evolution":
@@ -312,13 +150,8 @@ def optimize_parameters(
     result.best_params_dict = dict(zip(parameter_names, result.x))
     result.objective_function = objective
 
-    # Log results - handle both ObjectiveFunction class and custom functions
-    if hasattr(objective, "best_value"):
-        logger.info(
-            f"Optimization complete. Best {metric_name}: {objective.best_value:.6f}"
-        )
-    else:
-        logger.info(f"Optimization complete. Best value: {result.fun:.6f}")
+    best_value = -result.fun if maximize else result.fun
+    logger.info(f"Optimization complete. Best {metric_name}: {best_value:.6f}")
     logger.info(f"Best parameters: {result.best_params_dict}")
 
     return result
@@ -360,8 +193,8 @@ def multi_start_optimize(
     method : str, optional
         Optimization method (default: 'nelder_mead')
     objective_function : Callable, optional
-        Custom objective function that takes parameter array and returns scalar
-        to minimize. If None, uses default ObjectiveFunction class.
+        Objective callback that evaluates one parameter vector and returns the
+        scalar value to minimize. Required by the maintained optimization path.
     progress_callback : Callable, optional
         Callback function called after each refinement level completes.
     progress_callback : Callable, optional
@@ -375,6 +208,10 @@ def multi_start_optimize(
     OptimizeResult
         Best result from all starts
     """
+    objective = _require_objective_function(
+        objective_function, "multi_start_optimize"
+    )
+
     logger.info(f"Running multi-start optimization with {n_starts} starts")
 
     best_result = None
@@ -397,22 +234,14 @@ def multi_start_optimize(
             maximize=maximize,
             maxiter=maxiter,
             progress_callback=progress_callback,
-            objective_function=objective_function,
+            objective_function=objective,
             x0=x0,
             **optimizer_kwargs,
         )
 
         all_results.append(result)
 
-        # Check if this is best
-        # Handle both ObjectiveFunction and custom objective functions
-        if hasattr(result, "objective_function") and hasattr(
-            result.objective_function, "best_value"
-        ):
-            objective_value = result.objective_function.best_value
-        else:
-            # For custom objective functions, use result.fun (negated if maximizing)
-            objective_value = -result.fun if maximize else result.fun
+        objective_value = -result.fun if maximize else result.fun
 
         if maximize:
             if np.isfinite(objective_value) and objective_value > best_value:
@@ -426,7 +255,7 @@ def multi_start_optimize(
     # Add all results to best result
     best_result.all_starts = all_results
 
-    logger.info(f"Multi-start optimization complete.")
+    logger.info("Multi-start optimization complete.")
     logger.info(f"Best {metric_name}: {best_value:.6f}")
     logger.info(f"Best parameters: {best_result.best_params_dict}")
 
@@ -473,6 +302,10 @@ def adaptive_grid_search(
     Tuple[np.ndarray, float, Dict[str, Any]]
         (best_params, best_value, history)
     """
+    objective = _require_objective_function(
+        objective_function, "adaptive_grid_search"
+    )
+
     logger.info("Starting adaptive grid search")
 
     current_bounds = list(parameter_bounds)
@@ -495,20 +328,7 @@ def adaptive_grid_search(
         level_results = []
 
         for params in np.array(np.meshgrid(*grids)).T.reshape(-1, len(parameter_names)):
-            # Create or use provided objective function
-            if objective_function is None:
-                objective = ObjectiveFunction(
-                    config_template=config_template,
-                    parameter_names=parameter_names,
-                    parameter_bounds=parameter_bounds,
-                    metric_name=metric_name,
-                    maximize=maximize,
-                )
-                # Evaluate
-                obj_value = objective(params)
-            else:
-                # Use provided objective function directly
-                obj_value = objective_function(params)
+            obj_value = objective(params)
             metric_value = -obj_value if maximize else obj_value
 
             level_results.append(
@@ -628,8 +448,8 @@ def genetic_algorithm(
     seed : int, optional
         Random seed for reproducibility
     objective_function : Callable, optional
-        Custom objective function that takes parameter array and returns scalar
-        to minimize. If None, uses default ObjectiveFunction class.
+        Objective callback that evaluates one parameter vector and returns the
+        scalar value to minimize. Required by the maintained optimization path.
     convergence_tol : float, optional
         Relative tolerance for convergence detection (default: 1e-6).
         Stops if improvement over last `convergence_patience` generations
@@ -658,17 +478,7 @@ def genetic_algorithm(
     n_params = len(parameter_names)
     n_elite = max(1, int(population_size * elite_fraction))
 
-    # Create or use provided objective function
-    if objective_function is None:
-        objective = ObjectiveFunction(
-            config_template=config_template,
-            parameter_names=parameter_names,
-            parameter_bounds=parameter_bounds,
-            metric_name=metric_name,
-            maximize=maximize,
-        )
-    else:
-        objective = objective_function
+    objective = _require_objective_function(objective_function, "genetic_algorithm")
 
     # Initialize population randomly within bounds
     population = np.random.uniform(
@@ -858,11 +668,7 @@ def genetic_algorithm(
     result = OptimizeResult()
     result.x = best_individual
     result.fun = best_fitness
-    # Handle both ObjectiveFunction and custom objective functions
-    if hasattr(objective, "n_calls"):
-        result.nfev = objective.n_calls
-    else:
-        result.nfev = population_size * n_generations  # Approximate
+    result.nfev = population_size * n_generations
     result.nit = n_generations
     result.success = True
     result.message = f"Genetic algorithm completed {n_generations} generations"
@@ -872,17 +678,10 @@ def genetic_algorithm(
     result.final_population = population
     result.final_fitness = fitness
 
-    # Log completion with appropriate metric value
-    if hasattr(objective, "best_value"):
-        logger.info(
-            f"Genetic algorithm complete. Best {metric_name}: {objective.best_value:.6f}"
-        )
-    else:
-        # For custom objective functions, use the best fitness (negated if maximizing)
-        best_metric_value = -best_fitness if maximize else best_fitness
-        logger.info(
-            f"Genetic algorithm complete. Best {metric_name}: {best_metric_value:.6f}"
-        )
+    best_metric_value = -best_fitness if maximize else best_fitness
+    logger.info(
+        f"Genetic algorithm complete. Best {metric_name}: {best_metric_value:.6f}"
+    )
     logger.info(f"Best parameters: {result.best_params_dict}")
 
     return result

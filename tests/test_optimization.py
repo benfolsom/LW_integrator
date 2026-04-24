@@ -3,6 +3,7 @@
 Basic tests to verify optimization functionality works correctly.
 """
 
+import importlib
 import optimization
 from types import SimpleNamespace
 
@@ -38,6 +39,12 @@ from optimization.plugin_results_helpers import (
     summarize_result_row,
     summarize_optimization_top_results,
     summarize_saved_results,
+)
+from optimization.optimizer import (
+    adaptive_grid_search,
+    genetic_algorithm,
+    multi_start_optimize,
+    optimize_parameters,
 )
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
 from optimization.results_mixins import OptimizationResultsMixin
@@ -96,6 +103,41 @@ def test_optimization_config_hides_internal_threshold_constants():
     assert "_ELECTRON_MASS_AMU" not in optimization_config_module.__all__
     assert "_PROTON_MASS_AMU" not in optimization_config_module.__all__
     assert "_ENERGY_THRESHOLD_EXPONENT" not in optimization_config_module.__all__
+
+
+def test_removed_optimization_ui_mixins_module_is_not_importable():
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("optimization.ui_mixins")
+
+
+@pytest.mark.parametrize(
+    ("func", "api_name", "kwargs"),
+    [
+        (optimize_parameters, "optimize_parameters", {"maxiter": 1}),
+        (multi_start_optimize, "multi_start_optimize", {"n_starts": 1, "maxiter": 1}),
+        (
+            adaptive_grid_search,
+            "adaptive_grid_search",
+            {"initial_points_per_dim": 2, "refinement_levels": 0},
+        ),
+        (
+            genetic_algorithm,
+            "genetic_algorithm",
+            {"population_size": 2, "n_generations": 1, "seed": 1},
+        ),
+    ],
+)
+def test_optimizer_entrypoints_require_explicit_objective_function(
+    func, api_name, kwargs
+):
+    with pytest.raises(NotImplementedError, match=api_name):
+        func(
+            config_template={},
+            parameter_names=["x"],
+            parameter_bounds=[(0.0, 1.0)],
+            objective_function=None,
+            **kwargs,
+        )
 
 
 class TestMetrics:
