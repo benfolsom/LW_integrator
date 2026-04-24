@@ -51,7 +51,7 @@ class TestCliConfigParsing:
         help_text = capsys.readouterr().out
         assert "--results-file RESULTS_FILE" in help_text
         assert "saved sweep or optimization results JSON" in help_text
-        assert "Historical configs may still use 'legacy'." in help_text
+        assert "'fast' uses the single-sample matching path." in help_text
 
     def test_parse_args_accepts_results_file(self):
         args = cli.parse_args(["--results-file", "results/sweep_results.json"])
@@ -79,21 +79,20 @@ class TestCliConfigParsing:
             SimulationType.BUNCH_TO_BUNCH
         )
 
-    def test_parse_simulation_type_accepts_enum_and_integer_values(self):
+    def test_parse_simulation_type_accepts_enum_instance(self):
         assert cli._parse_simulation_type(SimulationType.SWITCHING_WALL) == (
             SimulationType.SWITCHING_WALL
-        )
-        assert cli._parse_simulation_type(SimulationType.BUNCH_TO_BUNCH.value) == (
-            SimulationType.BUNCH_TO_BUNCH
         )
 
     def test_parse_simulation_type_rejects_unknown_value(self):
         with pytest.raises(cli.SimulationConfigError, match="Unknown simulation type"):
             cli._parse_simulation_type("not-a-mode")
+        with pytest.raises(cli.SimulationConfigError, match="Unknown simulation type"):
+            cli._parse_simulation_type(SimulationType.BUNCH_TO_BUNCH.value)
 
-    def test_parse_chrono_mode_accepts_aliases(self):
-        assert cli._parse_chrono_mode("legacy") == ChronoMatchingMode.FAST
-        assert cli._parse_chrono_mode("blended") == ChronoMatchingMode.AVERAGED
+    def test_parse_chrono_mode_accepts_supported_values(self):
+        assert cli._parse_chrono_mode("fast") == ChronoMatchingMode.FAST
+        assert cli._parse_chrono_mode("averaged") == ChronoMatchingMode.AVERAGED
 
     def test_parse_chrono_mode_accepts_enum_instance(self):
         assert cli._parse_chrono_mode(ChronoMatchingMode.AVERAGED) == (
@@ -109,8 +108,8 @@ class TestCliConfigParsing:
         ):
             cli._parse_chrono_mode(123)
 
-    def test_parse_startup_mode_accepts_enum_or_alias(self):
-        assert cli._parse_startup_mode("approximate") == (
+    def test_parse_startup_mode_accepts_enum_or_supported_alias(self):
+        assert cli._parse_startup_mode("approximate-back-history") == (
             StartupMode.APPROXIMATE_BACK_HISTORY
         )
         assert cli._parse_startup_mode(StartupMode.COLD_START) == (
@@ -155,8 +154,8 @@ class TestCliConfigParsing:
                 "wall_position": "1.5",
                 "aperture_radius": "0.002",
                 "simulation_type": "switching-wall",
-                "chrono_mode": "legacy",
-                "startup_mode": "approximate",
+                "chrono_mode": "fast",
+                "startup_mode": "approximate-back-history",
                 "image_subcharge_count": "16",
                 "use_image_weighting": "no",
             }

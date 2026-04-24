@@ -78,10 +78,8 @@ SIMULATION_TYPE_ALIASES: Mapping[str, SimulationType] = {
 STARTUP_MODE_ALIASES: Mapping[str, StartupMode] = {
     "cold-start": StartupMode.COLD_START,
     "cold_start": StartupMode.COLD_START,
-    "cold": StartupMode.COLD_START,
     "approximate-back-history": StartupMode.APPROXIMATE_BACK_HISTORY,
     "approximate_back_history": StartupMode.APPROXIMATE_BACK_HISTORY,
-    "approximate": StartupMode.APPROXIMATE_BACK_HISTORY,
 }
 
 REQUIRED_PARTICLE_FIELDS: Iterable[str] = (
@@ -216,7 +214,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         choices=("averaged", "fast"),
         help=(
             "Retardation sampling strategy: 'averaged' blends R/c and 2R/c, "
-            "'fast' uses the single-sample matching path. Historical configs may still use 'legacy'."
+            "'fast' uses the single-sample matching path."
         ),
     )
     parser.add_argument(
@@ -444,13 +442,6 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
 def _parse_simulation_type(value: Any) -> SimulationType:
     if isinstance(value, SimulationType):
         return value
-    if isinstance(value, int):  # support legacy integer flags
-        try:
-            return SimulationType(value)
-        except ValueError as exc:  # pragma: no cover - defensive
-            raise SimulationConfigError(
-                f"Unknown simulation type integer: {value}"
-            ) from exc
     if isinstance(value, str):
         key = value.strip().lower()
         if key in SIMULATION_TYPE_ALIASES:
@@ -463,9 +454,9 @@ def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
         return value
     if isinstance(value, str):
         key = value.strip().lower()
-        if key in {"fast", "legacy"}:
+        if key == "fast":
             return ChronoMatchingMode.FAST
-        if key in {"averaged", "average", "blended"}:
+        if key == "averaged":
             return ChronoMatchingMode.AVERAGED
         raise SimulationConfigError(
             f"Unknown chrono_mode value: {value!r}. Expected 'fast' or 'averaged'."
