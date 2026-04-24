@@ -470,10 +470,4 @@ __all__ = [
     "calculate_auto_timestep",
     "calculate_auto_steps",
     "calculate_steps_from_duration",
-    "_ELECTRON_MASS_AMU",
-    "_PROTON_MASS_AMU",
-    "_ELECTRON_ENERGY_THRESHOLD_GEV",
-    "_PROTON_ENERGY_THRESHOLD_GEV",
-    "_ENERGY_THRESHOLD_EXPONENT",
-    "_ENERGY_THRESHOLD_SCALE",
 ]

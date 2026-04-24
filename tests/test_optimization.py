@@ -90,6 +90,14 @@ def create_mock_trajectory(n_steps=10, gamma_values=None):
     return trajectory
 
 
+def test_optimization_config_hides_internal_threshold_constants():
+    import optimization.config as optimization_config_module
+
+    assert "_ELECTRON_MASS_AMU" not in optimization_config_module.__all__
+    assert "_PROTON_MASS_AMU" not in optimization_config_module.__all__
+    assert "_ENERGY_THRESHOLD_EXPONENT" not in optimization_config_module.__all__
+
+
 class TestMetrics:
     """Test metric computation functions."""
 
