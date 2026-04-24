@@ -5,7 +5,7 @@ We welcome patches that improve the physics fidelity, performance, or ergonomics
 of the LW Integrator.  Please keep the following ground rules in mind:
 
 * **Stay regression safe.**  All changes that touch physics must keep the core
-  and legacy solvers in agreement.  Update the validation scripts and add tests
+  solver and archived reference solver in agreement.  Update the validation scripts and add tests
   if necessary.
 * **Document as you go.**  Extend the relevant page under ``docs/source/`` when
   you add or change behaviour.  The documentation is built as part of CI and

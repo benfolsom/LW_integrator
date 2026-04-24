@@ -103,7 +103,7 @@ Position updates follow directly from the Hamiltonian identity
 
 which the solver evaluates after each momentum update to keep particle states in
 sync.  Proper-time stepping avoids runaway behaviour at high :math:`\gamma`
-while keeping the integration scheme close to the legacy implementation (see
+while keeping the integration scheme close to the archived reference implementation (see
 ``legacy/covariant_integrator_library.py`` for a verbatim reference).
 
 Relativistic position updates in coordinate time

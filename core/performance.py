@@ -3,7 +3,7 @@ Numba-accelerated retarded integrator utilities.
 
 This module is a faithful, structured transcription of
 ``legacy/numba_optimized_integrator.py``.  The goal is to expose the validated
-optimised routines in a predictable API while leaving the original legacy file
+optimised routines in a predictable API while leaving the archived reference file
 untouched for regression comparison.
 """
 
@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
 from .images import generate_conducting_image, generate_switching_image
 from .integration_runner import retarded_integrator
-from .self_consistency import SelfConsistencyConfig, self_consistent_step
+from .self_consistency import SelfConsistencyConfig
 from .types import (
     ChronoMatchingMode,
     IntegratorConfig,
@@ -82,7 +82,7 @@ def arrays_to_dict(arrays: Dict[str, np.ndarray]) -> ParticleState:
 
 
 # ---------------------------------------------------------------------------
-# Numba kernels (verbatim physics from the legacy implementation)
+# Numba kernels (verbatim physics from the archived reference implementation)
 # ---------------------------------------------------------------------------
 
 
@@ -165,7 +165,7 @@ def _compute_electromagnetic_forces_numba(
             # Allow k_factor down to 1e-20 for ultra-relativistic particles
             k_threshold = 1e-20
             if abs(k_factor) < k_threshold:
-                print(f"    ⚠️  k-factor threshold triggered: interaction filtered")
+                print("    ⚠️  k-factor threshold triggered: interaction filtered")
                 print(
                     f"       |k| = {abs(k_factor):.6e}, threshold = {k_threshold:.6e}"
                 )

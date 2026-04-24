@@ -813,7 +813,7 @@ References
 
 - :ref:`equations_of_motion` - Full equations of motion documentation
 - :ref:`integration_runner` - Integration loop and timestep management
-- Local documentation: ``local/GAMMA_CHECK_DECISION.md`` - Test results justifying dual convergence
+- Local documentation: ``local/GAMMA_CHECK_DECISION.md`` - Test results justifying the two-criterion convergence check
 - Local documentation: ``local/WEIGHTED_CONVERGENCE_PROPOSAL.md`` - Design rationale
 
 See Also

@@ -1,6 +1,6 @@
 """Compatibility facade exposing the retarded integrator public API.
 
-The legacy codebase imported functionality directly from
+Earlier project layouts imported functionality directly from
 ``core.trajectory_integrator``. The implementation has since been modularised
 into smaller, focused modules. This wrapper re-exports the public symbols to
 maintain import compatibility while also providing a light-weight class based
