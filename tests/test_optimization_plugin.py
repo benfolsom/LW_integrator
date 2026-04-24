@@ -15,6 +15,7 @@ from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPl
 from optimization.plugin_config_mixins import OptimizationPluginConfigMixin
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
+from optimization.plugin_view_mixins import OptimizationPluginViewMixin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
 from optimization.plugin_ui_mixins import OptimizationPluginUIMixin
@@ -191,6 +192,20 @@ class TestOptimizationPluginIntegration:
         assert (
             OptimizationPlugin._save_config_to_path
             is OptimizationPluginConfigMixin._save_config_to_path
+        )
+
+    def test_plugin_inherits_results_view_helpers_from_view_mixin(self):
+        assert (
+            OptimizationPlugin._on_view_results
+            is OptimizationPluginViewMixin._on_view_results
+        )
+        assert (
+            OptimizationPlugin._show_results_summary
+            is OptimizationPluginViewMixin._show_results_summary
+        )
+        assert (
+            OptimizationPlugin._show_trajectory_viewer
+            is OptimizationPluginViewMixin._show_trajectory_viewer
         )
 
     def test_run_single_integration_uses_current_simulation_options_fields(
