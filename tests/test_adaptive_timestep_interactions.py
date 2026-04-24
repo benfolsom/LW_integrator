@@ -13,21 +13,15 @@ The key insight is:
 """
 
 import sys
-from pathlib import Path
 
 import numpy as np
-
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from core.constants import C_MMNS
 from core.integration_runner import (
     AdaptiveTimestepConfig,
-    EnergyMonitorConfig,
     retarded_integrator,
 )
-from core.types import ParticleState, SimulationType
+from core.types import SimulationType
 from examples.validation.core_vs_legacy_benchmark import prepare_two_particle_demo
 
 
@@ -93,7 +87,7 @@ def test_sweep_timestep_with_adaptive_disabled():
     z_final = float(traj[-1]["z"][0])
     distance_traveled = z_final - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Initial z: {z_initial:.3f} mm")
     print(f"  Final z: {z_final:.3f} mm")
     print(f"  Distance traveled: {distance_traveled:.2f} mm")
@@ -183,7 +177,7 @@ def test_sweep_timestep_with_proximity_refinement():
     z_final = float(traj[-1]["z"][0])
     distance_traveled = z_final - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Distance traveled: {distance_traveled:.2f} mm")
     print(f"  Target distance: {target_distance_mm:.2f} mm")
 
@@ -241,7 +235,6 @@ def test_sweep_timestep_with_energy_jump_refinement():
         enabled=True,  # ENABLE energy jump refinement
         energy_jump_threshold=0.10,  # Refine if energy changes by >10%
         timestep_reduction_factor=10,
-        max_refinement_attempts=5,
         cooldown_steps=10,
         proximity_refinement_enabled=False,  # Disable proximity for this test
         debug=False,  # Don't spam output
@@ -267,7 +260,7 @@ def test_sweep_timestep_with_energy_jump_refinement():
     z_final = float(np.mean(traj[-1]["z"]))
     distance_traveled = z_final - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Distance traveled: {distance_traveled:.2f} mm")
     print(f"  Target distance: {target_distance_mm:.2f} mm")
 
@@ -364,7 +357,7 @@ def test_fixed_vs_adaptive_comparison():
     dist_fixed = z_fixed - z_initial
     dist_adaptive = z_adaptive - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Fixed timestep:    distance = {dist_fixed:.2f} mm")
     print(f"  Adaptive timestep: distance = {dist_adaptive:.2f} mm")
     print(f"  Difference: {abs(dist_fixed - dist_adaptive):.2f} mm")

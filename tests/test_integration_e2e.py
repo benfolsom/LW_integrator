@@ -294,7 +294,6 @@ class TestAdaptiveTimestep:
             enabled=True,
             energy_jump_threshold=0.1,
             timestep_reduction_factor=10,
-            max_refinement_attempts=5,
             min_timestep_factor=1e-4,
             cooldown_steps=5,
             probe_threshold=0.01,
@@ -605,7 +604,7 @@ class TestEnergyMonitoringIntegration:
         # Check smoothness
         smoothness_config = SmoothnessConfig()
         traj_dict = trajectory_list_to_dict(trajectory_rider)
-        result = analyze_trajectory_smoothness(traj_dict, smoothness_config)
+        analyze_trajectory_smoothness(traj_dict, smoothness_config)
 
         # May or may not pass depending on severity, but should not crash
         # Physical radiation reaction should be handled smoothly by adaptive timestep
