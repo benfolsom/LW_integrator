@@ -400,7 +400,7 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Velocity-dependent weighting** - ADAPTIVE_WEIGHTED method uses β-dependent weights: trust energy at low β (<0.9), trust velocity at high β (>0.99), balanced in mid-range
 - **Custom threshold tuning** - All thresholds and weights configurable via API and GUI for ultra-relativistic particles or specific physics regimes
 - **GUI controls** - Gamma Reconciliation panel in Stability → Self-Consistency with method dropdown and parameter fields that show/hide dynamically
-- **Backward compatibility** - Old `gamma_reconciliation_enabled` boolean replaced with method enum; legacy property still works for compatibility
+- **Backward compatibility** - Old `gamma_reconciliation_enabled` boolean replaced with method enum; historical configs should now use the enum directly
 - **Important note** - Feature disabled by default (Feb 2026) due to energy conservation issues; requires redesign before safe re-enablement
 
 ### Transverse Offset GUI Improvements (January 2025)

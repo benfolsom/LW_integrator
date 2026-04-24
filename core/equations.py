@@ -1542,7 +1542,8 @@ def retarded_equations_of_motion(
             if (
                 sc_enabled
                 and self_consistency is not None
-                and self_consistency.gamma_reconciliation_enabled
+                and self_consistency.gamma_reconciliation_method
+                != GammaReconciliationMethod.DISABLED
             ):
                 gamma_from_energy = result["gamma"][particle_idx]
                 beta_total = np.sqrt(
@@ -1552,12 +1553,7 @@ def retarded_equations_of_motion(
                 # Determine reconciliation method
                 method = self_consistency.gamma_reconciliation_method
 
-                if method == GammaReconciliationMethod.DISABLED:
-                    # No reconciliation - use energy-based gamma (already set)
-                    gamma_reconciled = gamma_from_energy
-                    alpha = 1.0  # For logging
-
-                elif method == GammaReconciliationMethod.USE_VELOCITY:
+                if method == GammaReconciliationMethod.USE_VELOCITY:
                     # Always use velocity-based gamma
                     gamma_reconciled = gamma_from_velocity
                     alpha = 0.0  # For logging

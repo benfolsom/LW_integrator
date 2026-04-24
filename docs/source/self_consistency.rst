@@ -758,19 +758,14 @@ Backward Compatibility
 ----------------------
 
 The old boolean ``gamma_reconciliation_enabled`` parameter has been replaced with
-``gamma_reconciliation_method``. For backward compatibility:
+``gamma_reconciliation_method``. Historical configs should be updated to use the
+enum directly:
 
 .. code-block:: python
 
-   # Old style (deprecated)
-   config.gamma_reconciliation_enabled = True   # Now uses ADAPTIVE_WEIGHTED (opt-in)
-   config.gamma_reconciliation_enabled = False  # Now uses DISABLED
-
-   # New style (recommended)
+   # Maintained style
    config.gamma_reconciliation_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
-
-The ``gamma_reconciliation_enabled`` property still works (returns True if method != DISABLED)
-for historical config compatibility.
+   config.gamma_reconciliation_method = GammaReconciliationMethod.DISABLED
 
 Recommendations
 ---------------

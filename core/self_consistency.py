@@ -227,14 +227,6 @@ class SelfConsistencyConfig:
             canonicalize_self_consistency_mode(self.convergence_mode),
         )
 
-    @property
-    def gamma_reconciliation_enabled(self) -> bool:
-        """Backward compatibility property for gamma_reconciliation_enabled.
-
-        Returns True if reconciliation method is not DISABLED.
-        """
-        return self.gamma_reconciliation_method != GammaReconciliationMethod.DISABLED
-
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":
         """Return standard configuration for typical relativistic simulations.
@@ -308,12 +300,6 @@ class SelfConsistencyConfig:
             max_iterations=20,
             verbosity=0,
         )
-
-    @classmethod
-    def full_iteration(cls, tolerance: float = 1e-6) -> "SelfConsistencyConfig":
-        """Compatibility alias for :meth:`variable_geometry`."""
-
-        return cls.variable_geometry(tolerance=tolerance)
 
 def self_consistent_step(
     step_function: StepFunction,

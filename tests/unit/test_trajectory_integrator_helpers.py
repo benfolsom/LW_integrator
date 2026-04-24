@@ -117,7 +117,6 @@ def test_self_consistency_factory_methods_use_canonical_mode_names():
     assert SelfConsistencyConfig.standard().convergence_mode == "fixed_geometry"
     assert SelfConsistencyConfig.aggressive().convergence_mode == "variable_geometry"
     assert SelfConsistencyConfig.variable_geometry().convergence_mode == "variable_geometry"
-    assert SelfConsistencyConfig.full_iteration().convergence_mode == "variable_geometry"
 
 
 def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
