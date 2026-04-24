@@ -3832,18 +3832,9 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
             self.steps_var.set(str(data.get("steps", 2000)))
             self.objective_var.set(data.get("objective", "max_energy_gain"))
 
-            # Load trajectory options (with backward compatibility)
-            self.save_top_n_traj_var.set(
-                data.get(
-                    "save_top_n_trajectories", data.get("save_trajectories", False)
-                )
-            )
-            self.save_all_traj_var.set(
-                data.get(
-                    "save_all_trajectories",
-                    data.get("save_all_evaluation_trajectories", False),
-                )
-            )
+            # Load trajectory options
+            self.save_top_n_traj_var.set(data.get("save_top_n_trajectories", False))
+            self.save_all_traj_var.set(data.get("save_all_trajectories", False))
             self.save_failed_traj_var.set(data.get("save_failed_trajectories", False))
             self.trajectory_stride_var.set(str(data.get("trajectory_stride", 10)))
 

@@ -21,7 +21,7 @@
     "target_distance_mm": 120.0,
     "pcount": 1,
     "objective": "max_percent_energy_gain",
-    "save_trajectories": false,
+    "save_top_n_trajectories": false,
     "trajectory_stride": 10,
     "optimization_method": "genetic_algorithm",
     "optimization_maxiter": 10,

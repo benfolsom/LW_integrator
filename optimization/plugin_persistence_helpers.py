@@ -55,22 +55,11 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
 
 
 def metrics_export_settings_from_data(data: Dict[str, Any]) -> tuple[str, str]:
-    """Resolve metrics export settings, including legacy keys."""
-    if "metrics_export_format" in data:
-        export_format = data.get("metrics_export_format", "both")
-    else:
-        export_full = data.get(
-            "export_full_metrics_csv",
-            data.get("export_evaluation_csv", data.get("export_eval_csv", True)),
-        )
-        export_format = "both" if export_full else "none"
-
-    if "metrics_export_scope" in data:
-        export_scope = data.get("metrics_export_scope", "all")
-    else:
-        export_scope = "top_n" if data.get("export_top_n_metrics_csv", False) else "all"
-
-    return export_format, export_scope
+    """Resolve persisted metrics export settings."""
+    return (
+        data.get("metrics_export_format", "both"),
+        data.get("metrics_export_scope", "all"),
+    )
 
 
 def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:

@@ -475,11 +475,11 @@ class TestPluginConfigHelpers:
 class TestPluginPersistenceHelpers:
     """Test extracted optimization plugin persistence helpers."""
 
-    def test_metrics_export_settings_handles_legacy_keys(self):
+    def test_metrics_export_settings_uses_maintained_keys(self):
         export_format, export_scope = metrics_export_settings_from_data(
             {
-                "export_evaluation_csv": False,
-                "export_top_n_metrics_csv": True,
+                "metrics_export_format": "none",
+                "metrics_export_scope": "top_n",
             }
         )
 
