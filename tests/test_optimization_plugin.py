@@ -12,6 +12,7 @@ from core.types import SimulationType
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
+import optimization.run_mixins as run_mixins_module
 from optimization.sweep_helpers import calculate_energy_from_pz
 
 
@@ -112,6 +113,54 @@ class TestOptimizationPluginIntegration:
             OptimizationPlugin._cleanup_orphaned_temp_dirs
             is OptimizationRunMixin._cleanup_orphaned_temp_dirs
         )
+
+    def test_run_single_integration_uses_current_simulation_options_fields(
+        self, mock_config, tmp_path, monkeypatch
+    ):
+        captured = {}
+
+        class _AbortRun(RuntimeError):
+            pass
+
+        class _FakeSimulationOptions:
+            def __init__(self, **kwargs):
+                forbidden = {
+                    "legacy_enabled",
+                    "overlay_display",
+                    "overlay_save",
+                    "difference_display",
+                    "difference_save",
+                    "metrics_save",
+                }
+                assert forbidden.isdisjoint(kwargs)
+                captured["kwargs"] = kwargs
+
+        def fake_run_testbed(*_args, **_kwargs):
+            raise _AbortRun()
+
+        monkeypatch.setattr(run_mixins_module, "SimulationOptions", _FakeSimulationOptions)
+        monkeypatch.setattr(run_mixins_module, "run_testbed", fake_run_testbed)
+
+        harness = SimpleNamespace(
+            config=mock_config,
+            sweep_output_dir=tmp_path,
+            _log_result=lambda _message: None,
+        )
+
+        with pytest.raises(_AbortRun):
+            OptimizationRunMixin._run_single_integration(
+                harness,
+                aperture=0.25,
+                energy_gev=5.0,
+                start_z=1.0,
+                transv_offset=0.0,
+                timestep=1e-6,
+                steps=10,
+                run_num=3,
+            )
+
+        assert captured["kwargs"]["output_dir"].parent == tmp_path
+        assert captured["kwargs"]["seed"] == mock_config.seed + 3
 
     def test_apply_macroparticle_ui_state_updates_controls(self):
         harness = _build_sweep_harness(

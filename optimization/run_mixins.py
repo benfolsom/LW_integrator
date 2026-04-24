@@ -517,7 +517,6 @@ class OptimizationRunMixin:
 
                     # Run integration with timeout if enabled
                     result = None
-                    timed_out = False
 
                     if self.config.per_run_timeout > 0:
                         result_container = [None]
@@ -555,13 +554,12 @@ class OptimizationRunMixin:
                         thread.join(timeout=self.config.per_run_timeout)
 
                         if thread.is_alive():
-                            timed_out = True
                             cancel_flag[0] = True
                             self._log_result(
                                 f"[WARNING] Evaluation timed out for params {x} after {self.config.per_run_timeout}s"
                             )
                             self._log_result(
-                                f"[WARNING] Signaling integration to cancel..."
+                                "[WARNING] Signaling integration to cancel..."
                             )
                             # Give it a brief moment to respond
                             thread.join(timeout=2.0)
@@ -616,7 +614,7 @@ class OptimizationRunMixin:
                             f"[INFO] Evaluation {eval_num} halted early: {result.get('halt_reason', 'unknown')}"
                         )
                         self._log_result(
-                            f"[INFO] Returning inf (rejecting halted evaluation)"
+                            "[INFO] Returning inf (rejecting halted evaluation)"
                         )
                         # Store halted evaluation
                         eval_record = {
@@ -642,11 +640,11 @@ class OptimizationRunMixin:
                             f"[WARNING] Available metrics: {list(metrics.keys())}"
                         )
                         if len(metrics) > 0:
-                            self._log_result(f"[WARNING] Metric values:")
+                            self._log_result("[WARNING] Metric values:")
                             for k, v in metrics.items():
                                 self._log_result(f"  {k}: {v}")
                         self._log_result(
-                            f"[WARNING] Returning inf (rejecting this evaluation)"
+                            "[WARNING] Returning inf (rejecting this evaluation)"
                         )
                         # Store failed evaluation
                         eval_record = {
@@ -708,7 +706,7 @@ class OptimizationRunMixin:
                         f"[ERROR] Evaluation {eval_num} failed for params {x}"
                     )
                     self._log_result(f"[ERROR] Exception: {type(e).__name__}: {e}")
-                    self._log_result(f"[ERROR] Traceback:")
+                    self._log_result("[ERROR] Traceback:")
                     for line in traceback.format_exc().splitlines():
                         self._log_result(f"  {line}")
 
@@ -1031,7 +1029,7 @@ class OptimizationRunMixin:
                         f"    Target distance: {self.config.target_distance_mm:.1f} mm (wall_z + target)"
                     )
                     self._log_result(
-                        f"    All particles will travel to consistent z regardless of energy"
+                        "    All particles will travel to consistent z regardless of energy"
                     )
                 elif self.config.auto_steps:
                     self._log_result(
@@ -1162,7 +1160,7 @@ class OptimizationRunMixin:
                         f"    rider_transv_dist: {rider_transv_dist:.4e} mm"
                     )
                     if self.config.macroparticle_enabled:
-                        self._log_result(f"    macroparticle_enabled: True")
+                        self._log_result("    macroparticle_enabled: True")
                         self._log_result(
                             f"    macroparticle_charge_multiplier: {macroparticle_charge_multiplier:.4f}"
                         )
@@ -1405,7 +1403,7 @@ class OptimizationRunMixin:
                                     f"with large charge multiplier ({macroparticle_charge_multiplier:.0f})"
                                 )
                                 self._log_result(
-                                    f"    This may cause numerical instability or slow convergence"
+                                    "    This may cause numerical instability or slow convergence"
                                 )
 
                             def run_with_exception_handling():
@@ -1457,16 +1455,16 @@ class OptimizationRunMixin:
                                     f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
                                 )
                                 self._log_result(
-                                    f"    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
+                                    "    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
                                 )
                                 # Give it a brief moment to respond to cancellation
                                 integration_thread.join(timeout=2.0)
                                 if integration_thread.is_alive():
                                     self._log_result(
-                                        f"    Warning: Integration thread still running after cancel signal"
+                                        "    Warning: Integration thread still running after cancel signal"
                                     )
                                     self._log_result(
-                                        f"    Thread will be abandoned (daemon thread will terminate with main thread)"
+                                        "    Thread will be abandoned (daemon thread will terminate with main thread)"
                                     )
 
                             if error_container[0] is not None:
@@ -1719,7 +1717,7 @@ class OptimizationRunMixin:
                             self._log_result(f"    Energy: ΔE={delta_e:.6f}MeV")
                             if actual_distance < 0.1:
                                 self._log_result(
-                                    f"  [WARNING] Particle barely moved! Check timestep calculation."
+                                    "  [WARNING] Particle barely moved! Check timestep calculation."
                                 )
 
                         # Add trajectory if requested (check if any trajectory saving is enabled)
@@ -1752,7 +1750,7 @@ class OptimizationRunMixin:
                         self._log_result(f"[WARNING] Run {run_num} failed: {e}")
                         self._log_result(f"    Error details: {error_details}")
                         self._log_result(
-                            f"    Skipping and continuing with next run..."
+                            "    Skipping and continuing with next run..."
                         )
 
                         # Record failed run
@@ -1779,7 +1777,7 @@ class OptimizationRunMixin:
                         self._log_result(f"[ERROR] Run {run_num} failed: {e}")
                         self._log_result(f"    Error details: {error_details}")
                         self._log_result(
-                            f"    Stopping sweep (skip_failed_runs is disabled)"
+                            "    Stopping sweep (skip_failed_runs is disabled)"
                         )
                         raise
 
@@ -1787,7 +1785,7 @@ class OptimizationRunMixin:
                 if run_timed_out:
                     if self.config.skip_failed_runs:
                         self._log_result(
-                            f"    Skipping and continuing with next run..."
+                            "    Skipping and continuing with next run..."
                         )
                         failed_runs.append(
                             {
@@ -1806,7 +1804,7 @@ class OptimizationRunMixin:
                         )
                     else:
                         self._log_result(
-                            f"    Stopping sweep (skip_failed_runs is disabled)"
+                            "    Stopping sweep (skip_failed_runs is disabled)"
                         )
                         break
 
@@ -2015,7 +2013,6 @@ class OptimizationRunMixin:
             rider_params=rider_params,
             driver_params=driver_params,  # Use provided driver params (None for CONDUCTING_WALL)
             core_params=core_params,
-            legacy_enabled=False,
             trajectory_save=False,  # Don't save individual trajectory files to disk
             trajectory_interval=self.config.trajectory_stride,
             energy_display=False,  # Don't generate or display plots during sweep
@@ -2036,11 +2033,6 @@ class OptimizationRunMixin:
             macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
             image_subcharge_count=self.config.image_subcharge_count,
             use_image_weighting=self.config.use_image_weighting,
-            overlay_display=False,
-            overlay_save=False,
-            difference_display=False,
-            difference_save=False,
-            metrics_save=False,
             output_dir=run_output_dir,
             # Use stability options from sweep config
             self_consistency_enabled=self.config.self_consistency_enabled,
