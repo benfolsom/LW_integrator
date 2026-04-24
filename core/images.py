@@ -21,7 +21,7 @@ def _random_sign() -> int:
     return 1 if random.random() < 0.5 else -1
 
 
-def zeros_like_state(vector: ParticleState) -> ParticleState:
+def _zeros_like_state(vector: ParticleState) -> ParticleState:
     """Return an empty particle state dictionary with the same layout."""
 
     result: ParticleState = {
@@ -355,7 +355,7 @@ def generate_switching_image(
     to emulate an opening absorber.
     """
 
-    result = zeros_like_state(vector)
+    result = _zeros_like_state(vector)
     result["q"] = -np.copy(vector["q"])
 
     for i in range(len(vector["x"])):
@@ -388,5 +388,4 @@ def generate_switching_image(
 __all__ = [
     "generate_conducting_image",
     "generate_switching_image",
-    "zeros_like_state",
 ]
