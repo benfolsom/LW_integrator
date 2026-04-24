@@ -44,10 +44,9 @@ from core.particle_status import (
     get_particle_failure_summary,
 )
 from core.types import SimulationType
-from examples.validation.core_vs_legacy_benchmark import (  # type: ignore[import]
-    compute_delta_energy_components,
-)
 from input_output.bunch_initialization import create_bunch_from_params
+
+from .trajectory_metrics import compute_delta_energy_components, normalize_state
 
 # ---------------------------------------------------------------------------
 # Constants mirroring the notebook defaults
@@ -1215,9 +1214,6 @@ def run_testbed(
     import copy
 
     from core.trajectory_integrator import retarded_integrator
-    from examples.validation.core_vs_legacy_benchmark import (
-        _normalize_state,
-    )
 
     self_consistency_config = build_self_consistency_config(options)
     energy_monitor_config = build_energy_monitor_config(options)
@@ -1247,9 +1243,9 @@ def run_testbed(
                 if driver_state is not None:
                     driver_state["q"] = driver_state["q"] * charge_mult
 
-        rider_initial = _normalize_state(copy.deepcopy(rider_state))
+        rider_initial = normalize_state(copy.deepcopy(rider_state))
         driver_initial = (
-            _normalize_state(copy.deepcopy(driver_state))
+            normalize_state(copy.deepcopy(driver_state))
             if driver_state is not None
             else None
         )
@@ -1298,8 +1294,8 @@ def run_testbed(
         # Build a normalized payload shared by the GUI and CLI surfaces.
         payload = {
             "core": {
-                "rider": [_normalize_state(s) for s in core_traj_rider],
-                "driver": [_normalize_state(s) for s in core_traj_driver],
+                "rider": [normalize_state(s) for s in core_traj_rider],
+                "driver": [normalize_state(s) for s in core_traj_driver],
             },
             "initial_states": {
                 "rider": rider_initial,

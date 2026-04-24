@@ -1,6 +1,6 @@
 # Integrator Testbed Tests
 
-This directory contains tests for the integrator testbed notebook functionality.
+This directory contains tests for the maintained testbed helper functionality.
 
 ## Running the Tests
 
@@ -45,15 +45,15 @@ The test suite covers:
    - JSON serialization/deserialization
    - All required fields present
 
-5. **Legacy Overlay Plots** (`TestLegacyOverlayPlots`)
-   - Overlay plot requirements
-   - Legacy comparison functionality
+5. **State Normalization** (`TestNormalizeState`)
+   - Scalar-to-array normalization for trajectory payloads
+   - Metadata preservation for integrator halt markers
 
 ## Key Assertions
 
 ### Energy Plotting
 - Plots show **ΔE (GeV) vs Δz (mm)**, not Δγ/γ vs time
-- Energy changes are computed using `compute_delta_energy_series`
+- Energy changes are computed using `lw_integrator.trajectory_metrics.compute_delta_energy_series`
 - Initial position is subtracted to show Δz
 
 ### Filename Convention
@@ -63,7 +63,7 @@ The test suite covers:
 
 ## Integration with Notebook
 
-These tests validate the core logic used in the `integrator_testbed.ipynb` notebook,
+These tests validate the core logic used by the maintained testbed helpers,
 ensuring that:
 - Energy calculations are correct
 - Filenames are unique and descriptive

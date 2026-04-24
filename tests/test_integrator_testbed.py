@@ -1,25 +1,14 @@
-"""
-Tests for the integrator testbed notebook functionality.
-
-This test suite validates the key functionality of the integrator testbed
-widget without requiring the full Jupyter environment.
-"""
+"""Tests for maintained testbed trajectory helper functionality."""
 
 import json
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "examples" / "validation"))
-
 from core.types import ParticleState  # noqa: E402
-from examples.validation.core_vs_legacy_benchmark import (  # noqa: E402
+from lw_integrator.trajectory_metrics import (  # noqa: E402
     compute_delta_energy_series,
+    normalize_state,
 )
 
 
@@ -98,6 +87,21 @@ class TestComputeDeltaEnergySeries:
         assert delta_e[1] < 0.0  # Energy loss
         assert delta_e[2] < delta_e[1]  # Continuing to lose energy
         assert z_series[1] > z_series[0]
+
+
+class TestNormalizeState:
+    def test_normalize_state_wraps_scalars_and_preserves_metadata(self):
+        normalized = normalize_state(
+            {
+                "gamma": 10.0,
+                "z": [1.0, 2.0],
+                "_halt_reason": "jump",
+            }
+        )
+
+        np.testing.assert_array_equal(normalized["gamma"], np.array([10.0]))
+        np.testing.assert_array_equal(normalized["z"], np.array([1.0, 2.0]))
+        assert normalized["_halt_reason"] == "jump"
 
 
 class TestFilenameGeneration:
