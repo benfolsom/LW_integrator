@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import lw_integrator.sweep_heatmap as sweep_heatmap
+import numpy as np
 import pytest
-from lw_integrator import plot_latest_live
+from lw_integrator import logcache_plotter, plot_latest_live
 from optimization.results_mixins import OptimizationResultsMixin
 
 
@@ -19,6 +20,11 @@ class _ResultsHarness(OptimizationResultsMixin):
 
     def _plot_single_trajectory(self, *_args, **_kwargs) -> None:
         raise AssertionError("trajectory plot should not be called in this test")
+
+
+def _write_log(path: Path, lines: list[str]) -> Path:
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def test_generate_sweep_heatmap_main_accepts_argv(monkeypatch):
@@ -86,6 +92,103 @@ def test_plot_latest_live_forwards_to_live_plotter(tmp_path: Path, monkeypatch):
         "--output",
         "live.png",
     ]
+
+
+def test_parse_sweep_log_uses_only_most_recent_sweep(tmp_path: Path):
+    log_path = _write_log(
+        tmp_path / "multi_sweep.log",
+        [
+            "[OPTIMIZATION] Starting BLIND SWEEP (Grid Search): 4 total runs",
+            "[START] Run 1/4: a=0.001mm, E=0.010GeV",
+            "[METRICS] max_percent_energy_gain: 1.5%",
+            "[START] Run 2/4: a=0.002mm, E=0.020GeV",
+            "[METRICS] max_percent_energy_gain: 2.5%",
+            "",
+            "[OPTIMIZATION] Starting BLIND SWEEP (Grid Search): 4 total runs",
+            "[START] Run 1/4: a=0.003mm, E=0.030GeV",
+            "[METRICS] max_percent_energy_gain: 3.5%",
+            "[START] Run 2/4: a=0.004mm, E=0.040GeV",
+            "[METRICS] max_percent_energy_gain: 4.5%",
+            "",
+            "[OPTIMIZATION] Starting BLIND SWEEP (Grid Search): 4 total runs",
+            "[START] Run 1/4: a=0.005mm, E=0.050GeV",
+            "[METRICS] max_percent_energy_gain: 5.5%",
+            "[START] Run 2/4: a=0.006mm, E=0.060GeV",
+            "[METRICS] max_percent_energy_gain: 6.5%",
+            "[START] Run 3/4: a=0.007mm, E=0.070GeV",
+            "[METRICS] max_percent_energy_gain: -1.5%",
+            "[START] Run 4/4: a=0.008mm, E=0.080GeV",
+            "[METRICS] max_percent_energy_gain: 0.0%",
+        ],
+    )
+
+    (
+        energies_pos,
+        x_values_pos,
+        gains_pos,
+        energies_neg,
+        x_values_neg,
+        gains_neg,
+        stats,
+        param_metadata,
+    ) = logcache_plotter.parse_sweep_log(log_path, verbose=False)
+
+    np.testing.assert_allclose(energies_pos, [0.05, 0.06])
+    np.testing.assert_allclose(x_values_pos, [0.005, 0.006])
+    np.testing.assert_allclose(gains_pos, [5.5, 6.5])
+    np.testing.assert_allclose(energies_neg, [0.07, 0.08])
+    np.testing.assert_allclose(x_values_neg, [0.007, 0.008])
+    np.testing.assert_allclose(gains_neg, [-1.5, 0.0])
+    assert stats == {
+        "total": 4,
+        "completed": 4,
+        "positive_gains": 2,
+        "negative_gains": 2,
+        "last_run": 4,
+        "sweep_count": 3,
+    }
+    assert param_metadata["sweep_type"] == "CONDUCTING_WALL"
+    assert param_metadata["x_param_name"] == "aperture"
+
+
+def test_parse_sweep_log_separates_positive_and_non_positive_gains(tmp_path: Path):
+    log_path = _write_log(
+        tmp_path / "gain_filter.log",
+        [
+            "[OPTIMIZATION] Starting BLIND SWEEP (Grid Search): 5 total runs",
+            "[START] Run 1/5: a=0.001mm, E=0.010GeV",
+            "[METRICS] max_percent_energy_gain: 1.5%",
+            "[START] Run 2/5: a=0.002mm, E=0.020GeV",
+            "[METRICS] max_percent_energy_gain: -2.5%",
+            "[START] Run 3/5: a=0.003mm, E=0.030GeV",
+            "[METRICS] max_percent_energy_gain: 0.0%",
+            "[START] Run 4/5: a=0.004mm, E=0.040GeV",
+            "[METRICS] max_percent_energy_gain: 3.5%",
+            "[START] Run 5/5: a=0.005mm, E=0.050GeV",
+            "[METRICS] max_percent_energy_gain: -0.1%",
+        ],
+    )
+
+    (
+        energies_pos,
+        x_values_pos,
+        gains_pos,
+        energies_neg,
+        x_values_neg,
+        gains_neg,
+        stats,
+        _param_metadata,
+    ) = logcache_plotter.parse_sweep_log(log_path, verbose=False)
+
+    np.testing.assert_allclose(energies_pos, [0.01, 0.04])
+    np.testing.assert_allclose(x_values_pos, [0.001, 0.004])
+    np.testing.assert_allclose(gains_pos, [1.5, 3.5])
+    np.testing.assert_allclose(energies_neg, [0.02, 0.03, 0.05])
+    np.testing.assert_allclose(x_values_neg, [0.002, 0.003, 0.005])
+    np.testing.assert_allclose(gains_neg, [-2.5, 0.0, -0.1])
+    assert stats["completed"] == 5
+    assert stats["positive_gains"] == 2
+    assert stats["negative_gains"] == 3
 
 
 def test_generate_summary_plots_calls_heatmap_tool(tmp_path: Path, monkeypatch):

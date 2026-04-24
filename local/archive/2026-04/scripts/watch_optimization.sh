@@ -1,9 +1,28 @@
 #!/bin/bash
-# Simple wrapper for optimization monitoring
+# Compatibility wrapper for the packaged optimization monitor CLI.
 # Usage: ./scripts/watch_optimization.sh [OPTIONS]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MONITOR_SCRIPT="$SCRIPT_DIR/monitor_optimization.py"
+
+find_repo_root() {
+    local dir="$SCRIPT_DIR"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/pyproject.toml" ] && [ -d "$dir/lw_integrator" ]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
+REPO_ROOT="$(find_repo_root)" || {
+    echo "Could not locate repository root from $SCRIPT_DIR" >&2
+    exit 1
+}
+LOGCACHE_DIR="$REPO_ROOT/logcache"
+
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 # Default options
 INTERVAL=60
@@ -71,16 +90,34 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Build command
-CMD="python3 $MONITOR_SCRIPT --interval $INTERVAL --top $TOP $LATEST_ONLY $SPECIFIC_RUN"
+CMD=(
+    python3
+    -m
+    lw_integrator.optimization_monitor
+    --logcache
+    "$LOGCACHE_DIR"
+    --interval
+    "$INTERVAL"
+    --top
+    "$TOP"
+)
+
+if [ -n "$LATEST_ONLY" ]; then
+    CMD+=("$LATEST_ONLY")
+fi
+
+if [ -n "$SPECIFIC_RUN" ]; then
+    CMD+=(--run "${SPECIFIC_RUN#--run }")
+fi
 
 if [ "$MODE" = "compact" ]; then
-    CMD="$CMD --compact"
+    CMD+=(--compact)
 elif [ "$MODE" = "once" ]; then
-    CMD="$CMD --once"
+    CMD+=(--once)
 fi
 
 # Run the monitor
 echo "🔬 Starting Optimization Monitor..."
 echo "Press Ctrl+C to stop"
 echo ""
-exec $CMD
+exec "${CMD[@]}"

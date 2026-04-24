@@ -129,10 +129,11 @@ LW_integrator/
 ├── input_output/         # Particle bunch initialisation utilities
 ├── legacy/               # Archived original solver and notebooks
 │                         # (deprecated — kept for regression comparisons)
+├── local/                # Ignored local archive for scratch material and
+│                         # retired helper scripts
 ├── lw_integrator/        # CLI, GUI, sweep runner, and testbed runner
 ├── optimization/         # Sweep/optimization engine, metrics, result I/O
 ├── results/              # Sweep and optimization output (git-ignored)
-├── scripts/              # Monitoring and helper scripts
 ├── tests/                # Pytest suite covering physics and helper modules
 ├── .github/workflows/    # Continuous-integration pipelines (docs publishing)
 ├── core/_version.py      # Single source of truth for the project version
