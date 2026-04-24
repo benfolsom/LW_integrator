@@ -83,7 +83,10 @@ from .distances import (
     compute_instantaneous_distance,
     compute_retarded_distance,
 )
-from .self_consistency import SelfConsistencyConfig
+from .self_consistency import (
+    SelfConsistencyConfig,
+    canonicalize_self_consistency_mode,
+)
 from .types import (
     ChronoMatchingMode,
     GammaReconciliationMethod,
@@ -176,7 +179,7 @@ def _extract_self_consistency_params(
         if self_consistency is not None
         else "fixed_geometry"
     )
-    convergence_mode = _canonicalize_convergence_mode(convergence_mode)
+    convergence_mode = canonicalize_self_consistency_mode(convergence_mode)
     target_ms_tolerance = (
         self_consistency.target_ms_tolerance if self_consistency is not None else 1e-6
     )
@@ -200,16 +203,6 @@ def _extract_self_consistency_params(
         max_iterations,
         verbosity,
     )
-
-
-def _canonicalize_convergence_mode(convergence_mode: str) -> str:
-    aliases = {
-        "mass_shell_only": "fixed_geometry",
-        "full_iteration": "variable_geometry",
-    }
-    return aliases.get(convergence_mode, convergence_mode)
-
-
 def _initialize_result_state(current_state: ParticleState) -> ParticleState:
     """Create a copy of the current particle state for the next time step.
 

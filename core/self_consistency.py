@@ -46,6 +46,17 @@ StepFunction = Callable[
 ]
 
 
+def canonicalize_self_consistency_mode(mode: object) -> str:
+    """Return the maintained self-consistency mode name."""
+
+    mode_str = str(mode)
+    aliases = {
+        "mass_shell_only": "fixed_geometry",
+        "full_iteration": "variable_geometry",
+    }
+    return aliases.get(mode_str, mode_str)
+
+
 @dataclass
 class SelfConsistencyConfig:
     """Configuration for self-consistency iterations.
@@ -208,18 +219,13 @@ class SelfConsistencyConfig:
     max_iterations: int = 10  # Maximum SC iterations per particle per step
     verbosity: int = 0
 
-    # Mode name aliases for backwards compatibility
-    _MODE_ALIASES = {
-        "mass_shell_only": "fixed_geometry",
-        "full_iteration": "variable_geometry",
-    }
-
     def __post_init__(self):
-        """Normalize mode name using aliases."""
-        if self.convergence_mode in self._MODE_ALIASES:
-            object.__setattr__(
-                self, "convergence_mode", self._MODE_ALIASES[self.convergence_mode]
-            )
+        """Normalize mode name using historical aliases."""
+        object.__setattr__(
+            self,
+            "convergence_mode",
+            canonicalize_self_consistency_mode(self.convergence_mode),
+        )
 
     @property
     def gamma_reconciliation_enabled(self) -> bool:
@@ -309,10 +315,6 @@ class SelfConsistencyConfig:
 
         return cls.variable_geometry(tolerance=tolerance)
 
-
-__all__ = ["SelfConsistencyConfig", "self_consistent_step"]
-
-
 def self_consistent_step(
     step_function: StepFunction,
     h_step: float,
@@ -394,4 +396,8 @@ def self_consistent_step(
     return result
 
 
-__all__ = ["SelfConsistencyConfig", "self_consistent_step"]
+__all__ = [
+    "SelfConsistencyConfig",
+    "canonicalize_self_consistency_mode",
+    "self_consistent_step",
+]

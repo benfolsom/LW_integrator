@@ -43,6 +43,7 @@ from core.particle_status import (
     get_alive_particle_values,
     get_particle_failure_summary,
 )
+from core.self_consistency import canonicalize_self_consistency_mode
 from core.types import SimulationType
 from input_output.bunch_initialization import create_bunch_from_params
 
@@ -167,16 +168,6 @@ plt.rcParams.update(
     }
 )
 
-
-def _canonicalize_self_consistency_mode(mode: object) -> str:
-    """Return the maintained self-consistency mode name."""
-
-    mode_str = str(mode)
-    aliases = {
-        "mass_shell_only": "fixed_geometry",
-        "full_iteration": "variable_geometry",
-    }
-    return aliases.get(mode_str, mode_str)
 
 # ---------------------------------------------------------------------------
 # Helper classes
@@ -534,7 +525,7 @@ class SimulationOptions:
             ),
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
-            self_consistency_convergence_mode=_canonicalize_self_consistency_mode(
+            self_consistency_convergence_mode=canonicalize_self_consistency_mode(
                 payload.get("self_consistency_convergence_mode", "fixed_geometry")
             ),
             self_consistency_target_ms_tolerance=_float(
