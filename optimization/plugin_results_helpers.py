@@ -11,64 +11,8 @@ UNKNOWN_RESULTS_FORMAT_MESSAGE = (
     "Cannot parse this file format.\n\n"
     "Expected either:\n"
     "- sweep_results.json with 'results' array\n"
-    "- optimization_results.json with 'all_evaluations'\n"
-    "- Legacy trajectory file with 'core'/'rider' structure"
+    "- optimization_results.json with 'all_evaluations'"
 )
-
-
-def convert_legacy_trajectory_data(
-    data: Dict[str, Any], m_particle_amu: float, amu_to_mev: float
-) -> Dict[str, Any]:
-    """Convert legacy trajectory JSON data into the plugin's result shape."""
-    rider_data = data.get("core", {}).get("rider", {})
-
-    positions = rider_data.get("positions_mm", {})
-    x = positions.get("x", [])
-    y = positions.get("y", [])
-    z_pos = positions.get("z", [])
-    r = [np.sqrt(xi**2 + yi**2) for xi, yi in zip(x, y)] if x and y else []
-
-    momenta = rider_data.get("conjugate_momenta", {})
-    pz = momenta.get("Pz", [])
-    px = momenta.get("Px", [])
-    py = momenta.get("Py", [])
-    pr = [np.sqrt(pxi**2 + pyi**2) for pxi, pyi in zip(px, py)] if px and py else []
-
-    t = rider_data.get("time_ns", [])
-    gamma_hist = rider_data.get("gamma_hist", [])
-    rest_energy_mev = m_particle_amu * amu_to_mev
-
-    if gamma_hist:
-        gamma_initial = gamma_hist[0]
-        gamma_final = gamma_hist[-1]
-        delta_e_mev = (gamma_final - gamma_initial) * rest_energy_mev
-    else:
-        gamma_initial = 1.0
-        gamma_final = 1.0
-        delta_e_mev = 0.0
-
-    return {
-        "run_number": 1,
-        "parameters": {
-            "aperture_radius": data.get("aperture_radius", 0),
-            "particle_energy_gev": (gamma_initial - 1) * rest_energy_mev / 1000.0,
-            "start_z": z_pos[0] if z_pos else 0,
-            "wall_z": data.get("wall_z", 0),
-            "simulation_type": data.get("simulation_type", "UNKNOWN"),
-        },
-        "metrics": {
-            "rider_delta_e_mev": delta_e_mev,
-            "rider_gamma_initial": gamma_initial,
-            "rider_gamma_final": gamma_final,
-        },
-        "trajectory": {
-            "z": z_pos,
-            "r": r,
-            "pz": pz,
-            "pr": pr,
-            "t": t,
-        },
-    }
 
 
 def summarize_result_row(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -190,7 +134,7 @@ def build_trajectory_plot_data(
 def parse_results_payload(
     data: Dict[str, Any], *, m_particle_amu: float, amu_to_mev: float
 ) -> Dict[str, Any]:
-    """Classify saved results payloads and normalize legacy trajectories."""
+    """Classify saved results payloads for maintained sweep and optimization files."""
     if "results" in data:
         results = data.get("results", [])
         return {
@@ -207,16 +151,6 @@ def parse_results_payload(
             "results_with_trajectories": [],
         }
 
-    if "core" in data and "rider" in data["core"]:
-        result = convert_legacy_trajectory_data(
-            data, m_particle_amu=m_particle_amu, amu_to_mev=amu_to_mev
-        )
-        return {
-            "kind": "legacy",
-            "results": [result],
-            "results_with_trajectories": [result],
-        }
-
     raise ValueError(UNKNOWN_RESULTS_FORMAT_MESSAGE)
 
 
@@ -224,7 +158,7 @@ def summarize_saved_results(parsed: Dict[str, Any]) -> Dict[str, Any]:
     """Summarize a parsed saved-results payload for CLI or GUI reporting."""
     kind = parsed["kind"]
 
-    if kind in {"sweep", "legacy"}:
+    if kind == "sweep":
         rows = [summarize_result_row(result) for result in parsed["results"]]
         best_row = max(rows, key=lambda row: row["delta_e"], default=None)
         summary = {
@@ -375,7 +309,6 @@ __all__ = [
     "build_summary_heatmap_grid",
     "build_trajectory_plot_data",
     "collect_summary_plot_data",
-    "convert_legacy_trajectory_data",
     "parse_results_payload",
     "summarize_optimization_evaluation_counts",
     "summarize_result_row",

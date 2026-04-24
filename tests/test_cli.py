@@ -494,6 +494,20 @@ class TestCliMain:
         assert result == 2
         assert "Cannot parse this file format." in capsys.readouterr().err
 
+    def test_main_returns_2_for_legacy_results_file_format(
+        self, tmp_path: Path, capsys
+    ):
+        results_path = tmp_path / "legacy_results.json"
+        results_path.write_text(
+            json.dumps({"core": {"rider": {"positions_mm": {}, "conjugate_momenta": {}}}}),
+            encoding="utf-8",
+        )
+
+        result = cli.main(["--results-file", str(results_path)])
+
+        assert result == 2
+        assert "Cannot parse this file format." in capsys.readouterr().err
+
     def test_main_dispatches_to_sweep_runner(self, monkeypatch):
         captured = {}
 

@@ -136,7 +136,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--results-file",
         type=Path,
         dest="results_file",
-        help="Path to a saved sweep/optimization/legacy results JSON file to summarize.",
+        help="Path to a saved sweep or optimization results JSON file to summarize.",
     )
     parser.add_argument(
         "--log-verbosity",
@@ -197,7 +197,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--bunch-mean",
         type=float,
         dest="bunch_mean",
-        help="Initial bunch separation parameter (legacy compatibility).",
+        help="Initial bunch separation parameter.",
     )
     parser.add_argument(
         "--cavity-spacing",
@@ -216,7 +216,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         choices=("averaged", "fast"),
         help=(
             "Retardation sampling strategy: 'averaged' blends R/c and 2R/c, "
-            "'fast' reproduces legacy single-sample behaviour."
+            "'fast' uses the single-sample matching path. Historical configs may still use 'legacy'."
         ),
     )
     parser.add_argument(

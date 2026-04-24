@@ -17,7 +17,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from core.types import SimulationType  # type: ignore[import]
 from optimization.config import OptimizationConfig
@@ -36,7 +36,6 @@ from optimization.plugin_results_helpers import (
     build_summary_heatmap_grid,
     build_trajectory_plot_data,
     collect_summary_plot_data,
-    convert_legacy_trajectory_data,
     parse_results_payload,
     summarize_result_row,
     UNKNOWN_RESULTS_FORMAT_MESSAGE,
@@ -4694,14 +4693,6 @@ class OptimizationPlugin(OptimizationRunMixin, OptimizationResultsMixin, ttk.Fra
                 "Error Loading File",
                 f"Failed to load file:\n{e}\n\n{traceback.format_exc()}",
             )
-
-    def _convert_legacy_trajectory(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert legacy trajectory format to sweep results format."""
-        return convert_legacy_trajectory_data(
-            data,
-            m_particle_amu=getattr(self.config, "m_particle", 0.00054857990907),
-            amu_to_mev=AMU_TO_MEV,
-        )
 
     def _show_results_summary(self, results, file_path):
         """Show metrics-first results summary (works without trajectory data).

@@ -32,7 +32,6 @@ from optimization.plugin_results_helpers import (
     build_summary_heatmap_grid,
     build_trajectory_plot_data,
     collect_summary_plot_data,
-    convert_legacy_trajectory_data,
     parse_results_payload,
     summarize_optimization_evaluation_counts,
     summarize_result_row,
@@ -567,28 +566,6 @@ class TestPluginPersistenceHelpers:
 class TestPluginResultsHelpers:
     """Test extracted optimization plugin result helpers."""
 
-    def test_convert_legacy_trajectory_data_handles_missing_gamma_history(self):
-        result = convert_legacy_trajectory_data(
-            {
-                "core": {
-                    "rider": {
-                        "positions_mm": {"x": [3.0], "y": [4.0], "z": [5.0]},
-                        "conjugate_momenta": {"Px": [6.0], "Py": [8.0], "Pz": [9.0]},
-                        "time_ns": [0.1],
-                    }
-                },
-                "aperture_radius": 0.2,
-                "wall_z": 10.0,
-            },
-            m_particle_amu=1.0,
-            amu_to_mev=931.494,
-        )
-
-        assert result["parameters"]["particle_energy_gev"] == pytest.approx(0.0)
-        assert result["trajectory"]["r"] == pytest.approx([5.0])
-        assert result["trajectory"]["pr"] == pytest.approx([10.0])
-        assert result["metrics"]["rider_delta_e_mev"] == pytest.approx(0.0)
-
     def test_summarize_result_row_normalizes_distance_and_metrics(self):
         row = summarize_result_row(
             {
@@ -694,17 +671,18 @@ class TestPluginResultsHelpers:
             m_particle_amu=1.0,
             amu_to_mev=931.494,
         )
-        legacy = parse_results_payload(
-            {"core": {"rider": {"positions_mm": {}, "conjugate_momenta": {}}}},
-            m_particle_amu=1.0,
-            amu_to_mev=931.494,
-        )
 
         assert sweep["kind"] == "sweep"
         assert len(sweep["results_with_trajectories"]) == 1
         assert optimization["kind"] == "optimization"
-        assert legacy["kind"] == "legacy"
-        assert len(legacy["results"]) == 1
+
+    def test_parse_results_payload_rejects_legacy_trajectory_payloads(self):
+        with pytest.raises(ValueError, match="Cannot parse this file format"):
+            parse_results_payload(
+                {"core": {"rider": {"positions_mm": {}, "conjugate_momenta": {}}}},
+                m_particle_amu=1.0,
+                amu_to_mev=931.494,
+            )
 
     def test_summarize_saved_results_handles_sweep_and_optimization_payloads(self):
         sweep_summary = summarize_saved_results(
