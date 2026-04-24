@@ -113,6 +113,13 @@ def test_extract_self_consistency_params_canonicalizes_alias_modes():
     assert convergence_mode == "variable_geometry"
 
 
+def test_self_consistency_factory_methods_use_canonical_mode_names():
+    assert SelfConsistencyConfig.standard().convergence_mode == "fixed_geometry"
+    assert SelfConsistencyConfig.aggressive().convergence_mode == "variable_geometry"
+    assert SelfConsistencyConfig.variable_geometry().convergence_mode == "variable_geometry"
+    assert SelfConsistencyConfig.full_iteration().convergence_mode == "variable_geometry"
+
+
 def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
     trajectory = [
         _make_single_particle_state(t=0.0, x=0.0),
