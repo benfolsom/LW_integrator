@@ -41,8 +41,6 @@ wired into all save points:
 * GUI mixin (``optimization/results_mixins.py``) — after
   ``_save_sweep_results``.
 * GUI plugin (``lw_integrator/optimization_plugin.py``) — after saving results.
-* Library API (``optimization/parameter_sweep.py``) — after
-  ``_save_sweep_results`` in ``run_parameter_sweep``.
 
 The threshold (``min_runs=100``) is currently hard-coded at each call site.
 Directory-name collisions are resolved by appending ``_1``, ``_2``, etc.

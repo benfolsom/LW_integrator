@@ -3,6 +3,7 @@
 Basic tests to verify optimization functionality works correctly.
 """
 
+import optimization
 from types import SimpleNamespace
 
 import numpy as np
@@ -565,6 +566,12 @@ class TestPluginPersistenceHelpers:
 
 class TestPluginResultsHelpers:
     """Test extracted optimization plugin result helpers."""
+
+
+def test_optimization_package_no_longer_exports_broken_run_parameter_sweep():
+    assert "run_parameter_sweep" not in optimization.__all__
+    with pytest.raises(AttributeError):
+        optimization.run_parameter_sweep
 
     def test_summarize_result_row_normalizes_distance_and_metrics(self):
         row = summarize_result_row(

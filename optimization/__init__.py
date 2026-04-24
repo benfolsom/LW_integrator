@@ -29,7 +29,6 @@ __all__ = [
     "plot_energy_heatmap",
     "plot_optimization_summary",
     "plot_parameter_slice",
-    "run_parameter_sweep",
 ]
 
 _EXPORTS = {
@@ -65,7 +64,6 @@ _EXPORTS = {
         "create_energy_aperture_grid",
     ),
     "load_sweep_results": ("optimization.parameter_sweep", "load_sweep_results"),
-    "run_parameter_sweep": ("optimization.parameter_sweep", "run_parameter_sweep"),
     "create_interactive_plot": (
         "optimization.visualization",
         "create_interactive_plot",
