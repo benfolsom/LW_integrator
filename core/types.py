@@ -131,7 +131,7 @@ class IntegratorConfig:
         Strategy for handling the initial lack of retarded history expressed as
         :class:`StartupMode`.
     bunch_mean:
-        Optional mean bunch separation used by legacy notebooks. Not every
+        Optional mean bunch separation used by archived notebooks. Not every
         integration path consumes it, but the value is retained for API
         compatibility.
     cavity_spacing:

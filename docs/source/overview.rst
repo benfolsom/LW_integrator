@@ -41,7 +41,7 @@ High-level anatomy
 
 ``examples/``
     Ready-to-run validation material.  The ``validation/`` folder contains both
-    Python scripts and Jupyter notebooks that reproduce the legacy vs. core
+    Python scripts and Jupyter notebooks that reproduce archived-reference vs. core
     comparisons.  The ``comparison/`` folder houses CLI benchmarks that report
     metrics (maximum Δγ, Δz, etc.) across seeded simulation suites.
 

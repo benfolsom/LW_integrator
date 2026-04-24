@@ -421,7 +421,7 @@ def _compute_full_retarded_distance(
         timestep_h=timestep_h,
     )
 
-    # Handle both legacy (array) and new (ChronoMatchResult) returns
+    # Handle both plain index-array returns and ChronoMatchResult payloads.
     if isinstance(retarded_result, ChronoMatchResult):
         retarded_indices = retarded_result.indices
         chrono_match_result = retarded_result

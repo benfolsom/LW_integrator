@@ -880,7 +880,7 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
         if abs(driver_params_for_twiss.get("transv_dist", 0.0)) < 1e-10:
             driver_params_for_twiss["transv_dist"] = 1e-4  # 0.1 micron default
 
-    # Use core initialization (not legacy)
+    # Always use the maintained core initialization path here.
     rider_state, driver_state, rider_rest_mev, driver_rest_mev = (
         prepare_particle_bunches(
             seed=options.seed,

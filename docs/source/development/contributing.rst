@@ -11,7 +11,7 @@ of the LW Integrator.  Please keep the following ground rules in mind:
   you add or change behaviour.  The documentation is built as part of CI and
   warnings fail the build.
 * **Prefer type hints and small helpers.**  The modern ``core/`` modules are a
-  transcription of the legacy code; helper functions exist to keep the flow
+  transcription of the archived reference code; helper functions exist to keep the flow
   readable without altering the math.
 * **Use the project tooling.**  Formatting, linting, and tests are orchestrated
   via ``pre-commit`` hooks and ``pytest``.  Run ``pre-commit install`` once and
