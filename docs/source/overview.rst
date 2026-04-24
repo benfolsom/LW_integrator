@@ -162,6 +162,9 @@ Key ideas to keep in mind
   publication-quality heatmaps from sweep results. Contour lines use a low
   alpha (0.18), labels are clamped to stay inside the axes after the final
   layout pass, and overlapping labels are culled automatically.
+* **Live sweep plotting.**  ``lw-plot-latest-live`` follows the newest sweep
+  log automatically, while ``lw-plot-from-logcache-live`` can watch a specific
+  log file or render a one-shot static plot from it.
 * **Saved trajectory plotting.**  ``lw-plot-trajectory`` turns saved single-run
   JSON or NPZ trajectory files into publication-ready PNG summaries, including
   core/legacy overlays for JSON payloads and compact momentum/gamma panels for

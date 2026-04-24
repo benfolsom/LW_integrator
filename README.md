@@ -401,6 +401,19 @@ Contour lines use reduced alpha (0.18) and labels are automatically clamped
 to stay within the axes. Overlapping labels are culled after the final
 layout pass so they never stack on top of each other.
 
+### Live sweep plotting
+
+The maintained live sweep plotting commands are:
+
+```bash
+lw-plot-latest-live
+lw-plot-from-logcache-live logcache/<sweep_log>.log
+```
+
+`lw-plot-latest-live` follows the most recent sweep log automatically.
+`lw-plot-from-logcache-live` can run in static mode by default or in live mode
+with `--live`.
+
 ### Saved trajectory plotting
 
 Saved single-run trajectory files from the GUI/testbed can be plotted from the
