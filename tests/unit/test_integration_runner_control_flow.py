@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import core.integration_runner as integration_runner
+from core.equations import GammaBlowupError
 from core.integration_runner import (
     AdaptiveTimestepConfig,
     EnergyJumpDetected,
@@ -306,6 +307,197 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
     assert step_2_calls == [1.0, 0.5, 0.5]
     assert trajectory[-1]["t"][0] == pytest.approx(2.0)
     assert trajectory[-1]["gamma"][0] == pytest.approx(10.5)
+
+
+def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        raise GammaBlowupError(
+            step_idx=int(step_idx or 0),
+            particle_idx=0,
+            gamma_value=1e9,
+            iteration=2,
+        )
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=3,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 2
+    assert len(driver) == 2
+    assert trajectory[-1]["_dead_particles"][0]
+    assert trajectory[-1]["_particle_failure_info"][0]["reason"] == "gamma_blowup_no_adaptive"
+    assert any("Gamma blowup" in message for message in messages)
+
+
+def test_retarded_integrator_gamma_blowup_at_min_timestep_marks_particle_dead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        raise GammaBlowupError(
+            step_idx=int(step_idx or 0),
+            particle_idx=0,
+            gamma_value=1e9,
+            iteration=3,
+        )
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=3,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            timestep_reduction_factor=2,
+            min_timestep_factor=0.9,
+            proximity_refinement_enabled=False,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 2
+    assert len(driver) == 2
+    assert trajectory[-1]["_dead_particles"][0]
+    assert trajectory[-1]["_particle_failure_info"][0]["reason"] == "gamma_blowup_min_timestep"
+    assert any("Minimum timestep reached after gamma blowup" in message for message in messages)
+
+
+def test_retarded_integrator_gamma_blowup_retries_with_reduced_timestep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h_calls: list[float] = []
+    messages: list[str] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        h_calls.append(h_step)
+        if len(h_calls) == 1:
+            raise GammaBlowupError(
+                step_idx=int(step_idx or 0),
+                particle_idx=0,
+                gamma_value=1e9,
+                iteration=4,
+                is_hard_blowup=True,
+            )
+
+        state = _clone_state(trajectory[-1])
+        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
+        state["gamma"] = np.array([1.0], dtype=float)
+        state["Pt"] = np.array([integration_runner.C_MMNS], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=2,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            timestep_reduction_factor=2,
+            min_timestep_factor=0.1,
+            proximity_refinement_enabled=False,
+            energy_jump_threshold=10.0,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 2
+    assert len(driver) == 2
+    assert h_calls[0] == pytest.approx(1.0)
+    assert h_calls[1:] == pytest.approx([0.25, 0.25, 0.25, 0.25])
+    assert trajectory[-1]["t"][0] == pytest.approx(1.0)
+    assert any("HARD gamma blowup detected" in message for message in messages)
 
 
 def test_retarded_integrator_marks_relative_cutoff_early_exit(

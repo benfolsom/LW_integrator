@@ -376,13 +376,9 @@ def retarded_integrator(
                 if use_numba_path:
                     if logger:
                         if callable(logger):
-                            logger(
-                                f"Using Numba-optimized integrator (expected ~20x speedup)"
-                            )
+                            logger("Using Numba-optimized integrator (expected ~20x speedup)")
                         else:
-                            logger.info(
-                                f"Using Numba-optimized integrator (expected ~20x speedup)"
-                            )
+                            logger.info("Using Numba-optimized integrator (expected ~20x speedup)")
 
                     return retarded_integrator_numba(
                         steps=steps,
@@ -978,9 +974,6 @@ def retarded_integrator(
                                     reduced_h_step = current_h_step
                                     cooldown_counter = 0
                                     stable_steps_counter = 0
-
-                                    # Propagate dead particles to base before breaking
-                                    propagate_deaths_to_base(trial_state)
 
                                     break  # Exit sub-step loop to retry with smaller timestep
 

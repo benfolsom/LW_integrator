@@ -27,6 +27,13 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Fix** — Aligned the Numba kernel with the NumPy implementation and added parity coverage for hard-cutoff, small-k, verbose diagnostics, interpolation branches, and nonzero-acceleration kernels
 - **Files modified** — `core/vectorized_interactions.py`, `tests/unit/test_vectorized_interactions_helpers.py`, `tests/unit/test_images_helpers.py`
 
+### Adaptive Gamma-Blowup Retry Fix (April 2026)
+
+- **Bug** — The adaptive gamma-blowup recovery path in `core.integration_runner` could raise `UnboundLocalError` before retrying with a smaller timestep
+- **Impact** — Instead of recovering or cleanly marking a particle dead, some gamma blowups aborted the integration loop from the control-flow layer itself
+- **Fix** — Removed the invalid `trial_state` propagation in the retry branch and added regression coverage for no-adaptive, minimum-timestep, and hard-blowup retry paths
+- **Files modified** — `core/integration_runner.py`, `tests/unit/test_integration_runner_control_flow.py`
+
 ## v0.6.0 — March 2026
 
 ### CLI / GUI Parity (March 2026)
