@@ -21,8 +21,8 @@ For the full history see [CHANGELOG.md](CHANGELOG.md).
 
 The LW Integrator is a covariant charged-particle tracking code that evaluates
 retarded Liénard–Wiechert potentials to obtain first-principles beam dynamics.
-The repository contains a modernised `core` implementation that mirrors the
-validated legacy solver, an updated Sphinx documentation set, and a collection
+The repository contains a modernised `core` implementation that preserves the
+validated reference physics, an updated Sphinx documentation set, and a collection
 of validation scripts and notebooks. The methodology is documented in the
 peer-reviewed article _Relativistic beam loading, recoil-reduction, and
 residual-wake acceleration with a covariant retarded-potential integrator_
@@ -50,7 +50,7 @@ residual-wake acceleration with a covariant retarded-potential integrator_
 
 - **Physics focus.** The code integrates particle trajectories using
   retarded-vector potentials and conjugate-momentum dynamics. The `core`
-  package is a faithful transcription of the proven legacy solver and is kept in
+  package is a faithful transcription of the validated reference implementation and is kept in
   numerical lockstep by an integration test suite.
 - **Self-consistency and energy conservation.** The integrator enforces the
   relativistic mass-shell constraint Pt² = P² + (mc)² through iterative

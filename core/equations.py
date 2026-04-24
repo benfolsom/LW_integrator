@@ -1,7 +1,7 @@
 """Retarded equations of motion for the Liénard–Wiechert solver.
 
-The implementation intentionally mirrors the behaviour of the validated legacy
-code so that historical regression data remains applicable.  The heavy lifting
+The implementation preserves the validated reference behavior so historical
+regression data remains applicable. The heavy lifting
 is performed inside :func:`retarded_equations_of_motion`, which calculates the
 covariant updates for momentum, position, and acceleration for each particle.
 
@@ -886,7 +886,7 @@ def _print_convergence_info(
                 x, y, z = particle_position
                 print(f"      Position: x={x:.6e} mm, y={y:.6e} mm, z={z:.6e} mm")
                 print(f"      Time: t={particle_time:.6e} ns")
-            # Only print gamma values, no "dual convergence" or gamma consistency messages
+            # Only print gamma values here, not the convergence-criteria summary.
             print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
             print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
             print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
@@ -914,7 +914,7 @@ def _print_convergence_info(
             x, y, z = particle_position
             print(f"      Position: x={x:.6e} mm, y={y:.6e} mm, z={z:.6e} mm")
             print(f"      Time: t={particle_time:.6e} ns")
-        # Only print gamma values, no "dual convergence" or gamma consistency messages
+        # Only print gamma values here, not the convergence-criteria summary.
         print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
         print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
         print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
@@ -933,7 +933,7 @@ def retarded_equations_of_motion(
     step_idx: Optional[int] = None,
     cancel_callback: Optional[Any] = None,
 ) -> ParticleState:
-    """Core equations of motion mirroring the validated legacy implementation.
+    """Core equations of motion preserving the validated reference behavior.
 
     Parameters
     ----------

@@ -152,7 +152,7 @@ simulation, and confirm that the regression tooling works on your machine.
 
       pytest tests/integration/test_core_integrators.py -k two_particle
 
-   The tests confirm that the core and legacy solvers agree on canonical
+   The tests confirm that the core solver and archived reference solver agree on canonical
    benchmarks to within floating-point tolerances.
 
 9. Run a macroparticle simulation (conducting-wall mode):
@@ -223,7 +223,7 @@ Next steps
 ----------
 
 * :doc:`validation` details the scripts and notebooks that compare the core and
-  legacy implementations across multiple seeds and integration lengths.
+  archived reference implementations across multiple seeds and integration lengths.
 * :doc:`notebooks` provides guidance on using the interactive assets efficiently
   (plot styling, DPI control, output directories, etc.).
 * :doc:`recent_changes` describes the macroparticle simulation feature and other

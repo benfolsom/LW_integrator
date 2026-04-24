@@ -38,7 +38,7 @@ core solver with its legacy counterpart.
       transient treatment exposed in :class:`~core.types.StartupMode`; the
       default cold start suppresses retarded forces until enough history is
       accumulated, while the approximation reconstructs a constant-velocity past
-      (mirroring the legacy solver).
+      (matching the archived reference treatment).
     * ``--steps`` / ``--time-step`` / ``--seed`` control integration length and
       reproducibility.
     * ``--save-json`` writes metrics to disk; ``--save-fig`` exports the overlay

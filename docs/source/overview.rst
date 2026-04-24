@@ -48,7 +48,7 @@ High-level anatomy
 ``tests/``
     Automated regression coverage.  ``tests/integration/test_core_integrators.py``
     verifies equivalence between the core solver, its self-consistent variant,
-    and the legacy implementation.  ``tests/unit`` hosts deterministic unit
+    and the archived reference implementation.  ``tests/unit`` hosts deterministic unit
     tests for helper functions such as ``generate_conducting_image``.
 
 ``input_output/``
@@ -95,7 +95,7 @@ Key ideas to keep in mind
 -------------------------
 
 * **Physics parity matters.**  The core code is intentionally a transcription of
-  the legacy solver, with critical corrections applied in December 2025 to fix
+  the validated reference solver, with critical corrections applied in December 2025 to fix
   gamma calculation and scalar potential handling. Recent changes include proper
   separation of conjugate and kinetic energy, corrected self-consistency
   convergence tests, and improved numerical precision for extreme relativistic
@@ -106,12 +106,12 @@ Key ideas to keep in mind
   ``char_time`` …) or use ``input_output.create_bunch_from_energy`` to obtain a
   correctly shaped state.
 * **Simulation modes are enumerated.**  ``SimulationType`` enumerates the three
-  supported wall configurations.  The solver mirrors the legacy integer flags so
-  comparison runs remain straightforward.
+  supported wall configurations.  The enum still accepts the historical integer
+  values so comparison runs remain straightforward.
 * **Startup modes are configurable.**  ``StartupMode`` switches between
   ``COLD_START`` (the default, suppressing early retarded forces) and
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
-  mirrors the legacy solver's behaviour).  CLI commands, scripts, and notebooks
+  matches the archived reference treatment).  CLI commands, scripts, and notebooks
   surface the enum so you can pick the right transient treatment per study.
 * **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
   (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
