@@ -176,6 +176,7 @@ def _extract_self_consistency_params(
         if self_consistency is not None
         else "fixed_geometry"
     )
+    convergence_mode = _canonicalize_convergence_mode(convergence_mode)
     target_ms_tolerance = (
         self_consistency.target_ms_tolerance if self_consistency is not None else 1e-6
     )
@@ -199,6 +200,14 @@ def _extract_self_consistency_params(
         max_iterations,
         verbosity,
     )
+
+
+def _canonicalize_convergence_mode(convergence_mode: str) -> str:
+    aliases = {
+        "mass_shell_only": "fixed_geometry",
+        "full_iteration": "variable_geometry",
+    }
+    return aliases.get(convergence_mode, convergence_mode)
 
 
 def _initialize_result_state(current_state: ParticleState) -> ParticleState:
@@ -1072,10 +1081,7 @@ def retarded_equations_of_motion(
             # ================================================================
             # In variable_geometry mode, use position from previous iteration
             # In fixed_geometry mode, use initial position for all iterations
-            if (
-                sc_convergence_mode in ("variable_geometry", "full_iteration")
-                and sc_iteration > 0
-            ):
+            if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
                 # Create temporary state with updated position for retarded distance calc
                 observer_state = {
                     "x": np.array([working_x]),
@@ -1187,10 +1193,7 @@ def retarded_equations_of_motion(
                     )
                 else:
                     # For variable geometry modes, need to create trajectory with observer_state
-                    if (
-                        sc_convergence_mode in ("variable_geometry", "full_iteration")
-                        and sc_iteration > 0
-                    ):
+                    if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
                         # Create temporary trajectory for retarded distance calculation
                         temp_trajectory = trajectory.copy()
                         temp_trajectory[index_traj] = observer_state
@@ -1372,28 +1375,13 @@ def retarded_equations_of_motion(
                 Pt_before_correction = np.float64(result["Pt"][particle_idx])
 
                 # Determine Pt and P correction based on mode
-                if sc_convergence_mode in (
-                    "fixed_geometry",
-                    "variable_geometry",
-                    "mass_shell_only",
-                    "full_iteration",
-                ):
+                if sc_convergence_mode in ("fixed_geometry", "variable_geometry"):
                     # Modes 1 & 2: Project Pt onto mass-shell (asymmetric relaxation)
                     Pt_corrected = Pt_from_mass_shell
 
                     if sc_verbosity >= 3:
-                        mode_name = (
-                            sc_convergence_mode
-                            if sc_convergence_mode
-                            in ("fixed_geometry", "variable_geometry")
-                            else (
-                                "fixed_geometry"
-                                if sc_convergence_mode == "mass_shell_only"
-                                else "variable_geometry"
-                            )
-                        )
                         print(
-                            f"      Mode: {mode_name}, Pt_ms={Pt_from_mass_shell:.6e}"
+                            f"      Mode: {sc_convergence_mode}, Pt_ms={Pt_from_mass_shell:.6e}"
                         )
 
                     # Apply relaxation to Pt only (asymmetric)

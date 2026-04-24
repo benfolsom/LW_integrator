@@ -104,6 +104,15 @@ def test_extract_self_consistency_params_defaults_to_fixed_geometry():
     assert convergence_mode == "fixed_geometry"
 
 
+def test_extract_self_consistency_params_canonicalizes_alias_modes():
+    enabled, convergence_mode, *_rest = _extract_self_consistency_params(
+        SelfConsistencyConfig(convergence_mode="full_iteration")
+    )
+
+    assert enabled is True
+    assert convergence_mode == "variable_geometry"
+
+
 def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
     trajectory = [
         _make_single_particle_state(t=0.0, x=0.0),
