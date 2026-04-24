@@ -6,15 +6,9 @@ to find optimal configurations for maximum energy gain.
 """
 
 import itertools
-import json
-import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-
-logger = logging.getLogger(__name__)
-
 
 class ParameterGrid:
     """Define a grid of parameters to sweep over.
@@ -79,34 +73,3 @@ def create_energy_aperture_grid(
             "initial_energy_gev": energies_gev,
         }
     )
-
-def load_sweep_results(output_dir: Path) -> Dict[str, Any]:
-    """Load previously saved sweep results.
-
-    Parameters
-    ----------
-    output_dir : Path
-        Directory containing sweep results
-
-    Returns
-    -------
-    Dict[str, Any]
-        Loaded results dictionary
-    """
-    json_path = Path(output_dir) / "sweep_results.json"
-
-    with open(json_path, "r") as f:
-        results = json.load(f)
-
-    # Load numpy arrays if available
-    try:
-        import numpy as np
-
-        results["arrays"] = {}
-        for npy_file in Path(output_dir).glob("*.npy"):
-            metric_name = npy_file.stem
-            results["arrays"][metric_name] = np.load(npy_file)
-    except Exception as e:
-        logger.warning(f"Could not load numpy arrays: {e}")
-
-    return results
