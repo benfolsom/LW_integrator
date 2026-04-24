@@ -81,3 +81,9 @@ def test_main_reports_missing_file(tmp_path: Path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "Trajectory file not found" in captured.out
+
+
+def test_module_exposes_only_supported_public_plotters():
+    assert not hasattr(trajectory_plotter, "plot_saved_json_trajectory")
+    assert not hasattr(trajectory_plotter, "plot_saved_npz_trajectory")
+    assert "plot_saved_trajectory" in trajectory_plotter.__all__

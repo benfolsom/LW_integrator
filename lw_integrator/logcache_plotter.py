@@ -558,7 +558,7 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
     )
 
 
-def create_1d_curves_plot(
+def _create_1d_curves_plot(
     energies, apertures, percent_gains, output_file, stats=None, live_mode=False
 ):
     """Create 1D plot with multiple curves (one per aperture value).
@@ -679,7 +679,7 @@ def create_1d_curves_plot(
     plt.close()
 
 
-def create_combined_gains_plot(
+def _create_combined_gains_plot(
     energies_pos,
     x_values_pos,
     percent_gains_pos,
@@ -887,7 +887,7 @@ def create_combined_gains_plot(
     plt.close()
 
 
-def create_contour_plot(
+def _create_contour_plot(
     energies,
     x_values,
     percent_gains,
@@ -1130,7 +1130,7 @@ def create_contour_plot(
         if not x_degenerate:
             curves_output = output_file.replace(".png", "_1d_curves.png")
             try:
-                create_1d_curves_plot(
+                _create_1d_curves_plot(
                     energies, x_values, percent_gains, curves_output, stats, live_mode
                 )
             except Exception as e:
@@ -1244,7 +1244,7 @@ def create_contour_plot(
     # Also create 1D multi-curve plot showing gain vs energy for each aperture
     curves_output = output_file.replace(".png", "_1d_curves.png")
     try:
-        create_1d_curves_plot(
+        _create_1d_curves_plot(
             energies, x_values, percent_gains, curves_output, stats, live_mode
         )
         print(f"  Also created 1D curves plot: {curves_output}")
@@ -1266,7 +1266,7 @@ def find_latest_log(logcache_dir="logcache"):
     return max(sweep_logs, key=lambda p: p.stat().st_mtime)
 
 
-def live_monitor(
+def _live_monitor(
     log_file, output_file, interval=3, max_gain_percent=30.0, log_x=False, log_y=False
 ):
     """Monitor log file and regenerate plot when data changes."""
@@ -1332,7 +1332,7 @@ def live_monitor(
 
                 # Generate updated plots (positive gains only if available)
                 if energies_pos is not None and len(energies_pos) > 0:
-                    create_contour_plot(
+                    _create_contour_plot(
                         energies_pos,
                         x_values_pos,
                         percent_gains_pos,
@@ -1351,7 +1351,7 @@ def live_monitor(
                     combined_output = (
                         str(Path(output_file).with_suffix("")) + "_combined.png"
                     )
-                    create_combined_gains_plot(
+                    _create_combined_gains_plot(
                         energies_pos,
                         x_values_pos,
                         percent_gains_pos,
@@ -1468,7 +1468,7 @@ def main(argv=None):
 
     # Run in appropriate mode
     if args.live:
-        live_monitor(
+        _live_monitor(
             str(log_file),
             str(output_file),
             interval=args.interval,
@@ -1506,7 +1506,7 @@ def main(argv=None):
             print(
                 "Note: No positive gains found, plotting all data (negative/zero gains)"
             )
-            create_combined_gains_plot(
+            _create_combined_gains_plot(
                 energies_pos,
                 x_values_pos,
                 percent_gains_pos,
@@ -1521,7 +1521,7 @@ def main(argv=None):
             )
         else:
             # We have positive gains, use the standard contour plot
-            create_contour_plot(
+            _create_contour_plot(
                 energies_pos,
                 x_values_pos,
                 percent_gains_pos,
@@ -1536,7 +1536,7 @@ def main(argv=None):
         # Generate combined gains plot if we have negative data
         if energies_neg is not None and len(energies_neg) > 0:
             combined_output = str(output_file).replace(".png", "_combined.png")
-            create_combined_gains_plot(
+            _create_combined_gains_plot(
                 energies_pos,
                 x_values_pos,
                 percent_gains_pos,

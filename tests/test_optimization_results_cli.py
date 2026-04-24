@@ -9,6 +9,9 @@ from lw_integrator import optimization_results
 
 
 class TestOptimizationResultsCli:
+    def test_module_hides_internal_formatting_helper(self):
+        assert not hasattr(optimization_results, "format_value")
+
     def test_main_prints_top_results(self, tmp_path: Path, capsys):
         results_path = tmp_path / "optimization_results.json"
         results_path.write_text(

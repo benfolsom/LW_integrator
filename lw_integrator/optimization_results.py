@@ -14,7 +14,7 @@ from optimization.plugin_results_helpers import (
 )
 
 
-def format_value(value: Any, precision: int = 4) -> str:
+def _format_value(value: Any, precision: int = 4) -> str:
     """Format a numeric value for display."""
     if isinstance(value, (int, float)):
         if abs(value) < 1e-3 or abs(value) > 1e4:
@@ -49,10 +49,10 @@ def _print_top_results(data: Dict[str, Any], *, top_n: int = 20) -> None:
         print(
             f"{result.get('rank', '?'):<6} "
             f"{result.get('evaluation', '?'):<8} "
-            f"{format_value(result.get('metric_value', float('nan')), 6):<15} "
-            f"{format_value(result.get('percent_energy_gain', float('nan')), 6):<15} "
-            f"{format_value(result.get('delta_e_mev', float('nan')), 6):<15} "
-            f"{format_value(result.get('fitness', float('nan')), 4):<12}"
+            f"{_format_value(result.get('metric_value', float('nan')), 6):<15} "
+            f"{_format_value(result.get('percent_energy_gain', float('nan')), 6):<15} "
+            f"{_format_value(result.get('delta_e_mev', float('nan')), 6):<15} "
+            f"{_format_value(result.get('fitness', float('nan')), 4):<12}"
         )
 
     print("-" * 120)
@@ -71,24 +71,24 @@ def _print_top_results(data: Dict[str, Any], *, top_n: int = 20) -> None:
         print("-" * 80)
         print("Parameters:")
         for key, value in result.get("parameters", {}).items():
-            print(f"  {key:<40} {format_value(value, 6)}")
+            print(f"  {key:<40} {_format_value(value, 6)}")
 
         print("\nObjective:")
         print(
             "  metric_value:                           "
-            f"{format_value(result.get('metric_value', float('nan')), 8)}"
+            f"{_format_value(result.get('metric_value', float('nan')), 8)}"
         )
         if result.get("fitness") is not None:
             print(
                 "  fitness:                                "
-                f"{format_value(result['fitness'], 8)}"
+                f"{_format_value(result['fitness'], 8)}"
             )
 
         metrics = result.get("metrics", {})
         if metrics:
             print("\nMetrics:")
             for key, value in sorted(metrics.items()):
-                print(f"  {key:<40} {format_value(value, 8)}")
+                print(f"  {key:<40} {_format_value(value, 8)}")
         print()
 
 
@@ -122,7 +122,7 @@ def _print_summary_statistics(data: Dict[str, Any]) -> None:
         )
 
     if "best_value" in data:
-        print(f"\nBest value found:       {format_value(data['best_value'], 8)}")
+        print(f"\nBest value found:       {_format_value(data['best_value'], 8)}")
     if "function_evaluations" in data:
         print(f"Function evaluations:   {data['function_evaluations']}")
     if "timestamp" in data:

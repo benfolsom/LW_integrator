@@ -81,7 +81,7 @@ def _extract_particle_series(
     }
 
 
-def plot_saved_json_trajectory(
+def _plot_saved_json_trajectory(
     input_path: Path,
     output_path: Path,
     *,
@@ -155,7 +155,7 @@ def plot_saved_json_trajectory(
     return output_path
 
 
-def plot_saved_npz_trajectory(
+def _plot_saved_npz_trajectory(
     input_path: Path,
     output_path: Path,
     *,
@@ -228,11 +228,11 @@ def plot_saved_trajectory(
 
     suffix = input_path.suffix.lower()
     if suffix == ".json":
-        return plot_saved_json_trajectory(
+        return _plot_saved_json_trajectory(
             input_path, output_path, default_mass_amu=mass_amu
         )
     if suffix == ".npz":
-        return plot_saved_npz_trajectory(input_path, output_path, mass_amu=mass_amu)
+        return _plot_saved_npz_trajectory(input_path, output_path, mass_amu=mass_amu)
     raise ValueError(f"Unsupported trajectory file type: {input_path.suffix}")
 
 
@@ -281,8 +281,6 @@ __all__ = [
     "AMU_TO_MEV",
     "infer_rest_energy_mev",
     "main",
-    "plot_saved_json_trajectory",
-    "plot_saved_npz_trajectory",
     "plot_saved_trajectory",
 ]
 

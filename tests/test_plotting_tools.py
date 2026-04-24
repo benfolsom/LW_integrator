@@ -222,3 +222,10 @@ def test_generate_summary_plots_calls_heatmap_tool(tmp_path: Path, monkeypatch):
         "sweep_heatmap.png",
     ]
     assert any("Heatmap saved to" in message for message in harness.logs)
+
+
+def test_logcache_plotter_hides_internal_plot_helpers():
+    assert not hasattr(logcache_plotter, "create_1d_curves_plot")
+    assert not hasattr(logcache_plotter, "create_combined_gains_plot")
+    assert not hasattr(logcache_plotter, "create_contour_plot")
+    assert not hasattr(logcache_plotter, "live_monitor")
