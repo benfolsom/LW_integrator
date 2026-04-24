@@ -396,13 +396,13 @@ For a challenging case (γ=200, separation=1mm) **with dual convergence**:
      → E_ms = 7.5e-13 ✓, E_gamma = 4.2e-7 ✓
      → CONVERGED in 5 iterations
 
-**Without dual convergence** (mass-shell only, legacy mode):
+**Without the gamma-consistency check**:
 
 .. code-block:: text
 
    Iteration 1:
      → E_ms = 5.2e-7 ✓ (< 1e-6)
-     → CONVERGED (mass-shell only)
+     → CONVERGED on mass-shell error alone
      → Gamma check: E_gamma = 3.1e-2 ⚠️ WARNING
 
    Subsequent steps:
@@ -483,10 +483,10 @@ For ultra-relativistic particles (γ > 1000) or narrow apertures:
        verbosity=2                     # Detailed logging
    )
 
-Legacy Mode (Not Recommended)
-------------------------------
+Benchmarking Configuration
+--------------------------
 
-For comparison with legacy code or benchmarking:
+For comparison runs or lower-cost benchmarking:
 
 .. code-block:: python
 
@@ -499,13 +499,14 @@ For comparison with legacy code or benchmarking:
    )
 
 .. warning::
-   Mass-shell-only mode can produce catastrophic gamma errors (10⁶) in high-energy
-   close-approach scenarios. Use only for testing/comparison, never in production.
+   Fixed-geometry self-consistency is the fast maintained path, but challenging
+   close-approach scenarios may still require tighter tolerances or more
+   iterations for stable convergence.
 
 Disabling Self-Consistency
 ---------------------------
 
-For debugging or legacy comparison:
+For debugging or reference comparisons:
 
 .. code-block:: python
 
@@ -513,8 +514,8 @@ For debugging or legacy comparison:
 
 .. danger::
    Disabling self-consistency can produce energy jumps exceeding 1000% and
-   non-physical particle trajectories. Only disable for testing or comparison
-   with legacy code. **Never use in production simulations.**
+   non-physical particle trajectories. Only disable for testing or controlled
+   reference comparisons. **Never use in production simulations.**
 
 Performance Considerations
 ==========================
@@ -672,7 +673,7 @@ via :py:class:`core.types.GammaReconciliationMethod`:
    Equivalent to DISABLED; provided for symmetry/clarity.
 
 **DISABLED (default as of February 2026)**
-   No reconciliation applied (v0.4.8 legacy behavior)
+   No reconciliation applied
 
    .. note::
       This is now the **recommended default** as of February 2026. The original
@@ -769,7 +770,7 @@ The old boolean ``gamma_reconciliation_enabled`` parameter has been replaced wit
    config.gamma_reconciliation_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
 
 The ``gamma_reconciliation_enabled`` property still works (returns True if method != DISABLED)
-for legacy code compatibility.
+for historical config compatibility.
 
 Recommendations
 ---------------
@@ -785,10 +786,6 @@ Recommendations
    - Lower ``high_beta_weight`` to 0.1 (trust velocity more)
 
 **Debugging**: Use USE_VELOCITY or USE_ENERGY to isolate problematic calculations
-
-**Not recommended**: DISABLED
-   - Only for legacy comparison or debugging
-   - Can cause catastrophic energy blowups
 
 Diagnostics
 -----------

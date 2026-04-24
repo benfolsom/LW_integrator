@@ -71,7 +71,8 @@ residual-wake acceleration with a covariant retarded-potential integrator_
     thresholds and weights. Trusts energy at low β, velocity at high β.
   - **FIXED_WEIGHTED**: Fixed 50/50 blend (or custom weight).
   - **USE_VELOCITY** / **USE_ENERGY**: Use one calculation exclusively.
-  - **DISABLED**: No reconciliation (legacy, not recommended).
+  - **DISABLED**: No reconciliation. This is the maintained default for the
+    current solver path.
     Configurable via API (`self_consistency_gamma_reconciliation_method` and related
     parameters) and GUI (Stability → Self-Consistency → Gamma Reconciliation).
     See `local/gamma_reconciliation_config.md` for detailed usage.
