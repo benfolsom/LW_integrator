@@ -61,8 +61,9 @@ class TestCliConfigParsing:
         assert args.results_file == Path("results/sweep_results.json")
 
     def test_package_exports_only_maintained_entry_points(self):
-        assert lw_integrator.__all__ == ["cli_main", "__version__", "VERSION"]
+        assert lw_integrator.__all__ == ["__version__", "VERSION"]
         for name in [
+            "cli_main",
             "IntegratorConfig",
             "SimulationType",
             "ParticleState",

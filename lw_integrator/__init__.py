@@ -9,10 +9,8 @@ Implementation APIs remain in the ``core`` package and in the concrete
 from __future__ import annotations
 
 from core._version import VERSION, __version__
-from .cli import main as cli_main
 
 __all__ = [
-    "cli_main",
     "__version__",
     "VERSION",
 ]
