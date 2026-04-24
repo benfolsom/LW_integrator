@@ -39,7 +39,7 @@ from .types import (
 
 
 class LienardWiechertIntegrator:
-    """Compatibility wrapper mimicking the legacy integrator facade.
+    """Compatibility wrapper mimicking the historical integrator facade.
 
     The historic API exposed a mutable class with helper methods that several
     notebooks and regression tests relied upon. The present codebase is
@@ -119,7 +119,7 @@ class LienardWiechertIntegrator:
     ) -> tuple[Trajectory, Trajectory]:
         """Execute retarded-field integration using the modern core runner.
 
-        Parameters mirror the legacy signature but are forwarded to
+        Parameters mirror the historical signature but are forwarded to
         :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
             preserved for backwards compatibility and contributes to the total step
             count.

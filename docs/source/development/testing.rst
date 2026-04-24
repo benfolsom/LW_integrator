@@ -7,8 +7,8 @@ The repository uses ``pytest`` for both unit and integration coverage.  The
 * ``tests/unit`` covers deterministic helpers such as image charge generation or
   chronology matching.
 * ``tests/integration`` exercises the end-to-end solvers, comparing core vs.
-  legacy and validating the self-consistency wrapper.
-* ``tests/physics`` retains legacy-style regression checks for specific physics
+  archived reference behavior and validating the self-consistency wrapper.
+* ``tests/physics`` retains regression checks for specific physics
   invariants (charge conservation, relativistic momentum, etc.).
 * ``tests/test_cli_gui_parity.py`` verifies that the CLI sweep runner and the
   GUI's Blind Sweep mode produce identical configurations and results when given

@@ -28,7 +28,7 @@ from .types import (
     StartupMode,
 )
 
-C_MMNS = 299.792458  # mm/ns (identical to legacy constant)
+C_MMNS = 299.792458  # mm/ns (identical to the maintained core constant)
 
 try:  # pragma: no cover - optional dependency path
     from numba import jit, prange
@@ -57,7 +57,7 @@ class OptimisationOptions:
 
 
 # ---------------------------------------------------------------------------
-# Helper utilities (converted directly from legacy helpers)
+# Helper utilities (converted directly from archived reference helpers)
 # ---------------------------------------------------------------------------
 
 
@@ -417,7 +417,7 @@ def eqsofmotion_retarded_numba(
         cancel_callback,
     )  # Retained for API parity with pure-Python solver.
 
-    # This is a legacy numba kernel for simple cases without SC
+    # This is an archived reference numba kernel for simple cases without SC
     # The main integrator now uses retarded_equations_of_motion directly
 
     current_arrays, n_particles = dict_to_arrays(trajectory[index_traj])

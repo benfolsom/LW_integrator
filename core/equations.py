@@ -950,7 +950,7 @@ def retarded_equations_of_motion(
     sim_type:
         Simulation boundary type encoded as :class:`SimulationType`.
     chrono_mode:
-        Retardation sampling strategy; ``FAST`` retains the legacy single
+        Retardation sampling strategy; ``FAST`` retains the validated single
         sample, whereas ``AVERAGED`` blends ``R / c`` and ``2R / c`` emission
         times for the external bunch.
     startup_mode:

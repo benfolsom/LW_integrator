@@ -1,8 +1,9 @@
 """
 Professional particle initialization module for electromagnetic field simulations.
 
-This module provides harmonized particle state initialization between legacy and modern
-integrator systems, ensuring consistent physics across both implementations.
+This module provides harmonized particle state initialization between the
+maintained solver and archived reference workflows, ensuring consistent
+physics across both paths.
 """
 
 from typing import Any, Dict, Mapping, Tuple, Union

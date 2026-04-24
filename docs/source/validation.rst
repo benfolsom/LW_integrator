@@ -15,7 +15,7 @@ Command-line benchmarks
 -----------------------
 
 The ``examples/comparison`` directory contains utilities aimed at comparing the
-core solver with its legacy counterpart.
+core solver with its archived reference counterpart.
 
 ``legacy_vs_core_systematic_comparison.py``
     Runs a configurable sweep over random seeds and integration lengths.  Use
@@ -24,7 +24,7 @@ core solver with its legacy counterpart.
     ``Pt``, and ``gamma``.
 
 ``legacy_vs_core_trajectory_comparison.py``
-    Recreates the canonical two-particle demo from the legacy notebooks, plots
+    Recreates the canonical two-particle demo from the archived notebooks, plots
     the position and γ-series overlays, and highlights discrepancies.  The
     refreshed version uses colourblind-safe palettes and high-DPI scatter
     rendering by default.
@@ -59,7 +59,7 @@ Notebook workflows
     Exploratory environment for all supported simulation types.  It disables
     irrelevant configuration controls dynamically and mirrors the plot styling
   used by the scripted tools so that figures remain consistent across entries.
-  Interactive toggles expose legacy-vs-core ΔE overlays and difference plots,
+  Interactive toggles expose archived-reference-vs-core ΔE overlays and difference plots,
   while a live initial-state panel displays rider/driver γ factors and
   energies after every parameter tweak.
 

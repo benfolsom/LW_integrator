@@ -29,14 +29,14 @@ Core notebooks
   selected simulation type and prints a JSON summary of the effective
   parameters so you can paste them into regression tests.  Live initial-state
   readouts show the rider/driver γ factors and energies after every parameter
-  tweak, and optional plots overlay legacy and modern ΔE curves or visualise
+  tweak, and optional plots overlay archived-reference and modern ΔE curves or visualise
   their differences to make regressions obvious.
 
-``examples/validation/conducting_aperture_test.ipynb`` (legacy)
+``examples/validation/conducting_aperture_test.ipynb`` (archived)
     Archived exploratory notebook; useful when cross-checking the 35 MeV
     conducting aperture scenario documented in :mod:`examples.validation.conducting_aperture_test`.
 
-The historical "static" integrator surfaces only inside the legacy notebooks.
+The historical "static" integrator surfaces only inside the archived notebooks.
 It remains functional for archival comparisons, but the actively maintained
 notebook UIs focus on the retarded-field solvers described elsewhere in this
 guide.
