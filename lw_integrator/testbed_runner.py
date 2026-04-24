@@ -730,6 +730,7 @@ class RunResult:
     verbose_logs: str  # Captured stdout/stderr from verbose integration output
     duration_s: float
     filename_base: str
+    debug_log_path: Optional[Path] = None
     # Additional computed values for optimization
     rider_delta_e: Optional[float] = None  # Final energy change in MeV
     rider_gamma_initial: Optional[float] = None
@@ -1093,12 +1094,6 @@ def run_testbed(
         Optional predicate that returns True if cancellation is requested.
     """
 
-    # Initialize debug logging if not already active (for API/testbed usage)
-    current_log = get_current_log_path()
-    if current_log is None:
-        initialize_debug_logging(context="testbed")
-        print("[LOGCACHE] Debug logging initialized in logcache/")
-
     start = time.perf_counter()
     logs: List[str] = []
 
@@ -1165,9 +1160,16 @@ def run_testbed(
     else:
         config_label = filename_base
 
+    # Start a fresh testbed log for each run so GUI and CLI single runs can
+    # save the exact debug session instead of guessing the latest file later.
+    initialize_debug_logging(context="testbed", force_new_log=True)
+    debug_log_path = get_current_log_path()
+
     _log(
         f"Running {sim_type.name.replace('_', ' ').title()} integrator for {options.steps} steps"
     )
+    if debug_log_path is not None:
+        _log(f"  Debug log: {debug_log_path}")
     _log(f"  Steps: {options.steps}")
     _log(f"  Seed: {options.seed}")
     _log(f"  Core params: {filtered_core_params}")
@@ -2589,24 +2591,17 @@ def run_testbed(
             except Exception as exc:
                 _log(f"Failed to save verbose log: {exc}")
 
-        # Copy debug log from logcache to output directory
-        logcache_dir = Path("logcache")
-        if logcache_dir.exists():
-            # Find most recent testbed log
-            log_files = sorted(
-                logcache_dir.glob("*testbed*.log"), key=lambda p: p.stat().st_mtime
-            )
-            if log_files:
-                most_recent_log = log_files[-1]
-                import shutil
+        # Copy the exact debug log session used by this run.
+        if debug_log_path is not None and debug_log_path.exists():
+            import shutil
 
-                debug_log_path = output_dir / most_recent_log.name
-                try:
-                    shutil.copy2(most_recent_log, debug_log_path)
-                    saved_paths["debug_log"] = debug_log_path
-                    _log(f"Copied debug log to: {debug_log_path}")
-                except Exception as exc:
-                    _log(f"Failed to copy debug log: {exc}")
+            copied_debug_log_path = output_dir / debug_log_path.name
+            try:
+                shutil.copy2(debug_log_path, copied_debug_log_path)
+                saved_paths["debug_log"] = copied_debug_log_path
+                _log(f"Copied debug log to: {copied_debug_log_path}")
+            except Exception as exc:
+                _log(f"Failed to copy debug log: {exc}")
 
     return RunResult(
         metrics=metrics,
@@ -2616,6 +2611,7 @@ def run_testbed(
         verbose_logs=captured_stdout,  # Include captured verbose output
         duration_s=duration,
         filename_base=filename_base,
+        debug_log_path=debug_log_path,
         rider_delta_e=rider_delta_e_final,
         rider_gamma_initial=rider_gamma_initial,
         rider_gamma_final=rider_gamma_final,

@@ -73,7 +73,12 @@ class DebugLogger:
         # Register cleanup on exit
         atexit.register(self.close)
 
-    def initialize(self, working_dir: Optional[str] = None, context: str = "default"):
+    def initialize(
+        self,
+        working_dir: Optional[str] = None,
+        context: str = "default",
+        force_new_log: bool = False,
+    ):
         """Initialize logging to the logcache directory.
 
         Parameters
@@ -83,11 +88,13 @@ class DebugLogger:
             If None, uses current working directory.
         context : str, optional
             Context name for log file (e.g., "gui", "testbed", "optimization")
+        force_new_log : bool, optional
+            Rotate to a fresh log file even if the context is unchanged.
         """
         with self._lock:
             if self._is_active:
-                # Already initialized, just update context if needed
-                if context != self._context_name:
+                # Already initialized, rotate when the caller requests a fresh run log
+                if force_new_log or context != self._context_name:
                     self._context_name = context
                     self._rotate_log(force=True)
                 return
@@ -111,7 +118,7 @@ class DebugLogger:
 
     def _create_new_log(self, logcache_path: Path):
         """Create a new log file with timestamp first for chronological sorting."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_filename = f"{timestamp}_{self._context_name}.log"
         self._log_path = logcache_path / log_filename
 
@@ -239,18 +246,23 @@ class DebugLogger:
                     f"[WARNING] Failed to write to log: {e}", file=self._original_stdout
                 )
 
-    def write(self, text: str):
+    def write(self, text: str, original_stream: Optional[TextIO] = None):
         """Write text to both stdout and log file (thread-safe).
 
         Parameters
         ----------
         text : str
             Text to write
+        original_stream : TextIO, optional
+            Stream that should still receive the console copy. Defaults to the
+            original stdout captured when the logger was created.
         """
         with self._write_lock:
-            # Always write to original stdout
-            self._original_stdout.write(text)
-            self._original_stdout.flush()
+            stream = original_stream or self._original_stdout
+
+            # Always write to the original console stream
+            stream.write(text)
+            stream.flush()
 
             # Write to log file if active
             if self._is_active and self._log_file is not None:
@@ -319,7 +331,7 @@ class TeeStream:
 
     def write(self, text: str):
         """Write to both original stream and logger."""
-        self.logger.write(text)
+        self.logger.write(text, original_stream=self.original_stream)
 
     def flush(self):
         """Flush both streams."""
@@ -373,7 +385,9 @@ _logging_handler: Optional[DebugLoggerHandler] = None
 
 
 def initialize_debug_logging(
-    working_dir: Optional[str] = None, context: str = "default"
+    working_dir: Optional[str] = None,
+    context: str = "default",
+    force_new_log: bool = False,
 ):
     """Initialize global debug logging system.
 
@@ -404,17 +418,34 @@ def initialize_debug_logging(
     if _global_logger is None:
         _global_logger = DebugLogger()
 
-    _global_logger.initialize(working_dir=working_dir, context=context)
+    _global_logger.initialize(
+        working_dir=working_dir,
+        context=context,
+        force_new_log=force_new_log,
+    )
 
-    # Redirect stdout and stderr to tee streams
-    sys.stdout = TeeStream(sys.stdout, _global_logger)
-    sys.stderr = TeeStream(sys.stderr, _global_logger)
+    # Redirect stdout and stderr to tee streams once. Re-initialization should
+    # reuse the same wrapper instead of nesting more TeeStreams.
+    base_stdout = _unwrap_tee_stream(sys.stdout)
+    base_stderr = _unwrap_tee_stream(sys.stderr)
+    if not (
+        isinstance(sys.stdout, TeeStream)
+        and sys.stdout.logger is _global_logger
+        and sys.stdout.original_stream is base_stdout
+    ):
+        sys.stdout = TeeStream(base_stdout, _global_logger)
+    if not (
+        isinstance(sys.stderr, TeeStream)
+        and sys.stderr.logger is _global_logger
+        and sys.stderr.original_stream is base_stderr
+    ):
+        sys.stderr = TeeStream(base_stderr, _global_logger)
 
     # Configure Python's logging module to also use our debug logger
     _configure_python_logging(_global_logger)
 
 
-def set_logging_context(context: str):
+def set_logging_context(context: str, force_new_log: bool = False):
     """Update the logging context (creates new log file).
 
     Parameters
@@ -429,7 +460,10 @@ def set_logging_context(context: str):
     global _global_logger
 
     if _global_logger is not None:
-        _global_logger.set_context(context)
+        if force_new_log:
+            _global_logger.initialize(context=context, force_new_log=True)
+        else:
+            _global_logger.set_context(context)
 
 
 def close_debug_logging():
@@ -438,16 +472,18 @@ def close_debug_logging():
     This is called automatically on program exit via atexit, but can also
     be called manually if needed.
     """
-    global _global_logger
+    global _global_logger, _logging_handler
 
     if _global_logger is not None:
         _global_logger.close()
 
-    # Restore original streams
-    if isinstance(sys.stdout, TeeStream):
-        sys.stdout = sys.stdout.original_stream
-    if isinstance(sys.stderr, TeeStream):
-        sys.stderr = sys.stderr.original_stream
+    if _logging_handler is not None:
+        logging.root.removeHandler(_logging_handler)
+        _logging_handler = None
+
+    # Restore original streams even if older nested wrappers are present.
+    sys.stdout = _unwrap_tee_stream(sys.stdout)
+    sys.stderr = _unwrap_tee_stream(sys.stderr)
 
 
 def get_current_log_path() -> Optional[Path]:
@@ -489,6 +525,13 @@ def _configure_python_logging(debug_logger: DebugLogger):
     # Add to root logger so all loggers inherit it
     logging.root.addHandler(_logging_handler)
     logging.root.setLevel(logging.INFO)  # Set root level to INFO
+
+
+def _unwrap_tee_stream(stream: TextIO) -> TextIO:
+    """Collapse nested TeeStreams back to their base stream."""
+    while isinstance(stream, TeeStream):
+        stream = stream.original_stream
+    return stream
 
 
 __all__ = [

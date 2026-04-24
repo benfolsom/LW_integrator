@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
-from core.debug_logger import set_logging_context  # type: ignore[import]
+from core.debug_logger import initialize_debug_logging  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
     analyze_trajectory_smoothness,
@@ -23,6 +23,11 @@ from lw_integrator.testbed_runner import (  # type: ignore[import]
 from optimization.config import (  # type: ignore[import]
     calculate_auto_steps,
     calculate_auto_timestep,
+)
+from optimization.logging_policy import (
+    apply_run_logging_policy,
+    describe_run_logging_policy,
+    restore_run_logging_policy,
 )
 from optimization.sweep_helpers import (
     build_parameter_grids,
@@ -38,7 +43,10 @@ class OptimizationRunMixin:
         """Run optimization in background using selected algorithm."""
         # Set logging context for this optimization run
         method = self.config.optimization_method
-        set_logging_context(f"optimization_{method}")
+        initialize_debug_logging(
+            context=f"optimization_{method}",
+            force_new_log=True,
+        )
 
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
@@ -62,56 +70,9 @@ class OptimizationRunMixin:
             self._log_result("=" * 80)
             self._log_result("")
 
-            # Apply log verbosity settings (same as sweep mode)
-            # Save original values to restore later
-            original_sc_verbosity = self.config.self_consistency_verbosity
-            original_adaptive_debug = self.config.adaptive_timestep_debug
-
-            use_no_logging = self.config.log_verbosity == "none"
-            use_truncated_logging = self.config.log_verbosity == "truncated"
-            use_full_logging = self.config.log_verbosity == "full"
-
-            # Apply log verbosity settings - control what gets logged
-            # "full" mode INHERITS stability settings from config/GUI
-            # Other modes override to reduce output
-            if use_full_logging:
-                # INHERIT stability verbosity settings from config (don't override)
-                # Use whatever was set in Stability tab or loaded from config
-                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-                self._log_result(
-                    "  Full debug logging enabled (inherits Stability tab settings)"
-                )
-                self._log_result(
-                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
-                )
-                self._log_result(
-                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
-                )
-            elif use_truncated_logging:
-                # Disable verbose logging for optimizations with many evaluations
-                self.config.self_consistency_verbosity = 0
-                self.config.adaptive_timestep_debug = False
-                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-                self._log_result(
-                    "  Truncated logging (parameters + metrics + errors only)"
-                )
-            elif use_no_logging:
-                # Completely disable all debug logging
-                self.config.self_consistency_verbosity = 0
-                self.config.adaptive_timestep_debug = False
-                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-                self._log_result("  Debug logging disabled")
-            else:
-                # Unknown log verbosity - use config file values
-                self._log_result(
-                    f"Log verbosity: {self.config.log_verbosity} (unknown, using config values)"
-                )
-                self._log_result(
-                    f"  adaptive_timestep_debug: {self.config.adaptive_timestep_debug}"
-                )
-                self._log_result(
-                    f"  self_consistency_verbosity: {self.config.self_consistency_verbosity}"
-                )
+            logging_policy = apply_run_logging_policy(self.config)
+            for line in describe_run_logging_policy(logging_policy):
+                self._log_result(line)
             self._log_result("")
 
             # Build parameter names and bounds from config
@@ -919,11 +880,8 @@ class OptimizationRunMixin:
                         f"[WARNING] Failed to save partial results: {save_err}"
                     )
         finally:
-            # Restore original verbosity settings
-            if "original_sc_verbosity" in locals():
-                self.config.self_consistency_verbosity = original_sc_verbosity
-            if "original_adaptive_debug" in locals():
-                self.config.adaptive_timestep_debug = original_adaptive_debug
+            if "logging_policy" in locals():
+                restore_run_logging_policy(self.config, logging_policy)
 
             self.running = False
             self._update_progress(100, "Done")
@@ -940,7 +898,7 @@ class OptimizationRunMixin:
         """
         # Set logging context for this sweep run
         context = "sweep_finetune" if is_finetune else "sweep"
-        set_logging_context(context)
+        initialize_debug_logging(context=context, force_new_log=True)
 
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
@@ -965,38 +923,16 @@ class OptimizationRunMixin:
             for values in param_grids.values():
                 total_runs *= len(values)
 
-            # Determine verbosity level from config
-            use_no_logging = self.config.log_verbosity == "none"
-            use_truncated_logging = self.config.log_verbosity == "truncated"
-            use_full_debug = self.config.log_verbosity == "full"
-
-            # Override config verbosity settings based on log mode
-            # Save original values to restore later
-            original_sc_verbosity = self.config.self_consistency_verbosity
-            original_adaptive_debug = self.config.adaptive_timestep_debug
-
-            if use_no_logging or use_truncated_logging:
-                # Suppress SC iteration output and adaptive timestep refinement output
-                self.config.self_consistency_verbosity = 0
-                self.config.adaptive_timestep_debug = False
-            # else: full debug mode - INHERIT stability settings from config/GUI (don't override)
+            logging_policy = apply_run_logging_policy(self.config)
+            use_no_logging = logging_policy.suppress_run_logs
+            use_truncated_logging = logging_policy.use_truncated_run_logs
+            use_full_debug = logging_policy.use_full_run_logs
 
             self._log_result(
                 f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs"
             )
-            self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-
-            # Log inherited stability settings in full debug mode
-            if use_full_debug:
-                self._log_result(
-                    "  Full debug logging enabled (inherits Stability tab settings)"
-                )
-                self._log_result(
-                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
-                )
-                self._log_result(
-                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
-                )
+            for line in describe_run_logging_policy(logging_policy):
+                self._log_result(line)
 
             # Only log detailed config in full debug mode
             if use_full_debug:
@@ -1840,11 +1776,8 @@ class OptimizationRunMixin:
 
             self._log_result(traceback.format_exc())
         finally:
-            # Restore original verbosity settings
-            if "original_sc_verbosity" in locals():
-                self.config.self_consistency_verbosity = original_sc_verbosity
-            if "original_adaptive_debug" in locals():
-                self.config.adaptive_timestep_debug = original_adaptive_debug
+            if "logging_policy" in locals():
+                restore_run_logging_policy(self.config, logging_policy)
 
             self.running = False
             # Ensure log file is closed

@@ -40,7 +40,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from core.constants import C_MMNS
-from core.debug_logger import initialize_debug_logging, set_logging_context
+from core.debug_logger import initialize_debug_logging
 from core.smoothness_analyzer import SmoothnessConfig, analyze_trajectory_smoothness
 from core.types import SimulationType
 from lw_integrator.testbed_runner import (
@@ -51,6 +51,11 @@ from optimization.config import (
     OptimizationConfig,
     calculate_auto_steps,
     calculate_auto_timestep,
+)
+from optimization.logging_policy import (
+    apply_run_logging_policy,
+    describe_run_logging_policy,
+    restore_run_logging_policy,
 )
 
 # ---------------------------------------------------------------------------
@@ -947,35 +952,13 @@ class SweepRunner:
         self.log_file = open(log_path, "w")
 
         # Initialize debug logging to logcache (like GUI sweeps)
-        initialize_debug_logging(context="sweep_cli")
-        set_logging_context("sweep_cli")
-
-        # Save original verbosity settings before any overrides
-        original_sc_verbosity = self.config.self_consistency_verbosity
-        original_adaptive_debug = self.config.adaptive_timestep_debug
+        initialize_debug_logging(context="sweep_cli", force_new_log=True)
+        logging_policy = apply_run_logging_policy(self.config)
 
         try:
-            # Apply log verbosity settings (like GUI does)
-            if self.config.log_verbosity in ("none", "truncated"):
-                self.config.self_consistency_verbosity = 0
-                self.config.adaptive_timestep_debug = False
-
             self._log("")
-            self._log(f"Log verbosity: {self.config.log_verbosity}")
-            if self.config.log_verbosity == "full":
-                self._log("  Full debug logging enabled (inherits config settings)")
-                self._log(f"    SC verbosity: {self.config.self_consistency_verbosity}")
-                self._log(
-                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
-                )
-            elif self.config.log_verbosity == "truncated":
-                self._log("  Truncated logging (parameters + metrics + errors only)")
-                self._log("    SC verbosity: 0 (overridden)")
-                self._log("    Adaptive timestep debug: False (overridden)")
-            elif self.config.log_verbosity == "none":
-                self._log("  Debug logging disabled")
-                self._log("    SC verbosity: 0 (overridden)")
-                self._log("    Adaptive timestep debug: False (overridden)")
+            for line in describe_run_logging_policy(logging_policy):
+                self._log(line)
             self._log(
                 f"Trajectory saving: Top N={self.config.save_top_n_trajectories}, "
                 f"All={self.config.save_all_trajectories}, "
@@ -1379,9 +1362,7 @@ class SweepRunner:
                     self._log(f"  {line}")
             return False
         finally:
-            # Restore original verbosity settings
-            self.config.self_consistency_verbosity = original_sc_verbosity
-            self.config.adaptive_timestep_debug = original_adaptive_debug
+            restore_run_logging_policy(self.config, logging_policy)
             if self.log_file is not None:
                 self.log_file.close()
 
