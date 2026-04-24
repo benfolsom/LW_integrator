@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import builtins
 import sys
 import types
 
@@ -118,6 +119,69 @@ def test_retarded_integrator_uses_numba_path_when_supported(
     assert any("Using Numba-optimized integrator" in message for message in messages)
 
 
+def test_retarded_integrator_logs_proximity_transition_zone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h_calls: list[float] = []
+    messages: list[str] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        h_calls.append(h_step)
+        state = _clone_state(trajectory[-1])
+        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=2,
+        h_step=1.0,
+        wall_z=0.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-0.75),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            proximity_refinement_enabled=True,
+            proximity_distance_aperture_radii=1.0,
+            proximity_transition_zone=0.5,
+            proximity_reduction_factor=4.0,
+            energy_jump_threshold=10.0,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 2
+    assert len(driver) == 2
+    assert h_calls == pytest.approx([0.4, 0.4])
+    assert any("transition zone" in message for message in messages)
+    assert any("Reduction factor: 2.5000x" in message for message in messages)
+
+
 def test_retarded_integrator_falls_back_from_numba_for_unsupported_features(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -184,6 +248,48 @@ def test_retarded_integrator_logs_when_numba_is_unavailable(
     assert len(driver) == 1
     assert any(
         "Numba not available, falling back to pure Python integrator" in message
+        for message in logger.warnings
+    )
+
+
+def test_retarded_integrator_logs_when_numba_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def fake_import(
+        name: str,
+        globals: object = None,
+        locals: object = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if level == 1 and name == "performance":
+            raise ImportError("synthetic import failure")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    logger = _LoggerRecorder()
+    trajectory, driver = retarded_integrator(
+        steps=1,
+        h_step=1e-3,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        logger=logger,
+        use_numba=True,
+    )
+
+    assert len(trajectory) == 1
+    assert len(driver) == 1
+    assert any(
+        "Could not import Numba integrator, using pure Python" in message
         for message in logger.warnings
     )
 
@@ -307,6 +413,132 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
     assert step_2_calls == [1.0, 0.5, 0.5]
     assert trajectory[-1]["t"][0] == pytest.approx(2.0)
     assert trajectory[-1]["gamma"][0] == pytest.approx(10.5)
+
+
+def test_retarded_integrator_accepts_energy_jump_after_max_refinement_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    gammas = iter([1.0, 2.0, 2.0, 2.0])
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        gamma = next(gammas)
+        state = _clone_state(trajectory[-1])
+        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
+        state["gamma"] = np.array([gamma], dtype=float)
+        state["Pt"] = np.array([gamma * integration_runner.C_MMNS], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=3,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0, gamma=1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            energy_jump_threshold=0.5,
+            timestep_reduction_factor=2,
+            min_timestep_factor=0.5,
+            proximity_refinement_enabled=False,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 3
+    assert len(driver) == 3
+    assert trajectory[-1]["gamma"][0] == pytest.approx(2.0)
+    assert any("Max refinement attempts (1) reached" in message for message in messages)
+
+
+def test_retarded_integrator_accepts_energy_jump_at_minimum_timestep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    gammas = iter([1.0, 2.0])
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        gamma = next(gammas)
+        state = _clone_state(trajectory[-1])
+        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
+        state["gamma"] = np.array([gamma], dtype=float)
+        state["Pt"] = np.array([gamma * integration_runner.C_MMNS], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=3,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0, gamma=1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            energy_jump_threshold=0.5,
+            timestep_reduction_factor=2,
+            min_timestep_factor=0.9,
+            proximity_refinement_enabled=False,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 3
+    assert len(driver) == 3
+    assert trajectory[-1]["gamma"][0] == pytest.approx(2.0)
+    assert any("Minimum timestep reached. Accepting remaining substeps" in message for message in messages)
 
 
 def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
@@ -500,6 +732,215 @@ def test_retarded_integrator_gamma_blowup_retries_with_reduced_timestep(
     assert any("HARD gamma blowup detected" in message for message in messages)
 
 
+def test_retarded_integrator_gamma_blowup_hits_max_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        raise GammaBlowupError(
+            step_idx=int(step_idx or 0),
+            particle_idx=0,
+            gamma_value=1e9,
+            iteration=5,
+        )
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=2,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            timestep_reduction_factor=2,
+            min_timestep_factor=0.5,
+            proximity_refinement_enabled=False,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 2
+    assert len(driver) == 2
+    assert trajectory[-1]["_dead_particles"][0]
+    assert trajectory[-1]["_particle_failure_info"][0]["reason"] == "gamma_blowup_max_retries"
+    assert any("Max refinement attempts reached after gamma blowup" in message for message in messages)
+
+
+def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h_calls: list[tuple[int | None, float]] = []
+    messages: list[str] = []
+
+    gammas = iter([1.0, 2.0, 1.05, 1.05, 1.05])
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        h_calls.append((step_idx, h_step))
+        gamma = next(gammas)
+        state = _clone_state(trajectory[-1])
+        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
+        state["gamma"] = np.array([gamma], dtype=float)
+        state["Pt"] = np.array([gamma * integration_runner.C_MMNS], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=4,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0, gamma=1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            energy_jump_threshold=0.5,
+            probe_threshold=0.1,
+            cooldown_steps=0,
+            max_probe_steps=1,
+            timestep_reduction_factor=2,
+            min_timestep_factor=0.1,
+            proximity_refinement_enabled=False,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 4
+    assert len(driver) == 4
+    assert h_calls == [
+        (1, 1.0),
+        (2, 1.0),
+        (2, 0.5),
+        (2, 0.5),
+        (3, 1.0),
+    ]
+    assert any("Stable (" in message for message in messages)
+    assert any("Returning to normal timestep" in message for message in messages)
+
+
+def test_retarded_integrator_unstable_probe_restarts_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h_calls: list[tuple[int | None, float]] = []
+    messages: list[str] = []
+
+    gammas = iter([1.0, 2.0, 1.3, 1.3, 1.45, 1.45])
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        h_calls.append((step_idx, h_step))
+        gamma = next(gammas)
+        state = _clone_state(trajectory[-1])
+        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
+        state["gamma"] = np.array([gamma], dtype=float)
+        state["Pt"] = np.array([gamma * integration_runner.C_MMNS], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(
+        integration_runner,
+        "generate_conducting_image",
+        lambda state, *args, **kwargs: _clone_state(state),
+    )
+
+    trajectory, driver = retarded_integrator(
+        steps=4,
+        h_step=1.0,
+        wall_z=100.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0, gamma=1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            debug=True,
+            energy_jump_threshold=0.5,
+            probe_threshold=0.1,
+            cooldown_steps=1,
+            max_probe_steps=1,
+            timestep_reduction_factor=2,
+            min_timestep_factor=0.1,
+            proximity_refinement_enabled=False,
+        ),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 4
+    assert len(driver) == 4
+    step_3_calls = [h for step, h in h_calls if step == 3]
+    assert step_3_calls == [0.5, 0.5]
+    assert any("Unstable during probing" in message for message in messages)
+    assert any("Cooldown mode" in message for message in messages)
+
+
 def test_retarded_integrator_marks_relative_cutoff_early_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -545,6 +986,55 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
     assert trajectory[-1]["_halted_early"] is True
     assert trajectory[-1]["_halt_step"] == 1
     assert "distance_reached" in trajectory[-1]["_halt_reason"]
+
+
+def test_retarded_integrator_logs_relative_cutoff_debug_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+    ) -> dict[str, object]:
+        source_state = next(state for state in reversed(trajectory) if state)
+        state = _clone_state(source_state)
+        state["z"] = np.array([float(source_state["z"][0])], dtype=float)
+        state["t"] = np.array([float(source_state["t"][0]) + h_step], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    trajectory, driver = retarded_integrator(
+        steps=2,
+        h_step=1.0,
+        wall_z=0.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_particle_state(z=2.0),
+        init_driver=_make_particle_state(z=5.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1.5,
+        z_cutoff_mode="relative",
+        adaptive_timestep=AdaptiveTimestepConfig(enabled=True, debug=True),
+        logger=messages.append,
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 2
+    assert len(driver) == 2
+    assert any("BUNCH_TO_BUNCH relative cutoff mode" in message for message in messages)
 
 
 def test_retarded_integrator_halts_when_all_particles_dead(

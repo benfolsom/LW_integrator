@@ -653,6 +653,7 @@ def retarded_integrator(
                 k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
                 for k, v in trajectory[i - 1].items()
             }
+            probe_reference_energy = previous_energy
 
             # Propagate dead particle status from previous step ONCE
             if i > 0:
@@ -811,6 +812,7 @@ def retarded_integrator(
                         else:
                             # Adaptive timestep available - try to reduce and retry
                             gamma_blowup_detected = True
+                            refinement_attempt += 1
 
                             if (
                                 refinement_attempt
@@ -1124,12 +1126,13 @@ def retarded_integrator(
                         and cooldown_counter >= adaptive_timestep.cooldown_steps
                     ):
                         # We're in probing phase - check energy stability
-                        if previous_energy is not None:
+                        if probe_reference_energy is not None:
                             # Use temp_trajectory[-1] which contains the current step result
                             # (trajectory[i] hasn't been assigned yet at this point)
                             current_energy = _compute_total_energy(temp_trajectory[-1])
                             relative_change = (
-                                abs(current_energy - previous_energy) / previous_energy
+                                abs(current_energy - probe_reference_energy)
+                                / probe_reference_energy
                             )
 
                             if relative_change < adaptive_timestep.probe_threshold:

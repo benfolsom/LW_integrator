@@ -22,9 +22,9 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Numba Force-Kernel Parity Fix (April 2026)
 
-- **Bug** — `_compute_forces_numba_kernel()` in `core.vectorized_interactions` used `bdot·bdot` where the maintained NumPy path uses `beta·bdot`
+- **Bug** — `_compute_forces_numba_kernel()` in `core.vectorized_interactions` computed local `bdot_scalar` as `bdot·bdot` instead of the maintained NumPy path's `beta·bdot`
 - **Impact** — The default JIT-accelerated force path could drift from the validated Python implementation on nonzero-acceleration trajectories, producing inconsistent momentum updates depending on whether Numba was active
-- **Fix** — Aligned the Numba kernel with the NumPy implementation and added parity coverage for hard-cutoff, small-k, verbose diagnostics, interpolation branches, and nonzero-acceleration kernels
+- **Fix** — Corrected `bdot_scalar` to `bx*bdotx + by*bdoty + bz*bdotz`, aligning the Numba kernel with the NumPy implementation, and added parity coverage for hard-cutoff, small-k, verbose diagnostics, interpolation branches, and nonzero-acceleration kernels
 - **Files modified** — `core/vectorized_interactions.py`, `tests/unit/test_vectorized_interactions_helpers.py`, `tests/unit/test_images_helpers.py`
 
 ### Adaptive Gamma-Blowup Retry Fix (April 2026)
@@ -32,6 +32,18 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Bug** — The adaptive gamma-blowup recovery path in `core.integration_runner` could raise `UnboundLocalError` before retrying with a smaller timestep
 - **Impact** — Instead of recovering or cleanly marking a particle dead, some gamma blowups aborted the integration loop from the control-flow layer itself
 - **Fix** — Removed the invalid `trial_state` propagation in the retry branch and added regression coverage for no-adaptive, minimum-timestep, and hard-blowup retry paths
+- **Files modified** — `core/integration_runner.py`, `tests/unit/test_integration_runner_control_flow.py`
+
+### Adaptive Refinement Bookkeeping Fixes (April 2026)
+
+- **Bug** — Adaptive gamma-blowup retries were not incrementing `refinement_attempt`, so the configured max-retry limit was not actually enforced
+- **Impact** — Some repeated gamma-blowup cases could keep refining until minimum timestep rather than honoring the intended retry cap
+- **Fix** — Count gamma-blowup refinement attempts the same way energy-jump retries are counted, and added regression coverage for max-retry fallback
+
+- **Bug** — Probe-stability checks in reduced-timestep mode compared the accepted step against the already-updated `previous_energy`, which collapsed the measured `ΔE/E` to zero
+- **Impact** — The “unstable during probing” path was effectively unreachable, making timestep recovery look stable even when step-to-step energy drift remained large
+- **Fix** — Preserve the pre-step reference energy for probing decisions, and added regression coverage for both stable return-to-normal and unstable-cooldown restart behavior
+
 - **Files modified** — `core/integration_runner.py`, `tests/unit/test_integration_runner_control_flow.py`
 
 ## v0.6.0 — March 2026
