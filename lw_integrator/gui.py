@@ -31,6 +31,7 @@ from core.types import SimulationType
 from .gui_config_mixins import IntegratorGUIConfigMixin
 from .gui_plot_mixins import IntegratorGUIPlotMixin
 from .gui_runtime_mixins import IntegratorGUIRuntimeMixin
+from .gui_summary_mixins import IntegratorGUISummaryMixin
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
@@ -39,10 +40,8 @@ from .testbed_runner import (
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
     SPECIES_OPTIONS,
-    InitialSummary,
     SimulationOptions,
     apply_species_preset,
-    compute_initial_summary,
     list_config_files,
     supports_driver,
 )
@@ -314,7 +313,10 @@ class _ScrollableNotebookPage:
 
 
 class IntegratorGUI(
-    IntegratorGUIPlotMixin, IntegratorGUIRuntimeMixin, IntegratorGUIConfigMixin
+    IntegratorGUISummaryMixin,
+    IntegratorGUIPlotMixin,
+    IntegratorGUIRuntimeMixin,
+    IntegratorGUIConfigMixin,
 ):
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -3136,104 +3138,6 @@ class IntegratorGUI(
             self.current_sweep_config_label.config(
                 text="<none>", foreground="gray", font=("TkDefaultFont", 9, "italic")
             )
-
-    def _refresh_initial_summary(self) -> None:
-        try:
-            options = self._build_options_from_ui()
-        except ValueError:
-            return
-        except Exception as exc:
-            self.summary_var.set(f"Summary unavailable: {exc}")
-            return
-        summary = compute_initial_summary(options)
-        formatted_summary = self._format_summary(summary)
-        self.summary_var.set(formatted_summary)
-
-        # Update the summary text widget
-        if hasattr(self, "summary_text"):
-            self.summary_text.config(state="normal")
-            self.summary_text.delete("1.0", "end")
-            self.summary_text.insert("1.0", formatted_summary)
-            self.summary_text.config(state="disabled")
-
-    def _format_summary(self, summary: InitialSummary) -> str:
-        lines = ["(single run)", f"Seed: {summary.seed}"]
-        lines.append(f"Rider gamma: {summary.rider_gamma:.4f}")
-        lines.append(
-            "Rider rest energy: "
-            f"{summary.rider_rest_mev:.4f} MeV ({summary.rider_rest_gev:.4f} GeV)"
-        )
-        lines.append(f"Rider total energy: {summary.rider_total_gev:.4f} GeV")
-
-        # Add rider beam optics if available
-        if summary.rider_emittance_x_mm_mrad is not None:
-            # Convert to picometer-radians for alternative display
-            emit_x_pm = summary.rider_emittance_x_mm_mrad * 1e9  # pm·rad
-            emit_y_pm = summary.rider_emittance_y_mm_mrad * 1e9  # pm·rad
-            norm_emit_x_pm = summary.rider_norm_emittance_x_mm_mrad * 1e9  # pm·rad
-            norm_emit_y_pm = summary.rider_norm_emittance_y_mm_mrad * 1e9  # pm·rad
-
-            lines.append(
-                f"Rider ε: "
-                f"{summary.rider_emittance_x_mm_mrad:.2e} mm·mrad ({emit_x_pm:.2e} pm·rad), "
-                f"{summary.rider_emittance_y_mm_mrad:.2e} mm·mrad ({emit_y_pm:.2e} pm·rad)"
-            )
-            lines.append(
-                f"Rider εₙ: "
-                f"{summary.rider_norm_emittance_x_mm_mrad:.2e} mm·mrad ({norm_emit_x_pm:.2e} pm·rad), "
-                f"{summary.rider_norm_emittance_y_mm_mrad:.2e} mm·mrad ({norm_emit_y_pm:.2e} pm·rad)"
-            )
-            lines.append(
-                f"Rider β: "
-                f"{summary.rider_beta_x_m:.3f} m, "
-                f"{summary.rider_beta_y_m:.3f} m"
-            )
-
-        # Only show driver info if this simulation type supports it
-        if summary.supports_driver:
-            if summary.has_driver:
-                lines.append("Driver present")
-                lines.append(f"Driver gamma: {summary.driver_gamma:.4f}")
-                if (
-                    summary.driver_rest_mev is not None
-                    and summary.driver_rest_gev is not None
-                ):
-                    lines.append(
-                        "Driver rest energy: "
-                        f"{summary.driver_rest_mev:.4f} MeV ({summary.driver_rest_gev:.4f} GeV)"
-                    )
-                if summary.driver_total_gev is not None:
-                    lines.append(
-                        f"Driver total energy: {summary.driver_total_gev:.4f} GeV"
-                    )
-
-                # Add driver beam optics if available
-                if summary.driver_emittance_x_mm_mrad is not None:
-                    driver_emit_x_pm = summary.driver_emittance_x_mm_mrad * 1e9
-                    driver_emit_y_pm = summary.driver_emittance_y_mm_mrad * 1e9
-                    driver_norm_emit_x_pm = (
-                        summary.driver_norm_emittance_x_mm_mrad * 1e9
-                    )
-                    driver_norm_emit_y_pm = (
-                        summary.driver_norm_emittance_y_mm_mrad * 1e9
-                    )
-
-                    lines.append(
-                        f"Driver ε: "
-                        f"{summary.driver_emittance_x_mm_mrad:.2e} mm·mrad ({driver_emit_x_pm:.2e} pm·rad), "
-                        f"{summary.driver_emittance_y_mm_mrad:.2e} mm·mrad ({driver_emit_y_pm:.2e} pm·rad)"
-                    )
-                    lines.append(
-                        f"Driver εₙ: "
-                        f"{summary.driver_norm_emittance_x_mm_mrad:.2e} mm·mrad ({driver_norm_emit_x_pm:.2e} pm·rad), "
-                        f"{summary.driver_norm_emittance_y_mm_mrad:.2e} mm·mrad ({driver_norm_emit_y_pm:.2e} pm·rad)"
-                    )
-                    lines.append(
-                        f"Driver β: "
-                        f"{summary.driver_beta_x_m:.3f} m, "
-                        f"{summary.driver_beta_y_m:.3f} m"
-                    )
-        return "\n".join(lines)
 
     def _select_config_dir(self) -> None:
         import os

@@ -9,6 +9,7 @@ from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
 from lw_integrator.gui_plot_mixins import IntegratorGUIPlotMixin
 from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
+from lw_integrator.gui_summary_mixins import IntegratorGUISummaryMixin
 
 
 class _Var:
@@ -70,6 +71,14 @@ def test_gui_inherits_plot_helpers_from_plot_mixin():
         gui.IntegratorGUI._prepare_figure_for_display
         is IntegratorGUIPlotMixin._prepare_figure_for_display
     )
+
+
+def test_gui_inherits_summary_helpers_from_summary_mixin():
+    assert (
+        gui.IntegratorGUI._refresh_initial_summary
+        is IntegratorGUISummaryMixin._refresh_initial_summary
+    )
+    assert gui.IntegratorGUI._format_summary is IntegratorGUISummaryMixin._format_summary
 
 
 def test_load_config_no_longer_requires_removed_legacy_state(
@@ -273,3 +282,38 @@ def test_close_figure_removes_handle_and_destroys_widgets():
 
     assert harness._figure_windows == []
     assert destroyed == ["canvas", "window"]
+
+
+def test_format_summary_includes_driver_block_when_present():
+    summary = SimpleNamespace(
+        seed=123,
+        rider_gamma=10.0,
+        rider_rest_mev=1.0,
+        rider_rest_gev=0.001,
+        rider_total_gev=2.5,
+        rider_emittance_x_mm_mrad=None,
+        rider_emittance_y_mm_mrad=None,
+        rider_norm_emittance_x_mm_mrad=None,
+        rider_norm_emittance_y_mm_mrad=None,
+        rider_beta_x_m=None,
+        rider_beta_y_m=None,
+        supports_driver=True,
+        has_driver=True,
+        driver_gamma=20.0,
+        driver_rest_mev=2.0,
+        driver_rest_gev=0.002,
+        driver_total_gev=3.5,
+        driver_emittance_x_mm_mrad=None,
+        driver_emittance_y_mm_mrad=None,
+        driver_norm_emittance_x_mm_mrad=None,
+        driver_norm_emittance_y_mm_mrad=None,
+        driver_beta_x_m=None,
+        driver_beta_y_m=None,
+    )
+
+    formatted = gui.IntegratorGUI._format_summary(SimpleNamespace(), summary)
+
+    assert "Seed: 123" in formatted
+    assert "Rider gamma: 10.0000" in formatted
+    assert "Driver present" in formatted
+    assert "Driver gamma: 20.0000" in formatted
