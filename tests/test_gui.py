@@ -9,6 +9,7 @@ from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
 from lw_integrator.gui_plot_mixins import IntegratorGUIPlotMixin
 from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
+from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
 from lw_integrator.gui_summary_mixins import IntegratorGUISummaryMixin
 
 
@@ -79,6 +80,25 @@ def test_gui_inherits_summary_helpers_from_summary_mixin():
         is IntegratorGUISummaryMixin._refresh_initial_summary
     )
     assert gui.IntegratorGUI._format_summary is IntegratorGUISummaryMixin._format_summary
+
+
+def test_gui_inherits_state_helpers_from_state_mixin():
+    assert (
+        gui.IntegratorGUI._on_sim_type_change
+        is IntegratorGUIStateMixin._on_sim_type_change
+    )
+    assert (
+        gui.IntegratorGUI._update_driver_visibility
+        is IntegratorGUIStateMixin._update_driver_visibility
+    )
+    assert (
+        gui.IntegratorGUI._toggle_z_cutoff_controls
+        is IntegratorGUIStateMixin._toggle_z_cutoff_controls
+    )
+    assert (
+        gui.IntegratorGUI._update_macroparticle_state
+        is IntegratorGUIStateMixin._update_macroparticle_state
+    )
 
 
 def test_load_config_no_longer_requires_removed_legacy_state(
@@ -317,3 +337,117 @@ def test_format_summary_includes_driver_block_when_present():
     assert "Rider gamma: 10.0000" in formatted
     assert "Driver present" in formatted
     assert "Driver gamma: 20.0000" in formatted
+
+
+def test_update_driver_visibility_disables_driver_fields_for_non_driver_modes():
+    driver_combo_calls = []
+    driver_entry_calls = []
+    rider_offset_calls = []
+    driver_offset_calls = []
+    rider_label_calls = []
+    driver_label_calls = []
+    driver_species_var = _Var("not-custom")
+
+    harness = SimpleNamespace(
+        sim_type_var=_Var("CONDUCTING_WALL"),
+        driver_species_combo=SimpleNamespace(
+            configure=lambda **kwargs: driver_combo_calls.append(kwargs)
+        ),
+        _driver_entries=[
+            SimpleNamespace(configure=lambda **kwargs: driver_entry_calls.append(kwargs))
+        ],
+        _species_label_by_key={"custom": "Custom"},
+        _species_by_label={"Custom": object()},
+        driver_species_var=driver_species_var,
+        _rider_offset_entries=[
+            SimpleNamespace(configure=lambda **kwargs: rider_offset_calls.append(kwargs))
+        ],
+        _driver_offset_entries=[
+            SimpleNamespace(
+                configure=lambda **kwargs: driver_offset_calls.append(kwargs)
+            )
+        ],
+        _rider_offset_labels=[
+            SimpleNamespace(configure=lambda **kwargs: rider_label_calls.append(kwargs))
+        ],
+        _driver_offset_labels=[
+            SimpleNamespace(configure=lambda **kwargs: driver_label_calls.append(kwargs))
+        ],
+    )
+
+    gui.IntegratorGUI._update_driver_visibility(harness)
+
+    assert driver_combo_calls == [{"state": "disabled"}]
+    assert driver_entry_calls == [{"state": "disabled"}]
+    assert driver_species_var.get() == "Custom"
+    assert rider_offset_calls == [{"state": "disabled"}]
+    assert driver_offset_calls == [{"state": "disabled"}]
+    assert rider_label_calls == [{"foreground": "gray60"}]
+    assert driver_label_calls == [{"foreground": "gray60"}]
+
+
+def test_toggle_z_cutoff_controls_disables_widgets_and_resets_cutoff():
+    entry_calls = []
+    combo_calls = []
+    z_cutoff_var = _Var(12.0)
+    harness = SimpleNamespace(
+        z_cutoff_enabled_var=_Var(False),
+        z_cutoff_entry=SimpleNamespace(
+            configure=lambda **kwargs: entry_calls.append(kwargs)
+        ),
+        z_cutoff_mode_combo=SimpleNamespace(
+            configure=lambda **kwargs: combo_calls.append(kwargs)
+        ),
+        core_param_vars={"z_cutoff": z_cutoff_var},
+    )
+
+    gui.IntegratorGUI._toggle_z_cutoff_controls(harness)
+
+    assert entry_calls == [{"state": "disabled"}]
+    assert combo_calls == [{"state": "disabled"}]
+    assert z_cutoff_var.get() == 0.0
+
+
+def test_update_macroparticle_state_forces_disabled_outside_conducting_wall():
+    check_calls = []
+    entry_calls = []
+    label_calls = []
+    enabled_var = _Var(True)
+    harness = SimpleNamespace(
+        sim_type_var=_Var("BUNCH_TO_BUNCH"),
+        macroparticle_enable_check=SimpleNamespace(
+            configure=lambda **kwargs: check_calls.append(kwargs)
+        ),
+        macroparticle_enabled_var=enabled_var,
+        _macroparticle_widgets=[
+            SimpleNamespace(configure=lambda **kwargs: entry_calls.append(kwargs)),
+            SimpleNamespace(configure=lambda **kwargs: label_calls.append(kwargs)),
+        ],
+    )
+
+    # Attach concrete ttk-ish classes by monkeypatching isinstance checks through subclassing
+    import tkinter.ttk as ttk
+
+    class _Entry(ttk.Entry):
+        pass
+
+    class _Label(ttk.Label):
+        pass
+
+    harness._macroparticle_widgets = [
+        _Entry.__new__(_Entry),
+        _Label.__new__(_Label),
+    ]
+    harness._macroparticle_widgets[0].configure = lambda **kwargs: entry_calls.append(
+        kwargs
+    )
+    harness._macroparticle_widgets[1].configure = lambda **kwargs: label_calls.append(
+        kwargs
+    )
+
+    gui.IntegratorGUI._update_macroparticle_state(harness)
+
+    assert check_calls == [{"state": "disabled"}]
+    assert enabled_var.get() is False
+    assert entry_calls == [{"state": "disabled"}]
+    assert label_calls == [{"foreground": "gray"}]
