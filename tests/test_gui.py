@@ -9,6 +9,8 @@ from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
 from lw_integrator.gui_config_list_mixins import IntegratorGUIConfigListMixin
 from lw_integrator.gui_controller_mixins import IntegratorGUIControllerMixin
+from lw_integrator.gui_layout_mixins import IntegratorGUILayoutMixin
+from lw_integrator.gui_log_mixins import IntegratorGUILogMixin
 from lw_integrator.gui_plot_mixins import IntegratorGUIPlotMixin
 from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
@@ -131,6 +133,45 @@ def test_gui_inherits_controller_helpers_from_controller_mixin():
     assert (
         gui.IntegratorGUI._trigger_sweep
         is IntegratorGUIControllerMixin._trigger_sweep
+    )
+
+
+def test_gui_inherits_layout_helpers_from_layout_mixin():
+    assert gui.IntegratorGUI._enforce_panel_minimums is (
+        IntegratorGUILayoutMixin._enforce_panel_minimums
+    )
+    assert gui.IntegratorGUI._create_scrollable_tab is (
+        IntegratorGUILayoutMixin._create_scrollable_tab
+    )
+    assert gui.IntegratorGUI._build_config_panel is (
+        IntegratorGUILayoutMixin._build_config_panel
+    )
+    assert gui.IntegratorGUI._on_run_mode_changed is (
+        IntegratorGUILayoutMixin._on_run_mode_changed
+    )
+    assert gui.IntegratorGUI._add_output_toggle is (
+        IntegratorGUILayoutMixin._add_output_toggle
+    )
+    assert gui.IntegratorGUI._build_output_tab is (
+        IntegratorGUILayoutMixin._build_output_tab
+    )
+    assert gui.IntegratorGUI._build_log_summary_panel is (
+        IntegratorGUILayoutMixin._build_log_summary_panel
+    )
+
+
+def test_gui_inherits_log_helpers_from_log_mixin():
+    assert gui.IntegratorGUI._append_log is IntegratorGUILogMixin._append_log
+    assert gui.IntegratorGUI._parse_log_line is IntegratorGUILogMixin._parse_log_line
+    assert (
+        gui.IntegratorGUI._refresh_summary_display
+        is IntegratorGUILogMixin._refresh_summary_display
+    )
+    assert gui.IntegratorGUI._update_log_format is IntegratorGUILogMixin._update_log_format
+    assert gui.IntegratorGUI._clear_log is IntegratorGUILogMixin._clear_log
+    assert (
+        gui.IntegratorGUI._load_verbose_logs
+        is IntegratorGUILogMixin._load_verbose_logs
     )
 
 
@@ -417,6 +458,65 @@ def test_update_driver_visibility_disables_driver_fields_for_non_driver_modes():
     assert driver_offset_calls == [{"state": "disabled"}]
     assert rider_label_calls == [{"foreground": "gray60"}]
     assert driver_label_calls == [{"foreground": "gray60"}]
+
+
+def test_enforce_panel_minimums_clamps_sash_position():
+    placements = []
+
+    class _PanedStub:
+        def sash_coord(self, index):
+            assert index == 0
+            return (100, 0)
+
+        def winfo_width(self):
+            return 1000
+
+        def sash_place(self, index, x, y):
+            placements.append((index, x, y))
+
+    harness = SimpleNamespace(_main_horizontal_paned=_PanedStub())
+
+    gui.IntegratorGUI._enforce_panel_minimums(harness)
+
+    assert placements == [(0, 800, 0)]
+
+
+def test_on_run_mode_changed_updates_run_button_command():
+    calls = []
+    harness = SimpleNamespace(
+        run_mode_var=_Var("sweep"),
+        _trigger_run=object(),
+        _trigger_sweep=object(),
+        _run_button=SimpleNamespace(config=lambda **kwargs: calls.append(kwargs)),
+    )
+
+    gui.IntegratorGUI._on_run_mode_changed(harness)
+
+    assert calls == [
+        {"text": "▶ Run Sweep", "command": harness._trigger_sweep},
+    ]
+
+
+def test_clear_log_resets_buffers_and_widget():
+    calls = []
+    harness = SimpleNamespace(
+        _raw_log_lines=["a"],
+        _log_summary=["b"],
+        log_output=SimpleNamespace(
+            configure=lambda **kwargs: calls.append(("configure", kwargs)),
+            delete=lambda start, end: calls.append(("delete", start, end)),
+        ),
+    )
+
+    gui.IntegratorGUI._clear_log(harness)
+
+    assert harness._raw_log_lines == []
+    assert harness._log_summary == []
+    assert calls == [
+        ("configure", {"state": "normal"}),
+        ("delete", "1.0", "end"),
+        ("configure", {"state": "disabled"}),
+    ]
 
 
 def test_toggle_z_cutoff_controls_disables_widgets_and_resets_cutoff():
