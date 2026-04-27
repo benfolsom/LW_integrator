@@ -10,15 +10,16 @@ import numpy as np
 import pytest
 
 from core.types import SimulationType
-import lw_integrator.optimization_plugin as plugin_module
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.plugin_config_mixins import OptimizationPluginConfigMixin
+from optimization.plugin_control_mixins import OptimizationPluginControlMixin
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
 from optimization.plugin_view_mixins import OptimizationPluginViewMixin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
 from optimization.plugin_ui_mixins import OptimizationPluginUIMixin
+import optimization.plugin_view_mixins as view_mixins_module
 import optimization.run_mixins as run_mixins_module
 from optimization.sweep_helpers import calculate_energy_from_pz
 
@@ -208,6 +209,21 @@ class TestOptimizationPluginIntegration:
             is OptimizationPluginViewMixin._show_trajectory_viewer
         )
 
+    def test_plugin_inherits_control_helpers_from_control_mixin(self):
+        assert (
+            OptimizationPlugin._validate_inputs
+            is OptimizationPluginControlMixin._validate_inputs
+        )
+        assert (
+            OptimizationPlugin._gather_config
+            is OptimizationPluginControlMixin._gather_config
+        )
+        assert (
+            OptimizationPlugin._on_run_sweep
+            is OptimizationPluginControlMixin._on_run_sweep
+        )
+        assert OptimizationPlugin._on_stop is OptimizationPluginControlMixin._on_stop
+
     def test_run_single_integration_uses_current_simulation_options_fields(
         self, mock_config, tmp_path, monkeypatch
     ):
@@ -328,8 +344,12 @@ class TestOptimizationPluginIntegration:
             captured["initialdir"] = kwargs["initialdir"]
             return ""
 
-        monkeypatch.setattr(plugin_module.filedialog, "askopenfilename", fake_askopenfilename)
-        monkeypatch.setattr(plugin_module.messagebox, "askyesno", lambda *args, **kwargs: False)
+        monkeypatch.setattr(
+            view_mixins_module.filedialog, "askopenfilename", fake_askopenfilename
+        )
+        monkeypatch.setattr(
+            view_mixins_module.messagebox, "askyesno", lambda *args, **kwargs: False
+        )
 
         harness = SimpleNamespace(
             sweep_output_dir=str(sweep_dir),
@@ -405,6 +425,22 @@ class TestOptimizationPluginIntegration:
         assert sim_type_var.get() == "BUNCH_TO_BUNCH"
         combo.current.assert_called_once_with(1)
         root.update_idletasks.assert_called_once_with()
+
+    def test_on_stop_marks_cancelled_and_notifies_gui(self):
+        cancel_var = SimpleNamespace(_cancel_requested=False)
+        harness = SimpleNamespace(
+            running=True,
+            _was_cancelled=False,
+            gui_controller=cancel_var,
+            _update_progress_text=Mock(),
+        )
+
+        OptimizationPlugin._on_stop(harness)
+
+        assert harness.running is False
+        assert harness._was_cancelled is True
+        assert harness.gui_controller._cancel_requested is True
+        harness._update_progress_text.assert_called_once_with("Stopping...")
 
     def test_run_single_integration_completes(self, mock_config, mock_run_result):
         """Test that _run_single_integration completes without hanging."""
