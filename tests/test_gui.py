@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
+from lw_integrator.gui_config_list_mixins import IntegratorGUIConfigListMixin
 from lw_integrator.gui_plot_mixins import IntegratorGUIPlotMixin
 from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
@@ -98,6 +99,25 @@ def test_gui_inherits_state_helpers_from_state_mixin():
     assert (
         gui.IntegratorGUI._update_macroparticle_state
         is IntegratorGUIStateMixin._update_macroparticle_state
+    )
+
+
+def test_gui_inherits_config_list_helpers_from_config_list_mixin():
+    assert (
+        gui.IntegratorGUI._refresh_config_list
+        is IntegratorGUIConfigListMixin._refresh_config_list
+    )
+    assert (
+        gui.IntegratorGUI._selected_config_filename
+        is IntegratorGUIConfigListMixin._selected_config_filename
+    )
+    assert (
+        gui.IntegratorGUI._load_sweep_config
+        is IntegratorGUIConfigListMixin._load_sweep_config
+    )
+    assert (
+        gui.IntegratorGUI._save_sweep_config
+        is IntegratorGUIConfigListMixin._save_sweep_config
     )
 
 
@@ -451,3 +471,77 @@ def test_update_macroparticle_state_forces_disabled_outside_conducting_wall():
     assert enabled_var.get() is False
     assert entry_calls == [{"state": "disabled"}]
     assert label_calls == [{"foreground": "gray"}]
+
+
+def test_selected_config_filename_returns_selected_value():
+    config_list = SimpleNamespace(
+        curselection=lambda: (0,),
+        get=lambda index: "demo.json" if index == 0 else None,
+    )
+    harness = SimpleNamespace(config_list=config_list)
+
+    assert gui.IntegratorGUI._selected_config_filename(harness) == "demo.json"
+
+
+def test_load_sweep_config_uses_entry_value_and_normalizes_extension(tmp_path):
+    loaded_paths = []
+    sweep_file = tmp_path / "example.json"
+    sweep_file.write_text("{}", encoding="utf-8")
+    label_calls = []
+    harness = SimpleNamespace(
+        sweep_config_name_var=_Var("example"),
+        optimization_tab=SimpleNamespace(
+            _load_config_from_path=lambda path: loaded_paths.append(path)
+        ),
+        sweep_config_dir_var=_Var(str(tmp_path)),
+        current_sweep_config_label=SimpleNamespace(
+            config=lambda **kwargs: label_calls.append(kwargs)
+        ),
+    )
+
+    gui.IntegratorGUI._load_sweep_config(harness)
+
+    assert loaded_paths == [str(sweep_file)]
+    assert label_calls == [
+        {"text": "example.json", "foreground": "black", "font": ("TkDefaultFont", 9)}
+    ]
+
+
+def test_save_sweep_config_normalizes_name_and_refreshes_list(tmp_path, monkeypatch):
+    info_calls = []
+    saved_paths = []
+    refresh_calls = []
+    label_calls = []
+    monkeypatch.setattr(
+        "lw_integrator.gui_config_list_mixins.messagebox.showinfo",
+        lambda title, message: info_calls.append((title, message)),
+    )
+
+    harness = SimpleNamespace(
+        optimization_tab=SimpleNamespace(
+            _save_config_to_path=lambda path: saved_paths.append(path) or True
+        ),
+        sweep_config_name_var=_Var("demo_sweep"),
+        sweep_config_dir_var=_Var(str(tmp_path)),
+        _check_override_warning=lambda path, config_type="sweep": True,
+        current_sweep_config_label=SimpleNamespace(
+            config=lambda **kwargs: label_calls.append(kwargs)
+        ),
+        _refresh_sweep_config_list=lambda selected=None: refresh_calls.append(selected),
+    )
+
+    gui.IntegratorGUI._save_sweep_config(harness)
+
+    assert saved_paths == [str(tmp_path / "demo_sweep.json")]
+    assert harness.sweep_config_name_var.get() == "demo_sweep.json"
+    assert refresh_calls == ["demo_sweep.json"]
+    assert label_calls == [
+        {
+            "text": "demo_sweep.json",
+            "foreground": "black",
+            "font": ("TkDefaultFont", 9),
+        }
+    ]
+    assert info_calls == [
+        ("Save Sweep Config", "Configuration saved as demo_sweep.json")
+    ]

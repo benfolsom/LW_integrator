@@ -19,7 +19,7 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import messagebox, scrolledtext, ttk
 from typing import Any, Dict, List, Optional, Set
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -29,6 +29,7 @@ from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
 from .gui_config_mixins import IntegratorGUIConfigMixin
+from .gui_config_list_mixins import IntegratorGUIConfigListMixin
 from .gui_plot_mixins import IntegratorGUIPlotMixin
 from .gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from .gui_state_mixins import IntegratorGUIStateMixin
@@ -43,7 +44,6 @@ from .testbed_runner import (
     SPECIES_OPTIONS,
     SimulationOptions,
     apply_species_preset,
-    list_config_files,
 )
 
 DISPLAY_MAX_WIDTH = 1600  # pixels
@@ -313,6 +313,7 @@ class _ScrollableNotebookPage:
 
 
 class IntegratorGUI(
+    IntegratorGUIConfigListMixin,
     IntegratorGUIStateMixin,
     IntegratorGUISummaryMixin,
     IntegratorGUIPlotMixin,
@@ -3069,229 +3070,6 @@ class IntegratorGUI(
         for field, value in params.items():
             var_map[field].set(value)
         self._refresh_initial_summary()
-
-    def _refresh_config_list(self, selected: Optional[str] = None) -> None:
-        configs = list_config_files(Path(self.config_dir_var.get()))
-        self.config_list.delete(0, tk.END)
-        self.config_list.selection_clear(0, tk.END)
-
-        highlight: Optional[int] = None
-        if selected and selected in configs:
-            highlight = configs.index(selected)
-        elif self.config_file_var.get() in configs:
-            highlight = configs.index(self.config_file_var.get())
-
-        for config_name in configs:
-            self.config_list.insert(tk.END, config_name)
-
-        if highlight is not None:
-            self.config_list.selection_set(highlight)
-            self.config_list.see(highlight)
-
-    def _refresh_sweep_config_list(self, selected: Optional[str] = None) -> None:
-        """Refresh the sweep config list."""
-        import os
-
-        self.sweep_config_list.delete(0, tk.END)
-        sweep_dir = self.sweep_config_dir_var.get()
-
-        highlight: Optional[int] = None
-
-        if os.path.isdir(sweep_dir):
-            configs = [f for f in os.listdir(sweep_dir) if f.endswith(".json")]
-            configs.sort()
-
-            if selected and selected in configs:
-                highlight = configs.index(selected)
-
-            for config_name in configs:
-                self.sweep_config_list.insert(tk.END, config_name)
-
-        if highlight is not None:
-            self.sweep_config_list.selection_set(highlight)
-            self.sweep_config_list.see(highlight)
-
-    def _selected_config_filename(self) -> Optional[str]:
-        selection = self.config_list.curselection()
-        if not selection:
-            return None
-        result = self.config_list.get(selection[0])
-        return str(result) if result else None
-
-    def _on_config_selected(self) -> None:
-        filename = self._selected_config_filename()
-        if filename:
-            self.config_file_var.set(filename)
-            self.current_config_label.config(text=filename, foreground="black")
-        else:
-            self.current_config_label.config(text="<none>", foreground="gray")
-
-    def _on_sweep_config_selected(self) -> None:
-        """Handle sweep config selection from list."""
-        selection = self.sweep_config_list.curselection()
-        if selection:
-            filename = self.sweep_config_list.get(selection[0])
-            self.sweep_config_name_var.set(filename)
-            self.current_sweep_config_label.config(
-                text=filename, foreground="black", font=("TkDefaultFont", 9)
-            )
-        else:
-            self.current_sweep_config_label.config(
-                text="<none>", foreground="gray", font=("TkDefaultFont", 9, "italic")
-            )
-
-    def _select_config_dir(self) -> None:
-        import os
-
-        # Use last used directory or default
-        initial_dir = self.config_dir_var.get()
-        if not os.path.exists(initial_dir):
-            initial_dir = self._default_config_dir
-
-        directory = filedialog.askdirectory(
-            title="Select config directory", initialdir=initial_dir
-        )
-        if directory:
-            self.config_dir_var.set(directory)
-            self._last_config_dir = directory
-            self._save_preferences()
-            self._refresh_config_list()
-
-    def _select_output_dir(self) -> None:
-        import os
-
-        initial_dir = self.output_dir_var.get()
-        if not os.path.exists(initial_dir):
-            initial_dir = self._default_output_dir
-
-        directory = filedialog.askdirectory(
-            title="Select output directory", initialdir=initial_dir
-        )
-        if directory:
-            self.output_dir_var.set(directory)
-            self._last_output_dir = directory
-            self._save_preferences()
-
-    def _select_sweep_config_dir(self) -> None:
-        """Select sweep config directory."""
-        import os
-
-        initial_dir = self.sweep_config_dir_var.get()
-        if not os.path.exists(initial_dir):
-            initial_dir = self._default_sweep_config_dir
-
-        directory = filedialog.askdirectory(
-            title="Select sweep config directory", initialdir=initial_dir
-        )
-        if directory:
-            self.sweep_config_dir_var.set(directory)
-            self._last_sweep_config_dir = directory
-            self._save_preferences()
-            self._refresh_sweep_config_list()
-            # Update optimization plugin
-            if hasattr(self, "optimization_tab"):
-                self.optimization_tab.sweep_config_dir = directory
-
-    def _select_sweep_output_dir(self) -> None:
-        """Select sweep output directory."""
-        import os
-
-        initial_dir = self.sweep_output_dir_var.get()
-        if not os.path.exists(initial_dir):
-            initial_dir = self._default_sweep_output_dir
-
-        directory = filedialog.askdirectory(
-            title="Select sweep output directory", initialdir=initial_dir
-        )
-        if directory:
-            self.sweep_output_dir_var.set(directory)
-            self._last_sweep_output_dir = directory
-            self._save_preferences()
-            # Update optimization plugin
-            if hasattr(self, "optimization_tab"):
-                self.optimization_tab.sweep_output_dir = directory
-
-    def _load_sweep_config(self) -> None:
-        """Load sweep configuration from entry field or list selection."""
-        import os
-
-        # First try to get filename from entry field
-        filename = self.sweep_config_name_var.get().strip()
-
-        # If entry is empty, try to get from list selection
-        if not filename:
-            selection = self.sweep_config_list.curselection()
-            if not selection:
-                messagebox.showinfo(
-                    "Load Sweep Config",
-                    "Enter a config name or select one from the list.",
-                )
-                return
-            filename = self.sweep_config_list.get(selection[0])
-
-        # Ensure .json extension
-        if not filename.endswith(".json"):
-            filename += ".json"
-
-        if not hasattr(self, "optimization_tab"):
-            return
-
-        # Build full path
-        sweep_config_dir = self.sweep_config_dir_var.get()
-        path = os.path.join(sweep_config_dir, filename)
-
-        # Check if file exists
-        if not os.path.exists(path):
-            messagebox.showerror(
-                "Load Sweep Config", f"Configuration file not found: {filename}"
-            )
-            return
-
-        # Load the configuration
-        self.optimization_tab._load_config_from_path(path)
-        self.current_sweep_config_label.config(
-            text=filename, foreground="black", font=("TkDefaultFont", 9)
-        )
-
-    def _save_sweep_config(self) -> None:
-        """Save current sweep configuration using entered filename."""
-        if not hasattr(self, "optimization_tab"):
-            return
-
-        # Get filename from entry field
-        filename = self.sweep_config_name_var.get().strip()
-
-        if not filename:
-            messagebox.showinfo("Save Sweep Config", "Enter a config name to save.")
-            return
-
-        # Ensure .json extension
-        if not filename.endswith(".json"):
-            filename += ".json"
-
-        import os
-
-        sweep_config_dir = self.sweep_config_dir_var.get()
-        os.makedirs(sweep_config_dir, exist_ok=True)
-
-        filepath = os.path.join(sweep_config_dir, filename)
-
-        # Check for override warning
-        if not self._check_override_warning(Path(filepath), "sweep"):
-            return
-
-        # Delegate to optimization plugin with the filepath
-        success = self.optimization_tab._save_config_to_path(filepath)
-
-        if success:
-            self.sweep_config_name_var.set(filename)
-            self.current_sweep_config_label.config(
-                text=filename, foreground="black", font=("TkDefaultFont", 9)
-            )
-            self._refresh_sweep_config_list(selected=filename)
-            messagebox.showinfo(
-                "Save Sweep Config", f"Configuration saved as {filename}"
-            )
 
     def _check_override_warning(self, filepath: Path, config_type: str = "run") -> bool:
         """Check if file exists and show override warning if needed.
