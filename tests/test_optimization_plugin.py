@@ -15,6 +15,7 @@ from optimization.plugin_config_mixins import OptimizationPluginConfigMixin
 from optimization.plugin_control_mixins import OptimizationPluginControlMixin
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
+from optimization.plugin_runtime_mixins import OptimizationPluginRuntimeMixin
 from optimization.plugin_view_mixins import OptimizationPluginViewMixin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
@@ -223,6 +224,24 @@ class TestOptimizationPluginIntegration:
             is OptimizationPluginControlMixin._on_run_sweep
         )
         assert OptimizationPlugin._on_stop is OptimizationPluginControlMixin._on_stop
+
+    def test_plugin_inherits_runtime_helpers_from_runtime_mixin(self):
+        assert (
+            OptimizationPlugin._log_truncated_run
+            is OptimizationPluginRuntimeMixin._log_truncated_run
+        )
+        assert (
+            OptimizationPlugin._should_save_trajectory
+            is OptimizationPluginRuntimeMixin._should_save_trajectory
+        )
+        assert (
+            OptimizationPlugin._update_progress
+            is OptimizationPluginRuntimeMixin._update_progress
+        )
+        assert (
+            OptimizationPlugin._reset_ui_state
+            is OptimizationPluginRuntimeMixin._reset_ui_state
+        )
 
     def test_run_single_integration_uses_current_simulation_options_fields(
         self, mock_config, tmp_path, monkeypatch
@@ -441,6 +460,31 @@ class TestOptimizationPluginIntegration:
         assert harness._was_cancelled is True
         assert harness.gui_controller._cancel_requested is True
         harness._update_progress_text.assert_called_once_with("Stopping...")
+
+    def test_reset_ui_state_restores_gui_controls(self):
+        run_button = Mock()
+        cancel_button = Mock()
+        set_status = Mock()
+        harness = SimpleNamespace(
+            running=False,
+            gui_controller=SimpleNamespace(
+                _running=True,
+                _cancel_requested=True,
+                _set_status=set_status,
+                _run_button=run_button,
+                _cancel_button=cancel_button,
+            ),
+            _update_progress_text=Mock(),
+        )
+
+        OptimizationPlugin._reset_ui_state(harness)
+
+        assert harness.gui_controller._running is False
+        assert harness.gui_controller._cancel_requested is False
+        set_status.assert_called_once_with("Ready")
+        run_button.configure.assert_called_once_with(state="normal")
+        cancel_button.configure.assert_called_once_with(state="disabled")
+        harness._update_progress_text.assert_called_once_with("Ready")
 
     def test_run_single_integration_completes(self, mock_config, mock_run_result):
         """Test that _run_single_integration completes without hanging."""
