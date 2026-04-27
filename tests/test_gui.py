@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
+from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
 
 
 class _Var:
@@ -44,6 +45,17 @@ def test_gui_inherits_config_helpers_from_config_mixin():
         is IntegratorGUIConfigMixin._build_options_from_ui
     )
     assert gui.IntegratorGUI._save_config is IntegratorGUIConfigMixin._save_config
+
+
+def test_gui_inherits_runtime_helpers_from_runtime_mixin():
+    assert gui.IntegratorGUI._trigger_run is IntegratorGUIRuntimeMixin._trigger_run
+    assert (
+        gui.IntegratorGUI._trigger_cancel is IntegratorGUIRuntimeMixin._trigger_cancel
+    )
+    assert (
+        gui.IntegratorGUI._run_background is IntegratorGUIRuntimeMixin._run_background
+    )
+    assert gui.IntegratorGUI._on_success is IntegratorGUIRuntimeMixin._on_success
 
 
 def test_load_config_no_longer_requires_removed_legacy_state(
@@ -150,3 +162,55 @@ def test_save_config_normalizes_filename_and_updates_ui(tmp_path, monkeypatch):
     assert ("refresh_config_list", "my_run.json") in calls
     assert ("status", "Saved config: my_run.json") in calls
     assert ("Save Run Config", "Configuration saved as my_run.json") in info_calls
+
+
+def test_trigger_cancel_updates_run_state_feedback():
+    calls = []
+    harness = SimpleNamespace(
+        _running=True,
+        _cancel_requested=False,
+        _cancel_button=SimpleNamespace(
+            configure=lambda **kwargs: calls.append(("cancel_button", kwargs))
+        ),
+        _append_log=lambda message: calls.append(("log", message)),
+        _set_status=lambda message: calls.append(("status", message)),
+    )
+
+    gui.IntegratorGUI._trigger_cancel(harness)
+
+    assert harness._cancel_requested is True
+    assert ("cancel_button", {"state": "disabled"}) in calls
+    assert ("log", "Cancellation requested...") in calls
+    assert ("status", "Cancelling...") in calls
+
+
+def test_on_cancelled_restores_ready_controls():
+    run_button_calls = []
+    cancel_button_calls = []
+    status_calls = []
+    progress_values = []
+    harness = SimpleNamespace(
+        _running=True,
+        _worker=object(),
+        _cancel_requested=True,
+        _set_status=lambda message: status_calls.append(message),
+        _append_log=lambda message: status_calls.append(f"log:{message}"),
+        _run_button=SimpleNamespace(
+            configure=lambda **kwargs: run_button_calls.append(kwargs)
+        ),
+        _cancel_button=SimpleNamespace(
+            configure=lambda **kwargs: cancel_button_calls.append(kwargs)
+        ),
+        progress_var=SimpleNamespace(set=lambda value: progress_values.append(value)),
+    )
+
+    gui.IntegratorGUI._on_cancelled(harness)
+
+    assert harness._running is False
+    assert harness._worker is None
+    assert harness._cancel_requested is False
+    assert "Cancelled" in status_calls
+    assert "log:Simulation cancelled by user." in status_calls
+    assert run_button_calls == [{"state": "normal"}]
+    assert cancel_button_calls == [{"state": "disabled"}]
+    assert progress_values == [0.0]

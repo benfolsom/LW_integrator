@@ -17,7 +17,6 @@ import signal
 import sys
 import threading
 import tkinter as tk
-import traceback
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -26,11 +25,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
-from core.batched_logger import BatchedLogger, ThrottledProgressCallback
+from core.batched_logger import BatchedLogger
 from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
 from .gui_config_mixins import IntegratorGUIConfigMixin
+from .gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
@@ -40,13 +40,10 @@ from .testbed_runner import (
     PARTICLE_PARAM_FIELDS,
     SPECIES_OPTIONS,
     InitialSummary,
-    RunResult,
     SimulationOptions,
     apply_species_preset,
     compute_initial_summary,
-    ensure_directory,
     list_config_files,
-    run_testbed,
     supports_driver,
 )
 
@@ -316,7 +313,7 @@ class _ScrollableNotebookPage:
         self.canvas.yview_scroll(delta, "units")
 
 
-class IntegratorGUI(IntegratorGUIConfigMixin):
+class IntegratorGUI(IntegratorGUIRuntimeMixin, IntegratorGUIConfigMixin):
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("LW Integrator Testbed")
@@ -3829,131 +3826,6 @@ class IntegratorGUI(IntegratorGUIConfigMixin):
                 "Optimization plugin not properly initialized.",
             )
 
-    def _trigger_run(self) -> None:
-        if self._running:
-            messagebox.showinfo("LW Integrator", "Simulation already running")
-            return
-
-        try:
-            options = self._build_options_from_ui()
-        except ValueError as exc:
-            _show_error_dialog(self.root, "Invalid configuration", str(exc))
-            return
-
-        self.options = options
-
-        # Create timestamped output directory for single runs
-        # Format: results/runs/YYYYMMDD_HHMMSS_configname/
-        from datetime import datetime
-        from pathlib import Path
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        config_name = Path(options.config_name).stem  # Remove .json extension
-        timestamped_dir = Path("results/runs") / f"{timestamp}_{config_name}"
-
-        # Update options to use timestamped directory
-        options.output_dir = timestamped_dir
-        ensure_directory(options.output_dir)
-
-        # Log where results will be saved
-        self._append_log(f"Output directory: {timestamped_dir}")
-        for handle in list(self._figure_windows):
-            self._close_figure(handle)
-
-        self._cancel_requested = False
-        self._set_status("Running...")
-        self._append_log("Launching simulation...")
-        self._running = True
-        self.progress_var.set(0.0)
-        self._run_button.configure(state="disabled")
-        self._cancel_button.configure(state="normal")
-
-        self._worker = threading.Thread(
-            target=self._run_background, args=(options,), daemon=True
-        )
-        self._worker.start()
-
-    def _trigger_cancel(self) -> None:
-        if self._running:
-            self._cancel_requested = True
-            self._cancel_button.configure(state="disabled")
-            self._append_log("Cancellation requested...")
-            self._set_status("Cancelling...")
-
-    def _run_background(self, options: SimulationOptions) -> None:
-        from core.integration_runner import IntegrationCancelled
-
-        # Create batched logger for this run (100 messages per batch, 500ms flush interval)
-        def gui_log_callback(text: str) -> None:
-            self.root.after(0, partial(self._append_log, text))
-
-        self._batched_logger = BatchedLogger(
-            gui_callback=gui_log_callback,
-            batch_size=100,
-            flush_interval_ms=500,
-            max_queue_size=10000,
-            enable_batching=True,  # Can be disabled for debugging if needed
-        )
-
-        # Throttled progress callback (max 10 updates/second)
-        throttled_progress = ThrottledProgressCallback(
-            gui_callback=lambda pct: self.root.after(
-                0, lambda: self.progress_var.set(pct)
-            ),
-            min_interval_ms=100,
-            force_final=True,
-        )
-
-        def cancel_callback() -> bool:
-            return self._cancel_requested
-
-        try:
-            result = run_testbed(
-                options,
-                log=self._batched_logger.log,  # Use batched logger
-                progress_callback=throttled_progress,  # Use throttled progress
-                cancel_callback=cancel_callback,
-            )
-        except IntegrationCancelled:
-            # Flush any remaining log messages before canceling
-            if self._batched_logger:
-                self._batched_logger.flush()
-            self.root.after(0, self._on_cancelled)
-            return
-        except Exception as exc:  # pragma: no cover - UI safeguard
-            # Flush any remaining log messages before error handling
-            if self._batched_logger:
-                self._batched_logger.flush()
-            # Log brief error to summary
-            brief_error = str(exc)
-            # Log full traceback to detailed logs
-            full_traceback = "".join(
-                traceback.format_exception(type(exc), exc, exc.__traceback__)
-            )
-            # Store full details in raw log lines for detailed view
-            for line in full_traceback.splitlines():
-                if line.strip():
-                    self._raw_log_lines.append(line)
-            # Pass brief error to failure handler
-            self.root.after(0, partial(self._on_failure, brief_error))
-            return
-        finally:
-            # Clean shutdown of batched logger
-            if self._batched_logger:
-                stats = self._batched_logger.get_stats()
-                if stats["total_messages"] > 0:
-                    # Log batching statistics for monitoring
-                    reduction = stats["reduction_factor"]
-                    self._append_log(
-                        f"[Batched Logging Stats] {stats['total_messages']} messages "
-                        f"→ {stats['total_batches']} batches "
-                        f"({reduction:.1f}× reduction, {stats['dropped_messages']} dropped)"
-                    )
-                self._batched_logger.shutdown()
-                self._batched_logger = None
-
-        self.root.after(0, partial(self._on_success, result))
-
     def _queue_log(self, text: str) -> None:
         """Queue a UI log line; batched logging remains the preferred path."""
         self.root.after(0, partial(self._append_log, text))
@@ -4250,76 +4122,6 @@ class IntegratorGUI(IntegratorGUIConfigMixin):
 
         # Force canvas redraw
         canvas.draw_idle()
-
-    def _on_cancelled(self) -> None:
-        self._running = False
-        self._worker = None
-        self._cancel_requested = False
-        self._set_status("Cancelled")
-        self._append_log("Simulation cancelled by user.")
-        self._run_button.configure(state="normal")
-        self._cancel_button.configure(state="disabled")
-        self.progress_var.set(0.0)
-
-    def _on_failure(self, message: str) -> None:
-        self._running = False
-        self._worker = None
-        self._cancel_requested = False
-        self._set_status("Failed")
-        # Add error to summary
-        self._log_summary.append(f"[ERROR] {message}")
-        # Log brief error message
-        self._append_log(f"Error: {message}")
-        self._append_log("(Full traceback available in Detailed view)")
-        self._run_button.configure(state="normal")
-        self._cancel_button.configure(state="disabled")
-        self.progress_var.set(0.0)
-        _show_error_dialog(self.root, "LW Integrator", message)
-
-    def _on_success(self, result: RunResult) -> None:
-        self._running = False
-        self._worker = None
-        self._cancel_requested = False
-        self._set_status("Completed")
-        self._append_log("Simulation finished successfully.")
-        self._append_log(f"Duration: {result.duration_s:.2f} s")
-
-        # Save config copy to output directory
-        try:
-            import json
-            from pathlib import Path
-
-            config_file = Path(self.options.output_dir) / "run_config.json"
-            with open(config_file, "w") as f:
-                json.dump(self.options.to_dict(), f, indent=2)
-            self._append_log(f"Config saved to: {config_file}")
-        except Exception as e:
-            self._append_log(f"Warning: Could not save config: {e}")
-
-        self._run_button.configure(state="normal")
-        self._cancel_button.configure(state="disabled")
-        self.progress_var.set(100.0)
-
-        # Auto-load verbose logs into GUI for post-run analysis
-        if hasattr(result, "verbose_logs") and result.verbose_logs:
-            verbose_line_count = len(
-                [line for line in result.verbose_logs.splitlines() if line.strip()]
-            )
-            self._append_log(
-                f"Loading {verbose_line_count:,} verbose log lines into GUI..."
-            )
-            self._load_verbose_logs(result.verbose_logs)
-
-        for name, figure in result.figures.items():
-            title = (
-                name.replace("_", " ").title() if isinstance(name, str) else str(name)
-            )
-            try:
-                self._show_figure(title, figure, plot_name=name)
-            except Exception as e:
-                error_msg = f"Error displaying {title} plot: {e}"
-                self._append_log(error_msg)
-                _show_warning_dialog(self.root, "Plot Display Error", error_msg)
 
     def _show_figure(self, title: str, figure: Any, plot_name: str = "") -> None:
         try:
