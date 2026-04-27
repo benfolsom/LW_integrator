@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
+from lw_integrator.gui_plot_mixins import IntegratorGUIPlotMixin
 from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
 
 
@@ -56,6 +57,19 @@ def test_gui_inherits_runtime_helpers_from_runtime_mixin():
         gui.IntegratorGUI._run_background is IntegratorGUIRuntimeMixin._run_background
     )
     assert gui.IntegratorGUI._on_success is IntegratorGUIRuntimeMixin._on_success
+
+
+def test_gui_inherits_plot_helpers_from_plot_mixin():
+    assert gui.IntegratorGUI._queue_log is IntegratorGUIPlotMixin._queue_log
+    assert (
+        gui.IntegratorGUI._replot_with_new_axis
+        is IntegratorGUIPlotMixin._replot_with_new_axis
+    )
+    assert gui.IntegratorGUI._show_figure is IntegratorGUIPlotMixin._show_figure
+    assert (
+        gui.IntegratorGUI._prepare_figure_for_display
+        is IntegratorGUIPlotMixin._prepare_figure_for_display
+    )
 
 
 def test_load_config_no_longer_requires_removed_legacy_state(
@@ -214,3 +228,48 @@ def test_on_cancelled_restores_ready_controls():
     assert run_button_calls == [{"state": "normal"}]
     assert cancel_button_calls == [{"state": "disabled"}]
     assert progress_values == [0.0]
+
+
+def test_prepare_figure_for_display_scales_large_figures():
+    calls = []
+
+    class _FigureStub:
+        def get_dpi(self):
+            return 100.0
+
+        def get_size_inches(self):
+            return (40.0, 20.0)
+
+        def set_size_inches(self, width, height, forward=False):
+            calls.append(("size", width, height, forward))
+
+    harness = SimpleNamespace(
+        _scale_figure_visuals=lambda figure, scale: calls.append(("scale", scale))
+    )
+
+    width_px, height_px = gui.IntegratorGUI._prepare_figure_for_display(
+        harness, _FigureStub()
+    )
+
+    assert (width_px, height_px) == (1600, 800)
+    assert ("size", 16.0, 8.0, False) in calls
+    assert ("scale", 0.4) in calls
+
+
+def test_close_figure_removes_handle_and_destroys_widgets():
+    destroyed = []
+
+    class _CanvasWidget:
+        def destroy(self):
+            destroyed.append("canvas")
+
+    handle = SimpleNamespace(
+        canvas=SimpleNamespace(get_tk_widget=lambda: _CanvasWidget()),
+        window=SimpleNamespace(destroy=lambda: destroyed.append("window")),
+    )
+    harness = SimpleNamespace(_figure_windows=[handle])
+
+    gui.IntegratorGUI._close_figure(harness, handle)
+
+    assert harness._figure_windows == []
+    assert destroyed == ["canvas", "window"]
