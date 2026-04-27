@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
 from lw_integrator.gui_config_list_mixins import IntegratorGUIConfigListMixin
+from lw_integrator.gui_controller_mixins import IntegratorGUIControllerMixin
 from lw_integrator.gui_plot_mixins import IntegratorGUIPlotMixin
 from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
@@ -118,6 +119,18 @@ def test_gui_inherits_config_list_helpers_from_config_list_mixin():
     assert (
         gui.IntegratorGUI._save_sweep_config
         is IntegratorGUIConfigListMixin._save_sweep_config
+    )
+
+
+def test_gui_inherits_controller_helpers_from_controller_mixin():
+    assert gui.IntegratorGUI._set_status is IntegratorGUIControllerMixin._set_status
+    assert (
+        gui.IntegratorGUI._apply_species
+        is IntegratorGUIControllerMixin._apply_species
+    )
+    assert (
+        gui.IntegratorGUI._trigger_sweep
+        is IntegratorGUIControllerMixin._trigger_sweep
     )
 
 
@@ -545,3 +558,54 @@ def test_save_sweep_config_normalizes_name_and_refreshes_list(tmp_path, monkeypa
     assert info_calls == [
         ("Save Sweep Config", "Configuration saved as demo_sweep.json")
     ]
+
+
+def test_apply_species_updates_particle_vars_and_refreshes_summary():
+    rider_param_vars = {
+        "m_particle": _Var(1.0),
+        "charge_sign": _Var(-1.0),
+        "pcount": _Var(1),
+        "energy": _Var(2.0),
+        "transv_mom": _Var(0.0),
+        "transv_dist": _Var(0.0),
+        "stripped_ions": _Var(0.0),
+    }
+    # ensure all expected fields exist without hardcoding the full set
+    from lw_integrator.testbed_runner import PARTICLE_PARAM_FIELDS
+
+    for field in PARTICLE_PARAM_FIELDS:
+        rider_param_vars.setdefault(field, _Var(0.0))
+
+    refresh_calls = []
+    harness = SimpleNamespace(
+        rider_species_var=_Var("Muon"),
+        driver_species_var=_Var("Custom"),
+        _species_by_label={"Muon": "muon", "Custom": "custom"},
+        rider_param_vars=rider_param_vars,
+        driver_param_vars={field: _Var(0.0) for field in PARTICLE_PARAM_FIELDS},
+        _refresh_initial_summary=lambda: refresh_calls.append("refresh"),
+    )
+
+    gui.IntegratorGUI._apply_species(harness, "rider")
+
+    assert refresh_calls == ["refresh"]
+    assert any(var.get() != 0.0 for var in rider_param_vars.values())
+
+
+def test_trigger_sweep_delegates_to_optimization_tab(monkeypatch):
+    run_calls = []
+    monkeypatch.setattr(
+        "lw_integrator.gui_controller_mixins.messagebox.askyesno",
+        lambda *args, **kwargs: True,
+    )
+
+    harness = SimpleNamespace(
+        optimization_tab=SimpleNamespace(
+            last_loaded_config=None,
+            _on_run_sweep=lambda: run_calls.append("run"),
+        )
+    )
+
+    gui.IntegratorGUI._trigger_sweep(harness)
+
+    assert run_calls == ["run"]

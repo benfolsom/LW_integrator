@@ -30,6 +30,7 @@ from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
 from .gui_config_mixins import IntegratorGUIConfigMixin
 from .gui_config_list_mixins import IntegratorGUIConfigListMixin
+from .gui_controller_mixins import IntegratorGUIControllerMixin
 from .gui_plot_mixins import IntegratorGUIPlotMixin
 from .gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from .gui_state_mixins import IntegratorGUIStateMixin
@@ -43,7 +44,6 @@ from .testbed_runner import (
     PARTICLE_PARAM_FIELDS,
     SPECIES_OPTIONS,
     SimulationOptions,
-    apply_species_preset,
 )
 
 DISPLAY_MAX_WIDTH = 1600  # pixels
@@ -313,6 +313,7 @@ class _ScrollableNotebookPage:
 
 
 class IntegratorGUI(
+    IntegratorGUIControllerMixin,
     IntegratorGUIConfigListMixin,
     IntegratorGUIStateMixin,
     IntegratorGUISummaryMixin,
@@ -3052,25 +3053,6 @@ class IntegratorGUI(
 
                 traceback.print_exc()
 
-    def _set_status(self, text: str) -> None:
-        self.status_var.set(text)
-
-    def _apply_species(self, target: str) -> None:
-        label = (
-            self.rider_species_var.get()
-            if target == "rider"
-            else self.driver_species_var.get()
-        )
-        preset_key = self._species_by_label.get(label, "custom")
-        if preset_key == "custom":
-            return
-        var_map = self.rider_param_vars if target == "rider" else self.driver_param_vars
-        params = {field: var_map[field].get() for field in PARTICLE_PARAM_FIELDS}
-        apply_species_preset(params, preset_key)
-        for field, value in params.items():
-            var_map[field].set(value)
-        self._refresh_initial_summary()
-
     def _check_override_warning(self, filepath: Path, config_type: str = "run") -> bool:
         """Check if file exists and show override warning if needed.
 
@@ -3167,51 +3149,6 @@ class IntegratorGUI(
     # ------------------------------------------------------------------
     # Simulation execution
     # ------------------------------------------------------------------
-
-    def _on_tab_changed(self, event=None) -> None:
-        """Handle notebook tab change events.
-
-        Note: We no longer auto-switch run mode when changing tabs.
-        Users must explicitly select run mode via the radio buttons.
-        """
-        # Removed auto-switching behavior - run mode is now only changed
-        # via explicit radio button selection in the control panel
-
-        # Refresh initial summary when switching tabs to ensure it's up-to-date
-        self._refresh_initial_summary()
-
-    def _open_optimization_tab(self) -> None:
-        """Switch to the Sweep/Optim tab."""
-        for i in range(self.notebook.index("end")):
-            if self.notebook.tab(i, "text") == "Sweep/Optim":
-                self.notebook.select(i)
-                break
-
-    def _trigger_sweep(self) -> None:
-        """Handle Run Sweep button click with validation."""
-        # Check if a configuration is loaded/saved in optimization plugin
-        if (
-            not hasattr(self.optimization_tab, "last_loaded_config")
-            or not self.optimization_tab.last_loaded_config
-        ):
-            response = messagebox.askyesno(
-                "No Configuration",
-                "No sweep configuration has been loaded or saved.\n\n"
-                "It is recommended to save your sweep configuration first.\n\n"
-                "Continue anyway?",
-                icon="warning",
-            )
-            if not response:
-                return
-
-        # Delegate to optimization plugin's run sweep method
-        if hasattr(self.optimization_tab, "_on_run_sweep"):
-            self.optimization_tab._on_run_sweep()
-        else:
-            messagebox.showerror(
-                "Error",
-                "Optimization plugin not properly initialized.",
-            )
 
 def main() -> None:
     # Set locale to system default for proper keyboard input (Swedish, etc.)
