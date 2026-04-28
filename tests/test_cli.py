@@ -605,6 +605,43 @@ class TestCliMain:
             "delta_gamma_mean": 0.0,
         }
 
+    def test_main_runs_minimal_config_without_monkeypatch(self, tmp_path: Path):
+        config_path = tmp_path / "minimal.json"
+        output_path = tmp_path / "summary.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "steps": 2,
+                    "time_step": 1e-6,
+                    "simulation_type": "wall",
+                    "wall_position": 1000.0,
+                    "aperture_radius": 1000.0,
+                    "bunch_mean": 1000.0,
+                    "rider": {
+                        "kinetic_energy_mev": 1.0,
+                        "mass_amu": 0.00054857990907,
+                        "charge_sign": -1.0,
+                        "position_z": -10.0,
+                        "particle_count": 1,
+                        "transverse_radius": 0.0,
+                        "transverse_momentum": 0.0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = cli.main(
+            ["--config", str(config_path), "--output", str(output_path), "--quiet"]
+        )
+
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert result == 0
+        assert payload["steps_completed"] == 2
+        assert payload["initial_z_mm"] == pytest.approx(-10.0)
+        assert payload["final_z_mm"] > payload["initial_z_mm"]
+        assert payload["delta_gamma_mean"] == pytest.approx(0.0)
+
     def test_main_prints_driver_summary_when_present(self, monkeypatch, capsys):
         fake_request = object()
         monkeypatch.setattr(cli, "build_request", lambda args: fake_request)
