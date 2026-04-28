@@ -46,6 +46,21 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 - **Files modified** — `core/integration_runner.py`, `tests/unit/test_integration_runner_control_flow.py`
 
+### BUNCH_TO_BUNCH Transverse Offset Mode Fix (April 2026)
+
+- **Bug** — Optimization and sweep run-control code sometimes compared `SimulationType.BUNCH_TO_BUNCH` enum values to the string `"BUNCH_TO_BUNCH"`
+- **Impact** — Enum-backed BUNCH_TO_BUNCH configs could take the conducting-wall offset path, treating an absolute bunch offset as an aperture fraction and scaling it by aperture radius
+- **Fix** — Centralized simulation-mode detection in `optimization.run_parameter_helpers.is_bunch_to_bunch()` and routed transverse-offset resolution through `calculate_transverse_offset()`
+- **Regression coverage** — Added tests covering enum and string mode values so BUNCH_TO_BUNCH offsets remain absolute while wall-mode offsets remain aperture-scaled
+- **Files modified** — `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `tests/test_optimization_run_parameter_helpers.py`
+
+### Maintained Plotting and Validation Surface Cleanup (April 2026)
+
+- **Plotting surface** — Added focused CLI coverage for `lw-generate-sweep-heatmap`, `lw-plot-latest-live`, `lw-plot-from-logcache-live`, and `lw-plot-trajectory`
+- **Legacy isolation** — Removed standalone legacy comparison Python scripts from active examples; legacy comparison notebooks remain as historical reference material
+- **Test discovery** — Fixed pytest configuration to collect from the actual `tests/` tree instead of stale `lw_integrator/tests`
+- **Files modified** — `lw_integrator/sweep_heatmap.py`, `tests/test_plotting_tools.py`, `tests/test_adaptive_timestep_interactions.py`, `docs/source/validation.rst`, `pyproject.toml`
+
 ## v0.6.0 — March 2026
 
 ### CLI / GUI Parity (March 2026)
