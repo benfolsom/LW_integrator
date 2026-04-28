@@ -7,11 +7,22 @@ from types import SimpleNamespace
 import pytest
 
 from core.types import SimulationType
+import optimization.sweep_run_helpers as sweep_run_helpers
 from optimization.sweep_run_helpers import (
     build_full_debug_parameter_log_lines,
     resolve_sweep_run_parameters,
     resolve_sweep_timestep,
 )
+
+
+def test_module_exposes_only_maintained_public_helpers():
+    assert sweep_run_helpers.__all__ == [
+        "SweepRunParameters",
+        "SweepTimestepResolution",
+        "build_full_debug_parameter_log_lines",
+        "resolve_sweep_run_parameters",
+        "resolve_sweep_timestep",
+    ]
 
 
 def _config(**overrides):

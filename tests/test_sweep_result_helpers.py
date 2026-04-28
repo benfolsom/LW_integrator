@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from core.types import SimulationType
+import optimization.sweep_result_helpers as sweep_result_helpers
 from optimization.sweep_result_helpers import (
     SweepMetricSummary,
     build_failed_sweep_run_record,
@@ -18,6 +19,23 @@ from optimization.sweep_result_helpers import (
     extract_sweep_metric_summary,
     simulation_type_name,
 )
+
+
+def test_module_exposes_only_maintained_public_helpers():
+    assert sweep_result_helpers.__all__ == [
+        "SweepAttemptClassification",
+        "SweepMetricSummary",
+        "build_failed_sweep_run_record",
+        "build_full_debug_sweep_result_log_lines",
+        "build_sweep_completion_log_lines",
+        "build_sweep_run_data",
+        "build_timeout_sweep_run_record",
+        "build_truncated_sweep_log_params",
+        "classify_sweep_attempt_result",
+        "extract_actual_distance",
+        "extract_sweep_metric_summary",
+        "simulation_type_name",
+    ]
 
 
 def test_simulation_type_name_accepts_enum_and_string_modes():

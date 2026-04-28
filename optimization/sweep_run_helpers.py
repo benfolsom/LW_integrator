@@ -322,3 +322,12 @@ def _timestep_log_lines(
     if config.timestep_strategy == "auto_distance":
         log_lines.append(f"    target_distance={config.target_distance_mm:.2f} mm")
     return log_lines
+
+
+__all__ = [
+    "SweepRunParameters",
+    "SweepTimestepResolution",
+    "build_full_debug_parameter_log_lines",
+    "resolve_sweep_run_parameters",
+    "resolve_sweep_timestep",
+]
