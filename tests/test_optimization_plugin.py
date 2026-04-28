@@ -19,6 +19,7 @@ from optimization.plugin_runtime_mixins import OptimizationPluginRuntimeMixin
 from optimization.plugin_view_mixins import OptimizationPluginViewMixin
 from optimization.results_mixins import OptimizationResultsMixin
 from optimization.run_mixins import OptimizationRunMixin
+from optimization.run_parameter_helpers import OptimizationRunParameters
 from optimization.plugin_ui_mixins import OptimizationPluginUIMixin
 import optimization.plugin_view_mixins as view_mixins_module
 import optimization.run_mixins as run_mixins_module
@@ -44,6 +45,27 @@ def _build_sweep_harness(sweep_params):
 
     harness._set_fixed_sweep_value = set_fixed_sweep_value
     return harness
+
+
+def _optimization_run_params() -> OptimizationRunParameters:
+    return OptimizationRunParameters(
+        aperture=0.25,
+        energy_gev=5.0,
+        start_z=1.0,
+        transv_offset=0.1,
+        timestep=1e-6,
+        steps=10,
+        rider_m_particle=0.00054857990907,
+        rider_charge_sign=-1.0,
+        rider_pcount=2,
+        rider_transv_mom=0.0,
+        rider_transv_dist=0.0,
+        rider_stripped_ions=1.0,
+        macroparticle_charge_multiplier=1.0,
+        macroparticle_sigma_multiplier=1.0,
+        driver_params=None,
+        wall_z=100.0,
+    )
 
 
 @pytest.fixture
@@ -290,6 +312,58 @@ class TestOptimizationPluginIntegration:
 
         assert captured["kwargs"]["output_dir"].parent == tmp_path
         assert captured["kwargs"]["seed"] == mock_config.seed + 3
+
+    def test_run_optimization_evaluation_integration_runs_directly(self):
+        captured = {}
+
+        def fake_run_single_integration(**kwargs):
+            captured["kwargs"] = kwargs
+            return {"metrics": {"ok": True}}
+
+        harness = SimpleNamespace(
+            config=SimpleNamespace(per_run_timeout=0.0),
+            _run_single_integration=fake_run_single_integration,
+            _log_result=lambda _message: None,
+        )
+
+        result, timed_out = (
+            OptimizationRunMixin._run_optimization_evaluation_integration(
+                harness, _optimization_run_params(), eval_num=4, original_params=[1.0]
+            )
+        )
+
+        assert timed_out is False
+        assert result == {"metrics": {"ok": True}}
+        assert captured["kwargs"]["run_num"] == 4
+        assert captured["kwargs"]["cancel_flag"] is None
+        assert captured["kwargs"]["aperture"] == 0.25
+        assert captured["kwargs"]["rider_pcount"] == 2
+
+    def test_run_optimization_evaluation_integration_signals_timeout(self):
+        logs = []
+
+        def fake_run_single_integration(**kwargs):
+            cancel_flag = kwargs["cancel_flag"]
+            deadline = time.time() + 1.0
+            while not cancel_flag[0] and time.time() < deadline:
+                time.sleep(0.001)
+            return {"metrics": {"late": True}}
+
+        harness = SimpleNamespace(
+            config=SimpleNamespace(per_run_timeout=0.01),
+            _run_single_integration=fake_run_single_integration,
+            _log_result=logs.append,
+        )
+
+        result, timed_out = (
+            OptimizationRunMixin._run_optimization_evaluation_integration(
+                harness, _optimization_run_params(), eval_num=5, original_params=[2.0]
+            )
+        )
+
+        assert result is None
+        assert timed_out is True
+        assert any("timed out" in message for message in logs)
 
     def test_apply_macroparticle_ui_state_updates_controls(self):
         harness = _build_sweep_harness(

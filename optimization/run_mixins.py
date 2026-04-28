@@ -159,100 +159,15 @@ class OptimizationRunMixin:
                     )
                     aperture = run_params.aperture
                     energy = run_params.energy_gev
-                    start_z = run_params.start_z
-                    transv_offset = run_params.transv_offset
-                    timestep = run_params.timestep
-                    steps = run_params.steps
-                    rider_m_particle = run_params.rider_m_particle
-                    rider_charge_sign = run_params.rider_charge_sign
-                    rider_pcount = run_params.rider_pcount
-                    rider_transv_mom = run_params.rider_transv_mom
-                    rider_transv_dist = run_params.rider_transv_dist
-                    rider_stripped_ions = run_params.rider_stripped_ions
                     macroparticle_charge_mult = (
                         run_params.macroparticle_charge_multiplier
                     )
-                    macroparticle_sigma_mult = (
-                        run_params.macroparticle_sigma_multiplier
+
+                    result, timed_out = self._run_optimization_evaluation_integration(
+                        run_params, eval_num, x
                     )
-                    driver_params_dict = run_params.driver_params
-                    wall_z = run_params.wall_z
-
-                    # Run integration with timeout if enabled
-                    result = None
-
-                    if self.config.per_run_timeout > 0:
-                        result_container = [None]
-                        error_container = [None]
-                        cancel_flag = [False]
-
-                        def run_integration():
-                            try:
-                                result_container[0] = self._run_single_integration(
-                                    aperture=aperture,
-                                    energy_gev=energy,
-                                    start_z=start_z,
-                                    transv_offset=transv_offset,
-                                    timestep=timestep,
-                                    steps=steps,
-                                    rider_m_particle=rider_m_particle,
-                                    rider_charge_sign=rider_charge_sign,
-                                    rider_pcount=int(rider_pcount),
-                                    rider_transv_mom=rider_transv_mom,
-                                    rider_transv_dist=rider_transv_dist,
-                                    rider_stripped_ions=rider_stripped_ions,
-                                    macroparticle_charge_multiplier=macroparticle_charge_mult,
-                                    macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                                    driver_params=driver_params_dict,
-                                    wall_z=wall_z,
-                                    run_num=eval_num,
-                                    cancel_flag=cancel_flag,
-                                )
-                            except Exception as e:
-                                error_container[0] = e
-
-                        thread = threading.Thread(target=run_integration)
-                        thread.daemon = True
-                        thread.start()
-                        thread.join(timeout=self.config.per_run_timeout)
-
-                        if thread.is_alive():
-                            cancel_flag[0] = True
-                            self._log_result(
-                                f"[WARNING] Evaluation timed out for params {x} after {self.config.per_run_timeout}s"
-                            )
-                            self._log_result(
-                                "[WARNING] Signaling integration to cancel..."
-                            )
-                            # Give it a brief moment to respond
-                            thread.join(timeout=2.0)
-                            return np.inf
-                        elif error_container[0] is not None:
-                            raise error_container[0]
-                        else:
-                            result = result_container[0]
-                    else:
-                        # No timeout - run directly
-                        result = self._run_single_integration(
-                            aperture=aperture,
-                            energy_gev=energy,
-                            start_z=start_z,
-                            transv_offset=transv_offset,
-                            timestep=timestep,
-                            steps=steps,
-                            rider_m_particle=rider_m_particle,
-                            rider_charge_sign=rider_charge_sign,
-                            rider_pcount=int(rider_pcount),
-                            rider_transv_mom=rider_transv_mom,
-                            rider_transv_dist=rider_transv_dist,
-                            rider_stripped_ions=rider_stripped_ions,
-                            macroparticle_charge_multiplier=macroparticle_charge_mult,
-                            macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                            driver_params=driver_params_dict,
-                            wall_z=wall_z,
-                            run_num=eval_num,
-                            cancel_flag=None,
-                        )
+                    if timed_out:
+                        return np.inf
 
                     if result is None or "metrics" not in result:
                         # Store failed evaluation
@@ -590,6 +505,72 @@ class OptimizationRunMixin:
             # Ensure log file is closed
             if self._log_file is not None:
                 self._close_log_file()
+
+    def _run_optimization_evaluation_integration(
+        self, run_params, eval_num: int, original_params
+    ):
+        """Run one optimizer evaluation, optionally with a per-run timeout."""
+        integration_kwargs = {
+            "aperture": run_params.aperture,
+            "energy_gev": run_params.energy_gev,
+            "start_z": run_params.start_z,
+            "transv_offset": run_params.transv_offset,
+            "timestep": run_params.timestep,
+            "steps": run_params.steps,
+            "rider_m_particle": run_params.rider_m_particle,
+            "rider_charge_sign": run_params.rider_charge_sign,
+            "rider_pcount": int(run_params.rider_pcount),
+            "rider_transv_mom": run_params.rider_transv_mom,
+            "rider_transv_dist": run_params.rider_transv_dist,
+            "rider_stripped_ions": run_params.rider_stripped_ions,
+            "macroparticle_charge_multiplier": (
+                run_params.macroparticle_charge_multiplier
+            ),
+            "macroparticle_sigma_multiplier": run_params.macroparticle_sigma_multiplier,
+            "driver_params": run_params.driver_params,
+            "wall_z": run_params.wall_z,
+            "run_num": eval_num,
+        }
+
+        if self.config.per_run_timeout <= 0:
+            result = self._run_single_integration(
+                **integration_kwargs,
+                cancel_flag=None,
+            )
+            return result, False
+
+        result_container = [None]
+        error_container = [None]
+        cancel_flag = [False]
+
+        def run_integration():
+            try:
+                result_container[0] = self._run_single_integration(
+                    **integration_kwargs,
+                    cancel_flag=cancel_flag,
+                )
+            except Exception as e:
+                error_container[0] = e
+
+        thread = threading.Thread(target=run_integration)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout=self.config.per_run_timeout)
+
+        if thread.is_alive():
+            cancel_flag[0] = True
+            self._log_result(
+                f"[WARNING] Evaluation timed out for params {original_params} "
+                f"after {self.config.per_run_timeout}s"
+            )
+            self._log_result("[WARNING] Signaling integration to cancel...")
+            thread.join(timeout=2.0)
+            return None, True
+
+        if error_container[0] is not None:
+            raise error_container[0]
+
+        return result_container[0], False
 
     def _run_sweep_background(self, is_finetune: bool = False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
