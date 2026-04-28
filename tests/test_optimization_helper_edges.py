@@ -24,7 +24,11 @@ from optimization.plugin_results_helpers import (
     summarize_optimization_top_results,
     summarize_saved_results,
 )
-from optimization.sweep_helpers import build_parameter_grids, calculate_energy_from_pz
+from optimization.sweep_helpers import (
+    build_config_parameter_grids,
+    build_parameter_grids,
+    calculate_energy_from_pz,
+)
 
 
 def _state(
@@ -410,3 +414,31 @@ def test_sweep_helpers_cover_zero_pz_and_disabled_non_driver_controls():
 
     assert "rider_transv_mom" not in grids
     assert grids["transverse_offset_fraction"] == [0.0]
+
+
+def test_build_config_parameter_grids_accepts_string_b2b_mode():
+    config = SimpleNamespace(
+        simulation_type="BUNCH_TO_BUNCH",
+        aperture_range=(0.01, 0.02),
+        aperture_points=3,
+        aperture_log_scale=False,
+        energy_range=(1.0, 1.0),
+        energy_points=1,
+        energy_log_scale=False,
+        starting_z_positions=[0.0],
+        starting_z_range=None,
+        starting_z_points=1,
+        transverse_offset_fractions=[0.0],
+        wall_z=1000.0,
+        wall_z_range=None,
+        wall_z_points=1,
+        driver_energy_range=(10.0, 20.0),
+        driver_energy_points=2,
+        driver_energy_log_scale=False,
+    )
+
+    grids = build_config_parameter_grids(config)
+
+    assert "aperture" not in grids
+    assert grids["energy"] == [1.0]
+    assert grids["driver_energy_gev"] == pytest.approx([10.0, 20.0])
