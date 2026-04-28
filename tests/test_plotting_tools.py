@@ -398,6 +398,69 @@ def test_parse_sweep_log_separates_positive_and_non_positive_gains(tmp_path: Pat
     assert stats["negative_gains"] == 3
 
 
+def test_parse_sweep_log_reads_truncated_b2b_driver_energy_axis(tmp_path: Path):
+    log_path = _write_log(
+        tmp_path / "b2b_truncated.log",
+        [
+            "[OPTIMIZATION] Starting BLIND SWEEP (Grid Search): 1 total runs",
+            (
+                "Run #   1 | initial_energy_gev=5.0 driver_energy_gev=-2.0 "
+                "| ΔE=0.50MeV γ_i=10.0 γ_f=11.0 | SUCCESS"
+            ),
+        ],
+    )
+
+    (
+        energies_pos,
+        x_values_pos,
+        gains_pos,
+        _energies_neg,
+        _x_values_neg,
+        _gains_neg,
+        stats,
+        param_metadata,
+    ) = logcache_plotter.parse_sweep_log(log_path, verbose=False)
+
+    np.testing.assert_allclose(energies_pos, [5.0])
+    np.testing.assert_allclose(x_values_pos, [2.0])
+    np.testing.assert_allclose(gains_pos, [10.0])
+    assert stats["completed"] == 1
+    assert param_metadata["sweep_type"] == "BUNCH_TO_BUNCH"
+    assert param_metadata["x_param_name"] == "driver_energy_gev"
+
+
+def test_parse_sweep_log_reads_cli_params_block_b2b_axis(tmp_path: Path):
+    log_path = _write_log(
+        tmp_path / "b2b_params_block.log",
+        [
+            "[OPTIMIZATION] Starting BLIND SWEEP (Grid Search): 1 total runs",
+            "[OPTIMIZATION] [PARAMS] Run 1/1 - All parameters:",
+            "[OPTIMIZATION]     energy: 5.0 GeV",
+            "[OPTIMIZATION]     driver_starting_distance: 900.0 mm",
+            "[OPTIMIZATION] [RESULT] Run 1 metrics:",
+            "[OPTIMIZATION] max_percent_energy_gain: 1.25%",
+        ],
+    )
+
+    (
+        energies_pos,
+        x_values_pos,
+        gains_pos,
+        _energies_neg,
+        _x_values_neg,
+        _gains_neg,
+        stats,
+        param_metadata,
+    ) = logcache_plotter.parse_sweep_log(log_path, verbose=False)
+
+    np.testing.assert_allclose(energies_pos, [5.0])
+    np.testing.assert_allclose(x_values_pos, [900.0])
+    np.testing.assert_allclose(gains_pos, [1.25])
+    assert stats["completed"] == 1
+    assert param_metadata["sweep_type"] == "BUNCH_TO_BUNCH"
+    assert param_metadata["x_param_name"] == "driver_starting_distance"
+
+
 def test_generate_summary_plots_logs_postprocessing_heatmap_command(
     tmp_path: Path, monkeypatch
 ):

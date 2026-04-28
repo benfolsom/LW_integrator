@@ -45,6 +45,30 @@ except ImportError as e:
 
 __all__ = ["find_latest_log", "main", "parse_sweep_log"]
 
+_B2B_PARAMS_BLOCK_X_CANDIDATES = (
+    ("driver_starting_distance", "Driver Starting Distance", "mm", False),
+    ("driver_energy_gev", "Driver Energy", "GeV", True),
+    ("driver_transv_dist", "Driver Transverse Spread", "mm", False),
+    ("rider_transv_dist", "Rider Transverse Spread", "mm", False),
+    ("start_z", "Starting Z Position", "mm", False),
+)
+
+_B2B_TRUNCATED_X_CANDIDATES = (
+    ("driver_energy_gev", "Driver Energy", "GeV", True),
+    ("driver_transv_dist", "Driver Transverse Spread", "mm", False),
+    ("rider_transv_dist", "Rider Transverse Spread", "mm", False),
+    ("driver_starting_distance", "Driver Starting Distance", "mm", False),
+    ("start_z", "Starting Z Position", "mm", False),
+)
+
+
+def _select_b2b_x_axis(param_values, energy, candidates):
+    for param_name, label, units, use_abs in candidates:
+        if param_name in param_values:
+            value = param_values[param_name]
+            return (abs(value) if use_abs else value, param_name, label, units)
+    return energy, "initial_energy_gev", "Particle Energy (Linked)", "GeV"
+
 
 def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
     """Parse sweep log file and extract run parameters and metrics.
@@ -187,43 +211,13 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                         if params_block and "energy" in params_block:
                             energy = params_block["energy"]
 
-                            # Determine x-axis parameter (priority order for B2B sweeps)
-                            x_value = None
-                            x_param = None
-                            x_label = None
-                            x_units = None
-
-                            if "driver_starting_distance" in params_block:
-                                x_value = params_block["driver_starting_distance"]
-                                x_param = "driver_starting_distance"
-                                x_label = "Driver Starting Distance"
-                                x_units = "mm"
-                            elif "driver_energy_gev" in params_block:
-                                x_value = abs(params_block["driver_energy_gev"])
-                                x_param = "driver_energy_gev"
-                                x_label = "Driver Energy"
-                                x_units = "GeV"
-                            elif "driver_transv_dist" in params_block:
-                                x_value = params_block["driver_transv_dist"]
-                                x_param = "driver_transv_dist"
-                                x_label = "Driver Transverse Spread"
-                                x_units = "mm"
-                            elif "rider_transv_dist" in params_block:
-                                x_value = params_block["rider_transv_dist"]
-                                x_param = "rider_transv_dist"
-                                x_label = "Rider Transverse Spread"
-                                x_units = "mm"
-                            elif "start_z" in params_block:
-                                x_value = params_block["start_z"]
-                                x_param = "start_z"
-                                x_label = "Starting Z Position"
-                                x_units = "mm"
-
-                            if x_value is None:
-                                x_value = energy
-                                x_param = "initial_energy_gev"
-                                x_label = "Particle Energy (Linked)"
-                                x_units = "GeV"
+                            x_value, x_param, x_label, x_units = (
+                                _select_b2b_x_axis(
+                                    params_block,
+                                    energy,
+                                    _B2B_PARAMS_BLOCK_X_CANDIDATES,
+                                )
+                            )
 
                             if param_metadata["sweep_type"] is None:
                                 param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
@@ -311,47 +305,11 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     if "initial_energy_gev" in kv_pairs:
                         energy = abs(kv_pairs["initial_energy_gev"])
 
-                        # Determine x-axis parameter (priority order)
-                        # Prefer swept parameters that represent physically meaningful variations
-                        x_value = None
-                        x_param = None
-                        x_label = None
-                        x_units = None
-
-                        if "driver_energy_gev" in kv_pairs:
-                            # Energy is always positive magnitude
-                            x_value = abs(kv_pairs["driver_energy_gev"])
-                            x_param = "driver_energy_gev"
-                            x_label = "Driver Energy"
-                            x_units = "GeV"
-                        elif "driver_transv_dist" in kv_pairs:
-                            x_value = kv_pairs["driver_transv_dist"]
-                            x_param = "driver_transv_dist"
-                            x_label = "Driver Transverse Spread"
-                            x_units = "mm"
-                        elif "rider_transv_dist" in kv_pairs:
-                            x_value = kv_pairs["rider_transv_dist"]
-                            x_param = "rider_transv_dist"
-                            x_label = "Rider Transverse Spread"
-                            x_units = "mm"
-                        elif "driver_starting_distance" in kv_pairs:
-                            x_value = kv_pairs["driver_starting_distance"]
-                            x_param = "driver_starting_distance"
-                            x_label = "Driver Starting Distance"
-                            x_units = "mm"
-                        elif "start_z" in kv_pairs:
-                            x_value = kv_pairs["start_z"]
-                            x_param = "start_z"
-                            x_label = "Starting Z Position"
-                            x_units = "mm"
-
-                        # Handle linked energy sweeps (1D) - use energy as x_value if no other param
-                        if x_value is None:
-                            # Linked energy sweep - only initial_energy_gev present
-                            x_value = energy
-                            x_param = "initial_energy_gev"
-                            x_label = "Particle Energy (Linked)"
-                            x_units = "GeV"
+                        x_value, x_param, x_label, x_units = _select_b2b_x_axis(
+                            kv_pairs,
+                            energy,
+                            _B2B_TRUNCATED_X_CANDIDATES,
+                        )
 
                         # Set metadata on first detection
                         if param_metadata["sweep_type"] is None:
@@ -416,43 +374,13 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                         if "initial_energy_gev" in kv_pairs:
                             energy = abs(kv_pairs["initial_energy_gev"])
 
-                            # Determine x-axis parameter (priority order)
-                            x_value = None
-                            x_param = None
-                            x_label = None
-                            x_units = None
-
-                            if "driver_energy_gev" in kv_pairs:
-                                x_value = abs(kv_pairs["driver_energy_gev"])
-                                x_param = "driver_energy_gev"
-                                x_label = "Driver Energy"
-                                x_units = "GeV"
-                            elif "driver_transv_dist" in kv_pairs:
-                                x_value = kv_pairs["driver_transv_dist"]
-                                x_param = "driver_transv_dist"
-                                x_label = "Driver Transverse Spread"
-                                x_units = "mm"
-                            elif "rider_transv_dist" in kv_pairs:
-                                x_value = kv_pairs["rider_transv_dist"]
-                                x_param = "rider_transv_dist"
-                                x_label = "Rider Transverse Spread"
-                                x_units = "mm"
-                            elif "driver_starting_distance" in kv_pairs:
-                                x_value = kv_pairs["driver_starting_distance"]
-                                x_param = "driver_starting_distance"
-                                x_label = "Driver Starting Distance"
-                                x_units = "mm"
-                            elif "start_z" in kv_pairs:
-                                x_value = kv_pairs["start_z"]
-                                x_param = "start_z"
-                                x_label = "Starting Z Position"
-                                x_units = "mm"
-
-                            if x_value is None:
-                                x_value = energy
-                                x_param = "initial_energy_gev"
-                                x_label = "Particle Energy (Linked)"
-                                x_units = "GeV"
+                            x_value, x_param, x_label, x_units = (
+                                _select_b2b_x_axis(
+                                    kv_pairs,
+                                    energy,
+                                    _B2B_TRUNCATED_X_CANDIDATES,
+                                )
+                            )
 
                             if param_metadata["sweep_type"] is None:
                                 param_metadata["sweep_type"] = "BUNCH_TO_BUNCH"
