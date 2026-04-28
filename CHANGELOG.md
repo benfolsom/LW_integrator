@@ -54,6 +54,14 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Regression coverage** — Added tests covering enum and string mode values so BUNCH_TO_BUNCH offsets remain absolute, BUNCH_TO_BUNCH sweeps keep driver parameters, and auto-distance timestep calculations use driver distance
 - **Files modified** — `optimization/config.py`, `optimization/plugin_config_mixins.py`, `optimization/plugin_control_mixins.py`, `optimization/results_mixins.py`, `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `optimization/simulation_type_helpers.py`, `optimization/sweep_helpers.py`, `optimization/sweep_result_helpers.py`, `tests/test_optimization.py`, `tests/test_optimization_config_helpers.py`, `tests/test_optimization_run_parameter_helpers.py`, `tests/test_sweep_result_helpers.py`
 
+### CLI Conducting-Wall Energy Convention Fix (April 2026)
+
+- **Bug** — The CLI sweep runner converted conducting-wall particle energy with the BUNCH_TO_BUNCH kinetic-energy convention when building `SimulationOptions.rider_params["starting_Pz"]`
+- **Impact** — Headless conducting-wall sweeps could initialize riders with too-large longitudinal momentum relative to the GUI/single-run convention, breaking CLI/GUI parity for wall-mode runs
+- **Fix** — Reused the shared single-integration Pz helper in `lw_integrator.sweep_runner`, preserving kinetic-energy semantics for BUNCH_TO_BUNCH and total-energy semantics for wall modes
+- **Regression coverage** — Added CLI option-construction coverage that captures the generated `SimulationOptions` and asserts conducting-wall Pz matches the shared GUI helper, not the BUNCH_TO_BUNCH convention
+- **Files modified** — `lw_integrator/sweep_runner.py`, `tests/test_cli_gui_parity.py`
+
 ### Maintained Plotting and Validation Surface Cleanup (April 2026)
 
 - **Plotting surface** — Added focused CLI coverage for `lw-generate-sweep-heatmap`, `lw-plot-latest-live`, `lw-plot-from-logcache-live`, and `lw-plot-trajectory`

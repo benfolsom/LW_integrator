@@ -21,6 +21,7 @@ import shutil
 import tempfile
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -38,6 +39,7 @@ from optimization.config import (
     calculate_auto_steps,
     calculate_auto_timestep,
 )
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 
 # ---------------------------------------------------------------------------
 # Constants (must match sweep_runner.py / optimization_plugin.py)
@@ -54,14 +56,13 @@ RUN_CONFIG_DIR = PROJECT_ROOT / "configs" / "run_configs"
 # ---------------------------------------------------------------------------
 
 
-def _calculate_starting_pz(energy_gev: float, m_particle_amu: float) -> float:
-    """Derive starting_Pz (specific momentum, mm/ns) from KE in GeV."""
-    rest_energy_mev = m_particle_amu * AMU_TO_MEV
-    gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-    if gamma < 1.0:
-        gamma = 1.0
-    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
-    return gamma * beta * C_MMNS
+def _calculate_starting_pz(
+    energy_gev: float,
+    m_particle_amu: float,
+    simulation_type: SimulationType = SimulationType.BUNCH_TO_BUNCH,
+) -> float:
+    """Derive the specific starting_Pz expected by SimulationOptions."""
+    return calculate_rider_starting_pz(energy_gev, m_particle_amu, simulation_type)
 
 
 def _build_options_from_config(
@@ -101,7 +102,9 @@ def _build_options_from_config(
         "macroparticle_sigma_multiplier", config.macroparticle_sigma_multiplier
     )
 
-    rider_pz = _calculate_starting_pz(energy_gev, rider_m_particle)
+    rider_pz = _calculate_starting_pz(
+        energy_gev, rider_m_particle, config.simulation_type
+    )
     rider_params: Dict[str, Any] = {
         "starting_distance": start_z,
         "transv_mom": rider_transv_mom,
@@ -634,15 +637,81 @@ class TestCliGuiOptionsParity:
             expected_electron = delta_gamma * rest_mev_electron
 
             assert delta_e_mev == pytest.approx(expected_proton, rel=1e-10), (
-                f"ΔE should use proton mass ({rest_mev_proton:.3f} MeV), "
+                f"Delta E should use proton mass ({rest_mev_proton:.3f} MeV), "
                 f"got {delta_e_mev}, expected {expected_proton}"
             )
             # Only check ratio if delta_gamma is nonzero
             if abs(delta_gamma) > 1e-20:
                 ratio = abs(delta_e_mev / expected_electron)
                 assert ratio > 100, (
-                    "ΔE seems to use electron mass (ratio should be ~1836)"
+                    "Delta E seems to use electron mass (ratio should be ~1836)"
                 )
+
+    def test_cli_conducting_wall_uses_shared_total_energy_pz(
+        self, tmp_output_dir, monkeypatch
+    ):
+        """CW CLI options should use the same total-energy Pz convention as GUI."""
+        captured: Dict[str, SimulationOptions] = {}
+
+        def fake_run_testbed(options, **_kwargs):
+            captured["options"] = options
+            return SimpleNamespace(
+                halted_early=False,
+                halt_reason=None,
+                rider_delta_e=0.0,
+                rider_gamma_initial=10.0,
+                rider_gamma_final=10.0,
+                rider_trajectory=None,
+                rider_emittance_x_mm_mrad=None,
+                rider_emittance_y_mm_mrad=None,
+                rider_norm_emittance_x_mm_mrad=None,
+                rider_norm_emittance_y_mm_mrad=None,
+                num_particles_dead=0,
+            )
+
+        monkeypatch.setattr("lw_integrator.sweep_runner.run_testbed", fake_run_testbed)
+
+        config = OptimizationConfig(
+            simulation_type=SimulationType.CONDUCTING_WALL,
+            mode="blind_sweep",
+            aperture_range=(0.1, 0.1),
+            aperture_points=1,
+            energy_range=(1.0, 1.0),
+            energy_points=1,
+            wall_z=1000.0,
+            steps=20,
+            timestep=1e-6,
+            timestep_strategy="fixed",
+            m_particle=1.0,
+            charge_sign=1.0,
+            pcount=1,
+            transv_mom=0.0,
+            transv_dist=0.0,
+            stripped_ions=1.0,
+            adaptive_timestep_enabled=False,
+            smoothness_enabled=False,
+            log_verbosity="none",
+        )
+        runner = SweepRunner(config, tmp_output_dir / "cli_pz", verbose=False)
+
+        result = runner._run_single_integration(
+            aperture=0.1,
+            energy_gev=1.0,
+            start_z=0.0,
+            transv_offset_frac=0.0,
+            run_num=0,
+        )
+
+        assert result["success"]
+        expected = calculate_rider_starting_pz(
+            1.0, 1.0, SimulationType.CONDUCTING_WALL
+        )
+        kinetic_convention = calculate_rider_starting_pz(
+            1.0, 1.0, SimulationType.BUNCH_TO_BUNCH
+        )
+        actual = captured["options"].rider_params["starting_Pz"]
+        assert actual == pytest.approx(expected)
+        assert actual != pytest.approx(kinetic_convention)
 
 
 # =========================================================================
@@ -880,7 +949,7 @@ class TestSinglePointFromConfig:
         assert result["success"], f"Run failed: {result.get('error')}"
         m = result["metrics"]
         assert m["rider_gamma_initial"] == pytest.approx(expected_gamma, rel=0.01), (
-            f"Expected γ≈{expected_gamma:.1f} for 10 GeV electron, "
+            f"Expected gamma≈{expected_gamma:.1f} for 10 GeV electron, "
             f"got {m['rider_gamma_initial']}"
         )
 

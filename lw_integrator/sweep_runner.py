@@ -57,31 +57,13 @@ from optimization.logging_policy import (
     describe_run_logging_policy,
     restore_run_logging_policy,
 )
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 AMU_TO_MEV = 931.494
-
-
-def _calculate_starting_pz(energy_gev: float, m_particle_amu: float) -> float:
-    """Derive starting_Pz (specific momentum = momentum/mass, mm/ns) from KE in GeV.
-
-    This is the value expected by ``create_bunch_from_params`` via
-    ``SimulationOptions.rider_params["starting_Pz"]``.
-
-    Kinetic energy convention:
-        γ = KE / E_rest + 1
-        β = sqrt(1 - 1/γ²)
-        starting_Pz = γ · β · c   (specific momentum in mm/ns)
-    """
-    rest_energy_mev = m_particle_amu * AMU_TO_MEV
-    gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-    if gamma < 1.0:
-        gamma = 1.0
-    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
-    return gamma * beta * C_MMNS
 
 
 class SweepRunner:
@@ -406,7 +388,10 @@ class SweepRunner:
 
         # ── Log timestep calculation ──
         rest_energy_mev = rider_m_particle * AMU_TO_MEV
-        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+        else:
+            gamma = (energy_gev * 1e3) / rest_energy_mev
         if gamma < 1.0:
             gamma = 1.0
         beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
@@ -472,7 +457,9 @@ class SweepRunner:
         )
 
         # ── Build rider_params dict (same format as GUI / create_bunch_from_params) ──
-        rider_pz = _calculate_starting_pz(energy_gev, rider_m_particle)
+        rider_pz = calculate_rider_starting_pz(
+            energy_gev, rider_m_particle, self.config.simulation_type
+        )
         rider_params = {
             "starting_distance": start_z,
             "transv_mom": rider_transv_mom,
@@ -517,7 +504,9 @@ class SweepRunner:
             # Determine Pz sign from driver direction
             driver_negative = getattr(self.config, "driver_direction", "-z") == "-z"
             pz_sign = -1.0 if driver_negative else 1.0
-            driver_pz_magnitude = _calculate_starting_pz(abs(d_energy_gev), d_m)
+            driver_pz_magnitude = calculate_rider_starting_pz(
+                abs(d_energy_gev), d_m, SimulationType.BUNCH_TO_BUNCH
+            )
 
             driver_params = {
                 "starting_distance": d_start_dist,
