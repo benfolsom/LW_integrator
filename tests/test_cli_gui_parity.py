@@ -1370,6 +1370,28 @@ class TestTwoParticleDemo8:
 class TestCliSweepRunnerE2E:
     """Run a minimal CLI sweep and verify it produces correct output."""
 
+    def test_parameter_grids_accept_string_b2b_mode(self, tmp_output_dir):
+        config = OptimizationConfig(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            mode="blind_sweep",
+            aperture_range=(0.01, 0.02),
+            aperture_points=3,
+            energy_range=(1.0, 1.0),
+            energy_points=1,
+            starting_z_positions=[0.0],
+            transverse_offset_fractions=[0.0],
+            driver_energy_range=(10.0, 20.0),
+            driver_energy_points=2,
+        )
+        config.simulation_type = "BUNCH_TO_BUNCH"
+        runner = SweepRunner(config, tmp_output_dir / "string_b2b", verbose=False)
+
+        grids = runner._generate_parameter_grids()
+
+        assert "aperture" not in grids
+        assert grids["energy"] == [1.0]
+        assert grids["driver_energy_gev"] == pytest.approx([10.0, 20.0])
+
     def test_single_integration_logs_temp_cleanup_failure(
         self, tmp_output_dir, monkeypatch
     ):

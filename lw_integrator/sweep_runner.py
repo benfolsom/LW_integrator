@@ -59,6 +59,7 @@ from optimization.single_integration_helpers import (
     build_single_integration_setup,
     calculate_rider_starting_pz,
 )
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import generate_parameter_range
 
 # ---------------------------------------------------------------------------
@@ -106,7 +107,7 @@ class SweepRunner:
         grids = {}
 
         # Aperture grid (not used for BUNCH_TO_BUNCH)
-        if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
+        if not is_bunch_to_bunch(self.config.simulation_type):
             if self.config.aperture_points > 1:
                 aper_min, aper_max = self.config.aperture_range
                 grids["aperture"] = generate_parameter_range(
@@ -255,7 +256,7 @@ class SweepRunner:
                 continue
             if (
                 grid_key.startswith("driver_")
-                and self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH
+                and not is_bunch_to_bunch(self.config.simulation_type)
             ):
                 continue
             log_scale = getattr(self.config, log_attr, False) if log_attr else False
@@ -350,7 +351,7 @@ class SweepRunner:
 
         # Calculate timestep
         driver_start_z = 1000.0  # default for non-BUNCH_TO_BUNCH
-        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+        if is_bunch_to_bunch(self.config.simulation_type):
             driver_start_z = sweep_overrides.get(
                 "driver_starting_distance", self.config.driver_starting_distance
             )
@@ -368,7 +369,7 @@ class SweepRunner:
 
         # ── Log timestep calculation ──
         rest_energy_mev = rider_m_particle * AMU_TO_MEV
-        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+        if is_bunch_to_bunch(self.config.simulation_type):
             gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
         else:
             gamma = (energy_gev * 1e3) / rest_energy_mev
@@ -438,7 +439,7 @@ class SweepRunner:
 
         # ── Build driver_params dict if BUNCH_TO_BUNCH ──
         driver_params = None
-        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+        if is_bunch_to_bunch(self.config.simulation_type):
             d_m = sweep_overrides.get(
                 "driver_m_particle", self.config.driver_m_particle
             )
@@ -819,7 +820,7 @@ class SweepRunner:
             self._log(f"  z_cutoff_mode: {self.config.z_cutoff_mode}")
 
             # Log fixed particle parameters
-            if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            if is_bunch_to_bunch(self.config.simulation_type):
                 self._log("")
                 self._log("  Fixed rider parameters:")
                 self._log(f"    m_particle: {self.config.m_particle:.4e} amu")
@@ -918,7 +919,7 @@ class SweepRunner:
                         f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
                     )
 
-                if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                if is_bunch_to_bunch(self.config.simulation_type):
                     d_m = sweep_overrides.get(
                         "driver_m_particle", self.config.driver_m_particle
                     )
