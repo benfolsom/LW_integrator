@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 import numpy as np
 
 from optimization.simulation_type_helpers import is_bunch_to_bunch
+
+
+@dataclass(frozen=True)
+class SweepAttemptClassification:
+    """Useful-metric classification for one sweep retry attempt."""
+
+    succeeded: bool
+    error: Exception | None
+    log_lines: list[str]
 
 
 def simulation_type_name(simulation_type: Any) -> str:
@@ -124,3 +134,66 @@ def extract_actual_distance(result: Mapping[str, Any]) -> float:
     z_start = float(np.asarray(z_values[0]).flat[0])
     z_end = float(np.asarray(z_values[-1]).flat[0])
     return abs(z_end - z_start)
+
+
+def classify_sweep_attempt_result(
+    attempt_result: Mapping[str, Any],
+    *,
+    run_num: int,
+    retry_attempt: int,
+    include_debug_logs: bool = False,
+) -> SweepAttemptClassification:
+    """Classify whether an integration attempt produced useful sweep metrics."""
+    is_halted = attempt_result.get("halted_early", False)
+    metrics = attempt_result.get("metrics", {})
+    log_lines: list[str] = []
+
+    if include_debug_logs:
+        log_lines.append(
+            f"  [DEBUG] Run {run_num} attempt {retry_attempt}: "
+            f"is_halted={is_halted}, has_metrics={bool(metrics)}"
+        )
+        if metrics:
+            log_lines.extend(
+                [
+                    (
+                        "    max_percent_energy_gain="
+                        f"{metrics.get('max_percent_energy_gain')}"
+                    ),
+                    f"    rider_gamma_final={metrics.get('rider_gamma_final')}",
+                    f"    rider_delta_e_mev={metrics.get('rider_delta_e_mev')}",
+                ]
+            )
+
+    has_useful_metrics = (
+        not is_halted
+        and bool(metrics)
+        and (
+            metrics.get("max_percent_energy_gain") is not None
+            or (
+                metrics.get("rider_gamma_final") is not None
+                and metrics.get("rider_gamma_final") > 0
+            )
+            or metrics.get("rider_delta_e_mev") is not None
+        )
+    )
+    if has_useful_metrics:
+        return SweepAttemptClassification(
+            succeeded=True,
+            error=None,
+            log_lines=log_lines,
+        )
+
+    halt_reason = attempt_result.get("halt_reason", "unknown")
+    if include_debug_logs:
+        log_lines.append(
+            f"  [FAILED] Run {run_num} attempt {retry_attempt}: "
+            f"halted={is_halted}, has_metrics={bool(metrics)}, "
+            "has_useful_metrics=False"
+        )
+
+    return SweepAttemptClassification(
+        succeeded=False,
+        error=Exception(f"Run failed: halted_early={is_halted}, reason={halt_reason}"),
+        log_lines=log_lines,
+    )

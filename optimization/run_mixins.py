@@ -51,6 +51,7 @@ from optimization.sweep_helpers import (
 from optimization.sweep_result_helpers import (
     build_sweep_run_data,
     build_truncated_sweep_log_params,
+    classify_sweep_attempt_result,
     extract_actual_distance,
 )
 
@@ -1052,40 +1053,18 @@ class OptimizationRunMixin:
                         and attempt_error is None
                         and attempt_result is not None
                     ):
-                        # Check if result has valid metrics (not all particles dead)
-                        is_halted = attempt_result.get("halted_early", False)
-                        metrics = attempt_result.get("metrics", {})
+                        attempt_classification = classify_sweep_attempt_result(
+                            attempt_result,
+                            run_num=run_num,
+                            retry_attempt=retry_attempt,
+                            include_debug_logs=(
+                                use_full_debug or use_truncated_logging
+                            ),
+                        )
+                        for line in attempt_classification.log_lines:
+                            self._log_result(line)
 
-                        # DEBUG: Log what we're checking
-                        if use_full_debug:
-                            self._log_result(
-                                f"  [DEBUG] Run {run_num} attempt {retry_attempt}: is_halted={is_halted}, has_metrics={bool(metrics)}"
-                            )
-                            if metrics:
-                                self._log_result(
-                                    f"    max_percent_energy_gain={metrics.get('max_percent_energy_gain')}"
-                                )
-                                self._log_result(
-                                    f"    rider_gamma_final={metrics.get('rider_gamma_final')}"
-                                )
-                                self._log_result(
-                                    f"    rider_delta_e_mev={metrics.get('rider_delta_e_mev')}"
-                                )
-
-                        has_useful_metrics = False
-                        if not is_halted and metrics:
-                            # Check for key optimization metrics
-                            if metrics.get("max_percent_energy_gain") is not None:
-                                has_useful_metrics = True
-                            elif (
-                                metrics.get("rider_gamma_final") is not None
-                                and metrics.get("rider_gamma_final") > 0
-                            ):
-                                has_useful_metrics = True
-                            elif metrics.get("rider_delta_e_mev") is not None:
-                                has_useful_metrics = True
-
-                        if has_useful_metrics:
+                        if attempt_classification.succeeded:
                             # Success! Use this result
                             result = attempt_result
                             run_error = None
@@ -1094,18 +1073,11 @@ class OptimizationRunMixin:
                             if retry_attempt > 0:
                                 self._log_result(
                                     f"  [SUCCESS] Run {run_num} succeeded on retry attempt {retry_attempt}"
-                                )
+                            )
                             break
                         else:
                             # No useful metrics - all particles died or halted early
-                            halt_reason = attempt_result.get("halt_reason", "unknown")
-                            attempt_error = Exception(
-                                f"Run failed: halted_early={is_halted}, reason={halt_reason}"
-                            )
-                            if use_full_debug or use_truncated_logging:
-                                self._log_result(
-                                    f"  [FAILED] Run {run_num} attempt {retry_attempt}: halted={is_halted}, has_metrics={bool(metrics)}, has_useful_metrics=False"
-                                )
+                            attempt_error = attempt_classification.error
 
                     # If we got here without breaking, the attempt failed
                     if not attempt_succeeded:

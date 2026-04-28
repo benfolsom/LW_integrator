@@ -8,6 +8,7 @@ from core.types import SimulationType
 from optimization.sweep_result_helpers import (
     build_sweep_run_data,
     build_truncated_sweep_log_params,
+    classify_sweep_attempt_result,
     extract_actual_distance,
     simulation_type_name,
 )
@@ -97,3 +98,48 @@ def test_extract_actual_distance_falls_back_to_trajectory_arrays():
     )
 
     assert distance == 12.5
+
+
+def test_classify_sweep_attempt_result_accepts_percent_gain():
+    classification = classify_sweep_attempt_result(
+        {"metrics": {"max_percent_energy_gain": 0.0}},
+        run_num=3,
+        retry_attempt=0,
+        include_debug_logs=True,
+    )
+
+    assert classification.succeeded is True
+    assert classification.error is None
+    assert any("has_metrics=True" in line for line in classification.log_lines)
+
+
+def test_classify_sweep_attempt_result_accepts_positive_gamma_fallback():
+    classification = classify_sweep_attempt_result(
+        {"metrics": {"rider_gamma_final": 2.0}},
+        run_num=3,
+        retry_attempt=1,
+    )
+
+    assert classification.succeeded is True
+
+
+def test_classify_sweep_attempt_result_rejects_halted_or_empty_metrics():
+    halted = classify_sweep_attempt_result(
+        {"metrics": {"max_percent_energy_gain": 2.0}, "halted_early": True},
+        run_num=4,
+        retry_attempt=2,
+        include_debug_logs=True,
+    )
+    empty = classify_sweep_attempt_result(
+        {"metrics": {}, "halt_reason": "all dead"},
+        run_num=5,
+        retry_attempt=3,
+    )
+
+    assert halted.succeeded is False
+    assert halted.error is not None
+    assert "halted_early=True" in str(halted.error)
+    assert any("has_useful_metrics=False" in line for line in halted.log_lines)
+    assert empty.succeeded is False
+    assert empty.error is not None
+    assert "reason=all dead" in str(empty.error)
