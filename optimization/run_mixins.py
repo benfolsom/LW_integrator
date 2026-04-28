@@ -41,6 +41,11 @@ from optimization.sweep_helpers import (
     calculate_starting_pz_from_energy,
     generate_parameter_range,
 )
+from optimization.sweep_result_helpers import (
+    build_sweep_run_data,
+    build_truncated_sweep_log_params,
+    extract_actual_distance,
+)
 
 
 class OptimizationRunMixin:
@@ -1138,29 +1143,29 @@ class OptimizationRunMixin:
                         )
 
                         # Create run_data structure (used regardless of logging mode)
-                        run_data = {
-                            "run_number": run_num,
-                            "parameters": {
-                                "aperture_radius": aperture,
-                                "particle_energy_gev": energy,
-                                "start_z": start_z,
-                                "transverse_offset": transv_offset,
-                                "transverse_offset_fraction": offset_frac,
-                                "timestep": timestep,
-                                "steps": steps,
-                                "retry_attempts": retry_attempt,
-                                "wall_z": params_dict.get("wall_z", self.config.wall_z),
-                                "rider_m_particle": rider_m_particle,
-                                "rider_charge_sign": rider_charge_sign,
-                                "rider_pcount": int(rider_pcount),
-                                "rider_transv_mom": rider_transv_mom,
-                                "rider_transv_dist": rider_transv_dist,
-                                "macroparticle_charge_multiplier": macroparticle_charge_multiplier,
-                                "macroparticle_sigma_multiplier": macroparticle_sigma_multiplier,
-                                "simulation_type": self.config.simulation_type.name,
-                            },
-                            "metrics": result.get("metrics", {}),
-                        }
+                        run_data = build_sweep_run_data(
+                            run_number=run_num,
+                            params_dict=params_dict,
+                            simulation_type=self.config.simulation_type,
+                            aperture=aperture,
+                            energy=energy,
+                            start_z=start_z,
+                            transv_offset=transv_offset,
+                            offset_frac=offset_frac,
+                            timestep=timestep,
+                            steps=steps,
+                            retry_attempts=retry_attempt,
+                            default_wall_z=self.config.wall_z,
+                            rider_m_particle=rider_m_particle,
+                            rider_charge_sign=rider_charge_sign,
+                            rider_pcount=rider_pcount,
+                            rider_transv_mom=rider_transv_mom,
+                            rider_transv_dist=rider_transv_dist,
+                            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                            metrics=result.get("metrics", {}),
+                            driver_params=driver_params_dict,
+                        )
 
                         # Log based on verbosity mode
                         if use_no_logging:
@@ -1168,41 +1173,14 @@ class OptimizationRunMixin:
                             pass
                         elif use_truncated_logging:
                             # Truncated mode: 1-2 lines with key info
-                            # Build log params from actual swept parameters
-                            log_params = {}
-
-                            # Include parameters that have multiple values (i.e., are being swept)
-                            for param_name in param_grids.keys():
-                                if len(param_grids[param_name]) > 1:
-                                    # This parameter is being swept - include it
-                                    if param_name in params_dict:
-                                        log_params[param_name] = params_dict[param_name]
-
-                            # If no parameters are being swept (all fixed), show key simulation params
-                            if not log_params:
-                                # For BUNCH_TO_BUNCH, show initial_energy_gev if present
-                                if (
-                                    is_bunch_to_bunch(self.config.simulation_type)
-                                ):
-                                    if "initial_energy_gev" in params_dict:
-                                        log_params["initial_energy_gev"] = params_dict[
-                                            "initial_energy_gev"
-                                        ]
-                                    if "driver_starting_distance" in params_dict:
-                                        log_params["driver_starting_distance"] = (
-                                            params_dict["driver_starting_distance"]
-                                        )
-                                else:
-                                    # For CONDUCTING_WALL modes
-                                    log_params["aperture"] = aperture
-                                    log_params["energy"] = energy
-
-                                # Always show wall_z if present
-                                if "wall_z" in params_dict:
-                                    log_params["wall_z"] = params_dict["wall_z"]
-                                elif hasattr(self.config, "wall_z"):
-                                    log_params["wall_z"] = self.config.wall_z
-
+                            log_params = build_truncated_sweep_log_params(
+                                param_grids=param_grids,
+                                params_dict=params_dict,
+                                simulation_type=self.config.simulation_type,
+                                aperture=aperture,
+                                energy=energy,
+                                wall_z=self.config.wall_z,
+                            )
                             self._log_truncated_run(
                                 run_num,
                                 params=log_params,
@@ -1215,23 +1193,7 @@ class OptimizationRunMixin:
                             )
                         elif use_full_debug:
                             # Full debug mode: all details
-                            # Extract actual trajectory distance for diagnostics
-                            actual_distance = 0.0
-                            if "_distance_info" in result:
-                                dist_info = result["_distance_info"]
-                                actual_distance = abs(
-                                    dist_info["z_end"] - dist_info["z_start"]
-                                )
-                            elif "trajectory" in result and result["trajectory"]:
-                                # Fallback: try to extract from full trajectory if present
-                                traj = result["trajectory"]
-                                z_vals = traj.get("z", [])
-                                if len(z_vals) > 1:
-                                    # Safely handle both lists and numpy arrays
-                                    z_start = float(np.asarray(z_vals[0]).flat[0])
-                                    z_end = float(np.asarray(z_vals[-1]).flat[0])
-                                    actual_distance = abs(z_end - z_start)
-
+                            actual_distance = extract_actual_distance(result)
                             self._log_result(f"  [RESULT] Run {run_num}/{total_runs}:")
                             self._log_result(
                                 f"    Distance: expected={expected_distance:.2f}mm, actual={actual_distance:.2f}mm"
@@ -1253,15 +1215,6 @@ class OptimizationRunMixin:
                         )
                         if save_traj and "trajectory" in result:
                             run_data["trajectory"] = result["trajectory"]
-
-                        # Add driver params to stored results if applicable
-                        if driver_params_dict is not None:
-                            run_data["parameters"].update(
-                                {
-                                    f"driver_{k}": v
-                                    for k, v in driver_params_dict.items()
-                                }
-                            )
 
                         all_results.append(run_data)
 
