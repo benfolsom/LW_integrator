@@ -33,9 +33,10 @@ import itertools
 import json
 import shutil
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 
@@ -78,6 +79,99 @@ from optimization.sweep_run_helpers import (
 # ---------------------------------------------------------------------------
 
 AMU_TO_MEV = 931.494
+
+
+@dataclass(frozen=True)
+class _ResolvedRiderOverrides:
+    m_particle: float
+    charge_sign: float
+    pcount: int
+    transv_mom: float
+    transv_dist: float
+    stripped_ions: float
+    macroparticle_charge_multiplier: float
+    macroparticle_sigma_multiplier: float
+
+
+@dataclass(frozen=True)
+class _CliDriverSetup:
+    params: dict[str, Any] | None
+    log_line: str | None
+
+
+def _resolve_cli_rider_overrides(
+    config: Any,
+    sweep_overrides: Mapping[str, Any],
+) -> _ResolvedRiderOverrides:
+    return _ResolvedRiderOverrides(
+        m_particle=sweep_overrides.get("rider_m_particle", config.m_particle),
+        charge_sign=sweep_overrides.get("rider_charge_sign", config.charge_sign),
+        pcount=int(sweep_overrides.get("rider_pcount", config.pcount)),
+        transv_mom=sweep_overrides.get("rider_transv_mom", config.transv_mom),
+        transv_dist=sweep_overrides.get("rider_transv_dist", config.transv_dist),
+        stripped_ions=sweep_overrides.get(
+            "rider_stripped_ions", config.stripped_ions
+        ),
+        macroparticle_charge_multiplier=sweep_overrides.get(
+            "macroparticle_charge_multiplier",
+            config.macroparticle_charge_multiplier,
+        ),
+        macroparticle_sigma_multiplier=sweep_overrides.get(
+            "macroparticle_sigma_multiplier",
+            config.macroparticle_sigma_multiplier,
+        ),
+    )
+
+
+def _resolve_cli_driver_setup(
+    config: Any,
+    sweep_overrides: Mapping[str, Any],
+) -> _CliDriverSetup:
+    if not is_bunch_to_bunch(config.simulation_type):
+        return _CliDriverSetup(params=None, log_line=None)
+
+    d_m = sweep_overrides.get("driver_m_particle", config.driver_m_particle)
+    d_charge = sweep_overrides.get("driver_charge_sign", config.driver_charge_sign)
+    d_pcount = int(sweep_overrides.get("driver_pcount", config.driver_pcount))
+    d_transv_mom = sweep_overrides.get("driver_transv_mom", config.driver_transv_mom)
+    d_transv_dist = sweep_overrides.get(
+        "driver_transv_dist", config.driver_transv_dist
+    )
+    d_start_dist = sweep_overrides.get(
+        "driver_starting_distance", config.driver_starting_distance
+    )
+    d_stripped = sweep_overrides.get(
+        "driver_stripped_ions", config.driver_stripped_ions
+    )
+    d_energy_gev = sweep_overrides.get("driver_energy_gev", config.driver_energy_gev)
+
+    driver_negative = getattr(config, "driver_direction", "-z") == "-z"
+    pz_sign = -1.0 if driver_negative else 1.0
+    driver_pz_magnitude = calculate_rider_starting_pz(
+        abs(d_energy_gev), d_m, SimulationType.BUNCH_TO_BUNCH
+    )
+    params = {
+        "starting_distance": d_start_dist,
+        "transv_mom": d_transv_mom,
+        "transv_dist": d_transv_dist,
+        "transv_offset_x": 0.0,
+        "transv_offset_y": 0.0,
+        "m_particle": d_m,
+        "charge_sign": d_charge,
+        "pcount": d_pcount,
+        "stripped_ions": d_stripped,
+        "starting_Pz": pz_sign * driver_pz_magnitude,
+    }
+
+    dir_label = "\u2212z" if driver_negative else "+z"
+    return _CliDriverSetup(
+        params=params,
+        log_line=(
+            f"[OPTIMIZATION]   [DRIVER] energy={d_energy_gev:.4f} GeV, "
+            f"m={d_m:.4e} amu, Pz={params['starting_Pz']:.4e} ({dir_label}), "
+            f"stripped={d_stripped:.2e}, pcount={d_pcount}"
+        ),
+    )
 
 
 def _format_aperture_for_start_log(aperture: float) -> str:
@@ -233,30 +327,7 @@ class SweepRunner:
         if sweep_overrides is None:
             sweep_overrides = {}
 
-        # ── Resolve rider parameters (sweep overrides > config) ──
-        rider_m_particle = sweep_overrides.get(
-            "rider_m_particle", self.config.m_particle
-        )
-        rider_charge_sign = sweep_overrides.get(
-            "rider_charge_sign", self.config.charge_sign
-        )
-        rider_pcount = int(sweep_overrides.get("rider_pcount", self.config.pcount))
-        rider_transv_mom = sweep_overrides.get(
-            "rider_transv_mom", self.config.transv_mom
-        )
-        rider_transv_dist = sweep_overrides.get(
-            "rider_transv_dist", self.config.transv_dist
-        )
-        rider_stripped_ions = sweep_overrides.get(
-            "rider_stripped_ions", self.config.stripped_ions
-        )
-        macro_charge_mult = sweep_overrides.get(
-            "macroparticle_charge_multiplier",
-            self.config.macroparticle_charge_multiplier,
-        )
-        macro_sigma_mult = sweep_overrides.get(
-            "macroparticle_sigma_multiplier", self.config.macroparticle_sigma_multiplier
-        )
+        rider = _resolve_cli_rider_overrides(self.config, sweep_overrides)
 
         # ── Compute timestep and steps (same logic as before) ──
         transv_offset = transv_offset_frac * aperture
@@ -269,7 +340,7 @@ class SweepRunner:
                     wall_z=self.config.wall_z,
                     distance_past_wall=self.config.auto_steps_distance_past_wall,
                     particle_energy_gev=energy_gev,
-                    particle_mass_amu=rider_m_particle,
+                    particle_mass_amu=rider.m_particle,
                     target_steps=self.config.auto_steps_target,
                 )
                 steps = calculate_auto_steps(
@@ -278,7 +349,7 @@ class SweepRunner:
                     distance_past_wall=self.config.auto_steps_distance_past_wall,
                     timestep=preliminary_timestep,
                     particle_energy_gev=energy_gev,
-                    particle_mass_amu=rider_m_particle,
+                    particle_mass_amu=rider.m_particle,
                 )
             else:
                 steps = calculate_auto_steps(
@@ -287,7 +358,7 @@ class SweepRunner:
                     distance_past_wall=self.config.auto_steps_distance_past_wall,
                     timestep=self.config.timestep,
                     particle_energy_gev=energy_gev,
-                    particle_mass_amu=rider_m_particle,
+                    particle_mass_amu=rider.m_particle,
                 )
         else:
             steps = self.config.steps
@@ -306,12 +377,12 @@ class SweepRunner:
             start_z=start_z,
             wall_z=self.config.wall_z,
             driver_start_z=driver_start_z,
-            m_particle_amu=rider_m_particle,
+            m_particle_amu=rider.m_particle,
         )
         self.config.steps = original_steps
 
         # ── Log timestep calculation ──
-        rest_energy_mev = rider_m_particle * AMU_TO_MEV
+        rest_energy_mev = rider.m_particle * AMU_TO_MEV
         if is_bunch_to_bunch(self.config.simulation_type):
             gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
         else:
@@ -324,7 +395,7 @@ class SweepRunner:
             run_num=run_num,
             timestep_strategy=self.config.timestep_strategy,
             energy_gev=energy_gev,
-            rider_m_particle=rider_m_particle,
+            rider_m_particle=rider.m_particle,
             gamma=gamma,
             beta=beta,
             timestep=timestep,
@@ -351,60 +422,10 @@ class SweepRunner:
             print(line, flush=True)
 
         # ── Build driver_params dict if BUNCH_TO_BUNCH ──
-        driver_params = None
-        if is_bunch_to_bunch(self.config.simulation_type):
-            d_m = sweep_overrides.get(
-                "driver_m_particle", self.config.driver_m_particle
-            )
-            d_charge = sweep_overrides.get(
-                "driver_charge_sign", self.config.driver_charge_sign
-            )
-            d_pcount = int(
-                sweep_overrides.get("driver_pcount", self.config.driver_pcount)
-            )
-            d_transv_mom = sweep_overrides.get(
-                "driver_transv_mom", self.config.driver_transv_mom
-            )
-            d_transv_dist = sweep_overrides.get(
-                "driver_transv_dist", self.config.driver_transv_dist
-            )
-            d_start_dist = sweep_overrides.get(
-                "driver_starting_distance", self.config.driver_starting_distance
-            )
-            d_stripped = sweep_overrides.get(
-                "driver_stripped_ions", self.config.driver_stripped_ions
-            )
-            d_energy_gev = sweep_overrides.get(
-                "driver_energy_gev", self.config.driver_energy_gev
-            )
-
-            # Determine Pz sign from driver direction
-            driver_negative = getattr(self.config, "driver_direction", "-z") == "-z"
-            pz_sign = -1.0 if driver_negative else 1.0
-            driver_pz_magnitude = calculate_rider_starting_pz(
-                abs(d_energy_gev), d_m, SimulationType.BUNCH_TO_BUNCH
-            )
-
-            driver_params = {
-                "starting_distance": d_start_dist,
-                "transv_mom": d_transv_mom,
-                "transv_dist": d_transv_dist,
-                "transv_offset_x": 0.0,
-                "transv_offset_y": 0.0,
-                "m_particle": d_m,
-                "charge_sign": d_charge,
-                "pcount": d_pcount,
-                "stripped_ions": d_stripped,
-                "starting_Pz": pz_sign * driver_pz_magnitude,
-            }
-
-            dir_label = "\u2212z" if driver_negative else "+z"
-            print(
-                f"[OPTIMIZATION]   [DRIVER] energy={d_energy_gev:.4f} GeV, "
-                f"m={d_m:.4e} amu, Pz={driver_params['starting_Pz']:.4e} ({dir_label}), "
-                f"stripped={d_stripped:.2e}, pcount={d_pcount}",
-                flush=True,
-            )
+        driver_setup = _resolve_cli_driver_setup(self.config, sweep_overrides)
+        driver_params = driver_setup.params
+        if driver_setup.log_line is not None:
+            print(driver_setup.log_line, flush=True)
 
         # ── Build SimulationOptions (same dataclass the GUI uses) ──
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
@@ -422,14 +443,14 @@ class SweepRunner:
             run_output_dir=run_output_dir,
             run_num=run_num,
             driver_params=driver_params,
-            rider_m_particle=rider_m_particle,
-            rider_charge_sign=rider_charge_sign,
-            rider_pcount=rider_pcount,
-            rider_transv_mom=rider_transv_mom,
-            rider_transv_dist=rider_transv_dist,
-            rider_stripped_ions=rider_stripped_ions,
-            macroparticle_charge_multiplier=macro_charge_mult,
-            macroparticle_sigma_multiplier=macro_sigma_mult,
+            rider_m_particle=rider.m_particle,
+            rider_charge_sign=rider.charge_sign,
+            rider_pcount=rider.pcount,
+            rider_transv_mom=rider.transv_mom,
+            rider_transv_dist=rider.transv_dist,
+            rider_stripped_ions=rider.stripped_ions,
+            macroparticle_charge_multiplier=rider.macroparticle_charge_multiplier,
+            macroparticle_sigma_multiplier=rider.macroparticle_sigma_multiplier,
         )
         options = setup.options
 
@@ -569,7 +590,7 @@ class SweepRunner:
         )
         metrics_outcome = build_integration_metrics(
             result,
-            rider_m_particle=rider_m_particle,
+            rider_m_particle=rider.m_particle,
             run_num=run_num,
         )
         metrics = metrics_outcome.metrics
@@ -599,7 +620,7 @@ class SweepRunner:
             smoothness_result = analyze_trajectory_smoothness(
                 traj,
                 smoothness_config,
-                particle_mass_amu=rider_m_particle,
+                particle_mass_amu=rider.m_particle,
             )
             metrics["smoothness_passed"] = smoothness_result.passed
             metrics["smoothness_violations"] = len(smoothness_result.violations)

@@ -2,11 +2,88 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from core.types import SimulationType
 from lw_integrator.sweep_runner import (
     _build_cli_start_log_lines,
     _build_cli_timestep_log_lines,
     _format_aperture_for_start_log,
+    _resolve_cli_driver_setup,
+    _resolve_cli_rider_overrides,
 )
+
+
+def _config(**overrides):
+    defaults = {
+        "simulation_type": SimulationType.CONDUCTING_WALL,
+        "m_particle": 1.0,
+        "charge_sign": 1.0,
+        "pcount": 3,
+        "transv_mom": 0.0,
+        "transv_dist": 1e-4,
+        "stripped_ions": 1.0,
+        "macroparticle_charge_multiplier": 2.0,
+        "macroparticle_sigma_multiplier": 3.0,
+        "driver_m_particle": 2.0,
+        "driver_charge_sign": -1.0,
+        "driver_pcount": 5,
+        "driver_transv_mom": 2e-4,
+        "driver_transv_dist": 3e-4,
+        "driver_starting_distance": 900.0,
+        "driver_stripped_ions": 4.0,
+        "driver_energy_gev": 6.0,
+        "driver_direction": "-z",
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_resolve_cli_rider_overrides_prefers_sweep_values():
+    rider = _resolve_cli_rider_overrides(
+        _config(),
+        {
+            "rider_m_particle": 4.0,
+            "rider_pcount": 9.0,
+            "macroparticle_charge_multiplier": 8.0,
+        },
+    )
+
+    assert rider.m_particle == 4.0
+    assert rider.charge_sign == 1.0
+    assert rider.pcount == 9
+    assert rider.transv_dist == 1e-4
+    assert rider.macroparticle_charge_multiplier == 8.0
+    assert rider.macroparticle_sigma_multiplier == 3.0
+
+
+def test_resolve_cli_driver_setup_returns_none_for_wall_mode():
+    setup = _resolve_cli_driver_setup(_config(), {"driver_energy_gev": 10.0})
+
+    assert setup.params is None
+    assert setup.log_line is None
+
+
+def test_resolve_cli_driver_setup_builds_b2b_driver_params_and_log_line():
+    setup = _resolve_cli_driver_setup(
+        _config(simulation_type="BUNCH_TO_BUNCH", driver_direction="+z"),
+        {
+            "driver_m_particle": 3.0,
+            "driver_pcount": 7.0,
+            "driver_energy_gev": 8.0,
+            "driver_starting_distance": 700.0,
+        },
+    )
+
+    assert setup.params is not None
+    assert setup.params["m_particle"] == 3.0
+    assert setup.params["pcount"] == 7
+    assert setup.params["starting_distance"] == 700.0
+    assert setup.params["starting_Pz"] > 0.0
+    assert setup.log_line is not None
+    assert "energy=8.0000 GeV" in setup.log_line
+    assert "(+z)" in setup.log_line
+    assert "pcount=7" in setup.log_line
 
 
 def test_format_aperture_for_start_log_matches_existing_precision_branches():
