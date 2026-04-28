@@ -75,6 +75,59 @@ def test_generate_sweep_heatmap_resolves_contour_counts():
     assert sweep_heatmap.resolve_contour_counts(20, True, 4, 7) == (5, 15)
 
 
+def test_sweep_heatmap_collapses_energy_aliases_when_detecting_parameters():
+    data = {
+        "results": [
+            {
+                "parameters": {
+                    "initial_energy_gev": 1.0,
+                    "energy_gev": 1.0,
+                    "aperture_radius": 0.1,
+                }
+            },
+            {
+                "parameters": {
+                    "initial_energy_gev": 2.0,
+                    "energy_gev": 2.0,
+                    "aperture_radius": 0.2,
+                }
+            },
+        ]
+    }
+
+    swept_params, labels = sweep_heatmap.detect_swept_parameters(data)
+
+    assert swept_params == ["initial_energy_gev", "aperture_radius"]
+    assert labels["initial_energy_gev"] == "Initial Energy (GeV)"
+    assert labels["energy_gev"] == "Initial Energy (GeV)"
+
+
+def test_sweep_heatmap_extract_data_uses_energy_alias_fallback():
+    data = {
+        "results": [
+            {
+                "parameters": {"energy_gev": 1.0, "aperture_radius": 0.1},
+                "metrics": {"percent_delta_e": 3.0},
+            },
+            {
+                "parameters": {"energy_gev": 2.0, "aperture_radius": 0.2},
+                "metrics": {"percent_delta_e": -4.0},
+            },
+        ]
+    }
+
+    param1, param2, gains = sweep_heatmap.extract_data(
+        data,
+        param1_name="initial_energy_gev",
+        param2_name="aperture_radius",
+        gain_filter="all",
+    )
+
+    np.testing.assert_allclose(param1, [1.0, 2.0])
+    np.testing.assert_allclose(param2, [0.1, 0.2])
+    np.testing.assert_allclose(gains, [3.0, -4.0])
+
+
 def test_generate_sweep_heatmap_rejects_removed_legacy_aliases():
     with pytest.raises(SystemExit) as excinfo:
         sweep_heatmap.main(["results/sweeps/example", "--energy-min", "1.0"])
