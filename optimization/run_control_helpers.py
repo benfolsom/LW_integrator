@@ -47,77 +47,152 @@ def validate_optimization_inputs(
     try:
         b2b_mode = is_bunch_to_bunch(simulation_type)
 
-        if not b2b_mode:
-            aperture_min_float = float(aperture_min)
-            aperture_max_float = float(aperture_max)
-            if aperture_min_float >= aperture_max_float:
-                return "Aperture min must be less than max"
-            if aperture_min_float <= 0:
-                return "Aperture min must be positive"
-
-        energy_min_float = float(energy_min)
-        energy_max_float = float(energy_max)
         energy_points_int = int(energy_points)
+        error = _validate_aperture_range(
+            b2b_mode=b2b_mode,
+            aperture_min=aperture_min,
+            aperture_max=aperture_max,
+        )
+        if error is not None:
+            return error
 
-        if b2b_mode and energy_points_int == 1:
-            if energy_min_float <= 0:
-                return "Rider energy must be positive"
-        else:
-            if energy_min_float >= energy_max_float:
-                return "Energy min must be less than max"
-            if energy_min_float <= 0:
-                return "Energy min must be positive"
+        error = _validate_energy_range(
+            b2b_mode=b2b_mode,
+            energy_min=energy_min,
+            energy_max=energy_max,
+            energy_points=energy_points_int,
+        )
+        if error is not None:
+            return error
 
-        if mode == "blind_sweep":
-            has_swept_sub_param = any(param.swept for param in sweep_parameters)
-            if not b2b_mode:
-                aperture_points_int = int(aperture_points)
-                if aperture_points_int < 2:
-                    return "Sweep mode: Aperture must have at least 2 points"
-            if energy_points_int < 2 and not has_swept_sub_param:
-                return (
-                    "Sweep mode: Energy must have at least 2 points "
-                    "(or enable a swept sub-parameter)"
-                )
-        else:
-            if not b2b_mode:
-                aperture_points_int = int(aperture_points)
-                if aperture_points_int < 1:
-                    return "Aperture must have at least 1 point"
-            if energy_points_int < 1:
-                return "Energy must have at least 1 point"
+        error = _validate_grid_point_counts(
+            b2b_mode=b2b_mode,
+            mode=mode,
+            aperture_points=aperture_points,
+            energy_points=energy_points_int,
+            sweep_parameters=sweep_parameters,
+        )
+        if error is not None:
+            return error
 
-        parse_float_list(offset_fractions)
-        float(start_z)
-        float(wall_z)
-        steps_int = int(steps)
-        if steps_int < 100:
-            return "Steps must be at least 100"
+        error = _validate_scalar_run_fields(
+            offset_fractions=offset_fractions,
+            start_z=start_z,
+            wall_z=wall_z,
+            steps=steps,
+            auto_steps_distance=auto_steps_distance,
+        )
+        if error is not None:
+            return error
 
-        distance_past_wall = float(auto_steps_distance)
-        if distance_past_wall < 0:
-            return "Distance past wall must be non-negative"
-
-        for param in sweep_parameters:
-            if param.swept:
-                min_val = float(param.min_value)
-                max_val = float(param.max_value)
-                points = int(param.points)
-
-                if min_val >= max_val:
-                    return f"{param.name}: min must be less than max"
-                if points < 2:
-                    return f"{param.name}: must have at least 2 points"
-            else:
-                fixed_val = float(param.fixed_value)
-                if "m_particle" in param.name and fixed_val <= 0:
-                    return f"{param.name}: Particle mass must be positive"
-                if "pcount" in param.name and int(fixed_val) < 1:
-                    return f"{param.name}: Particle count must be at least 1"
-
-        return None
+        return _validate_sweep_parameters(sweep_parameters)
     except ValueError as exc:
         return f"Invalid input: {exc}"
+
+
+def _validate_aperture_range(
+    *, b2b_mode: bool, aperture_min: Any, aperture_max: Any
+) -> str | None:
+    if b2b_mode:
+        return None
+
+    aperture_min_float = float(aperture_min)
+    aperture_max_float = float(aperture_max)
+    if aperture_min_float >= aperture_max_float:
+        return "Aperture min must be less than max"
+    if aperture_min_float <= 0:
+        return "Aperture min must be positive"
+    return None
+
+
+def _validate_energy_range(
+    *, b2b_mode: bool, energy_min: Any, energy_max: Any, energy_points: int
+) -> str | None:
+    energy_min_float = float(energy_min)
+    energy_max_float = float(energy_max)
+    if b2b_mode and energy_points == 1:
+        if energy_min_float <= 0:
+            return "Rider energy must be positive"
+        return None
+
+    if energy_min_float >= energy_max_float:
+        return "Energy min must be less than max"
+    if energy_min_float <= 0:
+        return "Energy min must be positive"
+    return None
+
+
+def _validate_grid_point_counts(
+    *,
+    b2b_mode: bool,
+    mode: str,
+    aperture_points: Any,
+    energy_points: int,
+    sweep_parameters: list[SweepParameterValidationInput],
+) -> str | None:
+    if mode == "blind_sweep":
+        has_swept_sub_param = any(param.swept for param in sweep_parameters)
+        if not b2b_mode:
+            aperture_points_int = int(aperture_points)
+            if aperture_points_int < 2:
+                return "Sweep mode: Aperture must have at least 2 points"
+        if energy_points < 2 and not has_swept_sub_param:
+            return (
+                "Sweep mode: Energy must have at least 2 points "
+                "(or enable a swept sub-parameter)"
+            )
+        return None
+
+    if not b2b_mode:
+        aperture_points_int = int(aperture_points)
+        if aperture_points_int < 1:
+            return "Aperture must have at least 1 point"
+    if energy_points < 1:
+        return "Energy must have at least 1 point"
+    return None
+
+
+def _validate_scalar_run_fields(
+    *,
+    offset_fractions: str,
+    start_z: Any,
+    wall_z: Any,
+    steps: Any,
+    auto_steps_distance: Any,
+) -> str | None:
+    parse_float_list(offset_fractions)
+    float(start_z)
+    float(wall_z)
+    steps_int = int(steps)
+    if steps_int < 100:
+        return "Steps must be at least 100"
+
+    distance_past_wall = float(auto_steps_distance)
+    if distance_past_wall < 0:
+        return "Distance past wall must be non-negative"
+    return None
+
+
+def _validate_sweep_parameters(
+    sweep_parameters: list[SweepParameterValidationInput],
+) -> str | None:
+    for param in sweep_parameters:
+        if param.swept:
+            min_val = float(param.min_value)
+            max_val = float(param.max_value)
+            points = int(param.points)
+
+            if min_val >= max_val:
+                return f"{param.name}: min must be less than max"
+            if points < 2:
+                return f"{param.name}: must have at least 2 points"
+        else:
+            fixed_val = float(param.fixed_value)
+            if "m_particle" in param.name and fixed_val <= 0:
+                return f"{param.name}: Particle mass must be positive"
+            if "pcount" in param.name and int(fixed_val) < 1:
+                return f"{param.name}: Particle count must be at least 1"
+    return None
 
 
 def build_extreme_parameter_warning(config: Any) -> str | None:
