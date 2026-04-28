@@ -787,7 +787,7 @@ def ensure_directory(path: Path) -> Path:
 
 def generate_filename_base(config_name: str) -> str:
     timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-    base = config_name.strip().replace(".json", "") or "testbed_config"
+    base = config_name.strip().removesuffix(".json") or "testbed_config"
     return f"{base}_{timestamp}"
 
 

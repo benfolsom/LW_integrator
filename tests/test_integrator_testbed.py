@@ -121,6 +121,10 @@ class TestFilenameGeneration:
             testbed_runner.generate_filename_base("my_config")
             == "my_config_20251022_123456"
         )
+        assert (
+            testbed_runner.generate_filename_base("my.json.backup")
+            == "my.json.backup_20251022_123456"
+        )
 
     def test_filename_base_defaults_empty_config_name(self, monkeypatch):
         monkeypatch.setattr(testbed_runner.time, "strftime", lambda *_args: "20251022_123456")
