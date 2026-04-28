@@ -26,10 +26,6 @@ Core notebooks
     Treat archived-reference overlays as reference material rather than the
     supported validation baseline.
 
-``examples/validation/conducting_aperture_test.ipynb`` (archived)
-    Archived exploratory notebook; useful when cross-checking the 35 MeV
-    conducting aperture scenario documented in :mod:`examples.validation.conducting_aperture_test`.
-
 The historical "static" integrator surfaces only inside archived reference
 material.  Active validation should use the pytest and CLI checks described in
 :doc:`validation`.
