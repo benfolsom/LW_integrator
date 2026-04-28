@@ -221,6 +221,31 @@ def test_logcache_plotter_static_main_calls_contour_plot(tmp_path: Path, monkeyp
     assert captured["contour"]["kwargs"]["log_y"] is False
 
 
+def test_logcache_plotter_interpolation_falls_back_between_methods(monkeypatch):
+    calls = []
+
+    def fake_griddata(_points, _values, grid, method):
+        calls.append(method)
+        if method == "nearest":
+            raise RuntimeError("nearest failed")
+        return np.ones_like(grid[0])
+
+    monkeypatch.setattr(logcache_plotter, "griddata", fake_griddata)
+
+    grid_x, grid_y = np.meshgrid(np.array([1.0, 2.0]), np.array([0.1, 0.2]))
+    interpolated, method = logcache_plotter._interpolate_gain_grid(
+        np.array([1.0, 2.0]),
+        np.array([0.1, 0.2]),
+        np.array([3.0, 4.0]),
+        grid_x,
+        grid_y,
+    )
+
+    assert calls == ["nearest", "linear"]
+    assert method == "linear"
+    np.testing.assert_allclose(interpolated, np.ones_like(grid_x))
+
+
 def test_parse_sweep_log_uses_only_most_recent_sweep(tmp_path: Path):
     log_path = _write_log(
         tmp_path / "multi_sweep.log",

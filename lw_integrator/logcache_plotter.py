@@ -681,6 +681,24 @@ def _create_1d_curves_plot(
     plt.close()
 
 
+def _interpolate_gain_grid(x_values, y_values, gains, grid_x, grid_y):
+    """Interpolate gains with a robust nearest-to-cubic fallback chain."""
+    for method in ("nearest", "linear", "cubic"):
+        try:
+            return (
+                griddata(
+                    (x_values, y_values),
+                    gains,
+                    (grid_x, grid_y),
+                    method=method,
+                ),
+                method,
+            )
+        except Exception:
+            continue
+    return None, None
+
+
 def _create_combined_gains_plot(
     energies_pos,
     x_values_pos,
@@ -738,21 +756,13 @@ def _create_combined_gains_plot(
     x_grid = np.linspace(x_values_all.min(), x_values_all.max(), n_points)
     energy_mesh, x_mesh = np.meshgrid(energy_grid, x_grid)
 
-    # Try interpolation with fallback chain
-    gain_interpolated = None
-    for method in ["nearest", "linear", "cubic"]:
-        try:
-            gain_interpolated = griddata(
-                (energies_all, x_values_all),
-                gains_all,
-                (energy_mesh, x_mesh),
-                method=method,
-            )
-            break
-        except Exception:
-            if method == "cubic":
-                pass
-            continue
+    gain_interpolated, _method_used = _interpolate_gain_grid(
+        energies_all,
+        x_values_all,
+        gains_all,
+        energy_mesh,
+        x_mesh,
+    )
 
     if gain_interpolated is None:
         return  # Can't create plot
@@ -1087,26 +1097,13 @@ def _create_contour_plot(
     x_grid = np.linspace(x_values.min(), x_values.max(), n_points)
     energy_mesh, x_mesh = np.meshgrid(energy_grid, x_grid)
 
-    # Try interpolation with fallback chain: nearest -> linear -> cubic
-    # Nearest is most robust (no Qhull), linear is smoother, cubic is smoothest
-    gain_interpolated = None
-    method_used = None
-
-    for method in ["nearest", "linear", "cubic"]:
-        try:
-            gain_interpolated = griddata(
-                (energies, x_values),
-                percent_gains,
-                (energy_mesh, x_mesh),
-                method=method,
-            )
-            method_used = method
-            break
-        except Exception:
-            if method == "cubic":
-                # Last resort failed, stick with whatever we got from earlier methods
-                pass
-            continue
+    gain_interpolated, method_used = _interpolate_gain_grid(
+        energies,
+        x_values,
+        percent_gains,
+        energy_mesh,
+        x_mesh,
+    )
 
     if gain_interpolated is None:
         print(
