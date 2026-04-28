@@ -61,7 +61,10 @@ from optimization.single_integration_helpers import (
 )
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import build_config_parameter_grids
-from optimization.sweep_result_helpers import build_successful_sweep_run_log
+from optimization.sweep_result_helpers import (
+    build_successful_sweep_run_log,
+    build_sweep_results_payload,
+)
 from optimization.sweep_run_helpers import (
     build_full_debug_parameter_log_lines,
     resolve_sweep_run_parameters,
@@ -810,25 +813,15 @@ class SweepRunner:
             results_path = self.output_dir / "sweep_results.json"
             with open(results_path, "w") as f:
                 json.dump(
-                    {
-                        "config": {
-                            "simulation_type": (
-                                self.config.simulation_type.name
-                                if hasattr(self.config.simulation_type, "name")
-                                else str(self.config.simulation_type)
-                            ),
-                            "aperture_range": list(self.config.aperture_range),
-                            "aperture_points": self.config.aperture_points,
-                            "energy_range": list(self.config.energy_range),
-                            "energy_points": self.config.energy_points,
-                            "param_grids": {k: v for k, v in param_grids.items()},
-                        },
-                        "total_runs": total_runs,
-                        "successful": total_runs - failed_count,
-                        "failed": failed_count,
-                        "elapsed_time_seconds": elapsed_time,
-                        "results": self.results,
-                    },
+                    build_sweep_results_payload(
+                        config=self.config,
+                        param_grids=param_grids,
+                        total_runs=total_runs,
+                        successful=total_runs - failed_count,
+                        failed=failed_count,
+                        elapsed_time_seconds=elapsed_time,
+                        results=self.results,
+                    ),
                     f,
                     indent=2,
                 )

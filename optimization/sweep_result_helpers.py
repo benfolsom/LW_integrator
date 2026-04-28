@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -97,6 +97,34 @@ def build_sweep_run_data(
         "run_number": run_number,
         "parameters": parameters,
         "metrics": dict(metrics),
+    }
+
+
+def build_sweep_results_payload(
+    *,
+    config: Any,
+    param_grids: Mapping[str, Sequence[Any]],
+    total_runs: int,
+    successful: int,
+    failed: int,
+    elapsed_time_seconds: float,
+    results: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build the persisted completed-sweep results payload."""
+    return {
+        "config": {
+            "simulation_type": simulation_type_name(config.simulation_type),
+            "aperture_range": list(config.aperture_range),
+            "aperture_points": config.aperture_points,
+            "energy_range": list(config.energy_range),
+            "energy_points": config.energy_points,
+            "param_grids": {key: values for key, values in param_grids.items()},
+        },
+        "total_runs": total_runs,
+        "successful": successful,
+        "failed": failed,
+        "elapsed_time_seconds": elapsed_time_seconds,
+        "results": list(results),
     }
 
 
@@ -437,6 +465,7 @@ __all__ = [
     "build_failed_sweep_run_record",
     "build_full_debug_sweep_result_log_lines",
     "build_sweep_completion_log_lines",
+    "build_sweep_results_payload",
     "build_successful_sweep_run_log",
     "build_sweep_run_data",
     "build_timeout_sweep_run_record",

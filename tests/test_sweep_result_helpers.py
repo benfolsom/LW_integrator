@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from core.types import SimulationType
@@ -12,6 +14,7 @@ from optimization.sweep_result_helpers import (
     build_failed_sweep_run_record,
     build_full_debug_sweep_result_log_lines,
     build_sweep_completion_log_lines,
+    build_sweep_results_payload,
     build_successful_sweep_run_log,
     build_sweep_run_data,
     build_timeout_sweep_run_record,
@@ -31,6 +34,7 @@ def test_module_exposes_only_maintained_public_helpers():
         "build_failed_sweep_run_record",
         "build_full_debug_sweep_result_log_lines",
         "build_sweep_completion_log_lines",
+        "build_sweep_results_payload",
         "build_successful_sweep_run_log",
         "build_sweep_run_data",
         "build_timeout_sweep_run_record",
@@ -78,6 +82,40 @@ def test_build_sweep_run_data_serializes_string_mode_and_driver_params():
     assert record["parameters"]["driver_starting_distance"] == 1000.0
     assert record["parameters"]["driver_pcount"] == 5
     assert record["metrics"] == {"max_percent_energy_gain": 1.5}
+
+
+def test_build_sweep_results_payload_serializes_completed_sweep_summary():
+    payload = build_sweep_results_payload(
+        config=SimpleNamespace(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            aperture_range=(0.001, 0.002),
+            aperture_points=2,
+            energy_range=(5.0, 6.0),
+            energy_points=2,
+        ),
+        param_grids={"energy": [5.0, 6.0], "start_z": [100.0]},
+        total_runs=4,
+        successful=3,
+        failed=1,
+        elapsed_time_seconds=12.5,
+        results=[{"run_number": 1, "success": True}],
+    )
+
+    assert payload == {
+        "config": {
+            "simulation_type": "BUNCH_TO_BUNCH",
+            "aperture_range": [0.001, 0.002],
+            "aperture_points": 2,
+            "energy_range": [5.0, 6.0],
+            "energy_points": 2,
+            "param_grids": {"energy": [5.0, 6.0], "start_z": [100.0]},
+        },
+        "total_runs": 4,
+        "successful": 3,
+        "failed": 1,
+        "elapsed_time_seconds": 12.5,
+        "results": [{"run_number": 1, "success": True}],
+    }
 
 
 def test_build_truncated_sweep_log_params_prefers_swept_values():
