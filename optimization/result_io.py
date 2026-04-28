@@ -210,8 +210,6 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     # Copy debug log from logcache to results directory
     if hasattr(plugin, "_log_file_path") and plugin._log_file_path is not None:
         if plugin._log_file_path.exists():
-            import shutil
-
             dest_log = opt_dir / plugin._log_file_path.name
             try:
                 shutil.copy2(plugin._log_file_path, dest_log)
@@ -228,7 +226,6 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
             )
             if log_files:
                 most_recent_log = log_files[-1]
-                import shutil
 
                 dest_log = opt_dir / most_recent_log.name
                 try:
@@ -342,7 +339,6 @@ def generate_optimization_plots(
 ):
     """Generate optimization visualization plots."""
     import matplotlib.pyplot as plt
-    import numpy as np
 
     try:
         if hasattr(result, "convergence_history") and result.convergence_history:
@@ -476,7 +472,6 @@ def generate_optimization_heatmap(
 ):
     """Generate sparse heatmap from optimization evaluations."""
     import matplotlib.pyplot as plt
-    import numpy as np
     from scipy.interpolate import griddata
 
     try:
@@ -683,10 +678,7 @@ def save_top_n_optimization_trajectories(
 
 def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[dict]):
     """Generate comparison plot showing all top N trajectories overlaid."""
-    from pathlib import Path
-
     import matplotlib.pyplot as plt
-    import numpy as np
 
     try:
         output_dir = getattr(
@@ -827,8 +819,6 @@ def save_partial_optimization_results(
     status: str = "PARTIAL",
 ):
     """Save partial optimization results when cancelled or failed."""
-    from datetime import datetime
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if plugin.config.mode == "optimization":
