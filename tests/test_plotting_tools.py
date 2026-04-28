@@ -301,6 +301,32 @@ def test_logcache_plotter_interpolation_falls_back_between_methods(monkeypatch):
     np.testing.assert_allclose(interpolated, np.ones_like(grid_x))
 
 
+def test_logcache_plotter_reports_optional_1d_curve_failure(
+    tmp_path: Path, monkeypatch, capsys
+):
+    def fail_curves(*_args, **_kwargs):
+        raise RuntimeError("curve render failed")
+
+    monkeypatch.setattr(logcache_plotter, "_create_1d_curves_plot", fail_curves)
+
+    logcache_plotter._create_contour_plot(
+        np.array([1.0, 2.0, 1.0, 2.0]),
+        np.array([0.1, 0.1, 0.2, 0.2]),
+        np.array([1.0, 2.0, 3.0, 4.0]),
+        str(tmp_path / "plot.png"),
+        stats={"completed": 4, "total": 4},
+        param_metadata={
+            "x_label": "Aperture",
+            "x_units": "mm",
+            "y_label": "Energy",
+            "y_units": "GeV",
+        },
+    )
+
+    captured = capsys.readouterr()
+    assert "Failed to create 1D curves plot: curve render failed" in captured.out
+
+
 def test_parse_sweep_log_uses_only_most_recent_sweep(tmp_path: Path):
     log_path = _write_log(
         tmp_path / "multi_sweep.log",

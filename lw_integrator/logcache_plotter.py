@@ -1175,9 +1175,8 @@ def _create_contour_plot(
             energies, x_values, percent_gains, curves_output, stats, live_mode
         )
         print(f"  Also created 1D curves plot: {curves_output}")
-    except Exception:
-        # Don't fail if 1D plot creation fails
-        pass
+    except Exception as exc:
+        print(f"  [WARNING] Failed to create 1D curves plot: {exc}")
 
 
 def find_latest_log(logcache_dir="logcache"):
