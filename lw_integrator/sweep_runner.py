@@ -59,6 +59,7 @@ from optimization.single_integration_helpers import (
     build_single_integration_setup,
     calculate_rider_starting_pz,
 )
+from optimization.sweep_helpers import generate_parameter_range
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -97,20 +98,6 @@ class SweepRunner:
             self.log_file.flush()
 
     # ------------------------------------------------------------------
-    # Parameter helpers (unchanged from original)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _make_range(
-        min_val: float, max_val: float, points: int, log_scale: bool = False
-    ) -> List[float]:
-        if points <= 1:
-            return [(min_val + max_val) / 2.0]
-        if log_scale and min_val > 0 and max_val > 0:
-            return np.logspace(np.log10(min_val), np.log10(max_val), points).tolist()
-        return np.linspace(min_val, max_val, points).tolist()
-
-    # ------------------------------------------------------------------
     # Grid generation (unchanged from original)
     # ------------------------------------------------------------------
 
@@ -122,7 +109,7 @@ class SweepRunner:
         if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
             if self.config.aperture_points > 1:
                 aper_min, aper_max = self.config.aperture_range
-                grids["aperture"] = self._make_range(
+                grids["aperture"] = generate_parameter_range(
                     aper_min,
                     aper_max,
                     self.config.aperture_points,
@@ -134,7 +121,7 @@ class SweepRunner:
         # Energy grid (rider kinetic energy)
         if self.config.energy_points > 1:
             e_min, e_max = self.config.energy_range
-            grids["energy"] = self._make_range(
+            grids["energy"] = generate_parameter_range(
                 e_min,
                 e_max,
                 self.config.energy_points,
@@ -172,7 +159,7 @@ class SweepRunner:
 
         # Wall-z sweep
         if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
-            grids["wall_z"] = self._make_range(
+            grids["wall_z"] = generate_parameter_range(
                 self.config.wall_z_range[0],
                 self.config.wall_z_range[1],
                 self.config.wall_z_points,
@@ -273,7 +260,9 @@ class SweepRunner:
                 continue
             log_scale = getattr(self.config, log_attr, False) if log_attr else False
             min_val, max_val = float(rng[0]), float(rng[1])
-            grids[grid_key] = self._make_range(min_val, max_val, pts, log_scale)
+            grids[grid_key] = generate_parameter_range(
+                min_val, max_val, pts, log_scale
+            )
 
         return grids
 

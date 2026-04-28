@@ -340,6 +340,9 @@ class TestSweepHelpers:
         assert generate_parameter_range(1e-3, 1e1, 3, True) == pytest.approx(
             [1e-3, 1e-1, 1e1]
         )
+        assert generate_parameter_range(0.0, 2.0, 3, True) == pytest.approx(
+            [0.0, 1.0, 2.0]
+        )
 
     @pytest.mark.parametrize(
         "simulation_type", [SimulationType.BUNCH_TO_BUNCH, "BUNCH_TO_BUNCH"]

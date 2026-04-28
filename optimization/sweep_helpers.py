@@ -43,7 +43,7 @@ def generate_parameter_range(
     """Generate a linearly or logarithmically spaced parameter range."""
     if points == 1:
         return [(min_val + max_val) / 2.0]
-    if log_scale:
+    if log_scale and min_val > 0 and max_val > 0:
         return np.logspace(np.log10(min_val), np.log10(max_val), points).tolist()
     return np.linspace(min_val, max_val, points).tolist()
 
