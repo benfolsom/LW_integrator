@@ -37,10 +37,7 @@ from optimization.single_integration_helpers import (
     distance_info_from_trajectory,
     sample_trajectory_arrays,
 )
-from optimization.sweep_helpers import (
-    build_parameter_grids,
-    generate_parameter_range,
-)
+from optimization.sweep_helpers import build_parameter_grids
 from optimization.sweep_run_helpers import (
     build_full_debug_parameter_log_lines,
     resolve_sweep_run_parameters,
@@ -1088,12 +1085,6 @@ class OptimizationRunMixin:
     def _generate_parameter_grids(self):
         """Generate all parameter grids including sweepable parameters."""
         return build_parameter_grids(self.config, self.sweep_params)
-
-    def _generate_range(
-        self, min_val: float, max_val: float, points: int, log_scale: bool
-    ) -> List[float]:
-        """Generate parameter range (linear or log scale)."""
-        return generate_parameter_range(min_val, max_val, points, log_scale)
 
     def _run_single_integration(
         self,
