@@ -13,6 +13,7 @@ from optimization.sweep_result_helpers import (
     SuccessfulSweepRunLog,
     build_failed_sweep_run_record,
     build_full_debug_sweep_result_log_lines,
+    build_interrupted_sweep_results_payload,
     build_sweep_completion_log_lines,
     build_sweep_results_payload,
     build_successful_sweep_run_log,
@@ -33,6 +34,7 @@ def test_module_exposes_only_maintained_public_helpers():
         "SuccessfulSweepRunLog",
         "build_failed_sweep_run_record",
         "build_full_debug_sweep_result_log_lines",
+        "build_interrupted_sweep_results_payload",
         "build_sweep_completion_log_lines",
         "build_sweep_results_payload",
         "build_successful_sweep_run_log",
@@ -115,6 +117,25 @@ def test_build_sweep_results_payload_serializes_completed_sweep_summary():
         "failed": 1,
         "elapsed_time_seconds": 12.5,
         "results": [{"run_number": 1, "success": True}],
+    }
+
+
+def test_build_interrupted_sweep_results_payload_preserves_partial_shape():
+    payload = build_interrupted_sweep_results_payload(
+        config=SimpleNamespace(simulation_type="CONDUCTING_WALL"),
+        total_runs=2,
+        elapsed_time_seconds=5.0,
+        results=[{"run_number": 1}, {"run_number": 2}],
+    )
+
+    assert payload == {
+        "config": {"simulation_type": "CONDUCTING_WALL"},
+        "total_runs": 2,
+        "successful": 2,
+        "failed": 0,
+        "elapsed_time_seconds": 5.0,
+        "interrupted": True,
+        "results": [{"run_number": 1}, {"run_number": 2}],
     }
 
 

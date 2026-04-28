@@ -128,6 +128,25 @@ def build_sweep_results_payload(
     }
 
 
+def build_interrupted_sweep_results_payload(
+    *,
+    config: Any,
+    total_runs: int,
+    elapsed_time_seconds: float,
+    results: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build the persisted partial-sweep payload for interrupted CLI sweeps."""
+    return {
+        "config": {"simulation_type": simulation_type_name(config.simulation_type)},
+        "total_runs": total_runs,
+        "successful": total_runs,
+        "failed": 0,
+        "elapsed_time_seconds": elapsed_time_seconds,
+        "interrupted": True,
+        "results": list(results),
+    }
+
+
 def build_truncated_sweep_log_params(
     *,
     param_grids: Mapping[str, list],
@@ -464,6 +483,7 @@ __all__ = [
     "SuccessfulSweepRunLog",
     "build_failed_sweep_run_record",
     "build_full_debug_sweep_result_log_lines",
+    "build_interrupted_sweep_results_payload",
     "build_sweep_completion_log_lines",
     "build_sweep_results_payload",
     "build_successful_sweep_run_log",

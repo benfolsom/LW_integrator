@@ -62,6 +62,7 @@ from optimization.single_integration_helpers import (
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import build_config_parameter_grids
 from optimization.sweep_result_helpers import (
+    build_interrupted_sweep_results_payload,
     build_successful_sweep_run_log,
     build_sweep_results_payload,
 )
@@ -855,21 +856,12 @@ class SweepRunner:
                     )
                     with open(partial_path, "w") as f:
                         json.dump(
-                            {
-                                "config": {
-                                    "simulation_type": (
-                                        self.config.simulation_type.name
-                                        if hasattr(self.config.simulation_type, "name")
-                                        else str(self.config.simulation_type)
-                                    ),
-                                },
-                                "total_runs": len(self.results),
-                                "successful": len(self.results),
-                                "failed": 0,
-                                "elapsed_time_seconds": elapsed_time,
-                                "interrupted": True,
-                                "results": self.results,
-                            },
+                            build_interrupted_sweep_results_payload(
+                                config=self.config,
+                                total_runs=len(self.results),
+                                elapsed_time_seconds=elapsed_time,
+                                results=self.results,
+                            ),
                             f,
                             indent=2,
                         )
