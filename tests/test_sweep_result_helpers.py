@@ -8,9 +8,11 @@ from core.types import SimulationType
 import optimization.sweep_result_helpers as sweep_result_helpers
 from optimization.sweep_result_helpers import (
     SweepMetricSummary,
+    SuccessfulSweepRunLog,
     build_failed_sweep_run_record,
     build_full_debug_sweep_result_log_lines,
     build_sweep_completion_log_lines,
+    build_successful_sweep_run_log,
     build_sweep_run_data,
     build_timeout_sweep_run_record,
     build_truncated_sweep_log_params,
@@ -25,9 +27,11 @@ def test_module_exposes_only_maintained_public_helpers():
     assert sweep_result_helpers.__all__ == [
         "SweepAttemptClassification",
         "SweepMetricSummary",
+        "SuccessfulSweepRunLog",
         "build_failed_sweep_run_record",
         "build_full_debug_sweep_result_log_lines",
         "build_sweep_completion_log_lines",
+        "build_successful_sweep_run_log",
         "build_sweep_run_data",
         "build_timeout_sweep_run_record",
         "build_truncated_sweep_log_params",
@@ -252,3 +256,38 @@ def test_build_sweep_completion_log_lines_formats_time_branches():
     assert "Failed/timed-out" not in "\n".join(seconds)
     assert minutes[-1] == "  Total time: 1m 5.0s (65.0s)"
     assert hours[-1] == "  Total time: 1h 1m 5.0s (3665.0s)"
+
+
+def test_build_successful_sweep_run_log_formats_optimizer_and_compact_lines():
+    log = build_successful_sweep_run_log(
+        run_num=7,
+        total_runs=9,
+        metrics={
+            "rider_gamma_initial": 10.0,
+            "rider_gamma_final": 12.0,
+            "max_percent_energy_gain": 3.5,
+            "max_energy_gain_gev": 0.004,
+            "max_relative_gain": 0.2,
+        },
+        rest_energy_mev=2.0,
+        param_names=["energy", "rider_transv_dist", "driver_energy_gev"],
+        energy=5.0,
+        rider_transv_dist=1e-4,
+        sweep_overrides={"driver_energy_gev": 8.0},
+        default_driver_energy_gev=6.0,
+    )
+
+    assert isinstance(log, SuccessfulSweepRunLog)
+    assert log.metrics.delta_gamma == 2.0
+    assert log.metrics.delta_e == 4.0
+    assert log.optimization_lines[0] == (
+        "[OPTIMIZATION] max_percent_energy_gain: 3.500000000000e+00%"
+    )
+    assert "[OPTIMIZATION] delta_e_mev: 4.000000000000e+00 MeV" in (
+        log.optimization_lines
+    )
+    assert log.detail_lines[0] == "  [RESULT] Run 7/9:"
+    assert "initial_energy_gev=5" in log.compact_line
+    assert "rider_transv_dist=1.000e-04" in log.compact_line
+    assert "driver_energy_gev=8" in log.compact_line
+    assert "ΔE=4.000e+00 Δγ=2.000e+00" in log.compact_line

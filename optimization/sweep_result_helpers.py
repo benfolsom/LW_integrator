@@ -29,6 +29,16 @@ class SweepMetricSummary:
     gamma_final: float
 
 
+@dataclass(frozen=True)
+class SuccessfulSweepRunLog:
+    """Formatted log output for one successful sweep run."""
+
+    optimization_lines: list[str]
+    detail_lines: list[str]
+    compact_line: str
+    metrics: SweepMetricSummary
+
+
 def simulation_type_name(simulation_type: Any) -> str:
     """Return a stable serialized name for enum-backed or string-backed modes."""
     return str(getattr(simulation_type, "name", simulation_type))
@@ -272,6 +282,91 @@ def build_sweep_completion_log_lines(
     return log_lines
 
 
+def build_successful_sweep_run_log(
+    *,
+    run_num: int,
+    total_runs: int,
+    metrics: Mapping[str, Any],
+    rest_energy_mev: float,
+    param_names: list[str],
+    energy: float,
+    rider_transv_dist: float,
+    sweep_overrides: Mapping[str, Any],
+    default_driver_energy_gev: float,
+) -> SuccessfulSweepRunLog:
+    """Return all formatted logging for one successful CLI sweep run."""
+    gamma_initial = metrics.get(
+        "initial_gamma_mean", metrics.get("rider_gamma_initial", 1.0)
+    )
+    gamma_final = metrics.get("final_gamma_mean", metrics.get("rider_gamma_final", 1.0))
+    delta_gamma = gamma_final - gamma_initial
+    delta_e_mev = delta_gamma * rest_energy_mev
+    metric_summary = SweepMetricSummary(
+        delta_e=delta_e_mev,
+        delta_gamma=delta_gamma,
+        gamma_initial=gamma_initial,
+        gamma_final=gamma_final,
+    )
+
+    optimization_lines = [
+        (
+            "[OPTIMIZATION] max_percent_energy_gain: "
+            f"{metrics.get('max_percent_energy_gain', 0):.12e}%"
+        ),
+        (
+            "[OPTIMIZATION] max_energy_gain: "
+            f"{metrics.get('max_energy_gain_gev', 0):.12e} GeV"
+        ),
+        (
+            "[OPTIMIZATION] max_relative_gain: "
+            f"{metrics.get('max_relative_gain', 0):.12e}"
+        ),
+        f"[OPTIMIZATION] delta_gamma: {delta_gamma:.12e}",
+        f"[OPTIMIZATION] delta_e_mev: {delta_e_mev:.12e} MeV",
+        f"[OPTIMIZATION] final_gamma: {gamma_final:.16f}",
+        f"[OPTIMIZATION] initial_gamma: {gamma_initial:.16f}",
+    ]
+
+    detail_lines = [
+        f"  [RESULT] Run {run_num}/{total_runs}:",
+        f"    rider_gamma_initial: {gamma_initial:.16f}",
+        f"    rider_gamma_final: {gamma_final:.16f}",
+        f"    delta_gamma: {delta_gamma:.12e}",
+        f"    delta_e_mev: {delta_e_mev:.12e} MeV",
+        (
+            "    max_percent_energy_gain: "
+            f"{metrics.get('max_percent_energy_gain', 0):.12e}%"
+        ),
+        f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.12e} GeV",
+        f"    max_relative_gain: {metrics.get('max_relative_gain', 0):.12e}",
+    ]
+
+    swept_params = []
+    if "energy" in param_names:
+        swept_params.append(f"initial_energy_gev={energy:.3g}")
+    if "rider_transv_dist" in param_names:
+        swept_params.append(f"rider_transv_dist={rider_transv_dist:.3e}")
+    if "driver_energy_gev" in param_names:
+        swept_params.append(
+            "driver_energy_gev="
+            f"{sweep_overrides.get('driver_energy_gev', default_driver_energy_gev):.3g}"
+        )
+    param_str = " ".join(swept_params) if swept_params else "fixed_params"
+
+    compact_line = (
+        f"Run #{run_num:4d} | {param_str} | "
+        f"ΔE={delta_e_mev:.3e} Δγ={delta_gamma:.3e} "
+        f"γ_i={gamma_initial:.2f} γ_f={gamma_final:.2f} | SUCCESS"
+    )
+
+    return SuccessfulSweepRunLog(
+        optimization_lines=optimization_lines,
+        detail_lines=detail_lines,
+        compact_line=compact_line,
+        metrics=metric_summary,
+    )
+
+
 def classify_sweep_attempt_result(
     attempt_result: Mapping[str, Any],
     *,
@@ -338,9 +433,11 @@ def classify_sweep_attempt_result(
 __all__ = [
     "SweepAttemptClassification",
     "SweepMetricSummary",
+    "SuccessfulSweepRunLog",
     "build_failed_sweep_run_record",
     "build_full_debug_sweep_result_log_lines",
     "build_sweep_completion_log_lines",
+    "build_successful_sweep_run_log",
     "build_sweep_run_data",
     "build_timeout_sweep_run_record",
     "build_truncated_sweep_log_params",

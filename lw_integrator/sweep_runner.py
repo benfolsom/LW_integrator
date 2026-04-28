@@ -61,6 +61,7 @@ from optimization.single_integration_helpers import (
 )
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import build_config_parameter_grids
+from optimization.sweep_result_helpers import build_successful_sweep_run_log
 from optimization.sweep_run_helpers import (
     build_full_debug_parameter_log_lines,
     resolve_sweep_run_parameters,
@@ -773,76 +774,24 @@ class SweepRunner:
                 # ── Log results ──
                 if result.get("success"):
                     metrics = result.get("metrics", {})
-                    gamma_initial = metrics.get(
-                        "initial_gamma_mean", metrics.get("rider_gamma_initial", 1.0)
+                    log_output = build_successful_sweep_run_log(
+                        run_num=run_num,
+                        total_runs=total_runs,
+                        metrics=metrics,
+                        rest_energy_mev=rider_m_particle * AMU_TO_MEV,
+                        param_names=param_names,
+                        energy=energy,
+                        rider_transv_dist=rider_transv_dist,
+                        sweep_overrides=sweep_overrides,
+                        default_driver_energy_gev=self.config.driver_energy_gev,
                     )
-                    gamma_final = metrics.get(
-                        "final_gamma_mean", metrics.get("rider_gamma_final", 1.0)
-                    )
-                    delta_gamma = gamma_final - gamma_initial
-                    rest_energy_mev = rider_m_particle * AMU_TO_MEV
-                    delta_e_mev = delta_gamma * rest_energy_mev
 
                     # Log metrics in format compatible with plotting script
-                    print(
-                        f"[OPTIMIZATION] max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.12e}%",
-                        flush=True,
-                    )
-                    print(
-                        f"[OPTIMIZATION] max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.12e} GeV",
-                        flush=True,
-                    )
-                    print(
-                        f"[OPTIMIZATION] max_relative_gain: {metrics.get('max_relative_gain', 0):.12e}",
-                        flush=True,
-                    )
-                    print(f"[OPTIMIZATION] delta_gamma: {delta_gamma:.12e}", flush=True)
-                    print(
-                        f"[OPTIMIZATION] delta_e_mev: {delta_e_mev:.12e} MeV",
-                        flush=True,
-                    )
-                    print(f"[OPTIMIZATION] final_gamma: {gamma_final:.16f}", flush=True)
-                    print(
-                        f"[OPTIMIZATION] initial_gamma: {gamma_initial:.16f}",
-                        flush=True,
-                    )
-
-                    self._log(f"  [RESULT] Run {run_num}/{total_runs}:")
-                    self._log(f"    rider_gamma_initial: {gamma_initial:.16f}")
-                    self._log(f"    rider_gamma_final: {gamma_final:.16f}")
-                    self._log(f"    delta_gamma: {delta_gamma:.12e}")
-                    self._log(f"    delta_e_mev: {delta_e_mev:.12e} MeV")
-                    self._log(
-                        f"    max_percent_energy_gain: {metrics.get('max_percent_energy_gain', 0):.12e}%"
-                    )
-                    self._log(
-                        f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.12e} GeV"
-                    )
-                    self._log(
-                        f"    max_relative_gain: {metrics.get('max_relative_gain', 0):.12e}"
-                    )
-
-                    # Compact summary line (like GUI format)
-                    swept_params = []
-                    if "energy" in param_names:
-                        swept_params.append(f"initial_energy_gev={energy:.3g}")
-                    if "rider_transv_dist" in param_names:
-                        swept_params.append(
-                            f"rider_transv_dist={rider_transv_dist:.3e}"
-                        )
-                    if "driver_energy_gev" in param_names:
-                        swept_params.append(
-                            f"driver_energy_gev={sweep_overrides.get('driver_energy_gev', self.config.driver_energy_gev):.3g}"
-                        )
-                    param_str = (
-                        " ".join(swept_params) if swept_params else "fixed_params"
-                    )
-
-                    self._log(
-                        f"Run #{run_num:4d} | {param_str} | "
-                        f"ΔE={delta_e_mev:.3e} Δγ={delta_gamma:.3e} "
-                        f"γ_i={gamma_initial:.2f} γ_f={gamma_final:.2f} | SUCCESS"
-                    )
+                    for line in log_output.optimization_lines:
+                        print(line, flush=True)
+                    for line in log_output.detail_lines:
+                        self._log(line)
+                    self._log(log_output.compact_line)
 
             # ── Save results ──
             elapsed_time = (time.time() - start_time) if start_time is not None else 0.0
