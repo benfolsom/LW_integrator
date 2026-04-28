@@ -22,6 +22,10 @@ from optimization.ui_helpers import (
 )
 
 
+def _existing_config_value(config: OptimizationConfig | None, attr: str, default):
+    return getattr(config, attr) if config is not None else default
+
+
 class OptimizationPluginControlMixin:
     """Validate inputs and prepare or control optimization runs."""
 
@@ -143,6 +147,7 @@ class OptimizationPluginControlMixin:
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
         existing_config = getattr(self, "config", None)
+        config_value = _existing_config_value
 
         has_gui = self.gui_controller is not None
         print(f"[DEBUG] _gather_config: Main GUI available: {has_gui}")
@@ -295,202 +300,164 @@ class OptimizationPluginControlMixin:
             failed_run_retry_attempts=int(self.failed_run_retry_attempts_var.get()),
             image_subcharge_count=self._get_gui_stability_setting(
                 "image_subcharge_var",
-                existing_config.image_subcharge_count if existing_config else 12,
+                config_value(existing_config, "image_subcharge_count", 12),
             ),
             use_image_weighting=self._get_gui_stability_setting(
                 "image_weighting_var",
-                existing_config.use_image_weighting if existing_config else True,
+                config_value(existing_config, "use_image_weighting", True),
             ),
             self_consistency_enabled=self._get_gui_stability_setting(
                 "self_consistency_enabled_var",
-                existing_config.self_consistency_enabled if existing_config else True,
+                config_value(existing_config, "self_consistency_enabled", True),
             ),
             self_consistency_tolerance=self._get_gui_stability_setting(
                 "self_consistency_target_ms_tolerance_var",
-                existing_config.self_consistency_tolerance if existing_config else 1e-4,
+                config_value(existing_config, "self_consistency_tolerance", 1e-4),
             ),
             self_consistency_max_iterations=self._get_gui_stability_setting(
                 "self_consistency_max_iterations_var",
-                (
-                    existing_config.self_consistency_max_iterations
-                    if existing_config
-                    else 5
-                ),
+                config_value(existing_config, "self_consistency_max_iterations", 5),
             ),
             self_consistency_verbosity=self._get_gui_stability_setting(
                 "self_consistency_verbosity_var",
-                existing_config.self_consistency_verbosity if existing_config else 0,
+                config_value(existing_config, "self_consistency_verbosity", 0),
             ),
             self_consistency_chrono_interpolate=self._get_gui_stability_setting(
                 "self_consistency_chrono_interpolate_var",
-                (
-                    existing_config.self_consistency_chrono_interpolate
-                    if existing_config
-                    else False
+                config_value(
+                    existing_config, "self_consistency_chrono_interpolate", False
                 ),
             ),
             self_consistency_chrono_tolerance=self._get_gui_stability_setting(
                 "self_consistency_chrono_tolerance_var",
-                (
-                    existing_config.self_consistency_chrono_tolerance
-                    if existing_config
-                    else 1e-3
-                ),
+                config_value(existing_config, "self_consistency_chrono_tolerance", 1e-3),
             ),
             self_consistency_chrono_high_precision=self._get_gui_stability_setting(
                 "self_consistency_chrono_high_precision_var",
-                (
-                    existing_config.self_consistency_chrono_high_precision
-                    if existing_config
-                    else False
+                config_value(
+                    existing_config, "self_consistency_chrono_high_precision", False
                 ),
             ),
             self_consistency_chrono_adaptive_tolerance=self._get_gui_stability_setting(
                 "self_consistency_chrono_adaptive_tolerance_var",
-                (
-                    existing_config.self_consistency_chrono_adaptive_tolerance
-                    if existing_config
-                    else False
+                config_value(
+                    existing_config,
+                    "self_consistency_chrono_adaptive_tolerance",
+                    False,
                 ),
             ),
             energy_monitor_halt_on_jump=self._get_gui_stability_setting(
                 "adaptive_timestep_halt_on_jump_var",
-                (
-                    existing_config.energy_monitor_halt_on_jump
-                    if existing_config
-                    else False
-                ),
+                config_value(existing_config, "energy_monitor_halt_on_jump", False),
             ),
             adaptive_timestep_enabled=self._get_gui_stability_setting(
                 "adaptive_timestep_enabled_var",
-                existing_config.adaptive_timestep_enabled if existing_config else True,
+                config_value(existing_config, "adaptive_timestep_enabled", True),
             ),
             adaptive_timestep_threshold=self._get_gui_stability_setting(
                 "adaptive_timestep_threshold_var",
-                (
-                    existing_config.adaptive_timestep_threshold
-                    if existing_config
-                    else 0.10
-                ),
+                config_value(existing_config, "adaptive_timestep_threshold", 0.10),
             ),
             adaptive_timestep_reduction_factor=self._get_gui_stability_setting(
                 "adaptive_timestep_reduction_factor_var",
-                (
-                    existing_config.adaptive_timestep_reduction_factor
-                    if existing_config
-                    else 10
+                config_value(
+                    existing_config, "adaptive_timestep_reduction_factor", 10
                 ),
             ),
             adaptive_timestep_min_factor=self._get_gui_stability_setting(
                 "adaptive_timestep_min_factor_var",
-                (
-                    existing_config.adaptive_timestep_min_factor
-                    if existing_config
-                    else 1e-4
-                ),
+                config_value(existing_config, "adaptive_timestep_min_factor", 1e-4),
             ),
             adaptive_timestep_cooldown_steps=self._get_gui_stability_setting(
                 "adaptive_timestep_cooldown_steps_var",
-                (
-                    existing_config.adaptive_timestep_cooldown_steps
-                    if existing_config
-                    else 10
-                ),
+                config_value(existing_config, "adaptive_timestep_cooldown_steps", 10),
             ),
             adaptive_timestep_probe_threshold=self._get_gui_stability_setting(
                 "adaptive_timestep_probe_threshold_var",
-                (
-                    existing_config.adaptive_timestep_probe_threshold
-                    if existing_config
-                    else 0.01
-                ),
+                config_value(existing_config, "adaptive_timestep_probe_threshold", 0.01),
             ),
             adaptive_timestep_max_probe_steps=self._get_gui_stability_setting(
                 "adaptive_timestep_max_probe_steps_var",
-                (
-                    existing_config.adaptive_timestep_max_probe_steps
-                    if existing_config
-                    else 3
-                ),
+                config_value(existing_config, "adaptive_timestep_max_probe_steps", 3),
             ),
             adaptive_timestep_debug=self._get_gui_stability_setting(
                 "adaptive_timestep_debug_var",
-                existing_config.adaptive_timestep_debug if existing_config else False,
+                config_value(existing_config, "adaptive_timestep_debug", False),
             ),
             self_consistency_gamma_reconciliation_method=self._get_gui_stability_setting(
                 "self_consistency_gamma_reconciliation_method_var",
-                (
-                    existing_config.self_consistency_gamma_reconciliation_method
-                    if existing_config
-                    else "DISABLED"
+                config_value(
+                    existing_config,
+                    "self_consistency_gamma_reconciliation_method",
+                    "DISABLED",
                 ),
             ),
             self_consistency_gamma_reconciliation_low_beta_threshold=self._get_gui_stability_setting(
                 "self_consistency_gamma_reconciliation_low_beta_threshold_var",
-                (
-                    existing_config.self_consistency_gamma_reconciliation_low_beta_threshold
-                    if existing_config
-                    else 0.9
+                config_value(
+                    existing_config,
+                    "self_consistency_gamma_reconciliation_low_beta_threshold",
+                    0.9,
                 ),
             ),
             self_consistency_gamma_reconciliation_high_beta_threshold=self._get_gui_stability_setting(
                 "self_consistency_gamma_reconciliation_high_beta_threshold_var",
-                (
-                    existing_config.self_consistency_gamma_reconciliation_high_beta_threshold
-                    if existing_config
-                    else 0.99
+                config_value(
+                    existing_config,
+                    "self_consistency_gamma_reconciliation_high_beta_threshold",
+                    0.99,
                 ),
             ),
             self_consistency_gamma_reconciliation_low_beta_weight=self._get_gui_stability_setting(
                 "self_consistency_gamma_reconciliation_low_beta_weight_var",
-                (
-                    existing_config.self_consistency_gamma_reconciliation_low_beta_weight
-                    if existing_config
-                    else 0.8
+                config_value(
+                    existing_config,
+                    "self_consistency_gamma_reconciliation_low_beta_weight",
+                    0.8,
                 ),
             ),
             self_consistency_gamma_reconciliation_high_beta_weight=self._get_gui_stability_setting(
                 "self_consistency_gamma_reconciliation_high_beta_weight_var",
-                (
-                    existing_config.self_consistency_gamma_reconciliation_high_beta_weight
-                    if existing_config
-                    else 0.2
+                config_value(
+                    existing_config,
+                    "self_consistency_gamma_reconciliation_high_beta_weight",
+                    0.2,
                 ),
             ),
             self_consistency_gamma_reconciliation_mid_beta_weight=self._get_gui_stability_setting(
                 "self_consistency_gamma_reconciliation_mid_beta_weight_var",
-                (
-                    existing_config.self_consistency_gamma_reconciliation_mid_beta_weight
-                    if existing_config
-                    else 0.5
+                config_value(
+                    existing_config,
+                    "self_consistency_gamma_reconciliation_mid_beta_weight",
+                    0.5,
                 ),
             ),
             self_consistency_gamma_reconciliation_fixed_weight=self._get_gui_stability_setting(
                 "self_consistency_gamma_reconciliation_fixed_weight_var",
-                (
-                    existing_config.self_consistency_gamma_reconciliation_fixed_weight
-                    if existing_config
-                    else 0.5
+                config_value(
+                    existing_config,
+                    "self_consistency_gamma_reconciliation_fixed_weight",
+                    0.5,
                 ),
             ),
             smoothness_trend_threshold=(
-                existing_config.smoothness_trend_threshold if existing_config else 0.30
+                config_value(existing_config, "smoothness_trend_threshold", 0.30)
             ),
             smoothness_max_violations=(
-                existing_config.smoothness_max_violations if existing_config else 3
+                config_value(existing_config, "smoothness_max_violations", 3)
             ),
             timestep_strategy="auto_distance",
             target_distance_mm=(
-                existing_config.target_distance_mm if existing_config else 100.0
+                config_value(existing_config, "target_distance_mm", 100.0)
             ),
             energy_scale_exponent=(
-                existing_config.energy_scale_exponent if existing_config else 1.0
+                config_value(existing_config, "energy_scale_exponent", 1.0)
             ),
             startup_mode=(
                 self.gui_controller.core_param_vars["startup_mode"].get()
                 if self.gui_controller
                 and hasattr(self.gui_controller, "core_param_vars")
-                else (existing_config.startup_mode if existing_config else "COLD_START")
+                else config_value(existing_config, "startup_mode", "COLD_START")
             ),
         )
 
