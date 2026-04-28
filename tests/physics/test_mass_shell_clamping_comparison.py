@@ -275,7 +275,7 @@ class TestMassShellClampingDynamics:
         energy_final = energies[-1]
         energy_drift = abs(energy_final - energy_initial) / energy_initial
 
-        print(f"\nEnergy conservation with mass-shell clamping:")
+        print("\nEnergy conservation with mass-shell clamping:")
         print(f"  Initial energy: {energy_initial:.10e}")
         print(f"  Final energy:   {energy_final:.10e}")
         print(f"  Relative drift: {energy_drift:.3e}")
@@ -381,7 +381,7 @@ class TestMassShellClampingDocumentation:
         sc_config = SelfConsistencyConfig(
             enabled=True,
             max_iterations=10,
-            target_tolerance=1e-6,
+            target_ms_tolerance=1e-6,
             verbosity=0,
         )
 

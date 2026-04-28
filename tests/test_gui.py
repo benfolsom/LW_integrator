@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tkinter as tk
 from types import SimpleNamespace
+
+import pytest
 
 from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
@@ -41,6 +44,21 @@ class _ComboBoxStub:
 
     def current(self, index):
         self.current_calls.append(index)
+
+
+def test_integrator_gui_constructs_full_tk_window():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        root.update_idletasks()
+        assert isinstance(app, gui.IntegratorGUI)
+    finally:
+        root.destroy()
 
 
 def test_gui_inherits_config_helpers_from_config_mixin():

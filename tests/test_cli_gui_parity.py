@@ -307,6 +307,7 @@ def tmp_output_dir():
 # =========================================================================
 
 
+@pytest.mark.slow
 class TestCoreRunTestbedParity:
     """Verify that calling run_testbed twice with identical options yields
     identical RunResult metrics (deterministic given same seed)."""
@@ -472,6 +473,7 @@ class TestCoreRunTestbedParity:
 # =========================================================================
 
 
+@pytest.mark.slow
 class TestCliGuiOptionsParity:
     """Verify that a SweepRunner._run_single_integration call and a direct
     run_testbed call produce identical results when built from the same config."""
@@ -902,6 +904,7 @@ def _compare_cli_vs_direct(
         )
 
 
+@pytest.mark.slow
 class TestSinglePointFromConfig:
     """For each designated config, run a single point through BOTH the CLI
     SweepRunner and a direct run_testbed call, then compare all metrics."""
@@ -1078,6 +1081,7 @@ class TestSinglePointFromConfig:
 # =========================================================================
 
 
+@pytest.mark.slow
 class TestTwoParticleDemo8:
     """Load two_particle_demo8.json and compare CLI-path vs direct-path results."""
 

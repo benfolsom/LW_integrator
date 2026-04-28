@@ -31,6 +31,8 @@ from core.types import ParticleState, SimulationType
 from optimization.metrics import compute_max_energy_gain, compute_trajectory_metrics
 from optimization.parameter_sweep import ParameterGrid
 
+pytestmark = pytest.mark.slow
+
 
 def trajectory_list_to_dict(trajectory: List[ParticleState]) -> Dict[str, np.ndarray]:
     """Convert trajectory from list of states to dict of arrays.
