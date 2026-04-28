@@ -127,6 +127,13 @@ class _CliTimestepSetup:
     beta: float
 
 
+@dataclass(frozen=True)
+class _CliStabilityOutcome:
+    log_lines: list[str]
+    metrics_updates: dict[str, Any]
+    rejection_record: dict[str, Any] | None
+
+
 def _resolve_cli_rider_overrides(
     config: Any,
     sweep_overrides: Mapping[str, Any],
@@ -434,6 +441,97 @@ def _build_small_aperture_diagnostic_line(
     )
 
 
+def _evaluate_cli_stability(
+    config: Any,
+    result: Any,
+    metrics: Mapping[str, Any],
+    *,
+    rider_m_particle: float,
+    run_num: int,
+    aperture: float,
+    energy_gev: float,
+    start_z: float,
+    transv_offset: float,
+) -> _CliStabilityOutcome:
+    log_lines = [
+        f"[OPTIMIZATION]   [DEBUG] Processing trajectory data for Run {run_num}..."
+    ]
+    metrics_updates: dict[str, Any] = {}
+
+    if result.rider_trajectory is not None and config.smoothness_enabled:
+        log_lines.append(
+            f"[OPTIMIZATION]   [DEBUG] Performing stability analysis for Run {run_num}..."
+        )
+        smoothness_config = SmoothnessConfig(
+            enabled=True,
+            window_size=config.smoothness_window_size,
+            oscillation_threshold=config.smoothness_oscillation_threshold,
+            trend_smoothness_threshold=config.smoothness_trend_threshold,
+            reject_on_violation=config.smoothness_reject_on_violation,
+            max_allowed_violations=config.smoothness_max_violations,
+        )
+        smoothness_result = analyze_trajectory_smoothness(
+            result.rider_trajectory,
+            smoothness_config,
+            particle_mass_amu=rider_m_particle,
+        )
+        metrics_updates = {
+            "smoothness_passed": smoothness_result.passed,
+            "smoothness_violations": len(smoothness_result.violations),
+        }
+
+        if not smoothness_result.passed:
+            log_lines.extend(
+                [
+                    (
+                        f"[OPTIMIZATION]   [WARNING] Stability check FAILED "
+                        f"for Run {run_num}"
+                    ),
+                    f"[OPTIMIZATION]     Quality: {smoothness_result.quality_summary}",
+                ]
+            )
+            if config.smoothness_reject_on_violation:
+                log_lines.append(
+                    f"[OPTIMIZATION]   [REJECT] Run {run_num} rejected due to numerical instability"
+                )
+                rejected_metrics = {**metrics, **metrics_updates}
+                return _CliStabilityOutcome(
+                    log_lines=log_lines,
+                    metrics_updates=metrics_updates,
+                    rejection_record={
+                        "success": False,
+                        "error": (
+                            "Smoothness violation: "
+                            f"{len(smoothness_result.violations)} violations"
+                        ),
+                        "parameters": {
+                            "aperture": aperture,
+                            "energy_gev": energy_gev,
+                            "start_z": start_z,
+                            "transv_offset": transv_offset,
+                        },
+                        "metrics": rejected_metrics,
+                    },
+                )
+        else:
+            log_lines.append(
+                f"[OPTIMIZATION]   [OK] Stability check PASSED for Run {run_num}: "
+                f"{smoothness_result.quality_summary}"
+            )
+    elif result.rider_trajectory is None:
+        log_lines.append(f"[OPTIMIZATION]   [WARNING] No trajectory data for Run {run_num}")
+    elif not config.smoothness_enabled:
+        log_lines.append(
+            f"[OPTIMIZATION]   [INFO] Stability analysis DISABLED for Run {run_num}"
+        )
+
+    return _CliStabilityOutcome(
+        log_lines=log_lines,
+        metrics_updates=metrics_updates,
+        rejection_record=None,
+    )
+
+
 class SweepRunner:
     """Execute parameter sweeps from configuration files without GUI.
 
@@ -682,73 +780,22 @@ class SweepRunner:
             print(f"[OPTIMIZATION] {line}", flush=True)
 
         # ── Stability analysis (same as GUI) ──
-        print(
-            f"[OPTIMIZATION]   [DEBUG] Processing trajectory data for Run {run_num}...",
-            flush=True,
+        stability_outcome = _evaluate_cli_stability(
+            self.config,
+            result,
+            metrics,
+            rider_m_particle=rider.m_particle,
+            run_num=run_num,
+            aperture=aperture,
+            energy_gev=energy_gev,
+            start_z=start_z,
+            transv_offset=timestep_setup.transv_offset,
         )
-
-        if result.rider_trajectory is not None and self.config.smoothness_enabled:
-            print(
-                f"[OPTIMIZATION]   [DEBUG] Performing stability analysis for Run {run_num}...",
-                flush=True,
-            )
-            traj = result.rider_trajectory
-            smoothness_config = SmoothnessConfig(
-                enabled=True,
-                window_size=self.config.smoothness_window_size,
-                oscillation_threshold=self.config.smoothness_oscillation_threshold,
-                trend_smoothness_threshold=self.config.smoothness_trend_threshold,
-                reject_on_violation=self.config.smoothness_reject_on_violation,
-                max_allowed_violations=self.config.smoothness_max_violations,
-            )
-            smoothness_result = analyze_trajectory_smoothness(
-                traj,
-                smoothness_config,
-                particle_mass_amu=rider.m_particle,
-            )
-            metrics["smoothness_passed"] = smoothness_result.passed
-            metrics["smoothness_violations"] = len(smoothness_result.violations)
-
-            if not smoothness_result.passed:
-                print(
-                    f"[OPTIMIZATION]   [WARNING] Stability check FAILED for Run {run_num}",
-                    flush=True,
-                )
-                print(
-                    f"[OPTIMIZATION]     Quality: {smoothness_result.quality_summary}",
-                    flush=True,
-                )
-                if self.config.smoothness_reject_on_violation:
-                    print(
-                        f"[OPTIMIZATION]   [REJECT] Run {run_num} rejected due to numerical instability",
-                        flush=True,
-                    )
-                    return {
-                        "success": False,
-                        "error": f"Smoothness violation: {len(smoothness_result.violations)} violations",
-                        "parameters": {
-                            "aperture": aperture,
-                            "energy_gev": energy_gev,
-                            "start_z": start_z,
-                            "transv_offset": timestep_setup.transv_offset,
-                        },
-                        "metrics": metrics,
-                    }
-            else:
-                print(
-                    f"[OPTIMIZATION]   [OK] Stability check PASSED for Run {run_num}: {smoothness_result.quality_summary}",
-                    flush=True,
-                )
-        elif result.rider_trajectory is None:
-            print(
-                f"[OPTIMIZATION]   [WARNING] No trajectory data for Run {run_num}",
-                flush=True,
-            )
-        elif not self.config.smoothness_enabled:
-            print(
-                f"[OPTIMIZATION]   [INFO] Stability analysis DISABLED for Run {run_num}",
-                flush=True,
-            )
+        metrics.update(stability_outcome.metrics_updates)
+        for line in stability_outcome.log_lines:
+            print(line, flush=True)
+        if stability_outcome.rejection_record is not None:
+            return stability_outcome.rejection_record
 
         print(
             f"[OPTIMIZATION]   [DEBUG] _run_single_integration returning for Run {run_num}",
