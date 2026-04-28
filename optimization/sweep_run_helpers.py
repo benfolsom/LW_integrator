@@ -202,8 +202,10 @@ def build_full_debug_parameter_log_lines(
     *,
     run_num: int,
     total_runs: int,
+    params_dict: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Return verbose parameter logging for one sweep run."""
+    params_dict = params_dict or {}
     log_lines = [
         f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:",
         f"    aperture: {run_params.aperture:.4e} mm",
@@ -215,6 +217,7 @@ def build_full_debug_parameter_log_lines(
         f"    rider_pcount: {run_params.rider_pcount}",
         f"    rider_transv_mom: {run_params.rider_transv_mom:.4e} amu·mm/ns",
         f"    rider_transv_dist: {run_params.rider_transv_dist:.4e} mm",
+        f"    rider_stripped_ions: {run_params.rider_stripped_ions:.2e}",
     ]
     if config.macroparticle_enabled:
         log_lines.extend(
@@ -232,6 +235,26 @@ def build_full_debug_parameter_log_lines(
                     "    macroparticle_use_momentum_errors: "
                     f"{config.macroparticle_use_momentum_errors}"
                 ),
+            ]
+        )
+    if run_params.driver_params is not None:
+        driver = run_params.driver_params
+        driver_energy_gev = params_dict.get(
+            "driver_energy_gev", getattr(config, "driver_energy_gev", 0.0)
+        )
+        log_lines.extend(
+            [
+                f"    driver_m_particle: {driver['m_particle']:.4e} amu",
+                f"    driver_charge_sign: {driver['charge_sign']:.1f}",
+                f"    driver_pcount: {driver['pcount']}",
+                f"    driver_transv_mom: {driver['transv_mom']:.4e} amu·mm/ns",
+                f"    driver_transv_dist: {driver['transv_dist']:.4e} mm",
+                (
+                    "    driver_starting_distance: "
+                    f"{driver['starting_distance']:.4f} mm"
+                ),
+                f"    driver_energy_gev: {driver_energy_gev:.4f} GeV",
+                f"    driver_stripped_ions: {driver['stripped_ions']:.2e}",
             ]
         )
     return log_lines

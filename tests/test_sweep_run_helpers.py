@@ -45,6 +45,7 @@ def _config(**overrides):
         "driver_transv_dist": 3e-4,
         "driver_starting_distance": 900.0,
         "driver_starting_Pz": -10.0,
+        "driver_energy_gev": 12.0,
         "driver_stripped_ions": 2.0,
         "driver_direction": "-z",
         "timestep_strategy": "fixed",
@@ -190,5 +191,31 @@ def test_build_full_debug_parameter_log_lines_includes_macroparticle_fields():
     )
 
     assert lines[0] == "  [PARAMS] Run 3/9 - All parameters:"
+    assert any("rider_stripped_ions: 1.00e+00" in line for line in lines)
     assert any("macroparticle_enabled: True" in line for line in lines)
     assert any("macroparticle_charge_multiplier: 4.0000" in line for line in lines)
+
+
+def test_build_full_debug_parameter_log_lines_includes_b2b_driver_fields():
+    params = {
+        "initial_energy_gev": 5.0,
+        "start_z": 10.0,
+        "transverse_offset_fraction": 0.25,
+        "driver_energy_gev": 2.0,
+        "driver_starting_distance": 700.0,
+    }
+    config = _config(simulation_type="BUNCH_TO_BUNCH")
+    run_params = resolve_sweep_run_parameters(config, params)
+
+    assert run_params is not None
+    lines = build_full_debug_parameter_log_lines(
+        config,
+        run_params,
+        run_num=3,
+        total_runs=9,
+        params_dict=params,
+    )
+
+    assert any("driver_m_particle: 2.0000e+00 amu" in line for line in lines)
+    assert any("driver_starting_distance: 700.0000 mm" in line for line in lines)
+    assert any("driver_energy_gev: 2.0000 GeV" in line for line in lines)

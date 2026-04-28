@@ -762,6 +762,7 @@ class OptimizationRunMixin:
                         run_params,
                         run_num=run_num,
                         total_runs=total_runs,
+                        params_dict=params_dict,
                     ):
                         self._log_result(line)
 

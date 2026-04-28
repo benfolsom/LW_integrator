@@ -61,6 +61,10 @@ from optimization.single_integration_helpers import (
 )
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import generate_parameter_range
+from optimization.sweep_run_helpers import (
+    build_full_debug_parameter_log_lines,
+    resolve_sweep_run_parameters,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -865,93 +869,25 @@ class SweepRunner:
                 sweep_overrides = {
                     k: v for k, v in params_dict.items() if k not in _positional_keys
                 }
+                helper_params = {
+                    **params_dict,
+                    "transverse_offset_fraction": transv_offset_frac,
+                }
+                run_params = resolve_sweep_run_parameters(self.config, helper_params)
+                if run_params is None:
+                    raise ValueError("Sweep run parameters are missing energy")
 
-                # ── Resolve all rider params for logging ──
-                rider_m_particle = sweep_overrides.get(
-                    "rider_m_particle", self.config.m_particle
-                )
-                rider_charge_sign = sweep_overrides.get(
-                    "rider_charge_sign", self.config.charge_sign
-                )
-                rider_pcount = int(
-                    sweep_overrides.get("rider_pcount", self.config.pcount)
-                )
-                rider_transv_mom = sweep_overrides.get(
-                    "rider_transv_mom", self.config.transv_mom
-                )
-                rider_transv_dist = sweep_overrides.get(
-                    "rider_transv_dist", self.config.transv_dist
-                )
-                rider_stripped_ions = sweep_overrides.get(
-                    "rider_stripped_ions", self.config.stripped_ions
-                )
+                rider_m_particle = run_params.rider_m_particle
+                rider_transv_dist = run_params.rider_transv_dist
 
-                # Log parameter values
-                self._log(f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:")
-                self._log(f"    aperture: {aperture:.4e} mm")
-                self._log(f"    energy: {energy:.4f} GeV")
-                self._log(f"    start_z: {start_z:.4f} mm")
-                self._log(f"    transv_offset_frac: {transv_offset_frac:.4f}")
-                self._log(f"    rider_m_particle: {rider_m_particle:.4e} amu")
-                self._log(f"    rider_charge_sign: {rider_charge_sign:.1f}")
-                self._log(f"    rider_pcount: {rider_pcount}")
-                self._log(f"    rider_transv_mom: {rider_transv_mom:.4e} amu·mm/ns")
-                self._log(f"    rider_transv_dist: {rider_transv_dist:.4e} mm")
-                self._log(f"    rider_stripped_ions: {rider_stripped_ions:.2e}")
-
-                if self.config.macroparticle_enabled:
-                    _macro_charge_mult = sweep_overrides.get(
-                        "macroparticle_charge_multiplier",
-                        self.config.macroparticle_charge_multiplier,
-                    )
-                    _macro_sigma_mult = sweep_overrides.get(
-                        "macroparticle_sigma_multiplier",
-                        self.config.macroparticle_sigma_multiplier,
-                    )
-                    self._log("    macroparticle_enabled: True")
-                    self._log(
-                        f"    macroparticle_charge_multiplier: {_macro_charge_mult:.4f}"
-                    )
-                    self._log(
-                        f"    macroparticle_sigma_multiplier: {_macro_sigma_mult:.4f}"
-                    )
-                    self._log(
-                        f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
-                    )
-
-                if is_bunch_to_bunch(self.config.simulation_type):
-                    d_m = sweep_overrides.get(
-                        "driver_m_particle", self.config.driver_m_particle
-                    )
-                    d_charge = sweep_overrides.get(
-                        "driver_charge_sign", self.config.driver_charge_sign
-                    )
-                    d_pcount = int(
-                        sweep_overrides.get("driver_pcount", self.config.driver_pcount)
-                    )
-                    d_transv_mom = sweep_overrides.get(
-                        "driver_transv_mom", self.config.driver_transv_mom
-                    )
-                    d_transv_dist = sweep_overrides.get(
-                        "driver_transv_dist", self.config.driver_transv_dist
-                    )
-                    d_start_dist = sweep_overrides.get(
-                        "driver_starting_distance", self.config.driver_starting_distance
-                    )
-                    d_stripped = sweep_overrides.get(
-                        "driver_stripped_ions", self.config.driver_stripped_ions
-                    )
-                    d_energy_gev = sweep_overrides.get(
-                        "driver_energy_gev", self.config.driver_energy_gev
-                    )
-                    self._log(f"    driver_m_particle: {d_m:.4e} amu")
-                    self._log(f"    driver_charge_sign: {d_charge:.1f}")
-                    self._log(f"    driver_pcount: {d_pcount}")
-                    self._log(f"    driver_transv_mom: {d_transv_mom:.4e} amu·mm/ns")
-                    self._log(f"    driver_transv_dist: {d_transv_dist:.4e} mm")
-                    self._log(f"    driver_starting_distance: {d_start_dist:.4f} mm")
-                    self._log(f"    driver_energy_gev: {d_energy_gev:.4f} GeV")
-                    self._log(f"    driver_stripped_ions: {d_stripped:.2e}")
+                for line in build_full_debug_parameter_log_lines(
+                    self.config,
+                    run_params,
+                    run_num=run_num,
+                    total_runs=total_runs,
+                    params_dict=helper_params,
+                ):
+                    self._log(line)
 
                 # ── Run integration ──
                 try:
