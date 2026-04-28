@@ -43,6 +43,8 @@ except ImportError as e:
     print("=" * 80)
     sys.exit(1)
 
+__all__ = ["find_latest_log", "main", "parse_sweep_log"]
+
 
 def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
     """Parse sweep log file and extract run parameters and metrics.
@@ -1398,7 +1400,7 @@ def _live_monitor(
         print(f"{'=' * 80}\n")
 
 
-def main(argv=None):
+def _build_parser():
     parser = argparse.ArgumentParser(
         description="Plot energy gains from logcache sweep data (static or live mode)"
     )
@@ -1439,34 +1441,115 @@ def main(argv=None):
         action="store_true",
         help="Use logarithmic scale for y-axis (swept parameter)",
     )
+    return parser
 
-    args = parser.parse_args(argv)
 
-    # Determine log file
-    if args.logfile:
-        log_file = Path(args.logfile)
+def _parse_args(argv=None):
+    return _build_parser().parse_args(argv)
+
+
+def _resolve_log_file(logfile):
+    if logfile:
+        return Path(logfile)
+
+    log_file = find_latest_log()
+    if log_file is None:
+        print("ERROR: No sweep log files found in logcache/")
+        print("Please specify a log file explicitly.")
+        return None
+
+    print(f"Auto-detected latest sweep log: {log_file}")
+    return Path(log_file)
+
+
+def _resolve_output_file(output):
+    if output:
+        return Path(output)
+    return Path("logcache/latest_sweep_plot.png")
+
+
+def _run_static_plot(log_file, output_file, args):
+    print(f"Parsing log file: {log_file}")
+    (
+        energies_pos,
+        x_values_pos,
+        percent_gains_pos,
+        energies_neg,
+        x_values_neg,
+        percent_gains_neg,
+        stats,
+        param_metadata,
+    ) = parse_sweep_log(str(log_file), verbose=True, max_gain_percent=args.max_gain)
+
+    has_any_data = (energies_pos is not None and len(energies_pos) > 0) or (
+        energies_neg is not None and len(energies_neg) > 0
+    )
+    if not has_any_data:
+        print("ERROR: No data found in log file")
+        return 1
+
+    print("\nGenerating plots...")
+
+    if energies_pos is None or len(energies_pos) == 0:
+        print("Note: No positive gains found, plotting all data (negative/zero gains)")
+        _create_combined_gains_plot(
+            energies_pos,
+            x_values_pos,
+            percent_gains_pos,
+            energies_neg,
+            x_values_neg,
+            percent_gains_neg,
+            str(output_file),
+            stats=stats,
+            param_metadata=param_metadata,
+            log_x=args.log_x,
+            log_y=args.log_y,
+        )
     else:
-        log_file = find_latest_log()
-        if log_file is None:
-            print("ERROR: No sweep log files found in logcache/")
-            print("Please specify a log file explicitly.")
-            return 1
-        print(f"Auto-detected latest sweep log: {log_file}")
+        _create_contour_plot(
+            energies_pos,
+            x_values_pos,
+            percent_gains_pos,
+            str(output_file),
+            stats=stats,
+            param_metadata=param_metadata,
+            log_x=args.log_x,
+            log_y=args.log_y,
+        )
+    print(f"Plot saved to: {output_file}")
 
+    if energies_neg is not None and len(energies_neg) > 0:
+        combined_output = str(output_file).replace(".png", "_combined.png")
+        _create_combined_gains_plot(
+            energies_pos,
+            x_values_pos,
+            percent_gains_pos,
+            energies_neg,
+            x_values_neg,
+            percent_gains_neg,
+            combined_output,
+            stats=stats,
+            param_metadata=param_metadata,
+            log_x=args.log_x,
+            log_y=args.log_y,
+        )
+        print(f"Combined gains plot saved to: {combined_output}")
+
+    return 0
+
+
+def main(argv=None):
+    args = _parse_args(argv)
+    log_file = _resolve_log_file(args.logfile)
+    if log_file is None:
+        return 1
     if not log_file.exists():
         print(f"ERROR: Log file not found: {log_file}")
         return 1
 
-    # Determine output file
-    if args.output:
-        output_file = Path(args.output)
-    else:
-        output_file = Path("logcache/latest_sweep_plot.png")
-
-    # Ensure output directory exists
+    output_file = _resolve_output_file(args.output)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Run in appropriate mode
     if args.live:
         _live_monitor(
             str(log_file),
@@ -1476,82 +1559,9 @@ def main(argv=None):
             log_x=args.log_x,
             log_y=args.log_y,
         )
-    else:
-        # Single static plot
-        print(f"Parsing log file: {log_file}")
-        (
-            energies_pos,
-            x_values_pos,
-            percent_gains_pos,
-            energies_neg,
-            x_values_neg,
-            percent_gains_neg,
-            stats,
-            param_metadata,
-        ) = parse_sweep_log(str(log_file), verbose=True, max_gain_percent=args.max_gain)
+        return 0
 
-        # Check if we have any data at all (positive or negative)
-        has_any_data = (energies_pos is not None and len(energies_pos) > 0) or (
-            energies_neg is not None and len(energies_neg) > 0
-        )
-
-        if not has_any_data:
-            print("ERROR: No data found in log file")
-            return 1
-
-        print("\nGenerating plots...")
-
-        # If we only have negative/zero gains, use combined plot
-        if energies_pos is None or len(energies_pos) == 0:
-            print(
-                "Note: No positive gains found, plotting all data (negative/zero gains)"
-            )
-            _create_combined_gains_plot(
-                energies_pos,
-                x_values_pos,
-                percent_gains_pos,
-                energies_neg,
-                x_values_neg,
-                percent_gains_neg,
-                str(output_file),
-                stats=stats,
-                param_metadata=param_metadata,
-                log_x=args.log_x,
-                log_y=args.log_y,
-            )
-        else:
-            # We have positive gains, use the standard contour plot
-            _create_contour_plot(
-                energies_pos,
-                x_values_pos,
-                percent_gains_pos,
-                str(output_file),
-                stats=stats,
-                param_metadata=param_metadata,
-                log_x=args.log_x,
-                log_y=args.log_y,
-            )
-        print(f"Plot saved to: {output_file}")
-
-        # Generate combined gains plot if we have negative data
-        if energies_neg is not None and len(energies_neg) > 0:
-            combined_output = str(output_file).replace(".png", "_combined.png")
-            _create_combined_gains_plot(
-                energies_pos,
-                x_values_pos,
-                percent_gains_pos,
-                energies_neg,
-                x_values_neg,
-                percent_gains_neg,
-                combined_output,
-                stats=stats,
-                param_metadata=param_metadata,
-                log_x=args.log_x,
-                log_y=args.log_y,
-            )
-            print(f"Combined gains plot saved to: {combined_output}")
-
-    return 0
+    return _run_static_plot(log_file, output_file, args)
 
 
 if __name__ == "__main__":

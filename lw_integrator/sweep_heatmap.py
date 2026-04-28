@@ -36,6 +36,13 @@ from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import KDTree
 
+__all__ = [
+    "generate_heatmap",
+    "load_sweep_results",
+    "main",
+    "resolve_contour_counts",
+]
+
 
 def load_sweep_results(sweep_dir):
     """Load sweep results from JSON file."""
@@ -1293,7 +1300,7 @@ def resolve_contour_counts(
     return low, max(1, num_contours - low)
 
 
-def main(argv=None):  # noqa: C901
+def _build_parser():
     parser = argparse.ArgumentParser(
         description="Generate publication-quality smooth heatmap from sweep results"
     )
@@ -1469,9 +1476,14 @@ def main(argv=None):  # noqa: C901
         dest="grey_centre",
         help="Gain value (%%%%) that maps to grey in --grey-zero mode (default: -10.0)",
     )
+    return parser
 
-    args = parser.parse_args(argv)
 
+def _parse_args(argv=None):
+    return _build_parser().parse_args(argv)
+
+
+def _generate_heatmap_from_args(args):
     num_contours_low, num_contours_high = resolve_contour_counts(
         args.num_contours,
         args.grey_zero,
@@ -1507,6 +1519,11 @@ def main(argv=None):  # noqa: C901
         num_contours_high=num_contours_high,
         contour_threshold=args.contour_threshold,
     )
+
+
+def main(argv=None):
+    args = _parse_args(argv)
+    _generate_heatmap_from_args(args)
     return 0
 
 

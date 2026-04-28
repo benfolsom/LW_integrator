@@ -82,6 +82,16 @@ def test_generate_sweep_heatmap_rejects_removed_legacy_aliases():
     assert excinfo.value.code == 2
 
 
+def test_generate_sweep_heatmap_exposes_only_supported_public_helpers():
+    assert not hasattr(sweep_heatmap, "parse_args")
+    assert sweep_heatmap.__all__ == [
+        "generate_heatmap",
+        "load_sweep_results",
+        "main",
+        "resolve_contour_counts",
+    ]
+
+
 def test_plot_latest_live_resolves_newest_log(tmp_path: Path):
     logcache = tmp_path / "logcache"
     logcache.mkdir()
@@ -152,6 +162,15 @@ def test_project_scripts_expose_maintained_plotting_tools():
         scripts["lw-plot-from-logcache-live"] == "lw_integrator.logcache_plotter:main"
     )
     assert scripts["lw-plot-trajectory"] == "lw_integrator.trajectory_plotter:main"
+
+
+def test_logcache_plotter_exposes_only_supported_public_helpers():
+    assert not hasattr(logcache_plotter, "parse_args")
+    assert logcache_plotter.__all__ == [
+        "find_latest_log",
+        "main",
+        "parse_sweep_log",
+    ]
 
 
 def test_logcache_plotter_static_main_calls_contour_plot(tmp_path: Path, monkeypatch):
