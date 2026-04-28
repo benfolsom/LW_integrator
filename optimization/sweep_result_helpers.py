@@ -147,6 +147,37 @@ def build_interrupted_sweep_results_payload(
     }
 
 
+def build_exception_sweep_run_log_lines(
+    *,
+    run_num: int,
+    total_runs: int,
+    error: BaseException,
+    error_detail: str,
+) -> list[str]:
+    """Build log lines for an exception raised while executing one sweep run."""
+    log_lines = [f"  [EXCEPTION] Run {run_num}/{total_runs}: {error}"]
+    log_lines.extend(
+        f"    {line}" for line in error_detail.split("\n") if line
+    )
+    return log_lines
+
+
+def build_exception_sweep_run_record(
+    *,
+    run_num: int,
+    error: BaseException,
+    error_detail: str,
+    params_dict: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the persisted CLI sweep record for an unexpected run exception."""
+    return {
+        "run_number": run_num,
+        "success": False,
+        "error": f"{error}\n{error_detail}",
+        "parameters": dict(params_dict),
+    }
+
+
 def build_truncated_sweep_log_params(
     *,
     param_grids: Mapping[str, list],
@@ -481,6 +512,8 @@ __all__ = [
     "SweepAttemptClassification",
     "SweepMetricSummary",
     "SuccessfulSweepRunLog",
+    "build_exception_sweep_run_log_lines",
+    "build_exception_sweep_run_record",
     "build_failed_sweep_run_record",
     "build_full_debug_sweep_result_log_lines",
     "build_interrupted_sweep_results_payload",

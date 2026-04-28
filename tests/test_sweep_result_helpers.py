@@ -11,6 +11,8 @@ import optimization.sweep_result_helpers as sweep_result_helpers
 from optimization.sweep_result_helpers import (
     SweepMetricSummary,
     SuccessfulSweepRunLog,
+    build_exception_sweep_run_log_lines,
+    build_exception_sweep_run_record,
     build_failed_sweep_run_record,
     build_full_debug_sweep_result_log_lines,
     build_interrupted_sweep_results_payload,
@@ -32,6 +34,8 @@ def test_module_exposes_only_maintained_public_helpers():
         "SweepAttemptClassification",
         "SweepMetricSummary",
         "SuccessfulSweepRunLog",
+        "build_exception_sweep_run_log_lines",
+        "build_exception_sweep_run_record",
         "build_failed_sweep_run_record",
         "build_full_debug_sweep_result_log_lines",
         "build_interrupted_sweep_results_payload",
@@ -136,6 +140,36 @@ def test_build_interrupted_sweep_results_payload_preserves_partial_shape():
         "elapsed_time_seconds": 5.0,
         "interrupted": True,
         "results": [{"run_number": 1}, {"run_number": 2}],
+    }
+
+
+def test_build_exception_sweep_run_helpers_format_log_and_record():
+    error = RuntimeError("integration exploded")
+    detail = "Traceback line 1\nTraceback line 2\n"
+
+    assert build_exception_sweep_run_log_lines(
+        run_num=3,
+        total_runs=5,
+        error=error,
+        error_detail=detail,
+    ) == [
+        "  [EXCEPTION] Run 3/5: integration exploded",
+        "    Traceback line 1",
+        "    Traceback line 2",
+    ]
+
+    record = build_exception_sweep_run_record(
+        run_num=3,
+        error=error,
+        error_detail=detail,
+        params_dict={"energy": 5.0},
+    )
+
+    assert record == {
+        "run_number": 3,
+        "success": False,
+        "error": "integration exploded\nTraceback line 1\nTraceback line 2\n",
+        "parameters": {"energy": 5.0},
     }
 
 

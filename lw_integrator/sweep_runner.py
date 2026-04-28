@@ -62,6 +62,8 @@ from optimization.single_integration_helpers import (
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import build_config_parameter_grids
 from optimization.sweep_result_helpers import (
+    build_exception_sweep_run_log_lines,
+    build_exception_sweep_run_record,
     build_interrupted_sweep_results_payload,
     build_successful_sweep_run_log,
     build_sweep_results_payload,
@@ -761,17 +763,20 @@ class SweepRunner:
                     import traceback
 
                     error_detail = traceback.format_exc()
-                    self._log(f"  [EXCEPTION] Run {run_num}/{total_runs}: {e}")
-                    for line in error_detail.split("\n"):
-                        if line:
-                            self._log(f"    {line}")
+                    for line in build_exception_sweep_run_log_lines(
+                        run_num=run_num,
+                        total_runs=total_runs,
+                        error=e,
+                        error_detail=error_detail,
+                    ):
+                        self._log(line)
                     self.results.append(
-                        {
-                            "run_number": run_num,
-                            "success": False,
-                            "error": f"{e}\n{error_detail}",
-                            "parameters": dict(params_dict),
-                        }
+                        build_exception_sweep_run_record(
+                            run_num=run_num,
+                            error=e,
+                            error_detail=error_detail,
+                            params_dict=params_dict,
+                        )
                     )
                     result = self.results[-1]
 
