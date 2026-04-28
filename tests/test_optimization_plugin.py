@@ -281,6 +281,46 @@ class TestOptimizationPluginIntegration:
         )
         assert kwargs["self_consistency_gamma_reconciliation_fixed_weight"] == 0.7
 
+    def test_gather_particle_config_kwargs_reads_fixed_sweep_values(self):
+        harness = OptimizationPluginControlMixin()
+        harness.macroparticle_enabled_var = _MockVar(True)
+        harness.macroparticle_momentum_errors_var = _MockVar(False)
+        harness.sweep_params = {
+            "rider_transv_mom": {"fixed_var": _MockVar("0.01")},
+            "rider_transv_dist": {"fixed_var": _MockVar("0.02")},
+            "macroparticle_charge_multiplier": {"fixed_var": _MockVar("10")},
+            "macroparticle_sigma_multiplier": {"fixed_var": _MockVar("2")},
+            "rider_m_particle": {"fixed_var": _MockVar("1.0")},
+            "rider_pcount": {"fixed_var": _MockVar("3")},
+            "rider_charge_sign": {"fixed_var": _MockVar("-1")},
+            "rider_stripped_ions": {"fixed_var": _MockVar("4")},
+            "driver_m_particle": {"fixed_var": _MockVar("2.0")},
+            "driver_charge_sign": {"fixed_var": _MockVar("1")},
+            "driver_pcount": {"fixed_var": _MockVar("5")},
+            "driver_transv_mom": {"fixed_var": _MockVar("0.03")},
+            "driver_transv_dist": {"fixed_var": _MockVar("0.04")},
+            "driver_starting_distance": {"fixed_var": _MockVar("100")},
+            "driver_stripped_ions": {"fixed_var": _MockVar("6")},
+        }
+
+        kwargs = harness._gather_particle_config_kwargs((0.1, 0.2), (-0.3, -0.4))
+
+        assert kwargs["transv_mom"] == pytest.approx(0.01)
+        assert kwargs["transv_dist"] == pytest.approx(0.02)
+        assert kwargs["transv_offset_x"] == pytest.approx(0.1)
+        assert kwargs["transv_offset_y"] == pytest.approx(0.2)
+        assert kwargs["driver_transv_offset_x"] == pytest.approx(-0.3)
+        assert kwargs["driver_transv_offset_y"] == pytest.approx(-0.4)
+        assert kwargs["macroparticle_enabled"] is True
+        assert kwargs["macroparticle_use_momentum_errors"] is False
+        assert kwargs["m_particle"] == pytest.approx(1.0)
+        assert kwargs["pcount"] == 3
+        assert kwargs["charge_sign"] == pytest.approx(-1.0)
+        assert kwargs["stripped_ions"] == pytest.approx(4.0)
+        assert kwargs["driver_m_particle"] == pytest.approx(2.0)
+        assert kwargs["driver_pcount"] == 5
+        assert kwargs["driver_stripped_ions"] == pytest.approx(6.0)
+
     def test_plugin_inherits_runtime_helpers_from_runtime_mixin(self):
         assert (
             OptimizationPlugin._log_truncated_run

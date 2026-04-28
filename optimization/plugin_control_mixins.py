@@ -252,10 +252,186 @@ class OptimizationPluginControlMixin:
             ),
         }
 
+    def _gather_search_config_kwargs(
+        self, existing_config: OptimizationConfig | None
+    ) -> dict:
+        """Return search-space and integration-grid config keyword arguments."""
+        config_value = _existing_config_value
+
+        return {
+            "simulation_type": SimulationType[self.sim_type_var.get()],
+            "mode": self.mode_var.get(),
+            "optimization_method": self.optimization_method_var.get(),
+            "optimization_maxiter": int(self.optimization_maxiter_var.get()),
+            "optimization_population_size": int(self.optimization_popsize_var.get()),
+            "optimization_mutation_rate": float(self.optimization_mutation_var.get()),
+            "optimization_crossover_rate": float(self.optimization_crossover_var.get()),
+            "optimization_n_starts": int(self.optimization_nstarts_var.get()),
+            "optimization_save_top_n": int(self.optimization_save_top_n_var.get()),
+            "optimization_convergence_tol": float(
+                self.optimization_convergence_tol_var.get()
+            ),
+            "optimization_convergence_patience": int(
+                self.optimization_convergence_patience_var.get()
+            ),
+            "aperture_range": (
+                float(self.aperture_min_var.get()),
+                float(self.aperture_max_var.get()),
+            ),
+            "aperture_points": (
+                1
+                if is_bunch_to_bunch(self.sim_type_var.get())
+                else int(self.aperture_points_var.get())
+            ),
+            "aperture_log_scale": self.aperture_log_var.get(),
+            "energy_range": (
+                float(self.energy_min_var.get()),
+                float(self.energy_max_var.get()),
+            ),
+            "energy_points": int(self.energy_points_var.get()),
+            "energy_log_scale": self.energy_log_var.get(),
+            "transverse_offset_fractions": parse_float_list(
+                self.offset_fractions_var.get()
+            ),
+            "starting_z_positions": [float(self.start_z_var.get())],
+            "wall_z": float(self.wall_z_var.get()),
+            "wall_z_range": (
+                (
+                    float(self.wall_z_min_var.get()),
+                    float(self.wall_z_max_var.get()),
+                )
+                if self.wall_z_sweep_var.get()
+                else None
+            ),
+            "wall_z_points": (
+                int(self.wall_z_points_var.get()) if self.wall_z_sweep_var.get() else 1
+            ),
+            "cavity_spacing": float(self.cavity_spacing_var.get()),
+            "timestep": (
+                float(self.duration_var.get())
+                if self.timestep_mode_var.get() == "count"
+                else 3e-7
+            ),
+            "steps": (
+                int(self.steps_var.get())
+                if self.timestep_mode_var.get() == "duration"
+                else 200
+            ),
+            "auto_steps": True,
+            "auto_steps_target": (
+                int(self.steps_var.get())
+                if self.timestep_mode_var.get() == "duration"
+                else 200
+            ),
+            "auto_steps_distance_past_wall": float(self.auto_steps_distance_var.get()),
+            "objective": self.objective_var.get(),
+            "timestep_strategy": "auto_distance",
+            "target_distance_mm": config_value(
+                existing_config, "target_distance_mm", 100.0
+            ),
+            "energy_scale_exponent": config_value(
+                existing_config, "energy_scale_exponent", 1.0
+            ),
+            "startup_mode": (
+                self.gui_controller.core_param_vars["startup_mode"].get()
+                if self.gui_controller
+                and hasattr(self.gui_controller, "core_param_vars")
+                else config_value(existing_config, "startup_mode", "COLD_START")
+            ),
+        }
+
+    def _gather_particle_config_kwargs(
+        self, rider_offset: tuple[float, float], driver_offset: tuple[float, float]
+    ) -> dict:
+        """Return particle and macroparticle config keyword arguments."""
+        return {
+            "transv_mom": float(
+                self.sweep_params["rider_transv_mom"]["fixed_var"].get()
+            ),
+            "transv_dist": float(
+                self.sweep_params["rider_transv_dist"]["fixed_var"].get()
+            ),
+            "transv_offset_x": rider_offset[0],
+            "transv_offset_y": rider_offset[1],
+            "driver_transv_offset_x": driver_offset[0],
+            "driver_transv_offset_y": driver_offset[1],
+            "macroparticle_enabled": bool(self.macroparticle_enabled_var.get()),
+            "macroparticle_charge_multiplier": float(
+                self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].get()
+            ),
+            "macroparticle_sigma_multiplier": float(
+                self.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].get()
+            ),
+            "macroparticle_use_momentum_errors": bool(
+                self.macroparticle_momentum_errors_var.get()
+            ),
+            "m_particle": float(
+                self.sweep_params["rider_m_particle"]["fixed_var"].get()
+            ),
+            "pcount": int(self.sweep_params["rider_pcount"]["fixed_var"].get()),
+            "charge_sign": float(
+                self.sweep_params["rider_charge_sign"]["fixed_var"].get()
+            ),
+            "stripped_ions": float(
+                self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
+            ),
+            "driver_m_particle": float(
+                self.sweep_params["driver_m_particle"]["fixed_var"].get()
+            ),
+            "driver_charge_sign": float(
+                self.sweep_params["driver_charge_sign"]["fixed_var"].get()
+            ),
+            "driver_pcount": int(self.sweep_params["driver_pcount"]["fixed_var"].get()),
+            "driver_transv_mom": float(
+                self.sweep_params["driver_transv_mom"]["fixed_var"].get()
+            ),
+            "driver_transv_dist": float(
+                self.sweep_params["driver_transv_dist"]["fixed_var"].get()
+            ),
+            "driver_starting_distance": float(
+                self.sweep_params["driver_starting_distance"]["fixed_var"].get()
+            ),
+            "driver_stripped_ions": float(
+                self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
+            ),
+        }
+
+    def _gather_output_and_failure_kwargs(
+        self, existing_config: OptimizationConfig | None
+    ) -> dict:
+        """Return result-output, smoothness, and failure-policy keyword arguments."""
+        config_value = _existing_config_value
+
+        return {
+            "save_top_n_trajectories": bool(self.save_top_n_traj_var.get()),
+            "save_all_trajectories": bool(self.save_all_traj_var.get()),
+            "save_failed_trajectories": bool(self.save_failed_traj_var.get()),
+            "trajectory_stride": int(self.trajectory_stride_var.get()),
+            "metrics_export_format": str(self.metrics_format_var.get()),
+            "metrics_export_scope": str(self.metrics_scope_var.get()),
+            "log_verbosity": str(self.log_verbosity_var.get()),
+            "smoothness_enabled": self.smoothness_enabled_var.get(),
+            "smoothness_window_size": int(self.smoothness_window_var.get()),
+            "smoothness_oscillation_threshold": float(
+                self.smoothness_oscillation_var.get()
+            ),
+            "smoothness_reject_on_violation": self.smoothness_reject_var.get(),
+            "smoothness_trend_threshold": config_value(
+                existing_config, "smoothness_trend_threshold", 0.30
+            ),
+            "smoothness_max_violations": config_value(
+                existing_config, "smoothness_max_violations", 3
+            ),
+            "per_run_timeout": float(self.per_run_timeout_var.get()),
+            "skip_failed_runs": self.skip_failed_runs_var.get(),
+            "failed_run_retry_attempts": int(
+                self.failed_run_retry_attempts_var.get()
+            ),
+        }
+
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
         existing_config = getattr(self, "config", None)
-        config_value = _existing_config_value
 
         has_gui = self.gui_controller is not None
         print(f"[DEBUG] _gather_config: Main GUI available: {has_gui}")
@@ -281,151 +457,10 @@ class OptimizationPluginControlMixin:
         driver_offset = parse_offset_pair(self.driver_offset_var.get())
 
         config_obj = OptimizationConfig(
-            simulation_type=SimulationType[self.sim_type_var.get()],
-            mode=self.mode_var.get(),
-            optimization_method=self.optimization_method_var.get(),
-            optimization_maxiter=int(self.optimization_maxiter_var.get()),
-            optimization_population_size=int(self.optimization_popsize_var.get()),
-            optimization_mutation_rate=float(self.optimization_mutation_var.get()),
-            optimization_crossover_rate=float(self.optimization_crossover_var.get()),
-            optimization_n_starts=int(self.optimization_nstarts_var.get()),
-            optimization_save_top_n=int(self.optimization_save_top_n_var.get()),
-            optimization_convergence_tol=float(
-                self.optimization_convergence_tol_var.get()
-            ),
-            optimization_convergence_patience=int(
-                self.optimization_convergence_patience_var.get()
-            ),
-            aperture_range=(
-                float(self.aperture_min_var.get()),
-                float(self.aperture_max_var.get()),
-            ),
-            aperture_points=(
-                1
-                if is_bunch_to_bunch(self.sim_type_var.get())
-                else int(self.aperture_points_var.get())
-            ),
-            aperture_log_scale=self.aperture_log_var.get(),
-            energy_range=(
-                float(self.energy_min_var.get()),
-                float(self.energy_max_var.get()),
-            ),
-            energy_points=int(self.energy_points_var.get()),
-            energy_log_scale=self.energy_log_var.get(),
-            transverse_offset_fractions=parse_float_list(self.offset_fractions_var.get()),
-            starting_z_positions=[float(self.start_z_var.get())],
-            wall_z=float(self.wall_z_var.get()),
-            wall_z_range=(
-                (
-                    float(self.wall_z_min_var.get()),
-                    float(self.wall_z_max_var.get()),
-                )
-                if self.wall_z_sweep_var.get()
-                else None
-            ),
-            wall_z_points=(
-                int(self.wall_z_points_var.get()) if self.wall_z_sweep_var.get() else 1
-            ),
-            cavity_spacing=float(self.cavity_spacing_var.get()),
-            timestep=(
-                float(self.duration_var.get())
-                if self.timestep_mode_var.get() == "count"
-                else 3e-7
-            ),
-            steps=(
-                int(self.steps_var.get())
-                if self.timestep_mode_var.get() == "duration"
-                else 200
-            ),
-            auto_steps=True,
-            auto_steps_target=(
-                int(self.steps_var.get())
-                if self.timestep_mode_var.get() == "duration"
-                else 200
-            ),
-            auto_steps_distance_past_wall=float(self.auto_steps_distance_var.get()),
-            objective=self.objective_var.get(),
-            transv_mom=float(self.sweep_params["rider_transv_mom"]["fixed_var"].get()),
-            transv_dist=float(
-                self.sweep_params["rider_transv_dist"]["fixed_var"].get()
-            ),
-            transv_offset_x=rider_offset[0],
-            transv_offset_y=rider_offset[1],
-            driver_transv_offset_x=driver_offset[0],
-            driver_transv_offset_y=driver_offset[1],
-            macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
-            macroparticle_charge_multiplier=float(
-                self.sweep_params["macroparticle_charge_multiplier"]["fixed_var"].get()
-            ),
-            macroparticle_sigma_multiplier=float(
-                self.sweep_params["macroparticle_sigma_multiplier"]["fixed_var"].get()
-            ),
-            macroparticle_use_momentum_errors=bool(
-                self.macroparticle_momentum_errors_var.get()
-            ),
-            m_particle=float(self.sweep_params["rider_m_particle"]["fixed_var"].get()),
-            pcount=int(self.sweep_params["rider_pcount"]["fixed_var"].get()),
-            charge_sign=float(
-                self.sweep_params["rider_charge_sign"]["fixed_var"].get()
-            ),
-            stripped_ions=float(
-                self.sweep_params["rider_stripped_ions"]["fixed_var"].get()
-            ),
-            driver_m_particle=float(
-                self.sweep_params["driver_m_particle"]["fixed_var"].get()
-            ),
-            driver_charge_sign=float(
-                self.sweep_params["driver_charge_sign"]["fixed_var"].get()
-            ),
-            driver_pcount=int(self.sweep_params["driver_pcount"]["fixed_var"].get()),
-            driver_transv_mom=float(
-                self.sweep_params["driver_transv_mom"]["fixed_var"].get()
-            ),
-            driver_transv_dist=float(
-                self.sweep_params["driver_transv_dist"]["fixed_var"].get()
-            ),
-            driver_starting_distance=float(
-                self.sweep_params["driver_starting_distance"]["fixed_var"].get()
-            ),
-            driver_stripped_ions=float(
-                self.sweep_params["driver_stripped_ions"]["fixed_var"].get()
-            ),
-            save_top_n_trajectories=bool(self.save_top_n_traj_var.get()),
-            save_all_trajectories=bool(self.save_all_traj_var.get()),
-            save_failed_trajectories=bool(self.save_failed_traj_var.get()),
-            trajectory_stride=int(self.trajectory_stride_var.get()),
-            metrics_export_format=str(self.metrics_format_var.get()),
-            metrics_export_scope=str(self.metrics_scope_var.get()),
-            log_verbosity=str(self.log_verbosity_var.get()),
-            smoothness_enabled=self.smoothness_enabled_var.get(),
-            smoothness_window_size=int(self.smoothness_window_var.get()),
-            smoothness_oscillation_threshold=float(
-                self.smoothness_oscillation_var.get()
-            ),
-            smoothness_reject_on_violation=self.smoothness_reject_var.get(),
-            per_run_timeout=float(self.per_run_timeout_var.get()),
-            skip_failed_runs=self.skip_failed_runs_var.get(),
-            failed_run_retry_attempts=int(self.failed_run_retry_attempts_var.get()),
+            **self._gather_search_config_kwargs(existing_config),
+            **self._gather_particle_config_kwargs(rider_offset, driver_offset),
+            **self._gather_output_and_failure_kwargs(existing_config),
             **self._gather_stability_config_kwargs(existing_config),
-            smoothness_trend_threshold=(
-                config_value(existing_config, "smoothness_trend_threshold", 0.30)
-            ),
-            smoothness_max_violations=(
-                config_value(existing_config, "smoothness_max_violations", 3)
-            ),
-            timestep_strategy="auto_distance",
-            target_distance_mm=(
-                config_value(existing_config, "target_distance_mm", 100.0)
-            ),
-            energy_scale_exponent=(
-                config_value(existing_config, "energy_scale_exponent", 1.0)
-            ),
-            startup_mode=(
-                self.gui_controller.core_param_vars["startup_mode"].get()
-                if self.gui_controller
-                and hasattr(self.gui_controller, "core_param_vars")
-                else config_value(existing_config, "startup_mode", "COLD_START")
-            ),
         )
 
         driver_negative = (
