@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import core
 import json
+import runpy
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +45,14 @@ def _make_args(**overrides) -> argparse.Namespace:
 
 
 class TestCliConfigParsing:
+    def test_python_module_entry_point_delegates_to_cli_main(self, monkeypatch):
+        monkeypatch.setattr(cli, "main", lambda: 17)
+
+        with pytest.raises(SystemExit) as exc_info:
+            runpy.run_module("lw_integrator", run_name="__main__")
+
+        assert exc_info.value.code == 17
+
     def test_help_text_describes_maintained_results_and_chrono_modes(
         self, capsys
     ):
