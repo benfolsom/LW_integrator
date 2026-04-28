@@ -80,6 +80,99 @@ from optimization.sweep_run_helpers import (
 AMU_TO_MEV = 931.494
 
 
+def _format_aperture_for_start_log(aperture: float) -> str:
+    if aperture >= 1.0:
+        return f"{aperture:.1f}"
+    if aperture >= 0.01:
+        return f"{aperture:.4f}"
+    return f"{aperture:.6f}"
+
+
+def _build_cli_timestep_log_lines(
+    *,
+    run_num: int,
+    timestep_strategy: str,
+    energy_gev: float,
+    rider_m_particle: float,
+    gamma: float,
+    beta: float,
+    timestep: float,
+    steps: int,
+    start_z: float,
+    wall_z: float,
+    auto_steps_distance_past_wall: float,
+    auto_steps_target: int,
+) -> list[str]:
+    lines = [
+        (
+            f"[OPTIMIZATION]   [TIMESTEP] Run {run_num} "
+            f"strategy '{timestep_strategy}':"
+        ),
+        (
+            f"[OPTIMIZATION]     E={energy_gev:.4f} GeV, "
+            f"m={rider_m_particle:.4e} amu"
+        ),
+        f"[OPTIMIZATION]     gamma={gamma:.2f}, beta={beta:.8f}",
+        (
+            "[OPTIMIZATION]     timestep h="
+            f"{timestep:.4e} ns (proper time = dt/gamma)"
+        ),
+        f"[OPTIMIZATION]     steps={steps}",
+    ]
+    if timestep_strategy == "auto_distance":
+        distance_per_step = beta * gamma * C_MMNS * timestep
+        expected_total = distance_per_step * steps
+        lines.extend(
+            [
+                (
+                    "[OPTIMIZATION]     distance_per_step = β·γ·c·h = "
+                    f"{distance_per_step:.4f} mm"
+                ),
+                (
+                    "[OPTIMIZATION]     expected_total_distance = "
+                    f"{expected_total:.2f} mm"
+                ),
+                (
+                    f"[OPTIMIZATION]     wall_z={wall_z:.2f} mm, "
+                    f"start_z={start_z:.2f} mm"
+                ),
+                (
+                    "[OPTIMIZATION]     distance_to_wall = "
+                    f"{abs(wall_z - start_z):.2f} mm"
+                ),
+                (
+                    "[OPTIMIZATION]     distance_past_wall="
+                    f"{auto_steps_distance_past_wall:.2f} mm"
+                ),
+                f"[OPTIMIZATION]     target_steps={auto_steps_target}",
+            ]
+        )
+    return lines
+
+
+def _build_cli_start_log_lines(
+    *,
+    run_num: int,
+    total_runs: int,
+    aperture: float,
+    energy_gev: float,
+    start_z: float,
+    timestep: float,
+    steps: int,
+) -> list[str]:
+    aperture_str = _format_aperture_for_start_log(aperture)
+    return [
+        (
+            f"[OPTIMIZATION] [START] Run {run_num}/{total_runs}: "
+            f"a={aperture_str}mm, E={energy_gev:.2f}GeV"
+        ),
+        (
+            f"[OPTIMIZATION]   [PARAMS] z={start_z:.2f}mm, "
+            f"h={timestep:.4e}ns, N={steps}"
+        ),
+    ]
+
+
 class SweepRunner:
     """Execute parameter sweeps from configuration files without GUI.
 
@@ -227,65 +320,35 @@ class SweepRunner:
             gamma = 1.0
         beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
 
-        print(
-            f"[OPTIMIZATION]   [TIMESTEP] Run {run_num} strategy '{self.config.timestep_strategy}':",
-            flush=True,
-        )
-        print(
-            f"[OPTIMIZATION]     E={energy_gev:.4f} GeV, m={rider_m_particle:.4e} amu",
-            flush=True,
-        )
-        print(f"[OPTIMIZATION]     gamma={gamma:.2f}, beta={beta:.8f}", flush=True)
-        print(
-            f"[OPTIMIZATION]     timestep h={timestep:.4e} ns (proper time = dt/gamma)",
-            flush=True,
-        )
-        print(f"[OPTIMIZATION]     steps={steps}", flush=True)
-
-        if self.config.timestep_strategy == "auto_distance":
-            distance_per_step = beta * gamma * C_MMNS * timestep
-            expected_total = distance_per_step * steps
-            print(
-                f"[OPTIMIZATION]     distance_per_step = β·γ·c·h = {distance_per_step:.4f} mm",
-                flush=True,
-            )
-            print(
-                f"[OPTIMIZATION]     expected_total_distance = {expected_total:.2f} mm",
-                flush=True,
-            )
-            print(
-                f"[OPTIMIZATION]     wall_z={self.config.wall_z:.2f} mm, start_z={start_z:.2f} mm",
-                flush=True,
-            )
-            print(
-                f"[OPTIMIZATION]     distance_to_wall = {abs(self.config.wall_z - start_z):.2f} mm",
-                flush=True,
-            )
-            print(
-                f"[OPTIMIZATION]     distance_past_wall={self.config.auto_steps_distance_past_wall:.2f} mm",
-                flush=True,
-            )
-            print(
-                f"[OPTIMIZATION]     target_steps={self.config.auto_steps_target}",
-                flush=True,
-            )
+        for line in _build_cli_timestep_log_lines(
+            run_num=run_num,
+            timestep_strategy=self.config.timestep_strategy,
+            energy_gev=energy_gev,
+            rider_m_particle=rider_m_particle,
+            gamma=gamma,
+            beta=beta,
+            timestep=timestep,
+            steps=steps,
+            start_z=start_z,
+            wall_z=self.config.wall_z,
+            auto_steps_distance_past_wall=(
+                self.config.auto_steps_distance_past_wall
+            ),
+            auto_steps_target=self.config.auto_steps_target,
+        ):
+            print(line, flush=True)
 
         # Log [START] line
-        if aperture >= 1.0:
-            aperture_str = f"{aperture:.1f}"
-        elif aperture >= 0.01:
-            aperture_str = f"{aperture:.4f}"
-        else:
-            aperture_str = f"{aperture:.6f}"
-
-        print(
-            f"[OPTIMIZATION] [START] Run {run_num}/{total_runs}: a={aperture_str}mm, E={energy_gev:.2f}GeV",
-            flush=True,
-        )
-        print(
-            f"[OPTIMIZATION]   [PARAMS] z={start_z:.2f}mm, h={timestep:.4e}ns, N={steps}",
-            flush=True,
-        )
+        for line in _build_cli_start_log_lines(
+            run_num=run_num,
+            total_runs=total_runs,
+            aperture=aperture,
+            energy_gev=energy_gev,
+            start_z=start_z,
+            timestep=timestep,
+            steps=steps,
+        ):
+            print(line, flush=True)
 
         # ── Build driver_params dict if BUNCH_TO_BUNCH ──
         driver_params = None
