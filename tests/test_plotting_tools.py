@@ -138,6 +138,11 @@ def test_plot_latest_live_reports_missing_logs(tmp_path: Path, capsys):
     assert "No sweep log files found" in captured.out
 
 
+def test_plot_latest_live_exposes_only_supported_public_helpers():
+    assert not hasattr(plot_latest_live, "parse_args")
+    assert plot_latest_live.__all__ == ["main", "resolve_latest_sweep_log"]
+
+
 def test_project_scripts_expose_maintained_plotting_tools():
     scripts = _load_project_scripts()
 

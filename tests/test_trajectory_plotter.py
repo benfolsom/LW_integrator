@@ -97,4 +97,5 @@ def test_main_reports_unsupported_file_type(tmp_path: Path, capsys):
 def test_module_exposes_only_supported_public_plotters():
     assert not hasattr(trajectory_plotter, "plot_saved_json_trajectory")
     assert not hasattr(trajectory_plotter, "plot_saved_npz_trajectory")
+    assert not hasattr(trajectory_plotter, "parse_args")
     assert "plot_saved_trajectory" in trajectory_plotter.__all__

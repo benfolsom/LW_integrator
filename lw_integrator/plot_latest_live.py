@@ -12,7 +12,7 @@ from lw_integrator.logcache_plotter import (
 )
 
 
-def parse_args(argv: Optional[list[str]] = None) -> tuple[argparse.Namespace, list[str]]:
+def _parse_args(argv: Optional[list[str]] = None) -> tuple[argparse.Namespace, list[str]]:
     """Parse wrapper arguments and preserve unknown flags for the plotter."""
     parser = argparse.ArgumentParser(
         description="Launch live plotting for the latest sweep log"
@@ -40,7 +40,7 @@ def resolve_latest_sweep_log(logcache_dir: Path) -> Path | None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Launch the latest-log live plotter."""
-    args, forwarded = parse_args(argv)
+    args, forwarded = _parse_args(argv)
     latest_log = resolve_latest_sweep_log(args.logcache)
     if latest_log is None:
         print(f"ERROR: No sweep log files found in {args.logcache}")
@@ -53,3 +53,6 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     print(f"Latest sweep log: {latest_log}")
     return plot_from_logcache_main(plot_args)
+
+
+__all__ = ["main", "resolve_latest_sweep_log"]

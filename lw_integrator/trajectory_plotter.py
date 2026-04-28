@@ -240,7 +240,7 @@ def plot_saved_trajectory(
     raise ValueError(f"Unsupported trajectory file type: {input_path.suffix}")
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     """Parse trajectory plotting CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Plot saved single-run trajectory JSON or NPZ files"
@@ -264,7 +264,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point for the saved trajectory plotter CLI."""
-    args = parse_args(argv)
+    args = _parse_args(argv)
     if not args.input_path.exists():
         print(f"ERROR: Trajectory file not found: {args.input_path}")
         return 1
