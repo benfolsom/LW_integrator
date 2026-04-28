@@ -12,7 +12,7 @@ with heavy debug logging (e.g., cooldown mode with 1000 substeps).
 import threading
 import time
 from collections import deque
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 
 class BatchedLogger:

@@ -19,7 +19,7 @@ Author: LW Integrator Team
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -252,7 +252,6 @@ def analyze_trajectory_smoothness(
     # Extract arrays
     try:
         z = np.asarray(trajectory.get("z", []))
-        t = np.asarray(trajectory.get("t", []))
         # Handle gamma carefully - don't convert None to array yet
         gamma_raw = trajectory.get("gamma", None)
         if gamma_raw is not None:
@@ -526,6 +525,6 @@ def filter_stable_trajectories(
             if verbose:
                 print(f"Result {i}: FAILED - {analysis.quality_summary}")
                 if config.reject_on_violation:
-                    print(f"  -> REJECTED")
+                    print("  -> REJECTED")
 
     return stable, rejected
