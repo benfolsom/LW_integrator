@@ -620,8 +620,12 @@ class SweepRunner:
             try:
                 if run_output_dir.exists():
                     shutil.rmtree(run_output_dir)
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                if self.verbose:
+                    self._log(
+                        f"[WARNING] Failed to remove temporary run directory "
+                        f"{run_output_dir}: {cleanup_error}"
+                    )
 
         # ── Check for halted run ──
         if result.halted_early:
@@ -1152,8 +1156,11 @@ class SweepRunner:
                             indent=2,
                         )
                     self._log(f"[INFO] Partial results saved to: {partial_path}")
-                except Exception:
-                    pass
+                except Exception as save_error:
+                    self._log(
+                        f"[WARNING] Failed to save partial results to "
+                        f"{partial_path}: {save_error}"
+                    )
 
             # Move to archive/incomplete if below minimum run threshold
             from optimization.result_io import relocate_incomplete_sweep

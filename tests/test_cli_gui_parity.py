@@ -1370,6 +1370,59 @@ class TestTwoParticleDemo8:
 class TestCliSweepRunnerE2E:
     """Run a minimal CLI sweep and verify it produces correct output."""
 
+    def test_single_integration_logs_temp_cleanup_failure(
+        self, tmp_output_dir, monkeypatch
+    ):
+        config = OptimizationConfig(
+            simulation_type=SimulationType.CONDUCTING_WALL,
+            mode="blind_sweep",
+            aperture_range=(0.1, 0.1),
+            aperture_points=1,
+            energy_range=(1.0, 1.0),
+            energy_points=1,
+            wall_z=1000.0,
+            steps=1,
+            timestep=1e-6,
+            timestep_strategy="fixed",
+            output_dir=str(tmp_output_dir / "cleanup_warning"),
+            log_verbosity="none",
+        )
+        runner = SweepRunner(config, tmp_output_dir / "cleanup_warning", verbose=True)
+        messages = []
+        runner._log = messages.append
+
+        def fake_run_testbed(options, **_kwargs):
+            options.output_dir.mkdir(parents=True, exist_ok=True)
+            return RunResult(
+                metrics={},
+                saved_paths={},
+                figures={},
+                logs=[],
+                verbose_logs="",
+                duration_s=0.0,
+                filename_base="mock",
+                rider_gamma_initial=10.0,
+                rider_gamma_final=10.0,
+            )
+
+        def fail_rmtree(_path):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr("lw_integrator.sweep_runner.run_testbed", fake_run_testbed)
+        monkeypatch.setattr("lw_integrator.sweep_runner.shutil.rmtree", fail_rmtree)
+
+        result = runner._run_single_integration(
+            aperture=0.1,
+            energy_gev=1.0,
+            start_z=0.0,
+            transv_offset_frac=0.0,
+            run_num=1,
+            total_runs=1,
+        )
+
+        assert result["success"], result.get("error")
+        assert any("Failed to remove temporary run directory" in msg for msg in messages)
+
     def test_tiny_conducting_wall_sweep(self, tmp_output_dir):
         """A 2×2 CW sweep completes and produces results.json."""
         config = OptimizationConfig(
