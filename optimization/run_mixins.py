@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from core.constants import C_MMNS  # type: ignore[import]
 from core.debug_logger import initialize_debug_logging  # type: ignore[import]
 from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
@@ -19,10 +18,6 @@ from lw_integrator.testbed_runner import (  # type: ignore[import]
     SimulationOptions,
     run_testbed,
 )
-from optimization.config import (  # type: ignore[import]
-    calculate_auto_steps,
-    calculate_auto_timestep,
-)
 from optimization.logging_policy import (
     apply_run_logging_policy,
     describe_run_logging_policy,
@@ -30,7 +25,6 @@ from optimization.logging_policy import (
 )
 from optimization.run_parameter_helpers import (
     build_optimization_evaluation_outcome,
-    calculate_transverse_offset,
     collect_optimization_parameter_selection,
     resolve_optimization_run_parameters,
     resolve_objective_metric,
@@ -45,8 +39,12 @@ from optimization.single_integration_helpers import (
 )
 from optimization.sweep_helpers import (
     build_parameter_grids,
-    calculate_starting_pz_from_energy,
     generate_parameter_range,
+)
+from optimization.sweep_run_helpers import (
+    build_full_debug_parameter_log_lines,
+    resolve_sweep_run_parameters,
+    resolve_sweep_timestep,
 )
 from optimization.sweep_result_helpers import (
     build_sweep_run_data,
@@ -632,16 +630,8 @@ class OptimizationRunMixin:
 
                 # Extract parameters from combination
                 params_dict = dict(zip(param_names, param_combo))
-
-                # Get aperture (only for CONDUCTING_WALL modes)
-                aperture = params_dict.get("aperture", 0.001)  # Default if not present
-
-                # Get energy (named differently for BUNCH_TO_BUNCH)
-                energy = params_dict.get("initial_energy_gev") or params_dict.get(
-                    "energy"
-                )
-
-                if energy is None:
+                run_params = resolve_sweep_run_parameters(self.config, params_dict)
+                if run_params is None:
                     self._log_result(
                         f"[ERROR] Run {run_num}: No energy parameter found in params_dict!"
                     )
@@ -653,223 +643,47 @@ class OptimizationRunMixin:
                     )
                     continue  # Skip this run
 
-                start_z = params_dict["start_z"]
-                offset_frac = params_dict["transverse_offset_fraction"]
-
-                # Get rider particle parameters (either from sweep or fixed values)
-                rider_m_particle = params_dict.get(
-                    "rider_m_particle", self.config.m_particle
+                aperture = run_params.aperture
+                energy = run_params.energy
+                start_z = run_params.start_z
+                offset_frac = run_params.offset_frac
+                rider_m_particle = run_params.rider_m_particle
+                rider_charge_sign = run_params.rider_charge_sign
+                rider_pcount = run_params.rider_pcount
+                rider_transv_mom = run_params.rider_transv_mom
+                rider_transv_dist = run_params.rider_transv_dist
+                rider_stripped_ions = run_params.rider_stripped_ions
+                macroparticle_charge_multiplier = (
+                    run_params.macroparticle_charge_multiplier
                 )
-                rider_charge_sign = params_dict.get(
-                    "rider_charge_sign", self.config.charge_sign
+                macroparticle_sigma_multiplier = (
+                    run_params.macroparticle_sigma_multiplier
                 )
-                rider_pcount = params_dict.get("rider_pcount", self.config.pcount)
-                rider_transv_mom = params_dict.get(
-                    "rider_transv_mom", self.config.transv_mom
-                )
-                rider_transv_dist = params_dict.get(
-                    "rider_transv_dist", self.config.transv_dist
-                )
-                rider_stripped_ions = params_dict.get(
-                    "rider_stripped_ions", self.config.stripped_ions
-                )
-
-                # Get macroparticle parameters (either from sweep or fixed values)
-                macroparticle_charge_multiplier = params_dict.get(
-                    "macroparticle_charge_multiplier",
-                    self.config.macroparticle_charge_multiplier,
-                )
-                macroparticle_sigma_multiplier = params_dict.get(
-                    "macroparticle_sigma_multiplier",
-                    self.config.macroparticle_sigma_multiplier,
-                )
+                driver_params_dict = run_params.driver_params
+                transv_offset = run_params.transv_offset
 
                 # Log parameter values based on verbosity
                 if use_full_debug:
-                    # Log ALL swept parameter values for this run
-                    self._log_result(
-                        f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:"
-                    )
-                    self._log_result(f"    aperture: {aperture:.4e} mm")
-                    self._log_result(f"    energy: {energy:.4f} GeV")
-                    self._log_result(f"    start_z: {start_z:.4f} mm")
-                    self._log_result(f"    transv_offset_frac: {offset_frac:.4f}")
-                    self._log_result(
-                        f"    rider_m_particle: {rider_m_particle:.4e} amu"
-                    )
-                    self._log_result(f"    rider_charge_sign: {rider_charge_sign:.1f}")
-                    self._log_result(f"    rider_pcount: {rider_pcount}")
-                    self._log_result(
-                        f"    rider_transv_mom: {rider_transv_mom:.4e} amu·mm/ns"
-                    )
-                    self._log_result(
-                        f"    rider_transv_dist: {rider_transv_dist:.4e} mm"
-                    )
-                    if self.config.macroparticle_enabled:
-                        self._log_result("    macroparticle_enabled: True")
-                        self._log_result(
-                            f"    macroparticle_charge_multiplier: {macroparticle_charge_multiplier:.4f}"
-                        )
-                        self._log_result(
-                            f"    macroparticle_sigma_multiplier: {macroparticle_sigma_multiplier:.4f}"
-                        )
-                        self._log_result(
-                            f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
-                        )
+                    for line in build_full_debug_parameter_log_lines(
+                        self.config,
+                        run_params,
+                        run_num=run_num,
+                        total_runs=total_runs,
+                    ):
+                        self._log_result(line)
 
-                # Get driver particle parameters if BUNCH_TO_BUNCH
-                driver_params_dict = None
-                if is_bunch_to_bunch(self.config.simulation_type):
-                    driver_m = params_dict.get(
-                        "driver_m_particle", self.config.driver_m_particle
-                    )
-
-                    # Convert driver_energy_gev to starting_Pz if present,
-                    # otherwise fall back to legacy driver_starting_Pz key.
-                    driver_neg = getattr(self.config, "driver_direction", "-z") == "-z"
-                    if "driver_energy_gev" in params_dict:
-                        driver_pz = calculate_starting_pz_from_energy(
-                            abs(params_dict["driver_energy_gev"]),
-                            driver_m,
-                            negative=driver_neg,
-                        )
-                    else:
-                        driver_pz = params_dict.get(
-                            "driver_starting_Pz", self.config.driver_starting_Pz
-                        )
-
-                    driver_params_dict = {
-                        "m_particle": driver_m,
-                        "charge_sign": params_dict.get(
-                            "driver_charge_sign", self.config.driver_charge_sign
-                        ),
-                        "pcount": int(
-                            params_dict.get("driver_pcount", self.config.driver_pcount)
-                        ),
-                        "transv_mom": params_dict.get(
-                            "driver_transv_mom", self.config.driver_transv_mom
-                        ),
-                        "transv_dist": params_dict.get(
-                            "driver_transv_dist", self.config.driver_transv_dist
-                        ),
-                        "starting_distance": params_dict.get(
-                            "driver_starting_distance",
-                            self.config.driver_starting_distance,
-                        ),
-                        "starting_Pz": driver_pz,
-                        "stripped_ions": params_dict.get(
-                            "driver_stripped_ions", self.config.driver_stripped_ions
-                        ),
-                    }
-
-                transv_offset = calculate_transverse_offset(
-                    self.config.simulation_type, offset_frac, aperture
+                timestep_resolution = resolve_sweep_timestep(
+                    self.config,
+                    params_dict,
+                    run_params,
+                    run_num=run_num,
+                    use_full_debug=use_full_debug,
                 )
-
-                # Calculate timestep based on strategy
-                if self.config.timestep_strategy != "fixed":
-                    # Use energy-aware timestep calculation
-                    # Get wall_z for this run (it may be swept)
-                    wall_z_for_calc = params_dict.get("wall_z", self.config.wall_z)
-
-                    # Get driver starting position for BUNCH_TO_BUNCH mode
-                    driver_start_z = 1000.0  # Default
-                    if driver_params_dict is not None:
-                        driver_start_z = driver_params_dict.get(
-                            "starting_distance", 1000.0
-                        )
-
-                    timestep = self.config.calculate_timestep_for_energy(
-                        energy,
-                        rider_m_particle,
-                        wall_z=wall_z_for_calc,
-                        start_z=start_z,
-                        driver_start_z=driver_start_z,
-                    )
-                    steps = self.config.steps
-
-                    # Calculate gamma for diagnostics (ALWAYS log for debugging)
-                    AMU_TO_MEV = 931.494
-                    rest_energy_mev = rider_m_particle * AMU_TO_MEV
-
-                    # For BUNCH_TO_BUNCH, energy is kinetic; for others, it's total
-                    if is_bunch_to_bunch(self.config.simulation_type):
-                        gamma = (energy * 1e3) / rest_energy_mev + 1.0
-                    else:
-                        gamma = (energy * 1e3) / rest_energy_mev
-
-                    beta = (
-                        np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
-                    )
-                    distance_per_step = beta * gamma * C_MMNS * timestep
-                    expected_distance = distance_per_step * steps
-
-                    if use_full_debug:
-                        self._log_result(
-                            f"  [TIMESTEP] Run {run_num} strategy '{self.config.timestep_strategy}':"
-                        )
-                        self._log_result(
-                            f"    E={energy:.4f} GeV, m={rider_m_particle:.4e} amu"
-                        )
-                        self._log_result(f"    gamma={gamma:.2f}, beta={beta:.8f}")
-                        self._log_result(
-                            f"    timestep h={timestep:.4e} ns (proper time = dt/gamma)"
-                        )
-                        self._log_result(f"    steps={steps}")
-                        self._log_result(
-                            f"    distance_per_step = β·γ·c·h = {distance_per_step:.4f} mm"
-                        )
-                        self._log_result(
-                            f"    expected_total_distance = {expected_distance:.2f} mm"
-                        )
-                        # Use wall_z from grid if available, otherwise use config default
-                        current_wall_z = params_dict.get("wall_z", self.config.wall_z)
-                        self._log_result(
-                            f"    wall_z={current_wall_z:.2f} mm, start_z={start_z:.2f} mm"
-                        )
-                        self._log_result(
-                            f"    distance_to_wall = {abs(current_wall_z - start_z):.2f} mm"
-                        )
-                        if self.config.timestep_strategy == "auto_distance":
-                            self._log_result(
-                                f"    target_distance={self.config.target_distance_mm:.2f} mm"
-                            )
-                elif self.config.auto_steps:
-                    # Legacy auto_steps mode (deprecated, but keep for compatibility)
-                    current_wall_z = params_dict.get("wall_z", self.config.wall_z)
-                    distance_to_wall = abs(current_wall_z - start_z)
-                    total_distance = (
-                        distance_to_wall + self.config.auto_steps_distance_past_wall
-                    )
-
-                    timestep = calculate_auto_timestep(
-                        start_z=start_z,
-                        wall_z=current_wall_z,
-                        distance_past_wall=self.config.auto_steps_distance_past_wall,
-                        particle_energy_gev=energy,
-                        particle_mass_amu=rider_m_particle,
-                        target_steps=self.config.auto_steps_target,
-                    )
-                    steps = calculate_auto_steps(
-                        start_z=start_z,
-                        wall_z=current_wall_z,
-                        distance_past_wall=self.config.auto_steps_distance_past_wall,
-                        timestep=timestep,
-                        particle_energy_gev=energy,
-                        particle_mass_amu=rider_m_particle,
-                    )
-                else:
-                    timestep = self.config.timestep
-                    steps = self.config.steps
-
-                # Enforce minimum of 5% of requested steps (absolute floor of 20)
-                min_steps = max(20, int(self.config.steps * 0.05))
-                if steps < min_steps:
-                    if use_full_debug:
-                        self._log_result(
-                            f"  [WARNING] Steps adjusted from {steps} to {min_steps} (minimum floor)"
-                        )
-                    steps = min_steps
+                timestep = timestep_resolution.timestep
+                steps = timestep_resolution.steps
+                expected_distance = timestep_resolution.expected_distance
+                for line in timestep_resolution.log_lines:
+                    self._log_result(line)
 
                 # Log run start summary (only in full debug mode - truncated mode logs after completion)
                 if use_full_debug:
