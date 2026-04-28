@@ -191,6 +191,9 @@ def test_gui_inherits_shell_helpers_from_shell_mixin():
         IntegratorGUIShellMixin._reset_directories_to_defaults
     )
     assert gui.IntegratorGUI._on_close is IntegratorGUIShellMixin._on_close
+    assert gui.IntegratorGUI._check_override_warning is (
+        IntegratorGUIShellMixin._check_override_warning
+    )
     assert gui.IntegratorGUI._setup_keyboard_fix is (
         IntegratorGUIShellMixin._setup_keyboard_fix
     )
@@ -538,6 +541,12 @@ def test_clear_log_resets_buffers_and_widget():
         ("delete", "1.0", "end"),
         ("configure", {"state": "disabled"}),
     ]
+
+
+def test_check_override_warning_allows_missing_file(tmp_path):
+    harness = SimpleNamespace(_suppress_override_warning=False)
+
+    assert gui.IntegratorGUI._check_override_warning(harness, tmp_path / "new.json")
 
 
 def test_toggle_z_cutoff_controls_disables_widgets_and_resets_cutoff():

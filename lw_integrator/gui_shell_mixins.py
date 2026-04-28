@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 
 class IntegratorGUIShellMixin:
@@ -86,6 +87,77 @@ class IntegratorGUIShellMixin:
         """Handle window close event."""
         self._save_preferences()
         self.root.destroy()
+
+    def _check_override_warning(self, filepath: Path, config_type: str = "run") -> bool:
+        """Check if file exists and show override warning if needed."""
+        if not filepath.exists():
+            return True
+
+        if self._suppress_override_warning:
+            return True
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Override {config_type.capitalize()} Configuration")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=20)
+        frame.pack(fill="both", expand=True)
+
+        msg = (
+            f"Configuration file already exists:\n\n{filepath.name}\n\n"
+            "Do you want to override it?"
+        )
+        ttk.Label(frame, text=msg, wraplength=400).pack(pady=(0, 15))
+
+        suppress_var = tk.BooleanVar(value=False)
+        check_frame = ttk.Frame(frame)
+        check_frame.pack(fill="x", pady=(0, 15))
+        ttk.Checkbutton(
+            check_frame,
+            text="Don't show this warning again (this session only)",
+            variable=suppress_var,
+        ).pack(anchor="w")
+
+        info_label = ttk.Label(
+            check_frame,
+            text="Note: This setting resets when you restart the GUI",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray",
+        )
+        info_label.pack(anchor="w", padx=(20, 0), pady=(5, 0))
+
+        result = [False]
+
+        def on_yes():
+            if suppress_var.get():
+                self._suppress_override_warning = True
+            result[0] = True
+            dialog.destroy()
+
+        def on_no():
+            result[0] = False
+            dialog.destroy()
+
+        button_frame = ttk.Frame(frame)
+        button_frame.pack()
+        ttk.Button(button_frame, text="Yes, Override", command=on_yes, width=15).pack(
+            side="left", padx=5
+        )
+        ttk.Button(button_frame, text="No, Cancel", command=on_no, width=15).pack(
+            side="left", padx=5
+        )
+
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        dialog.wait_window()
+
+        return result[0]
 
     def _setup_keyboard_fix(self) -> None:
         """Set up keyboard fix for non-US layouts (Swedish, German, etc.)."""
