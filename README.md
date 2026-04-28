@@ -126,8 +126,7 @@ LW_integrator/
 ├── examples/
 │   └── validation/       # Reference notebooks and validation examples
 ├── input_output/         # Particle bunch initialisation utilities
-├── legacy/               # Archived original solver and notebooks
-│                         # (deprecated; historical reference only)
+├── legacy/               # Archived notebooks (historical reference only)
 ├── lw_integrator/        # CLI, GUI, sweep runner, and testbed runner
 ├── optimization/         # Sweep/optimization engine, metrics, result I/O
 ├── results/              # Sweep and optimization output (git-ignored)

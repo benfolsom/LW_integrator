@@ -2,9 +2,9 @@ Overview
 ========
 
 The LW Integrator is a covariant electromagnetic particle tracking code tuned for
-accelerator physics studies.  The validated implementation still lives in the
-``legacy/`` tree, but the modern ``core/`` package mirrors the same physics with
-clearer structure, type hints, and unit-tested helper utilities.  The method is
+accelerator physics studies.  The maintained implementation lives in ``core/``,
+with CLI and GUI workflows layered on top through ``lw_integrator/`` and
+``optimization/``.  The method is
 described in *Relativistic beam loading, recoil-reduction, and residual-wake
 acceleration with a covariant retarded-potential integrator*
 (``https://doi.org/10.1016/j.nima.2024.169988`` / ``https://arxiv.org/abs/2310.03850``).
@@ -33,10 +33,9 @@ High-level anatomy
     options, and verbosity settings consumed by both the CLI and GUI runners.
 
 ``legacy/``
-    Archived notebooks and scripts from the original codebase.  They are kept
-    for historical reference.  Production workflows should use ``core/``.  The
-    historical "static" integrator lives here for completeness; it is considered
-    deprecated and is not exercised by the modern documentation or tooling.
+    Archived notebooks from the original codebase.  They are kept for
+    historical reference only; production workflows should use ``core/`` and the
+    maintained CLI/GUI entry points.
 
 ``examples/``
     Ready-to-run examples and reference validation material.  The

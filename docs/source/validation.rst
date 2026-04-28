@@ -2,9 +2,8 @@ Validation and Regression
 =========================
 
 Supported validation now centers on the maintained core, CLI, GUI, and plotting
-entry points.  The archived solver under ``legacy/`` and the historical
-comparison notebooks remain in the repository as reference material, but they
-are not the baseline for new workflows.
+entry points.  Historical comparison notebooks remain in the repository as
+reference material, but they are not the baseline for new workflows.
 
 Automated Checks
 ----------------

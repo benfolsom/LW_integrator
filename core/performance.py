@@ -1,10 +1,9 @@
 """
 Numba-accelerated retarded integrator utilities.
 
-This module is a faithful, structured transcription of
-``legacy/numba_optimized_integrator.py``.  The goal is to expose the validated
-optimised routines in a predictable API while leaving the archived reference file
-untouched for regression comparison.
+This module exposes the validated optimized routines in a predictable API.  The
+implementation descends from the historical Numba prototype, but the maintained
+source of truth is now this module and the surrounding core test coverage.
 """
 
 # mypy: ignore-errors

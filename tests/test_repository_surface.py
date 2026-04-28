@@ -19,3 +19,10 @@ def test_validation_examples_do_not_reintroduce_legacy_comparison_scripts():
 
 def test_legacy_plotting_helpers_are_not_active_python_modules():
     assert not (PROJECT_ROOT / "legacy" / "plotting_variables.py").exists()
+
+
+def test_legacy_reference_tree_keeps_notebooks_only():
+    legacy_dir = PROJECT_ROOT / "legacy"
+    active_python_modules = sorted(path.name for path in legacy_dir.glob("*.py"))
+
+    assert active_python_modules == []

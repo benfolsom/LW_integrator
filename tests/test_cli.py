@@ -87,6 +87,7 @@ class TestCliConfigParsing:
 
     def test_core_package_exports_only_version_metadata(self):
         assert core.__all__ == ["__version__", "VERSION"]
+        assert "trajectory_integrator" not in core.__all__
         for name in [
             "IntegratorConfig",
             "SimulationType",
@@ -94,7 +95,6 @@ class TestCliConfigParsing:
             "Trajectory",
             "retarded_integrator",
             "run_integrator",
-            "trajectory_integrator",
             "C_MMNS",
         ]:
             with pytest.raises(AttributeError):

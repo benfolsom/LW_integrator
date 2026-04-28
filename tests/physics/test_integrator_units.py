@@ -21,7 +21,7 @@ except ImportError:
     )
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
-from core.types import IntegratorConfig
+from core.types import IntegratorConfig, SimulationType
 from tests.test_config import (
     PROTON,
     TestConfiguration,
@@ -60,7 +60,13 @@ class TestTrajectoryIntegratorUnits:
         assert hasattr(integrator, "c_mmns")
         assert integrator.c_mmns == C_MMNS
 
-        config = IntegratorConfig()
+        config = IntegratorConfig(
+            steps=1,
+            time_step=1e-5,
+            wall_position=1e5,
+            aperture_radius=1e5,
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+        )
         integrator_with_config = LienardWiechertIntegrator(config)
         assert integrator_with_config.config is not None
 

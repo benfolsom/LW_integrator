@@ -57,9 +57,9 @@ All notable changes and updates to the LW Integrator project are documented in t
 ### Maintained Plotting and Validation Surface Cleanup (April 2026)
 
 - **Plotting surface** — Added focused CLI coverage for `lw-generate-sweep-heatmap`, `lw-plot-latest-live`, `lw-plot-from-logcache-live`, and `lw-plot-trajectory`
-- **Legacy isolation** — Removed standalone legacy comparison and legacy plotting Python scripts from active examples; legacy notebooks remain as historical reference material
+- **Legacy isolation** — Removed standalone legacy comparison and legacy plotting Python scripts from active examples and the `legacy/` tree; legacy notebooks remain as historical reference material
 - **Test discovery** — Fixed pytest configuration to collect from the actual `tests/` tree instead of stale `lw_integrator/tests`
-- **Files modified** — `lw_integrator/sweep_heatmap.py`, `tests/test_plotting_tools.py`, `tests/test_adaptive_timestep_interactions.py`, `tests/test_repository_surface.py`, `docs/source/validation.rst`, `docs/source/notebooks.rst`, `pyproject.toml`, `examples/validation/`, `legacy/`
+- **Files modified** — `lw_integrator/sweep_heatmap.py`, `tests/test_plotting_tools.py`, `tests/test_adaptive_timestep_interactions.py`, `tests/test_repository_surface.py`, `docs/source/validation.rst`, `docs/source/notebooks.rst`, `docs/source/overview.rst`, `docs/source/theory.rst`, `docs/source/recent_changes.rst`, `pyproject.toml`, `examples/validation/`, `legacy/`
 
 ## v0.6.0 — March 2026
 
@@ -475,7 +475,7 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Transverse offset parameters** - New `transv_offset_x` and `transv_offset_y` fields separate beam center position from beam spread
 - **Beam positioning** - Particles now distributed in `[offset ± spread]` allowing off-axis beams with controllable size
 - **Core bunch initialization** - New `input_output.bunch_initialization.create_bunch_from_params()` replaces legacy initialization for normal operation
-- **Legacy code isolation** - Legacy initialization (`legacy/bunch_inits.py`) now ONLY runs when "Enable legacy comparison" is checked in GUI
+- **Legacy code isolation** - Legacy initialization was isolated from normal operation; active legacy comparison code has since been removed in favor of maintained core paths and reference notebooks
 - **GUI integration** - Offset fields automatically appear in Particles tab for both rider and driver bunches
 - **Optimization plugin fix** - "Transverse Offset" now correctly sets beam **position** (not spread), with separate `transv_dist` for beam size
 - **Backward compatibility** - Old configs without offset parameters default to 0.0 (on-axis), no breaking changes

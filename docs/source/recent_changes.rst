@@ -776,8 +776,8 @@ studies:
 
 * **New offset parameters**: ``transv_offset_x`` and ``transv_offset_y`` specify beam center position in mm
 * **Beam positioning**: Particles distributed in [offset ± spread] for both x and y coordinates
-* **Core initialization**: New ``input_output.bunch_initialization.create_bunch_from_params()`` replaces legacy initialization
-* **Legacy isolation**: Legacy code (``legacy/bunch_inits.py``) now ONLY runs when "Enable legacy comparison" is checked
+* **Core initialization**: ``input_output.bunch_initialization.create_bunch_from_params()`` is the maintained initializer for configs using historical parameter names
+* **Legacy isolation**: Active legacy comparison code has since been removed; historical notebooks remain as reference material
 * **GUI integration**: Offset fields automatically appear in Particles tab for rider and driver bunches
 * **Optimization fix**: "Transverse Offset" fractions now correctly set beam **position**, not spread
 * **Backward compatibility**: Old configs without offset parameters default to 0.0 (on-axis)
@@ -862,23 +862,17 @@ The offset and spread are applied in ``input_output/bunch_initialization.py``:
            pcount
        )
 
-Legacy Code Isolation
-~~~~~~~~~~~~~~~~~~~~~
+Legacy Reference Isolation
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Legacy initialization is now only used when explicitly requested:
-
-* **GUI**: "Enable legacy comparison" checkbox in Output tab
-* **API**: ``use_legacy=True`` in ``prepare_particle_bunches()``
-* **Default behavior**: Core initialization (``create_bunch_from_params()``)
-
-When legacy mode is disabled (default), the modern core implementation handles
-all particle initialization, ensuring offset parameters are supported and
-transverse momentum spread is properly applied.
+Active workflows now use the maintained core initializer
+(``create_bunch_from_params()``).  Historical comparison notebooks remain in the
+repository for reference, but legacy Python comparison modes are no longer part
+of the supported API surface.
 
 **Impact**: Enables off-axis beam studies for aperture tolerance analysis, beam
-halo characterization, and beam dynamics research. Legacy code isolation ensures
-the modern core implementation is used by default while maintaining validation
-capability against historical results.
+halo characterization, and beam dynamics research while keeping active
+validation centered on maintained code paths.
 
 
 Macroparticle Simulation (January 2025)
