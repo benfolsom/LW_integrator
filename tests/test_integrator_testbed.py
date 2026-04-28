@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from core.types import ParticleState  # noqa: E402
+import lw_integrator.testbed_runner as testbed_runner
 from lw_integrator.testbed_runner import SimulationOptions  # noqa: E402
 from lw_integrator.trajectory_metrics import (  # noqa: E402
     compute_delta_energy_series,
@@ -108,29 +109,26 @@ class TestNormalizeState:
 class TestFilenameGeneration:
     """Test filename generation with config name and timestamp."""
 
-    def test_filename_with_timestamp(self):
-        """Test that filenames include timestamp."""
-        from datetime import datetime
+    def test_filename_base_strips_json_extension(self, monkeypatch):
+        """Test that generated filename bases include sanitized config names."""
+        monkeypatch.setattr(testbed_runner.time, "strftime", lambda *_args: "20251022_123456")
 
-        config_name = "electronwall10.3gev.json"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        assert (
+            testbed_runner.generate_filename_base("electronwall10.3gev.json")
+            == "electronwall10.3gev_20251022_123456"
+        )
+        assert (
+            testbed_runner.generate_filename_base("my_config")
+            == "my_config_20251022_123456"
+        )
 
-        # Test energy filename
-        expected_base = config_name.replace(".json", "")
-        filename = f"{expected_base}_energy_{timestamp}.png"
+    def test_filename_base_defaults_empty_config_name(self, monkeypatch):
+        monkeypatch.setattr(testbed_runner.time, "strftime", lambda *_args: "20251022_123456")
 
-        assert expected_base in filename
-        assert "energy" in filename
-        assert ".png" in filename
-        assert len(timestamp) == 15  # YYYYMMDD_HHMMSS
-
-    def test_filename_without_json_extension(self):
-        """Test config name without .json extension."""
-        config_name = "my_config"
-        timestamp = "20251022_123456"
-
-        filename = f"{config_name}_energy_{timestamp}.png"
-        assert filename == "my_config_energy_20251022_123456.png"
+        assert (
+            testbed_runner.generate_filename_base("  ")
+            == "testbed_config_20251022_123456"
+        )
 
 
 class TestPlotValidation:
