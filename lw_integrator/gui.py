@@ -41,6 +41,7 @@ from .gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from .gui_shell_mixins import IntegratorGUIShellMixin
 from .gui_state_mixins import IntegratorGUIStateMixin
 from .gui_summary_mixins import IntegratorGUISummaryMixin
+from .gui_tab_mixins import IntegratorGUITabMixin
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
@@ -195,6 +196,7 @@ class _FigureHandle:
 class IntegratorGUI(
     IntegratorGUILogMixin,
     IntegratorGUIShellMixin,
+    IntegratorGUITabMixin,
     IntegratorGUILayoutMixin,
     IntegratorGUIControllerMixin,
     IntegratorGUIConfigListMixin,

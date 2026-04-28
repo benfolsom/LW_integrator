@@ -16,6 +16,7 @@ from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
 from lw_integrator.gui_shell_mixins import IntegratorGUIShellMixin
 from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
 from lw_integrator.gui_summary_mixins import IntegratorGUISummaryMixin
+from lw_integrator.gui_tab_mixins import IntegratorGUITabMixin
 
 
 class _Var:
@@ -150,21 +151,24 @@ def test_gui_inherits_layout_helpers_from_layout_mixin():
     assert gui.IntegratorGUI._on_run_mode_changed is (
         IntegratorGUILayoutMixin._on_run_mode_changed
     )
-    assert gui.IntegratorGUI._add_output_toggle is (
-        IntegratorGUILayoutMixin._add_output_toggle
-    )
-    assert gui.IntegratorGUI._build_output_tab is (
-        IntegratorGUILayoutMixin._build_output_tab
-    )
     assert gui.IntegratorGUI._build_log_summary_panel is (
         IntegratorGUILayoutMixin._build_log_summary_panel
     )
-    assert gui.IntegratorGUI._build_particle_tab is (
-        IntegratorGUILayoutMixin._build_particle_tab
+
+
+def test_gui_inherits_tab_builders_from_tab_mixin():
+    assert gui.IntegratorGUI._build_output_tab is (
+        IntegratorGUITabMixin._build_output_tab
     )
-    assert gui.IntegratorGUI._build_core_tab is IntegratorGUILayoutMixin._build_core_tab
+    assert gui.IntegratorGUI._build_particle_tab is (
+        IntegratorGUITabMixin._build_particle_tab
+    )
+    assert gui.IntegratorGUI._build_core_tab is IntegratorGUITabMixin._build_core_tab
     assert gui.IntegratorGUI._build_stability_tab is (
-        IntegratorGUILayoutMixin._build_stability_tab
+        IntegratorGUITabMixin._build_stability_tab
+    )
+    assert gui.IntegratorGUI._add_output_toggle is (
+        IntegratorGUITabMixin._add_output_toggle
     )
 
 
