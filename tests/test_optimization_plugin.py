@@ -246,6 +246,8 @@ class TestOptimizationPluginIntegration:
             is OptimizationPluginControlMixin._on_run_sweep
         )
         assert OptimizationPlugin._on_stop is OptimizationPluginControlMixin._on_stop
+        assert not hasattr(OptimizationPluginControlMixin, "_compute_soft_penalty")
+        assert not hasattr(OptimizationPlugin, "_compute_soft_penalty")
 
     def test_plugin_inherits_runtime_helpers_from_runtime_mixin(self):
         assert (

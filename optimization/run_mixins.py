@@ -23,6 +23,7 @@ from optimization.logging_policy import (
     describe_run_logging_policy,
     restore_run_logging_policy,
 )
+from optimization.penalties import compute_soft_penalty
 from optimization.run_parameter_helpers import (
     build_optimization_evaluation_outcome,
     collect_optimization_parameter_selection,
@@ -183,7 +184,8 @@ class OptimizationRunMixin:
                     if timed_out:
                         return np.inf
 
-                    penalty = self._compute_soft_penalty(
+                    penalty = compute_soft_penalty(
+                        self.config,
                         aperture_radius=aperture,
                         macroparticle_charge_multiplier=macroparticle_charge_mult,
                         initial_energy_gev=energy,

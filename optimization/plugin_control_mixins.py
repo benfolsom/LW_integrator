@@ -934,39 +934,6 @@ class OptimizationPluginControlMixin:
         if self.gui_controller and hasattr(self.gui_controller, "_cancel_requested"):
             self.gui_controller._cancel_requested = True
 
-    def _compute_soft_penalty(
-        self,
-        *,
-        aperture_radius: float,
-        macroparticle_charge_multiplier: float,
-        initial_energy_gev: float,
-    ) -> float:
-        """Estimate a soft penalty for risky parameter combinations."""
-        penalty = 0.0
-
-        aperture_threshold_mm = 0.01
-        charge_threshold = 800.0
-        energy_threshold = 120.0
-        penalty_scale = 1.0e-3
-
-        small_aperture_factor = max(
-            0.0, (aperture_threshold_mm - aperture_radius) / aperture_threshold_mm
-        )
-        high_charge_factor = max(
-            0.0,
-            (macroparticle_charge_multiplier - charge_threshold) / charge_threshold,
-        )
-
-        if small_aperture_factor > 0 and high_charge_factor > 0:
-            penalty += small_aperture_factor * high_charge_factor
-
-        if high_charge_factor > 0 and initial_energy_gev > energy_threshold:
-            energy_factor = (initial_energy_gev - energy_threshold) / energy_threshold
-            tight_aperture_factor = max(0.0, (0.1 - aperture_radius) / 0.1)
-            penalty += 0.5 * energy_factor * high_charge_factor * tight_aperture_factor
-
-        return max(0.0, penalty * penalty_scale)
-
     def _set_fixed_sweep_value(self, param_name: str, value: str):
         """Update a fixed-value sweep control."""
         self.sweep_params[param_name]["fixed_var"].set(value)

@@ -54,6 +54,14 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Regression coverage** — Added tests covering enum and string mode values so BUNCH_TO_BUNCH offsets remain absolute, BUNCH_TO_BUNCH sweeps keep driver parameters, and auto-distance timestep calculations use driver distance
 - **Files modified** — `optimization/config.py`, `optimization/plugin_config_mixins.py`, `optimization/plugin_control_mixins.py`, `optimization/results_mixins.py`, `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `optimization/simulation_type_helpers.py`, `optimization/sweep_helpers.py`, `optimization/sweep_result_helpers.py`, `tests/test_optimization.py`, `tests/test_optimization_config_helpers.py`, `tests/test_optimization_run_parameter_helpers.py`, `tests/test_sweep_result_helpers.py`
 
+### Optimization Soft-Penalty Threshold Fix (April 2026)
+
+- **Bug** — The optimization run path used a duplicate soft-penalty implementation with a hard-coded high-energy threshold instead of the tested mass-aware helper
+- **Impact** — Proton and heavier-ion optimizations could be penalized at electron-like energies, biasing objective values away from otherwise valid high-energy parameter regions
+- **Fix** — Routed optimization evaluations through `optimization.penalties.compute_soft_penalty()` and removed the duplicate mixin method
+- **Regression coverage** — Kept focused penalty coverage for electron/proton threshold behavior and added an API guard so the duplicate control-mixin penalty method is not reintroduced
+- **Files modified** — `optimization/run_mixins.py`, `optimization/plugin_control_mixins.py`, `tests/test_optimization_plugin.py`
+
 ### CLI Conducting-Wall Energy Convention Fix (April 2026)
 
 - **Bug** — The CLI sweep runner converted conducting-wall particle energy with the BUNCH_TO_BUNCH kinetic-energy convention when building `SimulationOptions.rider_params["starting_Pz"]`
