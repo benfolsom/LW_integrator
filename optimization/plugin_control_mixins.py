@@ -256,10 +256,14 @@ class OptimizationPluginControlMixin:
         self, existing_config: OptimizationConfig | None
     ) -> dict:
         """Return search-space and integration-grid config keyword arguments."""
-        config_value = _existing_config_value
+        kwargs = self._gather_optimization_algorithm_kwargs()
+        kwargs.update(self._gather_sweep_grid_kwargs())
+        kwargs.update(self._gather_integration_grid_kwargs(existing_config))
+        return kwargs
 
+    def _gather_optimization_algorithm_kwargs(self) -> dict:
+        """Return optimization algorithm config keyword arguments."""
         return {
-            "simulation_type": SimulationType[self.sim_type_var.get()],
             "mode": self.mode_var.get(),
             "optimization_method": self.optimization_method_var.get(),
             "optimization_maxiter": int(self.optimization_maxiter_var.get()),
@@ -274,6 +278,13 @@ class OptimizationPluginControlMixin:
             "optimization_convergence_patience": int(
                 self.optimization_convergence_patience_var.get()
             ),
+            "objective": self.objective_var.get(),
+        }
+
+    def _gather_sweep_grid_kwargs(self) -> dict:
+        """Return sweep grid config keyword arguments."""
+        return {
+            "simulation_type": SimulationType[self.sim_type_var.get()],
             "aperture_range": (
                 float(self.aperture_min_var.get()),
                 float(self.aperture_max_var.get()),
@@ -306,6 +317,15 @@ class OptimizationPluginControlMixin:
             "wall_z_points": (
                 int(self.wall_z_points_var.get()) if self.wall_z_sweep_var.get() else 1
             ),
+        }
+
+    def _gather_integration_grid_kwargs(
+        self, existing_config: OptimizationConfig | None
+    ) -> dict:
+        """Return integration timing and startup config keyword arguments."""
+        config_value = _existing_config_value
+
+        return {
             "cavity_spacing": float(self.cavity_spacing_var.get()),
             "timestep": (
                 float(self.duration_var.get())
@@ -324,7 +344,6 @@ class OptimizationPluginControlMixin:
                 else 200
             ),
             "auto_steps_distance_past_wall": float(self.auto_steps_distance_var.get()),
-            "objective": self.objective_var.get(),
             "timestep_strategy": "auto_distance",
             "target_distance_mm": config_value(
                 existing_config, "target_distance_mm", 100.0

@@ -321,6 +321,38 @@ class TestOptimizationPluginIntegration:
         assert kwargs["driver_pcount"] == 5
         assert kwargs["driver_stripped_ions"] == pytest.approx(6.0)
 
+    def test_gather_sweep_grid_kwargs_normalizes_b2b_aperture_points(self):
+        harness = OptimizationPluginControlMixin()
+        harness.sim_type_var = _MockVar("BUNCH_TO_BUNCH")
+        harness.aperture_min_var = _MockVar("0.01")
+        harness.aperture_max_var = _MockVar("0.02")
+        harness.aperture_points_var = _MockVar("9")
+        harness.aperture_log_var = _MockVar(False)
+        harness.energy_min_var = _MockVar("1.0")
+        harness.energy_max_var = _MockVar("2.0")
+        harness.energy_points_var = _MockVar("3")
+        harness.energy_log_var = _MockVar(True)
+        harness.offset_fractions_var = _MockVar("0.1, 0.2")
+        harness.start_z_var = _MockVar("5.0")
+        harness.wall_z_var = _MockVar("100.0")
+        harness.wall_z_sweep_var = _MockVar(True)
+        harness.wall_z_min_var = _MockVar("90.0")
+        harness.wall_z_max_var = _MockVar("110.0")
+        harness.wall_z_points_var = _MockVar("4")
+
+        kwargs = harness._gather_sweep_grid_kwargs()
+
+        assert kwargs["simulation_type"] is SimulationType.BUNCH_TO_BUNCH
+        assert kwargs["aperture_range"] == pytest.approx((0.01, 0.02))
+        assert kwargs["aperture_points"] == 1
+        assert kwargs["energy_range"] == pytest.approx((1.0, 2.0))
+        assert kwargs["energy_points"] == 3
+        assert kwargs["energy_log_scale"] is True
+        assert kwargs["transverse_offset_fractions"] == pytest.approx([0.1, 0.2])
+        assert kwargs["starting_z_positions"] == pytest.approx([5.0])
+        assert kwargs["wall_z_range"] == pytest.approx((90.0, 110.0))
+        assert kwargs["wall_z_points"] == 4
+
     def test_plugin_inherits_runtime_helpers_from_runtime_mixin(self):
         assert (
             OptimizationPlugin._log_truncated_run
