@@ -13,6 +13,7 @@ from lw_integrator.gui_layout_mixins import IntegratorGUILayoutMixin
 from lw_integrator.gui_log_mixins import IntegratorGUILogMixin
 from lw_integrator.gui_plot_mixins import IntegratorGUIPlotMixin
 from lw_integrator.gui_runtime_mixins import IntegratorGUIRuntimeMixin
+from lw_integrator.gui_shell_mixins import IntegratorGUIShellMixin
 from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
 from lw_integrator.gui_summary_mixins import IntegratorGUISummaryMixin
 
@@ -176,6 +177,22 @@ def test_gui_inherits_log_helpers_from_log_mixin():
     assert (
         gui.IntegratorGUI._load_verbose_logs
         is IntegratorGUILogMixin._load_verbose_logs
+    )
+
+
+def test_gui_inherits_shell_helpers_from_shell_mixin():
+    assert gui.IntegratorGUI._load_preferences is (
+        IntegratorGUIShellMixin._load_preferences
+    )
+    assert gui.IntegratorGUI._save_preferences is (
+        IntegratorGUIShellMixin._save_preferences
+    )
+    assert gui.IntegratorGUI._reset_directories_to_defaults is (
+        IntegratorGUIShellMixin._reset_directories_to_defaults
+    )
+    assert gui.IntegratorGUI._on_close is IntegratorGUIShellMixin._on_close
+    assert gui.IntegratorGUI._setup_keyboard_fix is (
+        IntegratorGUIShellMixin._setup_keyboard_fix
     )
 
 

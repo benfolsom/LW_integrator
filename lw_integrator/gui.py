@@ -9,7 +9,6 @@ in dedicated top-level windows using Matplotlib's TkAgg backend.
 
 from __future__ import annotations
 
-import json
 import locale
 import os
 import signal
@@ -18,7 +17,7 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from typing import Any, Dict, List, Optional
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -39,6 +38,7 @@ from .gui_layout_mixins import (
 from .gui_log_mixins import IntegratorGUILogMixin
 from .gui_plot_mixins import IntegratorGUIPlotMixin
 from .gui_runtime_mixins import IntegratorGUIRuntimeMixin
+from .gui_shell_mixins import IntegratorGUIShellMixin
 from .gui_state_mixins import IntegratorGUIStateMixin
 from .gui_summary_mixins import IntegratorGUISummaryMixin
 from .optimization_plugin import OptimizationPlugin
@@ -194,6 +194,7 @@ class _FigureHandle:
 
 class IntegratorGUI(
     IntegratorGUILogMixin,
+    IntegratorGUIShellMixin,
     IntegratorGUILayoutMixin,
     IntegratorGUIControllerMixin,
     IntegratorGUIConfigListMixin,
@@ -536,286 +537,6 @@ class IntegratorGUI(
             )
             self.driver_param_vars[name].trace_add(
                 "write", lambda *_: self._refresh_initial_summary()
-            )
-
-    # ------------------------------------------------------------------
-    # Layout
-    # ------------------------------------------------------------------
-
-    def _load_preferences(self) -> None:
-        """Load saved directory preferences or use defaults."""
-        # Run defaults
-        self._default_config_dir = "configs/run_configs"
-        self._default_output_dir = "results/runs"
-
-        # Sweep defaults
-        self._default_sweep_config_dir = "configs/sweep_configs"
-        self._default_sweep_output_dir = "results/sweeps"
-
-        if self._prefs_file.exists():
-            try:
-                with open(self._prefs_file, "r") as f:
-                    prefs = json.load(f)
-                self._last_config_dir = prefs.get(
-                    "last_config_dir", self._default_config_dir
-                )
-                self._last_output_dir = prefs.get(
-                    "last_output_dir", self._default_output_dir
-                )
-                self._last_sweep_config_dir = prefs.get(
-                    "last_sweep_config_dir", self._default_sweep_config_dir
-                )
-                self._last_sweep_output_dir = prefs.get(
-                    "last_sweep_output_dir", self._default_sweep_output_dir
-                )
-            except Exception:
-                # If preferences file is corrupted, use defaults
-                self._last_config_dir = self._default_config_dir
-                self._last_output_dir = self._default_output_dir
-                self._last_sweep_config_dir = self._default_sweep_config_dir
-                self._last_sweep_output_dir = self._default_sweep_output_dir
-        else:
-            # First run - use defaults
-            self._last_config_dir = self._default_config_dir
-            self._last_output_dir = self._default_output_dir
-            self._last_sweep_config_dir = self._default_sweep_config_dir
-            self._last_sweep_output_dir = self._default_sweep_output_dir
-
-    def _save_preferences(self) -> None:
-        """Save current directory preferences."""
-        try:
-            prefs = {
-                "last_config_dir": self._last_config_dir,
-                "last_output_dir": self._last_output_dir,
-                "last_sweep_config_dir": self._last_sweep_config_dir,
-                "last_sweep_output_dir": self._last_sweep_output_dir,
-            }
-            with open(self._prefs_file, "w") as f:
-                json.dump(prefs, f, indent=2)
-        except Exception:
-            pass  # Silently fail if we can't save preferences
-
-    def _reset_directories_to_defaults(self) -> None:
-        """Reset directories to default values."""
-        self.config_dir_var.set(self._default_config_dir)
-        self.output_dir_var.set(self._default_output_dir)
-        self._last_config_dir = self._default_config_dir
-        self._last_output_dir = self._default_output_dir
-        self._last_sweep_config_dir = self._default_sweep_config_dir
-        self._last_sweep_output_dir = self._default_sweep_output_dir
-        self._save_preferences()
-        self._refresh_config_list()
-
-        # Also update optimization plugin directories if it exists
-        if hasattr(self, "optimization_tab"):
-            self.optimization_tab.sweep_config_dir = self._default_sweep_config_dir
-            self.optimization_tab.sweep_output_dir = self._default_sweep_output_dir
-
-        messagebox.showinfo(
-            "Reset Directories",
-            "Directories reset to defaults:\n\n"
-            f"Run Config: {self._default_config_dir}\n"
-            f"Run Output: {self._default_output_dir}\n"
-            f"Sweep Config: {self._default_sweep_config_dir}\n"
-            f"Sweep Output: {self._default_sweep_output_dir}",
-        )
-
-    def _on_close(self) -> None:
-        """Handle window close event."""
-        self._save_preferences()
-        self.root.destroy()
-
-    def _setup_keyboard_fix(self) -> None:
-        """Set up keyboard fix for non-US layouts (Swedish, German, etc.).
-
-        This fixes issues where Windows doesn't properly send keyboard layout
-        information to Tkinter. We use keycode remapping for Swedish ISO layout.
-
-        Enable debug: LW_KEYBOARD_DEBUG=1 python -m lw_integrator.gui
-        """
-
-        # Swedish ISO keyboard keycode mapping (Windows)
-        # Maps keycodes to (unshifted_char, shifted_char)
-        SWEDISH_KEYMAP = {
-            # Number row
-            10: ("1", "!"),
-            11: ("2", '"'),
-            12: ("3", "#"),
-            13: ("4", "¤"),  # Currency sign
-            14: ("5", "%"),
-            15: ("6", "&"),
-            16: ("7", "/"),
-            17: ("8", "("),
-            18: ("9", ")"),
-            19: ("0", "="),
-            20: ("+", "?"),
-            21: ("´", "`"),  # Acute/grave accent
-            # Top row
-            24: ("q", "Q"),
-            25: ("w", "W"),
-            26: ("e", "E"),
-            27: ("r", "R"),
-            28: ("t", "T"),
-            29: ("y", "Y"),
-            30: ("u", "U"),
-            31: ("i", "I"),
-            32: ("o", "O"),
-            33: ("p", "P"),
-            34: ("å", "Å"),
-            35: ("¨", "^"),  # Diaeresis/circumflex (dead key)
-            # Home row
-            38: ("a", "A"),
-            39: ("s", "S"),
-            40: ("d", "D"),
-            41: ("f", "F"),
-            42: ("g", "G"),
-            43: ("h", "H"),
-            44: ("j", "J"),
-            45: ("k", "K"),
-            46: ("l", "L"),
-            47: ("ö", "Ö"),
-            48: ("ä", "Ä"),
-            49: ("'", "*"),
-            # Bottom row
-            52: ("z", "Z"),
-            53: ("x", "X"),
-            54: ("c", "C"),
-            55: ("v", "V"),
-            56: ("b", "B"),
-            57: ("n", "N"),
-            58: ("m", "M"),
-            59: (",", ";"),
-            60: (".", ":"),
-            61: ("-", "_"),  # THIS IS THE HYPHEN KEY!
-            # Special keys
-            65: (" ", " "),  # Space
-        }
-
-        def fixed_key_handler(event):
-            """Handle keyboard input using keycode remapping for Swedish layout."""
-            widget = event.widget
-            char = event.char
-            keysym = event.keysym
-            keycode = event.keycode
-            state = event.state
-
-            if self._keyboard_debug:
-                widget_name = widget.winfo_name()
-                print(f"[KEY] Widget: {widget_name}")
-                print(f"      keysym:  {keysym}")
-                print(f"      keycode: {keycode}")
-                print(f"      char:    {repr(char)} (from OS)")
-                print(f"      state:   {state}")
-
-            # Check for modifier keys (except Shift)
-            # state & 0x4 = Control, state & 0x8 or 0x20000 = Alt
-            has_ctrl = bool(state & 0x4)
-            has_alt = bool(state & 0x8 or state & 0x20000)
-            has_shift = bool(state & 0x1)
-
-            if has_ctrl or has_alt:
-                # Let Tkinter handle Ctrl+X, Alt+X shortcuts
-                if self._keyboard_debug:
-                    print("      → Passing through (has Ctrl/Alt modifier)")
-                    print("-" * 60)
-                return None
-
-            # Try Swedish keycode mapping
-            correct_char = None
-            if keycode in SWEDISH_KEYMAP:
-                unshifted, shifted = SWEDISH_KEYMAP[keycode]
-                correct_char = shifted if has_shift else unshifted
-
-                if self._keyboard_debug:
-                    print(
-                        f"      ✓ Swedish keymap: keycode {keycode} → {repr(correct_char)}"
-                    )
-                    if correct_char != char:
-                        print(
-                            f"      ⚠ FIXED: OS gave {repr(char)}, using {repr(correct_char)}"
-                        )
-            else:
-                # Not in our mapping - check if it's a control character or letter
-                if not char or not char.isprintable():
-                    # Control character, navigation key, etc.
-                    if self._keyboard_debug:
-                        print("      → Passing through (control/special key)")
-                        print("-" * 60)
-                    return None
-
-                # Unmapped but printable - use what the OS gave us
-                correct_char = char
-                if self._keyboard_debug:
-                    print(f"      ℹ Not in Swedish keymap, using OS char: {repr(char)}")
-
-            if self._keyboard_debug:
-                print(f"      ✓ Inserting: {repr(correct_char)}")
-                print("-" * 60)
-
-            # Handle Entry widgets
-            if isinstance(widget, tk.Entry):
-                # Check if text is selected
-                try:
-                    if widget.selection_present():
-                        widget.delete("sel.first", "sel.last")
-                except tk.TclError:
-                    pass
-
-                # Insert correct character at cursor position
-                insert_pos = widget.index("insert")
-                widget.insert(insert_pos, correct_char)
-
-                # Return "break" to prevent Tkinter's default (wrong) handler
-                return "break"
-
-            # Handle Text widgets
-            elif isinstance(widget, tk.Text):
-                # Check if text is selected
-                try:
-                    if widget.tag_ranges("sel"):
-                        widget.delete("sel.first", "sel.last")
-                except tk.TclError:
-                    pass
-
-                # Insert correct character at cursor position
-                widget.insert("insert", correct_char)
-
-                # Return "break" to prevent Tkinter's default (wrong) handler
-                return "break"
-
-            # For other widgets, let Tkinter handle it
-            return None
-
-        # Bind fix handler to all current Entry and Text widgets
-        def bind_fix_recursive(widget):
-            """Recursively bind keyboard fix to all Entry/Text widgets."""
-            if isinstance(widget, (tk.Entry, tk.Text)):
-                # Use bindtags to ensure our handler runs BEFORE the class binding
-                # Default bindtags order: (widget_name, class_name, toplevel, 'all')
-                # We insert a custom tag before the class to intercept events first
-                current_tags = list(widget.bindtags())
-
-                # Create a unique tag for this widget
-                custom_tag = f"CustomKey{id(widget)}"
-
-                # Insert custom tag before the class name (usually second position)
-                if len(current_tags) >= 2:
-                    current_tags.insert(1, custom_tag)
-                else:
-                    current_tags.insert(0, custom_tag)
-
-                widget.bindtags(tuple(current_tags))
-
-                # Bind our handler to the custom tag
-                widget.bind_class(custom_tag, "<Key>", fixed_key_handler)
-
-            for child in widget.winfo_children():
-                bind_fix_recursive(child)
-
-        bind_fix_recursive(self.root)
-        if self._keyboard_debug:
-            print(
-                "[FIX] Swedish keyboard keycode remapping applied to all text widgets"
             )
 
     def _build_layout(self) -> None:
