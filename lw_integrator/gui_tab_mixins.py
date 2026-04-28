@@ -613,8 +613,6 @@ class IntegratorGUITabMixin:
 
     def _build_stability_tab(self) -> None:
         """Build self-consistency and adaptive timestep controls."""
-        from .gui import Tooltip
-
         # Stability Settings tab ----------------------------------------
         stability_frame = self._create_scrollable_tab(
             self.notebook, "Stability", padding=12
@@ -635,6 +633,21 @@ class IntegratorGUITabMixin:
             justify="left",
         )
         stability_notice_label.pack(anchor="w")
+
+        self._build_self_consistency_section(stability_frame)
+        self._build_adaptive_timestep_section(stability_frame)
+
+        # Help text removed - was obscuring Adaptive Timestep Refinement section
+        # All parameter help is now available via ⓘ tooltips
+
+        # Initialize control states
+        self._toggle_self_consistency_controls()
+        self._toggle_chrono_controls()
+        self._toggle_adaptive_timestep_controls()
+
+    def _build_self_consistency_section(self, stability_frame: ttk.Frame) -> None:
+        """Build self-consistency and gamma reconciliation controls."""
+        from .gui import Tooltip
 
         # Self-consistency section
         sc_frame = ttk.LabelFrame(
@@ -1151,6 +1164,10 @@ class IntegratorGUITabMixin:
         )
         self._toggle_gamma_reconciliation_params()
 
+    def _build_adaptive_timestep_section(self, stability_frame: ttk.Frame) -> None:
+        """Build adaptive timestep refinement controls."""
+        from .gui import Tooltip
+
         # Adaptive timestep section (Energy Jump Detection functionality integrated here)
         at_frame = ttk.LabelFrame(
             stability_frame, text="Adaptive Timestep Refinement", padding=8
@@ -1427,12 +1444,4 @@ class IntegratorGUITabMixin:
         self.adaptive_max_substeps_display.grid(
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
-
-        # Help text removed - was obscuring Adaptive Timestep Refinement section
-        # All parameter help is now available via ⓘ tooltips
-
-        # Initialize control states
-        self._toggle_self_consistency_controls()
-        self._toggle_chrono_controls()
-        self._toggle_adaptive_timestep_controls()
 

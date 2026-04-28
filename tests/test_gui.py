@@ -167,6 +167,12 @@ def test_gui_inherits_tab_builders_from_tab_mixin():
     assert gui.IntegratorGUI._build_stability_tab is (
         IntegratorGUITabMixin._build_stability_tab
     )
+    assert gui.IntegratorGUI._build_self_consistency_section is (
+        IntegratorGUITabMixin._build_self_consistency_section
+    )
+    assert gui.IntegratorGUI._build_adaptive_timestep_section is (
+        IntegratorGUITabMixin._build_adaptive_timestep_section
+    )
     assert gui.IntegratorGUI._add_output_toggle is (
         IntegratorGUITabMixin._add_output_toggle
     )
