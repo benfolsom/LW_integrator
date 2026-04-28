@@ -6,8 +6,10 @@ from optimization.run_parameter_helpers import (
     calculate_transverse_offset,
     collect_optimization_parameter_selection,
     is_bunch_to_bunch,
+    resolve_optimization_run_parameters,
     resolve_objective_metric,
 )
+from optimization.sweep_helpers import calculate_starting_pz_from_energy
 
 
 def test_collect_optimization_parameter_selection_preserves_existing_order():
@@ -99,3 +101,100 @@ def test_calculate_transverse_offset_handles_enum_and_string_modes():
     assert calculate_transverse_offset(
         SimulationType.CONDUCTING_WALL, offset_value=0.25, aperture=0.001
     ) == 0.00025
+
+
+def test_resolve_optimization_run_parameters_maps_wall_mode_values():
+    config = OptimizationConfig(
+        simulation_type=SimulationType.CONDUCTING_WALL,
+        aperture_range=(0.01, 0.02),
+        energy_range=(1.0, 2.0),
+        starting_z_positions=[5.0],
+        transverse_offset_fractions=[0.2],
+        timestep=1e-6,
+        timestep_strategy="fixed",
+        steps=123,
+        transv_dist=0.0003,
+        macroparticle_charge_multiplier=4.0,
+    )
+
+    resolved = resolve_optimization_run_parameters(
+        config,
+        [
+            "aperture_radius",
+            "initial_energy_gev",
+            "transverse_offset",
+            "rider_pcount",
+            "macroparticle_sigma_multiplier",
+        ],
+        [0.5, 3.0, 0.25, 7, 2.5],
+    )
+
+    assert resolved.aperture == 0.5
+    assert resolved.energy_gev == 3.0
+    assert resolved.start_z == 5.0
+    assert resolved.transv_offset == 0.125
+    assert resolved.timestep == 1e-6
+    assert resolved.steps == 123
+    assert resolved.rider_pcount == 7
+    assert resolved.rider_transv_dist == 0.0003
+    assert resolved.macroparticle_charge_multiplier == 4.0
+    assert resolved.macroparticle_sigma_multiplier == 2.5
+    assert resolved.driver_params is None
+
+
+def test_resolve_optimization_run_parameters_builds_bunch_driver_params_for_enum():
+    config = OptimizationConfig(
+        simulation_type=SimulationType.BUNCH_TO_BUNCH,
+        aperture_range=(0.01, 0.02),
+        energy_range=(1.0, 2.0),
+        transverse_offset_fractions=[0.2],
+        driver_direction="+z",
+        driver_transv_offset_x=0.01,
+        driver_transv_offset_y=-0.02,
+    )
+
+    resolved = resolve_optimization_run_parameters(
+        config,
+        [
+            "transverse_offset",
+            "driver_m_particle",
+            "driver_charge_sign",
+            "driver_pcount",
+            "driver_transv_mom",
+            "driver_transv_dist",
+            "driver_starting_distance",
+            "driver_energy_gev",
+            "driver_stripped_ions",
+        ],
+        [0.25, 207.2, 1.0, 9, 0.03, -0.04, 800.0, 0.6, 54.0],
+    )
+
+    assert resolved.transv_offset == 0.25
+    assert resolved.driver_params == {
+        "m_particle": 207.2,
+        "charge_sign": 1.0,
+        "pcount": 9,
+        "transv_mom": 0.03,
+        "transv_dist": -0.04,
+        "starting_distance": 800.0,
+        "starting_Pz": calculate_starting_pz_from_energy(
+            0.6, 207.2, negative=False
+        ),
+        "stripped_ions": 54.0,
+        "transv_offset_x": 0.01,
+        "transv_offset_y": -0.02,
+    }
+
+
+def test_resolve_optimization_run_parameters_accepts_string_bunch_mode():
+    config = OptimizationConfig(simulation_type=SimulationType.CONDUCTING_WALL)
+    config.simulation_type = "BUNCH_TO_BUNCH"
+
+    resolved = resolve_optimization_run_parameters(
+        config,
+        ["transverse_offset"],
+        [0.25],
+    )
+
+    assert resolved.transv_offset == 0.25
+    assert resolved.driver_params is not None

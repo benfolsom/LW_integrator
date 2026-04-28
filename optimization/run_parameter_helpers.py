@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, List, Tuple
 
 from core.types import SimulationType
+from optimization.sweep_helpers import calculate_starting_pz_from_energy
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,28 @@ class OptimizationParameterSelection:
     names: List[str]
     bounds: List[Tuple[float, float]]
     log_lines: List[str]
+
+
+@dataclass(frozen=True)
+class OptimizationRunParameters:
+    """Resolved parameters for one optimization objective evaluation."""
+
+    aperture: float
+    energy_gev: float
+    start_z: float
+    transv_offset: float
+    timestep: float
+    steps: int
+    rider_m_particle: float
+    rider_charge_sign: float
+    rider_pcount: int
+    rider_transv_mom: float
+    rider_transv_dist: float
+    rider_stripped_ions: float
+    macroparticle_charge_multiplier: float
+    macroparticle_sigma_multiplier: float
+    driver_params: dict[str, Any] | None
+    wall_z: float
 
 
 OPTIMIZATION_PARAMETER_DEFINITIONS: tuple[OptimizationParameterDefinition, ...] = (
@@ -173,3 +196,140 @@ def calculate_transverse_offset(
     if is_bunch_to_bunch(simulation_type):
         return offset_value
     return offset_value * aperture
+
+
+def resolve_optimization_run_parameters(
+    config: Any, param_names: list[str], values: Any
+) -> OptimizationRunParameters:
+    """Map one optimizer parameter vector onto integration-run arguments."""
+    aperture = config.aperture_range[0]
+    energy = config.energy_range[0]
+    start_z = config.starting_z_positions[0] if config.starting_z_positions else 0.0
+    offset_value = (
+        config.transverse_offset_fractions[0]
+        if config.transverse_offset_fractions
+        else 0.0
+    )
+    timestep = config.timestep
+    steps = config.steps
+    rider_transv_dist = config.transv_dist
+    macroparticle_charge_multiplier = config.macroparticle_charge_multiplier
+    macroparticle_sigma_multiplier = config.macroparticle_sigma_multiplier
+    wall_z = config.wall_z
+    rider_stripped_ions = config.stripped_ions
+    driver_stripped_ions = config.driver_stripped_ions
+    rider_m_particle = config.m_particle
+    rider_charge_sign = config.charge_sign
+    rider_pcount = config.pcount
+    rider_transv_mom = config.transv_mom
+    driver_m_particle = config.driver_m_particle
+    driver_charge_sign = config.driver_charge_sign
+    driver_pcount = config.driver_pcount
+    driver_transv_mom = config.driver_transv_mom
+    driver_transv_dist = config.driver_transv_dist
+    driver_starting_distance = config.driver_starting_distance
+    driver_starting_pz = config.driver_starting_Pz
+
+    for index, param_name in enumerate(param_names):
+        value = values[index]
+        if param_name == "aperture_radius":
+            aperture = value
+        elif param_name == "initial_energy_gev":
+            energy = value
+        elif param_name == "start_z":
+            start_z = value
+        elif param_name == "transverse_offset":
+            offset_value = value
+        elif param_name == "timestep":
+            timestep = value
+        elif param_name == "transverse_momentum":
+            rider_transv_mom = value
+        elif param_name == "rider_transv_dist":
+            rider_transv_dist = value
+        elif param_name == "macroparticle_charge_multiplier":
+            macroparticle_charge_multiplier = value
+        elif param_name == "macroparticle_sigma_multiplier":
+            macroparticle_sigma_multiplier = value
+        elif param_name == "wall_z":
+            wall_z = value
+        elif param_name == "rider_stripped_ions":
+            rider_stripped_ions = value
+        elif param_name == "driver_stripped_ions":
+            driver_stripped_ions = value
+        elif param_name == "rider_m_particle":
+            rider_m_particle = value
+        elif param_name == "rider_charge_sign":
+            rider_charge_sign = value
+        elif param_name == "rider_pcount":
+            rider_pcount = int(value)
+        elif param_name == "driver_m_particle":
+            driver_m_particle = value
+        elif param_name == "driver_charge_sign":
+            driver_charge_sign = value
+        elif param_name == "driver_pcount":
+            driver_pcount = int(value)
+        elif param_name == "driver_transv_mom":
+            driver_transv_mom = value
+        elif param_name == "driver_transv_dist":
+            driver_transv_dist = value
+        elif param_name == "driver_starting_distance":
+            driver_starting_distance = value
+        elif param_name == "driver_energy_gev":
+            driver_negative = getattr(config, "driver_direction", "-z") == "-z"
+            driver_starting_pz = calculate_starting_pz_from_energy(
+                value, driver_m_particle, negative=driver_negative
+            )
+        elif param_name == "driver_starting_Pz":
+            driver_starting_pz = value
+
+    transv_offset = calculate_transverse_offset(
+        config.simulation_type, offset_value, aperture
+    )
+
+    driver_params = None
+    if is_bunch_to_bunch(config.simulation_type):
+        driver_params = {
+            "m_particle": driver_m_particle,
+            "charge_sign": driver_charge_sign,
+            "pcount": int(driver_pcount),
+            "transv_mom": driver_transv_mom,
+            "transv_dist": driver_transv_dist,
+            "starting_distance": driver_starting_distance,
+            "starting_Pz": driver_starting_pz,
+            "stripped_ions": driver_stripped_ions,
+            "transv_offset_x": config.driver_transv_offset_x,
+            "transv_offset_y": config.driver_transv_offset_y,
+        }
+
+    if config.timestep_strategy == "auto_distance":
+        driver_start_z = 1000.0
+        if driver_params is not None:
+            driver_start_z = driver_params.get("starting_distance", 1000.0)
+
+        timestep = config.calculate_timestep_for_energy(
+            energy,
+            config.m_particle,
+            wall_z=wall_z,
+            start_z=start_z,
+            driver_start_z=driver_start_z,
+        )
+        steps = config.steps
+
+    return OptimizationRunParameters(
+        aperture=aperture,
+        energy_gev=energy,
+        start_z=start_z,
+        transv_offset=transv_offset,
+        timestep=timestep,
+        steps=steps,
+        rider_m_particle=rider_m_particle,
+        rider_charge_sign=rider_charge_sign,
+        rider_pcount=int(rider_pcount),
+        rider_transv_mom=rider_transv_mom,
+        rider_transv_dist=rider_transv_dist,
+        rider_stripped_ions=rider_stripped_ions,
+        macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+        macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+        driver_params=driver_params,
+        wall_z=wall_z,
+    )
