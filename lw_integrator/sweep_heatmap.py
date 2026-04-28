@@ -52,6 +52,52 @@ _ENERGY_ALIASES = (
 
 _ENERGY_LABEL = "Initial Energy (GeV)"
 
+_DERIVED_PARAMETERS = {
+    "timestep",  # Computed from energy
+    "retry_attempts",  # Internal tracking
+    "steps",  # May vary with auto_steps
+    "run_number",  # Sequential counter
+    "driver_starting_Pz",  # Computed from driver energy
+}
+
+_PARAM_PRIORITY = [
+    "driver_transv_dist",
+    "rider_transv_dist",
+    "driver_starting_distance",
+    "aperture_radius",
+    "wall_z",
+    "start_z",
+    "driver_stripped_ions",
+    "rider_stripped_ions",
+    "driver_pcount",
+    "rider_pcount",
+    "driver_transv_mom",
+    "rider_transv_mom",
+]
+
+_PARAM_LABELS = {
+    "particle_energy_gev": _ENERGY_LABEL,
+    "initial_energy_gev": _ENERGY_LABEL,
+    "energy_gev": _ENERGY_LABEL,
+    "energy": _ENERGY_LABEL,
+    "aperture_radius": "Aperture Radius (mm)",
+    "driver_starting_distance": "Driver Starting Distance (mm)",
+    "wall_z": "Wall Position (mm)",
+    "rider_m_particle": "Rider Mass (amu)",
+    "driver_m_particle": "Driver Mass (amu)",
+    "rider_pcount": "Rider Particle Count",
+    "driver_pcount": "Driver Particle Count",
+    "rider_stripped_ions": "Rider Stripped Ions",
+    "driver_stripped_ions": "Driver Stripped Ions",
+    "rider_transverse_momentum": "Rider Transverse Momentum",
+    "driver_transverse_momentum": "Driver Transverse Momentum",
+    "rider_transv_dist": "Rider Transverse Spread (mm)",
+    "driver_transv_dist": "Driver Transverse Spread (mm)",
+    "rider_transv_mom": "Rider Transverse Momentum (amu·mm/ns)",
+    "driver_transv_mom": "Driver Transverse Momentum (amu·mm/ns)",
+    "start_z": "Starting Z Position (mm)",
+}
+
 
 def load_sweep_results(sweep_dir):
     """Load sweep results from JSON file."""
@@ -80,33 +126,6 @@ def detect_swept_parameters(data):
     if not data.get("results"):
         return [], {}
 
-    # Parameters that are derived/computed rather than directly swept
-    # These should be excluded from swept parameter detection
-    DERIVED_PARAMETERS = {
-        "timestep",  # Computed from energy
-        "retry_attempts",  # Internal tracking
-        "steps",  # May vary with auto_steps
-        "run_number",  # Sequential counter
-        "driver_starting_Pz",  # Computed from driver energy
-    }
-
-    # Priority order for parameter selection (most important first)
-    # When auto-detecting, prefer these parameters as the second axis
-    PARAM_PRIORITY = [
-        "driver_transv_dist",
-        "rider_transv_dist",
-        "driver_starting_distance",
-        "aperture_radius",
-        "wall_z",
-        "start_z",
-        "driver_stripped_ions",
-        "rider_stripped_ions",
-        "driver_pcount",
-        "rider_pcount",
-        "driver_transv_mom",
-        "rider_transv_mom",
-    ]
-
     # Collect all parameter values
     all_param_values = {}
     for result in data["results"]:
@@ -124,7 +143,7 @@ def detect_swept_parameters(data):
     _energy_param_seen = False  # only admit one energy alias
     for param_name, values in all_param_values.items():
         # Skip derived parameters
-        if param_name in DERIVED_PARAMETERS:
+        if param_name in _DERIVED_PARAMETERS:
             continue
         # Collapse all energy aliases to a single representative
         if param_name in _ENERGY_ALIASES:
@@ -141,38 +160,14 @@ def detect_swept_parameters(data):
         if param in _ENERGY_ALIASES:
             return (-1000, param)
         # Check if in priority list
-        if param in PARAM_PRIORITY:
-            return (PARAM_PRIORITY.index(param), param)
+        if param in _PARAM_PRIORITY:
+            return (_PARAM_PRIORITY.index(param), param)
         # Unknown params go last, sorted alphabetically
         return (1000, param)
 
     swept_params.sort(key=param_sort_key)
 
-    # Define display labels for common parameters
-    param_labels = {
-        "particle_energy_gev": _ENERGY_LABEL,
-        "initial_energy_gev": _ENERGY_LABEL,
-        "energy_gev": _ENERGY_LABEL,
-        "energy": _ENERGY_LABEL,
-        "aperture_radius": "Aperture Radius (mm)",
-        "driver_starting_distance": "Driver Starting Distance (mm)",
-        "wall_z": "Wall Position (mm)",
-        "rider_m_particle": "Rider Mass (amu)",
-        "driver_m_particle": "Driver Mass (amu)",
-        "rider_pcount": "Rider Particle Count",
-        "driver_pcount": "Driver Particle Count",
-        "rider_stripped_ions": "Rider Stripped Ions",
-        "driver_stripped_ions": "Driver Stripped Ions",
-        "rider_transverse_momentum": "Rider Transverse Momentum",
-        "driver_transverse_momentum": "Driver Transverse Momentum",
-        "rider_transv_dist": "Rider Transverse Spread (mm)",
-        "driver_transv_dist": "Driver Transverse Spread (mm)",
-        "rider_transv_mom": "Rider Transverse Momentum (amu·mm/ns)",
-        "driver_transv_mom": "Driver Transverse Momentum (amu·mm/ns)",
-        "start_z": "Starting Z Position (mm)",
-    }
-
-    return swept_params, param_labels
+    return swept_params, dict(_PARAM_LABELS)
 
 
 def extract_data(

@@ -83,6 +83,7 @@ def test_sweep_heatmap_collapses_energy_aliases_when_detecting_parameters():
                     "initial_energy_gev": 1.0,
                     "energy_gev": 1.0,
                     "aperture_radius": 0.1,
+                    "timestep": 1e-3,
                 }
             },
             {
@@ -90,6 +91,7 @@ def test_sweep_heatmap_collapses_energy_aliases_when_detecting_parameters():
                     "initial_energy_gev": 2.0,
                     "energy_gev": 2.0,
                     "aperture_radius": 0.2,
+                    "timestep": 2e-3,
                 }
             },
         ]
