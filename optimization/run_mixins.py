@@ -36,6 +36,11 @@ from optimization.run_parameter_helpers import (
     resolve_objective_metric,
 )
 from optimization.simulation_type_helpers import is_bunch_to_bunch
+from optimization.single_integration_helpers import (
+    build_integration_metrics,
+    distance_info_from_trajectory,
+    sample_trajectory_arrays,
+)
 from optimization.sweep_helpers import (
     build_parameter_grids,
     calculate_starting_pz_from_energy,
@@ -1732,14 +1737,9 @@ class OptimizationRunMixin:
                         traj = result.rider_trajectory
                         stride = self.config.trajectory_stride
                         try:
-                            output["trajectory"] = {
-                                "z": np.asarray(traj["z"])[::stride].tolist(),
-                                "r": np.asarray(traj["r"])[::stride].tolist(),
-                                "pz": np.asarray(traj["pz"])[::stride].tolist(),
-                                "pr": np.asarray(traj["pr"])[::stride].tolist(),
-                                "t": np.asarray(traj["t"])[::stride].tolist(),
-                                "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
-                            }
+                            output["trajectory"] = sample_trajectory_arrays(
+                                traj, stride
+                            )
                             self._log_result(
                                 f"    Halted trajectory saved ({len(traj['z'])} points, stride={stride})"
                             )
@@ -1755,160 +1755,16 @@ class OptimizationRunMixin:
 
             # Extract metrics (only for non-halted runs)
             self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
-            metrics = {}
-            if result.rider_delta_e is not None:
-                metrics["rider_delta_e_mev"] = result.rider_delta_e
-            if result.rider_gamma_initial is not None:
-                metrics["rider_gamma_initial"] = result.rider_gamma_initial
-            if result.rider_gamma_final is not None:
-                metrics["rider_gamma_final"] = result.rider_gamma_final
+            metrics_outcome = build_integration_metrics(
+                result,
+                rider_m_particle=rider_m_particle,
+                run_num=run_num,
+                optimization_mode=getattr(self.config, "mode", None) == "optimization",
+            )
+            for line in metrics_outcome.log_lines:
+                self._log_result(line)
 
-            # Calculate max_percent_energy_gain from gamma values
-            gamma_initial = result.rider_gamma_initial
-            gamma_final = result.rider_gamma_final
-
-            # Diagnostic logging
-            self._log_result(f"  [RESULT] Run {run_num} metrics:")
-            self._log_result(f"    rider_gamma_initial: {gamma_initial}")
-            self._log_result(f"    rider_gamma_final: {gamma_final}")
-
-            # Try to calculate from available gamma values
-            if (
-                gamma_initial is not None
-                and gamma_final is not None
-                and gamma_initial > 0
-            ):
-                delta_gamma = gamma_final - gamma_initial
-                energy_gain_percent = delta_gamma / gamma_initial * 100.0
-                energy_gain_ppm = delta_gamma / gamma_initial * 1e6
-                rest_energy_mev = rider_m_particle * AMU_TO_MEV
-                delta_e_mev = delta_gamma * rest_energy_mev
-
-                metrics["max_percent_energy_gain"] = energy_gain_percent
-                metrics["percent_delta_e"] = energy_gain_percent
-                metrics["delta_gamma"] = delta_gamma
-                metrics["delta_e_mev"] = delta_e_mev
-                metrics["energy_gain_ppm"] = energy_gain_ppm
-
-                self._log_result(f"    delta_gamma: {delta_gamma:.12e}")
-                self._log_result(f"    delta_e_mev: {delta_e_mev:.12e} MeV")
-                self._log_result(
-                    f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
-                )
-                self._log_result(f"    percent_delta_e: {energy_gain_percent:.12e}%")
-                self._log_result(f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm")
-
-                if hasattr(self, "config") and hasattr(self.config, "mode"):
-                    if self.config.mode == "optimization":
-                        optimizer_value = -energy_gain_percent
-                        self._log_result(
-                            f"    optimizer_objective: {optimizer_value:.12e}"
-                        )
-            else:
-                # Fallback: Try to calculate from trajectory if gamma values are missing
-                self._log_result(
-                    "  [WARNING] Gamma values missing, attempting trajectory fallback..."
-                )
-                if result.rider_trajectory is not None:
-                    try:
-                        traj = result.rider_trajectory
-                        gamma_array = np.asarray(traj.get("gamma", []))
-                        if len(gamma_array) > 0:
-                            gamma_initial_fallback = float(gamma_array[0])
-                            gamma_final_fallback = float(gamma_array[-1])
-                            if gamma_initial_fallback > 0:
-                                delta_gamma_fallback = (
-                                    gamma_final_fallback - gamma_initial_fallback
-                                )
-                                energy_gain_percent = (
-                                    delta_gamma_fallback
-                                    / gamma_initial_fallback
-                                    * 100.0
-                                )
-                                energy_gain_ppm = (
-                                    delta_gamma_fallback / gamma_initial_fallback * 1e6
-                                )
-                                delta_e_mev_fallback = delta_gamma_fallback * (
-                                    rider_m_particle * AMU_TO_MEV
-                                )
-
-                                metrics["max_percent_energy_gain"] = energy_gain_percent
-                                metrics["percent_delta_e"] = energy_gain_percent
-                                metrics["delta_gamma"] = delta_gamma_fallback
-                                metrics["delta_e_mev"] = delta_e_mev_fallback
-                                metrics["energy_gain_ppm"] = energy_gain_ppm
-
-                                self._log_result(
-                                    "  [OK] Fallback calculation successful:"
-                                )
-                                self._log_result(
-                                    f"    gamma_initial (from traj): {gamma_initial_fallback:.12e}"
-                                )
-                                self._log_result(
-                                    f"    gamma_final (from traj): {gamma_final_fallback:.12e}"
-                                )
-                                self._log_result(
-                                    f"    delta_gamma: {delta_gamma_fallback:.12e}"
-                                )
-                                self._log_result(
-                                    f"    delta_e_mev: {delta_e_mev_fallback:.12e} MeV"
-                                )
-                                self._log_result(
-                                    f"    max_percent_energy_gain: {energy_gain_percent:.12e}%"
-                                )
-                                self._log_result(
-                                    f"    percent_delta_e: {energy_gain_percent:.12e}%"
-                                )
-                                self._log_result(
-                                    f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm"
-                                )
-                            else:
-                                self._log_result(
-                                    "  [ERROR] Fallback gamma_initial <= 0"
-                                )
-                        else:
-                            self._log_result("  [ERROR] Trajectory gamma array is empty")
-                    except Exception as e:
-                        self._log_result(f"  [ERROR] Fallback calculation failed: {e}")
-                else:
-                    self._log_result(
-                        "  [ERROR] No trajectory data available for fallback"
-                    )
-
-                if "max_percent_energy_gain" not in metrics:
-                    self._log_result(
-                        f"  [CRITICAL] max_percent_energy_gain could not be calculated for Run {run_num}"
-                    )
-                    self._log_result(
-                        "  [CRITICAL] This will result in NaN/inf for optimization objective"
-                    )
-
-            # Add beam optics metrics if available
-            if result.rider_emittance_x_mm_mrad is not None:
-                metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
-            if result.rider_emittance_y_mm_mrad is not None:
-                metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
-            if result.rider_norm_emittance_x_mm_mrad is not None:
-                metrics["rider_norm_emittance_x_mm_mrad"] = (
-                    result.rider_norm_emittance_x_mm_mrad
-                )
-            if result.rider_norm_emittance_y_mm_mrad is not None:
-                metrics["rider_norm_emittance_y_mm_mrad"] = (
-                    result.rider_norm_emittance_y_mm_mrad
-                )
-            if result.rider_beta_x_m is not None:
-                metrics["rider_beta_x_m"] = result.rider_beta_x_m
-            if result.rider_beta_y_m is not None:
-                metrics["rider_beta_y_m"] = result.rider_beta_y_m
-
-            # Add particle failure tracking
-            metrics["num_particles_dead"] = result.num_particles_dead
-            if result.halted_early:
-                metrics["halted_early"] = True
-                if result.halt_reason:
-                    metrics["halt_reason"] = result.halt_reason
-
-            output = {"metrics": metrics}
+            output = {"metrics": metrics_outcome.metrics}
 
             self._log_result(
                 f"  [DEBUG] Processing trajectory data for Run {run_num}..."
@@ -1918,13 +1774,9 @@ class OptimizationRunMixin:
 
                 # Always include minimal trajectory info for distance calculation
                 try:
-                    z_array = np.asarray(traj["z"])
-                    if len(z_array) > 0:
-                        output["_distance_info"] = {
-                            "z_start": float(z_array[0]),
-                            "z_end": float(z_array[-1]),
-                            "num_steps": len(z_array),
-                        }
+                    distance_info = distance_info_from_trajectory(traj)
+                    if distance_info is not None:
+                        output["_distance_info"] = distance_info
                 except Exception as e:
                     print(f"[DEBUG] Failed to extract distance info: {e}")
 
@@ -1991,14 +1843,7 @@ class OptimizationRunMixin:
                 if save_traj:
                     stride = self.config.trajectory_stride
                     try:
-                        output["trajectory"] = {
-                            "z": np.asarray(traj["z"])[::stride].tolist(),
-                            "r": np.asarray(traj["r"])[::stride].tolist(),
-                            "pz": np.asarray(traj["pz"])[::stride].tolist(),
-                            "pr": np.asarray(traj["pr"])[::stride].tolist(),
-                            "t": np.asarray(traj["t"])[::stride].tolist(),
-                            "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
-                        }
+                        output["trajectory"] = sample_trajectory_arrays(traj, stride)
                     except Exception as e:
                         self._log_result(
                             f"    [WARNING] Failed to save trajectory arrays: {e}"
