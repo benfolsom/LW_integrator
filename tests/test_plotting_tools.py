@@ -27,6 +27,22 @@ def _write_log(path: Path, lines: list[str]) -> Path:
     return path
 
 
+def _load_project_scripts() -> dict[str, str]:
+    scripts = {}
+    in_scripts = False
+    for line in Path("pyproject.toml").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped == "[project.scripts]":
+            in_scripts = True
+            continue
+        if in_scripts and stripped.startswith("["):
+            break
+        if in_scripts and "=" in stripped:
+            name, target = stripped.split("=", 1)
+            scripts[name.strip()] = target.strip().strip('"')
+    return scripts
+
+
 def test_generate_sweep_heatmap_main_accepts_argv(monkeypatch):
     captured = {}
 
@@ -35,11 +51,28 @@ def test_generate_sweep_heatmap_main_accepts_argv(monkeypatch):
 
     monkeypatch.setattr(sweep_heatmap, "generate_heatmap", fake_generate_heatmap)
 
-    exit_code = sweep_heatmap.main(["results/sweeps/example", "--gain-filter", "all"])
+    exit_code = sweep_heatmap.main(
+        [
+            "results/sweeps/example",
+            "--gain-filter",
+            "all",
+            "--num-contours",
+            "20",
+            "--grey-zero",
+        ]
+    )
 
     assert exit_code == 0
     assert captured["sweep_dir"] == "results/sweeps/example"
     assert captured["gain_filter"] == "all"
+    assert captured["num_contours_low"] == 5
+    assert captured["num_contours_high"] == 15
+
+
+def test_generate_sweep_heatmap_resolves_contour_counts():
+    assert sweep_heatmap.resolve_contour_counts(None, False, 4, 7) == (4, 7)
+    assert sweep_heatmap.resolve_contour_counts(20, False, 4, 7) == (8, 12)
+    assert sweep_heatmap.resolve_contour_counts(20, True, 4, 7) == (5, 15)
 
 
 def test_generate_sweep_heatmap_rejects_removed_legacy_aliases():
@@ -92,6 +125,76 @@ def test_plot_latest_live_forwards_to_live_plotter(tmp_path: Path, monkeypatch):
         "--output",
         "live.png",
     ]
+
+
+def test_plot_latest_live_reports_missing_logs(tmp_path: Path, capsys):
+    logcache = tmp_path / "logcache"
+    logcache.mkdir()
+
+    exit_code = plot_latest_live.main(["--logcache", str(logcache)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "No sweep log files found" in captured.out
+
+
+def test_project_scripts_expose_maintained_plotting_tools():
+    scripts = _load_project_scripts()
+
+    assert scripts["lw-generate-sweep-heatmap"] == "lw_integrator.sweep_heatmap:main"
+    assert scripts["lw-plot-latest-live"] == "lw_integrator.plot_latest_live:main"
+    assert (
+        scripts["lw-plot-from-logcache-live"] == "lw_integrator.logcache_plotter:main"
+    )
+    assert scripts["lw-plot-trajectory"] == "lw_integrator.trajectory_plotter:main"
+
+
+def test_logcache_plotter_static_main_calls_contour_plot(tmp_path: Path, monkeypatch):
+    log_path = tmp_path / "run_sweep.log"
+    log_path.write_text("placeholder", encoding="utf-8")
+    output_path = tmp_path / "plot.png"
+    captured = {}
+
+    def fake_parse(log_file, verbose=True, max_gain_percent=30.0):
+        captured["parse"] = {
+            "log_file": log_file,
+            "verbose": verbose,
+            "max_gain_percent": max_gain_percent,
+        }
+        return (
+            np.array([1.0, 2.0]),
+            np.array([0.1, 0.2]),
+            np.array([3.0, 4.0]),
+            np.array([]),
+            np.array([]),
+            np.array([]),
+            {"total": 2, "completed": 2},
+            {"x_param_name": "aperture"},
+        )
+
+    def fake_contour(*args, **kwargs):
+        captured["contour"] = {"args": args, "kwargs": kwargs}
+
+    monkeypatch.setattr(logcache_plotter, "parse_sweep_log", fake_parse)
+    monkeypatch.setattr(logcache_plotter, "_create_contour_plot", fake_contour)
+
+    exit_code = logcache_plotter.main(
+        [str(log_path), "--output", str(output_path), "--max-gain", "12.5", "--log-x"]
+    )
+
+    assert exit_code == 0
+    assert captured["parse"] == {
+        "log_file": str(log_path),
+        "verbose": True,
+        "max_gain_percent": 12.5,
+    }
+    contour_args = captured["contour"]["args"]
+    np.testing.assert_allclose(contour_args[0], [1.0, 2.0])
+    np.testing.assert_allclose(contour_args[1], [0.1, 0.2])
+    np.testing.assert_allclose(contour_args[2], [3.0, 4.0])
+    assert contour_args[3] == str(output_path)
+    assert captured["contour"]["kwargs"]["log_x"] is True
+    assert captured["contour"]["kwargs"]["log_y"] is False
 
 
 def test_parse_sweep_log_uses_only_most_recent_sweep(tmp_path: Path):

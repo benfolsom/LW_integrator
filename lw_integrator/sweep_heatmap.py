@@ -1278,6 +1278,21 @@ def generate_heatmap(
     )
 
 
+def resolve_contour_counts(
+    num_contours, grey_zero, num_contours_low, num_contours_high
+):
+    """Resolve CLI contour settings into low/high contour counts."""
+    if num_contours is None:
+        return num_contours_low, num_contours_high
+
+    if grey_zero:
+        low = max(1, int(num_contours * 0.25))
+    else:
+        low = max(1, int(num_contours * 0.4))
+
+    return low, max(1, num_contours - low)
+
+
 def main(argv=None):  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Generate publication-quality smooth heatmap from sweep results"
@@ -1457,19 +1472,12 @@ def main(argv=None):  # noqa: C901
 
     args = parser.parse_args(argv)
 
-    # Handle contour arguments
-    if args.num_contours is not None:
-        if args.grey_zero:
-            # Fewer contours below grey_centre (losses), more above (gains)
-            num_contours_low = max(1, int(args.num_contours * 0.25))
-            num_contours_high = max(1, args.num_contours - num_contours_low)
-        else:
-            # Default split: roughly 40/60 between low/high
-            num_contours_low = max(1, int(args.num_contours * 0.4))
-            num_contours_high = max(1, args.num_contours - num_contours_low)
-    else:
-        num_contours_low = args.num_contours_low
-        num_contours_high = args.num_contours_high
+    num_contours_low, num_contours_high = resolve_contour_counts(
+        args.num_contours,
+        args.grey_zero,
+        args.num_contours_low,
+        args.num_contours_high,
+    )
 
     generate_heatmap(
         sweep_dir=args.sweep_dir,
