@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -26,3 +27,25 @@ def test_legacy_reference_tree_keeps_notebooks_only():
     active_python_modules = sorted(path.name for path in legacy_dir.glob("*.py"))
 
     assert active_python_modules == []
+
+
+def test_example_configs_do_not_use_removed_comparison_keys():
+    removed_keys = {
+        "legacy_enabled",
+        "overlay_display",
+        "overlay_save",
+        "difference_display",
+        "difference_save",
+        "metrics_save",
+    }
+    config_paths = sorted((PROJECT_ROOT / "configs").glob("**/*.json"))
+    config_paths.extend(sorted((PROJECT_ROOT / "examples").glob("**/*.json")))
+
+    offenders = {}
+    for path in config_paths:
+        payload = json.loads(path.read_text())
+        stale_keys = sorted(removed_keys.intersection(payload))
+        if stale_keys:
+            offenders[str(path.relative_to(PROJECT_ROOT))] = stale_keys
+
+    assert offenders == {}
