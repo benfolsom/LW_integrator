@@ -48,7 +48,7 @@ Directory-name collisions are resolved by appending ``_1``, ``_2``, etc.
 Heatmap Contour Improvements (March 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``generate_sweep_heatmap.py`` received several visual-quality fixes:
+``lw-generate-sweep-heatmap`` received several visual-quality fixes:
 
 * **Contour line alpha** reduced from 0.35 → 0.18 for less visual clutter.
 * **Edge-aware label clamping** — labels whose centres fall outside the axes

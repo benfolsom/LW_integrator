@@ -90,7 +90,7 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Contour alpha** reduced from 0.35 → 0.18 for less visual clutter
 - **Edge-aware label clamping** — Labels whose centres fall outside the axes data limits are hidden; a one-shot `draw_event` callback shifts overflowing labels inward after the final Matplotlib layout pass
 - **Overlap culling** — A second pass hides labels that genuinely intersect previously-accepted labels (negative pixel padding of −4 px, so merely-touching labels are kept)
-- **Files modified** — `generate_sweep_heatmap.py`
+- **Files modified** — `lw_integrator/sweep_heatmap.py`
 
 ### Driver Energy Sweep Fix (February–March 2026)
 
@@ -163,7 +163,7 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Solution** - Restructured config panel to use grid layout with explicit weight distribution:
   - Row 0 (weight=1): Scrollable canvas container - expands to fill space
   - Row 1-3 (weight=0): Control elements (Run Mode, RUN/CANCEL buttons, Status) - fixed height, always visible
-- **Testing** - Created `local/test_gui_button_visibility.py` to verify buttons remain visible at various window sizes
+- **Testing** - Added a local resize check to verify buttons remain visible at various window sizes
 - **Files modified** - `lw_integrator/gui.py` (\_build_config_panel method, lines ~2608-2910)
 
 ### CLI Logging Fixes (February 25, 2026)
@@ -228,7 +228,7 @@ Step 130: travel = 65mm,  R = 135mm, threshold = 45mm  → forces ON ✓
 Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 ```
 
-**Impact**: Low-velocity simulations (β < 0.5) had severely incorrect gating. Non-relativistic particles would have forces suppressed until far past physical interaction regions, producing wrong results. High-β simulations (β > 0.9) unaffected. See `local/COLD_START_FIX_IMPLEMENTED.md` for detailed analysis and verification.
+**Impact**: Low-velocity simulations (β < 0.5) had severely incorrect gating. Non-relativistic particles would have forces suppressed until far past physical interaction regions, producing wrong results. High-β simulations (β > 0.9) unaffected.
 
 ### Transverse Offset Sweep Bug Fix (February 23, 2026)
 
@@ -295,7 +295,7 @@ Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 - **Opt-in feature** - Reconciliation methods (ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, etc.) still available but require explicit enablement
 - **Legacy behavior restored** - Default configuration matches v0.4.8 stable behavior: `gamma_reconciliation_method = DISABLED`
 
-**Impact**: Eliminates silent energy non-conservation for users upgrading from v0.4.8. Feature requires redesign before safe re-enablement (see `local/GAMMA_RECONCILIATION_FIX.md`).
+**Impact**: Eliminates silent energy non-conservation for users upgrading from v0.4.8. Feature requires redesign before safe re-enablement.
 
 ### Sweep Plotting and Heatmap Tools (February 5-8, 2026)
 
@@ -458,7 +458,7 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Opt-in feature** - Five methods still available (ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, USE_VELOCITY, USE_ENERGY, DISABLED) but require explicit enablement
 - **Momentum rescaling removed** - Spatial momentum no longer rescaled by default, preventing trajectory alterations
 - **Legacy behavior restored** - Default matches v0.4.8 stable version behavior
-- **Detailed documentation** - See `local/GAMMA_RECONCILIATION_FIX.md` for analysis and migration guide
+- **Detailed documentation** - Changelog and configuration notes document the safe migration path
 
 ## January 2025
 
@@ -511,6 +511,6 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Fixed self-consistency convergence** - Iterations now enforce the mass-shell constraint Pt² = P² + (mc)² through projection
 - **Improved numerical precision** - Float64 throughout, relaxed k_factor threshold to 1e-20 for extreme angles
 - **Self-consistency enabled by default** - Essential for energy conservation in high-energy simulations
-- **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`. See `local/CHRONO_INTERPOLATION_SUMMARY.md` for details.
+- **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`.
 
 **Overall Impact**: The LW Integrator has evolved from a research prototype to a production-ready tool with comprehensive GUI, robust numerical methods, and extensive validation. Energy conservation improved by 3+ orders of magnitude. COLD_START gating fixes ensure correct physics across all velocity regimes. Optimization system enables practical parameter searches. GUI provides intuitive access to all features with real-time monitoring. Self-consistency iterations maintain physical correctness in challenging scenarios. The codebase now includes significant numerical methods and features beyond the original publication.

@@ -49,3 +49,16 @@ def test_example_configs_do_not_use_removed_comparison_keys():
             offenders[str(path.relative_to(PROJECT_ROOT))] = stale_keys
 
     assert offenders == {}
+
+
+def test_tracked_docs_do_not_reference_local_worktree_notes():
+    doc_paths = [PROJECT_ROOT / "README.md", PROJECT_ROOT / "CHANGELOG.md"]
+    doc_paths.extend(sorted((PROJECT_ROOT / "docs" / "source").glob("**/*.rst")))
+
+    offenders = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in doc_paths
+        if "local/" in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
