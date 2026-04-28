@@ -38,6 +38,8 @@ from optimization.run_parameter_helpers import (
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.single_integration_helpers import (
     build_integration_metrics,
+    build_final_z_check_log_lines,
+    build_single_integration_setup,
     distance_info_from_trajectory,
     sample_trajectory_arrays,
 )
@@ -1381,93 +1383,6 @@ class OptimizationRunMixin:
                 f"    smoothness_reject_on_violation: {self.config.smoothness_reject_on_violation}"
             )
 
-        # Use provided rider values or fall back to config defaults
-        rider_m_particle = (
-            rider_m_particle if rider_m_particle is not None else self.config.m_particle
-        )
-        rider_charge_sign = (
-            rider_charge_sign
-            if rider_charge_sign is not None
-            else self.config.charge_sign
-        )
-        rider_pcount = (
-            rider_pcount if rider_pcount is not None else int(self.config.pcount)
-        )
-        rider_transv_mom = (
-            rider_transv_mom if rider_transv_mom is not None else self.config.transv_mom
-        )
-        rider_transv_dist = (
-            rider_transv_dist
-            if rider_transv_dist is not None
-            else self.config.transv_dist
-        )
-        rider_stripped_ions = (
-            rider_stripped_ions
-            if rider_stripped_ions is not None
-            else self.config.stripped_ions
-        )
-        wall_z = wall_z if wall_z is not None else self.config.wall_z
-        macroparticle_charge_multiplier = (
-            macroparticle_charge_multiplier
-            if macroparticle_charge_multiplier is not None
-            else self.config.macroparticle_charge_multiplier
-        )
-        macroparticle_sigma_multiplier = (
-            macroparticle_sigma_multiplier
-            if macroparticle_sigma_multiplier is not None
-            else self.config.macroparticle_sigma_multiplier
-        )
-
-        # Build rider params
-        # transv_offset is the radial offset from axis (in mm)
-        # This is now properly used as an offset, not as spread
-        rider_params = {
-            "starting_distance": start_z,
-            "transv_mom": rider_transv_mom,
-            "transv_dist": rider_transv_dist,  # Use parameter, not config
-            "transv_offset_x": transv_offset,  # Radial offset as x-offset
-            "transv_offset_y": 0.0,  # Keep on x-axis (radial offset in x-direction)
-            "m_particle": rider_m_particle,
-            "charge_sign": rider_charge_sign,
-            "pcount": rider_pcount,
-            "stripped_ions": rider_stripped_ions,
-            "starting_Pz": 0.0,  # Will be calculated from energy
-        }
-
-        # Calculate initial Pz from energy
-        # E = gamma * m * c^2, where m*c^2 in MeV
-        AMU_TO_MEV = 931.494
-        rest_energy_mev = rider_m_particle * AMU_TO_MEV
-
-        # For BUNCH_TO_BUNCH, energy is kinetic energy; for others, it's total energy
-        if is_bunch_to_bunch(self.config.simulation_type):
-            # Kinetic energy: γ = (KE / E_rest) + 1
-            gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-        else:
-            # Total energy: γ = E_total / E_rest
-            gamma = (energy_gev * 1e3) / rest_energy_mev
-
-        # Legacy init_bunch expects starting_Pz as specific momentum (momentum/mass)
-        # It calculates: Pz = starting_Pz * mass, then γ = sqrt((Pz/(mc))² + 1)
-        # Working backwards: γ² = (Pz/(mc))² + 1 = (starting_Pz/c)² + 1
-        # Therefore: starting_Pz = c·sqrt(γ² - 1)
-        rider_params["starting_Pz"] = C_MMNS * np.sqrt(gamma * gamma - 1.0)
-
-        core_params = {
-            "time_step": timestep,
-            "wall_z": wall_z,
-            "aperture_radius": aperture,
-            "mean": 1.0e5,  # Large value (not used for CONDUCTING_WALL)
-            "cav_spacing": 1.0e5,
-            "z_cutoff": (
-                self.config.target_distance_mm
-                if self.config.z_cutoff_mode == "relative"
-                else 0.0
-            ),
-            "z_cutoff_mode": self.config.z_cutoff_mode,
-            "startup_mode": self.config.startup_mode,
-        }
-
         # Create a temporary subdirectory for this run's outputs (will be cleaned up)
         from datetime import datetime
 
@@ -1481,58 +1396,33 @@ class OptimizationRunMixin:
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use seed override if provided (for retries), otherwise use config seed + run_num
-        actual_seed = (
-            seed_override if seed_override is not None else (self.config.seed + run_num)
-        )
-
-        options = SimulationOptions(
+        setup = build_single_integration_setup(
+            self.config,
+            aperture=aperture,
+            energy_gev=energy_gev,
+            start_z=start_z,
+            transv_offset=transv_offset,
+            timestep=timestep,
             steps=steps,
-            seed=actual_seed,  # Unique seed per run for varied particle distributions
-            simulation_type=self.config.simulation_type,
-            rider_params=rider_params,
-            driver_params=driver_params,  # Use provided driver params (None for CONDUCTING_WALL)
-            core_params=core_params,
-            trajectory_save=False,  # Don't save individual trajectory files to disk
-            trajectory_interval=self.config.trajectory_stride,
-            energy_display=False,  # Don't generate or display plots during sweep
-            energy_save=False,
-            transverse_display=False,
-            transverse_save=True,  # Always return trajectory data for metrics calculation
-            beta_display=False,  # Don't generate beta plots
-            beta_save=False,
-            momentum_display=False,  # Don't generate momentum plots
-            momentum_save=False,
-            gamma_display=False,  # Don't generate gamma plots
-            gamma_save=False,
-            zposition_display=False,  # Don't generate z-position plots
-            zposition_save=False,
-            macroparticle_enabled=self.config.macroparticle_enabled,
+            run_output_dir=run_output_dir,
+            run_num=run_num,
+            driver_params=driver_params,
+            rider_m_particle=rider_m_particle,
+            rider_charge_sign=rider_charge_sign,
+            rider_pcount=rider_pcount,
+            rider_transv_mom=rider_transv_mom,
+            rider_transv_dist=rider_transv_dist,
+            rider_stripped_ions=rider_stripped_ions,
             macroparticle_charge_multiplier=macroparticle_charge_multiplier,
             macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-            macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
-            image_subcharge_count=self.config.image_subcharge_count,
-            use_image_weighting=self.config.use_image_weighting,
-            output_dir=run_output_dir,
-            # Use stability options from sweep config
-            self_consistency_enabled=self.config.self_consistency_enabled,
-            self_consistency_tolerance=self.config.self_consistency_tolerance,
-            self_consistency_max_iterations=self.config.self_consistency_max_iterations,
-            self_consistency_verbosity=self.config.self_consistency_verbosity,
-            energy_monitor_enabled=False,  # Removed - functionality in adaptive timestep
-            energy_monitor_threshold=2.0,
-            energy_monitor_check_interval=10,
-            energy_monitor_halt_on_jump=self.config.energy_monitor_halt_on_jump,
-            energy_monitor_debug=False,  # Removed
-            adaptive_timestep_enabled=self.config.adaptive_timestep_enabled,
-            adaptive_timestep_threshold=self.config.adaptive_timestep_threshold,
-            adaptive_timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
-            adaptive_timestep_min_factor=self.config.adaptive_timestep_min_factor,
-            adaptive_timestep_cooldown_steps=self.config.adaptive_timestep_cooldown_steps,
-            adaptive_timestep_probe_threshold=self.config.adaptive_timestep_probe_threshold,
-            adaptive_timestep_max_probe_steps=self.config.adaptive_timestep_max_probe_steps,
-            adaptive_timestep_debug=self.config.adaptive_timestep_debug,
+            wall_z=wall_z,
+            seed_override=seed_override,
+            simulation_options_cls=SimulationOptions,
         )
+        options = setup.options
+        rider_m_particle = setup.rider_m_particle
+        wall_z = setup.wall_z
+        macroparticle_charge_multiplier = setup.macroparticle_charge_multiplier
 
         # Create progress callback to track integration
         def progress_callback(current: int, total: int, run_id=run_num):
@@ -1640,63 +1530,16 @@ class OptimizationRunMixin:
                 )
 
             # Sanity check: Verify final z position doesn't exceed expected distance
-            if (
-                result.rider_trajectory is not None
-                and self.config.timestep_strategy == "auto_distance"
-            ):
-                try:
-                    traj = result.rider_trajectory
-                    z_array = np.asarray(traj.get("z", []))
-                    if len(z_array) > 0:
-                        final_z = float(z_array[-1])
-
-                        # Calculate expected distance based on simulation type
-                        if is_bunch_to_bunch(self.config.simulation_type):
-                            # For BUNCH_TO_BUNCH: target is driver_start + target_distance
-                            if driver_params is not None:
-                                driver_start_z = driver_params.get(
-                                    "starting_distance", 1000.0
-                                )
-                            else:
-                                driver_start_z = 1000.0
-                            expected_max_z = (
-                                abs(driver_start_z) + self.config.target_distance_mm
-                            )
-                        else:
-                            # For CONDUCTING_WALL/SWITCHING_WALL: target is wall + target_distance
-                            expected_max_z = wall_z + self.config.target_distance_mm
-
-                        if final_z > expected_max_z:
-                            excess = final_z - expected_max_z
-                            self._log_result(
-                                f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!"
-                            )
-                            self._log_result(f"    Final z: {final_z:.2f} mm")
-                            if (
-                                is_bunch_to_bunch(self.config.simulation_type)
-                            ):
-                                self._log_result(
-                                    f"    Expected max z: {expected_max_z:.2f} mm (driver_start + target={self.config.target_distance_mm:.2f})"
-                                )
-                            else:
-                                self._log_result(
-                                    f"    Expected max z: {expected_max_z:.2f} mm (wall_z={wall_z:.2f} + target={self.config.target_distance_mm:.2f})"
-                                )
-                            self._log_result(
-                                f"    Exceeded by: {excess:.2f} mm ({excess / expected_max_z * 100:.1f}%)"
-                            )
-                        else:
-                            under = expected_max_z - final_z
-                            self._log_result(
-                                f"  [DEBUG] Run {run_num}: Final z check OK"
-                            )
-                            self._log_result(
-                                f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)"
-                            )
-                except Exception as e:
-                    self._log_result(
-                        f"  [WARNING] Run {run_num}: Failed to check final z position: {e}"
-                    )
+            if self.config.timestep_strategy == "auto_distance":
+                for line in build_final_z_check_log_lines(
+                    trajectory=result.rider_trajectory,
+                    simulation_type=self.config.simulation_type,
+                    driver_params=driver_params,
+                    target_distance_mm=self.config.target_distance_mm,
+                    wall_z=wall_z,
+                    run_num=run_num,
+                ):
+                    self._log_result(line)
 
             # No figures should be generated during sweeps (all display/save flags set to False)
             # If any figures were created (shouldn't happen), close them as a safety measure

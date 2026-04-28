@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 import numpy as np
 
+from core.constants import C_MMNS
+from lw_integrator.testbed_runner import SimulationOptions
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import AMU_TO_MEV
+
+
+@dataclass(frozen=True)
+class SingleIntegrationSetup:
+    """Resolved options and parameters for one sweep/optimization integration."""
+
+    options: SimulationOptions
+    rider_m_particle: float
+    rider_charge_sign: float
+    rider_pcount: int
+    rider_transv_mom: float
+    rider_transv_dist: float
+    rider_stripped_ions: float
+    wall_z: float
+    macroparticle_charge_multiplier: float
+    macroparticle_sigma_multiplier: float
 
 
 @dataclass(frozen=True)
@@ -16,6 +36,160 @@ class IntegrationMetricsOutcome:
 
     metrics: dict[str, Any]
     log_lines: list[str]
+
+
+def build_single_integration_setup(
+    config: Any,
+    *,
+    aperture: float,
+    energy_gev: float,
+    start_z: float,
+    transv_offset: float,
+    timestep: float,
+    steps: int,
+    run_output_dir: Path,
+    run_num: int,
+    driver_params: dict[str, Any] | None,
+    rider_m_particle: float | None = None,
+    rider_charge_sign: float | None = None,
+    rider_pcount: int | None = None,
+    rider_transv_mom: float | None = None,
+    rider_transv_dist: float | None = None,
+    rider_stripped_ions: float | None = None,
+    macroparticle_charge_multiplier: float | None = None,
+    macroparticle_sigma_multiplier: float | None = None,
+    wall_z: float | None = None,
+    seed_override: int | None = None,
+    simulation_options_cls: type = SimulationOptions,
+) -> SingleIntegrationSetup:
+    """Resolve integration parameters and build the testbed options object."""
+    rider_m_particle = (
+        rider_m_particle if rider_m_particle is not None else config.m_particle
+    )
+    rider_charge_sign = (
+        rider_charge_sign if rider_charge_sign is not None else config.charge_sign
+    )
+    rider_pcount = rider_pcount if rider_pcount is not None else int(config.pcount)
+    rider_transv_mom = (
+        rider_transv_mom if rider_transv_mom is not None else config.transv_mom
+    )
+    rider_transv_dist = (
+        rider_transv_dist if rider_transv_dist is not None else config.transv_dist
+    )
+    rider_stripped_ions = (
+        rider_stripped_ions if rider_stripped_ions is not None else config.stripped_ions
+    )
+    wall_z = wall_z if wall_z is not None else config.wall_z
+    macroparticle_charge_multiplier = (
+        macroparticle_charge_multiplier
+        if macroparticle_charge_multiplier is not None
+        else config.macroparticle_charge_multiplier
+    )
+    macroparticle_sigma_multiplier = (
+        macroparticle_sigma_multiplier
+        if macroparticle_sigma_multiplier is not None
+        else config.macroparticle_sigma_multiplier
+    )
+
+    rider_params = {
+        "starting_distance": start_z,
+        "transv_mom": rider_transv_mom,
+        "transv_dist": rider_transv_dist,
+        "transv_offset_x": transv_offset,
+        "transv_offset_y": 0.0,
+        "m_particle": rider_m_particle,
+        "charge_sign": rider_charge_sign,
+        "pcount": rider_pcount,
+        "stripped_ions": rider_stripped_ions,
+        "starting_Pz": calculate_rider_starting_pz(
+            energy_gev, rider_m_particle, config.simulation_type
+        ),
+    }
+    core_params = {
+        "time_step": timestep,
+        "wall_z": wall_z,
+        "aperture_radius": aperture,
+        "mean": 1.0e5,
+        "cav_spacing": 1.0e5,
+        "z_cutoff": (
+            config.target_distance_mm if config.z_cutoff_mode == "relative" else 0.0
+        ),
+        "z_cutoff_mode": config.z_cutoff_mode,
+        "startup_mode": config.startup_mode,
+    }
+
+    actual_seed = seed_override if seed_override is not None else config.seed + run_num
+    options = simulation_options_cls(
+        steps=steps,
+        seed=actual_seed,
+        simulation_type=config.simulation_type,
+        rider_params=rider_params,
+        driver_params=driver_params,
+        core_params=core_params,
+        trajectory_save=False,
+        trajectory_interval=config.trajectory_stride,
+        energy_display=False,
+        energy_save=False,
+        transverse_display=False,
+        transverse_save=True,
+        beta_display=False,
+        beta_save=False,
+        momentum_display=False,
+        momentum_save=False,
+        gamma_display=False,
+        gamma_save=False,
+        zposition_display=False,
+        zposition_save=False,
+        macroparticle_enabled=config.macroparticle_enabled,
+        macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+        macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+        macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,
+        image_subcharge_count=config.image_subcharge_count,
+        use_image_weighting=config.use_image_weighting,
+        output_dir=run_output_dir,
+        self_consistency_enabled=config.self_consistency_enabled,
+        self_consistency_tolerance=config.self_consistency_tolerance,
+        self_consistency_max_iterations=config.self_consistency_max_iterations,
+        self_consistency_verbosity=config.self_consistency_verbosity,
+        energy_monitor_enabled=False,
+        energy_monitor_threshold=2.0,
+        energy_monitor_check_interval=10,
+        energy_monitor_halt_on_jump=config.energy_monitor_halt_on_jump,
+        energy_monitor_debug=False,
+        adaptive_timestep_enabled=config.adaptive_timestep_enabled,
+        adaptive_timestep_threshold=config.adaptive_timestep_threshold,
+        adaptive_timestep_reduction_factor=config.adaptive_timestep_reduction_factor,
+        adaptive_timestep_min_factor=config.adaptive_timestep_min_factor,
+        adaptive_timestep_cooldown_steps=config.adaptive_timestep_cooldown_steps,
+        adaptive_timestep_probe_threshold=config.adaptive_timestep_probe_threshold,
+        adaptive_timestep_max_probe_steps=config.adaptive_timestep_max_probe_steps,
+        adaptive_timestep_debug=config.adaptive_timestep_debug,
+    )
+
+    return SingleIntegrationSetup(
+        options=options,
+        rider_m_particle=rider_m_particle,
+        rider_charge_sign=rider_charge_sign,
+        rider_pcount=rider_pcount,
+        rider_transv_mom=rider_transv_mom,
+        rider_transv_dist=rider_transv_dist,
+        rider_stripped_ions=rider_stripped_ions,
+        wall_z=wall_z,
+        macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+        macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+    )
+
+
+def calculate_rider_starting_pz(
+    energy_gev: float, rider_m_particle: float, simulation_type: Any
+) -> float:
+    """Convert rider energy to the specific starting Pz expected by init_bunch."""
+    rest_energy_mev = rider_m_particle * AMU_TO_MEV
+    if is_bunch_to_bunch(simulation_type):
+        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+    else:
+        gamma = (energy_gev * 1e3) / rest_energy_mev
+    return C_MMNS * np.sqrt(gamma * gamma - 1.0)
 
 
 def build_integration_metrics(
@@ -101,6 +275,64 @@ def distance_info_from_trajectory(
         "z_end": float(z_array[-1]),
         "num_steps": len(z_array),
     }
+
+
+def build_final_z_check_log_lines(
+    *,
+    trajectory: Mapping[str, Any] | None,
+    simulation_type: Any,
+    driver_params: Mapping[str, Any] | None,
+    target_distance_mm: float,
+    wall_z: float,
+    run_num: int,
+) -> list[str]:
+    """Return final-z diagnostic log lines for auto-distance runs."""
+    if trajectory is None:
+        return []
+
+    try:
+        z_array = np.asarray(trajectory.get("z", []))
+        if len(z_array) == 0:
+            return []
+
+        final_z = float(z_array[-1])
+        if is_bunch_to_bunch(simulation_type):
+            driver_start_z = (
+                driver_params.get("starting_distance", 1000.0)
+                if driver_params is not None
+                else 1000.0
+            )
+            expected_max_z = abs(driver_start_z) + target_distance_mm
+            expected_line = (
+                f"    Expected max z: {expected_max_z:.2f} mm "
+                f"(driver_start + target={target_distance_mm:.2f})"
+            )
+        else:
+            expected_max_z = wall_z + target_distance_mm
+            expected_line = (
+                f"    Expected max z: {expected_max_z:.2f} mm "
+                f"(wall_z={wall_z:.2f} + target={target_distance_mm:.2f})"
+            )
+
+        if final_z > expected_max_z:
+            excess = final_z - expected_max_z
+            return [
+                f"  [WARNING] Run {run_num}: Final z position EXCEEDED expected distance!",
+                f"    Final z: {final_z:.2f} mm",
+                expected_line,
+                (
+                    f"    Exceeded by: {excess:.2f} mm "
+                    f"({excess / expected_max_z * 100:.1f}%)"
+                ),
+            ]
+
+        under = expected_max_z - final_z
+        return [
+            f"  [DEBUG] Run {run_num}: Final z check OK",
+            f"    Final z: {final_z:.2f} mm (under by {under:.2f} mm)",
+        ]
+    except Exception as exc:
+        return [f"  [WARNING] Run {run_num}: Failed to check final z position: {exc}"]
 
 
 def _add_energy_gain_metrics(
