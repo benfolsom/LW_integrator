@@ -65,6 +65,7 @@ All notable changes and updates to the LW Integrator project are documented in t
 ### Maintained Plotting and Validation Surface Cleanup (April 2026)
 
 - **Plotting surface** — Added focused CLI coverage for `lw-generate-sweep-heatmap`, `lw-plot-latest-live`, `lw-plot-from-logcache-live`, and `lw-plot-trajectory`
+- **Sweep plotting behavior** — Stopped auto-generating sweep heatmaps from the GUI save path; sweep saves now point users to `lw-generate-sweep-heatmap` for explicit post-processing
 - **Legacy isolation** — Removed standalone legacy comparison and legacy plotting Python scripts from active examples and the `legacy/` tree; legacy notebooks remain as historical reference material
 - **Config surface** — Removed stale legacy/overlay/difference comparison keys from tracked example configs while keeping loader tolerance for old user configs
 - **Test discovery** — Fixed pytest configuration to collect from the actual `tests/` tree instead of stale `lw_integrator/tests`

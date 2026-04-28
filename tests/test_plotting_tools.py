@@ -318,15 +318,15 @@ def test_parse_sweep_log_separates_positive_and_non_positive_gains(tmp_path: Pat
     assert stats["negative_gains"] == 3
 
 
-def test_generate_summary_plots_calls_heatmap_tool(tmp_path: Path, monkeypatch):
+def test_generate_summary_plots_logs_postprocessing_heatmap_command(
+    tmp_path: Path, monkeypatch
+):
     harness = _ResultsHarness()
-    captured = {}
 
-    def fake_main(argv):
-        captured["argv"] = argv
-        return 0
+    def fail_if_called(_argv):
+        raise AssertionError("sweep heatmap should be a post-processing command")
 
-    monkeypatch.setattr(sweep_heatmap, "main", fake_main)
+    monkeypatch.setattr(sweep_heatmap, "main", fail_if_called)
 
     results = [
         {
@@ -341,14 +341,10 @@ def test_generate_summary_plots_calls_heatmap_tool(tmp_path: Path, monkeypatch):
 
     harness._generate_summary_plots(results, tmp_path)
 
-    assert captured["argv"] == [
-        str(tmp_path),
-        "--gain-filter",
-        "all",
-        "--output",
-        "sweep_heatmap.png",
-    ]
-    assert any("Heatmap saved to" in message for message in harness.logs)
+    assert any(
+        f"lw-generate-sweep-heatmap {tmp_path} --gain-filter all" in message
+        for message in harness.logs
+    )
 
 
 def test_logcache_plotter_hides_internal_plot_helpers():

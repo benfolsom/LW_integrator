@@ -493,36 +493,18 @@ class OptimizationResultsMixin:
                 if len(unique_values) > 1:
                     num_swept_params += 1
 
-            # Only generate heatmap if exactly 2 parameters were swept
+            # Sweep heatmaps are intentionally post-processing tools now.  The
+            # automatic path was historically fragile and could obscure the
+            # saved sweep result with a plotting failure.
             if num_swept_params == 2:
-                try:
-                    from lw_integrator.sweep_heatmap import (
-                        main as generate_heatmap_main,
-                    )
-
-                    exit_code = generate_heatmap_main(
-                        [
-                            str(output_dir),
-                            "--gain-filter",
-                            "all",
-                            "--output",
-                            "sweep_heatmap.png",
-                        ]
-                    )
-
-                    if exit_code == 0:
-                        self._log_result(
-                            f"[OK] Heatmap saved to: {output_dir / 'sweep_heatmap.png'}"
-                        )
-                    else:
-                        self._log_result(
-                            "[WARNING] Heatmap generation failed with a non-zero exit code"
-                        )
-                except Exception as e:
-                    self._log_result(f"[WARNING] Failed to generate heatmap: {e}")
+                self._log_result(
+                    "[INFO] Sweep heatmap not generated automatically; run "
+                    f"`lw-generate-sweep-heatmap {output_dir} --gain-filter all` "
+                    "for post-processing."
+                )
             else:
                 self._log_result(
-                    f"[INFO] Skipping heatmap generation ({num_swept_params} parameters swept; heatmap only generated for 2-parameter sweeps)"
+                    f"[INFO] Skipping heatmap guidance ({num_swept_params} parameters swept; heatmaps require 2 swept parameters)"
                 )
 
             results_with_traj = [
