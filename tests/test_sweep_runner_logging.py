@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from core.types import SimulationType
 from lw_integrator.sweep_runner import (
     _build_cli_progress_log_line,
@@ -14,6 +16,7 @@ from lw_integrator.sweep_runner import (
     _format_aperture_for_start_log,
     _resolve_cli_driver_setup,
     _resolve_cli_rider_overrides,
+    _resolve_cli_timestep_setup,
     _should_emit_verbose_cli_log,
 )
 
@@ -41,7 +44,15 @@ def _config(**overrides):
         "smoothness_enabled": True,
         "smoothness_window_size": 20,
         "smoothness_reject_on_violation": True,
+        "auto_steps": False,
+        "timestep_strategy": "fixed",
+        "wall_z": 200.0,
+        "auto_steps_distance_past_wall": 25.0,
+        "auto_steps_target": 100,
+        "timestep": 1e-7,
+        "steps": 50,
     }
+    defaults["calculate_timestep_for_energy"] = lambda **_kwargs: 1e-7
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
 
@@ -91,6 +102,84 @@ def test_resolve_cli_driver_setup_builds_b2b_driver_params_and_log_line():
     assert "energy=8.0000 GeV" in setup.log_line
     assert "(+z)" in setup.log_line
     assert "pcount=7" in setup.log_line
+
+
+def test_resolve_cli_timestep_setup_fixed_path_restores_steps():
+    config = _config(steps=50)
+    captured = {}
+
+    def calculate_timestep_for_energy(**kwargs):
+        captured["steps_seen"] = config.steps
+        captured.update(kwargs)
+        return 2e-7
+
+    config.calculate_timestep_for_energy = calculate_timestep_for_energy
+
+    setup = _resolve_cli_timestep_setup(
+        config,
+        aperture=0.01,
+        energy_gev=5.0,
+        start_z=10.0,
+        transv_offset_frac=0.25,
+        rider_m_particle=1.0,
+        sweep_overrides={},
+    )
+
+    assert setup.transv_offset == pytest.approx(0.0025)
+    assert setup.steps == 50
+    assert setup.timestep == pytest.approx(2e-7)
+    assert setup.gamma == pytest.approx(5000.0 / 931.494)
+    assert setup.beta > 0.0
+    assert config.steps == 50
+    assert captured["steps_seen"] == 50
+    assert captured["driver_start_z"] == 1000.0
+
+
+def test_resolve_cli_timestep_setup_uses_b2b_driver_start_and_gamma_offset():
+    config = _config(simulation_type="BUNCH_TO_BUNCH", steps=30)
+    captured = {}
+
+    def calculate_timestep_for_energy(**kwargs):
+        captured.update(kwargs)
+        return 3e-7
+
+    config.calculate_timestep_for_energy = calculate_timestep_for_energy
+
+    setup = _resolve_cli_timestep_setup(
+        config,
+        aperture=0.01,
+        energy_gev=5.0,
+        start_z=10.0,
+        transv_offset_frac=0.25,
+        rider_m_particle=1.0,
+        sweep_overrides={"driver_starting_distance": 700.0},
+    )
+
+    assert captured["driver_start_z"] == 700.0
+    assert setup.gamma == pytest.approx(5000.0 / 931.494 + 1.0)
+    assert config.steps == 30
+
+
+def test_resolve_cli_timestep_setup_restores_steps_after_error():
+    config = _config(steps=50)
+
+    def calculate_timestep_for_energy(**_kwargs):
+        raise RuntimeError("bad timestep")
+
+    config.calculate_timestep_for_energy = calculate_timestep_for_energy
+
+    with pytest.raises(RuntimeError, match="bad timestep"):
+        _resolve_cli_timestep_setup(
+            config,
+            aperture=0.01,
+            energy_gev=5.0,
+            start_z=10.0,
+            transv_offset_frac=0.25,
+            rider_m_particle=1.0,
+            sweep_overrides={},
+        )
+
+    assert config.steps == 50
 
 
 def test_format_aperture_for_start_log_matches_existing_precision_branches():

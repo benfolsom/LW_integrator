@@ -118,6 +118,15 @@ class _CliDriverSetup:
     log_line: str | None
 
 
+@dataclass(frozen=True)
+class _CliTimestepSetup:
+    transv_offset: float
+    steps: int
+    timestep: float
+    gamma: float
+    beta: float
+
+
 def _resolve_cli_rider_overrides(
     config: Any,
     sweep_overrides: Mapping[str, Any],
@@ -190,6 +199,85 @@ def _resolve_cli_driver_setup(
             f"m={d_m:.4e} amu, Pz={params['starting_Pz']:.4e} ({dir_label}), "
             f"stripped={d_stripped:.2e}, pcount={d_pcount}"
         ),
+    )
+
+
+def _resolve_cli_timestep_setup(
+    config: Any,
+    *,
+    aperture: float,
+    energy_gev: float,
+    start_z: float,
+    transv_offset_frac: float,
+    rider_m_particle: float,
+    sweep_overrides: Mapping[str, Any],
+) -> _CliTimestepSetup:
+    transv_offset = transv_offset_frac * aperture
+
+    if config.auto_steps:
+        if config.timestep_strategy == "auto_distance":
+            preliminary_timestep = calculate_auto_timestep(
+                start_z=start_z,
+                wall_z=config.wall_z,
+                distance_past_wall=config.auto_steps_distance_past_wall,
+                particle_energy_gev=energy_gev,
+                particle_mass_amu=rider_m_particle,
+                target_steps=config.auto_steps_target,
+            )
+            steps = calculate_auto_steps(
+                start_z=start_z,
+                wall_z=config.wall_z,
+                distance_past_wall=config.auto_steps_distance_past_wall,
+                timestep=preliminary_timestep,
+                particle_energy_gev=energy_gev,
+                particle_mass_amu=rider_m_particle,
+            )
+        else:
+            steps = calculate_auto_steps(
+                start_z=start_z,
+                wall_z=config.wall_z,
+                distance_past_wall=config.auto_steps_distance_past_wall,
+                timestep=config.timestep,
+                particle_energy_gev=energy_gev,
+                particle_mass_amu=rider_m_particle,
+            )
+    else:
+        steps = config.steps
+
+    driver_start_z = 1000.0
+    if is_bunch_to_bunch(config.simulation_type):
+        driver_start_z = sweep_overrides.get(
+            "driver_starting_distance", config.driver_starting_distance
+        )
+
+    original_steps = config.steps
+    try:
+        config.steps = steps
+        timestep = config.calculate_timestep_for_energy(
+            energy_gev=energy_gev,
+            start_z=start_z,
+            wall_z=config.wall_z,
+            driver_start_z=driver_start_z,
+            m_particle_amu=rider_m_particle,
+        )
+    finally:
+        config.steps = original_steps
+
+    rest_energy_mev = rider_m_particle * AMU_TO_MEV
+    if is_bunch_to_bunch(config.simulation_type):
+        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
+    else:
+        gamma = (energy_gev * 1e3) / rest_energy_mev
+    if gamma < 1.0:
+        gamma = 1.0
+    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
+
+    return _CliTimestepSetup(
+        transv_offset=transv_offset,
+        steps=steps,
+        timestep=timestep,
+        gamma=gamma,
+        beta=beta,
     )
 
 
@@ -408,77 +496,26 @@ class SweepRunner:
 
         rider = _resolve_cli_rider_overrides(self.config, sweep_overrides)
 
-        # ── Compute timestep and steps (same logic as before) ──
-        transv_offset = transv_offset_frac * aperture
-
-        # Determine steps
-        if self.config.auto_steps:
-            if self.config.timestep_strategy == "auto_distance":
-                preliminary_timestep = calculate_auto_timestep(
-                    start_z=start_z,
-                    wall_z=self.config.wall_z,
-                    distance_past_wall=self.config.auto_steps_distance_past_wall,
-                    particle_energy_gev=energy_gev,
-                    particle_mass_amu=rider.m_particle,
-                    target_steps=self.config.auto_steps_target,
-                )
-                steps = calculate_auto_steps(
-                    start_z=start_z,
-                    wall_z=self.config.wall_z,
-                    distance_past_wall=self.config.auto_steps_distance_past_wall,
-                    timestep=preliminary_timestep,
-                    particle_energy_gev=energy_gev,
-                    particle_mass_amu=rider.m_particle,
-                )
-            else:
-                steps = calculate_auto_steps(
-                    start_z=start_z,
-                    wall_z=self.config.wall_z,
-                    distance_past_wall=self.config.auto_steps_distance_past_wall,
-                    timestep=self.config.timestep,
-                    particle_energy_gev=energy_gev,
-                    particle_mass_amu=rider.m_particle,
-                )
-        else:
-            steps = self.config.steps
-
-        # Calculate timestep
-        driver_start_z = 1000.0  # default for non-BUNCH_TO_BUNCH
-        if is_bunch_to_bunch(self.config.simulation_type):
-            driver_start_z = sweep_overrides.get(
-                "driver_starting_distance", self.config.driver_starting_distance
-            )
-
-        original_steps = self.config.steps
-        self.config.steps = steps
-        timestep = self.config.calculate_timestep_for_energy(
+        timestep_setup = _resolve_cli_timestep_setup(
+            self.config,
+            aperture=aperture,
             energy_gev=energy_gev,
             start_z=start_z,
-            wall_z=self.config.wall_z,
-            driver_start_z=driver_start_z,
-            m_particle_amu=rider.m_particle,
+            transv_offset_frac=transv_offset_frac,
+            rider_m_particle=rider.m_particle,
+            sweep_overrides=sweep_overrides,
         )
-        self.config.steps = original_steps
 
         # ── Log timestep calculation ──
-        rest_energy_mev = rider.m_particle * AMU_TO_MEV
-        if is_bunch_to_bunch(self.config.simulation_type):
-            gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-        else:
-            gamma = (energy_gev * 1e3) / rest_energy_mev
-        if gamma < 1.0:
-            gamma = 1.0
-        beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
-
         for line in _build_cli_timestep_log_lines(
             run_num=run_num,
             timestep_strategy=self.config.timestep_strategy,
             energy_gev=energy_gev,
             rider_m_particle=rider.m_particle,
-            gamma=gamma,
-            beta=beta,
-            timestep=timestep,
-            steps=steps,
+            gamma=timestep_setup.gamma,
+            beta=timestep_setup.beta,
+            timestep=timestep_setup.timestep,
+            steps=timestep_setup.steps,
             start_z=start_z,
             wall_z=self.config.wall_z,
             auto_steps_distance_past_wall=(
@@ -495,8 +532,8 @@ class SweepRunner:
             aperture=aperture,
             energy_gev=energy_gev,
             start_z=start_z,
-            timestep=timestep,
-            steps=steps,
+            timestep=timestep_setup.timestep,
+            steps=timestep_setup.steps,
         ):
             print(line, flush=True)
 
@@ -516,9 +553,9 @@ class SweepRunner:
             aperture=aperture,
             energy_gev=energy_gev,
             start_z=start_z,
-            transv_offset=transv_offset,
-            timestep=timestep,
-            steps=steps,
+            transv_offset=timestep_setup.transv_offset,
+            timestep=timestep_setup.timestep,
+            steps=timestep_setup.steps,
             run_output_dir=run_output_dir,
             run_num=run_num,
             driver_params=driver_params,
@@ -594,7 +631,7 @@ class SweepRunner:
                     "aperture": aperture,
                     "energy_gev": energy_gev,
                     "start_z": start_z,
-                    "transv_offset": transv_offset,
+                    "transv_offset": timestep_setup.transv_offset,
                 },
             }
         finally:
@@ -624,9 +661,9 @@ class SweepRunner:
                     "aperture": aperture,
                     "energy_gev": energy_gev,
                     "start_z": start_z,
-                    "transv_offset": transv_offset,
-                    "timestep": timestep,
-                    "steps": steps,
+                    "transv_offset": timestep_setup.transv_offset,
+                    "timestep": timestep_setup.timestep,
+                    "steps": timestep_setup.steps,
                 },
             }
 
@@ -693,7 +730,7 @@ class SweepRunner:
                             "aperture": aperture,
                             "energy_gev": energy_gev,
                             "start_z": start_z,
-                            "transv_offset": transv_offset,
+                            "transv_offset": timestep_setup.transv_offset,
                         },
                         "metrics": metrics,
                     }
@@ -724,9 +761,9 @@ class SweepRunner:
                 "aperture": aperture,
                 "energy_gev": energy_gev,
                 "start_z": start_z,
-                "transv_offset": transv_offset,
-                "timestep": timestep,
-                "steps": steps,
+                "transv_offset": timestep_setup.transv_offset,
+                "timestep": timestep_setup.timestep,
+                "steps": timestep_setup.steps,
             },
             "metrics": metrics,
         }
