@@ -249,6 +249,46 @@ class TestOptimizationPluginIntegration:
         assert not hasattr(OptimizationPluginControlMixin, "_compute_soft_penalty")
         assert not hasattr(OptimizationPlugin, "_compute_soft_penalty")
 
+    def test_gather_stability_config_kwargs_prefers_gui_with_config_fallback(self):
+        existing_config = OptimizationConfig(
+            image_subcharge_count=24,
+            use_image_weighting=False,
+            self_consistency_enabled=False,
+            self_consistency_tolerance=2e-4,
+            adaptive_timestep_enabled=False,
+            adaptive_timestep_threshold=0.25,
+            self_consistency_gamma_reconciliation_method="FIXED_WEIGHTED",
+            self_consistency_gamma_reconciliation_fixed_weight=0.7,
+        )
+        harness = SimpleNamespace(
+            gui_controller=SimpleNamespace(
+                image_subcharge_var=_MockVar(16),
+                self_consistency_target_ms_tolerance_var=_MockVar("5e-4"),
+                adaptive_timestep_enabled_var=_MockVar(True),
+            )
+        )
+        harness._get_gui_stability_setting = lambda var_name, default: (
+            OptimizationPluginControlMixin._get_gui_stability_setting(
+                harness, var_name, default
+            )
+        )
+
+        kwargs = OptimizationPluginControlMixin._gather_stability_config_kwargs(
+            harness, existing_config
+        )
+
+        assert kwargs["image_subcharge_count"] == 16
+        assert kwargs["self_consistency_tolerance"] == pytest.approx(5e-4)
+        assert kwargs["adaptive_timestep_enabled"] is True
+        assert kwargs["use_image_weighting"] is False
+        assert kwargs["self_consistency_enabled"] is False
+        assert kwargs["adaptive_timestep_threshold"] == pytest.approx(0.25)
+        assert (
+            kwargs["self_consistency_gamma_reconciliation_method"]
+            == "FIXED_WEIGHTED"
+        )
+        assert kwargs["self_consistency_gamma_reconciliation_fixed_weight"] == 0.7
+
     def test_plugin_inherits_runtime_helpers_from_runtime_mixin(self):
         assert (
             OptimizationPlugin._log_truncated_run

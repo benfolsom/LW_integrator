@@ -91,6 +91,130 @@ class OptimizationPluginControlMixin:
             return value
         return default_value
 
+    def _gather_stability_config_kwargs(
+        self, existing_config: OptimizationConfig | None
+    ) -> dict:
+        """Return stability-related ``OptimizationConfig`` keyword arguments."""
+        config_value = _existing_config_value
+
+        def setting(var_name: str, attr: str, default):
+            return self._get_gui_stability_setting(
+                var_name, config_value(existing_config, attr, default)
+            )
+
+        return {
+            "image_subcharge_count": setting("image_subcharge_var", "image_subcharge_count", 12),
+            "use_image_weighting": setting("image_weighting_var", "use_image_weighting", True),
+            "self_consistency_enabled": setting(
+                "self_consistency_enabled_var", "self_consistency_enabled", True
+            ),
+            "self_consistency_tolerance": setting(
+                "self_consistency_target_ms_tolerance_var",
+                "self_consistency_tolerance",
+                1e-4,
+            ),
+            "self_consistency_max_iterations": setting(
+                "self_consistency_max_iterations_var",
+                "self_consistency_max_iterations",
+                5,
+            ),
+            "self_consistency_verbosity": setting(
+                "self_consistency_verbosity_var", "self_consistency_verbosity", 0
+            ),
+            "self_consistency_chrono_interpolate": setting(
+                "self_consistency_chrono_interpolate_var",
+                "self_consistency_chrono_interpolate",
+                False,
+            ),
+            "self_consistency_chrono_tolerance": setting(
+                "self_consistency_chrono_tolerance_var",
+                "self_consistency_chrono_tolerance",
+                1e-3,
+            ),
+            "self_consistency_chrono_high_precision": setting(
+                "self_consistency_chrono_high_precision_var",
+                "self_consistency_chrono_high_precision",
+                False,
+            ),
+            "self_consistency_chrono_adaptive_tolerance": setting(
+                "self_consistency_chrono_adaptive_tolerance_var",
+                "self_consistency_chrono_adaptive_tolerance",
+                False,
+            ),
+            "energy_monitor_halt_on_jump": setting(
+                "adaptive_timestep_halt_on_jump_var",
+                "energy_monitor_halt_on_jump",
+                False,
+            ),
+            "adaptive_timestep_enabled": setting(
+                "adaptive_timestep_enabled_var", "adaptive_timestep_enabled", True
+            ),
+            "adaptive_timestep_threshold": setting(
+                "adaptive_timestep_threshold_var", "adaptive_timestep_threshold", 0.10
+            ),
+            "adaptive_timestep_reduction_factor": setting(
+                "adaptive_timestep_reduction_factor_var",
+                "adaptive_timestep_reduction_factor",
+                10,
+            ),
+            "adaptive_timestep_min_factor": setting(
+                "adaptive_timestep_min_factor_var", "adaptive_timestep_min_factor", 1e-4
+            ),
+            "adaptive_timestep_cooldown_steps": setting(
+                "adaptive_timestep_cooldown_steps_var",
+                "adaptive_timestep_cooldown_steps",
+                10,
+            ),
+            "adaptive_timestep_probe_threshold": setting(
+                "adaptive_timestep_probe_threshold_var",
+                "adaptive_timestep_probe_threshold",
+                0.01,
+            ),
+            "adaptive_timestep_max_probe_steps": setting(
+                "adaptive_timestep_max_probe_steps_var",
+                "adaptive_timestep_max_probe_steps",
+                3,
+            ),
+            "adaptive_timestep_debug": setting(
+                "adaptive_timestep_debug_var", "adaptive_timestep_debug", False
+            ),
+            "self_consistency_gamma_reconciliation_method": setting(
+                "self_consistency_gamma_reconciliation_method_var",
+                "self_consistency_gamma_reconciliation_method",
+                "DISABLED",
+            ),
+            "self_consistency_gamma_reconciliation_low_beta_threshold": setting(
+                "self_consistency_gamma_reconciliation_low_beta_threshold_var",
+                "self_consistency_gamma_reconciliation_low_beta_threshold",
+                0.9,
+            ),
+            "self_consistency_gamma_reconciliation_high_beta_threshold": setting(
+                "self_consistency_gamma_reconciliation_high_beta_threshold_var",
+                "self_consistency_gamma_reconciliation_high_beta_threshold",
+                0.99,
+            ),
+            "self_consistency_gamma_reconciliation_low_beta_weight": setting(
+                "self_consistency_gamma_reconciliation_low_beta_weight_var",
+                "self_consistency_gamma_reconciliation_low_beta_weight",
+                0.8,
+            ),
+            "self_consistency_gamma_reconciliation_high_beta_weight": setting(
+                "self_consistency_gamma_reconciliation_high_beta_weight_var",
+                "self_consistency_gamma_reconciliation_high_beta_weight",
+                0.2,
+            ),
+            "self_consistency_gamma_reconciliation_mid_beta_weight": setting(
+                "self_consistency_gamma_reconciliation_mid_beta_weight_var",
+                "self_consistency_gamma_reconciliation_mid_beta_weight",
+                0.5,
+            ),
+            "self_consistency_gamma_reconciliation_fixed_weight": setting(
+                "self_consistency_gamma_reconciliation_fixed_weight_var",
+                "self_consistency_gamma_reconciliation_fixed_weight",
+                0.5,
+            ),
+        }
+
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
         existing_config = getattr(self, "config", None)
@@ -245,148 +369,7 @@ class OptimizationPluginControlMixin:
             per_run_timeout=float(self.per_run_timeout_var.get()),
             skip_failed_runs=self.skip_failed_runs_var.get(),
             failed_run_retry_attempts=int(self.failed_run_retry_attempts_var.get()),
-            image_subcharge_count=self._get_gui_stability_setting(
-                "image_subcharge_var",
-                config_value(existing_config, "image_subcharge_count", 12),
-            ),
-            use_image_weighting=self._get_gui_stability_setting(
-                "image_weighting_var",
-                config_value(existing_config, "use_image_weighting", True),
-            ),
-            self_consistency_enabled=self._get_gui_stability_setting(
-                "self_consistency_enabled_var",
-                config_value(existing_config, "self_consistency_enabled", True),
-            ),
-            self_consistency_tolerance=self._get_gui_stability_setting(
-                "self_consistency_target_ms_tolerance_var",
-                config_value(existing_config, "self_consistency_tolerance", 1e-4),
-            ),
-            self_consistency_max_iterations=self._get_gui_stability_setting(
-                "self_consistency_max_iterations_var",
-                config_value(existing_config, "self_consistency_max_iterations", 5),
-            ),
-            self_consistency_verbosity=self._get_gui_stability_setting(
-                "self_consistency_verbosity_var",
-                config_value(existing_config, "self_consistency_verbosity", 0),
-            ),
-            self_consistency_chrono_interpolate=self._get_gui_stability_setting(
-                "self_consistency_chrono_interpolate_var",
-                config_value(
-                    existing_config, "self_consistency_chrono_interpolate", False
-                ),
-            ),
-            self_consistency_chrono_tolerance=self._get_gui_stability_setting(
-                "self_consistency_chrono_tolerance_var",
-                config_value(existing_config, "self_consistency_chrono_tolerance", 1e-3),
-            ),
-            self_consistency_chrono_high_precision=self._get_gui_stability_setting(
-                "self_consistency_chrono_high_precision_var",
-                config_value(
-                    existing_config, "self_consistency_chrono_high_precision", False
-                ),
-            ),
-            self_consistency_chrono_adaptive_tolerance=self._get_gui_stability_setting(
-                "self_consistency_chrono_adaptive_tolerance_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_chrono_adaptive_tolerance",
-                    False,
-                ),
-            ),
-            energy_monitor_halt_on_jump=self._get_gui_stability_setting(
-                "adaptive_timestep_halt_on_jump_var",
-                config_value(existing_config, "energy_monitor_halt_on_jump", False),
-            ),
-            adaptive_timestep_enabled=self._get_gui_stability_setting(
-                "adaptive_timestep_enabled_var",
-                config_value(existing_config, "adaptive_timestep_enabled", True),
-            ),
-            adaptive_timestep_threshold=self._get_gui_stability_setting(
-                "adaptive_timestep_threshold_var",
-                config_value(existing_config, "adaptive_timestep_threshold", 0.10),
-            ),
-            adaptive_timestep_reduction_factor=self._get_gui_stability_setting(
-                "adaptive_timestep_reduction_factor_var",
-                config_value(
-                    existing_config, "adaptive_timestep_reduction_factor", 10
-                ),
-            ),
-            adaptive_timestep_min_factor=self._get_gui_stability_setting(
-                "adaptive_timestep_min_factor_var",
-                config_value(existing_config, "adaptive_timestep_min_factor", 1e-4),
-            ),
-            adaptive_timestep_cooldown_steps=self._get_gui_stability_setting(
-                "adaptive_timestep_cooldown_steps_var",
-                config_value(existing_config, "adaptive_timestep_cooldown_steps", 10),
-            ),
-            adaptive_timestep_probe_threshold=self._get_gui_stability_setting(
-                "adaptive_timestep_probe_threshold_var",
-                config_value(existing_config, "adaptive_timestep_probe_threshold", 0.01),
-            ),
-            adaptive_timestep_max_probe_steps=self._get_gui_stability_setting(
-                "adaptive_timestep_max_probe_steps_var",
-                config_value(existing_config, "adaptive_timestep_max_probe_steps", 3),
-            ),
-            adaptive_timestep_debug=self._get_gui_stability_setting(
-                "adaptive_timestep_debug_var",
-                config_value(existing_config, "adaptive_timestep_debug", False),
-            ),
-            self_consistency_gamma_reconciliation_method=self._get_gui_stability_setting(
-                "self_consistency_gamma_reconciliation_method_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_gamma_reconciliation_method",
-                    "DISABLED",
-                ),
-            ),
-            self_consistency_gamma_reconciliation_low_beta_threshold=self._get_gui_stability_setting(
-                "self_consistency_gamma_reconciliation_low_beta_threshold_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_gamma_reconciliation_low_beta_threshold",
-                    0.9,
-                ),
-            ),
-            self_consistency_gamma_reconciliation_high_beta_threshold=self._get_gui_stability_setting(
-                "self_consistency_gamma_reconciliation_high_beta_threshold_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_gamma_reconciliation_high_beta_threshold",
-                    0.99,
-                ),
-            ),
-            self_consistency_gamma_reconciliation_low_beta_weight=self._get_gui_stability_setting(
-                "self_consistency_gamma_reconciliation_low_beta_weight_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_gamma_reconciliation_low_beta_weight",
-                    0.8,
-                ),
-            ),
-            self_consistency_gamma_reconciliation_high_beta_weight=self._get_gui_stability_setting(
-                "self_consistency_gamma_reconciliation_high_beta_weight_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_gamma_reconciliation_high_beta_weight",
-                    0.2,
-                ),
-            ),
-            self_consistency_gamma_reconciliation_mid_beta_weight=self._get_gui_stability_setting(
-                "self_consistency_gamma_reconciliation_mid_beta_weight_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_gamma_reconciliation_mid_beta_weight",
-                    0.5,
-                ),
-            ),
-            self_consistency_gamma_reconciliation_fixed_weight=self._get_gui_stability_setting(
-                "self_consistency_gamma_reconciliation_fixed_weight_var",
-                config_value(
-                    existing_config,
-                    "self_consistency_gamma_reconciliation_fixed_weight",
-                    0.5,
-                ),
-            ),
+            **self._gather_stability_config_kwargs(existing_config),
             smoothness_trend_threshold=(
                 config_value(existing_config, "smoothness_trend_threshold", 0.30)
             ),
