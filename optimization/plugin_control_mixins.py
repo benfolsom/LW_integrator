@@ -15,8 +15,8 @@ from optimization.plugin_config_helpers import (
     parse_float_list,
     parse_offset_pair,
 )
+from optimization.run_control_helpers import build_extreme_parameter_warning
 from optimization.simulation_type_helpers import is_bunch_to_bunch
-from optimization.sweep_helpers import AMU_TO_MEV
 from optimization.ui_helpers import (
     show_error_dialog as _show_error_dialog,
 )
@@ -748,79 +748,7 @@ class OptimizationPluginControlMixin:
 
     def _check_extreme_parameters(self) -> Optional[str]:
         """Check for extreme parameter combinations that might cause issues."""
-        warnings = []
-
-        aperture_min = self.config.aperture_range[0]
-        energy_max = self.config.energy_range[1]
-
-        m_electron = 0.00054857990907
-        rest_energy_mev = self.config.m_particle * AMU_TO_MEV
-
-        if is_bunch_to_bunch(self.config.simulation_type):
-            gamma_max = (energy_max * 1e3) / rest_energy_mev + 1.0
-        else:
-            gamma_max = (energy_max * 1e3) / rest_energy_mev
-
-        m_proton = 1.007276466621
-
-        if abs(self.config.m_particle - m_electron) < 1e-6:
-            extreme_gamma_threshold = 1_956_000
-            particle_type = "electron"
-            extreme_energy_tev = 1.0
-        elif abs(self.config.m_particle - m_proton) < 1e-3:
-            extreme_gamma_threshold = 21_300
-            particle_type = "proton"
-            extreme_energy_tev = 20.0
-        else:
-            extreme_gamma_threshold = int(21_300 * m_proton / self.config.m_particle)
-            particle_type = "particle"
-            extreme_energy_tev = extreme_gamma_threshold * rest_energy_mev / 1e6
-
-        if aperture_min < 1e-5 and gamma_max > 10000:
-            warnings.append(
-                f"• Very small aperture ({aperture_min:.2e} mm) with high energy ({energy_max:.1f} GeV, γ≈{gamma_max:.0f})\n"
-                f"  This may cause extreme fields, SC convergence issues, and very slow runs."
-            )
-
-        if aperture_min < 1e-6:
-            warnings.append(
-                f"• Aperture < 1 μm detected ({aperture_min:.2e} mm)\n"
-                f"  Sub-micron apertures often cause numerical instabilities."
-            )
-
-        if gamma_max > extreme_gamma_threshold:
-            warnings.append(
-                f"• Very high energy detected ({energy_max:.1f} GeV, γ≈{gamma_max:.0f})\n"
-                f"  Exceeds recommended threshold for {particle_type}s (~{extreme_energy_tev:.1f} TeV)\n"
-                f"  Ultra-relativistic particles may require very fine timesteps."
-            )
-
-        if not self.config.auto_steps:
-            timestep = self.config.timestep
-            beta_approx = 1.0 if gamma_max > 2 else 0.9
-            distance_per_step = beta_approx * gamma_max * 300.0 * timestep
-
-            if distance_per_step > aperture_min * 0.1:
-                warnings.append(
-                    f"• Fixed timestep may be too large for small apertures\n"
-                    f"  Distance/step ≈ {distance_per_step:.3f} mm vs aperture {aperture_min:.2e} mm\n"
-                    f"  Consider enabling 'Auto timestep' or reducing timestep."
-                )
-
-        if warnings:
-            warning_text = "Extreme parameter combinations detected:\n\n" + "\n\n".join(
-                warnings
-            )
-            warning_text += "\n\nRecommendations:\n"
-            warning_text += "• Enable 'Per-run timeout' to prevent hangs\n"
-            warning_text += "• Enable 'Skip failed runs' to complete the sweep\n"
-            warning_text += (
-                "• Consider more moderate parameter ranges for initial sweeps\n"
-            )
-            warning_text += "\nDo you want to proceed anyway?"
-            return warning_text
-
-        return None
+        return build_extreme_parameter_warning(self.config)
 
     def _on_run_sweep(self):
         """Handle run sweep button click."""

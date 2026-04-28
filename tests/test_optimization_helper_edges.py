@@ -16,6 +16,8 @@ from optimization.metrics import (
     detect_transverse_deflection,
 )
 from optimization.penalties import compute_soft_penalty
+import optimization.run_control_helpers as run_control_helpers
+from optimization.run_control_helpers import build_extreme_parameter_warning
 from optimization.plugin_results_helpers import (
     build_summary_heatmap_grid,
     build_trajectory_plot_data,
@@ -205,6 +207,65 @@ def test_compute_soft_penalty_is_zero_for_safe_region_and_positive_for_risky_cas
         )
         == 0.0
     )
+
+
+def test_run_control_helpers_expose_only_supported_public_helpers():
+    assert run_control_helpers.__all__ == ["build_extreme_parameter_warning"]
+
+
+def test_build_extreme_parameter_warning_returns_none_for_safe_config():
+    config = SimpleNamespace(
+        aperture_range=(0.01, 0.02),
+        energy_range=(1.0, 5.0),
+        m_particle=1.0,
+        simulation_type=SimulationType.CONDUCTING_WALL,
+        auto_steps=True,
+        timestep=1e-7,
+    )
+
+    assert build_extreme_parameter_warning(config) is None
+
+
+def test_build_extreme_parameter_warning_uses_b2b_kinetic_gamma_convention():
+    config = SimpleNamespace(
+        aperture_range=(1e-7, 1e-6),
+        energy_range=(1.0, 0.0001),
+        m_particle=1.0,
+        simulation_type=SimulationType.BUNCH_TO_BUNCH,
+        auto_steps=False,
+        timestep=1e-3,
+    )
+
+    warning = build_extreme_parameter_warning(config)
+
+    assert warning is not None
+    assert "Aperture < 1 μm" in warning
+    assert "Fixed timestep may be too large" in warning
+    assert "Do you want to proceed anyway?" in warning
+
+
+def test_build_extreme_parameter_warning_keeps_proton_thresholds_mass_aware():
+    proton = SimpleNamespace(
+        aperture_range=(0.1, 0.2),
+        energy_range=(1000.0, 5000.0),
+        m_particle=1.007276466621,
+        simulation_type=SimulationType.CONDUCTING_WALL,
+        auto_steps=True,
+        timestep=1e-7,
+    )
+    electron = SimpleNamespace(
+        aperture_range=(0.1, 0.2),
+        energy_range=(1000.0, 5000.0),
+        m_particle=0.00054857990907,
+        simulation_type=SimulationType.CONDUCTING_WALL,
+        auto_steps=True,
+        timestep=1e-7,
+    )
+
+    assert build_extreme_parameter_warning(proton) is None
+    electron_warning = build_extreme_parameter_warning(electron)
+    assert electron_warning is not None
+    assert "threshold for electrons" in electron_warning
 
 
 def test_plugin_result_helpers_cover_single_dimension_and_sparse_payloads():
