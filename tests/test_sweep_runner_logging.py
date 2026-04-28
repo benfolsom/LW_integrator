@@ -11,6 +11,7 @@ from lw_integrator.sweep_runner import (
     _build_cli_progress_log_line,
     _build_cli_start_log_lines,
     _build_cli_stability_config_log_lines,
+    _build_cli_sweep_start_log_lines,
     _build_cli_timestep_log_lines,
     _build_small_aperture_diagnostic_line,
     _evaluate_cli_stability,
@@ -55,6 +56,7 @@ def _config(**overrides):
         "auto_steps_target": 100,
         "timestep": 1e-7,
         "steps": 50,
+        "z_cutoff_mode": "absolute",
     }
     defaults["calculate_timestep_for_energy"] = lambda **_kwargs: 1e-7
     defaults.update(overrides)
@@ -392,3 +394,37 @@ def test_evaluate_cli_stability_builds_rejection_record(monkeypatch):
     assert outcome.log_lines[-1] == (
         "[OPTIMIZATION]   [REJECT] Run 6 rejected due to numerical instability"
     )
+
+
+def test_build_cli_sweep_start_log_lines_formats_wall_mode_summary():
+    lines = _build_cli_sweep_start_log_lines(
+        _config(timestep_strategy="auto_distance"),
+        param_grids={"energy": [5.0, 6.0], "start_z": [10.0]},
+        total_runs=2,
+    )
+
+    assert lines == [
+        "Starting BLIND SWEEP (Grid Search): 2 total runs",
+        f"  Simulation type: {SimulationType.CONDUCTING_WALL}",
+        "  energy: 2 points from 5.0000e+00 to 6.0000e+00",
+        "  start_z: 1.0000e+01 (fixed)",
+        "  Timestep strategy: auto_distance",
+        "    Distance past wall: 25.0 mm",
+        "    Target steps for timestep calculation: 100",
+        "    All particles will travel to consistent z regardless of energy",
+        "  z_cutoff_mode: absolute",
+    ]
+
+
+def test_build_cli_sweep_start_log_lines_includes_b2b_fixed_parameters():
+    lines = _build_cli_sweep_start_log_lines(
+        _config(simulation_type="BUNCH_TO_BUNCH"),
+        param_grids={"energy": [5.0]},
+        total_runs=1,
+    )
+
+    assert "  Fixed rider parameters:" in lines
+    assert "    m_particle: 1.0000e+00 amu" in lines
+    assert "  Fixed driver parameters:" in lines
+    assert "    energy_gev: 6.0000" in lines
+    assert "    starting_distance: 900.00" in lines

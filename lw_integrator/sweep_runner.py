@@ -532,6 +532,68 @@ def _evaluate_cli_stability(
     )
 
 
+def _build_cli_sweep_start_log_lines(
+    config: Any,
+    *,
+    param_grids: Mapping[str, list[Any]],
+    total_runs: int,
+) -> list[str]:
+    lines = [
+        f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs",
+        f"  Simulation type: {config.simulation_type}",
+    ]
+    for grid_key, grid_vals in param_grids.items():
+        if len(grid_vals) > 1:
+            lines.append(
+                f"  {grid_key}: {len(grid_vals)} points from "
+                f"{min(grid_vals):.4e} to {max(grid_vals):.4e}"
+            )
+        else:
+            lines.append(f"  {grid_key}: {grid_vals[0]:.4e} (fixed)")
+
+    lines.append(f"  Timestep strategy: {config.timestep_strategy}")
+    if config.timestep_strategy == "auto_distance":
+        lines.extend(
+            [
+                (
+                    "    Distance past wall: "
+                    f"{config.auto_steps_distance_past_wall} mm"
+                ),
+                (
+                    "    Target steps for timestep calculation: "
+                    f"{config.auto_steps_target}"
+                ),
+                "    All particles will travel to consistent z regardless of energy",
+            ]
+        )
+    lines.append(f"  z_cutoff_mode: {config.z_cutoff_mode}")
+
+    if is_bunch_to_bunch(config.simulation_type):
+        lines.extend(
+            [
+                "",
+                "  Fixed rider parameters:",
+                f"    m_particle: {config.m_particle:.4e} amu",
+                f"    charge_sign: {config.charge_sign}",
+                f"    pcount: {config.pcount}",
+                f"    stripped_ions: {config.stripped_ions:.2e}",
+                f"    transv_mom: {config.transv_mom:.4e}",
+                f"    transv_dist: {config.transv_dist:.4e}",
+                "  Fixed driver parameters:",
+                f"    m_particle: {config.driver_m_particle:.4e} amu",
+                f"    charge_sign: {config.driver_charge_sign}",
+                f"    pcount: {config.driver_pcount}",
+                f"    stripped_ions: {config.driver_stripped_ions:.2e}",
+                f"    energy_gev: {config.driver_energy_gev:.4f}",
+                (
+                    "    starting_distance: "
+                    f"{config.driver_starting_distance:.2f}"
+                ),
+            ]
+        )
+    return lines
+
+
 class SweepRunner:
     """Execute parameter sweeps from configuration files without GUI.
 
@@ -860,49 +922,12 @@ class SweepRunner:
             for values in param_grids.values():
                 total_runs *= len(values)
 
-            self._log(f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs")
-            self._log(f"  Simulation type: {self.config.simulation_type}")
-
-            for grid_key, grid_vals in param_grids.items():
-                if len(grid_vals) > 1:
-                    self._log(
-                        f"  {grid_key}: {len(grid_vals)} points from {min(grid_vals):.4e} to {max(grid_vals):.4e}"
-                    )
-                else:
-                    self._log(f"  {grid_key}: {grid_vals[0]:.4e} (fixed)")
-
-            self._log(f"  Timestep strategy: {self.config.timestep_strategy}")
-            if self.config.timestep_strategy == "auto_distance":
-                self._log(
-                    f"    Distance past wall: {self.config.auto_steps_distance_past_wall} mm"
-                )
-                self._log(
-                    f"    Target steps for timestep calculation: {self.config.auto_steps_target}"
-                )
-                self._log(
-                    "    All particles will travel to consistent z regardless of energy"
-                )
-            self._log(f"  z_cutoff_mode: {self.config.z_cutoff_mode}")
-
-            # Log fixed particle parameters
-            if is_bunch_to_bunch(self.config.simulation_type):
-                self._log("")
-                self._log("  Fixed rider parameters:")
-                self._log(f"    m_particle: {self.config.m_particle:.4e} amu")
-                self._log(f"    charge_sign: {self.config.charge_sign}")
-                self._log(f"    pcount: {self.config.pcount}")
-                self._log(f"    stripped_ions: {self.config.stripped_ions:.2e}")
-                self._log(f"    transv_mom: {self.config.transv_mom:.4e}")
-                self._log(f"    transv_dist: {self.config.transv_dist:.4e}")
-                self._log("  Fixed driver parameters:")
-                self._log(f"    m_particle: {self.config.driver_m_particle:.4e} amu")
-                self._log(f"    charge_sign: {self.config.driver_charge_sign}")
-                self._log(f"    pcount: {self.config.driver_pcount}")
-                self._log(f"    stripped_ions: {self.config.driver_stripped_ions:.2e}")
-                self._log(f"    energy_gev: {self.config.driver_energy_gev:.4f}")
-                self._log(
-                    f"    starting_distance: {self.config.driver_starting_distance:.2f}"
-                )
+            for line in _build_cli_sweep_start_log_lines(
+                self.config,
+                param_grids=param_grids,
+                total_runs=total_runs,
+            ):
+                self._log(line)
 
             self._log("")
             self._log(f"Output directory: {self.output_dir}")
