@@ -81,6 +81,25 @@ def _extract_particle_series(
     }
 
 
+def _plot_series(
+    axis: plt.Axes,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    *,
+    title: str,
+    ylabel: str,
+    label: str | None = None,
+) -> None:
+    """Plot one z-indexed trajectory series with standard styling."""
+    axis.plot(x_values, y_values, label=label, linewidth=1.8)
+    axis.set_title(title, fontsize=11, fontweight="bold")
+    axis.set_xlabel("z position (mm)")
+    axis.set_ylabel(ylabel)
+    axis.grid(True, alpha=0.3)
+    if label is not None:
+        axis.legend()
+
+
 def _plot_saved_json_trajectory(
     input_path: Path,
     output_path: Path,
@@ -117,25 +136,32 @@ def _plot_saved_json_trajectory(
         if z.size == 0:
             continue
 
-        energy_ax.plot(z, series["delta_e_mev"], label=particle_name.title(), linewidth=1.8)
-        radial_ax.plot(z, series["r"], label=particle_name.title(), linewidth=1.8)
-        gamma_ax.plot(z, series["gamma"], label=particle_name.title(), linewidth=1.8)
-
         title = particle_name.capitalize()
-        energy_ax.set_title(f"{title} ΔE vs z", fontsize=11, fontweight="bold")
-        radial_ax.set_title(f"{title} r vs z", fontsize=11, fontweight="bold")
-        gamma_ax.set_title(f"{title} γ vs z", fontsize=11, fontweight="bold")
-
-        energy_ax.set_xlabel("z position (mm)")
-        energy_ax.set_ylabel("ΔE (MeV)")
-        radial_ax.set_xlabel("z position (mm)")
-        radial_ax.set_ylabel("r (mm)")
-        gamma_ax.set_xlabel("z position (mm)")
-        gamma_ax.set_ylabel("γ")
-
-        for axis in (energy_ax, radial_ax, gamma_ax):
-            axis.grid(True, alpha=0.3)
-            axis.legend()
+        label = particle_name.title()
+        _plot_series(
+            energy_ax,
+            z,
+            series["delta_e_mev"],
+            title=f"{title} Delta E vs z",
+            ylabel="Delta E (MeV)",
+            label=label,
+        )
+        _plot_series(
+            radial_ax,
+            z,
+            series["r"],
+            title=f"{title} r vs z",
+            ylabel="r (mm)",
+            label=label,
+        )
+        _plot_series(
+            gamma_ax,
+            z,
+            series["gamma"],
+            title=f"{title} gamma vs z",
+            ylabel="gamma",
+            label=label,
+        )
 
     title_parts = []
     if data.get("config_label"):
@@ -181,33 +207,11 @@ def _plot_saved_npz_trajectory(
     ax_gamma = fig.add_subplot(gs[1, 1])
     ax_energy = fig.add_subplot(gs[2, :])
 
-    ax_r.plot(z, r, linewidth=1.8)
-    ax_r.set_title("Radial Position", fontweight="bold")
-    ax_r.set_xlabel("z position (mm)")
-    ax_r.set_ylabel("r (mm)")
-
-    ax_pz.plot(z, pz, linewidth=1.8)
-    ax_pz.set_title("Longitudinal Momentum", fontweight="bold")
-    ax_pz.set_xlabel("z position (mm)")
-    ax_pz.set_ylabel("Pz")
-
-    ax_pr.plot(z, pr, linewidth=1.8)
-    ax_pr.set_title("Transverse Momentum", fontweight="bold")
-    ax_pr.set_xlabel("z position (mm)")
-    ax_pr.set_ylabel("Pr")
-
-    ax_gamma.plot(z, gamma, linewidth=1.8)
-    ax_gamma.set_title("Lorentz Factor", fontweight="bold")
-    ax_gamma.set_xlabel("z position (mm)")
-    ax_gamma.set_ylabel("γ")
-
-    ax_energy.plot(z, delta_e_mev, linewidth=1.8)
-    ax_energy.set_title("Energy Change", fontweight="bold")
-    ax_energy.set_xlabel("z position (mm)")
-    ax_energy.set_ylabel("ΔE (MeV)")
-
-    for axis in (ax_r, ax_pz, ax_pr, ax_gamma, ax_energy):
-        axis.grid(True, alpha=0.3)
+    _plot_series(ax_r, z, r, title="Radial Position", ylabel="r (mm)")
+    _plot_series(ax_pz, z, pz, title="Longitudinal Momentum", ylabel="Pz")
+    _plot_series(ax_pr, z, pr, title="Transverse Momentum", ylabel="Pr")
+    _plot_series(ax_gamma, z, gamma, title="Lorentz Factor", ylabel="gamma")
+    _plot_series(ax_energy, z, delta_e_mev, title="Energy Change", ylabel="Delta E (MeV)")
 
     fig.suptitle(input_path.name, fontsize=13, fontweight="bold")
     plt.tight_layout()

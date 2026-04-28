@@ -83,6 +83,17 @@ def test_main_reports_missing_file(tmp_path: Path, capsys):
     assert "Trajectory file not found" in captured.out
 
 
+def test_main_reports_unsupported_file_type(tmp_path: Path, capsys):
+    unsupported = tmp_path / "trajectory.txt"
+    unsupported.write_text("not a trajectory", encoding="utf-8")
+
+    exit_code = trajectory_plotter.main([str(unsupported)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Unsupported trajectory file type" in captured.out
+
+
 def test_module_exposes_only_supported_public_plotters():
     assert not hasattr(trajectory_plotter, "plot_saved_json_trajectory")
     assert not hasattr(trajectory_plotter, "plot_saved_npz_trajectory")
