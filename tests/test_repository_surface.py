@@ -81,3 +81,15 @@ def test_tracked_docs_do_not_advertise_removed_validation_paths():
             offenders[str(path.relative_to(PROJECT_ROOT))] = matches
 
     assert offenders == {}
+
+
+def test_pytest_markers_do_not_reintroduce_legacy_mode():
+    config_paths = [PROJECT_ROOT / "pytest.ini", PROJECT_ROOT / "tests" / "pytest.ini"]
+
+    offenders = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in config_paths
+        if "legacy:" in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
