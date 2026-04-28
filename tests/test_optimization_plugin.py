@@ -260,22 +260,14 @@ class TestOptimizationPluginIntegration:
             self_consistency_gamma_reconciliation_method="FIXED_WEIGHTED",
             self_consistency_gamma_reconciliation_fixed_weight=0.7,
         )
-        harness = SimpleNamespace(
-            gui_controller=SimpleNamespace(
-                image_subcharge_var=_MockVar(16),
-                self_consistency_target_ms_tolerance_var=_MockVar("5e-4"),
-                adaptive_timestep_enabled_var=_MockVar(True),
-            )
-        )
-        harness._get_gui_stability_setting = lambda var_name, default: (
-            OptimizationPluginControlMixin._get_gui_stability_setting(
-                harness, var_name, default
-            )
+        harness = OptimizationPluginControlMixin()
+        harness.gui_controller = SimpleNamespace(
+            image_subcharge_var=_MockVar(16),
+            self_consistency_target_ms_tolerance_var=_MockVar("5e-4"),
+            adaptive_timestep_enabled_var=_MockVar(True),
         )
 
-        kwargs = OptimizationPluginControlMixin._gather_stability_config_kwargs(
-            harness, existing_config
-        )
+        kwargs = harness._gather_stability_config_kwargs(existing_config)
 
         assert kwargs["image_subcharge_count"] == 16
         assert kwargs["self_consistency_tolerance"] == pytest.approx(5e-4)

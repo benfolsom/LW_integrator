@@ -95,6 +95,15 @@ class OptimizationPluginControlMixin:
         self, existing_config: OptimizationConfig | None
     ) -> dict:
         """Return stability-related ``OptimizationConfig`` keyword arguments."""
+        kwargs = self._gather_image_and_self_consistency_kwargs(existing_config)
+        kwargs.update(self._gather_adaptive_timestep_kwargs(existing_config))
+        kwargs.update(self._gather_gamma_reconciliation_kwargs(existing_config))
+        return kwargs
+
+    def _gather_image_and_self_consistency_kwargs(
+        self, existing_config: OptimizationConfig | None
+    ) -> dict:
+        """Return image-charge and self-consistency config keyword arguments."""
         config_value = _existing_config_value
 
         def setting(var_name: str, attr: str, default):
@@ -141,6 +150,20 @@ class OptimizationPluginControlMixin:
                 "self_consistency_chrono_adaptive_tolerance",
                 False,
             ),
+        }
+
+    def _gather_adaptive_timestep_kwargs(
+        self, existing_config: OptimizationConfig | None
+    ) -> dict:
+        """Return adaptive-timestep config keyword arguments."""
+        config_value = _existing_config_value
+
+        def setting(var_name: str, attr: str, default):
+            return self._get_gui_stability_setting(
+                var_name, config_value(existing_config, attr, default)
+            )
+
+        return {
             "energy_monitor_halt_on_jump": setting(
                 "adaptive_timestep_halt_on_jump_var",
                 "energy_monitor_halt_on_jump",
@@ -178,6 +201,20 @@ class OptimizationPluginControlMixin:
             "adaptive_timestep_debug": setting(
                 "adaptive_timestep_debug_var", "adaptive_timestep_debug", False
             ),
+        }
+
+    def _gather_gamma_reconciliation_kwargs(
+        self, existing_config: OptimizationConfig | None
+    ) -> dict:
+        """Return self-consistency gamma-reconciliation keyword arguments."""
+        config_value = _existing_config_value
+
+        def setting(var_name: str, attr: str, default):
+            return self._get_gui_stability_setting(
+                var_name, config_value(existing_config, attr, default)
+            )
+
+        return {
             "self_consistency_gamma_reconciliation_method": setting(
                 "self_consistency_gamma_reconciliation_method_var",
                 "self_consistency_gamma_reconciliation_method",
