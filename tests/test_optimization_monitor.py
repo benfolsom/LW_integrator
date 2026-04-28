@@ -141,6 +141,10 @@ class TestOptimizationLogMonitorHelpers:
 
 
 class TestOptimizationMonitorCli:
+    def test_module_hides_parser_helper(self):
+        assert not hasattr(optimization_monitor, "parse_args")
+        assert optimization_monitor.__all__ == ["OptimizationMonitor", "main"]
+
     def test_main_runs_packaged_monitor_once(self, tmp_path: Path, capsys):
         log_path = tmp_path / "current_optimization.log"
         _write_log(

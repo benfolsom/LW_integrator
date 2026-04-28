@@ -13,6 +13,8 @@ from optimization.plugin_results_helpers import (
     summarize_optimization_top_results,
 )
 
+__all__ = ["main"]
+
 
 def _format_value(value: Any, precision: int = 4) -> str:
     """Format a numeric value for display."""
@@ -129,7 +131,7 @@ def _print_summary_statistics(data: Dict[str, Any]) -> None:
         print(f"Timestamp:              {data['timestamp']}")
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     """Parse optimization results CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Tabulate best runs from optimization results JSON"
@@ -172,7 +174,7 @@ def _load_optimization_results(results_path: Path) -> Dict[str, Any]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point for the packaged optimization results CLI."""
-    args = parse_args(argv)
+    args = _parse_args(argv)
 
     try:
         data = _load_optimization_results(args.results_file)

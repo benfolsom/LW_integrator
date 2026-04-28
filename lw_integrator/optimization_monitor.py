@@ -15,6 +15,8 @@ from optimization.log_monitor import (
     summarize_parameter_ranges,
 )
 
+__all__ = ["OptimizationMonitor", "main"]
+
 
 class OptimizationMonitor:
     """Monitor and display optimization progress in real time."""
@@ -299,7 +301,7 @@ class OptimizationMonitor:
         return 0
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     """Parse optimization monitor command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Monitor optimization progress in real time"
@@ -358,7 +360,7 @@ def _resolve_logcache_dir(logcache: Optional[Path]) -> Path:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point for the packaged optimization monitor CLI."""
-    args = parse_args(argv)
+    args = _parse_args(argv)
     logcache_dir = _resolve_logcache_dir(args.logcache)
     if not logcache_dir.exists():
         print(f"Error: logcache directory not found at {logcache_dir}")
