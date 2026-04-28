@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Tuple
 
+import numpy as np
+
 from core.types import SimulationType
 from optimization.sweep_helpers import calculate_starting_pz_from_energy
 
@@ -48,6 +50,15 @@ class OptimizationRunParameters:
     macroparticle_sigma_multiplier: float
     driver_params: dict[str, Any] | None
     wall_z: float
+
+
+@dataclass(frozen=True)
+class OptimizationEvaluationOutcome:
+    """Classified optimizer evaluation result and persisted record."""
+
+    fitness: float
+    record: dict[str, Any]
+    log_lines: List[str]
 
 
 OPTIMIZATION_PARAMETER_DEFINITIONS: tuple[OptimizationParameterDefinition, ...] = (
@@ -332,4 +343,116 @@ def resolve_optimization_run_parameters(
         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
         driver_params=driver_params,
         wall_z=wall_z,
+    )
+
+
+def build_optimization_evaluation_outcome(
+    result: dict[str, Any] | None,
+    *,
+    eval_num: int,
+    param_names: list[str],
+    values: Any,
+    metric_name: str,
+    maximize: bool,
+    penalty: float = 0.0,
+    objective_name: str = "objective",
+    save_trajectory: bool = False,
+) -> OptimizationEvaluationOutcome:
+    """Classify one optimizer evaluation result for fitness and persistence."""
+    parameters = dict(zip(param_names, values))
+
+    if result is None or "metrics" not in result:
+        record = {
+            "evaluation": eval_num,
+            "parameters": parameters,
+            "failed": True,
+            "halted_early": result.get("halted_early", False) if result else False,
+            "halt_reason": result.get("halt_reason", None) if result else None,
+            "objective_value": float("inf"),
+        }
+        return OptimizationEvaluationOutcome(
+            fitness=np.inf,
+            record=record,
+            log_lines=[],
+        )
+
+    if result.get("halted_early", False):
+        record = {
+            "evaluation": eval_num,
+            "parameters": parameters,
+            "failed": False,
+            "halted_early": True,
+            "halt_reason": result.get("halt_reason"),
+            "objective_value": float("inf"),
+        }
+        return OptimizationEvaluationOutcome(
+            fitness=np.inf,
+            record=record,
+            log_lines=[
+                (
+                    f"[INFO] Evaluation {eval_num} halted early: "
+                    f"{result.get('halt_reason', 'unknown')}"
+                ),
+                "[INFO] Returning inf (rejecting halted evaluation)",
+            ],
+        )
+
+    metrics = result["metrics"]
+    value = metrics.get(metric_name, np.nan)
+    if np.isnan(value) or np.isinf(value):
+        kind = "NaN" if np.isnan(value) else "inf"
+        log_lines = [
+            (
+                f"[WARNING] Evaluation {eval_num} returned {kind} "
+                f"for metric '{metric_name}'"
+            ),
+            f"[WARNING] Available metrics: {list(metrics.keys())}",
+        ]
+        if metrics:
+            log_lines.append("[WARNING] Metric values:")
+            log_lines.extend(f"  {key}: {metric}" for key, metric in metrics.items())
+        log_lines.append("[WARNING] Returning inf (rejecting this evaluation)")
+
+        record = {
+            "evaluation": eval_num,
+            "parameters": parameters,
+            "failed": True,
+            "objective_value": float("inf"),
+            "metrics": result.get("metrics", {}),
+        }
+        return OptimizationEvaluationOutcome(
+            fitness=np.inf,
+            record=record,
+            log_lines=log_lines,
+        )
+
+    adjusted_value = value
+    log_lines: List[str] = []
+    if penalty > 0:
+        adjusted_value = value - penalty if maximize else value + penalty
+        log_lines.append(
+            "[INFO] Applied soft penalty of "
+            f"{penalty:.3e} to {objective_name} (risk-prone parameters)"
+        )
+
+    fitness = -adjusted_value if maximize else adjusted_value
+    record = {
+        "evaluation": eval_num,
+        "parameters": parameters,
+        "objective_value": adjusted_value,
+        "raw_objective_value": value,
+        "soft_penalty": penalty,
+        "fitness": fitness,
+        "failed": False,
+        "halted_early": False,
+        "metrics": result.get("metrics", {}),
+    }
+
+    if save_trajectory and "trajectory" in result:
+        record["trajectory"] = result["trajectory"]
+
+    return OptimizationEvaluationOutcome(
+        fitness=fitness,
+        record=record,
+        log_lines=log_lines,
     )

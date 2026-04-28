@@ -1,8 +1,11 @@
 """Tests for pure optimization run-control helpers."""
 
+import numpy as np
+
 from core.types import SimulationType
 from optimization.config import OptimizationConfig
 from optimization.run_parameter_helpers import (
+    build_optimization_evaluation_outcome,
     calculate_transverse_offset,
     collect_optimization_parameter_selection,
     is_bunch_to_bunch,
@@ -198,3 +201,99 @@ def test_resolve_optimization_run_parameters_accepts_string_bunch_mode():
 
     assert resolved.transv_offset == 0.25
     assert resolved.driver_params is not None
+
+
+def test_build_optimization_evaluation_outcome_records_missing_metrics():
+    outcome = build_optimization_evaluation_outcome(
+        None,
+        eval_num=3,
+        param_names=["aperture"],
+        values=[0.1],
+        metric_name="max_percent_energy_gain",
+        maximize=True,
+    )
+
+    assert outcome.fitness == np.inf
+    assert outcome.record == {
+        "evaluation": 3,
+        "parameters": {"aperture": 0.1},
+        "failed": True,
+        "halted_early": False,
+        "halt_reason": None,
+        "objective_value": float("inf"),
+    }
+    assert outcome.log_lines == []
+
+
+def test_build_optimization_evaluation_outcome_records_halted_runs():
+    outcome = build_optimization_evaluation_outcome(
+        {"metrics": {}, "halted_early": True, "halt_reason": "gamma blowup"},
+        eval_num=4,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="max_percent_energy_gain",
+        maximize=True,
+    )
+
+    assert outcome.fitness == np.inf
+    assert outcome.record["failed"] is False
+    assert outcome.record["halted_early"] is True
+    assert outcome.record["halt_reason"] == "gamma blowup"
+    assert "halted early" in outcome.log_lines[0]
+
+
+def test_build_optimization_evaluation_outcome_records_invalid_metrics():
+    outcome = build_optimization_evaluation_outcome(
+        {"metrics": {"max_percent_energy_gain": np.nan, "other": 1.0}},
+        eval_num=5,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="max_percent_energy_gain",
+        maximize=True,
+    )
+
+    assert outcome.fitness == np.inf
+    assert outcome.record["failed"] is True
+    assert np.isnan(outcome.record["metrics"]["max_percent_energy_gain"])
+    assert outcome.record["metrics"]["other"] == 1.0
+    assert any("returned NaN" in line for line in outcome.log_lines)
+    assert any("other: 1.0" in line for line in outcome.log_lines)
+
+
+def test_build_optimization_evaluation_outcome_applies_penalty_and_saves_trajectory():
+    outcome = build_optimization_evaluation_outcome(
+        {
+            "metrics": {"max_percent_energy_gain": 2.0},
+            "trajectory": {"z": [0.0, 1.0]},
+        },
+        eval_num=6,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="max_percent_energy_gain",
+        maximize=True,
+        penalty=0.25,
+        objective_name="max_percent_energy_gain",
+        save_trajectory=True,
+    )
+
+    assert outcome.fitness == -1.75
+    assert outcome.record["objective_value"] == 1.75
+    assert outcome.record["raw_objective_value"] == 2.0
+    assert outcome.record["soft_penalty"] == 0.25
+    assert outcome.record["trajectory"] == {"z": [0.0, 1.0]}
+    assert any("Applied soft penalty" in line for line in outcome.log_lines)
+
+
+def test_build_optimization_evaluation_outcome_minimization_penalty_direction():
+    outcome = build_optimization_evaluation_outcome(
+        {"metrics": {"spread": 2.0}},
+        eval_num=7,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="spread",
+        maximize=False,
+        penalty=0.25,
+    )
+
+    assert outcome.fitness == 2.25
+    assert outcome.record["objective_value"] == 2.25

@@ -30,6 +30,7 @@ from optimization.logging_policy import (
     restore_run_logging_policy,
 )
 from optimization.run_parameter_helpers import (
+    build_optimization_evaluation_outcome,
     calculate_transverse_offset,
     collect_optimization_parameter_selection,
     resolve_optimization_run_parameters,
@@ -169,113 +170,26 @@ class OptimizationRunMixin:
                     if timed_out:
                         return np.inf
 
-                    if result is None or "metrics" not in result:
-                        # Store failed evaluation
-                        eval_record = {
-                            "evaluation": eval_num,
-                            "parameters": dict(zip(param_names, x)),
-                            "failed": True,
-                            "halted_early": (
-                                result.get("halted_early", False) if result else False
-                            ),
-                            "halt_reason": (
-                                result.get("halt_reason", None) if result else None
-                            ),
-                            "objective_value": float("inf"),
-                        }
-                        all_evaluations.append(eval_record)
-                        return np.inf
-
-                    # Check if run was halted early
-                    if result.get("halted_early", False):
-                        self._log_result(
-                            f"[INFO] Evaluation {eval_num} halted early: {result.get('halt_reason', 'unknown')}"
-                        )
-                        self._log_result(
-                            "[INFO] Returning inf (rejecting halted evaluation)"
-                        )
-                        # Store halted evaluation
-                        eval_record = {
-                            "evaluation": eval_num,
-                            "parameters": dict(zip(param_names, x)),
-                            "failed": False,
-                            "halted_early": True,
-                            "halt_reason": result.get("halt_reason"),
-                            "objective_value": float("inf"),
-                        }
-                        all_evaluations.append(eval_record)
-                        return np.inf
-
-                    # Extract metric value
-                    metrics = result["metrics"]
-                    value = metrics.get(metric_name, np.nan)
-
-                    if np.isnan(value) or np.isinf(value):
-                        self._log_result(
-                            f"[WARNING] Evaluation {eval_num} returned {'NaN' if np.isnan(value) else 'inf'} for metric '{metric_name}'"
-                        )
-                        self._log_result(
-                            f"[WARNING] Available metrics: {list(metrics.keys())}"
-                        )
-                        if len(metrics) > 0:
-                            self._log_result("[WARNING] Metric values:")
-                            for k, v in metrics.items():
-                                self._log_result(f"  {k}: {v}")
-                        self._log_result(
-                            "[WARNING] Returning inf (rejecting this evaluation)"
-                        )
-                        # Store failed evaluation
-                        eval_record = {
-                            "evaluation": eval_num,
-                            "parameters": dict(zip(param_names, x)),
-                            "failed": True,
-                            "objective_value": float("inf"),
-                            "metrics": result.get("metrics", {}),
-                        }
-                        all_evaluations.append(eval_record)
-                        return np.inf
-
                     penalty = self._compute_soft_penalty(
                         aperture_radius=aperture,
                         macroparticle_charge_multiplier=macroparticle_charge_mult,
                         initial_energy_gev=energy,
                     )
-
-                    adjusted_value = value
-                    if penalty > 0:
-                        if maximize:
-                            adjusted_value = value - penalty
-                        else:
-                            adjusted_value = value + penalty
-                        self._log_result(
-                            "[INFO] Applied soft penalty of "
-                            f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
-                        )
-
-                    # Return value to minimize (negate if maximizing)
-                    result_value = -adjusted_value if maximize else adjusted_value
-
-                    # Store successful evaluation
-                    eval_record = {
-                        "evaluation": eval_num,
-                        "parameters": dict(zip(param_names, x)),
-                        "objective_value": adjusted_value,
-                        "raw_objective_value": value,
-                        "soft_penalty": penalty,
-                        "fitness": result_value,  # Store fitness (for minimization)
-                        "failed": False,
-                        "halted_early": False,
-                        "metrics": result.get("metrics", {}),
-                    }
-
-                    # Save trajectory if requested and available
-                    if self.config.save_all_trajectories and "trajectory" in result:
-                        # We'll save these after optimization dir is created
-                        eval_record["trajectory"] = result["trajectory"]
-
-                    all_evaluations.append(eval_record)
-
-                    return result_value
+                    outcome = build_optimization_evaluation_outcome(
+                        result,
+                        eval_num=eval_num,
+                        param_names=param_names,
+                        values=x,
+                        metric_name=metric_name,
+                        maximize=maximize,
+                        penalty=penalty,
+                        objective_name=self.config.objective,
+                        save_trajectory=self.config.save_all_trajectories,
+                    )
+                    for line in outcome.log_lines:
+                        self._log_result(line)
+                    all_evaluations.append(outcome.record)
+                    return outcome.fitness
 
                 except Exception as e:
                     import traceback
