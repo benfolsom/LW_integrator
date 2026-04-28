@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.types import SimulationType
+import optimization.single_integration_helpers as single_integration_helpers
 from optimization.single_integration_helpers import (
     build_integration_metrics,
     build_final_z_check_log_lines,
@@ -15,6 +16,19 @@ from optimization.single_integration_helpers import (
     distance_info_from_trajectory,
     sample_trajectory_arrays,
 )
+
+
+def test_module_exposes_only_supported_public_helpers():
+    assert single_integration_helpers.__all__ == [
+        "IntegrationMetricsOutcome",
+        "SingleIntegrationSetup",
+        "build_final_z_check_log_lines",
+        "build_integration_metrics",
+        "build_single_integration_setup",
+        "calculate_rider_starting_pz",
+        "distance_info_from_trajectory",
+        "sample_trajectory_arrays",
+    ]
 
 
 def _result(**overrides):

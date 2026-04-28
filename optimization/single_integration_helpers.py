@@ -63,23 +63,21 @@ def build_single_integration_setup(
     simulation_options_cls: type = SimulationOptions,
 ) -> SingleIntegrationSetup:
     """Resolve integration parameters and build the testbed options object."""
-    rider_m_particle = (
-        rider_m_particle if rider_m_particle is not None else config.m_particle
+    rider_m_particle = _override_or_config(rider_m_particle, config, "m_particle")
+    rider_charge_sign = _override_or_config(
+        rider_charge_sign, config, "charge_sign"
     )
-    rider_charge_sign = (
-        rider_charge_sign if rider_charge_sign is not None else config.charge_sign
+    rider_pcount = int(_override_or_config(rider_pcount, config, "pcount"))
+    rider_transv_mom = _override_or_config(
+        rider_transv_mom, config, "transv_mom"
     )
-    rider_pcount = rider_pcount if rider_pcount is not None else int(config.pcount)
-    rider_transv_mom = (
-        rider_transv_mom if rider_transv_mom is not None else config.transv_mom
+    rider_transv_dist = _override_or_config(
+        rider_transv_dist, config, "transv_dist"
     )
-    rider_transv_dist = (
-        rider_transv_dist if rider_transv_dist is not None else config.transv_dist
+    rider_stripped_ions = _override_or_config(
+        rider_stripped_ions, config, "stripped_ions"
     )
-    rider_stripped_ions = (
-        rider_stripped_ions if rider_stripped_ions is not None else config.stripped_ions
-    )
-    wall_z = wall_z if wall_z is not None else config.wall_z
+    wall_z = _override_or_config(wall_z, config, "wall_z")
     macroparticle_charge_multiplier = (
         macroparticle_charge_multiplier
         if macroparticle_charge_multiplier is not None
@@ -221,6 +219,10 @@ def build_single_integration_setup(
         macroparticle_charge_multiplier=macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
     )
+
+
+def _override_or_config(explicit_value: Any | None, config: Any, attr: str) -> Any:
+    return explicit_value if explicit_value is not None else getattr(config, attr)
 
 
 def calculate_rider_starting_pz(
@@ -490,3 +492,15 @@ def _add_beam_optics_metrics(result: Any, metrics: dict[str, Any]) -> None:
         metrics["rider_beta_x_m"] = result.rider_beta_x_m
     if result.rider_beta_y_m is not None:
         metrics["rider_beta_y_m"] = result.rider_beta_y_m
+
+
+__all__ = [
+    "IntegrationMetricsOutcome",
+    "SingleIntegrationSetup",
+    "build_final_z_check_log_lines",
+    "build_integration_metrics",
+    "build_single_integration_setup",
+    "calculate_rider_starting_pz",
+    "distance_info_from_trajectory",
+    "sample_trajectory_arrays",
+]
