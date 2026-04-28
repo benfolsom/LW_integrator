@@ -15,6 +15,7 @@ from optimization.plugin_config_helpers import (
     parse_float_list,
     parse_offset_pair,
 )
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import AMU_TO_MEV
 from optimization.ui_helpers import (
     show_error_dialog as _show_error_dialog,
@@ -188,8 +189,7 @@ class OptimizationPluginControlMixin:
             ),
             aperture_points=(
                 1
-                if SimulationType[self.sim_type_var.get()]
-                == SimulationType.BUNCH_TO_BUNCH
+                if is_bunch_to_bunch(self.sim_type_var.get())
                 else int(self.aperture_points_var.get())
             ),
             aperture_log_scale=self.aperture_log_var.get(),
@@ -789,7 +789,7 @@ class OptimizationPluginControlMixin:
         m_electron = 0.00054857990907
         rest_energy_mev = self.config.m_particle * AMU_TO_MEV
 
-        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+        if is_bunch_to_bunch(self.config.simulation_type):
             gamma_max = (energy_max * 1e3) / rest_energy_mev + 1.0
         else:
             gamma_max = (energy_max * 1e3) / rest_energy_mev

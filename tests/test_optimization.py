@@ -341,10 +341,13 @@ class TestSweepHelpers:
             [1e-3, 1e-1, 1e1]
         )
 
-    def test_build_parameter_grids_for_bunch_to_bunch(self):
+    @pytest.mark.parametrize(
+        "simulation_type", [SimulationType.BUNCH_TO_BUNCH, "BUNCH_TO_BUNCH"]
+    )
+    def test_build_parameter_grids_for_bunch_to_bunch(self, simulation_type):
         """Bunch-to-bunch sweeps should omit aperture and normalize driver energy."""
         config = SimpleNamespace(
-            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            simulation_type=simulation_type,
             aperture_range=(0.01, 0.1),
             aperture_points=3,
             aperture_log_scale=False,

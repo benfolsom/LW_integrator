@@ -7,7 +7,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
-from core.types import SimulationType  # type: ignore[import]
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 
 AMU_TO_MEV = 931.494
 
@@ -53,7 +53,7 @@ def build_parameter_grids(config: Any, sweep_params: Mapping[str, Any]) -> dict[
     grids: dict[str, list] = {}
     sim_type = config.simulation_type
 
-    if sim_type != SimulationType.BUNCH_TO_BUNCH:
+    if not is_bunch_to_bunch(sim_type):
         grids["aperture"] = generate_parameter_range(
             config.aperture_range[0],
             config.aperture_range[1],
@@ -61,11 +61,7 @@ def build_parameter_grids(config: Any, sweep_params: Mapping[str, Any]) -> dict[
             config.aperture_log_scale,
         )
 
-    energy_key = (
-        "initial_energy_gev"
-        if sim_type == SimulationType.BUNCH_TO_BUNCH
-        else "energy"
-    )
+    energy_key = "initial_energy_gev" if is_bunch_to_bunch(sim_type) else "energy"
     grids[energy_key] = generate_parameter_range(
         config.energy_range[0],
         config.energy_range[1],
@@ -89,10 +85,7 @@ def build_parameter_grids(config: Any, sweep_params: Mapping[str, Any]) -> dict[
         )
 
     for param_name, controls in sweep_params.items():
-        if (
-            param_name.startswith("driver_")
-            and sim_type != SimulationType.BUNCH_TO_BUNCH
-        ):
+        if param_name.startswith("driver_") and not is_bunch_to_bunch(sim_type):
             continue
 
         if not controls["sweep_var"].get():

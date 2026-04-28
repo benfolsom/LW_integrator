@@ -50,9 +50,9 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 - **Bug** — Optimization and sweep run-control code sometimes compared `SimulationType.BUNCH_TO_BUNCH` enum values to the string `"BUNCH_TO_BUNCH"`
 - **Impact** — Enum-backed BUNCH_TO_BUNCH configs could take the conducting-wall offset path, treating an absolute bunch offset as an aperture fraction and scaling it by aperture radius
-- **Fix** — Centralized simulation-mode detection in `optimization.run_parameter_helpers.is_bunch_to_bunch()` and routed transverse-offset resolution through `calculate_transverse_offset()`
-- **Regression coverage** — Added tests covering enum and string mode values so BUNCH_TO_BUNCH offsets remain absolute while wall-mode offsets remain aperture-scaled
-- **Files modified** — `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `tests/test_optimization_run_parameter_helpers.py`
+- **Fix** — Centralized simulation-mode detection in `optimization.simulation_type_helpers.is_bunch_to_bunch()` and routed transverse-offset, sweep-grid, timestep, result-export, and sweep run-control branches through the normalized check
+- **Regression coverage** — Added tests covering enum and string mode values so BUNCH_TO_BUNCH offsets remain absolute, BUNCH_TO_BUNCH sweeps keep driver parameters, and auto-distance timestep calculations use driver distance
+- **Files modified** — `optimization/config.py`, `optimization/plugin_config_mixins.py`, `optimization/plugin_control_mixins.py`, `optimization/results_mixins.py`, `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `optimization/simulation_type_helpers.py`, `optimization/sweep_helpers.py`, `tests/test_optimization.py`, `tests/test_optimization_config_helpers.py`, `tests/test_optimization_run_parameter_helpers.py`
 
 ### Maintained Plotting and Validation Surface Cleanup (April 2026)
 

@@ -42,9 +42,14 @@ def test_calculate_timestep_for_energy_energy_scaled_uses_gamma():
     assert timestep == pytest.approx(3e-7 / gamma)
 
 
-def test_calculate_timestep_for_energy_auto_distance_uses_driver_distance_for_b2b():
+@pytest.mark.parametrize(
+    "simulation_type", [SimulationType.BUNCH_TO_BUNCH, "BUNCH_TO_BUNCH"]
+)
+def test_calculate_timestep_for_energy_auto_distance_uses_driver_distance_for_b2b(
+    simulation_type,
+):
     config = OptimizationConfig(
-        simulation_type=SimulationType.BUNCH_TO_BUNCH,
+        simulation_type=simulation_type,
         timestep_strategy="auto_distance",
         steps=400,
         target_distance_mm=25.0,
@@ -160,4 +165,3 @@ def test_calculate_steps_from_duration_uses_minimum_step_count():
 
     assert steps == 20
     assert timestep == pytest.approx(0.4)
-

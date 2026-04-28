@@ -10,6 +10,7 @@ import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
 from core.types import SimulationType  # type: ignore[import]
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 
 _ELECTRON_MASS_AMU = 0.00054857990907
 _PROTON_MASS_AMU = 1.0
@@ -322,7 +323,7 @@ class OptimizationConfig:
         rest_energy_mev = m_particle_amu * 931.494  # amu to MeV
 
         # For BUNCH_TO_BUNCH, energy is kinetic energy; for others, it's total energy
-        if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+        if is_bunch_to_bunch(self.simulation_type):
             # Kinetic energy: γ = (KE / E_rest) + 1
             gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
         else:
@@ -340,7 +341,7 @@ class OptimizationConfig:
                 wall_z = self.wall_z
 
             # Calculate target distance based on simulation type
-            if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            if is_bunch_to_bunch(self.simulation_type):
                 # For BUNCH_TO_BUNCH: rider travels to driver_start + target_distance
                 # This ensures rider reaches interaction region with driver
                 total_distance = abs(driver_start_z - start_z) + self.target_distance_mm

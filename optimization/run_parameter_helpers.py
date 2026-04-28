@@ -7,7 +7,7 @@ from typing import Any, List, Tuple
 
 import numpy as np
 
-from core.types import SimulationType
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import calculate_starting_pz_from_energy
 
 
@@ -189,15 +189,6 @@ def resolve_objective_metric(objective: str) -> tuple[str, bool]:
     if "min" in objective.lower():
         return "max_energy_gain_gev", False
     return "max_energy_gain_gev", True
-
-
-def is_bunch_to_bunch(simulation_type: Any) -> bool:
-    """Return whether a simulation type value represents BUNCH_TO_BUNCH mode."""
-    if simulation_type == SimulationType.BUNCH_TO_BUNCH:
-        return True
-    if simulation_type == "BUNCH_TO_BUNCH":
-        return True
-    return getattr(simulation_type, "name", None) == "BUNCH_TO_BUNCH"
 
 
 def calculate_transverse_offset(

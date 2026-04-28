@@ -9,7 +9,6 @@ from pathlib import Path
 from tkinter import filedialog
 from typing import Any
 
-from core.types import SimulationType
 from optimization.config import OptimizationConfig
 from optimization.plugin_persistence_helpers import (
     apply_persisted_config_overrides,
@@ -17,6 +16,7 @@ from optimization.plugin_persistence_helpers import (
     metrics_export_settings_from_data,
     resolve_loaded_sweep_state,
 )
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import calculate_energy_from_pz
 from optimization.ui_helpers import (
     show_error_dialog as _show_error_dialog,
@@ -222,7 +222,7 @@ class OptimizationPluginConfigMixin:
             self.main_timestep_display_var.set(f"{opt_config.timestep:.2e}")
 
             rider_start_z = main_options.rider_params.get("starting_distance", 0.0)
-            if main_options.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            if is_bunch_to_bunch(main_options.simulation_type):
                 if self._apply_driver_sweep_values(main_options.driver_params):
                     self._log_result("[INFO] Loaded driver parameters from main GUI")
                 self.start_z_var.set(f"{rider_start_z}")

@@ -10,7 +10,6 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from core.types import SimulationType  # type: ignore[import]
 from optimization.result_io import (  # type: ignore[import]
     generate_optimization_heatmap,
     generate_optimization_plots,
@@ -19,6 +18,7 @@ from optimization.result_io import (  # type: ignore[import]
     save_top_n_optimization_trajectories,
     save_top_trajectories_summary_table,
 )
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.ui_helpers import (  # type: ignore[import]
     show_error_dialog as _show_error_dialog,
 )
@@ -113,7 +113,7 @@ class OptimizationResultsMixin:
                 elif param_name == "macroparticle_sigma_multiplier":
                     macroparticle_sigma_mult = value
 
-            if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            if is_bunch_to_bunch(self.config.simulation_type):
                 transv_offset = offset_frac
                 driver_params_dict = {
                     "m_particle": self.config.driver_m_particle,

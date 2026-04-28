@@ -15,7 +15,6 @@ from core.smoothness_analyzer import (  # type: ignore[import]
     SmoothnessConfig,
     analyze_trajectory_smoothness,
 )
-from core.types import SimulationType  # type: ignore[import]
 from lw_integrator.testbed_runner import (  # type: ignore[import]
     SimulationOptions,
     run_testbed,
@@ -36,6 +35,7 @@ from optimization.run_parameter_helpers import (
     resolve_optimization_run_parameters,
     resolve_objective_metric,
 )
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import (
     build_parameter_grids,
     calculate_starting_pz_from_energy,
@@ -706,7 +706,7 @@ class OptimizationRunMixin:
 
                 # Get driver particle parameters if BUNCH_TO_BUNCH
                 driver_params_dict = None
-                if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                if is_bunch_to_bunch(self.config.simulation_type):
                     driver_m = params_dict.get(
                         "driver_m_particle", self.config.driver_m_particle
                     )
@@ -780,7 +780,7 @@ class OptimizationRunMixin:
                     rest_energy_mev = rider_m_particle * AMU_TO_MEV
 
                     # For BUNCH_TO_BUNCH, energy is kinetic; for others, it's total
-                    if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                    if is_bunch_to_bunch(self.config.simulation_type):
                         gamma = (energy * 1e3) / rest_energy_mev + 1.0
                     else:
                         gamma = (energy * 1e3) / rest_energy_mev
@@ -1182,8 +1182,7 @@ class OptimizationRunMixin:
                             if not log_params:
                                 # For BUNCH_TO_BUNCH, show initial_energy_gev if present
                                 if (
-                                    self.config.simulation_type
-                                    == SimulationType.BUNCH_TO_BUNCH
+                                    is_bunch_to_bunch(self.config.simulation_type)
                                 ):
                                     if "initial_energy_gev" in params_dict:
                                         log_params["initial_energy_gev"] = params_dict[
@@ -1483,7 +1482,7 @@ class OptimizationRunMixin:
         rest_energy_mev = rider_m_particle * AMU_TO_MEV
 
         # For BUNCH_TO_BUNCH, energy is kinetic energy; for others, it's total energy
-        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+        if is_bunch_to_bunch(self.config.simulation_type):
             # Kinetic energy: γ = (KE / E_rest) + 1
             gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
         else:
@@ -1601,7 +1600,7 @@ class OptimizationRunMixin:
             # Log diagnostic info for potentially problematic configurations
             # Only check aperture for CONDUCTING_WALL modes
             if (
-                self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH
+                not is_bunch_to_bunch(self.config.simulation_type)
                 and aperture < 0.1
             ):
                 self._log_result(
@@ -1694,7 +1693,7 @@ class OptimizationRunMixin:
                         final_z = float(z_array[-1])
 
                         # Calculate expected distance based on simulation type
-                        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+                        if is_bunch_to_bunch(self.config.simulation_type):
                             # For BUNCH_TO_BUNCH: target is driver_start + target_distance
                             if driver_params is not None:
                                 driver_start_z = driver_params.get(
@@ -1716,8 +1715,7 @@ class OptimizationRunMixin:
                             )
                             self._log_result(f"    Final z: {final_z:.2f} mm")
                             if (
-                                self.config.simulation_type
-                                == SimulationType.BUNCH_TO_BUNCH
+                                is_bunch_to_bunch(self.config.simulation_type)
                             ):
                                 self._log_result(
                                     f"    Expected max z: {expected_max_z:.2f} mm (driver_start + target={self.config.target_distance_mm:.2f})"
