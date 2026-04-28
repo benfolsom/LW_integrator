@@ -29,6 +29,11 @@ from optimization.logging_policy import (
     describe_run_logging_policy,
     restore_run_logging_policy,
 )
+from optimization.run_parameter_helpers import (
+    calculate_transverse_offset,
+    collect_optimization_parameter_selection,
+    resolve_objective_metric,
+)
 from optimization.sweep_helpers import (
     build_parameter_grids,
     calculate_starting_pz_from_energy,
@@ -75,188 +80,11 @@ class OptimizationRunMixin:
                 self._log_result(line)
             self._log_result("")
 
-            # Build parameter names and bounds from config
-            param_names = []
-            param_bounds = []
-
-            # Aperture
-            if self.config.aperture_points > 1:
-                param_names.append("aperture_radius")
-                param_bounds.append(self.config.aperture_range)
-
-            # Energy
-            if self.config.energy_points > 1:
-                param_names.append("initial_energy_gev")
-                param_bounds.append(self.config.energy_range)
-                self._log_result(
-                    f"    Added: initial_energy_gev, range={self.config.energy_range}, points={self.config.energy_points}"
-                )
-
-            # Transverse momentum (if enabled as sweep parameter)
-            if (
-                self.config.transverse_momentum_range is not None
-                and self.config.transverse_momentum_points > 1
-            ):
-                param_names.append("transverse_momentum")
-                param_bounds.append(self.config.transverse_momentum_range)
-                self._log_result(
-                    f"    Added: transverse_momentum, range={self.config.transverse_momentum_range}, points={self.config.transverse_momentum_points}"
-                )
-
-            # Timestep (if enabled as sweep parameter)
-            if (
-                self.config.timestep_range is not None
-                and self.config.timestep_points > 1
-            ):
-                param_names.append("timestep")
-                param_bounds.append(self.config.timestep_range)
-
-            # Rider transverse distance (spread) - if enabled as sweep parameter
-            if (
-                self.config.transverse_spread_range is not None
-                and self.config.transverse_spread_points > 1
-            ):
-                param_names.append("rider_transv_dist")
-                param_bounds.append(self.config.transverse_spread_range)
-                self._log_result(
-                    f"    Added: rider_transv_dist, range={self.config.transverse_spread_range}, points={self.config.transverse_spread_points}"
-                )
-
-            # Macroparticle charge multiplier - if enabled as sweep parameter
-            if (
-                self.config.macroparticle_charge_range is not None
-                and self.config.macroparticle_charge_points > 1
-            ):
-                param_names.append("macroparticle_charge_multiplier")
-                param_bounds.append(self.config.macroparticle_charge_range)
-
-            # Macroparticle sigma multiplier - if enabled as sweep parameter
-            if (
-                self.config.macroparticle_sigma_range is not None
-                and self.config.macroparticle_sigma_points > 1
-            ):
-                param_names.append("macroparticle_sigma_multiplier")
-                param_bounds.append(self.config.macroparticle_sigma_range)
-
-            # Wall z position - if enabled as sweep parameter
-            if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
-                param_names.append("wall_z")
-                param_bounds.append(self.config.wall_z_range)
-
-            # Rider stripped ions - if enabled as sweep parameter
-            if (
-                self.config.rider_stripped_ions_range is not None
-                and self.config.rider_stripped_ions_points > 1
-            ):
-                param_names.append("rider_stripped_ions")
-                param_bounds.append(self.config.rider_stripped_ions_range)
-
-            # Driver stripped ions - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_stripped_ions_range is not None
-                and self.config.driver_stripped_ions_points > 1
-            ):
-                param_names.append("driver_stripped_ions")
-                param_bounds.append(self.config.driver_stripped_ions_range)
-
-            # Rider particle mass - if enabled as sweep parameter
-            if (
-                self.config.particle_mass_range is not None
-                and self.config.particle_mass_points > 1
-            ):
-                param_names.append("rider_m_particle")
-                param_bounds.append(self.config.particle_mass_range)
-                self._log_result(
-                    f"    Added: rider_m_particle, range={self.config.particle_mass_range}, points={self.config.particle_mass_points}"
-                )
-
-            # Rider charge sign - if enabled as sweep parameter
-            if (
-                self.config.particle_charge_range is not None
-                and self.config.particle_charge_points > 1
-            ):
-                param_names.append("rider_charge_sign")
-                param_bounds.append(self.config.particle_charge_range)
-
-            # Rider particle count - if enabled as sweep parameter
-            if (
-                self.config.particle_count_range is not None
-                and self.config.particle_count_points > 1
-            ):
-                param_names.append("rider_pcount")
-                param_bounds.append(self.config.particle_count_range)
-                self._log_result(
-                    f"    Added: rider_pcount, range={self.config.particle_count_range}, points={self.config.particle_count_points}"
-                )
-
-            # Driver particle mass - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_mass_range is not None
-                and self.config.driver_mass_points > 1
-            ):
-                param_names.append("driver_m_particle")
-                param_bounds.append(self.config.driver_mass_range)
-                self._log_result(
-                    f"    Added: driver_m_particle, range={self.config.driver_mass_range}, points={self.config.driver_mass_points}"
-                )
-
-            # Driver charge sign - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_charge_sign_range is not None
-                and self.config.driver_charge_sign_points > 1
-            ):
-                param_names.append("driver_charge_sign")
-                param_bounds.append(self.config.driver_charge_sign_range)
-
-            # Driver particle count - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_pcount_range is not None
-                and self.config.driver_pcount_points > 1
-            ):
-                param_names.append("driver_pcount")
-                param_bounds.append(self.config.driver_pcount_range)
-                self._log_result(
-                    f"    Added: driver_pcount, range={self.config.driver_pcount_range}, points={self.config.driver_pcount_points}"
-                )
-
-            # Driver transverse momentum - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_transv_mom_range is not None
-                and self.config.driver_transv_mom_points > 1
-            ):
-                param_names.append("driver_transv_mom")
-                param_bounds.append(self.config.driver_transv_mom_range)
-                self._log_result(
-                    f"    Added: driver_transv_mom, range={self.config.driver_transv_mom_range}, points={self.config.driver_transv_mom_points}"
-                )
-
-            # Driver transverse distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_transv_dist_range is not None
-                and self.config.driver_transv_dist_points > 1
-            ):
-                param_names.append("driver_transv_dist")
-                param_bounds.append(self.config.driver_transv_dist_range)
-                self._log_result(
-                    f"    Added: driver_transv_dist, range={self.config.driver_transv_dist_range}, points={self.config.driver_transv_dist_points}"
-                )
-
-            # Driver starting distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_starting_distance_range is not None
-                and self.config.driver_starting_distance_points > 1
-            ):
-                param_names.append("driver_starting_distance")
-                param_bounds.append(self.config.driver_starting_distance_range)
-
-            # Driver energy - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            # Note: Internally uses Pz, but optimizer varies energy for user convenience
-            if (
-                self.config.driver_energy_range is not None
-                and self.config.driver_energy_points > 1
-            ):
-                param_names.append("driver_energy_gev")
-                param_bounds.append(self.config.driver_energy_range)
+            selection = collect_optimization_parameter_selection(self.config)
+            param_names = selection.names
+            param_bounds = selection.bounds
+            for line in selection.log_lines:
+                self._log_result(line)
 
             if len(param_names) == 0:
                 self._log_result(
@@ -287,15 +115,7 @@ class OptimizationRunMixin:
                 # Add other fixed parameters
             }
 
-            # Determine metric name from objective
-            metric_name = "max_energy_gain_gev"
-            maximize = True
-
-            if self.config.objective == "max_percent_energy_gain":
-                metric_name = "max_percent_energy_gain"
-                maximize = True
-            elif "min" in self.config.objective.lower():
-                maximize = False
+            metric_name, maximize = resolve_objective_metric(self.config.objective)
 
             # Run optimization based on selected method
             method = self.config.optimization_method
@@ -429,18 +249,9 @@ class OptimizationRunMixin:
                             # Legacy support if old configs still use Pz
                             driver_starting_Pz = x[i]
 
-                    # Calculate transverse offset in mm
-                    # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
-                    # For BUNCH_TO_BUNCH: absolute distance in mm
-                    sim_type_str = self.config.simulation_type
-                    if sim_type_str == "BUNCH_TO_BUNCH":
-                        transv_offset = (
-                            offset_frac  # Direct mm value for bunch-to-bunch
-                        )
-                    else:
-                        transv_offset = (
-                            offset_frac * aperture
-                        )  # Fraction for conducting wall
+                    transv_offset = calculate_transverse_offset(
+                        self.config.simulation_type, offset_frac, aperture
+                    )
 
                     # Get driver particle parameters if BUNCH_TO_BUNCH (needed before timestep calc)
                     driver_params_dict = None
@@ -1152,16 +963,9 @@ class OptimizationRunMixin:
                         ),
                     }
 
-                # Calculate transverse offset
-                # For CONDUCTING_WALL/SWITCHING_WALL: fraction of aperture
-                # For BUNCH_TO_BUNCH: absolute distance in mm
-                sim_type_str = self.config.simulation_type
-                if sim_type_str == "BUNCH_TO_BUNCH":
-                    transv_offset = offset_frac  # Direct mm value for bunch-to-bunch
-                else:
-                    transv_offset = (
-                        offset_frac * aperture
-                    )  # Fraction for conducting wall
+                transv_offset = calculate_transverse_offset(
+                    self.config.simulation_type, offset_frac, aperture
+                )
 
                 # Calculate timestep based on strategy
                 if self.config.timestep_strategy != "fixed":
