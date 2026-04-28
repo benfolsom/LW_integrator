@@ -158,6 +158,10 @@ def test_gui_inherits_layout_helpers_from_layout_mixin():
     assert gui.IntegratorGUI._build_log_summary_panel is (
         IntegratorGUILayoutMixin._build_log_summary_panel
     )
+    assert gui.IntegratorGUI._build_particle_tab is (
+        IntegratorGUILayoutMixin._build_particle_tab
+    )
+    assert gui.IntegratorGUI._build_core_tab is IntegratorGUILayoutMixin._build_core_tab
 
 
 def test_gui_inherits_log_helpers_from_log_mixin():
