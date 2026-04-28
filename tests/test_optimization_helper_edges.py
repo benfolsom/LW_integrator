@@ -17,7 +17,11 @@ from optimization.metrics import (
 )
 from optimization.penalties import compute_soft_penalty
 import optimization.run_control_helpers as run_control_helpers
-from optimization.run_control_helpers import build_extreme_parameter_warning
+from optimization.run_control_helpers import (
+    SweepParameterValidationInput,
+    build_extreme_parameter_warning,
+    validate_optimization_inputs,
+)
 from optimization.plugin_results_helpers import (
     build_summary_heatmap_grid,
     build_trajectory_plot_data,
@@ -214,7 +218,115 @@ def test_compute_soft_penalty_is_zero_for_safe_region_and_positive_for_risky_cas
 
 
 def test_run_control_helpers_expose_only_supported_public_helpers():
-    assert run_control_helpers.__all__ == ["build_extreme_parameter_warning"]
+    assert run_control_helpers.__all__ == [
+        "SweepParameterValidationInput",
+        "build_extreme_parameter_warning",
+        "validate_optimization_inputs",
+    ]
+
+
+def _validation_params(**overrides):
+    params = {
+        "simulation_type": SimulationType.CONDUCTING_WALL,
+        "aperture_min": "0.01",
+        "aperture_max": "0.02",
+        "aperture_points": "2",
+        "energy_min": "1.0",
+        "energy_max": "2.0",
+        "energy_points": "2",
+        "mode": "blind_sweep",
+        "offset_fractions": "0.0",
+        "start_z": "0.0",
+        "wall_z": "100.0",
+        "steps": "100",
+        "auto_steps_distance": "0.0",
+        "sweep_parameters": [
+            SweepParameterValidationInput(
+                name="rider_m_particle",
+                swept=False,
+                min_value="1.0",
+                max_value="2.0",
+                points="2",
+                fixed_value="1.0",
+            ),
+            SweepParameterValidationInput(
+                name="rider_pcount",
+                swept=False,
+                min_value="1",
+                max_value="2",
+                points="2",
+                fixed_value="1",
+            ),
+            SweepParameterValidationInput(
+                name="rider_stripped_ions",
+                swept=False,
+                min_value="1.0",
+                max_value="2.0",
+                points="2",
+                fixed_value="1.0",
+            ),
+        ],
+    }
+    params.update(overrides)
+    return params
+
+
+def test_validate_optimization_inputs_accepts_enum_backed_b2b_single_rider_energy():
+    error = validate_optimization_inputs(
+        **_validation_params(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            aperture_min="-1.0",
+            aperture_max="-1.0",
+            aperture_points="1",
+            energy_min="1.0",
+            energy_max="1.0",
+            energy_points="1",
+            mode="optimization",
+        )
+    )
+
+    assert error is None
+
+
+def test_validate_optimization_inputs_allows_blind_sweep_with_swept_subparameter():
+    swept_param = SweepParameterValidationInput(
+        name="rider_transv_mom",
+        swept=True,
+        min_value="0.0",
+        max_value="1.0",
+        points="2",
+        fixed_value="0.0",
+    )
+
+    error = validate_optimization_inputs(
+        **_validation_params(
+            energy_min="1.0",
+            energy_max="2.0",
+            energy_points="1",
+            sweep_parameters=[swept_param],
+        )
+    )
+
+    assert error is None
+
+
+def test_validate_optimization_inputs_reports_fixed_particle_constraints():
+    error = validate_optimization_inputs(
+        **_validation_params(
+            sweep_parameters=[
+                SweepParameterValidationInput(
+                    name="rider_m_particle",
+                    swept=False,
+                    min_value="1.0",
+                    max_value="2.0",
+                    points="2",
+                    fixed_value="0.0",
+                )
+            ]
+        )
+    )
+
+    assert error == "rider_m_particle: Particle mass must be positive"
 
 
 def test_build_extreme_parameter_warning_returns_none_for_safe_config():

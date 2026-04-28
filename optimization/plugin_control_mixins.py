@@ -15,7 +15,11 @@ from optimization.plugin_config_helpers import (
     parse_float_list,
     parse_offset_pair,
 )
-from optimization.run_control_helpers import build_extreme_parameter_warning
+from optimization.run_control_helpers import (
+    SweepParameterValidationInput,
+    build_extreme_parameter_warning,
+    validate_optimization_inputs,
+)
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.ui_helpers import (
     show_error_dialog as _show_error_dialog,
@@ -31,90 +35,33 @@ class OptimizationPluginControlMixin:
 
     def _validate_inputs(self) -> Optional[str]:
         """Validate user inputs. Returns error message or None."""
-        try:
-            sim_type = self.sim_type_var.get()
-            is_bunch_to_bunch = sim_type == "BUNCH_TO_BUNCH"
-
-            if not is_bunch_to_bunch:
-                aperture_min = float(self.aperture_min_var.get())
-                aperture_max = float(self.aperture_max_var.get())
-                if aperture_min >= aperture_max:
-                    return "Aperture min must be less than max"
-                if aperture_min <= 0:
-                    return "Aperture min must be positive"
-
-            energy_min = float(self.energy_min_var.get())
-            energy_max = float(self.energy_max_var.get())
-            energy_points = int(self.energy_points_var.get())
-
-            if is_bunch_to_bunch and energy_points == 1:
-                if energy_min <= 0:
-                    return "Rider energy must be positive"
-            else:
-                if energy_min >= energy_max:
-                    return "Energy min must be less than max"
-                if energy_min <= 0:
-                    return "Energy min must be positive"
-
-            mode = self.mode_var.get()
-
-            if mode == "blind_sweep":
-                has_swept_sub_param = any(
-                    controls["sweep_var"].get()
-                    for controls in self.sweep_params.values()
-                )
-                if not is_bunch_to_bunch:
-                    aperture_points = int(self.aperture_points_var.get())
-                    if aperture_points < 2:
-                        return "Sweep mode: Aperture must have at least 2 points"
-                if energy_points < 2 and not has_swept_sub_param:
-                    return (
-                        "Sweep mode: Energy must have at least 2 points "
-                        "(or enable a swept sub-parameter)"
-                    )
-            else:
-                if not is_bunch_to_bunch:
-                    aperture_points = int(self.aperture_points_var.get())
-                    if aperture_points < 1:
-                        return "Aperture must have at least 1 point"
-                if energy_points < 1:
-                    return "Energy must have at least 1 point"
-
-            parse_float_list(self.offset_fractions_var.get())
-            float(self.start_z_var.get())
-            float(self.wall_z_var.get())
-            steps = int(self.steps_var.get())
-            if steps < 100:
-                return "Steps must be at least 100"
-
-            distance_past_wall = float(self.auto_steps_distance_var.get())
-            if distance_past_wall < 0:
-                return "Distance past wall must be non-negative"
-
-            for param_name, controls in self.sweep_params.items():
-                if controls["sweep_var"].get():
-                    min_val = float(controls["min_var"].get())
-                    max_val = float(controls["max_var"].get())
-                    points = int(controls["points_var"].get())
-
-                    if min_val >= max_val:
-                        return f"{param_name}: min must be less than max"
-                    if points < 2:
-                        return f"{param_name}: must have at least 2 points"
-                else:
-                    fixed_val = float(controls["fixed_var"].get())
-                    if "m_particle" in param_name and fixed_val <= 0:
-                        return f"{param_name}: Particle mass must be positive"
-                    if "pcount" in param_name and int(fixed_val) < 1:
-                        return f"{param_name}: Particle count must be at least 1"
-
-            float(self.sweep_params["rider_stripped_ions"]["fixed_var"].get())
-            if self.sim_type_var.get() == "BUNCH_TO_BUNCH":
-                float(self.sweep_params["driver_stripped_ions"]["fixed_var"].get())
-
-            return None
-        except ValueError as e:
-            return f"Invalid input: {e}"
+        sweep_parameters = [
+            SweepParameterValidationInput(
+                name=param_name,
+                swept=controls["sweep_var"].get(),
+                min_value=controls["min_var"].get(),
+                max_value=controls["max_var"].get(),
+                points=controls["points_var"].get(),
+                fixed_value=controls["fixed_var"].get(),
+            )
+            for param_name, controls in self.sweep_params.items()
+        ]
+        return validate_optimization_inputs(
+            simulation_type=self.sim_type_var.get(),
+            aperture_min=self.aperture_min_var.get(),
+            aperture_max=self.aperture_max_var.get(),
+            aperture_points=self.aperture_points_var.get(),
+            energy_min=self.energy_min_var.get(),
+            energy_max=self.energy_max_var.get(),
+            energy_points=self.energy_points_var.get(),
+            mode=self.mode_var.get(),
+            offset_fractions=self.offset_fractions_var.get(),
+            start_z=self.start_z_var.get(),
+            wall_z=self.wall_z_var.get(),
+            steps=self.steps_var.get(),
+            auto_steps_distance=self.auto_steps_distance_var.get(),
+            sweep_parameters=sweep_parameters,
+        )
 
     def _get_gui_stability_setting(self, var_name: str, default_value):
         """Get a stability setting from the main GUI if available."""

@@ -5,11 +5,119 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from optimization.plugin_config_helpers import parse_float_list
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import AMU_TO_MEV
 
 _ELECTRON_MASS_AMU = 0.00054857990907
 _PROTON_MASS_AMU = 1.007276466621
+
+
+@dataclass(frozen=True)
+class SweepParameterValidationInput:
+    """UI-independent snapshot of one sweepable sub-parameter."""
+
+    name: str
+    swept: bool
+    min_value: Any
+    max_value: Any
+    points: Any
+    fixed_value: Any
+
+
+def validate_optimization_inputs(
+    *,
+    simulation_type: Any,
+    aperture_min: Any,
+    aperture_max: Any,
+    aperture_points: Any,
+    energy_min: Any,
+    energy_max: Any,
+    energy_points: Any,
+    mode: str,
+    offset_fractions: str,
+    start_z: Any,
+    wall_z: Any,
+    steps: Any,
+    auto_steps_distance: Any,
+    sweep_parameters: list[SweepParameterValidationInput],
+) -> str | None:
+    """Validate optimization run inputs without depending on Tk widgets."""
+
+    try:
+        b2b_mode = is_bunch_to_bunch(simulation_type)
+
+        if not b2b_mode:
+            aperture_min_float = float(aperture_min)
+            aperture_max_float = float(aperture_max)
+            if aperture_min_float >= aperture_max_float:
+                return "Aperture min must be less than max"
+            if aperture_min_float <= 0:
+                return "Aperture min must be positive"
+
+        energy_min_float = float(energy_min)
+        energy_max_float = float(energy_max)
+        energy_points_int = int(energy_points)
+
+        if b2b_mode and energy_points_int == 1:
+            if energy_min_float <= 0:
+                return "Rider energy must be positive"
+        else:
+            if energy_min_float >= energy_max_float:
+                return "Energy min must be less than max"
+            if energy_min_float <= 0:
+                return "Energy min must be positive"
+
+        if mode == "blind_sweep":
+            has_swept_sub_param = any(param.swept for param in sweep_parameters)
+            if not b2b_mode:
+                aperture_points_int = int(aperture_points)
+                if aperture_points_int < 2:
+                    return "Sweep mode: Aperture must have at least 2 points"
+            if energy_points_int < 2 and not has_swept_sub_param:
+                return (
+                    "Sweep mode: Energy must have at least 2 points "
+                    "(or enable a swept sub-parameter)"
+                )
+        else:
+            if not b2b_mode:
+                aperture_points_int = int(aperture_points)
+                if aperture_points_int < 1:
+                    return "Aperture must have at least 1 point"
+            if energy_points_int < 1:
+                return "Energy must have at least 1 point"
+
+        parse_float_list(offset_fractions)
+        float(start_z)
+        float(wall_z)
+        steps_int = int(steps)
+        if steps_int < 100:
+            return "Steps must be at least 100"
+
+        distance_past_wall = float(auto_steps_distance)
+        if distance_past_wall < 0:
+            return "Distance past wall must be non-negative"
+
+        for param in sweep_parameters:
+            if param.swept:
+                min_val = float(param.min_value)
+                max_val = float(param.max_value)
+                points = int(param.points)
+
+                if min_val >= max_val:
+                    return f"{param.name}: min must be less than max"
+                if points < 2:
+                    return f"{param.name}: must have at least 2 points"
+            else:
+                fixed_val = float(param.fixed_value)
+                if "m_particle" in param.name and fixed_val <= 0:
+                    return f"{param.name}: Particle mass must be positive"
+                if "pcount" in param.name and int(fixed_val) < 1:
+                    return f"{param.name}: Particle count must be at least 1"
+
+        return None
+    except ValueError as exc:
+        return f"Invalid input: {exc}"
 
 
 def build_extreme_parameter_warning(config: Any) -> str | None:
@@ -110,4 +218,8 @@ def _fixed_timestep_warning(
     )
 
 
-__all__ = ["build_extreme_parameter_warning"]
+__all__ = [
+    "SweepParameterValidationInput",
+    "build_extreme_parameter_warning",
+    "validate_optimization_inputs",
+]
