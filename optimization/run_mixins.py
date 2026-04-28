@@ -47,10 +47,15 @@ from optimization.sweep_run_helpers import (
     resolve_sweep_timestep,
 )
 from optimization.sweep_result_helpers import (
+    build_failed_sweep_run_record,
+    build_full_debug_sweep_result_log_lines,
+    build_sweep_completion_log_lines,
     build_sweep_run_data,
+    build_timeout_sweep_run_record,
     build_truncated_sweep_log_params,
     classify_sweep_attempt_result,
     extract_actual_distance,
+    extract_sweep_metric_summary,
 )
 
 
@@ -921,19 +926,7 @@ class OptimizationRunMixin:
                         )
 
                     if not run_timed_out and result is not None:
-                        # Extract metrics
-                        delta_e = result.get("metrics", {}).get(
-                            "rider_delta_e_mev", 0.0
-                        )
-                        delta_gamma = result.get("metrics", {}).get(
-                            "rider_delta_gamma", 0.0
-                        )
-                        gamma_initial = result.get("metrics", {}).get(
-                            "rider_gamma_initial", 0.0
-                        )
-                        gamma_final = result.get("metrics", {}).get(
-                            "rider_gamma_final", 0.0
-                        )
+                        metric_summary = extract_sweep_metric_summary(result)
 
                         # Create run_data structure (used regardless of logging mode)
                         run_data = build_sweep_run_data(
@@ -978,27 +971,23 @@ class OptimizationRunMixin:
                                 run_num,
                                 params=log_params,
                                 metrics={
-                                    "ΔE": delta_e,
-                                    "Δγ": delta_gamma,
-                                    "γ_i": gamma_initial,
-                                    "γ_f": gamma_final,
+                                    "ΔE": metric_summary.delta_e,
+                                    "Δγ": metric_summary.delta_gamma,
+                                    "γ_i": metric_summary.gamma_initial,
+                                    "γ_f": metric_summary.gamma_final,
                                 },
                             )
                         elif use_full_debug:
                             # Full debug mode: all details
                             actual_distance = extract_actual_distance(result)
-                            self._log_result(f"  [RESULT] Run {run_num}/{total_runs}:")
-                            self._log_result(
-                                f"    Distance: expected={expected_distance:.2f}mm, actual={actual_distance:.2f}mm"
-                            )
-                            self._log_result(
-                                f"    Gamma: initial={gamma_initial:.6f}, final={gamma_final:.6f}, delta={delta_gamma:.6e}"
-                            )
-                            self._log_result(f"    Energy: ΔE={delta_e:.6f}MeV")
-                            if actual_distance < 0.1:
-                                self._log_result(
-                                    "  [WARNING] Particle barely moved! Check timestep calculation."
-                                )
+                            for line in build_full_debug_sweep_result_log_lines(
+                                run_num=run_num,
+                                total_runs=total_runs,
+                                expected_distance=expected_distance,
+                                actual_distance=actual_distance,
+                                metrics=metric_summary,
+                            ):
+                                self._log_result(line)
 
                         # Add trajectory if requested (check if any trajectory saving is enabled)
                         # Note: save_top_n_trajectories only applies to optimization mode, not sweeps
@@ -1026,22 +1015,18 @@ class OptimizationRunMixin:
 
                         # Record failed run
                         failed_runs.append(
-                            {
-                                "run_number": run_num,
-                                "parameters": {
-                                    "aperture_radius": aperture,
-                                    "particle_energy_gev": energy,
-                                    "start_z": start_z,
-                                    "transverse_offset": transv_offset,
-                                    "timestep": timestep,
-                                    "steps": steps,
-                                    "wall_z": params_dict.get(
-                                        "wall_z", self.config.wall_z
-                                    ),
-                                },
-                                "error": run_error,
-                                "error_details": error_details,
-                            }
+                            build_failed_sweep_run_record(
+                                run_num=run_num,
+                                aperture=aperture,
+                                energy=energy,
+                                start_z=start_z,
+                                transv_offset=transv_offset,
+                                timestep=timestep,
+                                steps=steps,
+                                wall_z=params_dict.get("wall_z", self.config.wall_z),
+                                error=run_error,
+                                error_details=error_details,
+                            )
                         )
                     else:
                         # Don't skip - re-raise and stop sweep
@@ -1059,19 +1044,16 @@ class OptimizationRunMixin:
                             "    Skipping and continuing with next run..."
                         )
                         failed_runs.append(
-                            {
-                                "run_number": run_num,
-                                "parameters": {
-                                    "aperture_radius": aperture,
-                                    "particle_energy_gev": energy,
-                                    "start_z": start_z,
-                                    "transverse_offset": transv_offset,
-                                    "timestep": timestep,
-                                    "steps": steps,
-                                },
-                                "error": "TIMEOUT",
-                                "timeout_seconds": self.config.per_run_timeout,
-                            }
+                            build_timeout_sweep_run_record(
+                                run_num=run_num,
+                                aperture=aperture,
+                                energy=energy,
+                                start_z=start_z,
+                                transv_offset=transv_offset,
+                                timestep=timestep,
+                                steps=steps,
+                                timeout_seconds=self.config.per_run_timeout,
+                            )
                         )
                     else:
                         self._log_result(
@@ -1085,25 +1067,13 @@ class OptimizationRunMixin:
 
             if self.running:
                 elapsed_time = time.time() - start_time
-                hours = int(elapsed_time // 3600)
-                minutes = int((elapsed_time % 3600) // 60)
-                seconds = elapsed_time % 60
-
-                self._log_result("[OK] Sweep completed!")
-                self._log_result(f"  Results saved to: {self.config.output_dir}")
-                self._log_result(f"  Successful runs: {len(all_results)}")
-                if failed_runs:
-                    self._log_result(f"  Failed/timed-out runs: {len(failed_runs)}")
-                if hours > 0:
-                    self._log_result(
-                        f"  Total time: {hours}h {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
-                    )
-                elif minutes > 0:
-                    self._log_result(
-                        f"  Total time: {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
-                    )
-                else:
-                    self._log_result(f"  Total time: {elapsed_time:.1f}s")
+                for line in build_sweep_completion_log_lines(
+                    output_dir=self.config.output_dir,
+                    successful_runs=len(all_results),
+                    failed_runs=len(failed_runs),
+                    elapsed_time=elapsed_time,
+                ):
+                    self._log_result(line)
                 self._update_progress(100, "Complete!")
         except Exception as e:
             self._log_result(f"[ERROR] Error during sweep: {e}")

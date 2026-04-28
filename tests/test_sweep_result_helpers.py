@@ -6,10 +6,16 @@ import numpy as np
 
 from core.types import SimulationType
 from optimization.sweep_result_helpers import (
+    SweepMetricSummary,
+    build_failed_sweep_run_record,
+    build_full_debug_sweep_result_log_lines,
+    build_sweep_completion_log_lines,
     build_sweep_run_data,
+    build_timeout_sweep_run_record,
     build_truncated_sweep_log_params,
     classify_sweep_attempt_result,
     extract_actual_distance,
+    extract_sweep_metric_summary,
     simulation_type_name,
 )
 
@@ -143,3 +149,88 @@ def test_classify_sweep_attempt_result_rejects_halted_or_empty_metrics():
     assert empty.succeeded is False
     assert empty.error is not None
     assert "reason=all dead" in str(empty.error)
+
+
+def test_extract_sweep_metric_summary_uses_zero_defaults():
+    summary = extract_sweep_metric_summary(
+        {"metrics": {"rider_delta_e_mev": 1.0, "rider_gamma_final": 12.0}}
+    )
+
+    assert summary.delta_e == 1.0
+    assert summary.delta_gamma == 0.0
+    assert summary.gamma_initial == 0.0
+    assert summary.gamma_final == 12.0
+
+
+def test_build_full_debug_sweep_result_log_lines_warns_on_no_motion():
+    lines = build_full_debug_sweep_result_log_lines(
+        run_num=2,
+        total_runs=5,
+        expected_distance=10.0,
+        actual_distance=0.0,
+        metrics=SweepMetricSummary(
+            delta_e=1.0,
+            delta_gamma=0.2,
+            gamma_initial=10.0,
+            gamma_final=10.2,
+        ),
+    )
+
+    assert lines[0] == "  [RESULT] Run 2/5:"
+    assert any("Particle barely moved" in line for line in lines)
+
+
+def test_build_failed_and_timeout_run_records():
+    failed = build_failed_sweep_run_record(
+        run_num=3,
+        aperture=0.01,
+        energy=5.0,
+        start_z=1.0,
+        transv_offset=0.1,
+        timestep=1e-7,
+        steps=100,
+        wall_z=200.0,
+        error="bad",
+        error_details="traceback",
+    )
+    timeout = build_timeout_sweep_run_record(
+        run_num=4,
+        aperture=0.02,
+        energy=6.0,
+        start_z=2.0,
+        transv_offset=0.2,
+        timestep=2e-7,
+        steps=200,
+        timeout_seconds=30.0,
+    )
+
+    assert failed["parameters"]["wall_z"] == 200.0
+    assert failed["error_details"] == "traceback"
+    assert timeout["error"] == "TIMEOUT"
+    assert timeout["timeout_seconds"] == 30.0
+
+
+def test_build_sweep_completion_log_lines_formats_time_branches():
+    seconds = build_sweep_completion_log_lines(
+        output_dir="out",
+        successful_runs=2,
+        failed_runs=0,
+        elapsed_time=3.5,
+    )
+    minutes = build_sweep_completion_log_lines(
+        output_dir="out",
+        successful_runs=2,
+        failed_runs=1,
+        elapsed_time=65.0,
+    )
+    hours = build_sweep_completion_log_lines(
+        output_dir="out",
+        successful_runs=2,
+        failed_runs=1,
+        elapsed_time=3665.0,
+    )
+
+    assert seconds[-1] == "  Total time: 3.5s"
+    assert "Failed/timed-out" not in "\n".join(seconds)
+    assert minutes[-1] == "  Total time: 1m 5.0s (65.0s)"
+    assert hours[-1] == "  Total time: 1h 1m 5.0s (3665.0s)"

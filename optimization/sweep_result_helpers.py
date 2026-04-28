@@ -19,6 +19,16 @@ class SweepAttemptClassification:
     log_lines: list[str]
 
 
+@dataclass(frozen=True)
+class SweepMetricSummary:
+    """Common metric values used by sweep result logging."""
+
+    delta_e: float
+    delta_gamma: float
+    gamma_initial: float
+    gamma_final: float
+
+
 def simulation_type_name(simulation_type: Any) -> str:
     """Return a stable serialized name for enum-backed or string-backed modes."""
     return str(getattr(simulation_type, "name", simulation_type))
@@ -134,6 +144,132 @@ def extract_actual_distance(result: Mapping[str, Any]) -> float:
     z_start = float(np.asarray(z_values[0]).flat[0])
     z_end = float(np.asarray(z_values[-1]).flat[0])
     return abs(z_end - z_start)
+
+
+def extract_sweep_metric_summary(result: Mapping[str, Any]) -> SweepMetricSummary:
+    """Extract common sweep result metrics with historical zero defaults."""
+    metrics = result.get("metrics", {})
+    return SweepMetricSummary(
+        delta_e=metrics.get("rider_delta_e_mev", 0.0),
+        delta_gamma=metrics.get("rider_delta_gamma", 0.0),
+        gamma_initial=metrics.get("rider_gamma_initial", 0.0),
+        gamma_final=metrics.get("rider_gamma_final", 0.0),
+    )
+
+
+def build_full_debug_sweep_result_log_lines(
+    *,
+    run_num: int,
+    total_runs: int,
+    expected_distance: float,
+    actual_distance: float,
+    metrics: SweepMetricSummary,
+) -> list[str]:
+    """Return full-debug sweep result log lines."""
+    log_lines = [
+        f"  [RESULT] Run {run_num}/{total_runs}:",
+        (
+            f"    Distance: expected={expected_distance:.2f}mm, "
+            f"actual={actual_distance:.2f}mm"
+        ),
+        (
+            f"    Gamma: initial={metrics.gamma_initial:.6f}, "
+            f"final={metrics.gamma_final:.6f}, delta={metrics.delta_gamma:.6e}"
+        ),
+        f"    Energy: ΔE={metrics.delta_e:.6f}MeV",
+    ]
+    if actual_distance < 0.1:
+        log_lines.append("  [WARNING] Particle barely moved! Check timestep calculation.")
+    return log_lines
+
+
+def build_failed_sweep_run_record(
+    *,
+    run_num: int,
+    aperture: float,
+    energy: float,
+    start_z: float,
+    transv_offset: float,
+    timestep: float,
+    steps: int,
+    error: str,
+    error_details: str,
+    wall_z: float,
+) -> dict[str, Any]:
+    """Build a failed-run record for result processing exceptions."""
+    return {
+        "run_number": run_num,
+        "parameters": {
+            "aperture_radius": aperture,
+            "particle_energy_gev": energy,
+            "start_z": start_z,
+            "transverse_offset": transv_offset,
+            "timestep": timestep,
+            "steps": steps,
+            "wall_z": wall_z,
+        },
+        "error": error,
+        "error_details": error_details,
+    }
+
+
+def build_timeout_sweep_run_record(
+    *,
+    run_num: int,
+    aperture: float,
+    energy: float,
+    start_z: float,
+    transv_offset: float,
+    timestep: float,
+    steps: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Build a failed-run record for timed-out sweep integrations."""
+    return {
+        "run_number": run_num,
+        "parameters": {
+            "aperture_radius": aperture,
+            "particle_energy_gev": energy,
+            "start_z": start_z,
+            "transverse_offset": transv_offset,
+            "timestep": timestep,
+            "steps": steps,
+        },
+        "error": "TIMEOUT",
+        "timeout_seconds": timeout_seconds,
+    }
+
+
+def build_sweep_completion_log_lines(
+    *,
+    output_dir: str,
+    successful_runs: int,
+    failed_runs: int,
+    elapsed_time: float,
+) -> list[str]:
+    """Return final sweep completion log lines."""
+    hours = int(elapsed_time // 3600)
+    minutes = int((elapsed_time % 3600) // 60)
+    seconds = elapsed_time % 60
+
+    log_lines = [
+        "[OK] Sweep completed!",
+        f"  Results saved to: {output_dir}",
+        f"  Successful runs: {successful_runs}",
+    ]
+    if failed_runs:
+        log_lines.append(f"  Failed/timed-out runs: {failed_runs}")
+    if hours > 0:
+        log_lines.append(
+            f"  Total time: {hours}h {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
+        )
+    elif minutes > 0:
+        log_lines.append(
+            f"  Total time: {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
+        )
+    else:
+        log_lines.append(f"  Total time: {elapsed_time:.1f}s")
+    return log_lines
 
 
 def classify_sweep_attempt_result(
