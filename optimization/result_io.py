@@ -220,8 +220,6 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
                 plugin._log_result(f"[WARNING] Failed to copy debug log: {e}")
     else:
         # Try to find the most recent logcache file for this context
-        import glob
-
         logcache_dir = Path(plugin.config.output_dir).parent.parent / "logcache"
         if logcache_dir.exists():
             # Find most recent optimization log
@@ -549,7 +547,7 @@ def generate_optimization_heatmap(
                 extend="both",
             )
 
-            scatter = ax.scatter(
+            ax.scatter(
                 x_vals,
                 y_vals,
                 c=z_vals,
@@ -610,8 +608,6 @@ def save_top_n_optimization_trajectories(
     plugin: Any, result: Any, param_names: List[str]
 ):
     """Re-run top N parameter sets and save trajectories to timestamped directory."""
-    from pathlib import Path
-
     if getattr(plugin, "_was_cancelled", False):
         plugin._log_result("")
         plugin._log_result(
@@ -703,7 +699,6 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
         for i, item in enumerate(trajectory_data_list):
             rank = item["rank"]
             traj = item["trajectory"]
-            fitness = item["fitness"]
             color = colors[i]
 
             z = np.array(traj.get("z", []))
@@ -996,11 +991,6 @@ def relocate_incomplete_sweep(
 
 __all__ = [
     "save_optimization_results",
-    "save_top_trajectories_summary_table",
-    "generate_optimization_plots",
-    "generate_optimization_heatmap",
-    "save_top_n_optimization_trajectories",
-    "generate_trajectory_comparison_plot",
     "save_partial_optimization_results",
     "relocate_incomplete_sweep",
 ]

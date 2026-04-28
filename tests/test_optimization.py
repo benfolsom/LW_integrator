@@ -5,6 +5,7 @@ Basic tests to verify optimization functionality works correctly.
 
 import importlib
 import optimization
+import optimization.result_io as optimization_result_io_module
 from types import SimpleNamespace
 
 import numpy as np
@@ -907,6 +908,21 @@ def test_optimization_package_exposes_only_maintained_lazy_exports():
         assert name not in optimization.__all__
         with pytest.raises(AttributeError):
             getattr(optimization, name)
+
+
+def test_result_io_hides_internal_plotting_helpers_from_wildcard_api():
+    assert optimization_result_io_module.__all__ == [
+        "save_optimization_results",
+        "save_partial_optimization_results",
+        "relocate_incomplete_sweep",
+    ]
+    for name in [
+        "generate_optimization_plots",
+        "generate_optimization_heatmap",
+        "save_top_n_optimization_trajectories",
+        "generate_trajectory_comparison_plot",
+    ]:
+        assert name not in optimization_result_io_module.__all__
 
 
 class TestOptimizationResultsMixin:
