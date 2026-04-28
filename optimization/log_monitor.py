@@ -21,7 +21,7 @@ _PARAMETER_PATTERN = re.compile(r"(\w+)=([\d.e+-]+)")
 _GAIN_PATTERN = re.compile(r"max_percent_energy_gain:\s*([-\d.e+-]+)%")
 
 
-def parse_log_parameters(params_str: str) -> Dict[str, Any]:
+def _parse_log_parameters(params_str: str) -> Dict[str, Any]:
     """Parse key=value parameter assignments from one evaluation log line."""
     params: Dict[str, Any] = {}
     for param_match in _PARAMETER_PATTERN.finditer(params_str):
@@ -46,7 +46,7 @@ def parse_optimization_log(log_path: Path) -> list[Dict[str, Any]]:
                 if eval_match:
                     current_eval = {
                         "eval_num": int(eval_match.group(1)),
-                        "params": parse_log_parameters(eval_match.group(2)),
+                        "params": _parse_log_parameters(eval_match.group(2)),
                         "log_file": log_path.name,
                         "timestamp": log_path.stat().st_mtime,
                     }
@@ -161,7 +161,6 @@ __all__ = [
     "MONITORED_INSIGHT_PARAMETERS",
     "analyze_optimization_logs",
     "collect_varied_parameters",
-    "parse_log_parameters",
     "parse_optimization_log",
     "select_optimization_log_files",
     "summarize_parameter_ranges",

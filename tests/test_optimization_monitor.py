@@ -6,9 +6,9 @@ from pathlib import Path
 
 from lw_integrator import optimization_monitor
 from optimization.log_monitor import (
+    MONITORED_INSIGHT_PARAMETERS,
     analyze_optimization_logs,
     collect_varied_parameters,
-    parse_log_parameters,
     parse_optimization_log,
     select_optimization_log_files,
     summarize_parameter_ranges,
@@ -26,16 +26,38 @@ def _write_log(path: Path, content: str, *, mtime: int) -> None:
 
 
 class TestOptimizationLogMonitorHelpers:
-    def test_parse_log_parameters_extracts_numeric_values(self):
-        params = parse_log_parameters(
-            "initial_energy_gev=35 transverse_momentum=1.5e-3 aperture_radius=0.2"
+    def test_module_exposes_only_supported_public_helpers(self):
+        import optimization.log_monitor as log_monitor
+
+        assert not hasattr(log_monitor, "parse_log_parameters")
+        assert log_monitor.__all__ == [
+            "MONITORED_INSIGHT_PARAMETERS",
+            "analyze_optimization_logs",
+            "collect_varied_parameters",
+            "parse_optimization_log",
+            "select_optimization_log_files",
+            "summarize_parameter_ranges",
+        ]
+
+    def test_parse_optimization_log_extracts_numeric_parameter_values(
+        self, tmp_path: Path
+    ):
+        log_path = tmp_path / "run_optimization.log"
+        _write_log(
+            log_path,
+            "Evaluation 1: initial_energy_gev=35 transverse_momentum=1.5e-3 aperture_radius=0.2\n"
+            "max_percent_energy_gain: 1.25%",
+            mtime=10,
         )
 
-        assert params == {
+        results = parse_optimization_log(log_path)
+
+        assert results[0]["params"] == {
             "initial_energy_gev": 35.0,
             "transverse_momentum": 1.5e-3,
             "aperture_radius": 0.2,
         }
+        assert MONITORED_INSIGHT_PARAMETERS[0] == "initial_energy_gev"
 
     def test_parse_optimization_log_collects_evaluations(self, tmp_path: Path):
         log_path = tmp_path / "run_optimization.log"
