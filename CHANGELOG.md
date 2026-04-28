@@ -131,9 +131,9 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 - **Bug** - Sweeping `driver_energy_gev` in BUNCH_TO_BUNCH mode had no effect on simulation results; all runs produced identical rider energy gains regardless of driver energy
 - **Root cause** - The sweep code path in `_run_sweep_background()` built `driver_params_dict` using `params_dict.get("driver_starting_Pz", -4925.0)`, but the sweep grid populated the key `"driver_energy_gev"` (in GeV). Since `"driver_starting_Pz"` was never in `params_dict`, every run used the hardcoded default Pz of -4925.0
-- **Scope** - Affected both `optimization_plugin.py` (GUI sweep path) and `optimization/run_mixins.py` (mixin sweep path). The optimization path (`_run_optimization_background`) was already correct
-- **Fix** - When building `driver_params_dict`, check for `"driver_energy_gev"` in `params_dict` first and convert to Pz via `calculate_starting_pz_from_energy()`, falling back to legacy `"driver_starting_Pz"` key
-- **Files modified** - `lw_integrator/optimization_plugin.py` (sweep path ~L7465-7490), `optimization/run_mixins.py` (sweep path ~L1334-1390, optimization path ~L497-504, added `_calculate_starting_pz_from_energy` helper)
+- **Scope** - Affected the sweep run-control path when building BUNCH_TO_BUNCH driver parameters from sweep-grid values
+- **Fix** - When building driver parameters, check for `"driver_energy_gev"` in `params_dict` first and convert to Pz via the shared energy-to-Pz helper, falling back to `"driver_starting_Pz"` only for older configs
+- **Files modified** - `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `optimization/sweep_run_helpers.py`, `optimization/sweep_helpers.py`, and related regression tests
 
 ### Optimization Plugin Fixes (February 26, 2026)
 

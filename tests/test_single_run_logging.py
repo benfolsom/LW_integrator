@@ -7,13 +7,7 @@ from pathlib import Path
 import core
 from core.types import SimulationType
 from lw_integrator.testbed_runner import SimulationOptions, run_testbed
-
-
-def _calculate_starting_pz(energy_gev: float, m_particle_amu: float) -> float:
-    rest_energy_mev = m_particle_amu * 931.494
-    gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-    beta = (1.0 - 1.0 / (gamma * gamma)) ** 0.5 if gamma > 1.0 else 0.0
-    return gamma * beta * 299.792458
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 
 
 def test_run_testbed_returns_and_copies_exact_debug_log(tmp_path: Path):
@@ -32,7 +26,11 @@ def test_run_testbed_returns_and_copies_exact_debug_log(tmp_path: Path):
             "charge_sign": -1.0,
             "pcount": 1,
             "stripped_ions": 1.0,
-            "starting_Pz": _calculate_starting_pz(10.0, 0.00054857990907),
+            "starting_Pz": calculate_rider_starting_pz(
+                10.0,
+                0.00054857990907,
+                SimulationType.CONDUCTING_WALL,
+            ),
         },
         driver_params=None,
         core_params={
