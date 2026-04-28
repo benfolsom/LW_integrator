@@ -1,9 +1,8 @@
 """Particle configuration defaults and field definitions.
 
 This module contains the default parameter sets for rider and driver bunches,
-as well as field definitions used throughout the GUI and validation scripts.
-These were previously scattered in examples/validation/core_vs_legacy_benchmark.py
-but are now centralized here for easier access from core, GUI, and validation code.
+as well as field definitions used throughout the maintained core, GUI, and
+validation code.
 """
 
 from typing import Dict, Tuple

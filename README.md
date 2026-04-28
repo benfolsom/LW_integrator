@@ -124,10 +124,10 @@ LW_integrator/
 ├── configs/              # JSON run and sweep configuration files
 ├── docs/                 # Sphinx configuration, sources, and build script
 ├── examples/
-│   └── validation/       # CLI and notebook-based comparison studies
+│   └── validation/       # Reference notebooks and validation examples
 ├── input_output/         # Particle bunch initialisation utilities
 ├── legacy/               # Archived original solver and notebooks
-│                         # (deprecated — kept for regression comparisons)
+│                         # (deprecated; historical reference only)
 ├── lw_integrator/        # CLI, GUI, sweep runner, and testbed runner
 ├── optimization/         # Sweep/optimization engine, metrics, result I/O
 ├── results/              # Sweep and optimization output (git-ignored)
@@ -391,8 +391,8 @@ the maintained packaged command `lw-generate-sweep-heatmap`:
 ```bash
 lw-generate-sweep-heatmap results/sweeps/<sweep_dir> \
     --no-title --output gains.png --absolute-gains --log-param2 \
-    --energy-max 1000 --num-contours 8 --no-markers --grey-zero \
-    --grey-centre 0 --gain-max 200 --energy-min 1 --log-colorbar
+    --param1-max 1000 --num-contours 8 --no-markers --grey-zero \
+    --grey-centre 0 --gain-max 200 --param1-min 1 --log-colorbar
 ```
 
 Contour lines use reduced alpha (0.18) and labels are automatically clamped

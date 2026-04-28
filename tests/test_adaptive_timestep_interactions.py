@@ -22,7 +22,45 @@ from core.integration_runner import (
     retarded_integrator,
 )
 from core.types import SimulationType
-from examples.validation.core_vs_legacy_benchmark import prepare_two_particle_demo
+from input_output.bunch_initialization import create_bunch_from_params
+
+
+DEFAULT_RIDER_PARAMS = {
+    "starting_distance": 1.0e-6,
+    "transv_mom": 0.0,
+    "starting_Pz": 1.01e6,
+    "stripped_ions": 1.0,
+    "m_particle": 1.007319468,
+    "transv_dist": 2.0e-4,
+    "pcount": 5,
+    "charge_sign": -1.0,
+}
+
+DEFAULT_DRIVER_PARAMS = {
+    "starting_distance": 1000.0,
+    "transv_mom": 0.0,
+    "starting_Pz": -1.01e6 / 207.2 * 1.007319468,
+    "stripped_ions": 54.0,
+    "m_particle": 207.2,
+    "transv_dist": 2.0e-4 - 8.0e-2,
+    "pcount": 5,
+    "charge_sign": 1.0,
+}
+
+
+def prepare_two_particle_demo(seed, *, rider_params=None, driver_params=None):
+    """Create deterministic demo bunches without importing legacy comparison code."""
+    np.random.seed(seed)
+    resolved_rider = dict(DEFAULT_RIDER_PARAMS)
+    resolved_driver = dict(DEFAULT_DRIVER_PARAMS)
+    if rider_params:
+        resolved_rider.update(rider_params)
+    if driver_params:
+        resolved_driver.update(driver_params)
+
+    rider_state, rider_rest_mev = create_bunch_from_params(**resolved_rider)
+    driver_state, driver_rest_mev = create_bunch_from_params(**resolved_driver)
+    return rider_state, driver_state, rider_rest_mev, driver_rest_mev
 
 
 def test_sweep_timestep_with_adaptive_disabled():

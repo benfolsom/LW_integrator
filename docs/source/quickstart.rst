@@ -25,15 +25,14 @@ simulation, and confirm that the regression tooling works on your machine.
    The ``dev`` extra mirrors the dependencies used in CI (NumPy, SciPy,
    Matplotlib, pytest, Sphinx, nbsphinx, etc.).
 
-4. (Optional) Launch the validation notebook for interactive comparison:
+4. (Optional) Open the historical validation notebook for reference:
 
    .. code-block:: bash
 
       code examples/validation/core_vs_legacy_benchmark.ipynb
 
-   From VS Code or Jupyter Lab, execute the cells and experiment with the
-   widgets. The notebook runs the same ``run_benchmark`` helper that the CLI
-   uses and can save overlay plots and ΔE scatter figures directly.
+   Use it as a historical reference for the archived comparison workflow.  For
+   current validation, prefer the pytest and CLI checks in :doc:`validation`.
 
 5. Launch the GUI application:
 

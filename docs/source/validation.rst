@@ -1,80 +1,46 @@
-Validation and regression
-==========================
+Validation and Regression
+=========================
 
-The LW Integrator repository keeps parity with the archived physics by running a
-suite of scripted comparisons.  This page explains the assets you can use to
-confirm changes and to reproduce the plots that appear in publications.
+Supported validation now centers on the maintained core, CLI, GUI, and plotting
+entry points.  The archived solver under ``legacy/`` and the historical
+comparison notebooks remain in the repository as reference material, but they
+are not the baseline for new workflows.
 
-.. note::
+Automated Checks
+----------------
 
-  The historical "static" integrator is preserved under ``legacy/`` for archival
-  purposes but is no longer part of the supported workflows.  The tools
-  described here exercise the retarded-field solvers exclusively.
+Use the pytest suite as the primary regression gate:
 
-Command-line benchmarks
------------------------
+* ``pytest -m unit`` for deterministic helper and control-flow coverage.
+* ``pytest -m physics`` for numerical and stability checks.
+* ``pytest tests/test_cli_gui_parity.py`` when changes touch CLI/GUI parity.
+* ``pytest tests/test_plotting_tools.py tests/test_trajectory_plotter.py`` for
+  maintained sweep and single-run plotting commands.
 
-The ``examples/comparison`` directory contains utilities aimed at comparing the
-core solver with its archived reference counterpart.
+For broad local validation, run ``pytest`` from the repository root.
 
-``legacy_vs_core_systematic_comparison.py``
-    Runs a configurable sweep over random seeds and integration lengths.  Use
-    the ``--seed`` and ``--steps`` flags (or pass lists via the ``run_suite``
-    helper) to generate metrics such as maximum relative differences in ``z``,
-    ``Pt``, and ``gamma``.
+Maintained Plotting Validation
+------------------------------
 
-``legacy_vs_core_trajectory_comparison.py``
-    Recreates the canonical two-particle demo from the archived notebooks, plots
-    the position and γ-series overlays, and highlights discrepancies.  The
-    refreshed version uses colourblind-safe palettes and high-DPI scatter
-    rendering by default.
+Sweep post-processing should use the packaged commands:
 
-``core_vs_legacy_benchmark.py``
-    The central benchmarking CLI.  Key arguments:
+* ``lw-generate-sweep-heatmap`` for publication-quality sweep heatmaps.
+* ``lw-plot-latest-live`` to follow the newest sweep log.
+* ``lw-plot-from-logcache-live`` for a specific sweep log in static or live mode.
+* ``lw-plot-trajectory`` for saved single-run JSON or NPZ trajectory files.
 
-    * ``--simulation-type {conducting,switching,bunch_to_bunch}`` chooses the
-      wall configuration via :class:`~core.trajectory_integrator.SimulationType`.
-    * ``--startup-mode {cold_start,approximate_back_history}`` selects the
-      transient treatment exposed in :class:`~core.types.StartupMode`; the
-      default cold start suppresses retarded forces until enough history is
-      accumulated, while the approximation reconstructs a constant-velocity past
-      (matching the archived reference treatment).
-    * ``--steps`` / ``--time-step`` / ``--seed`` control integration length and
-      reproducibility.
-    * ``--save-json`` writes metrics to disk; ``--save-fig`` exports the overlay
-      plot using the palette shared with the notebooks; ``--plot-dpi`` sets the
-      output resolution (150–600 dpi).
-    * ``--skip-legacy`` runs only the modern solver when you are iterating on
-      new physics and the ground truth is not available.
+These tools are covered by focused CLI tests and should remain the supported
+surface for plotting-related changes.
 
-Notebook workflows
-------------------
+Reference Notebooks
+-------------------
 
-``examples/validation/core_vs_legacy_benchmark.ipynb``
-    Interactive front-end to ``run_benchmark`` with widgets for rider and driver
-    parameters, simulation type, and export options.  It produces ΔE scatter
-    plots, and can save both figures and metrics.
+``examples/validation/core_vs_legacy_benchmark.ipynb`` and
+``examples/validation/integrator_testbed.ipynb`` are kept as historical
+reference notebooks.  They may be useful for understanding older analysis
+paths, but active development should prefer the maintained CLI, GUI, and pytest
+coverage described above.
 
-``examples/validation/integrator_testbed.ipynb``
-    Exploratory environment for all supported simulation types.  It disables
-    irrelevant configuration controls dynamically and mirrors the plot styling
-  used by the scripted tools so that figures remain consistent across entries.
-  Interactive toggles expose archived-reference-vs-core ΔE overlays and difference plots,
-  while a live initial-state panel displays rider/driver γ factors and
-  energies after every parameter tweak.
-
-Practical tips
---------------
-
-* When updating physics, modify the validation scripts first so that the docs
-  and notebooks inherit the new behaviour naturally.
-* The helper :func:`core.performance.run_benchmark` returns both metrics and the
-  raw trajectories.  Use the payload to generate custom diagnostics without
-  re-running the solver.
-* Keep the output directories (`test_outputs/notebook_runs/` and
-  `test_outputs/testbed_runs/`) tidy; they are ignored by Git but referenced in
-  the notebooks.
-
-If a validation run reveals a regression, open an issue describing the scenario
-and attach the metrics JSON along with any overlay plots that highlight the
-breakdown.
+When a validation run reveals a regression, preserve the config, command, and
+result artifact that reproduce it, then add a focused pytest case before fixing
+the implementation.

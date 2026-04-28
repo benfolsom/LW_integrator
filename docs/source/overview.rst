@@ -33,23 +33,20 @@ High-level anatomy
     options, and verbosity settings consumed by both the CLI and GUI runners.
 
 ``legacy/``
-  Archived notebooks and scripts from the original codebase.  They are kept
-  for regression comparisons and historical reference.  Production workflows
-  should use ``core/`` unless you are debugging a discrepancy.  The historical
-  "static" integrator lives here for completeness; it is considered deprecated
-  and is not exercised by the modern documentation or tooling.
+    Archived notebooks and scripts from the original codebase.  They are kept
+    for historical reference.  Production workflows should use ``core/``.  The
+    historical "static" integrator lives here for completeness; it is considered
+    deprecated and is not exercised by the modern documentation or tooling.
 
 ``examples/``
-    Ready-to-run validation material.  The ``validation/`` folder contains both
-    Python scripts and Jupyter notebooks that reproduce archived-reference vs. core
-    comparisons.  The ``comparison/`` folder houses CLI benchmarks that report
-    metrics (maximum Δγ, Δz, etc.) across seeded simulation suites.
+    Ready-to-run examples and reference validation material.  The
+    ``validation/`` folder keeps historical notebooks and supporting examples,
+    while maintained command-line workflows live under ``lw_integrator/``.
 
 ``tests/``
-    Automated regression coverage.  ``tests/integration/test_core_integrators.py``
-    verifies equivalence between the core solver, its self-consistent variant,
-    and the archived reference implementation.  ``tests/unit`` hosts deterministic unit
-    tests for helper functions such as ``generate_conducting_image``.
+    Automated regression coverage.  ``tests/unit`` hosts deterministic unit
+    tests for helper functions, ``tests/physics`` covers numerical behavior, and
+    top-level tests cover CLI/GUI parity plus plotting entry points.
 
 ``input_output/``
     Utilities for constructing particle bunch dictionaries in the format the
@@ -90,24 +87,25 @@ High-level anatomy
 Key ideas to keep in mind
 -------------------------
 
-* **Physics parity matters.**  The core code is intentionally a transcription of
-  the validated reference solver, with critical corrections applied in December 2025 to fix
-  gamma calculation and scalar potential handling. Recent changes include proper
-  separation of conjugate and kinetic energy, corrected self-consistency
-  convergence tests, and improved numerical precision for extreme relativistic
-  scenarios. Any behavioural change should come with matching updates to the
-  validation scripts and the integration tests.
+* **Physics parity matters.**  The core code is intentionally close to the
+  validated reference solver, with critical corrections applied in December
+  2025 to fix gamma calculation and scalar potential handling. Recent changes
+  include proper separation of conjugate and kinetic energy, corrected
+  self-consistency convergence tests, and improved numerical precision for
+  extreme relativistic scenarios. Any behavioural change should come with
+  focused regression tests.
 * **Particle states are dictionaries of NumPy arrays.**  Whenever you initialize
   particles manually, fill every expected key (``x``, ``Pz``, ``gamma``, ``q``,
-  ``char_time`` …) or use ``input_output.create_bunch_from_energy`` to obtain a
+  ``char_time`` …) or use
+  ``input_output.bunch_initialization.create_bunch_from_energy`` to obtain a
   correctly shaped state.
 * **Simulation modes are enumerated.**  ``SimulationType`` enumerates the three
   supported wall configurations.  The enum still accepts the historical integer
-  values so comparison runs remain straightforward.
+  values for compatibility.
 * **Startup modes are configurable.**  ``StartupMode`` switches between
   ``COLD_START`` (the default, suppressing early retarded forces) and
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
-  matches the archived reference treatment).  CLI commands, scripts, and notebooks
+  matches the archived reference treatment).  Maintained CLI and GUI workflows
   surface the enum so you can pick the right transient treatment per study.
 * **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
   (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
@@ -150,8 +148,7 @@ Key ideas to keep in mind
   full control over particle properties, boundary conditions, physics parameters,
   and numerical methods. Results can be exported in CSV, JSON, or NPZ formats.
   The GUI is the recommended interface for interactive work, with the CLI
-  (``lw-simulate``) and notebook options available for scripting and batch
-  processing.
+  (``lw-simulate``) available for scripting and batch processing.
 * **Heatmap and contour tools.**  ``lw-generate-sweep-heatmap`` is the
   maintained command for producing
   publication-quality heatmaps from sweep results. Contour lines use a low
@@ -164,13 +161,12 @@ Key ideas to keep in mind
   JSON or NPZ trajectory files into publication-ready PNG summaries, including
   rider/driver views for JSON payloads and compact momentum/gamma panels for
   NPZ payloads.
-* **Notebook tooling is first-class.**  The validation notebooks are kept in
-  sync with the scripts and expose colourblind-friendly plots, high-DPI export,
-  and configuration widgets.  Use them to explore scenarios before committing to
-  scripted sweeps.
+* **Reference notebooks remain available.**  Historical validation notebooks are
+  retained for context, while maintained CLI and GUI workflows should be the
+  baseline for new scripted sweeps.
 * **Need the math?**  See :doc:`theory` for the derivation of the covariant
   equations of motion implemented in ``core/trajectory_integrator.py`` and the
   approximations used in the benchmark studies.
 
 With the map in hand, continue to :doc:`quickstart` to set up a development
-environment or jump to :doc:`validation` for the comparison workflows.
+environment or jump to :doc:`validation` for the maintained validation workflow.
