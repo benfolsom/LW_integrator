@@ -43,10 +43,7 @@ from core.constants import C_MMNS
 from core.debug_logger import initialize_debug_logging
 from core.smoothness_analyzer import SmoothnessConfig, analyze_trajectory_smoothness
 from core.types import SimulationType
-from lw_integrator.testbed_runner import (
-    SimulationOptions,
-    run_testbed,
-)
+from lw_integrator.testbed_runner import run_testbed
 from optimization.config import (
     OptimizationConfig,
     calculate_auto_steps,
@@ -59,6 +56,7 @@ from optimization.logging_policy import (
 )
 from optimization.single_integration_helpers import (
     build_integration_metrics,
+    build_single_integration_setup,
     calculate_rider_starting_pz,
 )
 
@@ -459,23 +457,6 @@ class SweepRunner:
             flush=True,
         )
 
-        # ── Build rider_params dict (same format as GUI / create_bunch_from_params) ──
-        rider_pz = calculate_rider_starting_pz(
-            energy_gev, rider_m_particle, self.config.simulation_type
-        )
-        rider_params = {
-            "starting_distance": start_z,
-            "transv_mom": rider_transv_mom,
-            "transv_dist": rider_transv_dist,
-            "transv_offset_x": transv_offset,
-            "transv_offset_y": 0.0,
-            "m_particle": rider_m_particle,
-            "charge_sign": rider_charge_sign,
-            "pcount": rider_pcount,
-            "stripped_ions": rider_stripped_ions,
-            "starting_Pz": rider_pz,
-        }
-
         # ── Build driver_params dict if BUNCH_TO_BUNCH ──
         driver_params = None
         if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
@@ -532,111 +513,32 @@ class SweepRunner:
                 flush=True,
             )
 
-        # ── Build core_params dict ──
-        core_params = {
-            "time_step": timestep,
-            "wall_z": self.config.wall_z,
-            "aperture_radius": aperture,
-            "mean": 1.0e5,
-            "cav_spacing": self.config.cavity_spacing,
-            "z_cutoff": (
-                self.config.target_distance_mm
-                if self.config.z_cutoff_mode == "relative"
-                else 0.0
-            ),
-            "z_cutoff_mode": self.config.z_cutoff_mode,
-            "startup_mode": self.config.startup_mode,
-        }
-
         # ── Build SimulationOptions (same dataclass the GUI uses) ──
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
         run_output_dir = self.output_dir / f"_temp_run_{run_num}_{timestamp}"
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
-        options = SimulationOptions(
+        setup = build_single_integration_setup(
+            self.config,
+            aperture=aperture,
+            energy_gev=energy_gev,
+            start_z=start_z,
+            transv_offset=transv_offset,
+            timestep=timestep,
             steps=steps,
-            seed=self.config.seed + run_num,
-            simulation_type=self.config.simulation_type,
-            rider_params=rider_params,
+            run_output_dir=run_output_dir,
+            run_num=run_num,
             driver_params=driver_params,
-            core_params=core_params,
-            trajectory_save=False,
-            trajectory_interval=self.config.trajectory_stride,
-            energy_display=False,
-            energy_save=False,
-            transverse_display=False,
-            transverse_save=True,  # Needed for metric extraction
-            beta_display=False,
-            beta_save=False,
-            momentum_display=False,
-            momentum_save=False,
-            gamma_display=False,
-            gamma_save=False,
-            zposition_display=False,
-            zposition_save=False,
-            macroparticle_enabled=self.config.macroparticle_enabled,
+            rider_m_particle=rider_m_particle,
+            rider_charge_sign=rider_charge_sign,
+            rider_pcount=rider_pcount,
+            rider_transv_mom=rider_transv_mom,
+            rider_transv_dist=rider_transv_dist,
+            rider_stripped_ions=rider_stripped_ions,
             macroparticle_charge_multiplier=macro_charge_mult,
             macroparticle_sigma_multiplier=macro_sigma_mult,
-            macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
-            image_subcharge_count=self.config.image_subcharge_count,
-            use_image_weighting=self.config.use_image_weighting,
-            output_dir=run_output_dir,
-            # Stability options (same as GUI)
-            self_consistency_enabled=self.config.self_consistency_enabled,
-            self_consistency_tolerance=self.config.self_consistency_tolerance,
-            self_consistency_max_iterations=self.config.self_consistency_max_iterations,
-            self_consistency_verbosity=self.config.self_consistency_verbosity,
-            self_consistency_chrono_interpolate=self.config.self_consistency_chrono_interpolate,
-            self_consistency_chrono_tolerance=self.config.self_consistency_chrono_tolerance,
-            self_consistency_chrono_high_precision=self.config.self_consistency_chrono_high_precision,
-            self_consistency_chrono_adaptive_tolerance=self.config.self_consistency_chrono_adaptive_tolerance,
-            self_consistency_gamma_reconciliation_method=getattr(
-                self.config, "self_consistency_gamma_reconciliation_method", "DISABLED"
-            ),
-            self_consistency_gamma_reconciliation_low_beta_threshold=getattr(
-                self.config,
-                "self_consistency_gamma_reconciliation_low_beta_threshold",
-                0.9,
-            ),
-            self_consistency_gamma_reconciliation_high_beta_threshold=getattr(
-                self.config,
-                "self_consistency_gamma_reconciliation_high_beta_threshold",
-                0.99,
-            ),
-            self_consistency_gamma_reconciliation_low_beta_weight=getattr(
-                self.config,
-                "self_consistency_gamma_reconciliation_low_beta_weight",
-                0.8,
-            ),
-            self_consistency_gamma_reconciliation_high_beta_weight=getattr(
-                self.config,
-                "self_consistency_gamma_reconciliation_high_beta_weight",
-                0.2,
-            ),
-            self_consistency_gamma_reconciliation_mid_beta_weight=getattr(
-                self.config,
-                "self_consistency_gamma_reconciliation_mid_beta_weight",
-                0.5,
-            ),
-            self_consistency_gamma_reconciliation_fixed_weight=getattr(
-                self.config, "self_consistency_gamma_reconciliation_fixed_weight", 0.5
-            ),
-            energy_monitor_enabled=False,
-            energy_monitor_threshold=2.0,
-            energy_monitor_check_interval=10,
-            energy_monitor_halt_on_jump=getattr(
-                self.config, "energy_monitor_halt_on_jump", False
-            ),
-            energy_monitor_debug=False,
-            adaptive_timestep_enabled=self.config.adaptive_timestep_enabled,
-            adaptive_timestep_threshold=self.config.adaptive_timestep_threshold,
-            adaptive_timestep_reduction_factor=self.config.adaptive_timestep_reduction_factor,
-            adaptive_timestep_min_factor=self.config.adaptive_timestep_min_factor,
-            adaptive_timestep_cooldown_steps=self.config.adaptive_timestep_cooldown_steps,
-            adaptive_timestep_probe_threshold=self.config.adaptive_timestep_probe_threshold,
-            adaptive_timestep_max_probe_steps=self.config.adaptive_timestep_max_probe_steps,
-            adaptive_timestep_debug=self.config.adaptive_timestep_debug,
         )
+        options = setup.options
 
         # ── Progress + log callbacks (same format as GUI) ──
         def progress_callback(current: int, total: int, _run_id=run_num):

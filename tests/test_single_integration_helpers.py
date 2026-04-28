@@ -50,6 +50,7 @@ def _config(**overrides):
         "macroparticle_sigma_multiplier": 1.0,
         "simulation_type": SimulationType.CONDUCTING_WALL,
         "target_distance_mm": 25.0,
+        "cavity_spacing": 321.0,
         "z_cutoff_mode": "absolute",
         "startup_mode": "FAST",
         "seed": 123,
@@ -62,6 +63,12 @@ def _config(**overrides):
         "self_consistency_tolerance": 1e-3,
         "self_consistency_max_iterations": 5,
         "self_consistency_verbosity": 0,
+        "self_consistency_chrono_interpolate": True,
+        "self_consistency_chrono_tolerance": 2e-3,
+        "self_consistency_chrono_high_precision": True,
+        "self_consistency_chrono_adaptive_tolerance": True,
+        "self_consistency_gamma_reconciliation_method": "FIXED_WEIGHTED",
+        "self_consistency_gamma_reconciliation_fixed_weight": 0.25,
         "energy_monitor_halt_on_jump": True,
         "adaptive_timestep_enabled": False,
         "adaptive_timestep_threshold": 0.1,
@@ -108,7 +115,14 @@ def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
     assert setup.options.driver_params == {"starting_distance": 900.0}
     assert setup.options.rider_params["transv_offset_x"] == 0.25
     assert setup.options.rider_params["starting_Pz"] > 0.0
+    assert setup.options.core_params["cav_spacing"] == 321.0
     assert setup.options.core_params["z_cutoff"] == 25.0
+    assert setup.options.self_consistency_chrono_interpolate is True
+    assert setup.options.self_consistency_chrono_tolerance == pytest.approx(2e-3)
+    assert setup.options.self_consistency_chrono_high_precision is True
+    assert setup.options.self_consistency_chrono_adaptive_tolerance is True
+    assert setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
+    assert setup.options.self_consistency_gamma_reconciliation_fixed_weight == 0.25
     assert setup.options.output_dir == tmp_path
 
 

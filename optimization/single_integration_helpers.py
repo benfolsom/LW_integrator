@@ -110,7 +110,7 @@ def build_single_integration_setup(
         "wall_z": wall_z,
         "aperture_radius": aperture,
         "mean": 1.0e5,
-        "cav_spacing": 1.0e5,
+        "cav_spacing": getattr(config, "cavity_spacing", 1.0e5),
         "z_cutoff": (
             config.target_distance_mm if config.z_cutoff_mode == "relative" else 0.0
         ),
@@ -151,6 +151,49 @@ def build_single_integration_setup(
         self_consistency_tolerance=config.self_consistency_tolerance,
         self_consistency_max_iterations=config.self_consistency_max_iterations,
         self_consistency_verbosity=config.self_consistency_verbosity,
+        self_consistency_chrono_interpolate=getattr(
+            config, "self_consistency_chrono_interpolate", False
+        ),
+        self_consistency_chrono_tolerance=getattr(
+            config, "self_consistency_chrono_tolerance", 1e-3
+        ),
+        self_consistency_chrono_high_precision=getattr(
+            config, "self_consistency_chrono_high_precision", False
+        ),
+        self_consistency_chrono_adaptive_tolerance=getattr(
+            config, "self_consistency_chrono_adaptive_tolerance", False
+        ),
+        self_consistency_gamma_reconciliation_method=getattr(
+            config, "self_consistency_gamma_reconciliation_method", "DISABLED"
+        ),
+        self_consistency_gamma_reconciliation_low_beta_threshold=getattr(
+            config,
+            "self_consistency_gamma_reconciliation_low_beta_threshold",
+            0.9,
+        ),
+        self_consistency_gamma_reconciliation_high_beta_threshold=getattr(
+            config,
+            "self_consistency_gamma_reconciliation_high_beta_threshold",
+            0.99,
+        ),
+        self_consistency_gamma_reconciliation_low_beta_weight=getattr(
+            config,
+            "self_consistency_gamma_reconciliation_low_beta_weight",
+            0.8,
+        ),
+        self_consistency_gamma_reconciliation_high_beta_weight=getattr(
+            config,
+            "self_consistency_gamma_reconciliation_high_beta_weight",
+            0.2,
+        ),
+        self_consistency_gamma_reconciliation_mid_beta_weight=getattr(
+            config,
+            "self_consistency_gamma_reconciliation_mid_beta_weight",
+            0.5,
+        ),
+        self_consistency_gamma_reconciliation_fixed_weight=getattr(
+            config, "self_consistency_gamma_reconciliation_fixed_weight", 0.5
+        ),
         energy_monitor_enabled=False,
         energy_monitor_threshold=2.0,
         energy_monitor_check_interval=10,
