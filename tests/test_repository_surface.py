@@ -62,3 +62,22 @@ def test_tracked_docs_do_not_reference_local_worktree_notes():
     ]
 
     assert offenders == []
+
+
+def test_tracked_docs_do_not_advertise_removed_validation_paths():
+    stale_phrases = {
+        "tests/integration",
+        "archived reference solver",
+        "core solver and archived reference solver",
+    }
+    doc_paths = [PROJECT_ROOT / "README.md", PROJECT_ROOT / "CHANGELOG.md"]
+    doc_paths.extend(sorted((PROJECT_ROOT / "docs" / "source").glob("**/*.rst")))
+
+    offenders = {}
+    for path in doc_paths:
+        text = path.read_text(encoding="utf-8")
+        matches = sorted(phrase for phrase in stale_phrases if phrase in text)
+        if matches:
+            offenders[str(path.relative_to(PROJECT_ROOT))] = matches
+
+    assert offenders == {}

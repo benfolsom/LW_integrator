@@ -143,14 +143,15 @@ simulation, and confirm that the regression tooling works on your machine.
 
    Open ``docs/build/html/index.html`` in a browser to browse the rendered pages.
 
-8. Run the integration test suite to validate physics parity:
+8. Run the integration and CLI/GUI parity checks relevant to your change:
 
    .. code-block:: bash
 
-      pytest tests/integration/test_core_integrators.py -k two_particle
+      pytest tests/test_integration_e2e.py
+      pytest tests/test_cli_gui_parity.py
 
-   The tests confirm that the core solver and archived reference solver agree on canonical
-   benchmarks to within floating-point tolerances.
+   These tests exercise maintained end-to-end solver paths and the intended
+   headless baseline for sweep behavior.
 
 9. Run a macroparticle simulation (conducting-wall mode):
 
@@ -219,8 +220,8 @@ simulation, and confirm that the regression tooling works on your machine.
 Next steps
 ----------
 
-* :doc:`validation` details the scripts and notebooks that compare the core and
-  archived reference implementations across multiple seeds and integration lengths.
+* :doc:`validation` details the maintained pytest, CLI, GUI, and plotting checks
+  used as the current regression baseline.
 * :doc:`notebooks` provides guidance on using the interactive assets efficiently
   (plot styling, DPI control, output directories, etc.).
 * :doc:`recent_changes` describes the macroparticle simulation feature and other

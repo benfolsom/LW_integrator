@@ -4,9 +4,9 @@ Contributing
 We welcome patches that improve the physics fidelity, performance, or ergonomics
 of the LW Integrator.  Please keep the following ground rules in mind:
 
-* **Stay regression safe.**  All changes that touch physics must keep the core
-  solver and archived reference solver in agreement.  Update the validation scripts and add tests
-  if necessary.
+* **Stay regression safe.**  All changes that touch physics need focused pytest
+  coverage and, where relevant, CLI/GUI parity checks.  Historical notebooks can
+  inform investigations, but they are not the active validation baseline.
 * **Document as you go.**  Extend the relevant page under ``docs/source/`` when
   you add or change behaviour.  The documentation is built as part of CI and
   warnings fail the build.
@@ -22,7 +22,7 @@ Process
 
 1. Fork and branch from ``main``.
 2. Make changes with accompanying tests and documentation.
-3. Run the validation scripts relevant to your change.
+3. Run the pytest, CLI, plotting, or docs checks relevant to your change.
 4. Submit a pull request summarising the physics context and validation output.
 
 Reach out via the issue tracker if you plan a large refactor so we can align on
