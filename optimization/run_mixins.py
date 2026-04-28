@@ -502,6 +502,95 @@ class OptimizationRunMixin:
 
         return result_container[0], False
 
+    def _run_sweep_integration_attempt(
+        self,
+        run_params,
+        params_dict: Dict[str, Any],
+        *,
+        timestep: float,
+        steps: int,
+        run_num: int,
+        seed_override: int,
+    ):
+        """Run one sweep integration attempt, optionally under a timeout."""
+
+        def run_single(cancel_flag):
+            return self._run_single_integration(
+                aperture=run_params.aperture,
+                energy_gev=run_params.energy,
+                start_z=run_params.start_z,
+                transv_offset=run_params.transv_offset,
+                timestep=timestep,
+                steps=steps,
+                rider_m_particle=run_params.rider_m_particle,
+                rider_charge_sign=run_params.rider_charge_sign,
+                rider_pcount=int(run_params.rider_pcount),
+                rider_transv_mom=run_params.rider_transv_mom,
+                rider_transv_dist=run_params.rider_transv_dist,
+                rider_stripped_ions=run_params.rider_stripped_ions,
+                macroparticle_charge_multiplier=(
+                    run_params.macroparticle_charge_multiplier
+                ),
+                macroparticle_sigma_multiplier=(
+                    run_params.macroparticle_sigma_multiplier
+                ),
+                driver_params=run_params.driver_params,
+                wall_z=params_dict.get("wall_z", self.config.wall_z),
+                run_num=run_num,
+                cancel_flag=cancel_flag,
+                seed_override=seed_override,
+            )
+
+        if self.config.per_run_timeout <= 0:
+            return run_single(None), None, False
+
+        result_container = [None]
+        error_container = [None]
+        cancel_flag = [False]
+
+        if run_params.aperture < 0.1 and run_params.macroparticle_charge_multiplier > 1000:
+            self._log_result(
+                f"  [WARNING] Run {run_num}: Very small aperture ({run_params.aperture:.4f} mm) "
+                f"with large charge multiplier ({run_params.macroparticle_charge_multiplier:.0f})"
+            )
+            self._log_result(
+                "    This may cause numerical instability or slow convergence"
+            )
+
+        def run_with_exception_handling():
+            try:
+                result_container[0] = run_single(cancel_flag)
+            except Exception as exc:
+                error_container[0] = exc
+
+        integration_thread = threading.Thread(target=run_with_exception_handling)
+        integration_thread.daemon = True
+        integration_thread.start()
+        integration_thread.join(timeout=self.config.per_run_timeout)
+
+        timed_out = False
+        if integration_thread.is_alive():
+            timed_out = True
+            cancel_flag[0] = True
+            self._log_result(
+                f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
+            )
+            self._log_result(
+                "    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
+            )
+            integration_thread.join(timeout=2.0)
+            if integration_thread.is_alive():
+                self._log_result(
+                    "    Warning: Integration thread still running after cancel signal"
+                )
+                self._log_result(
+                    "    Thread will be abandoned (daemon thread will terminate with main thread)"
+                )
+
+        if error_container[0] is not None:
+            return None, error_container[0], timed_out
+        return result_container[0], None, timed_out
+
     def _run_sweep_background(self, is_finetune: bool = False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
 
@@ -742,117 +831,18 @@ class OptimizationRunMixin:
                     attempt_timed_out = False
 
                     try:
-                        # Check if timeout is enabled
-                        if self.config.per_run_timeout > 0:
-                            import threading
-
-                            # Container for result (mutable for thread access)
-                            result_container = [None]
-                            error_container = [None]
-                            cancel_flag = [False]  # Flag to signal cancellation
-
-                            # Log warning for potentially problematic parameter combinations
-                            if (
-                                aperture < 0.1
-                                and macroparticle_charge_multiplier > 1000
-                            ):
-                                self._log_result(
-                                    f"  [WARNING] Run {run_num}: Very small aperture ({aperture:.4f} mm) "
-                                    f"with large charge multiplier ({macroparticle_charge_multiplier:.0f})"
-                                )
-                                self._log_result(
-                                    "    This may cause numerical instability or slow convergence"
-                                )
-
-                            def run_with_exception_handling():
-                                """Wrapper to run integration and catch exceptions."""
-                                try:
-                                    result_container[0] = self._run_single_integration(
-                                        aperture=aperture,
-                                        energy_gev=energy,
-                                        start_z=start_z,
-                                        transv_offset=transv_offset,
-                                        timestep=timestep,
-                                        steps=steps,
-                                        rider_m_particle=rider_m_particle,
-                                        rider_charge_sign=rider_charge_sign,
-                                        rider_pcount=int(rider_pcount),
-                                        rider_transv_mom=rider_transv_mom,
-                                        rider_transv_dist=rider_transv_dist,
-                                        rider_stripped_ions=rider_stripped_ions,
-                                        macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                                        macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                                        driver_params=driver_params_dict,
-                                        wall_z=params_dict.get(
-                                            "wall_z", self.config.wall_z
-                                        ),
-                                        run_num=run_num,
-                                        cancel_flag=cancel_flag,
-                                        seed_override=current_seed,
-                                    )
-                                except Exception as e:
-                                    error_container[0] = e
-
-                            # Start integration in separate thread
-                            integration_thread = threading.Thread(
-                                target=run_with_exception_handling
+                        (
+                            attempt_result,
+                            attempt_error,
+                            attempt_timed_out,
+                        ) = self._run_sweep_integration_attempt(
+                            run_params,
+                            params_dict,
+                            timestep=timestep,
+                            steps=steps,
+                            run_num=run_num,
+                            seed_override=current_seed,
                             )
-                            integration_thread.daemon = True
-                            integration_thread.start()
-
-                            # Wait for completion or timeout
-                            integration_thread.join(
-                                timeout=self.config.per_run_timeout
-                            )
-
-                            if integration_thread.is_alive():
-                                # Timeout occurred - signal the integration to cancel
-                                attempt_timed_out = True
-                                cancel_flag[0] = True
-                                self._log_result(
-                                    f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
-                                )
-                                self._log_result(
-                                    "    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
-                                )
-                                # Give it a brief moment to respond to cancellation
-                                integration_thread.join(timeout=2.0)
-                                if integration_thread.is_alive():
-                                    self._log_result(
-                                        "    Warning: Integration thread still running after cancel signal"
-                                    )
-                                    self._log_result(
-                                        "    Thread will be abandoned (daemon thread will terminate with main thread)"
-                                    )
-
-                            if error_container[0] is not None:
-                                attempt_error = error_container[0]
-                            else:
-                                attempt_result = result_container[0]
-                        else:
-                            # No timeout - run directly
-                            attempt_result = self._run_single_integration(
-                                aperture=aperture,
-                                energy_gev=energy,
-                                start_z=start_z,
-                                transv_offset=transv_offset,
-                                timestep=timestep,
-                                steps=steps,
-                                rider_m_particle=rider_m_particle,
-                                rider_charge_sign=rider_charge_sign,
-                                rider_pcount=int(rider_pcount),
-                                rider_transv_mom=rider_transv_mom,
-                                rider_transv_dist=rider_transv_dist,
-                                rider_stripped_ions=rider_stripped_ions,
-                                macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                                macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                                driver_params=driver_params_dict,
-                                wall_z=params_dict.get("wall_z", self.config.wall_z),
-                                run_num=run_num,
-                                cancel_flag=None,
-                                seed_override=current_seed,
-                            )
-
                     except Exception as e:
                         attempt_error = e
                         if use_full_debug:

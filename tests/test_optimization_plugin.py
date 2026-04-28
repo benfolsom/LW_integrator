@@ -365,6 +365,97 @@ class TestOptimizationPluginIntegration:
         assert timed_out is True
         assert any("timed out" in message for message in logs)
 
+    def test_run_sweep_integration_attempt_runs_directly(self):
+        captured = {}
+
+        def fake_run_single_integration(**kwargs):
+            captured["kwargs"] = kwargs
+            return {"metrics": {"ok": True}}
+
+        harness = SimpleNamespace(
+            config=SimpleNamespace(per_run_timeout=0.0, wall_z=200.0),
+            _run_single_integration=fake_run_single_integration,
+            _log_result=lambda _message: None,
+        )
+        run_params = SimpleNamespace(
+            aperture=0.25,
+            energy=5.0,
+            start_z=1.0,
+            transv_offset=0.1,
+            rider_m_particle=1.0,
+            rider_charge_sign=1.0,
+            rider_pcount=2,
+            rider_transv_mom=0.0,
+            rider_transv_dist=1e-4,
+            rider_stripped_ions=1.0,
+            macroparticle_charge_multiplier=1.0,
+            macroparticle_sigma_multiplier=1.0,
+            driver_params=None,
+        )
+
+        result, error, timed_out = OptimizationRunMixin._run_sweep_integration_attempt(
+            harness,
+            run_params,
+            {"wall_z": 250.0},
+            timestep=1e-7,
+            steps=100,
+            run_num=6,
+            seed_override=1234,
+        )
+
+        assert result == {"metrics": {"ok": True}}
+        assert error is None
+        assert timed_out is False
+        assert captured["kwargs"]["cancel_flag"] is None
+        assert captured["kwargs"]["wall_z"] == 250.0
+        assert captured["kwargs"]["seed_override"] == 1234
+
+    def test_run_sweep_integration_attempt_signals_timeout(self):
+        logs = []
+
+        def fake_run_single_integration(**kwargs):
+            cancel_flag = kwargs["cancel_flag"]
+            deadline = time.time() + 1.0
+            while not cancel_flag[0] and time.time() < deadline:
+                time.sleep(0.001)
+            return {"metrics": {"late": True}}
+
+        harness = SimpleNamespace(
+            config=SimpleNamespace(per_run_timeout=0.01, wall_z=200.0),
+            _run_single_integration=fake_run_single_integration,
+            _log_result=logs.append,
+        )
+        run_params = SimpleNamespace(
+            aperture=0.01,
+            energy=5.0,
+            start_z=1.0,
+            transv_offset=0.1,
+            rider_m_particle=1.0,
+            rider_charge_sign=1.0,
+            rider_pcount=2,
+            rider_transv_mom=0.0,
+            rider_transv_dist=1e-4,
+            rider_stripped_ions=1.0,
+            macroparticle_charge_multiplier=2000.0,
+            macroparticle_sigma_multiplier=1.0,
+            driver_params=None,
+        )
+
+        _result, error, timed_out = OptimizationRunMixin._run_sweep_integration_attempt(
+            harness,
+            run_params,
+            {},
+            timestep=1e-7,
+            steps=100,
+            run_num=7,
+            seed_override=1234,
+        )
+
+        assert error is None
+        assert timed_out is True
+        assert any("exceeded timeout" in message for message in logs)
+        assert any("Very small aperture" in message for message in logs)
+
     def test_apply_macroparticle_ui_state_updates_controls(self):
         harness = _build_sweep_harness(
             {
