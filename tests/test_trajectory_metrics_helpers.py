@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import lw_integrator.trajectory_metrics as trajectory_metrics
 from lw_integrator.trajectory_metrics import (
     compute_delta_energy_components,
     extract_series,
@@ -29,6 +30,15 @@ def test_extract_series_returns_scalar_history():
     )
 
     np.testing.assert_allclose(series, np.array([10.0, 12.5, 13.0]))
+
+
+def test_module_exposes_only_maintained_public_helpers():
+    assert trajectory_metrics.__all__ == [
+        "compute_delta_energy_components",
+        "compute_delta_energy_series",
+        "extract_series",
+        "normalize_state",
+    ]
 
 
 def test_compute_delta_energy_components_returns_total_longitudinal_and_z_series():

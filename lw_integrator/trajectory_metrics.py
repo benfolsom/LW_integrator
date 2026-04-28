@@ -8,6 +8,13 @@ import numpy as np
 
 from core.types import ParticleState
 
+__all__ = [
+    "compute_delta_energy_components",
+    "compute_delta_energy_series",
+    "extract_series",
+    "normalize_state",
+]
+
 
 def normalize_state(state: ParticleState) -> ParticleState:
     """Normalize particle-state values to NumPy arrays.
