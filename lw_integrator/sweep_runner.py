@@ -101,16 +101,6 @@ class SweepRunner:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _driver_ke_from_params(driver_params: Dict[str, Any]) -> float:
-        """Derive driver kinetic energy in GeV from a driver_params dict."""
-        m = driver_params["m_particle"]
-        pz = abs(driver_params["starting_Pz"])
-        gamma_beta = pz / (m * C_MMNS) if m > 0 else 0.0
-        gamma = np.sqrt(gamma_beta**2 + 1.0)
-        ke_mev = (gamma - 1.0) * m * AMU_TO_MEV
-        return ke_mev / 1e3
-
-    @staticmethod
     def _make_range(
         min_val: float, max_val: float, points: int, log_scale: bool = False
     ) -> List[float]:
