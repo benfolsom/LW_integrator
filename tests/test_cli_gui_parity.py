@@ -666,6 +666,8 @@ class TestCliGuiOptionsParity:
                 rider_emittance_y_mm_mrad=None,
                 rider_norm_emittance_x_mm_mrad=None,
                 rider_norm_emittance_y_mm_mrad=None,
+                rider_beta_x_m=None,
+                rider_beta_y_m=None,
                 num_particles_dead=0,
             )
 

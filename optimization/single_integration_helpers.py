@@ -211,8 +211,10 @@ def build_integration_metrics(
         metrics["rider_delta_e_mev"] = result.rider_delta_e
     if result.rider_gamma_initial is not None:
         metrics["rider_gamma_initial"] = result.rider_gamma_initial
+        metrics["initial_gamma_mean"] = result.rider_gamma_initial
     if result.rider_gamma_final is not None:
         metrics["rider_gamma_final"] = result.rider_gamma_final
+        metrics["final_gamma_mean"] = result.rider_gamma_final
 
     gamma_initial = result.rider_gamma_initial
     gamma_final = result.rider_gamma_final
@@ -354,6 +356,8 @@ def _add_energy_gain_metrics(
     metrics["delta_gamma"] = delta_gamma
     metrics["delta_e_mev"] = delta_e_mev
     metrics["energy_gain_ppm"] = energy_gain_ppm
+    metrics["max_energy_gain_gev"] = delta_e_mev / 1e3
+    metrics["max_relative_gain"] = delta_gamma / gamma_initial
 
     if source_prefix:
         log_lines.extend(

@@ -57,7 +57,10 @@ from optimization.logging_policy import (
     describe_run_logging_policy,
     restore_run_logging_policy,
 )
-from optimization.single_integration_helpers import calculate_rider_starting_pz
+from optimization.single_integration_helpers import (
+    build_integration_metrics,
+    calculate_rider_starting_pz,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -760,80 +763,19 @@ class SweepRunner:
                 },
             }
 
-        # ── Extract metrics from RunResult (same logic as GUI) ──
-        gamma_initial = result.rider_gamma_initial
-        gamma_final = result.rider_gamma_final
-
+        # ── Extract metrics from RunResult (same helper as GUI) ──
         print(
             f"[OPTIMIZATION]   [DEBUG] Extracting metrics for Run {run_num}...",
             flush=True,
         )
-        print(f"[OPTIMIZATION]   [RESULT] Run {run_num} metrics:", flush=True)
-        print(f"[OPTIMIZATION]     rider_gamma_initial: {gamma_initial}", flush=True)
-        print(f"[OPTIMIZATION]     rider_gamma_final: {gamma_final}", flush=True)
-
-        metrics: Dict[str, Any] = {}
-        if result.rider_delta_e is not None:
-            metrics["rider_delta_e_mev"] = result.rider_delta_e
-        if gamma_initial is not None:
-            metrics["rider_gamma_initial"] = gamma_initial
-            metrics["initial_gamma_mean"] = gamma_initial
-        if gamma_final is not None:
-            metrics["rider_gamma_final"] = gamma_final
-            metrics["final_gamma_mean"] = gamma_final
-
-        if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
-            delta_gamma = gamma_final - gamma_initial
-            energy_gain_percent = delta_gamma / gamma_initial * 100.0
-            energy_gain_ppm = delta_gamma / gamma_initial * 1e6
-
-            # Use actual particle mass for delta_e calculation
-            delta_e_mev = delta_gamma * rest_energy_mev
-
-            metrics["max_percent_energy_gain"] = energy_gain_percent
-            metrics["percent_delta_e"] = energy_gain_percent
-            metrics["delta_gamma"] = delta_gamma
-            metrics["delta_e_mev"] = delta_e_mev
-            metrics["energy_gain_ppm"] = energy_gain_ppm
-            metrics["max_energy_gain_gev"] = delta_e_mev / 1e3
-            metrics["max_relative_gain"] = delta_gamma / gamma_initial
-
-            print(f"[OPTIMIZATION]     delta_gamma: {delta_gamma:.12e}", flush=True)
-            print(f"[OPTIMIZATION]     delta_e_mev: {delta_e_mev:.12e} MeV", flush=True)
-            print(
-                f"[OPTIMIZATION]     max_percent_energy_gain: {energy_gain_percent:.12e}%",
-                flush=True,
-            )
-            print(
-                f"[OPTIMIZATION]     percent_delta_e: {energy_gain_percent:.12e}%",
-                flush=True,
-            )
-            print(
-                f"[OPTIMIZATION]     energy_gain_ppm: {energy_gain_ppm:.6f} ppm",
-                flush=True,
-            )
-        else:
-            print(
-                f"[OPTIMIZATION]   [WARNING] Could not compute metrics: gamma_initial={gamma_initial}, gamma_final={gamma_final}",
-                flush=True,
-            )
-
-        # Beam optics metrics
-        if result.rider_emittance_x_mm_mrad is not None:
-            metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
-        if result.rider_emittance_y_mm_mrad is not None:
-            metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
-        if result.rider_norm_emittance_x_mm_mrad is not None:
-            metrics["rider_norm_emittance_x_mm_mrad"] = (
-                result.rider_norm_emittance_x_mm_mrad
-            )
-        if result.rider_norm_emittance_y_mm_mrad is not None:
-            metrics["rider_norm_emittance_y_mm_mrad"] = (
-                result.rider_norm_emittance_y_mm_mrad
-            )
-
-        # Particle failure tracking
-        metrics["num_particles_dead"] = result.num_particles_dead
+        metrics_outcome = build_integration_metrics(
+            result,
+            rider_m_particle=rider_m_particle,
+            run_num=run_num,
+        )
+        metrics = metrics_outcome.metrics
+        for line in metrics_outcome.log_lines:
+            print(f"[OPTIMIZATION] {line}", flush=True)
 
         # ── Stability analysis (same as GUI) ──
         print(

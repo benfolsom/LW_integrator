@@ -127,8 +127,14 @@ def test_build_integration_metrics_uses_direct_gamma_values():
     )
 
     assert outcome.metrics["rider_delta_e_mev"] == 1.0
+    assert outcome.metrics["initial_gamma_mean"] == 10.0
+    assert outcome.metrics["final_gamma_mean"] == 12.0
     assert outcome.metrics["max_percent_energy_gain"] == pytest.approx(20.0)
     assert outcome.metrics["delta_e_mev"] == pytest.approx(2.0 * 931.494)
+    assert outcome.metrics["max_energy_gain_gev"] == pytest.approx(
+        2.0 * 931.494 / 1e3
+    )
+    assert outcome.metrics["max_relative_gain"] == pytest.approx(0.2)
     assert outcome.metrics["rider_emittance_x_mm_mrad"] == 0.5
     assert outcome.metrics["num_particles_dead"] == 2
     assert any("optimizer_objective" in line for line in outcome.log_lines)
