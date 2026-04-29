@@ -15,7 +15,6 @@ import pytest
 
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 from core.integration_runner import retarded_integrator
-from core.self_consistency import SelfConsistencyConfig
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 
 
@@ -351,7 +350,7 @@ class TestRadiationReactionWithMassShell:
             f"  Radiation reaction activations: {activations}/{len(trajectory) - 1} steps"
         )
         print(f"  Max mass-shell error: {max_mass_shell_error:.3e}")
-        print(f"  Mass-shell errors at activation steps:")
+        print("  Mass-shell errors at activation steps:")
         for step in activation_steps[:5]:  # First 5 activations
             if step < len(trajectory):
                 step_errors = []
@@ -477,7 +476,7 @@ class TestRadiationReactionPhysics:
             energy_during = energies[min(len(energies) - 1, first_activation + 10)]
             energy_change = (energy_during - energy_before) / energy_before
 
-            print(f"\nRadiation reaction energy dissipation:")
+            print("\nRadiation reaction energy dissipation:")
             print(f"  Activations: {activations}")
             print(f"  Energy before: {energy_before:.6e}")
             print(f"  Energy during/after: {energy_during:.6e}")
@@ -487,7 +486,7 @@ class TestRadiationReactionPhysics:
 
             # Document energy change (may be positive or negative depending on EM work)
             # The key is that radiation reaction is active
-            print(f"  Radiation reaction was active (detected)")
+            print("  Radiation reaction was active (detected)")
 
 
 if __name__ == "__main__":

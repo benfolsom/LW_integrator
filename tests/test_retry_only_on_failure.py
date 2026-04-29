@@ -7,12 +7,8 @@ This test verifies that the retry mechanism in the optimization sweep:
 3. Stops retrying after max_retries is exhausted
 """
 
-from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-
-from lw_integrator.optimization_plugin import OptimizationPlugin
-from optimization.config import OptimizationConfig
 
 
 class TestRetryOnlyOnFailure:
@@ -41,10 +37,7 @@ class TestRetryOnlyOnFailure:
         max_retries = 1
 
         # First attempt (should NOT log [RETRY])
-        if retry_attempt == 0:
-            current_seed = 12345
-        else:
-            current_seed = 12345 + 100 * retry_attempt
+        if retry_attempt > 0:
             capture_log(f"  [RETRY] Run 1, attempt {retry_attempt}/{max_retries}")
 
         # Verify no [RETRY] message for first attempt
@@ -55,10 +48,7 @@ class TestRetryOnlyOnFailure:
         log_messages.clear()
         retry_attempt = 1
 
-        if retry_attempt == 0:
-            current_seed = 12345
-        else:
-            current_seed = 12345 + 100 * retry_attempt
+        if retry_attempt > 0:
             capture_log(f"  [RETRY] Run 1, attempt {retry_attempt}/{max_retries}")
 
         # Verify [RETRY] message appears for second attempt

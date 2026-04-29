@@ -94,6 +94,13 @@ extend-exclude = '''
 [tool.ruff]
 line-length = 88
 target-version = "py38"
+extend-exclude = [
+    ".local_compat",
+    "docs/build",
+    "legacy",
+    "local",
+    "examples/validation",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/validation/core_vs_legacy_benchmark.ipynb" = ["E402"]

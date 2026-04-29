@@ -375,7 +375,7 @@ class TestCombinedExtreme:
         # Show error evolution
         if violation_count > 0:
             print(f"  Error history (first 10 steps): {error_history[:10]}")
-            print(f"  ⚠️  VIOLATION DETECTED - Additional clamping may be needed")
+            print("  ⚠️  VIOLATION DETECTED - Additional clamping may be needed")
 
         # Very loose tolerance - we expect this might fail
         assert max_error < 1.0, (

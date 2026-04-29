@@ -7,7 +7,6 @@ particles are re-processed in retry loops.
 """
 
 import numpy as np
-import pytest
 
 from core.equations import _initialize_result_state
 from core.particle_status import mark_particle_dead
@@ -51,9 +50,9 @@ def test_dead_particle_metadata_preserved_in_result_state():
 
     # Verify the state has dead particle metadata
     assert "_dead_particles" in state
-    assert state["_dead_particles"][1] == True
-    assert state["_dead_particles"][3] == True
-    assert state["_dead_particles"][0] == False
+    assert state["_dead_particles"][1]
+    assert state["_dead_particles"][3]
+    assert not state["_dead_particles"][0]
     assert "_particle_failure_info" in state
     assert 1 in state["_particle_failure_info"]
     assert 3 in state["_particle_failure_info"]
@@ -66,11 +65,11 @@ def test_dead_particle_metadata_preserved_in_result_state():
     assert "_particle_failure_info" in result, "Failure info should be copied"
 
     # Check that dead flags are preserved
-    assert result["_dead_particles"][1] == True, "Particle 1 should still be dead"
-    assert result["_dead_particles"][3] == True, "Particle 3 should still be dead"
-    assert result["_dead_particles"][0] == False, "Particle 0 should still be alive"
-    assert result["_dead_particles"][2] == False, "Particle 2 should still be alive"
-    assert result["_dead_particles"][4] == False, "Particle 4 should still be alive"
+    assert result["_dead_particles"][1], "Particle 1 should still be dead"
+    assert result["_dead_particles"][3], "Particle 3 should still be dead"
+    assert not result["_dead_particles"][0], "Particle 0 should still be alive"
+    assert not result["_dead_particles"][2], "Particle 2 should still be alive"
+    assert not result["_dead_particles"][4], "Particle 4 should still be alive"
 
     # Check that failure info is preserved
     assert 1 in result["_particle_failure_info"], (
@@ -86,7 +85,7 @@ def test_dead_particle_metadata_preserved_in_result_state():
 
     # Verify that arrays are independent copies (not shared references)
     result["_dead_particles"][2] = True
-    assert state["_dead_particles"][2] == False, "Original state should not be affected"
+    assert not state["_dead_particles"][2], "Original state should not be affected"
 
     # Verify that failure info is independent
     result["_particle_failure_info"][1]["step"] = 999

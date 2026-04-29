@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """Test the failed run retry mechanism for sweeps."""
 
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
-from core.types import SimulationType
 from optimization.config import OptimizationConfig
 
 

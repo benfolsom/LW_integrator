@@ -94,14 +94,14 @@ def demo_electron_bunch():
     print(f"Rider total energy: {summary.rider_total_gev:.4f} GeV")
     
     if summary.rider_emittance_x_mm_mrad is not None:
-        print(f"\nRider beam optics:")
-        print(f"  Geometric emittance:")
+        print("\nRider beam optics:")
+        print("  Geometric emittance:")
         print(f"    εx = {summary.rider_emittance_x_mm_mrad:.3e} mm·mrad")
         print(f"    εy = {summary.rider_emittance_y_mm_mrad:.3e} mm·mrad")
-        print(f"  Normalized emittance:")
+        print("  Normalized emittance:")
         print(f"    εnx = {summary.rider_norm_emittance_x_mm_mrad:.3e} mm·mrad")
         print(f"    εny = {summary.rider_norm_emittance_y_mm_mrad:.3e} mm·mrad")
-        print(f"  Twiss beta function:")
+        print("  Twiss beta function:")
         print(f"    βx = {summary.rider_beta_x_m:.3e} m")
         print(f"    βy = {summary.rider_beta_y_m:.3e} m")
     
@@ -147,7 +147,7 @@ def demo_proton_bunch():
     
     print(f"\nSeed: {summary.seed}")
     
-    print(f"\nRider (proton bunch):")
+    print("\nRider (proton bunch):")
     print(f"  Gamma: {summary.rider_gamma:.4f}")
     print(f"  Rest energy: {summary.rider_rest_mev:.4f} MeV")
     print(f"  Total energy: {summary.rider_total_gev:.4f} GeV")
@@ -158,7 +158,7 @@ def demo_proton_bunch():
         print(f"  Twiss beta: βx={summary.rider_beta_x_m:.3e} m")
     
     if summary.has_driver:
-        print(f"\nDriver (proton bunch):")
+        print("\nDriver (proton bunch):")
         print(f"  Gamma: {summary.driver_gamma:.4f}")
         print(f"  Total energy: {summary.driver_total_gev:.4f} GeV")
         
@@ -201,9 +201,9 @@ def demo_typical_accelerator_beam():
     
     summary = compute_initial_summary(options)
     
-    print(f"\nBeam parameters:")
-    print(f"  Particle count: 500")
-    print(f"  Transverse size: ~50 μm")
+    print("\nBeam parameters:")
+    print("  Particle count: 500")
+    print("  Transverse size: ~50 μm")
     print(f"  Gamma: {summary.rider_gamma:.2f}")
     print(f"  Total energy: {summary.rider_total_gev*1000:.1f} MeV")
     
@@ -212,13 +212,13 @@ def demo_typical_accelerator_beam():
         emit_x_um = summary.rider_emittance_x_mm_mrad * 1000  # μm·mrad
         norm_emit_x_um = summary.rider_norm_emittance_x_mm_mrad * 1000  # μm·mrad
         
-        print(f"\nBeam quality:")
+        print("\nBeam quality:")
         print(f"  Geometric emittance: {emit_x_um:.3f} μm·mrad")
         print(f"  Normalized emittance: {norm_emit_x_um:.3f} μm·mrad")
         print(f"  Twiss beta: {summary.rider_beta_x_m:.3f} m")
         
         print(f"\n  → This represents a {'low' if norm_emit_x_um < 10 else 'moderate'}-emittance beam")
-        print(f"     (Typical linacs: 1-100 μm·mrad)")
+        print("     (Typical linacs: 1-100 μm·mrad)")
     
     print()
 
