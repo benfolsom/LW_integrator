@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from core.types import SimulationType
 import optimization.single_integration_helpers as single_integration_helpers
 from optimization.single_integration_helpers import (
     HaltedIntegrationOutput,
+    IntegrationTrajectoryOutput,
     build_integration_metrics,
     build_final_z_check_log_lines,
     build_halted_integration_output,
+    build_integration_trajectory_output,
     build_single_integration_setup,
     calculate_rider_starting_pz,
     distance_info_from_trajectory,
@@ -24,10 +27,12 @@ def test_module_exposes_only_supported_public_helpers():
     assert single_integration_helpers.__all__ == [
         "HaltedIntegrationOutput",
         "IntegrationMetricsOutcome",
+        "IntegrationTrajectoryOutput",
         "SingleIntegrationSetup",
         "build_final_z_check_log_lines",
         "build_halted_integration_output",
         "build_integration_metrics",
+        "build_integration_trajectory_output",
         "build_single_integration_setup",
         "calculate_rider_starting_pz",
         "distance_info_from_trajectory",
@@ -96,6 +101,12 @@ def _config(**overrides):
         "adaptive_timestep_probe_threshold": 0.01,
         "adaptive_timestep_max_probe_steps": 3,
         "adaptive_timestep_debug": False,
+        "smoothness_enabled": True,
+        "smoothness_window_size": 20,
+        "smoothness_oscillation_threshold": 0.2,
+        "smoothness_trend_threshold": 0.3,
+        "smoothness_reject_on_violation": True,
+        "smoothness_max_violations": 3,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -257,6 +268,117 @@ def test_build_halted_integration_output_warns_on_bad_trajectory_payload():
         line.startswith("    [WARNING] Failed to save halted trajectory:")
         for line in outcome.log_lines
     )
+
+
+def test_build_integration_trajectory_output_reports_missing_trajectory():
+    outcome = build_integration_trajectory_output(
+        _result(rider_trajectory=None),
+        _config(smoothness_enabled=True),
+        run_num=8,
+        rider_m_particle=1.0,
+        metrics={},
+        save_trajectory=False,
+        trajectory_stride=1,
+    )
+
+    assert isinstance(outcome, IntegrationTrajectoryOutput)
+    assert outcome.output_updates == {}
+    assert outcome.debug_print_lines == []
+    assert outcome.log_lines == [
+        "  [DEBUG] Processing trajectory data for Run 8...",
+        "  [WARNING] No trajectory data available for Run 8",
+        (
+            "  [WARNING] Stability analysis SKIPPED - no trajectory data returned "
+            "from integration"
+        ),
+        "    Check that transverse_save=True in SimulationOptions",
+    ]
+
+
+def test_build_integration_trajectory_output_can_save_without_stability():
+    outcome = build_integration_trajectory_output(
+        _result(
+            rider_trajectory={
+                "z": [3.0, 7.0],
+                "r": [0.0, 0.2],
+                "pz": [1.0, 3.0],
+                "pr": [0.1, 0.3],
+                "t": [0.0, 1.0],
+                "gamma": [10.0, 12.0],
+            },
+        ),
+        _config(smoothness_enabled=False),
+        run_num=8,
+        rider_m_particle=1.0,
+        metrics={},
+        save_trajectory=True,
+        trajectory_stride=1,
+    )
+
+    assert outcome.output_updates["_distance_info"] == {
+        "z_start": 3.0,
+        "z_end": 7.0,
+        "num_steps": 2,
+    }
+    assert outcome.output_updates["trajectory"]["gamma"] == [10.0, 12.0]
+    assert outcome.log_lines == [
+        "  [DEBUG] Processing trajectory data for Run 8...",
+        "  [INFO] Stability analysis DISABLED for Run 8 (smoothness_enabled=False)",
+    ]
+
+
+def test_build_integration_trajectory_output_rejects_failed_smoothness(monkeypatch):
+    def fake_analyze_trajectory_smoothness(*_args, **_kwargs):
+        return SimpleNamespace(
+            passed=False,
+            violations=[
+                SimpleNamespace(description="oscillation"),
+                SimpleNamespace(description="trend"),
+                SimpleNamespace(description="extra"),
+            ],
+            oscillation_score=0.9,
+            trend_smoothness_score=0.8,
+            quality_summary="bad",
+        )
+
+    monkeypatch.setattr(
+        "optimization.single_integration_helpers.analyze_trajectory_smoothness",
+        fake_analyze_trajectory_smoothness,
+    )
+    metrics = {"max_percent_energy_gain": 1.0}
+
+    outcome = build_integration_trajectory_output(
+        _result(
+            rider_trajectory={
+                "z": [3.0, 7.0],
+                "r": [0.0, 0.2],
+                "pz": [1.0, 3.0],
+                "pr": [0.1, 0.3],
+                "t": [0.0, 1.0],
+                "gamma": [10.0, 12.0],
+            },
+        ),
+        _config(smoothness_enabled=True, smoothness_reject_on_violation=True),
+        run_num=8,
+        rider_m_particle=1.0,
+        metrics=metrics,
+        save_trajectory=False,
+        trajectory_stride=1,
+    )
+
+    assert np.isnan(metrics["max_percent_energy_gain"])
+    assert outcome.output_updates["stability_rejected"] is True
+    assert outcome.output_updates["stability_analysis"] == {
+        "passed": False,
+        "num_violations": 3,
+        "oscillation_score": 0.9,
+        "trend_smoothness_score": 0.8,
+        "quality": "bad",
+    }
+    assert "    Violations: 3" in outcome.log_lines
+    assert "      - oscillation" in outcome.log_lines
+    assert "      - trend" in outcome.log_lines
+    assert "      - extra" not in outcome.log_lines
 
 
 def test_sample_trajectory_arrays_applies_stride():

@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from core.constants import C_MMNS
+from core.smoothness_analyzer import SmoothnessConfig, analyze_trajectory_smoothness
 from lw_integrator.testbed_runner import SimulationOptions
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import AMU_TO_MEV
@@ -44,6 +45,15 @@ class HaltedIntegrationOutput:
 
     output: dict[str, Any]
     log_lines: list[str]
+
+
+@dataclass(frozen=True)
+class IntegrationTrajectoryOutput:
+    """Output updates and logs from trajectory post-processing."""
+
+    output_updates: dict[str, Any]
+    log_lines: list[str]
+    debug_print_lines: list[str]
 
 
 def build_single_integration_setup(
@@ -339,6 +349,121 @@ def build_halted_integration_output(
     return HaltedIntegrationOutput(output=output, log_lines=log_lines)
 
 
+def build_integration_trajectory_output(
+    result: Any,
+    config: Any,
+    *,
+    run_num: int,
+    rider_m_particle: float,
+    metrics: dict[str, Any],
+    save_trajectory: bool,
+    trajectory_stride: int,
+) -> IntegrationTrajectoryOutput:
+    """Build output updates and log lines from trajectory post-processing."""
+    output_updates: dict[str, Any] = {}
+    log_lines = [f"  [DEBUG] Processing trajectory data for Run {run_num}..."]
+    debug_print_lines: list[str] = []
+
+    if result.rider_trajectory is None:
+        log_lines.append(f"  [WARNING] No trajectory data available for Run {run_num}")
+        if config.smoothness_enabled:
+            log_lines.extend(
+                [
+                    (
+                        "  [WARNING] Stability analysis SKIPPED - no trajectory "
+                        "data returned from integration"
+                    ),
+                    "    Check that transverse_save=True in SimulationOptions",
+                ]
+            )
+        return IntegrationTrajectoryOutput(
+            output_updates=output_updates,
+            log_lines=log_lines,
+            debug_print_lines=debug_print_lines,
+        )
+
+    traj = result.rider_trajectory
+    try:
+        distance_info = distance_info_from_trajectory(traj)
+        if distance_info is not None:
+            output_updates["_distance_info"] = distance_info
+    except Exception as exc:
+        debug_print_lines.append(f"[DEBUG] Failed to extract distance info: {exc}")
+
+    if config.smoothness_enabled:
+        log_lines.append(
+            f"  [DEBUG] Performing stability analysis for Run {run_num}..."
+        )
+        smoothness_config = SmoothnessConfig(
+            enabled=True,
+            window_size=config.smoothness_window_size,
+            oscillation_threshold=config.smoothness_oscillation_threshold,
+            trend_smoothness_threshold=config.smoothness_trend_threshold,
+            reject_on_violation=config.smoothness_reject_on_violation,
+            max_allowed_violations=config.smoothness_max_violations,
+        )
+        smoothness_result = analyze_trajectory_smoothness(
+            traj,
+            smoothness_config,
+            particle_mass_amu=rider_m_particle,
+        )
+        output_updates["stability_analysis"] = {
+            "passed": smoothness_result.passed,
+            "num_violations": len(smoothness_result.violations),
+            "oscillation_score": smoothness_result.oscillation_score,
+            "trend_smoothness_score": smoothness_result.trend_smoothness_score,
+            "quality": smoothness_result.quality_summary,
+        }
+
+        if not smoothness_result.passed:
+            log_lines.extend(
+                [
+                    f"  [WARNING] Stability check FAILED for Run {run_num}",
+                    f"    Quality: {smoothness_result.quality_summary}",
+                ]
+            )
+            if len(smoothness_result.violations) > 0:
+                log_lines.append(f"    Violations: {len(smoothness_result.violations)}")
+                for violation in smoothness_result.violations[:2]:
+                    log_lines.append(f"      - {violation.description}")
+
+            if config.smoothness_reject_on_violation:
+                log_lines.append(
+                    f"  [REJECT] Run {run_num} rejected due to numerical instability"
+                )
+                metrics["max_percent_energy_gain"] = np.nan
+                output_updates["stability_rejected"] = True
+        else:
+            log_lines.append(
+                f"  [OK] Stability check PASSED for Run {run_num}: "
+                f"{smoothness_result.quality_summary}"
+            )
+    else:
+        log_lines.append(
+            f"  [INFO] Stability analysis DISABLED for Run {run_num} "
+            "(smoothness_enabled=False)"
+        )
+
+    if save_trajectory:
+        try:
+            output_updates["trajectory"] = sample_trajectory_arrays(
+                traj,
+                trajectory_stride,
+            )
+        except Exception as exc:
+            log_lines.append(f"    [WARNING] Failed to save trajectory arrays: {exc}")
+
+    if result.halted_early:
+        output_updates["halted_early"] = True
+        output_updates["halt_reason"] = result.halt_reason
+
+    return IntegrationTrajectoryOutput(
+        output_updates=output_updates,
+        log_lines=log_lines,
+        debug_print_lines=debug_print_lines,
+    )
+
+
 def sample_trajectory_arrays(
     trajectory: Mapping[str, Any], stride: int
 ) -> dict[str, list]:
@@ -540,10 +665,12 @@ def _add_beam_optics_metrics(result: Any, metrics: dict[str, Any]) -> None:
 __all__ = [
     "HaltedIntegrationOutput",
     "IntegrationMetricsOutcome",
+    "IntegrationTrajectoryOutput",
     "SingleIntegrationSetup",
     "build_final_z_check_log_lines",
     "build_halted_integration_output",
     "build_integration_metrics",
+    "build_integration_trajectory_output",
     "build_single_integration_setup",
     "calculate_rider_starting_pz",
     "distance_info_from_trajectory",

@@ -10,10 +10,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from core.debug_logger import initialize_debug_logging  # type: ignore[import]
-from core.smoothness_analyzer import (  # type: ignore[import]
-    SmoothnessConfig,
-    analyze_trajectory_smoothness,
-)
 from lw_integrator.testbed_runner import (  # type: ignore[import]
     SimulationOptions,
     run_testbed,
@@ -41,9 +37,8 @@ from optimization.single_integration_helpers import (
     build_integration_metrics,
     build_final_z_check_log_lines,
     build_halted_integration_output,
+    build_integration_trajectory_output,
     build_single_integration_setup,
-    distance_info_from_trajectory,
-    sample_trajectory_arrays,
 )
 from optimization.sweep_helpers import build_parameter_grids
 from optimization.sweep_run_helpers import (
@@ -1302,104 +1297,23 @@ class OptimizationRunMixin:
                 self._log_result(line)
 
             output = {"metrics": metrics_outcome.metrics}
-
-            self._log_result(
-                f"  [DEBUG] Processing trajectory data for Run {run_num}..."
-            )
-            if result.rider_trajectory is not None:
-                traj = result.rider_trajectory
-
-                # Always include minimal trajectory info for distance calculation
-                try:
-                    distance_info = distance_info_from_trajectory(traj)
-                    if distance_info is not None:
-                        output["_distance_info"] = distance_info
-                except Exception as e:
-                    print(f"[DEBUG] Failed to extract distance info: {e}")
-
-                # Perform stability analysis if enabled
-                if self.config.smoothness_enabled:
-                    self._log_result(
-                        f"  [DEBUG] Performing stability analysis for Run {run_num}..."
-                    )
-
-                    smoothness_config = SmoothnessConfig(
-                        enabled=True,
-                        window_size=self.config.smoothness_window_size,
-                        oscillation_threshold=self.config.smoothness_oscillation_threshold,
-                        trend_smoothness_threshold=self.config.smoothness_trend_threshold,
-                        reject_on_violation=self.config.smoothness_reject_on_violation,
-                        max_allowed_violations=self.config.smoothness_max_violations,
-                    )
-
-                    smoothness_result = analyze_trajectory_smoothness(
-                        traj, smoothness_config, particle_mass_amu=rider_m_particle
-                    )
-
-                    output["stability_analysis"] = {
-                        "passed": smoothness_result.passed,
-                        "num_violations": len(smoothness_result.violations),
-                        "oscillation_score": smoothness_result.oscillation_score,
-                        "trend_smoothness_score": smoothness_result.trend_smoothness_score,
-                        "quality": smoothness_result.quality_summary,
-                    }
-
-                    if not smoothness_result.passed:
-                        self._log_result(
-                            f"  [WARNING] Stability check FAILED for Run {run_num}"
-                        )
-                        self._log_result(
-                            f"    Quality: {smoothness_result.quality_summary}"
-                        )
-                        if len(smoothness_result.violations) > 0:
-                            self._log_result(
-                                f"    Violations: {len(smoothness_result.violations)}"
-                            )
-                            for violation in smoothness_result.violations[:2]:
-                                self._log_result(f"      - {violation.description}")
-
-                        if self.config.smoothness_reject_on_violation:
-                            self._log_result(
-                                f"  [REJECT] Run {run_num} rejected due to numerical instability"
-                            )
-                            output["metrics"]["max_percent_energy_gain"] = np.nan
-                            output["stability_rejected"] = True
-                    else:
-                        self._log_result(
-                            f"  [OK] Stability check PASSED for Run {run_num}: {smoothness_result.quality_summary}"
-                        )
-                else:
-                    self._log_result(
-                        f"  [INFO] Stability analysis DISABLED for Run {run_num} (smoothness_enabled=False)"
-                    )
-
-                save_traj = (
+            trajectory_outcome = build_integration_trajectory_output(
+                result,
+                self.config,
+                run_num=run_num,
+                rider_m_particle=rider_m_particle,
+                metrics=output["metrics"],
+                save_trajectory=(
                     self.config.save_all_trajectories
                     or self.config.save_failed_trajectories
-                )
-                if save_traj:
-                    stride = self.config.trajectory_stride
-                    try:
-                        output["trajectory"] = sample_trajectory_arrays(traj, stride)
-                    except Exception as e:
-                        self._log_result(
-                            f"    [WARNING] Failed to save trajectory arrays: {e}"
-                        )
-
-                if result.halted_early:
-                    output["halted_early"] = True
-                    output["halt_reason"] = result.halt_reason
-            else:
-                self._log_result(
-                    f"  [WARNING] No trajectory data available for Run {run_num}"
-                )
-                if self.config.smoothness_enabled:
-                    self._log_result(
-                        "  [WARNING] Stability analysis SKIPPED - no trajectory data returned from integration"
-                    )
-                    self._log_result(
-                        "    Check that transverse_save=True in SimulationOptions"
-                    )
+                ),
+                trajectory_stride=self.config.trajectory_stride,
+            )
+            for line in trajectory_outcome.debug_print_lines:
+                print(line)
+            for line in trajectory_outcome.log_lines:
+                self._log_result(line)
+            output.update(trajectory_outcome.output_updates)
 
             self._log_result(
                 f"  [DEBUG] _run_single_integration returning for Run {run_num}"
