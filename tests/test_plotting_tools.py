@@ -130,6 +130,124 @@ def test_sweep_heatmap_extract_data_uses_energy_alias_fallback():
     np.testing.assert_allclose(gains, [3.0, -4.0])
 
 
+def test_sweep_heatmap_extract_data_applies_parameter_and_gain_filters():
+    data = {
+        "results": [
+            {
+                "parameters": {"energy_gev": 1.0, "aperture_radius": 0.1},
+                "metrics": {"percent_delta_e": 3.0},
+            },
+            {
+                "parameters": {"energy_gev": 2.0, "aperture_radius": 0.2},
+                "metrics": {"percent_delta_e": 8.0},
+            },
+            {
+                "parameters": {"energy_gev": 3.0, "aperture_radius": 0.3},
+                "metrics": {"percent_delta_e": -4.0},
+            },
+            {
+                "parameters": {"energy_gev": 4.0, "aperture_radius": 0.4},
+                "metrics": {},
+            },
+        ]
+    }
+
+    param1, param2, gains = sweep_heatmap.extract_data(
+        data,
+        param1_name="initial_energy_gev",
+        param2_name="aperture_radius",
+        param1_min=1.5,
+        param1_max=3.5,
+        param2_min=0.15,
+        param2_max=0.35,
+        gain_filter="all",
+        gain_min=-5.0,
+        gain_max=5.0,
+    )
+
+    np.testing.assert_allclose(param1, [3.0])
+    np.testing.assert_allclose(param2, [0.3])
+    np.testing.assert_allclose(gains, [-4.0])
+
+
+def test_sweep_heatmap_extract_data_can_filter_by_gain_sign():
+    data = {
+        "results": [
+            {
+                "parameters": {"energy_gev": 1.0, "aperture_radius": 0.1},
+                "metrics": {"percent_delta_e": 3.0},
+            },
+            {
+                "parameters": {"energy_gev": 2.0, "aperture_radius": 0.2},
+                "metrics": {"percent_delta_e": -4.0},
+            },
+            {
+                "parameters": {"energy_gev": 3.0, "aperture_radius": 0.3},
+                "metrics": {"percent_delta_e": 0.0},
+            },
+        ]
+    }
+
+    positive = sweep_heatmap.extract_data(
+        data,
+        param1_name="energy_gev",
+        param2_name="aperture_radius",
+        gain_filter="positive",
+    )
+    negative = sweep_heatmap.extract_data(
+        data,
+        param1_name="energy_gev",
+        param2_name="aperture_radius",
+        gain_filter="negative",
+    )
+
+    np.testing.assert_allclose(positive[0], [1.0])
+    np.testing.assert_allclose(positive[2], [3.0])
+    np.testing.assert_allclose(negative[0], [2.0])
+    np.testing.assert_allclose(negative[2], [-4.0])
+
+
+def test_sweep_heatmap_extract_data_separates_positive_and_non_positive_gains():
+    data = {
+        "results": [
+            {
+                "parameters": {"energy_gev": 1.0, "aperture_radius": 0.1},
+                "metrics": {"percent_delta_e": 3.0},
+            },
+            {
+                "parameters": {"energy_gev": 2.0, "aperture_radius": 0.2},
+                "metrics": {"percent_delta_e": -4.0},
+            },
+            {
+                "parameters": {"energy_gev": 3.0, "aperture_radius": 0.3},
+                "metrics": {"percent_delta_e": 0.0},
+            },
+        ]
+    }
+
+    (
+        param1_pos,
+        param2_pos,
+        gains_pos,
+        param1_neg,
+        param2_neg,
+        gains_neg,
+    ) = sweep_heatmap.extract_data(
+        data,
+        param1_name="energy_gev",
+        param2_name="aperture_radius",
+        gain_filter="all",
+        separate_sign=True,
+    )
+
+    np.testing.assert_allclose(param1_pos, [1.0])
+    np.testing.assert_allclose(param2_pos, [0.1])
+    np.testing.assert_allclose(gains_pos, [3.0])
+    np.testing.assert_allclose(param1_neg, [2.0, 3.0])
+    np.testing.assert_allclose(param2_neg, [0.2, 0.3])
+    np.testing.assert_allclose(gains_neg, [-4.0, 0.0])
+
+
 def test_generate_sweep_heatmap_rejects_removed_legacy_aliases():
     with pytest.raises(SystemExit) as excinfo:
         sweep_heatmap.main(["results/sweeps/example", "--energy-min", "1.0"])
