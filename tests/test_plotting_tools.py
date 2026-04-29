@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import lw_integrator.sweep_heatmap as sweep_heatmap
@@ -41,6 +42,13 @@ def _load_project_scripts() -> dict[str, str]:
             name, target = stripped.split("=", 1)
             scripts[name.strip()] = target.strip().strip('"')
     return scripts
+
+
+def _write_sweep_results(sweep_dir: Path, data: dict) -> Path:
+    sweep_dir.mkdir()
+    results_path = sweep_dir / "sweep_results.json"
+    results_path.write_text(json.dumps(data), encoding="utf-8")
+    return results_path
 
 
 def test_generate_sweep_heatmap_main_accepts_argv(monkeypatch):
@@ -269,6 +277,163 @@ def test_sweep_heatmap_extract_data_separates_positive_and_non_positive_gains():
     np.testing.assert_allclose(param1_neg, [2.0, 3.0])
     np.testing.assert_allclose(param2_neg, [0.2, 0.3])
     np.testing.assert_allclose(gains_neg, [-4.0, 0.0])
+
+
+def test_sweep_heatmap_generate_auto_detects_params_and_uses_absolute_gains(
+    tmp_path: Path, monkeypatch
+):
+    sweep_dir = tmp_path / "sweep"
+    _write_sweep_results(
+        sweep_dir,
+        {
+            "total_runs": 3,
+            "results": [
+                {
+                    "parameters": {"energy_gev": 1.0, "aperture_radius": 0.1},
+                    "metrics": {"percent_delta_e": 3.0},
+                },
+                {
+                    "parameters": {"energy_gev": 2.0, "aperture_radius": 0.2},
+                    "metrics": {"percent_delta_e": -4.0},
+                },
+                {
+                    "parameters": {"energy_gev": 3.0, "aperture_radius": 0.3},
+                    "metrics": {"percent_delta_e": 0.0},
+                },
+            ],
+        },
+    )
+    captured = {}
+
+    def fake_create(param1_values, param2_values, gains, **kwargs):
+        captured["param1_values"] = param1_values
+        captured["param2_values"] = param2_values
+        captured["gains"] = gains
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(sweep_heatmap, "create_smooth_heatmap", fake_create)
+
+    sweep_heatmap.generate_heatmap(
+        sweep_dir,
+        absolute_gains=True,
+        resolution=12,
+        dpi=72,
+        output_name="custom.png",
+    )
+
+    np.testing.assert_allclose(captured["param1_values"], [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(captured["param2_values"], [0.1, 0.2, 0.3])
+    np.testing.assert_allclose(captured["gains"], [3.0, 4.0, 0.0])
+    kwargs = captured["kwargs"]
+    assert kwargs["output_path"] == str(sweep_dir / "custom.png")
+    assert kwargs["param1_label"] == "Initial Energy (GeV)"
+    assert kwargs["param2_label"] == "Aperture Radius (mm)"
+    assert kwargs["show_all_gains"] is True
+    assert kwargs["grid_resolution"] == 12
+    assert kwargs["dpi"] == 72
+    assert "Absolute Values: 1 positive, 2 negative" in kwargs["title"]
+    np.testing.assert_allclose(kwargs["param1_pos"], [1.0])
+    np.testing.assert_allclose(kwargs["param2_pos"], [0.1])
+    np.testing.assert_allclose(kwargs["gains_pos"], [3.0])
+    np.testing.assert_allclose(kwargs["param1_neg"], [2.0, 3.0])
+    np.testing.assert_allclose(kwargs["param2_neg"], [0.2, 0.3])
+    np.testing.assert_allclose(kwargs["gains_neg"], [-4.0, 0.0])
+
+
+def test_sweep_heatmap_generate_preserves_signed_gains_for_grey_zero(
+    tmp_path: Path, monkeypatch
+):
+    sweep_dir = tmp_path / "sweep"
+    _write_sweep_results(
+        sweep_dir,
+        {
+            "results": [
+                {
+                    "parameters": {"energy_gev": 1.0, "aperture_radius": 0.1},
+                    "metrics": {"percent_delta_e": 3.0},
+                },
+                {
+                    "parameters": {"energy_gev": 2.0, "aperture_radius": 0.2},
+                    "metrics": {"percent_delta_e": -4.0},
+                },
+            ]
+        },
+    )
+    captured = {}
+
+    def fake_create(_param1_values, _param2_values, gains, **kwargs):
+        captured["gains"] = gains
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(sweep_heatmap, "create_smooth_heatmap", fake_create)
+
+    sweep_heatmap.generate_heatmap(
+        sweep_dir,
+        absolute_gains=True,
+        grey_zero=True,
+        show_markers=False,
+    )
+
+    np.testing.assert_allclose(captured["gains"], [3.0, -4.0])
+    assert captured["kwargs"]["grey_zero"] is True
+    assert captured["kwargs"]["param1_pos"] is None
+    assert captured["kwargs"]["param1_neg"] is None
+
+
+def test_sweep_heatmap_generate_exits_when_auto_detection_has_too_few_params(
+    tmp_path: Path, monkeypatch, capsys
+):
+    sweep_dir = tmp_path / "sweep"
+    _write_sweep_results(
+        sweep_dir,
+        {
+            "results": [
+                {
+                    "parameters": {"energy_gev": 1.0, "aperture_radius": 0.1},
+                    "metrics": {"percent_delta_e": 3.0},
+                },
+                {
+                    "parameters": {"energy_gev": 2.0, "aperture_radius": 0.1},
+                    "metrics": {"percent_delta_e": 4.0},
+                },
+            ]
+        },
+    )
+
+    def fail_create(*_args, **_kwargs):
+        raise AssertionError("renderer should not be called")
+
+    monkeypatch.setattr(sweep_heatmap, "create_smooth_heatmap", fail_create)
+
+    with pytest.raises(SystemExit) as excinfo:
+        sweep_heatmap.generate_heatmap(sweep_dir)
+
+    assert excinfo.value.code == 1
+    assert "Need exactly 2 swept parameters" in capsys.readouterr().out
+
+
+def test_sweep_heatmap_grey_zero_cmap_handles_non_negative_data():
+    cmap, norm = sweep_heatmap.build_grey_zero_cmap(0.0, 5.0, n=16)
+
+    assert cmap.name == "viridis_grey0"
+    np.testing.assert_allclose(norm([0.0, 5.0]), [0.0, 1.0])
+    np.testing.assert_allclose(cmap(0), [0.35, 0.35, 0.35, 1.0])
+
+
+def test_sweep_heatmap_grey_zero_cmap_handles_non_positive_data():
+    cmap, norm = sweep_heatmap.build_grey_zero_cmap(-5.0, 0.0, n=16)
+
+    assert cmap.name == "red_grey"
+    np.testing.assert_allclose(norm([-5.0, 0.0]), [0.0, 1.0])
+    np.testing.assert_allclose(cmap(1.0), [0.55, 0.55, 0.55, 1.0])
+
+
+def test_sweep_heatmap_grey_zero_cmap_uses_zero_center_for_mixed_data():
+    cmap, norm = sweep_heatmap.build_grey_zero_cmap(-5.0, 20.0, n=16)
+
+    assert cmap.name == "diverging_grey_viridis"
+    np.testing.assert_allclose(norm([-5.0, 0.0, 20.0]), [0.0, 0.5, 1.0])
+    np.testing.assert_allclose(cmap(0.5), sweep_heatmap.plt.cm.viridis(0.0))
 
 
 def test_generate_sweep_heatmap_rejects_removed_legacy_aliases():
