@@ -116,7 +116,7 @@ with β > 0.5.
 
 Original (incorrect) formula:
 
-.. code-block:: python
+.. code-block:: text
 
    threshold = R * (1.0 - beta_dot_nhat)  # WRONG: multiplication
 
@@ -720,13 +720,26 @@ which define bunch center positions and are only meaningful in BUNCH_TO_BUNCH mo
 Behavior by Simulation Type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-============== ============== =================== ==============================
-Mode           Driver Params  Transverse Offsets  Use Case
-============== ============== =================== ==============================
-CONDUCTING_WALL Disabled      **Disabled**        Single bunch vs conducting wall
-SWITCHING_WALL  Enabled       **Disabled**        Two bunches, no transverse offset
-BUNCH_TO_BUNCH  Enabled       **Enabled**         Two bunches with separation
-============== ============== =================== ==============================
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 22 38
+
+   * - Mode
+     - Driver Params
+     - Transverse Offsets
+     - Use Case
+   * - CONDUCTING_WALL
+     - Disabled
+     - **Disabled**
+     - Single bunch vs conducting wall
+   * - SWITCHING_WALL
+     - Enabled
+     - **Disabled**
+     - Two bunches, no transverse offset
+   * - BUNCH_TO_BUNCH
+     - Enabled
+     - **Enabled**
+     - Two bunches with separation
 
 Original Demo Compatibility
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1075,7 +1088,7 @@ quantities: energy-derived gamma vs. velocity-derived gamma. Previously, the
 code only checked if the energy-derived gamma stopped changing between
 iterations.
 
-.. code-block:: python
+.. code-block:: text
 
    # Old (WRONG): Compare current vs. previous iteration
    converged = |gamma_energy[i] - gamma_energy[i-1]| < tolerance
@@ -1267,7 +1280,7 @@ Summary table of updated thresholds:
      - 7.0710678e7
      - (removed)
      - Now uses soft floor on denominator
-   * SC tolerance
+   * - SC tolerance
      - 1e-6
      - 1e-4
      - Default relaxed for performance

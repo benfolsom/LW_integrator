@@ -544,6 +544,7 @@ def retarded_integrator_numba(
     self-consistency iterations and gamma reconciliation.
 
     This hybrid approach provides the best of both worlds:
+
     - Numba compilation for the expensive O(N²) force calculations
     - Python control flow for self-consistency, gamma reconciliation, and other
       advanced features
