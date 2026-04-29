@@ -38,6 +38,14 @@ class IntegrationMetricsOutcome:
     log_lines: list[str]
 
 
+@dataclass(frozen=True)
+class HaltedIntegrationOutput:
+    """Output payload plus log lines for a halted integration."""
+
+    output: dict[str, Any]
+    log_lines: list[str]
+
+
 def build_single_integration_setup(
     config: Any,
     *,
@@ -296,6 +304,41 @@ def build_integration_metrics(
     return IntegrationMetricsOutcome(metrics=metrics, log_lines=log_lines)
 
 
+def build_halted_integration_output(
+    result: Any,
+    *,
+    run_num: int,
+    save_trajectory: bool,
+    trajectory_stride: int,
+) -> HaltedIntegrationOutput:
+    """Build output and log lines for a run halted before metrics extraction."""
+    log_lines = [
+        f"  [INFO] Run {run_num} was halted early - skipping metrics calculation",
+        "    Only trajectory and logs will be saved (if enabled)",
+    ]
+    output = {
+        "metrics": {},
+        "halted_early": True,
+        "halt_reason": result.halt_reason,
+    }
+
+    if result.rider_trajectory is not None and save_trajectory:
+        traj = result.rider_trajectory
+        try:
+            output["trajectory"] = sample_trajectory_arrays(traj, trajectory_stride)
+            log_lines.append(
+                f"    Halted trajectory saved ({len(traj['z'])} points, "
+                f"stride={trajectory_stride})"
+            )
+        except Exception as exc:
+            log_lines.append(f"    [WARNING] Failed to save halted trajectory: {exc}")
+
+    log_lines.append(
+        f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
+    )
+    return HaltedIntegrationOutput(output=output, log_lines=log_lines)
+
+
 def sample_trajectory_arrays(
     trajectory: Mapping[str, Any], stride: int
 ) -> dict[str, list]:
@@ -495,9 +538,11 @@ def _add_beam_optics_metrics(result: Any, metrics: dict[str, Any]) -> None:
 
 
 __all__ = [
+    "HaltedIntegrationOutput",
     "IntegrationMetricsOutcome",
     "SingleIntegrationSetup",
     "build_final_z_check_log_lines",
+    "build_halted_integration_output",
     "build_integration_metrics",
     "build_single_integration_setup",
     "calculate_rider_starting_pz",

@@ -40,6 +40,7 @@ from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.single_integration_helpers import (
     build_integration_metrics,
     build_final_z_check_log_lines,
+    build_halted_integration_output,
     build_single_integration_setup,
     distance_info_from_trajectory,
     sample_trajectory_arrays,
@@ -1276,43 +1277,18 @@ class OptimizationRunMixin:
 
             # Check if run was halted early - if so, skip metrics calculation
             if result.halted_early:
-                self._log_result(
-                    f"  [INFO] Run {run_num} was halted early - skipping metrics calculation"
-                )
-                self._log_result(
-                    "    Only trajectory and logs will be saved (if enabled)"
-                )
-                output = {
-                    "metrics": {},
-                    "halted_early": True,
-                    "halt_reason": result.halt_reason,
-                }
-
-                # Add trajectory if available and saving is enabled
-                if result.rider_trajectory is not None:
-                    save_traj = (
+                halted = build_halted_integration_output(
+                    result,
+                    run_num=run_num,
+                    save_trajectory=(
                         self.config.save_all_trajectories
                         or self.config.save_failed_trajectories
-                    )
-                    if save_traj:
-                        traj = result.rider_trajectory
-                        stride = self.config.trajectory_stride
-                        try:
-                            output["trajectory"] = sample_trajectory_arrays(
-                                traj, stride
-                            )
-                            self._log_result(
-                                f"    Halted trajectory saved ({len(traj['z'])} points, stride={stride})"
-                            )
-                        except Exception as e:
-                            self._log_result(
-                                f"    [WARNING] Failed to save halted trajectory: {e}"
-                            )
-
-                self._log_result(
-                    f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
+                    ),
+                    trajectory_stride=self.config.trajectory_stride,
                 )
-                return output
+                for line in halted.log_lines:
+                    self._log_result(line)
+                return halted.output
 
             # Extract metrics (only for non-halted runs)
             self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")

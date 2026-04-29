@@ -9,8 +9,10 @@ import pytest
 from core.types import SimulationType
 import optimization.single_integration_helpers as single_integration_helpers
 from optimization.single_integration_helpers import (
+    HaltedIntegrationOutput,
     build_integration_metrics,
     build_final_z_check_log_lines,
+    build_halted_integration_output,
     build_single_integration_setup,
     calculate_rider_starting_pz,
     distance_info_from_trajectory,
@@ -20,9 +22,11 @@ from optimization.single_integration_helpers import (
 
 def test_module_exposes_only_supported_public_helpers():
     assert single_integration_helpers.__all__ == [
+        "HaltedIntegrationOutput",
         "IntegrationMetricsOutcome",
         "SingleIntegrationSetup",
         "build_final_z_check_log_lines",
+        "build_halted_integration_output",
         "build_integration_metrics",
         "build_single_integration_setup",
         "calculate_rider_starting_pz",
@@ -191,6 +195,68 @@ def test_build_integration_metrics_reports_missing_gamma():
     assert "max_percent_energy_gain" not in outcome.metrics
     assert any("No trajectory data available" in line for line in outcome.log_lines)
     assert any("could not be calculated for Run 6" in line for line in outcome.log_lines)
+
+
+def test_build_halted_integration_output_can_save_sampled_trajectory():
+    outcome = build_halted_integration_output(
+        _result(
+            halted_early=True,
+            halt_reason="cancelled",
+            rider_trajectory={
+                "z": [0.0, 1.0, 2.0],
+                "r": [0.0, 0.1, 0.2],
+                "pz": [1.0, 2.0, 3.0],
+                "pr": [0.1, 0.2, 0.3],
+                "t": [0.0, 0.5, 1.0],
+                "gamma": [10.0, 11.0, 12.0],
+            },
+        ),
+        run_num=7,
+        save_trajectory=True,
+        trajectory_stride=2,
+    )
+
+    assert isinstance(outcome, HaltedIntegrationOutput)
+    assert outcome.output == {
+        "metrics": {},
+        "halted_early": True,
+        "halt_reason": "cancelled",
+        "trajectory": {
+            "z": [0.0, 2.0],
+            "r": [0.0, 0.2],
+            "pz": [1.0, 3.0],
+            "pr": [0.1, 0.3],
+            "t": [0.0, 1.0],
+            "gamma": [10.0, 12.0],
+        },
+    }
+    assert "    Halted trajectory saved (3 points, stride=2)" in outcome.log_lines
+    assert outcome.log_lines[-1] == (
+        "  [DEBUG] _run_single_integration returning for halted Run 7"
+    )
+
+
+def test_build_halted_integration_output_warns_on_bad_trajectory_payload():
+    outcome = build_halted_integration_output(
+        _result(
+            halted_early=True,
+            halt_reason="cancelled",
+            rider_trajectory={"z": [0.0]},
+        ),
+        run_num=7,
+        save_trajectory=True,
+        trajectory_stride=1,
+    )
+
+    assert outcome.output == {
+        "metrics": {},
+        "halted_early": True,
+        "halt_reason": "cancelled",
+    }
+    assert any(
+        line.startswith("    [WARNING] Failed to save halted trajectory:")
+        for line in outcome.log_lines
+    )
 
 
 def test_sample_trajectory_arrays_applies_stride():
