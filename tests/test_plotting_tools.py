@@ -75,6 +75,29 @@ def test_generate_sweep_heatmap_resolves_contour_counts():
     assert sweep_heatmap.resolve_contour_counts(20, True, 4, 7) == (5, 15)
 
 
+def test_sweep_heatmap_loads_results_file(tmp_path: Path):
+    sweep_dir = tmp_path / "sweep"
+    sweep_dir.mkdir()
+    results_path = sweep_dir / "sweep_results.json"
+    results_path.write_text('{"results": [{"run_number": 1}]}', encoding="utf-8")
+
+    assert sweep_heatmap.load_sweep_results(sweep_dir) == {
+        "results": [{"run_number": 1}]
+    }
+
+
+def test_sweep_heatmap_load_results_exits_for_missing_file(tmp_path: Path, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        sweep_heatmap.load_sweep_results(tmp_path)
+
+    assert excinfo.value.code == 1
+    assert "sweep_results.json not found" in capsys.readouterr().out
+
+
+def test_sweep_heatmap_detect_swept_parameters_handles_empty_results():
+    assert sweep_heatmap.detect_swept_parameters({"results": []}) == ([], {})
+
+
 def test_sweep_heatmap_collapses_energy_aliases_when_detecting_parameters():
     data = {
         "results": [
