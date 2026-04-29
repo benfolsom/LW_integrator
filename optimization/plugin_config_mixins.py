@@ -16,6 +16,7 @@ from optimization.plugin_persistence_helpers import (
     metrics_export_settings_from_data,
     resolve_loaded_sweep_state,
 )
+from optimization.mode_helpers import normalize_sweep_or_optimization_mode
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import calculate_energy_from_pz
 from optimization.ui_helpers import (
@@ -393,7 +394,10 @@ class OptimizationPluginConfigMixin:
             self.sim_type_var.set(sim_type_value)
             self._sync_main_gui_simulation_type(sim_type_value)
 
-            self.mode_var.set(data.get("mode", "blind_sweep"))
+            loaded_mode = normalize_sweep_or_optimization_mode(
+                data.get("mode", "blind_sweep")
+            )
+            self.mode_var.set(loaded_mode)
             self.aperture_min_var.set(str(data.get("aperture_min", 1e-5)))
             self.aperture_max_var.set(str(data.get("aperture_max", 1e-3)))
             self.aperture_points_var.set(str(data.get("aperture_points", 10)))

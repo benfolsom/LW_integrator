@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from tkinter import messagebox
 
 from core.particle_config import DEFAULT_DRIVER_PARAMS
 from core.types import SimulationType
+from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
@@ -18,6 +20,26 @@ from .testbed_runner import (
     save_config,
     supports_driver,
 )
+
+
+_SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
+
+
+def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
+    """Return true for configs that must be handled by the sweep/optim tab."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    if not isinstance(data, dict):
+        return False
+
+    mode = data.get("mode")
+    if isinstance(mode, str) and mode in SWEEP_OR_OPTIMIZATION_MODES:
+        return True
+
+    return any(key in data for key in _SWEEP_OR_OPTIMIZATION_KEYS)
 
 
 class IntegratorGUIConfigMixin:
@@ -32,6 +54,10 @@ class IntegratorGUIConfigMixin:
             return
 
         path = Path(self.config_dir_var.get()) / filename
+        if _looks_like_sweep_or_optimization_config(path):
+            self._load_sweep_or_optimization_config(path)
+            return
+
         try:
             options = load_config(path)
         except Exception as exc:
@@ -69,6 +95,45 @@ class IntegratorGUIConfigMixin:
 
         self._set_status(f"Loaded config: {filename}")
         self.current_config_label.config(text=filename, foreground="black")
+
+    def _load_sweep_or_optimization_config(self, path: Path) -> None:
+        from .gui import _show_error_dialog
+
+        if not hasattr(self, "optimization_tab"):
+            _show_error_dialog(
+                self.root,
+                "Load config",
+                f"{path.name} is a sweep/optimization config, but the sweep tab is unavailable.",
+            )
+            return
+
+        try:
+            self.optimization_tab._load_config_from_path(str(path))
+        except Exception as exc:
+            _show_error_dialog(
+                self.root, "Load config", f"Failed to load {path.name}: {exc}"
+            )
+            return
+
+        if hasattr(self, "sweep_config_name_var"):
+            self.sweep_config_name_var.set(path.name)
+        if hasattr(self, "sweep_config_dir_var"):
+            self.sweep_config_dir_var.set(str(path.parent))
+        if hasattr(self.optimization_tab, "sweep_config_dir"):
+            self.optimization_tab.sweep_config_dir = str(path.parent)
+        if hasattr(self, "run_mode_var"):
+            self.run_mode_var.set("sweep")
+        if hasattr(self, "_on_run_mode_changed"):
+            self._on_run_mode_changed()
+        if hasattr(self, "_refresh_sweep_config_list"):
+            self._refresh_sweep_config_list(selected=path.name)
+        if hasattr(self, "current_sweep_config_label"):
+            self.current_sweep_config_label.config(
+                text=path.name, foreground="black", font=("TkDefaultFont", 9)
+            )
+        if hasattr(self, "_set_status"):
+            self._set_status(f"Loaded sweep/optimization config: {path.name}")
+        print("[INFO] Auto-switched to Sweep/Optim run mode")
 
     def _apply_options_to_ui(
         self, options: SimulationOptions, preserve_directories: bool = False

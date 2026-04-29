@@ -293,6 +293,58 @@ def test_load_config_no_longer_requires_removed_legacy_state(
     assert ("status", f"Loaded config: {filename}") in calls
 
 
+@pytest.mark.parametrize("mode", ["blind_sweep", "sweep", "optimization"])
+def test_load_config_routes_sweep_and_optimization_configs_to_sweep_tab(
+    tmp_path, monkeypatch, mode
+):
+    filename = f"{mode}.json"
+    (tmp_path / filename).write_text(f'{{"mode": "{mode}"}}', encoding="utf-8")
+    calls = []
+    loaded_paths = []
+
+    def _single_run_loader(path):
+        raise AssertionError(f"single-run loader should not receive {path}")
+
+    monkeypatch.setattr("lw_integrator.gui_config_mixins.load_config", _single_run_loader)
+
+    harness = SimpleNamespace(
+        _selected_config_filename=lambda: filename,
+        config_dir_var=_Var(str(tmp_path)),
+        root=object(),
+        optimization_tab=SimpleNamespace(
+            _load_config_from_path=lambda path: loaded_paths.append(path),
+            sweep_config_dir=None,
+        ),
+        sweep_config_name_var=_Var(""),
+        sweep_config_dir_var=_Var(""),
+        run_mode_var=_Var("single"),
+        _on_run_mode_changed=lambda: calls.append("run_mode_changed"),
+        _refresh_sweep_config_list=lambda selected=None: calls.append(
+            ("refresh_sweep_config_list", selected)
+        ),
+        current_sweep_config_label=SimpleNamespace(
+            config=lambda **kwargs: calls.append(("sweep_label", kwargs))
+        ),
+        _set_status=lambda message: calls.append(("status", message)),
+    )
+    harness._load_sweep_or_optimization_config = (
+        lambda path: gui.IntegratorGUI._load_sweep_or_optimization_config(
+            harness, path
+        )
+    )
+
+    gui.IntegratorGUI._load_config(harness)
+
+    assert loaded_paths == [str(tmp_path / filename)]
+    assert harness.sweep_config_name_var.get() == filename
+    assert harness.sweep_config_dir_var.get() == str(tmp_path)
+    assert harness.optimization_tab.sweep_config_dir == str(tmp_path)
+    assert harness.run_mode_var.get() == "sweep"
+    assert "run_mode_changed" in calls
+    assert ("refresh_sweep_config_list", filename) in calls
+    assert ("status", f"Loaded sweep/optimization config: {filename}") in calls
+
+
 def test_save_config_normalizes_filename_and_updates_ui(tmp_path, monkeypatch):
     saved = {}
     info_calls = []

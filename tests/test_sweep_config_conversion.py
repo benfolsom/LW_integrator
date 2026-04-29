@@ -65,3 +65,8 @@ def test_convert_json_config_normalizes_driver_energy_sweep_range():
     assert converted["driver_energy_points"] == 4
     assert converted["driver_energy_log_scale"] is True
 
+
+def test_convert_json_config_normalizes_legacy_sweep_mode():
+    converted = _convert_json_config_to_dataclass({"mode": "sweep"})
+
+    assert converted["mode"] == "blind_sweep"

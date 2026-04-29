@@ -55,6 +55,7 @@ from optimization.logging_policy import (
     describe_run_logging_policy,
     restore_run_logging_policy,
 )
+from optimization.mode_helpers import normalize_sweep_or_optimization_mode
 from optimization.single_integration_helpers import (
     build_integration_metrics,
     build_single_integration_setup,
@@ -1087,6 +1088,8 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
     correct particle parameters instead of hard-coded defaults.
     """
     converted = dict(config_dict)
+    if "mode" in converted:
+        converted["mode"] = normalize_sweep_or_optimization_mode(converted["mode"])
 
     # Convert simulation_type string to SimulationType enum
     if "simulation_type" in converted and isinstance(converted["simulation_type"], str):
