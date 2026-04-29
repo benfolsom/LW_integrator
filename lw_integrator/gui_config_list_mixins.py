@@ -169,6 +169,10 @@ class IntegratorGUIConfigListMixin:
 
         self.optimization_tab._load_config_from_path(path)
         self.sweep_config_name_var.set(filename)
+        if hasattr(self, "run_mode_var"):
+            self.run_mode_var.set("sweep")
+        if hasattr(self, "_on_run_mode_changed"):
+            self._on_run_mode_changed()
         self.current_sweep_config_label.config(
             text=filename, foreground="black", font=("TkDefaultFont", 9)
         )

@@ -288,6 +288,8 @@ def test_load_config_no_longer_requires_removed_legacy_state(
 
     assert ("apply", loaded_options, True) in calls
     assert ("refresh_config_list", filename) in calls
+    assert ("run_mode", "single") in calls
+    assert "run_mode_changed" in calls
     assert "update_driver_visibility" in calls
     assert combo.current_calls == [0]
     assert ("status", f"Loaded config: {filename}") in calls
@@ -732,12 +734,15 @@ def test_load_sweep_config_uses_entry_value_and_normalizes_extension(tmp_path):
     sweep_file = tmp_path / "example.json"
     sweep_file.write_text("{}", encoding="utf-8")
     label_calls = []
+    run_mode_changes = []
     harness = SimpleNamespace(
         sweep_config_name_var=_Var("example"),
         optimization_tab=SimpleNamespace(
             _load_config_from_path=lambda path: loaded_paths.append(path)
         ),
         sweep_config_dir_var=_Var(str(tmp_path)),
+        run_mode_var=_Var("single"),
+        _on_run_mode_changed=lambda: run_mode_changes.append("changed"),
         current_sweep_config_label=SimpleNamespace(
             config=lambda **kwargs: label_calls.append(kwargs)
         ),
@@ -747,6 +752,8 @@ def test_load_sweep_config_uses_entry_value_and_normalizes_extension(tmp_path):
 
     assert loaded_paths == [str(sweep_file)]
     assert harness.sweep_config_name_var.get() == "example.json"
+    assert harness.run_mode_var.get() == "sweep"
+    assert run_mode_changes == ["changed"]
     assert label_calls == [
         {"text": "example.json", "foreground": "black", "font": ("TkDefaultFont", 9)}
     ]
