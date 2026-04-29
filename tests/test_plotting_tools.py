@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import lw_integrator.sweep_heatmap as sweep_heatmap
@@ -580,6 +581,154 @@ def test_logcache_plotter_static_main_calls_contour_plot(tmp_path: Path, monkeyp
     assert contour_args[3] == str(output_path)
     assert captured["contour"]["kwargs"]["log_x"] is True
     assert captured["contour"]["kwargs"]["log_y"] is False
+
+
+def test_logcache_plotter_find_latest_log_handles_missing_and_empty_dirs(
+    tmp_path: Path,
+):
+    assert logcache_plotter.find_latest_log(tmp_path / "missing") is None
+
+    logcache = tmp_path / "logcache"
+    logcache.mkdir()
+    (logcache / "run.log").write_text("", encoding="utf-8")
+
+    assert logcache_plotter.find_latest_log(logcache) is None
+
+
+def test_logcache_plotter_find_latest_log_returns_newest_sweep(tmp_path: Path):
+    logcache = tmp_path / "logcache"
+    logcache.mkdir()
+    older = logcache / "older_sweep.log"
+    newer = logcache / "newer_sweep.log"
+    older.write_text("", encoding="utf-8")
+    newer.write_text("", encoding="utf-8")
+    os.utime(older, (1, 1))
+    os.utime(newer, (2, 2))
+
+    assert logcache_plotter.find_latest_log(logcache) == newer
+
+
+def test_logcache_plotter_main_reports_missing_auto_detected_log(
+    tmp_path: Path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+
+    assert logcache_plotter.main([]) == 1
+    captured = capsys.readouterr()
+    assert "No sweep log files found" in captured.out
+
+
+def test_logcache_plotter_live_main_delegates_to_monitor(tmp_path: Path, monkeypatch):
+    log_path = tmp_path / "run_sweep.log"
+    output_path = tmp_path / "plots" / "live.png"
+    log_path.write_text("placeholder", encoding="utf-8")
+    captured = {}
+
+    def fake_monitor(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(logcache_plotter, "_live_monitor", fake_monitor)
+
+    exit_code = logcache_plotter.main(
+        [
+            str(log_path),
+            "--live",
+            "--interval",
+            "9",
+            "--output",
+            str(output_path),
+            "--max-gain",
+            "11.5",
+            "--log-x",
+            "--log-y",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.parent.exists()
+    assert captured["args"] == (str(log_path), str(output_path))
+    assert captured["kwargs"] == {
+        "interval": 9,
+        "max_gain_percent": 11.5,
+        "log_x": True,
+        "log_y": True,
+    }
+
+
+def test_logcache_plotter_static_main_plots_negative_only_data(
+    tmp_path: Path, monkeypatch
+):
+    log_path = tmp_path / "run_sweep.log"
+    output_path = tmp_path / "negative.png"
+    log_path.write_text("placeholder", encoding="utf-8")
+    captured = {}
+
+    def fake_parse(log_file, verbose=True, max_gain_percent=30.0):
+        captured["parse"] = (log_file, verbose, max_gain_percent)
+        return (
+            None,
+            None,
+            None,
+            np.array([1.0, 2.0]),
+            np.array([0.1, 0.2]),
+            np.array([-3.0, 0.0]),
+            {"total": 2, "completed": 2},
+            {
+                "x_label": "Aperture",
+                "x_units": "mm",
+                "y_label": "Energy",
+                "y_units": "GeV",
+            },
+        )
+
+    def fake_combined(*args, **kwargs):
+        captured.setdefault("combined", []).append({"args": args, "kwargs": kwargs})
+
+    def fail_contour(*_args, **_kwargs):
+        raise AssertionError("positive contour plot should not be called")
+
+    monkeypatch.setattr(logcache_plotter, "parse_sweep_log", fake_parse)
+    monkeypatch.setattr(logcache_plotter, "_create_combined_gains_plot", fake_combined)
+    monkeypatch.setattr(logcache_plotter, "_create_contour_plot", fail_contour)
+
+    exit_code = logcache_plotter.main([str(log_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    assert captured["parse"] == (str(log_path), True, 30.0)
+    assert len(captured["combined"]) == 2
+    combined_args = captured["combined"][0]["args"]
+    assert combined_args[0] is None
+    np.testing.assert_allclose(combined_args[3], [1.0, 2.0])
+    np.testing.assert_allclose(combined_args[5], [-3.0, 0.0])
+    assert combined_args[6] == str(output_path)
+    assert captured["combined"][1]["args"][6] == str(
+        output_path.with_name("negative_combined.png")
+    )
+
+
+def test_logcache_plotter_static_main_reports_no_data(
+    tmp_path: Path, monkeypatch, capsys
+):
+    log_path = tmp_path / "run_sweep.log"
+    log_path.write_text("placeholder", encoding="utf-8")
+
+    def fake_parse(*_args, **_kwargs):
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            {"total": 0, "completed": 0},
+            {},
+        )
+
+    monkeypatch.setattr(logcache_plotter, "parse_sweep_log", fake_parse)
+
+    assert logcache_plotter.main([str(log_path)]) == 1
+    assert "No data found in log file" in capsys.readouterr().out
 
 
 def test_logcache_plotter_interpolation_falls_back_between_methods(monkeypatch):
