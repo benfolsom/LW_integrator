@@ -62,6 +62,7 @@ class IntegratorGUIConfigListMixin:
     def _on_config_selected(self) -> None:
         filename = self._selected_config_filename()
         if filename:
+            self.config_name_var.set(filename)
             self.config_file_var.set(filename)
             self.current_config_label.config(text=filename, foreground="black")
         else:
@@ -167,6 +168,7 @@ class IntegratorGUIConfigListMixin:
             return
 
         self.optimization_tab._load_config_from_path(path)
+        self.sweep_config_name_var.set(filename)
         self.current_sweep_config_label.config(
             text=filename, foreground="black", font=("TkDefaultFont", 9)
         )

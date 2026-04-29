@@ -709,6 +709,24 @@ def test_selected_config_filename_returns_selected_value():
     assert gui.IntegratorGUI._selected_config_filename(harness) == "demo.json"
 
 
+def test_config_selection_populates_save_target_name():
+    calls = []
+    harness = SimpleNamespace(
+        _selected_config_filename=lambda: "demo.json",
+        config_name_var=_Var("old.json"),
+        config_file_var=_Var("old.json"),
+        current_config_label=SimpleNamespace(
+            config=lambda **kwargs: calls.append(("label", kwargs))
+        ),
+    )
+
+    gui.IntegratorGUI._on_config_selected(harness)
+
+    assert harness.config_name_var.get() == "demo.json"
+    assert harness.config_file_var.get() == "demo.json"
+    assert calls == [("label", {"text": "demo.json", "foreground": "black"})]
+
+
 def test_load_sweep_config_uses_entry_value_and_normalizes_extension(tmp_path):
     loaded_paths = []
     sweep_file = tmp_path / "example.json"
@@ -728,6 +746,7 @@ def test_load_sweep_config_uses_entry_value_and_normalizes_extension(tmp_path):
     gui.IntegratorGUI._load_sweep_config(harness)
 
     assert loaded_paths == [str(sweep_file)]
+    assert harness.sweep_config_name_var.get() == "example.json"
     assert label_calls == [
         {"text": "example.json", "foreground": "black", "font": ("TkDefaultFont", 9)}
     ]
