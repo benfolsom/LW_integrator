@@ -70,6 +70,37 @@ def _select_b2b_x_axis(param_values, energy, candidates):
     return energy, "initial_energy_gev", "Particle Energy (Linked)", "GeV"
 
 
+def _parse_numeric_key_values(params_str):
+    return {
+        match.group(1): float(match.group(2))
+        for match in re.finditer(r"(\w+)=([0-9.e+-]+)", params_str)
+    }
+
+
+def _record_gain_sample(
+    *,
+    energy,
+    x_value,
+    gain,
+    max_gain_percent,
+    positive_samples,
+    non_positive_samples,
+):
+    if abs(gain) > max_gain_percent:
+        return None
+
+    if gain > 0:
+        positive_samples[0].append(energy)
+        positive_samples[1].append(x_value)
+        positive_samples[2].append(gain)
+        return "positive"
+
+    non_positive_samples[0].append(energy)
+    non_positive_samples[1].append(x_value)
+    non_positive_samples[2].append(gain)
+    return "non_positive"
+
+
 def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
     """Parse sweep log file and extract run parameters and metrics.
 
@@ -297,9 +328,7 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     gamma_f_parsed = float(truncated_match.group(5))
 
                     # Parse all key=value pairs from the params section
-                    kv_pairs = {}
-                    for kv in re.finditer(r"(\w+)=([0-9.e+-]+)", params_str):
-                        kv_pairs[kv.group(1)] = float(kv.group(2))
+                    kv_pairs = _parse_numeric_key_values(params_str)
 
                     # Need at least initial_energy_gev to be useful
                     if "initial_energy_gev" in kv_pairs:
@@ -340,17 +369,26 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                         last_run_num = max(last_run_num, run_num)
 
                         # Filter out gains with absolute value beyond threshold
-                        if abs(gain) <= max_gain_percent:
-                            if gain > 0:
-                                energies_pos.append(energy)
-                                x_values_pos.append(x_value)
-                                percent_gains_pos.append(gain)
-                                runs_with_positive_gains += 1
-                            else:
-                                energies_neg.append(energy)
-                                x_values_neg.append(x_value)
-                                percent_gains_neg.append(gain)
-                                runs_with_negative_gains += 1
+                        sample_type = _record_gain_sample(
+                            energy=energy,
+                            x_value=x_value,
+                            gain=gain,
+                            max_gain_percent=max_gain_percent,
+                            positive_samples=(
+                                energies_pos,
+                                x_values_pos,
+                                percent_gains_pos,
+                            ),
+                            non_positive_samples=(
+                                energies_neg,
+                                x_values_neg,
+                                percent_gains_neg,
+                            ),
+                        )
+                        if sample_type == "positive":
+                            runs_with_positive_gains += 1
+                        elif sample_type == "non_positive":
+                            runs_with_negative_gains += 1
 
                         # Don't set current_run - we've already processed this run completely
                         continue
@@ -366,9 +404,7 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                         params_str = match.group(2)
 
                         # Parse all key=value pairs from the params section
-                        kv_pairs = {}
-                        for kv in re.finditer(r"(\w+)=([0-9.e+-]+)", params_str):
-                            kv_pairs[kv.group(1)] = float(kv.group(2))
+                        kv_pairs = _parse_numeric_key_values(params_str)
 
                         # Need at least initial_energy_gev to be useful
                         if "initial_energy_gev" in kv_pairs:
@@ -415,18 +451,26 @@ def parse_sweep_log(log_file, verbose=True, max_gain_percent=30.0):
                     runs_with_metrics += 1
 
                     # Filter out gains with absolute value beyond threshold (unrealistic data)
-                    if abs(gain) <= max_gain_percent:
-                        # Separate positive and negative/zero gains
-                        if gain > 0:
-                            energies_pos.append(current_run["energy"])
-                            x_values_pos.append(current_run["x_value"])
-                            percent_gains_pos.append(gain)
-                            runs_with_positive_gains += 1
-                        else:
-                            energies_neg.append(current_run["energy"])
-                            x_values_neg.append(current_run["x_value"])
-                            percent_gains_neg.append(gain)
-                            runs_with_negative_gains += 1
+                    sample_type = _record_gain_sample(
+                        energy=current_run["energy"],
+                        x_value=current_run["x_value"],
+                        gain=gain,
+                        max_gain_percent=max_gain_percent,
+                        positive_samples=(
+                            energies_pos,
+                            x_values_pos,
+                            percent_gains_pos,
+                        ),
+                        non_positive_samples=(
+                            energies_neg,
+                            x_values_neg,
+                            percent_gains_neg,
+                        ),
+                    )
+                    if sample_type == "positive":
+                        runs_with_positive_gains += 1
+                    elif sample_type == "non_positive":
+                        runs_with_negative_gains += 1
 
                     current_run = {}
     except FileNotFoundError:

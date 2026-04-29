@@ -327,6 +327,58 @@ def test_logcache_plotter_reports_optional_1d_curve_failure(
     assert "Failed to create 1D curves plot: curve render failed" in captured.out
 
 
+def test_logcache_plotter_parses_numeric_key_values():
+    assert logcache_plotter._parse_numeric_key_values(
+        "initial_energy_gev=5.0 driver_energy_gev=-2.5 bad=x rider_transv_dist=1e-4"
+    ) == {
+        "initial_energy_gev": 5.0,
+        "driver_energy_gev": -2.5,
+        "rider_transv_dist": 1e-4,
+    }
+
+
+def test_logcache_plotter_records_gain_samples_with_threshold_filtering():
+    positive = ([], [], [])
+    non_positive = ([], [], [])
+
+    assert (
+        logcache_plotter._record_gain_sample(
+            energy=5.0,
+            x_value=1.0,
+            gain=3.0,
+            max_gain_percent=10.0,
+            positive_samples=positive,
+            non_positive_samples=non_positive,
+        )
+        == "positive"
+    )
+    assert (
+        logcache_plotter._record_gain_sample(
+            energy=6.0,
+            x_value=2.0,
+            gain=0.0,
+            max_gain_percent=10.0,
+            positive_samples=positive,
+            non_positive_samples=non_positive,
+        )
+        == "non_positive"
+    )
+    assert (
+        logcache_plotter._record_gain_sample(
+            energy=7.0,
+            x_value=3.0,
+            gain=12.0,
+            max_gain_percent=10.0,
+            positive_samples=positive,
+            non_positive_samples=non_positive,
+        )
+        is None
+    )
+
+    assert positive == ([5.0], [1.0], [3.0])
+    assert non_positive == ([6.0], [2.0], [0.0])
+
+
 def test_parse_sweep_log_uses_only_most_recent_sweep(tmp_path: Path):
     log_path = _write_log(
         tmp_path / "multi_sweep.log",
