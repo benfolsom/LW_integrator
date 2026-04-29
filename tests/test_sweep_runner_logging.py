@@ -8,18 +8,14 @@ import pytest
 
 from core.types import SimulationType
 from lw_integrator.sweep_runner import (
-    _build_cli_progress_log_line,
     _build_cli_start_log_lines,
-    _build_cli_stability_config_log_lines,
     _build_cli_sweep_start_log_lines,
     _build_cli_timestep_log_lines,
-    _build_small_aperture_diagnostic_line,
     _evaluate_cli_stability,
     _format_aperture_for_start_log,
     _resolve_cli_driver_setup,
     _resolve_cli_rider_overrides,
     _resolve_cli_timestep_setup,
-    _should_emit_verbose_cli_log,
 )
 
 
@@ -260,49 +256,6 @@ def test_build_cli_start_log_lines_formats_start_and_params_lines():
         "[OPTIMIZATION] [START] Run 2/9: a=0.0123mm, E=5.00GeV",
         "[OPTIMIZATION]   [PARAMS] z=10.00mm, h=1.0000e-07ns, N=100",
     ]
-
-
-def test_build_cli_progress_log_line_respects_interval_and_completion():
-    assert _build_cli_progress_log_line(run_num=2, current=9, total=100) is None
-    assert _build_cli_progress_log_line(run_num=2, current=10, total=100) == (
-        "[OPTIMIZATION]     [PROGRESS] Run 2: step 10/100 (10%)"
-    )
-    assert _build_cli_progress_log_line(run_num=2, current=100, total=100) == (
-        "[OPTIMIZATION]     [PROGRESS] Run 2: step 100/100 (100%)"
-    )
-
-
-def test_should_emit_verbose_cli_log_matches_selected_keywords():
-    assert _should_emit_verbose_cli_log("Particle 1 converged")
-    assert _should_emit_verbose_cli_log("Reducing timestep after jump")
-    assert not _should_emit_verbose_cli_log("ordinary integrator message")
-
-
-def test_build_cli_stability_config_log_lines_includes_enabled_details():
-    assert _build_cli_stability_config_log_lines(_config(), run_num=3) == [
-        "[OPTIMIZATION]   [CONFIG] Run 3 stability settings:",
-        "[OPTIMIZATION]     smoothness_enabled: True",
-        "[OPTIMIZATION]     smoothness_window_size: 20",
-        "[OPTIMIZATION]     smoothness_reject_on_violation: True",
-    ]
-
-
-def test_build_cli_stability_config_log_lines_omits_disabled_details():
-    assert _build_cli_stability_config_log_lines(
-        _config(smoothness_enabled=False),
-        run_num=3,
-    ) == [
-        "[OPTIMIZATION]   [CONFIG] Run 3 stability settings:",
-        "[OPTIMIZATION]     smoothness_enabled: False",
-    ]
-
-
-def test_build_small_aperture_diagnostic_line_only_for_small_apertures():
-    assert _build_small_aperture_diagnostic_line(run_num=5, aperture=0.1) is None
-    assert _build_small_aperture_diagnostic_line(run_num=5, aperture=0.001) == (
-        "[OPTIMIZATION]   [DIAGNOSTIC] Run 5: "
-        "Small aperture detected (0.001000 mm)"
-    )
 
 
 def test_evaluate_cli_stability_reports_disabled_without_metric_updates():

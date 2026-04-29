@@ -30,6 +30,12 @@ from optimization.run_parameter_helpers import (
     resolve_optimization_run_parameters,
     resolve_objective_metric,
 )
+from optimization.run_logging_helpers import (
+    build_progress_log_line,
+    build_small_aperture_diagnostic_line,
+    build_stability_config_log_lines,
+    should_emit_verbose_run_log,
+)
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.single_integration_helpers import (
     build_integration_metrics,
@@ -1113,15 +1119,8 @@ class OptimizationRunMixin:
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
         # Log stability analysis configuration for debugging
-        self._log_result(f"  [CONFIG] Run {run_num} stability settings:")
-        self._log_result(f"    smoothness_enabled: {self.config.smoothness_enabled}")
-        if self.config.smoothness_enabled:
-            self._log_result(
-                f"    smoothness_window_size: {self.config.smoothness_window_size}"
-            )
-            self._log_result(
-                f"    smoothness_reject_on_violation: {self.config.smoothness_reject_on_violation}"
-            )
+        for line in build_stability_config_log_lines(self.config, run_num=run_num):
+            self._log_result(line)
 
         # Create a temporary subdirectory for this run's outputs (will be cleaned up)
         from datetime import datetime
@@ -1167,17 +1166,13 @@ class OptimizationRunMixin:
         # Create progress callback to track integration
         def progress_callback(current: int, total: int, run_id=run_num):
             """Log progress periodically."""
-            # Log every 10% or every 100 steps for short runs
-            if total <= 1000:
-                log_interval = max(1, total // 10)
-            else:
-                log_interval = max(100, total // 20)
-
-            if current % log_interval == 0 or current == total:
-                self._log_result(
-                    f"    [PROGRESS] Run {run_id}: step {current}/{total} "
-                    f"({100 * current // total}%)"
-                )
+            line = build_progress_log_line(
+                run_num=run_id,
+                current=current,
+                total=total,
+            )
+            if line is not None:
+                self._log_result(line)
 
         # Run the integration with progress tracking
         #
@@ -1191,9 +1186,12 @@ class OptimizationRunMixin:
                 not is_bunch_to_bunch(self.config.simulation_type)
                 and aperture < 0.1
             ):
-                self._log_result(
-                    f"  [DIAGNOSTIC] Run {run_num}: Small aperture detected ({aperture:.6f} mm)"
+                diagnostic_line = build_small_aperture_diagnostic_line(
+                    run_num=run_num,
+                    aperture=aperture,
                 )
+                if diagnostic_line is not None:
+                    self._log_result(diagnostic_line)
             if macroparticle_charge_multiplier > 1000:
                 self._log_result(
                     f"  [DIAGNOSTIC] Run {run_num}: Large charge multiplier ({macroparticle_charge_multiplier:.0f})"
@@ -1227,27 +1225,7 @@ class OptimizationRunMixin:
 
                 def verbose_log(message: str):
                     # Filter for SC and adaptive timestep related messages
-                    if any(
-                        keyword in message
-                        for keyword in [
-                            "Particle",
-                            "converged",
-                            "Mass-shell error",
-                            "γ_velocity",
-                            "γ_energy",
-                            "γ_mass_shell",
-                            "Energy jump detected",
-                            "Reducing timestep",
-                            "Proximity refinement",
-                            "Cooldown mode",
-                            "Probing stability",
-                            "Returning to normal timestep",
-                            "Stable",
-                            "Unstable",
-                            "Minimum timestep reached",
-                            "Max refinement attempts",
-                        ]
-                    ):
+                    if should_emit_verbose_run_log(message):
                         self._log_result(f"    [VERBOSE] {message}")
 
                 log_callback = verbose_log

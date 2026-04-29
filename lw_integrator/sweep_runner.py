@@ -60,6 +60,12 @@ from optimization.single_integration_helpers import (
     build_single_integration_setup,
     calculate_rider_starting_pz,
 )
+from optimization.run_logging_helpers import (
+    build_progress_log_line,
+    build_small_aperture_diagnostic_line,
+    build_stability_config_log_lines,
+    should_emit_verbose_run_log,
+)
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import build_config_parameter_grids
 from optimization.sweep_result_helpers import (
@@ -79,25 +85,6 @@ from optimization.sweep_run_helpers import (
 # ---------------------------------------------------------------------------
 
 AMU_TO_MEV = 931.494
-
-_VERBOSE_LOG_KEYWORDS = (
-    "Particle",
-    "converged",
-    "Mass-shell error",
-    "γ_velocity",
-    "γ_energy",
-    "γ_mass_shell",
-    "Energy jump detected",
-    "Reducing timestep",
-    "Proximity refinement",
-    "Cooldown mode",
-    "Probing stability",
-    "Returning to normal timestep",
-    "Stable",
-    "Unstable",
-    "Minimum timestep reached",
-    "Max refinement attempts",
-)
 
 
 @dataclass(frozen=True)
@@ -379,66 +366,6 @@ def _build_cli_start_log_lines(
             f"h={timestep:.4e}ns, N={steps}"
         ),
     ]
-
-
-def _build_cli_progress_log_line(
-    *,
-    run_num: int,
-    current: int,
-    total: int,
-) -> str | None:
-    if total <= 1000:
-        log_interval = max(1, total // 10)
-    else:
-        log_interval = max(100, total // 20)
-    if current % log_interval != 0 and current != total:
-        return None
-    return (
-        f"[OPTIMIZATION]     [PROGRESS] Run {run_num}: step {current}/{total} "
-        f"({100 * current // total}%)"
-    )
-
-
-def _should_emit_verbose_cli_log(message: str) -> bool:
-    return any(keyword in message for keyword in _VERBOSE_LOG_KEYWORDS)
-
-
-def _build_cli_stability_config_log_lines(
-    config: Any,
-    *,
-    run_num: int,
-) -> list[str]:
-    lines = [
-        f"[OPTIMIZATION]   [CONFIG] Run {run_num} stability settings:",
-        f"[OPTIMIZATION]     smoothness_enabled: {config.smoothness_enabled}",
-    ]
-    if config.smoothness_enabled:
-        lines.extend(
-            [
-                (
-                    "[OPTIMIZATION]     smoothness_window_size: "
-                    f"{config.smoothness_window_size}"
-                ),
-                (
-                    "[OPTIMIZATION]     smoothness_reject_on_violation: "
-                    f"{config.smoothness_reject_on_violation}"
-                ),
-            ]
-        )
-    return lines
-
-
-def _build_small_aperture_diagnostic_line(
-    *,
-    run_num: int,
-    aperture: float,
-) -> str | None:
-    if aperture >= 0.1:
-        return None
-    return (
-        f"[OPTIMIZATION]   [DIAGNOSTIC] Run {run_num}: "
-        f"Small aperture detected ({aperture:.6f} mm)"
-    )
 
 
 def _evaluate_cli_stability(
@@ -732,16 +659,17 @@ class SweepRunner:
 
         # ── Progress + log callbacks (same format as GUI) ──
         def progress_callback(current: int, total: int, _run_id=run_num):
-            line = _build_cli_progress_log_line(
+            line = build_progress_log_line(
                 run_num=_run_id,
                 current=current,
                 total=total,
+                prefix="[OPTIMIZATION] ",
             )
             if line is not None:
                 print(line, flush=True)
 
         def _verbose_log(message: str) -> None:
-            if _should_emit_verbose_cli_log(message):
+            if should_emit_verbose_run_log(message):
                 print(f"[OPTIMIZATION]     [VERBOSE] {message}", flush=True)
 
         log_callback: Optional[Callable[[str], None]] = None
@@ -752,15 +680,17 @@ class SweepRunner:
             log_callback = _verbose_log
 
         # ── Log stability settings (same as GUI) ──
-        for line in _build_cli_stability_config_log_lines(
+        for line in build_stability_config_log_lines(
             self.config,
             run_num=run_num,
+            prefix="[OPTIMIZATION] ",
         ):
             print(line, flush=True)
 
-        diagnostic_line = _build_small_aperture_diagnostic_line(
+        diagnostic_line = build_small_aperture_diagnostic_line(
             run_num=run_num,
             aperture=aperture,
+            prefix="[OPTIMIZATION] ",
         )
         if diagnostic_line is not None:
             print(diagnostic_line, flush=True)
