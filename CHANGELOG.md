@@ -79,6 +79,21 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Test discovery** — Fixed pytest configuration to collect from the actual `tests/` tree instead of stale `lw_integrator/tests`
 - **Files modified** — `lw_integrator/sweep_heatmap.py`, `tests/test_plotting_tools.py`, `tests/test_adaptive_timestep_interactions.py`, `tests/test_repository_surface.py`, `docs/source/validation.rst`, `docs/source/notebooks.rst`, `docs/source/overview.rst`, `docs/source/theory.rst`, `docs/source/recent_changes.rst`, `pyproject.toml`, `examples/validation/`, `legacy/`
 
+### CLI Config Compatibility Fix (April 2026)
+
+- **Bug** — CLI JSON config parsing stopped accepting integer `SimulationType` flags (`0`, `1`, `2`) and historical chrono/startup aliases even though master accepted these values
+- **Fix** — Restored integer mode parsing while rejecting boolean values and invalid integer flags; restored config-file aliases for older chrono/startup values without re-advertising them in help text
+- **Regression coverage** — Added CLI parser coverage for all integer simulation modes, invalid integer inputs, and historical chrono/startup aliases
+- **Files modified** — `lw_integrator/cli.py`, `tests/test_cli.py`
+
+### Optimization Top-N Trajectory Regeneration Fix (April 2026)
+
+- **Bug** — Top-N optimization trajectory regeneration used a stale local parameter mapper instead of the same resolver used by objective evaluations
+- **Impact** — Regenerated trajectories for swept rider/driver parameters could differ from the parameter set that was actually optimized, especially for BUNCH_TO_BUNCH driver energy, mass, and starting-distance sweeps
+- **Fix** — Route top-N regeneration through `resolve_optimization_run_parameters()` and always restore the temporary trajectory-saving flag after reruns
+- **Regression coverage** — Extended BUNCH_TO_BUNCH top-N trajectory coverage to assert swept rider and driver parameters are passed through
+- **Files modified** — `optimization/results_mixins.py`, `tests/test_optimization.py`
+
 ## v0.6.0 — March 2026
 
 ### CLI / GUI Parity (March 2026)

@@ -12,6 +12,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 
@@ -78,8 +79,10 @@ SIMULATION_TYPE_ALIASES: Mapping[str, SimulationType] = {
 STARTUP_MODE_ALIASES: Mapping[str, StartupMode] = {
     "cold-start": StartupMode.COLD_START,
     "cold_start": StartupMode.COLD_START,
+    "cold": StartupMode.COLD_START,
     "approximate-back-history": StartupMode.APPROXIMATE_BACK_HISTORY,
     "approximate_back_history": StartupMode.APPROXIMATE_BACK_HISTORY,
+    "approximate": StartupMode.APPROXIMATE_BACK_HISTORY,
 }
 
 REQUIRED_PARTICLE_FIELDS: Iterable[str] = (
@@ -413,9 +416,13 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     chrono_mode = _parse_chrono_mode(
         payload.get("chrono_mode", ChronoMatchingMode.AVERAGED)
     )
-    startup_mode = _parse_startup_mode(payload.get("startup_mode", StartupMode.COLD_START))
+    startup_mode = _parse_startup_mode(
+        payload.get("startup_mode", StartupMode.COLD_START)
+    )
     image_subcharge_count = _parse_image_subcharge_count(
-        payload.get("image_subcharge_count", DEFAULT_SIMULATION["image_subcharge_count"])
+        payload.get(
+            "image_subcharge_count", DEFAULT_SIMULATION["image_subcharge_count"]
+        )
     )
     use_image_weighting = _parse_image_weighting(
         payload.get("use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"])
@@ -442,6 +449,13 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
 def _parse_simulation_type(value: Any) -> SimulationType:
     if isinstance(value, SimulationType):
         return value
+    if isinstance(value, Integral) and not isinstance(value, bool):
+        try:
+            return SimulationType(int(value))
+        except ValueError as exc:
+            raise SimulationConfigError(
+                f"Unknown simulation type integer: {value}"
+            ) from exc
     if isinstance(value, str):
         key = value.strip().lower()
         if key in SIMULATION_TYPE_ALIASES:
@@ -454,9 +468,9 @@ def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
         return value
     if isinstance(value, str):
         key = value.strip().lower()
-        if key == "fast":
+        if key in {"fast", "legacy"}:
             return ChronoMatchingMode.FAST
-        if key == "averaged":
+        if key in {"averaged", "average", "blended"}:
             return ChronoMatchingMode.AVERAGED
         raise SimulationConfigError(
             f"Unknown chrono_mode value: {value!r}. Expected 'fast' or 'averaged'."
@@ -476,9 +490,7 @@ def _parse_startup_mode(value: Any) -> StartupMode:
         raise SimulationConfigError(
             f"Unknown startup_mode value: {value!r}. Expected 'cold-start' or 'approximate-back-history'."
         )
-    raise SimulationConfigError(
-        "startup_mode must be a string or StartupMode instance"
-    )
+    raise SimulationConfigError("startup_mode must be a string or StartupMode instance")
 
 
 def _parse_image_subcharge_count(value: Any) -> int:
@@ -587,8 +599,7 @@ def summarise_trajectory(trajectory: Trajectory) -> Dict[str, Any]:
         "traveled_distance_mm": summary_row["traveled"],
         "initial_gamma_mean": summary_row["gamma_initial"],
         "final_gamma_mean": summary_row["gamma_final"],
-        "delta_gamma_mean": summary_row["gamma_final"]
-        - summary_row["gamma_initial"],
+        "delta_gamma_mean": summary_row["gamma_final"] - summary_row["gamma_initial"],
         "max_absolute_velocity": _max_abs(final.get("bz", np.array([0.0]))),
     }
 
@@ -731,10 +742,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.quiet:
         print_summary(report)
         if driver is not None:
-            print(
-                "Driver trajectory generated with "
-                f"{len(driver)} integration steps."
-            )
+            print(f"Driver trajectory generated with {len(driver)} integration steps.")
 
     return 0
 

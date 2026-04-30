@@ -53,9 +53,7 @@ class TestCliConfigParsing:
 
         assert exc_info.value.code == 17
 
-    def test_help_text_describes_maintained_results_and_chrono_modes(
-        self, capsys
-    ):
+    def test_help_text_describes_maintained_results_and_chrono_modes(self, capsys):
         with pytest.raises(SystemExit, match="0"):
             cli.parse_args(["--help"])
 
@@ -126,15 +124,33 @@ class TestCliConfigParsing:
             SimulationType.SWITCHING_WALL
         )
 
+    def test_parse_simulation_type_accepts_integer_flags(self):
+        assert cli._parse_simulation_type(SimulationType.CONDUCTING_WALL.value) == (
+            SimulationType.CONDUCTING_WALL
+        )
+        assert cli._parse_simulation_type(SimulationType.SWITCHING_WALL.value) == (
+            SimulationType.SWITCHING_WALL
+        )
+        assert cli._parse_simulation_type(SimulationType.BUNCH_TO_BUNCH.value) == (
+            SimulationType.BUNCH_TO_BUNCH
+        )
+
     def test_parse_simulation_type_rejects_unknown_value(self):
         with pytest.raises(cli.SimulationConfigError, match="Unknown simulation type"):
             cli._parse_simulation_type("not-a-mode")
         with pytest.raises(cli.SimulationConfigError, match="Unknown simulation type"):
-            cli._parse_simulation_type(SimulationType.BUNCH_TO_BUNCH.value)
+            cli._parse_simulation_type(True)
+        with pytest.raises(
+            cli.SimulationConfigError, match="Unknown simulation type integer"
+        ):
+            cli._parse_simulation_type(99)
 
     def test_parse_chrono_mode_accepts_supported_values(self):
         assert cli._parse_chrono_mode("fast") == ChronoMatchingMode.FAST
         assert cli._parse_chrono_mode("averaged") == ChronoMatchingMode.AVERAGED
+        assert cli._parse_chrono_mode("legacy") == ChronoMatchingMode.FAST
+        assert cli._parse_chrono_mode("average") == ChronoMatchingMode.AVERAGED
+        assert cli._parse_chrono_mode("blended") == ChronoMatchingMode.AVERAGED
 
     def test_parse_chrono_mode_accepts_enum_instance(self):
         assert cli._parse_chrono_mode(ChronoMatchingMode.AVERAGED) == (
@@ -151,7 +167,11 @@ class TestCliConfigParsing:
             cli._parse_chrono_mode(123)
 
     def test_parse_startup_mode_accepts_enum_or_supported_alias(self):
+        assert cli._parse_startup_mode("cold") == StartupMode.COLD_START
         assert cli._parse_startup_mode("approximate-back-history") == (
+            StartupMode.APPROXIMATE_BACK_HISTORY
+        )
+        assert cli._parse_startup_mode("approximate") == (
             StartupMode.APPROXIMATE_BACK_HISTORY
         )
         assert cli._parse_startup_mode(StartupMode.COLD_START) == (
@@ -216,7 +236,12 @@ class TestCliConfigParsing:
             cli.SimulationConfigError, match="missing 'simulation_type'"
         ):
             cli._build_integrator_config(
-                {"steps": 1, "time_step": 0.1, "wall_position": 0.0, "aperture_radius": 1.0}
+                {
+                    "steps": 1,
+                    "time_step": 0.1,
+                    "wall_position": 0.0,
+                    "aperture_radius": 1.0,
+                }
             )
 
     def test_build_integrator_config_requires_core_fields(self):
@@ -317,7 +342,9 @@ class TestCliBuildRequest:
             cli._load_config(path)
 
     def test_load_config_reports_missing_file(self, tmp_path: Path):
-        with pytest.raises(cli.SimulationConfigError, match="Configuration file not found"):
+        with pytest.raises(
+            cli.SimulationConfigError, match="Configuration file not found"
+        ):
             cli._load_config(tmp_path / "missing.json")
 
     def test_load_config_rejects_invalid_json(self, tmp_path: Path):
@@ -328,9 +355,7 @@ class TestCliBuildRequest:
             cli._load_config(path)
 
     def test_build_particle_state_requires_core_fields(self):
-        with pytest.raises(
-            cli.SimulationConfigError, match="missing required fields"
-        ):
+        with pytest.raises(cli.SimulationConfigError, match="missing required fields"):
             cli._build_particle_state({"kinetic_energy_mev": 10.0, "mass_amu": 1.0})
 
     def test_build_particle_state_rejects_unsupported_options(self):
@@ -360,7 +385,9 @@ class TestCliSweepEntryPoint:
         config_path.write_text("{}", encoding="utf-8")
         captured = {}
 
-        def fake_run_sweep_from_config(*, config_path, output_dir, verbose, verbosity_overrides):
+        def fake_run_sweep_from_config(
+            *, config_path, output_dir, verbose, verbosity_overrides
+        ):
             captured["config_path"] = config_path
             captured["output_dir"] = output_dir
             captured["verbose"] = verbose
@@ -398,7 +425,9 @@ class TestCliSweepEntryPoint:
         assert result == 2
         assert "Sweep config file not found" in capsys.readouterr().err
 
-    def test_run_sweep_returns_2_on_exception(self, monkeypatch, tmp_path: Path, capsys):
+    def test_run_sweep_returns_2_on_exception(
+        self, monkeypatch, tmp_path: Path, capsys
+    ):
         config_path = tmp_path / "sweep.json"
         config_path.write_text("{}", encoding="utf-8")
 
@@ -447,9 +476,7 @@ class TestCliMain:
         assert "Run Count: 1" in output
         assert "Best Delta E Mev: 1.25" in output
 
-    def test_main_writes_saved_optimization_results_summary_json(
-        self, tmp_path: Path
-    ):
+    def test_main_writes_saved_optimization_results_summary_json(self, tmp_path: Path):
         results_path = tmp_path / "optimization_results.json"
         output_path = tmp_path / "summary.json"
         results_path.write_text(
@@ -477,7 +504,13 @@ class TestCliMain:
         )
 
         result = cli.main(
-            ["--results-file", str(results_path), "--output", str(output_path), "--quiet"]
+            [
+                "--results-file",
+                str(results_path),
+                "--output",
+                str(output_path),
+                "--quiet",
+            ]
         )
 
         payload = json.loads(output_path.read_text(encoding="utf-8"))
@@ -551,7 +584,9 @@ class TestCliMain:
     ):
         results_path = tmp_path / "legacy_results.json"
         results_path.write_text(
-            json.dumps({"core": {"rider": {"positions_mm": {}, "conjugate_momenta": {}}}}),
+            json.dumps(
+                {"core": {"rider": {"positions_mm": {}, "conjugate_momenta": {}}}}
+            ),
             encoding="utf-8",
         )
 
@@ -648,7 +683,17 @@ class TestCliMain:
         monkeypatch.setattr(
             cli,
             "run_simulation",
-            lambda request: ([{"gamma": np.array([1.0]), "z": np.array([0.0]), "t": np.array([0.0]), "bz": np.array([0.0])}], [1, 2, 3]),
+            lambda request: (
+                [
+                    {
+                        "gamma": np.array([1.0]),
+                        "z": np.array([0.0]),
+                        "t": np.array([0.0]),
+                        "bz": np.array([0.0]),
+                    }
+                ],
+                [1, 2, 3],
+            ),
         )
         monkeypatch.setattr(
             cli,

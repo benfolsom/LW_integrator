@@ -18,7 +18,7 @@ from optimization.result_io import (  # type: ignore[import]
     save_top_n_optimization_trajectories,
     save_top_trajectories_summary_table,
 )
-from optimization.simulation_type_helpers import is_bunch_to_bunch
+from optimization.run_parameter_helpers import resolve_optimization_run_parameters
 from optimization.ui_helpers import (  # type: ignore[import]
     show_error_dialog as _show_error_dialog,
 )
@@ -60,103 +60,48 @@ class OptimizationResultsMixin:
         self, params_dict, param_names, rank, fitness
     ):
         """Re-run a single parameter set and save its trajectory."""
-        from pathlib import Path
-
-        import numpy as np
-
         try:
-            # Set up run parameters (similar to evaluate_params)
-            aperture = self.config.aperture_range[0]
-            energy = self.config.energy_range[0]
-            start_z = (
-                self.config.starting_z_positions[0]
-                if self.config.starting_z_positions
-                else 0.0
+            ordered_names = [name for name in param_names if name in params_dict]
+            seen_names = set(ordered_names)
+            for name in params_dict:
+                if name not in seen_names:
+                    ordered_names.append(name)
+                    seen_names.add(name)
+            ordered_values = [params_dict[name] for name in ordered_names]
+            run_params = resolve_optimization_run_parameters(
+                self.config, ordered_names, ordered_values
             )
-            offset_frac = (
-                self.config.transverse_offset_fractions[0]
-                if self.config.transverse_offset_fractions
-                else 0.0
-            )
-            timestep = self.config.timestep
-            steps = self.config.steps
-            wall_z = self.config.wall_z
-            rider_transv_mom = self.config.transv_mom  # default
-            rider_transv_dist = self.config.transv_dist  # default
-            macroparticle_charge_mult = (
-                self.config.macroparticle_charge_multiplier
-            )  # default
-            macroparticle_sigma_mult = (
-                self.config.macroparticle_sigma_multiplier
-            )  # default
-
-            # Map parameters
-            for param_name, value in params_dict.items():
-                if param_name == "aperture_radius":
-                    aperture = value
-                elif param_name == "initial_energy_gev":
-                    energy = value
-                elif param_name == "start_z":
-                    start_z = value
-                elif param_name == "transverse_offset":
-                    offset_frac = value
-                elif param_name == "timestep":
-                    timestep = value
-                elif param_name == "wall_z":
-                    wall_z = value
-                elif param_name == "transverse_momentum":
-                    rider_transv_mom = value
-                elif param_name == "rider_transv_dist":
-                    rider_transv_dist = value
-                elif param_name == "macroparticle_charge_multiplier":
-                    macroparticle_charge_mult = value
-                elif param_name == "macroparticle_sigma_multiplier":
-                    macroparticle_sigma_mult = value
-
-            if is_bunch_to_bunch(self.config.simulation_type):
-                transv_offset = offset_frac
-                driver_params_dict = {
-                    "m_particle": self.config.driver_m_particle,
-                    "charge_sign": self.config.driver_charge_sign,
-                    "pcount": self.config.driver_pcount,
-                    "transv_mom": self.config.driver_transv_mom,
-                    "transv_dist": self.config.driver_transv_dist,
-                    "starting_distance": self.config.driver_starting_distance,
-                    "starting_Pz": self.config.driver_starting_Pz,
-                    "stripped_ions": self.config.driver_stripped_ions,
-                    "transv_offset_x": self.config.driver_transv_offset_x,
-                    "transv_offset_y": self.config.driver_transv_offset_y,
-                }
-            else:
-                transv_offset = offset_frac * aperture
-                driver_params_dict = None
 
             # Temporarily enable trajectory saving
             save_all_backup = self.config.save_all_trajectories
             self.config.save_all_trajectories = True
 
-            # Run integration
-            result_data = self._run_single_integration(
-                aperture=aperture,
-                energy_gev=energy,
-                start_z=start_z,
-                transv_offset=transv_offset,
-                timestep=timestep,
-                steps=steps,
-                rider_m_particle=self.config.m_particle,
-                rider_charge_sign=self.config.charge_sign,
-                rider_pcount=int(self.config.pcount),
-                rider_transv_mom=rider_transv_mom,
-                rider_transv_dist=rider_transv_dist,
-                macroparticle_charge_multiplier=macroparticle_charge_mult,
-                macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                driver_params=driver_params_dict,
-                wall_z=wall_z,
-                run_num=9999 + rank,
-            )
-
-            # Restore trajectory setting
-            self.config.save_all_trajectories = save_all_backup
+            try:
+                result_data = self._run_single_integration(
+                    aperture=run_params.aperture,
+                    energy_gev=run_params.energy_gev,
+                    start_z=run_params.start_z,
+                    transv_offset=run_params.transv_offset,
+                    timestep=run_params.timestep,
+                    steps=run_params.steps,
+                    rider_m_particle=run_params.rider_m_particle,
+                    rider_charge_sign=run_params.rider_charge_sign,
+                    rider_pcount=run_params.rider_pcount,
+                    rider_transv_mom=run_params.rider_transv_mom,
+                    rider_transv_dist=run_params.rider_transv_dist,
+                    rider_stripped_ions=run_params.rider_stripped_ions,
+                    macroparticle_charge_multiplier=(
+                        run_params.macroparticle_charge_multiplier
+                    ),
+                    macroparticle_sigma_multiplier=(
+                        run_params.macroparticle_sigma_multiplier
+                    ),
+                    driver_params=run_params.driver_params,
+                    wall_z=run_params.wall_z,
+                    run_num=9999 + rank,
+                )
+            finally:
+                self.config.save_all_trajectories = save_all_backup
 
             if result_data and "trajectory" in result_data:
                 output_dir = getattr(

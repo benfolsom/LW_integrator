@@ -513,9 +513,7 @@ class TestPluginConfigHelpers:
             "driver_transv_mom": _make_sweep_controls(enabled=False),
             "driver_transv_dist": _make_sweep_controls(enabled=False),
             "driver_starting_distance": _make_sweep_controls(enabled=False),
-            "driver_energy_gev": _make_sweep_controls(
-                enabled=False, fixed_val=-1.25
-            ),
+            "driver_energy_gev": _make_sweep_controls(enabled=False, fixed_val=-1.25),
             "driver_stripped_ions": _make_sweep_controls(enabled=False),
         }
 
@@ -956,23 +954,41 @@ class TestOptimizationResultsMixin:
         )
         harness = _ResultsMixinHarness(config, tmp_path)
 
+        params = {
+            "transverse_offset": 0.5,
+            "initial_energy_gev": 1.5,
+            "rider_m_particle": 2.0,
+            "rider_charge_sign": 1.0,
+            "rider_pcount": 5.0,
+            "rider_stripped_ions": 9.0,
+            "driver_m_particle": 20.0,
+            "driver_energy_gev": 12.0,
+            "driver_starting_distance": 321.0,
+        }
+
         trajectory = harness._save_single_optimization_trajectory(
-            {"transverse_offset": 0.5, "initial_energy_gev": 1.5},
-            ["transverse_offset", "initial_energy_gev"],
+            params,
+            list(params),
             rank=1,
             fitness=0.123,
         )
 
         assert trajectory is not None
         assert harness.captured_run["transv_offset"] == pytest.approx(0.5)
+        assert harness.captured_run["rider_m_particle"] == pytest.approx(2.0)
+        assert harness.captured_run["rider_charge_sign"] == pytest.approx(1.0)
+        assert harness.captured_run["rider_pcount"] == 5
+        assert harness.captured_run["rider_stripped_ions"] == pytest.approx(9.0)
         assert harness.captured_run["driver_params"] == {
-            "m_particle": 10.0,
+            "m_particle": 20.0,
             "charge_sign": 1.0,
             "pcount": 4,
             "transv_mom": 0.03,
             "transv_dist": 0.04,
-            "starting_distance": 123.0,
-            "starting_Pz": -456.0,
+            "starting_distance": 321.0,
+            "starting_Pz": pytest.approx(
+                calculate_starting_pz_from_energy(12.0, 20.0, negative=True)
+            ),
             "stripped_ions": 5.0,
             "transv_offset_x": 0.6,
             "transv_offset_y": -0.7,
