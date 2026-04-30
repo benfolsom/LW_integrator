@@ -380,6 +380,28 @@ class OptimizationPluginFormMixin:
                 self._param_widgets["wall_z_label"].config(foreground="black")
             self._toggle_wall_z_sweep()
 
+        if "offset_label" in self._param_widgets:
+            self._param_widgets["offset_label"].config(foreground="black")
+        if "offset_entry" in self._param_widgets:
+            self._param_widgets["offset_entry"].config(state="normal")
+        if "offset_desc_label" in self._param_widgets:
+            self._param_widgets["offset_desc_label"].config(foreground="gray40")
+
+        driver_offset_state = "normal" if is_bunch_to_bunch else "disabled"
+        driver_offset_color = "black" if is_bunch_to_bunch else "gray"
+        if "driver_offset_label" in self._param_widgets:
+            self._param_widgets["driver_offset_label"].config(
+                foreground=driver_offset_color
+            )
+        if "driver_offset_entry" in self._param_widgets:
+            self._param_widgets["driver_offset_entry"].config(
+                state=driver_offset_state
+            )
+        if "driver_offset_desc_label" in self._param_widgets:
+            self._param_widgets["driver_offset_desc_label"].config(
+                foreground="gray40" if is_bunch_to_bunch else "gray"
+            )
+
         self._update_timestep_tooltip()
         self._update_distance_target_labels()
 

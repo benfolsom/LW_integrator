@@ -328,36 +328,15 @@ class OptimizationPluginUIMixin:
         """Enable or disable Top N related controls."""
         if not hasattr(self, "save_top_n_traj_var"):
             return
-        if not hasattr(self, "results_output_frame"):
-            return
 
-        if hasattr(self, "optimization_save_top_n_entry"):
-            self.optimization_save_top_n_entry.configure(state=state)
-
-        for widget in self.results_output_frame.winfo_children():
-            if isinstance(widget, ttk.LabelFrame):
-                for child in widget.winfo_children():
-                    if isinstance(child, ttk.Checkbutton):
-                        if "top_n_traj_var" in str(child.cget("variable")):
-                            child.configure(state=state)
-
-        if hasattr(self, "metrics_scope_var"):
-            for widget in self.results_output_frame.winfo_children():
-                if isinstance(widget, ttk.LabelFrame):
-                    for child in widget.winfo_children():
-                        if isinstance(child, ttk.Frame):
-                            for radio in child.winfo_children():
-                                if isinstance(radio, ttk.Radiobutton):
-                                    if radio.cget("value") == "top_n":
-                                        radio.configure(state=state)
-
-        if hasattr(self, "log_verbosity_var"):
-            for widget in self.results_output_frame.winfo_children():
-                if isinstance(widget, ttk.LabelFrame):
-                    for child in widget.winfo_children():
-                        if isinstance(child, ttk.Radiobutton):
-                            if child.cget("value") == "top_n_only":
-                                child.configure(state=state)
+        for attr in (
+            "optimization_save_top_n_entry",
+            "save_top_n_traj_check",
+            "metrics_scope_top_n_radio",
+            "log_top_n_only_radio",
+        ):
+            if hasattr(self, attr):
+                getattr(self, attr).configure(state=state)
 
         if state == "disabled":
             if hasattr(self, "save_top_n_traj_var") and self.save_top_n_traj_var.get():
@@ -555,12 +534,13 @@ class OptimizationPluginUIMixin:
         traj_frame.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(5, 2))
 
         self.save_top_n_traj_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self.save_top_n_traj_check = ttk.Checkbutton(
             traj_frame,
             text="Top N trajectories (full detail)",
             variable=self.save_top_n_traj_var,
             command=self._on_top_n_traj_changed,
-        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
+        )
+        self.save_top_n_traj_check.grid(row=0, column=0, sticky="w", padx=(0, 10))
 
         self.save_all_traj_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
@@ -627,12 +607,13 @@ class OptimizationPluginUIMixin:
             variable=self.metrics_scope_var,
             value="all",
         ).pack(side="left", padx=5)
-        ttk.Radiobutton(
+        self.metrics_scope_top_n_radio = ttk.Radiobutton(
             scope_frame,
             text="Top N only",
             variable=self.metrics_scope_var,
             value="top_n",
-        ).pack(side="left", padx=5)
+        )
+        self.metrics_scope_top_n_radio.pack(side="left", padx=5)
 
         ttk.Label(
             frame,
@@ -671,12 +652,13 @@ class OptimizationPluginUIMixin:
             value="full",
         ).grid(row=2, column=0, sticky="w", pady=2)
 
-        ttk.Radiobutton(
+        self.log_top_n_only_radio = ttk.Radiobutton(
             log_frame,
             text="Top N only (logs only for best N trajectories)",
             variable=self.log_verbosity_var,
             value="top_n_only",
-        ).grid(row=3, column=0, sticky="w", pady=2)
+        )
+        self.log_top_n_only_radio.grid(row=3, column=0, sticky="w", pady=2)
 
         ttk.Label(
             frame,

@@ -37,6 +37,17 @@ class _MockVar:
         return self.value
 
 
+class _WidgetRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def config(self, **kwargs):
+        self.calls.append(kwargs)
+
+    def configure(self, **kwargs):
+        self.config(**kwargs)
+
+
 def _build_sweep_harness(sweep_params):
     harness = SimpleNamespace(sweep_params=sweep_params)
 
@@ -248,6 +259,78 @@ class TestOptimizationPluginIntegration:
         assert OptimizationPlugin._on_stop is OptimizationPluginControlMixin._on_stop
         assert not hasattr(OptimizationPluginControlMixin, "_compute_soft_penalty")
         assert not hasattr(OptimizationPlugin, "_compute_soft_penalty")
+
+    @pytest.mark.parametrize(
+        ("sim_type", "driver_state", "driver_color"),
+        [
+            ("CONDUCTING_WALL", "disabled", "gray"),
+            ("SWITCHING_WALL", "disabled", "gray"),
+            ("BUNCH_TO_BUNCH", "normal", "black"),
+        ],
+    )
+    def test_parameter_visibility_toggles_driver_offset_by_simulation_type(
+        self, sim_type, driver_state, driver_color
+    ):
+        widgets = {
+            name: _WidgetRecorder()
+            for name in (
+                "cavity_spacing_label",
+                "cavity_spacing_desc_label",
+                "offset_label",
+                "offset_entry",
+                "offset_desc_label",
+                "driver_offset_label",
+                "driver_offset_entry",
+                "driver_offset_desc_label",
+            )
+        }
+        harness = SimpleNamespace(
+            sim_type_var=_MockVar(sim_type),
+            cavity_spacing_entry=_WidgetRecorder(),
+            _param_widgets=widgets,
+            _set_frame_state=lambda frame, state: None,
+            _toggle_wall_z_sweep=lambda: None,
+            _update_timestep_tooltip=lambda: None,
+            _update_distance_target_labels=lambda: None,
+        )
+
+        OptimizationPlugin._update_parameter_visibility(harness)
+
+        assert widgets["offset_entry"].calls[-1] == {"state": "normal"}
+        assert widgets["offset_label"].calls[-1] == {"foreground": "black"}
+        assert widgets["offset_desc_label"].calls[-1] == {"foreground": "gray40"}
+        assert widgets["driver_offset_entry"].calls[-1] == {"state": driver_state}
+        assert widgets["driver_offset_label"].calls[-1] == {
+            "foreground": driver_color
+        }
+        assert widgets["driver_offset_desc_label"].calls[-1] == {
+            "foreground": "gray40" if sim_type == "BUNCH_TO_BUNCH" else "gray"
+        }
+
+    def test_set_top_n_controls_state_updates_direct_widget_references(self):
+        controls = {
+            name: _WidgetRecorder()
+            for name in (
+                "optimization_save_top_n_entry",
+                "save_top_n_traj_check",
+                "metrics_scope_top_n_radio",
+                "log_top_n_only_radio",
+            )
+        }
+        harness = SimpleNamespace(
+            save_top_n_traj_var=_MockVar(True),
+            metrics_scope_var=_MockVar("top_n"),
+            log_verbosity_var=_MockVar("top_n_only"),
+            **controls,
+        )
+
+        OptimizationPlugin._set_top_n_controls_state(harness, "disabled")
+
+        for control in controls.values():
+            assert control.calls[-1] == {"state": "disabled"}
+        assert harness.save_top_n_traj_var.get() is False
+        assert harness.metrics_scope_var.get() == "all"
+        assert harness.log_verbosity_var.get() == "truncated"
 
     def test_gather_stability_config_kwargs_prefers_gui_with_config_fallback(self):
         existing_config = OptimizationConfig(
