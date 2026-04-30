@@ -4,6 +4,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Sweep/Optimization Logging Policy Fixes (April 2026)
+
+- **Bug** — CLI sweep `--quiet` and `log_verbosity` policy paths still emitted per-run progress/detail/debug lines through direct `print()` and uncapped callbacks
+- **Impact** — Headless sweeps could produce noisy stdout and oversized logs even when users requested quiet or truncated logging, making post-processing and live-monitoring output harder to trust
+- **Fix** — Routed CLI sweep output through the runner logging policy, preserving compact metric lines for truncated logging while limiting full timestep/progress/stability diagnostics to `log_verbosity="full"`
+- **Bug** — The GUI sweep stability confirmation dialog silently converted self-consistency verbosity `0` to `1` and adaptive-timestep debug `False` to `True`
+- **Impact** — Loading or confirming otherwise quiet sweep configs could unexpectedly enable lower-level debug output for later full-logging runs
+- **Fix** — Preserve loaded/current stability logging values by default, keep sweep-default enabling only behind the explicit override path, and remove duplicate/unconditional GUI config debug prints
+- **Regression coverage** — Added focused tests for quiet CLI sweep logging and stability-dialog logging defaults
+- **Files modified** — `lw_integrator/sweep_runner.py`, `optimization/plugin_control_mixins.py`, `optimization/plugin_config_mixins.py`, `optimization/plugin_ui_mixins.py`, `optimization/config.py`, `tests/test_sweep_runner_logging.py`, `tests/test_optimization_plugin.py`
+
 ### Critical: Macroparticle Image Charge Multiplier Fix (April 2026)
 
 - **Bug** — `generate_conducting_image()` applied `macroparticle_charge_multiplier` twice, so image charges scaled as `multiplier²` instead of `multiplier`

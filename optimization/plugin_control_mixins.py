@@ -30,6 +30,11 @@ def _existing_config_value(config: OptimizationConfig | None, attr: str, default
     return getattr(config, attr) if config is not None else default
 
 
+def _stability_dialog_logging_defaults(config: OptimizationConfig) -> tuple[str, bool]:
+    """Return logging defaults without silently enabling debug output."""
+    return str(config.self_consistency_verbosity), bool(config.adaptive_timestep_debug)
+
+
 class OptimizationPluginControlMixin:
     """Validate inputs and prepare or control optimization runs."""
 
@@ -112,8 +117,12 @@ class OptimizationPluginControlMixin:
             )
 
         return {
-            "image_subcharge_count": setting("image_subcharge_var", "image_subcharge_count", 12),
-            "use_image_weighting": setting("image_weighting_var", "use_image_weighting", True),
+            "image_subcharge_count": setting(
+                "image_subcharge_var", "image_subcharge_count", 12
+            ),
+            "use_image_weighting": setting(
+                "image_weighting_var", "use_image_weighting", True
+            ),
             "self_consistency_enabled": setting(
                 "self_consistency_enabled_var", "self_consistency_enabled", True
             ),
@@ -443,34 +452,12 @@ class OptimizationPluginControlMixin:
             ),
             "per_run_timeout": float(self.per_run_timeout_var.get()),
             "skip_failed_runs": self.skip_failed_runs_var.get(),
-            "failed_run_retry_attempts": int(
-                self.failed_run_retry_attempts_var.get()
-            ),
+            "failed_run_retry_attempts": int(self.failed_run_retry_attempts_var.get()),
         }
 
     def _gather_config(self) -> OptimizationConfig:
         """Gather configuration from UI fields."""
         existing_config = getattr(self, "config", None)
-
-        has_gui = self.gui_controller is not None
-        print(f"[DEBUG] _gather_config: Main GUI available: {has_gui}")
-        if existing_config:
-            print(
-                "[DEBUG] _gather_config: Existing config available (will be used as fallback)"
-            )
-        else:
-            print(
-                "[DEBUG] _gather_config: No existing config, using defaults as fallback"
-            )
-
-        if has_gui:
-            print(
-                "[DEBUG] _gather_config: Reading stability settings from main GUI Stability tab"
-            )
-        else:
-            print(
-                "[DEBUG] _gather_config: No GUI available, using existing config or defaults"
-            )
 
         rider_offset = parse_offset_pair(self.offset_fractions_var.get())
         driver_offset = parse_offset_pair(self.driver_offset_var.get())
@@ -572,13 +559,12 @@ class OptimizationPluginControlMixin:
         ).pack(anchor="w", pady=(5, 0))
         ttk.Label(
             sc_frame,
-            text="  Note: Sweep/Optim override this via Log verbosity setting",
+            text="  Note: Full logging inherits this; truncated/none suppress it during sweep/optim",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray",
         ).pack(anchor="w")
-        sc_verb_var = tk.StringVar(
-            value=str(max(self.config.self_consistency_verbosity, 1))
-        )
+        sc_verbosity, adaptive_debug = _stability_dialog_logging_defaults(self.config)
+        sc_verb_var = tk.StringVar(value=sc_verbosity)
         sc_verb_entry = ttk.Entry(sc_frame, textvariable=sc_verb_var, width=15)
         sc_verb_entry.pack(anchor="w")
         all_widgets.append(sc_verb_entry)
@@ -645,7 +631,7 @@ class OptimizationPluginControlMixin:
         at_halt_cb.pack(anchor="w", pady=(5, 0))
         all_widgets.append(at_halt_cb)
 
-        at_debug_var = tk.BooleanVar(value=self.config.adaptive_timestep_debug or True)
+        at_debug_var = tk.BooleanVar(value=adaptive_debug)
         at_debug_cb = ttk.Checkbutton(
             at_frame,
             text="Debug logging (single run only; sweep/optim uses Log verbosity)",

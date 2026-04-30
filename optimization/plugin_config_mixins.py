@@ -470,11 +470,6 @@ class OptimizationPluginConfigMixin:
             loaded_config = self._gather_config()
             loaded_config = apply_persisted_config_overrides(loaded_config, data)
 
-            print("[DEBUG] _load_config_from_path: Assigning loaded_config to self.config")
-            print(f"  SC enabled: {loaded_config.self_consistency_enabled}")
-            print(f"  SC tolerance: {loaded_config.self_consistency_tolerance}")
-            print(f"  AT enabled: {loaded_config.adaptive_timestep_enabled}")
-            print(f"  AT debug: {loaded_config.adaptive_timestep_debug}")
             self.config = loaded_config
 
             self.per_run_timeout_var.set(str(loaded_config.per_run_timeout))
@@ -519,50 +514,6 @@ class OptimizationPluginConfigMixin:
                     self.gui_controller.image_weighting_var.set(
                         loaded_config.use_image_weighting
                     )
-
-            self._log_result("[INFO] Additional stability settings loaded:")
-            self._log_result(
-                f"  Self-consistency max_iterations: {loaded_config.self_consistency_max_iterations}"
-            )
-            self._log_result(
-                f"  Self-consistency verbosity: {loaded_config.self_consistency_verbosity}"
-            )
-            self._log_result(
-                f"  Self-consistency chrono_interpolate: {loaded_config.self_consistency_chrono_interpolate}"
-            )
-            self._log_result(
-                f"  Self-consistency chrono_tolerance: {loaded_config.self_consistency_chrono_tolerance:.1e} ns"
-            )
-            self._log_result(
-                f"  Self-consistency chrono_high_precision: {loaded_config.self_consistency_chrono_high_precision}"
-            )
-            self._log_result(
-                f"  Self-consistency chrono_adaptive_tolerance: {loaded_config.self_consistency_chrono_adaptive_tolerance}"
-            )
-            self._log_result(
-                f"  Adaptive timestep reduction_factor: {loaded_config.adaptive_timestep_reduction_factor}"
-            )
-            self._log_result(
-                f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
-            )
-            self._log_result(
-                f"  Adaptive timestep min_factor: {loaded_config.adaptive_timestep_min_factor}"
-            )
-            self._log_result(
-                f"  Adaptive timestep cooldown_steps: {loaded_config.adaptive_timestep_cooldown_steps}"
-            )
-            self._log_result(
-                f"  Adaptive timestep probe_threshold: {loaded_config.adaptive_timestep_probe_threshold}"
-            )
-            self._log_result(
-                f"  Adaptive timestep max_probe_steps: {loaded_config.adaptive_timestep_max_probe_steps}"
-            )
-            self._log_result(
-                f"  Smoothness trend_threshold: {loaded_config.smoothness_trend_threshold}"
-            )
-            self._log_result(
-                f"  Smoothness max_violations: {loaded_config.smoothness_max_violations}"
-            )
 
             self._apply_macroparticle_ui_state(
                 enabled=loaded_config.macroparticle_enabled,
@@ -649,9 +600,6 @@ class OptimizationPluginConfigMixin:
                 f"  Min timestep factor: {self.config.adaptive_timestep_min_factor}"
             )
             self._log_result(
-                f"  Min factor: {self.config.adaptive_timestep_min_factor}"
-            )
-            self._log_result(
                 f"  Cooldown steps: {self.config.adaptive_timestep_cooldown_steps}"
             )
             self._log_result(
@@ -724,23 +672,7 @@ class OptimizationPluginConfigMixin:
             return False
 
         try:
-            print("[DEBUG] _save_config_to_path: Gathering config for save")
             config = self._gather_config()
-            print("[DEBUG] After _gather_config:")
-            print(f"  SC enabled: {config.self_consistency_enabled}")
-            print(f"  SC tolerance: {config.self_consistency_tolerance}")
-            print(
-                f"  SC chrono interpolate: {config.self_consistency_chrono_interpolate}"
-            )
-            print(f"  SC chrono tolerance: {config.self_consistency_chrono_tolerance}")
-            print(
-                f"  SC chrono high precision: {config.self_consistency_chrono_high_precision}"
-            )
-            print(
-                f"  SC chrono adaptive tolerance: {config.self_consistency_chrono_adaptive_tolerance}"
-            )
-            print(f"  AT enabled: {config.adaptive_timestep_enabled}")
-            print(f"  AT debug: {config.adaptive_timestep_debug}")
 
             sweep_state = {}
             for param_name, controls in self.sweep_params.items():
@@ -779,15 +711,6 @@ class OptimizationPluginConfigMixin:
 
             self.last_loaded_config = filepath
             self._log_result(f"[OK] Configuration saved to {filepath}")
-            print("[DEBUG] Chrono settings saved to config:")
-            print(f"  chrono_interpolate: {config.self_consistency_chrono_interpolate}")
-            print(f"  chrono_tolerance: {config.self_consistency_chrono_tolerance}")
-            print(
-                f"  chrono_high_precision: {config.self_consistency_chrono_high_precision}"
-            )
-            print(
-                f"  chrono_adaptive_tolerance: {config.self_consistency_chrono_adaptive_tolerance}"
-            )
             return True
         except Exception as e:
             _show_error_dialog(self, "Save Error", f"Failed to save config: {e}")

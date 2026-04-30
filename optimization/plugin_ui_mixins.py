@@ -654,7 +654,7 @@ class OptimizationPluginUIMixin:
 
         self.log_top_n_only_radio = ttk.Radiobutton(
             log_frame,
-            text="Top N only (logs only for best N trajectories)",
+            text="Top-N compact (suppresses SC/adaptive debug during sweep)",
             variable=self.log_verbosity_var,
             value="top_n_only",
         )

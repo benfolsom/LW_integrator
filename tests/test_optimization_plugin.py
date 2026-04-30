@@ -12,7 +12,10 @@ import pytest
 from core.types import SimulationType
 from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPlugin
 from optimization.plugin_config_mixins import OptimizationPluginConfigMixin
-from optimization.plugin_control_mixins import OptimizationPluginControlMixin
+from optimization.plugin_control_mixins import (
+    OptimizationPluginControlMixin,
+    _stability_dialog_logging_defaults,
+)
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
 from optimization.plugin_runtime_mixins import OptimizationPluginRuntimeMixin
@@ -300,9 +303,7 @@ class TestOptimizationPluginIntegration:
         assert widgets["offset_label"].calls[-1] == {"foreground": "black"}
         assert widgets["offset_desc_label"].calls[-1] == {"foreground": "gray40"}
         assert widgets["driver_offset_entry"].calls[-1] == {"state": driver_state}
-        assert widgets["driver_offset_label"].calls[-1] == {
-            "foreground": driver_color
-        }
+        assert widgets["driver_offset_label"].calls[-1] == {"foreground": driver_color}
         assert widgets["driver_offset_desc_label"].calls[-1] == {
             "foreground": "gray40" if sim_type == "BUNCH_TO_BUNCH" else "gray"
         }
@@ -359,10 +360,17 @@ class TestOptimizationPluginIntegration:
         assert kwargs["self_consistency_enabled"] is False
         assert kwargs["adaptive_timestep_threshold"] == pytest.approx(0.25)
         assert (
-            kwargs["self_consistency_gamma_reconciliation_method"]
-            == "FIXED_WEIGHTED"
+            kwargs["self_consistency_gamma_reconciliation_method"] == "FIXED_WEIGHTED"
         )
         assert kwargs["self_consistency_gamma_reconciliation_fixed_weight"] == 0.7
+
+    def test_stability_dialog_logging_defaults_preserve_silent_config(self):
+        config = OptimizationConfig(
+            self_consistency_verbosity=0,
+            adaptive_timestep_debug=False,
+        )
+
+        assert _stability_dialog_logging_defaults(config) == ("0", False)
 
     def test_gather_particle_config_kwargs_reads_fixed_sweep_values(self):
         harness = OptimizationPluginControlMixin()
@@ -478,7 +486,9 @@ class TestOptimizationPluginIntegration:
         def fake_run_testbed(*_args, **_kwargs):
             raise _AbortRun()
 
-        monkeypatch.setattr(run_mixins_module, "SimulationOptions", _FakeSimulationOptions)
+        monkeypatch.setattr(
+            run_mixins_module, "SimulationOptions", _FakeSimulationOptions
+        )
         monkeypatch.setattr(run_mixins_module, "run_testbed", fake_run_testbed)
 
         harness = SimpleNamespace(
@@ -648,8 +658,8 @@ class TestOptimizationPluginIntegration:
     def test_apply_macroparticle_ui_state_updates_controls(self):
         harness = _build_sweep_harness(
             {
-            "macroparticle_charge_multiplier": {"fixed_var": _MockVar()},
-            "macroparticle_sigma_multiplier": {"fixed_var": _MockVar()},
+                "macroparticle_charge_multiplier": {"fixed_var": _MockVar()},
+                "macroparticle_sigma_multiplier": {"fixed_var": _MockVar()},
             }
         )
         harness.macroparticle_enabled_var = _MockVar()
@@ -736,14 +746,14 @@ class TestOptimizationPluginIntegration:
     def test_apply_driver_sweep_values_sets_driver_fields(self):
         harness = _build_sweep_harness(
             {
-            "driver_m_particle": {"fixed_var": _MockVar()},
-            "driver_charge_sign": {"fixed_var": _MockVar()},
-            "driver_pcount": {"fixed_var": _MockVar()},
-            "driver_transv_mom": {"fixed_var": _MockVar()},
-            "driver_transv_dist": {"fixed_var": _MockVar()},
-            "driver_starting_distance": {"fixed_var": _MockVar()},
-            "driver_energy_gev": {"fixed_var": _MockVar()},
-            "driver_stripped_ions": {"fixed_var": _MockVar()},
+                "driver_m_particle": {"fixed_var": _MockVar()},
+                "driver_charge_sign": {"fixed_var": _MockVar()},
+                "driver_pcount": {"fixed_var": _MockVar()},
+                "driver_transv_mom": {"fixed_var": _MockVar()},
+                "driver_transv_dist": {"fixed_var": _MockVar()},
+                "driver_starting_distance": {"fixed_var": _MockVar()},
+                "driver_energy_gev": {"fixed_var": _MockVar()},
+                "driver_stripped_ions": {"fixed_var": _MockVar()},
             }
         )
 
@@ -762,17 +772,20 @@ class TestOptimizationPluginIntegration:
         )
 
         assert updated is True
-        assert harness.sweep_params["driver_m_particle"]["fixed_var"].get() == "2.072000e+02"
+        assert (
+            harness.sweep_params["driver_m_particle"]["fixed_var"].get()
+            == "2.072000e+02"
+        )
         assert harness.sweep_params["driver_charge_sign"]["fixed_var"].get() == "1.0"
         assert harness.sweep_params["driver_pcount"]["fixed_var"].get() == "5"
-        assert (
-            float(harness.sweep_params["driver_energy_gev"]["fixed_var"].get())
-            == pytest.approx(calculate_energy_from_pz(-4925.0, 207.2))
-        )
+        assert float(
+            harness.sweep_params["driver_energy_gev"]["fixed_var"].get()
+        ) == pytest.approx(calculate_energy_from_pz(-4925.0, 207.2))
         assert harness.sweep_params["driver_stripped_ions"]["fixed_var"].get() == "54.0"
 
     def test_sync_main_gui_simulation_type_updates_controller(self):
         sim_type_var = _MockVar()
+
         class _Combo:
             def __init__(self):
                 self.current = Mock()
@@ -791,9 +804,7 @@ class TestOptimizationPluginIntegration:
             )
         )
 
-        OptimizationPlugin._sync_main_gui_simulation_type(
-            harness, "BUNCH_TO_BUNCH"
-        )
+        OptimizationPlugin._sync_main_gui_simulation_type(harness, "BUNCH_TO_BUNCH")
 
         assert sim_type_var.get() == "BUNCH_TO_BUNCH"
         combo.current.assert_called_once_with(1)

@@ -132,9 +132,7 @@ def _resolve_cli_rider_overrides(
         pcount=int(sweep_overrides.get("rider_pcount", config.pcount)),
         transv_mom=sweep_overrides.get("rider_transv_mom", config.transv_mom),
         transv_dist=sweep_overrides.get("rider_transv_dist", config.transv_dist),
-        stripped_ions=sweep_overrides.get(
-            "rider_stripped_ions", config.stripped_ions
-        ),
+        stripped_ions=sweep_overrides.get("rider_stripped_ions", config.stripped_ions),
         macroparticle_charge_multiplier=sweep_overrides.get(
             "macroparticle_charge_multiplier",
             config.macroparticle_charge_multiplier,
@@ -157,9 +155,7 @@ def _resolve_cli_driver_setup(
     d_charge = sweep_overrides.get("driver_charge_sign", config.driver_charge_sign)
     d_pcount = int(sweep_overrides.get("driver_pcount", config.driver_pcount))
     d_transv_mom = sweep_overrides.get("driver_transv_mom", config.driver_transv_mom)
-    d_transv_dist = sweep_overrides.get(
-        "driver_transv_dist", config.driver_transv_dist
-    )
+    d_transv_dist = sweep_overrides.get("driver_transv_dist", config.driver_transv_dist)
     d_start_dist = sweep_overrides.get(
         "driver_starting_distance", config.driver_starting_distance
     )
@@ -447,7 +443,9 @@ def _evaluate_cli_stability(
                 f"{smoothness_result.quality_summary}"
             )
     elif result.rider_trajectory is None:
-        log_lines.append(f"[OPTIMIZATION]   [WARNING] No trajectory data for Run {run_num}")
+        log_lines.append(
+            f"[OPTIMIZATION]   [WARNING] No trajectory data for Run {run_num}"
+        )
     elif not config.smoothness_enabled:
         log_lines.append(
             f"[OPTIMIZATION]   [INFO] Stability analysis DISABLED for Run {run_num}"
@@ -513,10 +511,7 @@ def _build_cli_sweep_start_log_lines(
                 f"    pcount: {config.driver_pcount}",
                 f"    stripped_ions: {config.driver_stripped_ions:.2e}",
                 f"    energy_gev: {config.driver_energy_gev:.4f}",
-                (
-                    "    starting_distance: "
-                    f"{config.driver_starting_distance:.2f}"
-                ),
+                ("    starting_distance: " f"{config.driver_starting_distance:.2f}"),
             ]
         )
     return lines
@@ -546,9 +541,14 @@ class SweepRunner:
 
     def _log(self, message: str) -> None:
         """Log a message to stdout and log file with [OPTIMIZATION] prefix."""
-        print(f"[OPTIMIZATION] {message}", flush=True)
+        self._log_line(f"[OPTIMIZATION] {message}")
+
+    def _log_line(self, line: str) -> None:
+        """Log a preformatted line to stdout and the sweep log file."""
+        if self.verbose:
+            print(line, flush=True)
         if self.log_file is not None:
-            self.log_file.write(f"[OPTIMIZATION] {message}\n")
+            self.log_file.write(f"{line}\n")
             self.log_file.flush()
 
     # ------------------------------------------------------------------
@@ -572,6 +572,8 @@ class SweepRunner:
         run_num: int,
         total_runs: int = 1,
         sweep_overrides: Optional[Dict[str, float]] = None,
+        emit_run_diagnostics: bool = True,
+        emit_run_summary: bool = True,
     ) -> Dict[str, Any]:
         """Run a single integration via run_testbed (same path as GUI).
 
@@ -595,41 +597,43 @@ class SweepRunner:
         )
 
         # ── Log timestep calculation ──
-        for line in _build_cli_timestep_log_lines(
-            run_num=run_num,
-            timestep_strategy=self.config.timestep_strategy,
-            energy_gev=energy_gev,
-            rider_m_particle=rider.m_particle,
-            gamma=timestep_setup.gamma,
-            beta=timestep_setup.beta,
-            timestep=timestep_setup.timestep,
-            steps=timestep_setup.steps,
-            start_z=start_z,
-            wall_z=self.config.wall_z,
-            auto_steps_distance_past_wall=(
-                self.config.auto_steps_distance_past_wall
-            ),
-            auto_steps_target=self.config.auto_steps_target,
-        ):
-            print(line, flush=True)
+        if emit_run_diagnostics:
+            for line in _build_cli_timestep_log_lines(
+                run_num=run_num,
+                timestep_strategy=self.config.timestep_strategy,
+                energy_gev=energy_gev,
+                rider_m_particle=rider.m_particle,
+                gamma=timestep_setup.gamma,
+                beta=timestep_setup.beta,
+                timestep=timestep_setup.timestep,
+                steps=timestep_setup.steps,
+                start_z=start_z,
+                wall_z=self.config.wall_z,
+                auto_steps_distance_past_wall=(
+                    self.config.auto_steps_distance_past_wall
+                ),
+                auto_steps_target=self.config.auto_steps_target,
+            ):
+                self._log_line(line)
 
         # Log [START] line
-        for line in _build_cli_start_log_lines(
-            run_num=run_num,
-            total_runs=total_runs,
-            aperture=aperture,
-            energy_gev=energy_gev,
-            start_z=start_z,
-            timestep=timestep_setup.timestep,
-            steps=timestep_setup.steps,
-        ):
-            print(line, flush=True)
+        if emit_run_summary:
+            for line in _build_cli_start_log_lines(
+                run_num=run_num,
+                total_runs=total_runs,
+                aperture=aperture,
+                energy_gev=energy_gev,
+                start_z=start_z,
+                timestep=timestep_setup.timestep,
+                steps=timestep_setup.steps,
+            ):
+                self._log_line(line)
 
         # ── Build driver_params dict if BUNCH_TO_BUNCH ──
         driver_setup = _resolve_cli_driver_setup(self.config, sweep_overrides)
         driver_params = driver_setup.params
-        if driver_setup.log_line is not None:
-            print(driver_setup.log_line, flush=True)
+        if emit_run_diagnostics and driver_setup.log_line is not None:
+            self._log_line(driver_setup.log_line)
 
         # ── Build SimulationOptions (same dataclass the GUI uses) ──
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
@@ -667,51 +671,52 @@ class SweepRunner:
                 prefix="[OPTIMIZATION] ",
             )
             if line is not None:
-                print(line, flush=True)
+                self._log_line(line)
 
         def _verbose_log(message: str) -> None:
             if should_emit_verbose_run_log(message):
-                print(f"[OPTIMIZATION]     [VERBOSE] {message}", flush=True)
+                self._log_line(f"[OPTIMIZATION]     [VERBOSE] {message}")
 
         log_callback: Optional[Callable[[str], None]] = None
-        if (
+        if emit_run_diagnostics and (
             self.config.self_consistency_verbosity > 0
             or self.config.adaptive_timestep_debug
         ):
             log_callback = _verbose_log
 
         # ── Log stability settings (same as GUI) ──
-        for line in build_stability_config_log_lines(
-            self.config,
-            run_num=run_num,
-            prefix="[OPTIMIZATION] ",
-        ):
-            print(line, flush=True)
+        if emit_run_diagnostics:
+            for line in build_stability_config_log_lines(
+                self.config,
+                run_num=run_num,
+                prefix="[OPTIMIZATION] ",
+            ):
+                self._log_line(line)
 
         diagnostic_line = build_small_aperture_diagnostic_line(
             run_num=run_num,
             aperture=aperture,
             prefix="[OPTIMIZATION] ",
         )
-        if diagnostic_line is not None:
-            print(diagnostic_line, flush=True)
+        if emit_run_diagnostics and diagnostic_line is not None:
+            self._log_line(diagnostic_line)
 
-        print(
-            f"[OPTIMIZATION]   [DEBUG] Calling run_testbed for Run {run_num}...",
-            flush=True,
-        )
+        if emit_run_diagnostics:
+            self._log_line(
+                f"[OPTIMIZATION]   [DEBUG] Calling run_testbed for Run {run_num}..."
+            )
 
         # ── Call run_testbed (THE SAME function the GUI calls) ──
         try:
             result = run_testbed(
                 options,
                 log=log_callback,
-                progress_callback=progress_callback,
+                progress_callback=progress_callback if emit_run_diagnostics else None,
             )
-            print(
-                f"[OPTIMIZATION]   [DEBUG] run_testbed completed for Run {run_num}",
-                flush=True,
-            )
+            if emit_run_diagnostics:
+                self._log_line(
+                    f"[OPTIMIZATION]   [DEBUG] run_testbed completed for Run {run_num}"
+                )
         except Exception as e:
             import traceback
 
@@ -731,18 +736,18 @@ class SweepRunner:
                 if run_output_dir.exists():
                     shutil.rmtree(run_output_dir)
             except Exception as cleanup_error:
-                if self.verbose:
-                    self._log(
-                        f"[WARNING] Failed to remove temporary run directory "
-                        f"{run_output_dir}: {cleanup_error}"
-                    )
+                self._log(
+                    f"[WARNING] Failed to remove temporary run directory "
+                    f"{run_output_dir}: {cleanup_error}"
+                )
 
         # ── Check for halted run ──
         if result.halted_early:
-            print(
-                f"[OPTIMIZATION]   [WARNING] Run {run_num} halted early: {result.halt_reason}",
-                flush=True,
-            )
+            if emit_run_summary:
+                self._log_line(
+                    "[OPTIMIZATION]   [WARNING] "
+                    f"Run {run_num} halted early: {result.halt_reason}"
+                )
             return {
                 "success": False,
                 "error": f"Halted early: {result.halt_reason}",
@@ -759,18 +764,19 @@ class SweepRunner:
             }
 
         # ── Extract metrics from RunResult (same helper as GUI) ──
-        print(
-            f"[OPTIMIZATION]   [DEBUG] Extracting metrics for Run {run_num}...",
-            flush=True,
-        )
+        if emit_run_diagnostics:
+            self._log_line(
+                f"[OPTIMIZATION]   [DEBUG] Extracting metrics for Run {run_num}..."
+            )
         metrics_outcome = build_integration_metrics(
             result,
             rider_m_particle=rider.m_particle,
             run_num=run_num,
         )
         metrics = metrics_outcome.metrics
-        for line in metrics_outcome.log_lines:
-            print(f"[OPTIMIZATION] {line}", flush=True)
+        if emit_run_diagnostics:
+            for line in metrics_outcome.log_lines:
+                self._log_line(f"[OPTIMIZATION] {line}")
 
         # ── Stability analysis (same as GUI) ──
         stability_outcome = _evaluate_cli_stability(
@@ -785,15 +791,22 @@ class SweepRunner:
             transv_offset=timestep_setup.transv_offset,
         )
         metrics.update(stability_outcome.metrics_updates)
-        for line in stability_outcome.log_lines:
-            print(line, flush=True)
+        if emit_run_diagnostics:
+            for line in stability_outcome.log_lines:
+                self._log_line(line)
+        elif emit_run_summary and stability_outcome.rejection_record is not None:
+            self._log_line(
+                f"[OPTIMIZATION]   [REJECT] Run {run_num} rejected due to "
+                "numerical instability"
+            )
         if stability_outcome.rejection_record is not None:
             return stability_outcome.rejection_record
 
-        print(
-            f"[OPTIMIZATION]   [DEBUG] _run_single_integration returning for Run {run_num}",
-            flush=True,
-        )
+        if emit_run_diagnostics:
+            self._log_line(
+                "[OPTIMIZATION]   [DEBUG] "
+                f"_run_single_integration returning for Run {run_num}"
+            )
 
         return {
             "success": True,
@@ -829,6 +842,9 @@ class SweepRunner:
         # Initialize debug logging to logcache (like GUI sweeps)
         initialize_debug_logging(context="sweep_cli", force_new_log=True)
         logging_policy = apply_run_logging_policy(self.config)
+        use_no_logging = logging_policy.suppress_run_logs
+        use_truncated_logging = logging_policy.use_truncated_run_logs
+        use_full_debug = logging_policy.use_full_run_logs
 
         try:
             self._log("")
@@ -897,14 +913,15 @@ class SweepRunner:
                 rider_m_particle = run_params.rider_m_particle
                 rider_transv_dist = run_params.rider_transv_dist
 
-                for line in build_full_debug_parameter_log_lines(
-                    self.config,
-                    run_params,
-                    run_num=run_num,
-                    total_runs=total_runs,
-                    params_dict=helper_params,
-                ):
-                    self._log(line)
+                if use_full_debug:
+                    for line in build_full_debug_parameter_log_lines(
+                        self.config,
+                        run_params,
+                        run_num=run_num,
+                        total_runs=total_runs,
+                        params_dict=helper_params,
+                    ):
+                        self._log(line)
 
                 # ── Run integration ──
                 try:
@@ -916,6 +933,8 @@ class SweepRunner:
                         run_num=run_num,
                         total_runs=total_runs,
                         sweep_overrides=sweep_overrides,
+                        emit_run_diagnostics=use_full_debug,
+                        emit_run_summary=not use_no_logging,
                     )
 
                     result["run_number"] = run_num
@@ -966,12 +985,14 @@ class SweepRunner:
                         default_driver_energy_gev=self.config.driver_energy_gev,
                     )
 
-                    # Log metrics in format compatible with plotting script
-                    for line in log_output.optimization_lines:
-                        print(line, flush=True)
-                    for line in log_output.detail_lines:
-                        self._log(line)
-                    self._log(log_output.compact_line)
+                    if use_truncated_logging or use_full_debug:
+                        # Keep metric/start/compact lines for live plotting.
+                        for line in log_output.optimization_lines:
+                            self._log_line(line)
+                        if use_full_debug:
+                            for line in log_output.detail_lines:
+                                self._log(line)
+                        self._log(log_output.compact_line)
 
             # ── Save results ──
             elapsed_time = (time.time() - start_time) if start_time is not None else 0.0
@@ -1296,7 +1317,8 @@ def run_sweep_from_config(
         for key, value in verbosity_overrides.items():
             if hasattr(config, key):
                 setattr(config, key, value)
-                print(f"[INFO] Overriding {key} from CLI: {value}", flush=True)
+                if verbose:
+                    print(f"[INFO] Overriding {key} from CLI: {value}", flush=True)
 
     # Determine output directory
     if output_dir is None:

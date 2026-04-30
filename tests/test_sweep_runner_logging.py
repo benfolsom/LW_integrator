@@ -8,6 +8,7 @@ import pytest
 
 from core.types import SimulationType
 from lw_integrator.sweep_runner import (
+    SweepRunner,
     _build_cli_start_log_lines,
     _build_cli_sweep_start_log_lines,
     _build_cli_timestep_log_lines,
@@ -16,6 +17,7 @@ from lw_integrator.sweep_runner import (
     _resolve_cli_driver_setup,
     _resolve_cli_rider_overrides,
     _resolve_cli_timestep_setup,
+    run_sweep_from_config,
 )
 
 
@@ -75,6 +77,36 @@ def test_resolve_cli_rider_overrides_prefers_sweep_values():
     assert rider.transv_dist == 1e-4
     assert rider.macroparticle_charge_multiplier == 8.0
     assert rider.macroparticle_sigma_multiplier == 3.0
+
+
+def test_sweep_runner_quiet_mode_suppresses_stdout_but_keeps_log_file(capsys, tmp_path):
+    runner = SweepRunner(_config(), tmp_path, verbose=False)
+    log_path = tmp_path / "sweep.log"
+    tmp_path.mkdir(exist_ok=True)
+
+    with log_path.open("w", encoding="utf-8") as log_file:
+        runner.log_file = log_file
+        runner._log("quiet message")
+
+    assert capsys.readouterr().out == ""
+    assert log_path.read_text(encoding="utf-8") == "[OPTIMIZATION] quiet message\n"
+
+
+def test_run_sweep_from_config_respects_quiet_verbosity_override(
+    capsys, monkeypatch, tmp_path
+):
+    config_path = tmp_path / "sweep.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("lw_integrator.sweep_runner.SweepRunner.run", lambda self: True)
+
+    assert run_sweep_from_config(
+        config_path=config_path,
+        output_dir=tmp_path / "out",
+        verbose=False,
+        verbosity_overrides={"log_verbosity": "full"},
+    )
+    assert capsys.readouterr().out == ""
 
 
 def test_resolve_cli_driver_setup_returns_none_for_wall_mode():
@@ -235,10 +267,7 @@ def test_build_cli_timestep_log_lines_omits_distance_details_for_fixed_strategy(
         "[OPTIMIZATION]   [TIMESTEP] Run 1 strategy 'fixed':",
         "[OPTIMIZATION]     E=5.0000 GeV, m=1.0000e+00 amu",
         "[OPTIMIZATION]     gamma=2.00, beta=0.50000000",
-        (
-            "[OPTIMIZATION]     timestep h=1.0000e-07 ns "
-            "(proper time = dt/gamma)"
-        ),
+        ("[OPTIMIZATION]     timestep h=1.0000e-07 ns " "(proper time = dt/gamma)"),
         "[OPTIMIZATION]     steps=10",
     ]
 

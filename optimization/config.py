@@ -35,7 +35,9 @@ class OptimizationConfig:
     mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
 
     # Optimization settings (only used when mode="optimization")
-    optimization_method: str = "differential_evolution"  # "differential_evolution", "genetic_algorithm", "multi_start", "adaptive_grid"
+    optimization_method: str = (
+        "differential_evolution"  # "differential_evolution", "genetic_algorithm", "multi_start", "adaptive_grid"
+    )
     optimization_maxiter: int = 50  # Max iterations/generations
     optimization_population_size: int = (
         20  # For genetic algorithm and differential evolution
@@ -228,7 +230,7 @@ class OptimizationConfig:
     # none = no debug logs saved
     # truncated = 1-2 lines per run with parameters + metrics + errors/warnings only
     # full = complete debug output with SC iterations and adaptive timestep refinements
-    # top_n_only = logs only for top N trajectories
+    # top_n_only = compact sweep logs; detailed output is limited to Top-N reruns
 
     # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
@@ -268,7 +270,9 @@ class OptimizationConfig:
     # Sweep robustness options
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
     skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
-    failed_run_retry_attempts: int = 1  # Number of retry attempts for failed runs with new random seeds (0 = no retries)
+    failed_run_retry_attempts: int = (
+        1  # Number of retry attempts for failed runs with new random seeds (0 = no retries)
+    )
 
     # Trajectory stability checking (multi-step numerical validation)
     smoothness_enabled: bool = True  # Enable trajectory stability analysis
