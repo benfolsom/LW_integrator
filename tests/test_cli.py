@@ -313,23 +313,6 @@ class TestCliBuildRequest:
         assert request.driver is not None
         assert float(request.driver["z"][0]) == pytest.approx(10.0)
 
-    @pytest.mark.parametrize(
-        "config_name",
-        [
-            "example_feasibility_electron_impulse_sanity.json",
-            "example_feasibility_like_charge_catalyst_sanity.json",
-        ],
-    )
-    def test_feasibility_example_configs_are_parseable(self, config_name: str):
-        config_path = (
-            Path(__file__).parents[1] / "configs" / "run_configs" / config_name
-        )
-
-        request = cli.build_request(_make_args(config=config_path))
-
-        assert request.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
-        assert request.driver is not None
-
     def test_build_request_keeps_optional_driver_for_non_b2b(self, tmp_path: Path):
         config_path = tmp_path / "wall.json"
         config_path.write_text(
@@ -387,78 +370,6 @@ class TestCliBuildRequest:
                     "unsupported_flag": True,
                 }
             )
-
-    def test_build_particle_state_accepts_direction_and_charge_state_aliases(self):
-        unit_state = cli._build_particle_state(
-            {
-                "kinetic_energy_mev": 10.0,
-                "mass_amu": 1.0,
-                "charge_sign": 1.0,
-            }
-        )
-        state = cli._build_particle_state(
-            {
-                "kinetic_energy_mev": 10.0,
-                "mass_amu": 1.0,
-                "charge_sign": 1.0,
-                "direction_z": "-z",
-                "charge_state": 54,
-            }
-        )
-
-        assert float(state["Pz"][0]) < 0.0
-        assert float(state["bz"][0]) < 0.0
-        assert float(state["q"][0]) == pytest.approx(54.0 * float(unit_state["q"][0]))
-
-    def test_build_particle_state_rejects_conflicting_particle_aliases(self):
-        with pytest.raises(cli.SimulationConfigError, match="Conflicting"):
-            cli._build_particle_state(
-                {
-                    "kinetic_energy_mev": 10.0,
-                    "mass_amu": 1.0,
-                    "charge_sign": 1.0,
-                    "direction_z": "+z",
-                    "momentum_direction": "-z",
-                }
-            )
-
-        with pytest.raises(cli.SimulationConfigError, match="Conflicting"):
-            cli._build_particle_state(
-                {
-                    "kinetic_energy_mev": 10.0,
-                    "mass_amu": 1.0,
-                    "charge_sign": 1.0,
-                    "charge_multiplier": 1,
-                    "stripped_ions": 2,
-                }
-            )
-
-    def test_summarise_trajectory_reports_transverse_radius(self):
-        trajectory = [
-            {
-                "x": np.array([3.0, 0.0]),
-                "y": np.array([4.0, 0.0]),
-                "z": np.array([0.0]),
-                "t": np.array([0.0]),
-                "gamma": np.array([1.0]),
-                "bz": np.array([0.0]),
-            },
-            {
-                "x": np.array([6.0, 0.0]),
-                "y": np.array([8.0, 0.0]),
-                "z": np.array([1.0]),
-                "t": np.array([1.0]),
-                "gamma": np.array([1.0]),
-                "bz": np.array([0.0]),
-            },
-        ]
-
-        summary = cli.summarise_trajectory(trajectory)
-
-        assert summary["initial_radius_mm_mean"] == pytest.approx(2.5)
-        assert summary["final_radius_mm_mean"] == pytest.approx(5.0)
-        assert summary["delta_radius_mm_mean"] == pytest.approx(2.5)
-        assert summary["final_radius_mm_max"] == pytest.approx(10.0)
 
 
 class TestCliSweepEntryPoint:
@@ -928,10 +839,6 @@ class TestCliRuntimeHelpers:
             "initial_gamma_mean": pytest.approx(3.0),
             "final_gamma_mean": pytest.approx(6.0),
             "delta_gamma_mean": pytest.approx(3.0),
-            "initial_radius_mm_mean": pytest.approx(0.0),
-            "final_radius_mm_mean": pytest.approx(0.0),
-            "delta_radius_mm_mean": pytest.approx(0.0),
-            "final_radius_mm_max": pytest.approx(0.0),
             "max_absolute_velocity": pytest.approx(0.75),
         }
 

@@ -91,9 +91,7 @@ simulation, and confirm that the regression tooling works on your machine.
           "kinetic_energy_mev": 5.0,
           "mass_amu": 1.0,
           "charge_sign": 1.0,
-          "position_z": 0.0,
-          "direction_z": "+z",
-          "charge_multiplier": 1.0
+          "position_z": 0.0
         }
       }
 

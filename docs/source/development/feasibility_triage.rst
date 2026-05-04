@@ -77,18 +77,7 @@ The first LW-integrator tasks should be falsification-oriented:
   beam stability hypotheses, and use dedicated spallation/core tools for neutron
   production and transmutation claims.
 
-Runnable CLI Seeds
-------------------
-
-Two initial single-run configs are tracked as CLI smoke seeds:
-
-.. code-block:: bash
-
-   lw-simulate --config configs/run_configs/example_feasibility_electron_impulse_sanity.json --output results/runs/feasibility_electron_impulse.json
-   lw-simulate --config configs/run_configs/example_feasibility_like_charge_catalyst_sanity.json --output results/runs/feasibility_like_charge_catalyst.json
-
-The output summaries include transverse radius metrics. The drivers are
-deliberately macro-charged so the sign is visible in short runs; these are not
-literal beam-current models. For the like-charge catalyst case, an outward
-``delta_radius_mm_mean`` is evidence against the prototype's "restorative xenon
-spine" assumption in that configuration.
+Generated proof configs should live in a separate feasibility-study workspace,
+not in the maintained integrator config tree. Use the existing GUI/testbed
+schema for those configs: ``starting_Pz`` controls longitudinal direction and
+``stripped_ions`` controls charge state or macro-charge weight.

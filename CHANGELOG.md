@@ -4,15 +4,12 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
-### Feasibility Triage and CLI Particle Config Surface (April 2026)
+### Feasibility Triage Documentation (April 2026)
 
 - **Research triage** — Added skeptical feasibility-study notes separating the speculative aneutronic ring/catalyst concepts from the more conventional spallation/ADSR driver concept, with explicit red flags for force-sign, missing Lorentz-force, macroparticle-current, energy-accounting, and nuclear-yield assumptions in the imported prototype scripts
-- **CLI surface** — Added `direction_z` support and charge-state/macro-charge scaling for modern CLI single-run particle configs so counter-propagating bunches and fully stripped ion drivers can be expressed without falling back to GUI-only config fields
-- **CLI reporting** — Added transverse radius summary metrics to CLI output so short sanity runs can directly report inward/outward transverse motion
-- **Examples** — Added two feasibility sanity configs for electron-driver impulse and like-charge xenon-catalyst force-sign checks
+- **Config boundary** — Documented that generated feasibility proof configs should live outside the maintained integrator config tree and should use the existing GUI/testbed schema (`starting_Pz` for direction and `stripped_ions` for charge state or macro-charge weight)
 - **Docs** — Corrected the README and quickstart CLI JSON examples to match the maintained top-level config schema
-- **Regression coverage** — Added CLI tests for direction aliases, charge-state aliases, example config parseability, and transverse-radius reporting
-- **Files modified** — `input_output/bunch_initialization.py`, `lw_integrator/cli.py`, `tests/test_cli.py`, `configs/run_configs/example_feasibility_*.json`, `docs/source/development/feasibility_triage.rst`, `README.md`, `docs/source/quickstart.rst`
+- **Files modified** — `docs/source/development/feasibility_triage.rst`, `README.md`, `docs/source/quickstart.rst`
 
 ### Sweep/Optimization Logging Policy Fixes (April 2026)
 

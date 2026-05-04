@@ -22,8 +22,6 @@ class BunchRequest:
     kinetic_energy_mev: float
     mass_amu: float
     charge_sign: float
-    charge_multiplier: float = 1.0
-    direction_z: float = 1.0
     position_z: float = 0.0
     particle_count: int = 1
     transverse_radius: float = 0.0
@@ -43,8 +41,6 @@ def create_bunch_from_energy(
     kinetic_energy_mev: float,
     mass_amu: float,
     charge_sign: float,
-    charge_multiplier: float = 1.0,
-    direction_z: float = 1.0,
     position_z: float = 0.0,
     particle_count: int = 1,
     transverse_radius: float = 0.0,
@@ -63,12 +59,6 @@ def create_bunch_from_energy(
         Particle mass in atomic mass units
     charge_sign : float
         Charge sign (+1 or -1)
-    charge_multiplier : float, optional
-        Multiplicative charge state in elementary-charge units (default: 1.0).
-        Use 54.0 for a fully stripped xenon ion, for example.
-    direction_z : float, optional
-        Sign of the initial longitudinal momentum. Positive values launch in
-        +z and negative values launch in -z (default: +z).
     position_z : float, optional
         Starting z position in mm (default: 0.0)
     particle_count : int, optional
@@ -104,13 +94,7 @@ def create_bunch_from_energy(
     gamma = _compute_gamma(kinetic_energy_mev, mass_amu)
     beta = math.sqrt(1.0 - 1.0 / (gamma**2)) if gamma > 1.0 else 0.0
     particle_mass = mass_amu
-    if not math.isfinite(charge_multiplier) or charge_multiplier <= 0.0:
-        raise ValueError("charge_multiplier must be a positive finite value")
-    if not math.isfinite(direction_z) or direction_z == 0.0:
-        raise ValueError("direction_z must be a non-zero finite value")
-
-    longitudinal_sign = 1.0 if direction_z > 0.0 else -1.0
-    macro_charge = charge_sign * charge_multiplier * ELEMENTARY_CHARGE_GU
+    macro_charge = charge_sign * ELEMENTARY_CHARGE_GU
     char_time = 2.0 / 3.0 * macro_charge**2 / (particle_mass * C_MMNS**3)
 
     count = particle_count
@@ -154,9 +138,7 @@ def create_bunch_from_energy(
         Py = zeros.copy()
 
     # Longitudinal momentum
-    Pz = np.full(
-        count, longitudinal_sign * gamma * particle_mass * C_MMNS * beta, dtype=float
-    )
+    Pz = np.full(count, gamma * particle_mass * C_MMNS * beta, dtype=float)
 
     # Total momentum and gamma (recompute for accuracy when Px, Py non-zero)
     P_total = np.sqrt(Px**2 + Py**2 + Pz**2)
