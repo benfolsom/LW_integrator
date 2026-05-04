@@ -39,7 +39,7 @@ assumptions:
   only ``q E`` from a velocity-field expression. At relativistic speeds,
   ``q (E + v x B)`` is the relevant force, and the magnetic term is often the
   difference between enhancement and cancellation.
-* **The "Folsom asymmetry" acceleration claims are not energy-accounted.** A
+* **The electron-driver acceleration-asymmetry claims are not energy-accounted.** A
   constant-velocity source field cannot replace RF cavities without source
   recoil, external work, or boundary conditions. Some snippets also use a
   positive field sign for an electron source and then interpret the impulse as a
