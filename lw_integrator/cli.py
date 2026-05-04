@@ -85,6 +85,22 @@ STARTUP_MODE_ALIASES: Mapping[str, StartupMode] = {
     "approximate": StartupMode.APPROXIMATE_BACK_HISTORY,
 }
 
+PARTICLE_DIRECTION_ALIASES: Mapping[str, float] = {
+    "+": 1.0,
+    "+z": 1.0,
+    "z+": 1.0,
+    "forward": 1.0,
+    "positive": 1.0,
+    "upstream-to-downstream": 1.0,
+    "-": -1.0,
+    "-z": -1.0,
+    "z-": -1.0,
+    "backward": -1.0,
+    "reverse": -1.0,
+    "negative": -1.0,
+    "downstream-to-upstream": -1.0,
+}
+
 REQUIRED_PARTICLE_FIELDS: Iterable[str] = (
     "kinetic_energy_mev",
     "mass_amu",
@@ -521,16 +537,84 @@ def _parse_image_weighting(value: Any) -> bool:
     return bool(value)
 
 
+def _parse_particle_direction(value: Any) -> float:
+    """Parse the initial z-momentum direction for a CLI particle config."""
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in PARTICLE_DIRECTION_ALIASES:
+            return PARTICLE_DIRECTION_ALIASES[key]
+        try:
+            value = float(key)
+        except ValueError as exc:
+            raise SimulationConfigError(
+                "direction_z must be positive/negative, +z/-z, forward, or backward"
+            ) from exc
+
+    try:
+        direction = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            "direction_z must be numeric or a direction string"
+        ) from exc
+
+    if direction == 0.0:
+        raise SimulationConfigError("direction_z must be non-zero")
+    return 1.0 if direction > 0.0 else -1.0
+
+
+def _normalise_particle_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Translate CLI-friendly particle aliases into initializer arguments."""
+    result = dict(payload)
+
+    if "direction_z" in result:
+        result["direction_z"] = _parse_particle_direction(result["direction_z"])
+    for alias in ("longitudinal_direction", "momentum_direction"):
+        if alias not in result:
+            continue
+        parsed = _parse_particle_direction(result.pop(alias))
+        if "direction_z" in result and result["direction_z"] != parsed:
+            raise SimulationConfigError(
+                f"Conflicting particle direction values: direction_z and {alias}"
+            )
+        result["direction_z"] = parsed
+
+    for alias in ("charge_state", "stripped_ions"):
+        if alias not in result:
+            continue
+        value = result.pop(alias)
+        try:
+            parsed = float(value)
+            existing = (
+                float(result["charge_multiplier"])
+                if "charge_multiplier" in result
+                else parsed
+            )
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"{alias} must be a positive numeric charge multiplier"
+            ) from exc
+        if "charge_multiplier" in result and existing != parsed:
+            raise SimulationConfigError(
+                f"Conflicting charge multiplier values: charge_multiplier and {alias}"
+            )
+        result["charge_multiplier"] = parsed
+
+    return result
+
+
 def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
-    missing = [field for field in REQUIRED_PARTICLE_FIELDS if field not in payload]
+    normalised_payload = _normalise_particle_payload(payload)
+    missing = [
+        field for field in REQUIRED_PARTICLE_FIELDS if field not in normalised_payload
+    ]
     if missing:
         raise SimulationConfigError(
             "Particle configuration is missing required fields: " + ", ".join(missing)
         )
 
     try:
-        state, _rest_energy = create_bunch_from_energy(**payload)
-    except TypeError as exc:
+        state, _rest_energy = create_bunch_from_energy(**normalised_payload)
+    except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
             f"Particle configuration includes unsupported options: {exc}"
         ) from exc
@@ -576,6 +660,14 @@ def summarise_trajectory(trajectory: Trajectory) -> Dict[str, Any]:
     final_z = _mean(final.get("z", np.array([0.0])))
     initial_gamma = _mean(initial.get("gamma", np.array([1.0])))
     final_gamma = _mean(final.get("gamma", np.array([1.0])))
+    initial_radius = np.hypot(
+        np.asarray(initial.get("x", np.array([0.0])), dtype=float),
+        np.asarray(initial.get("y", np.array([0.0])), dtype=float),
+    )
+    final_radius = np.hypot(
+        np.asarray(final.get("x", np.array([0.0])), dtype=float),
+        np.asarray(final.get("y", np.array([0.0])), dtype=float),
+    )
     summary_row = summarize_result_row(
         {
             "parameters": {"start_z": initial_z},
@@ -600,6 +692,10 @@ def summarise_trajectory(trajectory: Trajectory) -> Dict[str, Any]:
         "initial_gamma_mean": summary_row["gamma_initial"],
         "final_gamma_mean": summary_row["gamma_final"],
         "delta_gamma_mean": summary_row["gamma_final"] - summary_row["gamma_initial"],
+        "initial_radius_mm_mean": _mean(initial_radius),
+        "final_radius_mm_mean": _mean(final_radius),
+        "delta_radius_mm_mean": _mean(final_radius) - _mean(initial_radius),
+        "final_radius_mm_max": _max_abs(final_radius),
         "max_absolute_velocity": _max_abs(final.get("bz", np.array([0.0]))),
     }
 
@@ -616,6 +712,10 @@ def print_summary(summary: Mapping[str, Any]) -> None:
         "initial_gamma_mean",
         "final_gamma_mean",
         "delta_gamma_mean",
+        "initial_radius_mm_mean",
+        "final_radius_mm_mean",
+        "delta_radius_mm_mean",
+        "final_radius_mm_max",
         "max_absolute_velocity",
     ):
         if key in summary:

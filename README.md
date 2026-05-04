@@ -342,20 +342,18 @@ parameters, particle bunches, and physics options. Example structure:
 
 ```json
 {
-  "simulation": {
-    "steps": 1000,
-    "time_step": 3e-7,
-    "simulation_type": "conducting-wall",
-    "aperture_radius": 0.01,
-    "wall_position": 100.0
-  },
+  "steps": 1000,
+  "time_step": 3e-7,
+  "simulation_type": "conducting-wall",
+  "aperture_radius": 0.01,
+  "wall_position": 100.0,
   "rider": {
-    "mass": 1.0,
-    "charge": 1.0,
-    "energy": 5.0,
-    "x0": 0.0,
-    "y0": 0.0,
-    "z0": 0.0
+    "kinetic_energy_mev": 5.0,
+    "mass_amu": 1.0,
+    "charge_sign": 1.0,
+    "position_z": 0.0,
+    "direction_z": "+z",
+    "charge_multiplier": 1.0
   }
 }
 ```

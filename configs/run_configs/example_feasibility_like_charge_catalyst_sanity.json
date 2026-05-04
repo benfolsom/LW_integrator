@@ -1,0 +1,35 @@
+{
+  "steps": 1000,
+  "time_step": 5e-7,
+  "simulation_type": "bunch-to-bunch",
+  "wall_position": 100000.0,
+  "aperture_radius": 100000.0,
+  "bunch_mean": 100000.0,
+  "cavity_spacing": 100000.0,
+  "z_cutoff": 0.0,
+  "chrono_mode": "fast",
+  "startup_mode": "approximate-back-history",
+  "image_subcharge_count": 12,
+  "use_image_weighting": true,
+  "rider": {
+    "kinetic_energy_mev": 1.0,
+    "mass_amu": 2.01410177812,
+    "charge_sign": 1.0,
+    "charge_multiplier": 1.0,
+    "position_z": 0.0,
+    "particle_count": 1,
+    "transverse_offset_x": 0.00005,
+    "transverse_offset_y": 0.0
+  },
+  "driver": {
+    "kinetic_energy_mev": 193500.0,
+    "mass_amu": 128.9047808611,
+    "charge_sign": 1.0,
+    "charge_multiplier": 540000000000000.0,
+    "direction_z": "+z",
+    "position_z": -0.05,
+    "particle_count": 1,
+    "transverse_offset_x": 0.0,
+    "transverse_offset_y": 0.0
+  }
+}
