@@ -9,4 +9,3 @@ This section collects notes for contributors and maintainers.
    contributing
    testing
    style
-   feasibility_triage

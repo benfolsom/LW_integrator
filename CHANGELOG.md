@@ -4,13 +4,6 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
-### Feasibility Triage Documentation (April 2026)
-
-- **Research triage** — Added skeptical feasibility-study notes separating the speculative aneutronic ring/catalyst concepts from the more conventional spallation/ADSR driver concept, with explicit red flags for force-sign, missing Lorentz-force, macroparticle-current, energy-accounting, and nuclear-yield assumptions in the imported prototype scripts
-- **Config boundary** — Documented that generated feasibility proof configs should live outside the maintained integrator config tree and should use the existing GUI/testbed schema (`starting_Pz` for direction and `stripped_ions` for charge state or macro-charge weight)
-- **Docs** — Corrected the README and quickstart CLI JSON examples to match the maintained top-level config schema
-- **Files modified** — `docs/source/development/feasibility_triage.rst`, `README.md`, `docs/source/quickstart.rst`
-
 ### Sweep/Optimization Logging Policy Fixes (April 2026)
 
 - **Bug** — CLI sweep `--quiet` and `log_verbosity` policy paths still emitted per-run progress/detail/debug lines through direct `print()` and uncapped callbacks
