@@ -407,6 +407,48 @@ class TrajectoryBuilder:
         """Store per-particle failure info keyed by ``(step, particle_idx)``."""
         self._particle_failure_info[(step, particle_idx)] = info
 
+    def build_partial(self, up_to_step: int) -> "TrajectoryArrays":
+        """Return a zero-copy view of the first *up_to_step* rows.
+
+        The returned TrajectoryArrays shares memory with this builder's
+        pre-allocated arrays. up_to_step must be >= 1.
+        """
+        if up_to_step < 1:
+            raise ValueError(f"up_to_step must be >= 1, got {up_to_step}")
+        s = up_to_step
+        return TrajectoryArrays(
+            x=self._arrays["x"][:s],
+            y=self._arrays["y"][:s],
+            z=self._arrays["z"][:s],
+            t=self._arrays["t"][:s],
+            Px=self._arrays["Px"][:s],
+            Py=self._arrays["Py"][:s],
+            Pz=self._arrays["Pz"][:s],
+            Pt=self._arrays["Pt"][:s],
+            gamma=self._arrays["gamma"][:s],
+            bx=self._arrays["bx"][:s],
+            by=self._arrays["by"][:s],
+            bz=self._arrays["bz"][:s],
+            bdotx=self._arrays["bdotx"][:s],
+            bdoty=self._arrays["bdoty"][:s],
+            bdotz=self._arrays["bdotz"][:s],
+            origin_x=self._arrays["origin_x"][:s],
+            origin_y=self._arrays["origin_y"][:s],
+            origin_z=self._arrays["origin_z"][:s],
+            beta_avg_x=self._arrays["beta_avg_x"][:s],
+            beta_avg_y=self._arrays["beta_avg_y"][:s],
+            beta_avg_z=self._arrays["beta_avg_z"][:s],
+            beta_samples=self._arrays["beta_samples"][:s],
+            dead=self._arrays["dead"][:s],
+            q=self._arrays["q"],
+            m=self._arrays["m"],
+            char_time=self._arrays["char_time"],
+            halted_early=self._halted_early[:s],
+            halt_step=self._halt_step_arr[:s],
+            halt_reason=self._halt_reason,
+            particle_failure_info=self._particle_failure_info,
+        )
+
     def build(self) -> TrajectoryArrays:
         """Finalise and return the accumulated :class:`TrajectoryArrays`."""
         return TrajectoryArrays(

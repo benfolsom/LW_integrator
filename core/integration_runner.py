@@ -762,6 +762,13 @@ def retarded_integrator(
                 ]
                 temp_driver = [trajectory_drv[i - 1]]
 
+                # Per-step SOA builders for zero-copy build_partial during substeps
+                _n_p_rider = len(temp_trajectory[0]["x"])
+                _temp_traj_builder = TrajectoryBuilder(num_substeps + 1, _n_p_rider)
+                _temp_traj_builder.set_step(0, temp_trajectory[0])
+                _temp_drv_soa = _traj_drv_builder.build_partial(i) if _traj_drv_builder is not None else None
+                _scs_accepts_soa = "traj_soa" in inspect.signature(self_consistent_step).parameters
+
                 energy_jump_detected = False
                 gamma_blowup_detected = False
                 max_refinement_reached = (
@@ -778,9 +785,6 @@ def retarded_integrator(
 
                     # Compute one sub-step, catching soft gamma blowups
                     try:
-                        _scs_accepts_soa = "traj_soa" in inspect.signature(
-                            self_consistent_step
-                        ).parameters
                         trial_state = self_consistent_step(
                             retarded_equations_of_motion,
                             current_h_step,
@@ -795,8 +799,8 @@ def retarded_integrator(
                             step_idx=i,  # Pass main step index for error messages
                             cancel_callback=cancel_callback,  # Pass cancellation check through
                             **({"space_charge": space_charge} if space_charge is not None else {}),
-                            **({"traj_soa": _build_partial_soa(temp_trajectory, substep_idx + 1)} if _scs_accepts_soa else {}),
-                            **({"traj_ext_soa": _build_partial_soa(temp_driver, substep_idx + 1)} if _scs_accepts_soa else {}),
+                            **({"traj_soa": _temp_traj_builder.build_partial(substep_idx + 1)} if _scs_accepts_soa else {}),
+                            **({"traj_ext_soa": _temp_drv_soa} if _scs_accepts_soa else {}),
                         )
                     except GammaBlowupError as e:
                         # Soft gamma blowup detected - reduce timestep and retry
@@ -843,6 +847,7 @@ def retarded_integrator(
 
                             # Append the state with dead particle to trajectory
                             temp_trajectory.append(trial_state)
+                            _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
                             temp_driver.append(
                                 temp_driver[-1]
                                 if temp_driver
@@ -905,6 +910,7 @@ def retarded_integrator(
 
                                 # Append the state with dead particle to trajectory
                                 temp_trajectory.append(trial_state)
+                                _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
                                 temp_driver.append(
                                     temp_driver[-1]
                                     if temp_driver
@@ -967,6 +973,7 @@ def retarded_integrator(
 
                                     # Append the state with dead particle to trajectory
                                     temp_trajectory.append(trial_state)
+                                    _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
                                     temp_driver.append(
                                         temp_driver[-1]
                                         if temp_driver
@@ -1148,6 +1155,7 @@ def retarded_integrator(
 
                     # Append this substep to the temporary trajectory
                     temp_trajectory.append(trial_state)
+                    _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
                     temp_driver.append(trial_driver)
 
                 # If no energy jump, gamma blowup, or we're accepting anyway, we're done
@@ -1337,7 +1345,7 @@ def retarded_integrator(
                     raise ValueError(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
-                _scs_accepts_soa = "traj_soa" in inspect.signature(
+                _b2b_scs_accepts_soa = "traj_soa" in inspect.signature(
                     self_consistent_step
                 ).parameters
                 trajectory_drv[i] = self_consistent_step(
@@ -1356,11 +1364,11 @@ def retarded_integrator(
                         "space_charge": space_charge
                     } if space_charge is not None else {}),
                     **({
-                        "traj_soa": _build_partial_soa(trajectory_drv, i)
-                    } if _scs_accepts_soa else {}),
+                        "traj_soa": _traj_drv_builder.build_partial(i)
+                    } if _b2b_scs_accepts_soa and _traj_drv_builder is not None else {}),
                     **({
-                        "traj_ext_soa": _build_partial_soa(trajectory, i)
-                    } if _scs_accepts_soa else {}),
+                        "traj_ext_soa": _traj_builder.build_partial(i)
+                    } if _b2b_scs_accepts_soa else {}),
                 )
             _ensure_startup_metadata(trajectory_drv[i])
             if _traj_drv_builder is not None:

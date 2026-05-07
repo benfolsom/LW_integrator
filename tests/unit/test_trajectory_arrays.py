@@ -177,6 +177,40 @@ class TestMissingOptionalFields:
         np.testing.assert_array_equal(traj.beta_samples, 0.0)
 
 
+class TestBuildPartial:
+    def test_shape_partial(self):
+        builder = TrajectoryBuilder(10, 2)
+        for step in range(10):
+            builder.set_step(step, _make_state(step, 2))
+        partial = builder.build_partial(5)
+        assert partial.n_steps == 5
+        assert partial.n_particles == 2
+
+    def test_zero_copy(self):
+        builder = TrajectoryBuilder(10, 2)
+        for step in range(10):
+            builder.set_step(step, _make_state(step, 2))
+        partial = builder.build_partial(5)
+        sentinel = 999.0
+        builder._arrays["x"][2, 0] = sentinel
+        assert partial.x[2, 0] == sentinel
+
+    def test_full_equals_build(self):
+        builder = TrajectoryBuilder(10, 2)
+        for step in range(10):
+            builder.set_step(step, _make_state(step, 2))
+        full = builder.build()
+        partial_full = builder.build_partial(10)
+        np.testing.assert_array_equal(partial_full.x, full.x)
+        np.testing.assert_array_equal(partial_full.gamma, full.gamma)
+        assert partial_full.n_steps == full.n_steps
+
+    def test_raises_on_zero(self):
+        builder = TrajectoryBuilder(10, 2)
+        with pytest.raises(ValueError):
+            builder.build_partial(0)
+
+
 class TestParticleFailureInfo:
     def test_set_and_retrieve(self):
         builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
