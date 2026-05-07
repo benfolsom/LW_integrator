@@ -6,6 +6,7 @@ programmatic entry points for running the modern Liénard–Wiechert integrator.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple
 
@@ -29,12 +30,29 @@ from .types import (
     SimulationType,
     StartupMode,
     Trajectory,
+    TrajectoryArrays,
     TrajectoryBuilder,
 )
 
 
 class IntegrationCancelled(RuntimeError):
     """Raised when an integration is cancelled by an external caller."""
+
+
+def _build_partial_soa(
+    trajectory: Trajectory, up_to_step: int
+) -> "TrajectoryArrays | None":
+    """Build a TrajectoryArrays from trajectory[0:up_to_step]."""
+    if up_to_step < 1 or not trajectory[0]:
+        return None
+    try:
+        n_p = len(trajectory[0]["x"])
+        builder = TrajectoryBuilder(up_to_step, n_p)
+        for idx in range(up_to_step):
+            builder.set_step(idx, trajectory[idx])
+        return builder.build()
+    except Exception:
+        return None
 
 
 class EnergyJumpDetected(RuntimeError):
@@ -760,6 +778,9 @@ def retarded_integrator(
 
                     # Compute one sub-step, catching soft gamma blowups
                     try:
+                        _scs_accepts_soa = "traj_soa" in inspect.signature(
+                            self_consistent_step
+                        ).parameters
                         trial_state = self_consistent_step(
                             retarded_equations_of_motion,
                             current_h_step,
@@ -774,6 +795,8 @@ def retarded_integrator(
                             step_idx=i,  # Pass main step index for error messages
                             cancel_callback=cancel_callback,  # Pass cancellation check through
                             **({"space_charge": space_charge} if space_charge is not None else {}),
+                            **({"traj_soa": _build_partial_soa(temp_trajectory, substep_idx)} if _scs_accepts_soa else {}),
+                            **({"traj_ext_soa": _build_partial_soa(temp_driver, substep_idx)} if _scs_accepts_soa else {}),
                         )
                     except GammaBlowupError as e:
                         # Soft gamma blowup detected - reduce timestep and retry
@@ -1246,9 +1269,8 @@ def retarded_integrator(
                     halt_step=i,
                     requested_steps=steps,
                 )
-                _ = _traj_builder.build()
-                if _traj_drv_builder is not None:
-                    _ = _traj_drv_builder.build()
+                _traj_soa = _traj_builder.build()
+                _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
                 return trajectory, trajectory_drv
 
             # Post-step gamma check for individual particles
@@ -1315,6 +1337,9 @@ def retarded_integrator(
                     raise ValueError(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
+                _scs_accepts_soa = "traj_soa" in inspect.signature(
+                    self_consistent_step
+                ).parameters
                 trajectory_drv[i] = self_consistent_step(
                     retarded_equations_of_motion,
                     h_step,
@@ -1327,7 +1352,15 @@ def retarded_integrator(
                     chrono_mode,
                     startup_mode,
                     step_idx=i,
-                    **({"space_charge": space_charge} if space_charge is not None else {}),
+                    **({
+                        "space_charge": space_charge
+                    } if space_charge is not None else {}),
+                    **({
+                        "traj_soa": _build_partial_soa(trajectory_drv, i)
+                    } if _scs_accepts_soa else {}),
+                    **({
+                        "traj_ext_soa": _build_partial_soa(trajectory, i)
+                    } if _scs_accepts_soa else {}),
                 )
             _ensure_startup_metadata(trajectory_drv[i])
             if _traj_drv_builder is not None:
@@ -1365,9 +1398,8 @@ def retarded_integrator(
                     halt_step=i,
                     requested_steps=steps,
                 )
-                _ = _traj_builder.build()
-                if _traj_drv_builder is not None:
-                    _ = _traj_drv_builder.build()
+                _traj_soa = _traj_builder.build()
+                _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
                 return trajectory_truncated, trajectory_drv_truncated
 
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
@@ -1405,9 +1437,8 @@ def retarded_integrator(
         if progress_callback is not None:
             progress_callback(i + 1, steps)
 
-    _ = _traj_builder.build()
-    if _traj_drv_builder is not None:
-        _ = _traj_drv_builder.build()
+    _traj_soa = _traj_builder.build()
+    _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
     return trajectory, trajectory_drv
 
 

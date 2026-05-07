@@ -61,6 +61,7 @@ from typing import Dict, Sequence, Tuple
 import numpy as np
 
 from .constants import C_MMNS
+from .types import TrajectoryArrays
 
 # Try to import numba for JIT compilation
 try:
@@ -221,10 +222,81 @@ class ExternalSampleBatch:
     bdoty: np.ndarray
     bdotz: np.ndarray
     valid_mask: np.ndarray
+    x: np.ndarray | None = None
+    y: np.ndarray | None = None
+    z: np.ndarray | None = None
 
     @property
     def any_valid(self) -> bool:
         return bool(self.valid_mask.any())
+
+
+def gather_external_samples_soa(
+    traj_ext: TrajectoryArrays,
+    indices: np.ndarray,
+    *,
+    indices_next: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
+    needs_interpolation: np.ndarray | None = None,
+) -> ExternalSampleBatch:
+    """SOA fast path for gather_external_samples.
+
+    Replaces per-particle dict/list access with direct 2-D array slicing.
+    """
+    n_ext = traj_ext.n_particles
+    valid_mask = np.ones(n_ext, dtype=bool)
+    valid_mask &= (indices >= 0) & (indices < traj_ext.n_steps)
+
+    # TODO: vectorize with fancy indexing: traj_ext.bx[indices, np.arange(n_ext)]
+    bx = np.array([traj_ext.bx[indices[j], j] for j in range(n_ext)])
+    by = np.array([traj_ext.by[indices[j], j] for j in range(n_ext)])
+    bz = np.array([traj_ext.bz[indices[j], j] for j in range(n_ext)])
+    bdotx = np.array([traj_ext.bdotx[indices[j], j] for j in range(n_ext)])
+    bdoty = np.array([traj_ext.bdoty[indices[j], j] for j in range(n_ext)])
+    bdotz = np.array([traj_ext.bdotz[indices[j], j] for j in range(n_ext)])
+    gamma = np.array([traj_ext.gamma[indices[j], j] for j in range(n_ext)])
+    x = np.array([traj_ext.x[indices[j], j] for j in range(n_ext)])
+    y = np.array([traj_ext.y[indices[j], j] for j in range(n_ext)])
+    z = np.array([traj_ext.z[indices[j], j] for j in range(n_ext)])
+    charge = traj_ext.q.copy()
+
+    if (
+        weights is not None
+        and indices_next is not None
+        and needs_interpolation is not None
+        and np.any(needs_interpolation)
+    ):
+        for j in range(n_ext):
+            if not needs_interpolation[j] or indices_next[j] < 0:
+                continue
+            ni = indices_next[j]
+            w = weights[j]
+            w1 = 1.0 - w
+            bx[j] = w * bx[j] + w1 * traj_ext.bx[ni, j]
+            by[j] = w * by[j] + w1 * traj_ext.by[ni, j]
+            bz[j] = w * bz[j] + w1 * traj_ext.bz[ni, j]
+            bdotx[j] = w * bdotx[j] + w1 * traj_ext.bdotx[ni, j]
+            bdoty[j] = w * bdoty[j] + w1 * traj_ext.bdoty[ni, j]
+            bdotz[j] = w * bdotz[j] + w1 * traj_ext.bdotz[ni, j]
+            gamma[j] = w * gamma[j] + w1 * traj_ext.gamma[ni, j]
+            x[j] = w * x[j] + w1 * traj_ext.x[ni, j]
+            y[j] = w * y[j] + w1 * traj_ext.y[ni, j]
+            z[j] = w * z[j] + w1 * traj_ext.z[ni, j]
+
+    return ExternalSampleBatch(
+        bx=bx,
+        by=by,
+        bz=bz,
+        bdotx=bdotx,
+        bdoty=bdoty,
+        bdotz=bdotz,
+        gamma=gamma,
+        x=x,
+        y=y,
+        z=z,
+        charge=charge,
+        valid_mask=valid_mask,
+    )
 
 
 def gather_external_samples(

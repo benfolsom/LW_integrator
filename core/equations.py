@@ -76,12 +76,16 @@ from typing import Any, Optional
 
 import numpy as np
 
+import inspect
+
 from .constants import C_MMNS
 from .distances import (
     ChronoMatchResult,
     chrono_match_indices,
+    chrono_match_indices_soa,
     compute_instantaneous_distance,
     compute_retarded_distance,
+    compute_retarded_distance_soa,
 )
 from .self_consistency import (
     SelfConsistencyConfig,
@@ -94,10 +98,12 @@ from .types import (
     SimulationType,
     StartupMode,
     Trajectory,
+    TrajectoryArrays,
 )
 from .vectorized_interactions import (
     compute_vectorized_contributions,
     gather_external_samples,
+    gather_external_samples_soa,
 )
 
 
@@ -381,6 +387,8 @@ def _compute_full_retarded_distance(
     chrono_mode: ChronoMatchingMode,
     self_consistency: Optional[SelfConsistencyConfig] = None,
     timestep_h: float = 1e-3,
+    traj_soa: Optional[TrajectoryArrays] = None,
+    traj_ext_soa: Optional[TrajectoryArrays] = None,
 ) -> tuple[dict, np.ndarray, Optional[ChronoMatchResult]]:
     """Compute retarded distance using full chronological matching.
 
@@ -411,19 +419,34 @@ def _compute_full_retarded_distance(
         )
         verbosity = self_consistency.verbosity
 
-    retarded_result = chrono_match_indices(
-        trajectory,
-        trajectory_ext,
-        time_step_idx,
-        particle_idx,
-        mode=chrono_mode,
-        interpolate=chrono_interpolate,
-        tolerance=chrono_tolerance,
-        verbosity=verbosity,
-        high_precision=chrono_high_precision,
-        adaptive_tolerance=chrono_adaptive_tolerance,
-        timestep_h=timestep_h,
-    )
+    if traj_soa is not None and traj_ext_soa is not None:
+        retarded_result = chrono_match_indices_soa(
+            traj_soa,
+            traj_ext_soa,
+            time_step_idx,
+            particle_idx,
+            mode=chrono_mode,
+            interpolate=chrono_interpolate,
+            tolerance=chrono_tolerance,
+            verbosity=verbosity,
+            high_precision=chrono_high_precision,
+            adaptive_tolerance=chrono_adaptive_tolerance,
+            timestep_h=timestep_h,
+        )
+    else:
+        retarded_result = chrono_match_indices(
+            trajectory,
+            trajectory_ext,
+            time_step_idx,
+            particle_idx,
+            mode=chrono_mode,
+            interpolate=chrono_interpolate,
+            tolerance=chrono_tolerance,
+            verbosity=verbosity,
+            high_precision=chrono_high_precision,
+            adaptive_tolerance=chrono_adaptive_tolerance,
+            timestep_h=timestep_h,
+        )
 
     # Handle both plain index-array returns and ChronoMatchResult payloads.
     if isinstance(retarded_result, ChronoMatchResult):
@@ -436,13 +459,18 @@ def _compute_full_retarded_distance(
     max_external_idx = len(trajectory_ext) - 1
     indices_bounded = np.minimum(np.maximum(retarded_indices, 0), max_external_idx)
 
-    nhat = compute_retarded_distance(
-        trajectory,
-        trajectory_ext,
-        time_step_idx,
-        particle_idx,
-        indices_bounded,
-    )
+    if traj_soa is not None and traj_ext_soa is not None:
+        nhat = compute_retarded_distance_soa(
+            traj_soa, traj_ext_soa, time_step_idx, particle_idx, indices_bounded
+        )
+    else:
+        nhat = compute_retarded_distance(
+            trajectory,
+            trajectory_ext,
+            time_step_idx,
+            particle_idx,
+            indices_bounded,
+        )
 
     return nhat, indices_bounded, chrono_match_result
 
@@ -937,6 +965,8 @@ def retarded_equations_of_motion(
     step_idx: Optional[int] = None,
     cancel_callback: Optional[Any] = None,
     space_charge: Optional[Any] = None,
+    traj_soa: Optional[TrajectoryArrays] = None,
+    traj_ext_soa: Optional[TrajectoryArrays] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1195,6 +1225,9 @@ def retarded_equations_of_motion(
                         # Create temporary trajectory for retarded distance calculation
                         temp_trajectory = trajectory.copy()
                         temp_trajectory[index_traj] = observer_state
+                        _cfd_accepts_soa = "traj_soa" in inspect.signature(
+                            _compute_full_retarded_distance
+                        ).parameters
                         nhat, indices_bounded, chrono_result = (
                             _compute_full_retarded_distance(
                                 temp_trajectory,
@@ -1204,9 +1237,14 @@ def retarded_equations_of_motion(
                                 chrono_mode,
                                 self_consistency,
                                 timestep_h=h,
+                                **({"traj_soa": traj_soa} if _cfd_accepts_soa and traj_soa is not None else {}),
+                                **({"traj_ext_soa": traj_ext_soa} if _cfd_accepts_soa and traj_ext_soa is not None else {}),
                             )
                         )
                     else:
+                        _cfd_accepts_soa = "traj_soa" in inspect.signature(
+                            _compute_full_retarded_distance
+                        ).parameters
                         nhat, indices_bounded, chrono_result = (
                             _compute_full_retarded_distance(
                                 trajectory,
@@ -1216,6 +1254,8 @@ def retarded_equations_of_motion(
                                 chrono_mode,
                                 self_consistency,
                                 timestep_h=h,
+                                **({"traj_soa": traj_soa} if _cfd_accepts_soa and traj_soa is not None else {}),
+                                **({"traj_ext_soa": traj_ext_soa} if _cfd_accepts_soa and traj_ext_soa is not None else {}),
                             )
                         )
 
@@ -1271,7 +1311,15 @@ def retarded_equations_of_motion(
             # ================================================================
             if apply_forces and nhat["R"].size > 0:
                 # Gather external particle data at retarded times (with interpolation if enabled)
-                if chrono_result is not None:
+                if traj_ext_soa is not None and chrono_result is not None:
+                    external_samples = gather_external_samples_soa(
+                        traj_ext_soa,
+                        indices_bounded,
+                        indices_next=chrono_result.indices_next,
+                        weights=chrono_result.weights,
+                        needs_interpolation=chrono_result.needs_interpolation,
+                    )
+                elif chrono_result is not None:
                     # Use interpolation (with cubic and position interpolation if high-precision)
                     external_samples = gather_external_samples(
                         trajectory_ext,
@@ -1282,6 +1330,11 @@ def retarded_equations_of_motion(
                         indices_next2=chrono_result.indices_next2,
                         use_cubic=chrono_result.use_cubic,
                         interpolate_positions=chrono_high_precision,
+                    )
+                elif traj_ext_soa is not None:
+                    external_samples = gather_external_samples_soa(
+                        traj_ext_soa,
+                        indices_bounded,
                     )
                 else:
                     # Legacy path: no interpolation
@@ -1354,24 +1407,27 @@ def retarded_equations_of_motion(
             if (
                 space_charge is not None
                 and space_charge.enabled
-                and apply_forces
-                and len(trajectory) > 1
+                and len(trajectory) >= 1
             ):
                 n_particles = current_state["x"].shape[0]
                 if n_particles > 1:
                     sc_softening = float(space_charge.softening_mm)
+                    # Use retarded SC only once sufficient history has accumulated;
+                    # fall back to instantaneous Coulomb at startup.
+                    use_retarded_sc = space_charge.retarded and len(trajectory) > 1
                     for j in range(n_particles):
                         if j == particle_idx:
                             continue
-                        if space_charge.retarded:
+                        if use_retarded_sc:
                             sc_traj_ext = [
                                 {k: v[[j]] for k, v in step.items()}
                                 for step in trajectory[:index_traj + 1]
                             ]
                         else:
-                            sc_traj_ext = [
-                                {k: v[[j]] for k, v in trajectory[index_traj].items()}
-                            ]
+                            sc_step = {
+                                k: v[[j]] for k, v in trajectory[index_traj].items()
+                            }
+                            sc_traj_ext = [sc_step] * (index_traj + 1)
                         sc_nhat = compute_retarded_distance(
                             trajectory,
                             sc_traj_ext,

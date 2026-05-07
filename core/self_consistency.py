@@ -17,6 +17,7 @@ Enable self-consistency checks when:
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -315,6 +316,8 @@ def self_consistent_step(
     step_idx: Optional[int] = None,
     space_charge: Optional[Any] = None,
     cancel_callback: Optional[Any] = None,
+    traj_soa: Optional[Any] = None,
+    traj_ext_soa: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -364,8 +367,12 @@ def self_consistent_step(
         gamma converged.
     """
 
-    # Simply call the step function and pass the config through
-    # The iteration logic is now INSIDE retarded_equations_of_motion
+    # Check whether step_function accepts SOA keyword arguments
+    _sig_params = inspect.signature(step_function).parameters
+    _accepts_soa = "traj_soa" in _sig_params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
+    )
+
     result = step_function(
         h_step,
         trajectory,
@@ -379,6 +386,8 @@ def self_consistent_step(
         step_idx,
         cancel_callback,
         **({"space_charge": space_charge} if space_charge is not None else {}),
+        **({"traj_soa": traj_soa} if _accepts_soa and traj_soa is not None else {}),
+        **({"traj_ext_soa": traj_ext_soa} if _accepts_soa and traj_ext_soa is not None else {}),
     )
 
     return result
