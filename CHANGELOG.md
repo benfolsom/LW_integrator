@@ -4,6 +4,9 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+- **Bug** — SC particle-slice `{k: v[[j]] for k, v in step.items()}` failed with `IndexError` when any state-dict array had a different length than `n_particles` (e.g. metadata or per-step scalars); replaced with `_slice_step()` which only indexes arrays whose first-axis length equals `n_particles`
+- **Files modified** — `core/equations.py`
+
 ### Space-Charge Startup Fix and Physics-Driven Retarded Threshold (May 2026)
 
 - **Bug** — Intra-bunch SC forces were never applied: the `apply_forces` driver-startup gate blocked the rider→rider SC block, and the `len(trajectory) > 1` guard was always `False` because the substep buffer starts with one entry per main step
