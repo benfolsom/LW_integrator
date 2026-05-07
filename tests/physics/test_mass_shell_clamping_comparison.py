@@ -185,7 +185,7 @@ class TestMassShellClampingBasics:
         """Test that mass-shell constraint is maintained across energy scales."""
         init_state = create_two_particle_collision(gamma=gamma, separation=2.0)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=20,
             h_step=1e-8,
             wall_z=1e6,
@@ -218,7 +218,7 @@ class TestMassShellClampingBasics:
         for sep in separations:
             init_state = create_two_particle_collision(gamma=gamma, separation=sep)
 
-            trajectory, _ = retarded_integrator(
+            trajectory, _, *_soa_out = retarded_integrator(
                 steps=30,
                 h_step=1e-9,
                 wall_z=1e6,
@@ -252,7 +252,7 @@ class TestMassShellClampingDynamics:
         gamma = 10.0
         init_state = create_two_particle_collision(gamma=gamma, separation=1.0)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=50,
             h_step=1e-9,
             wall_z=1e6,
@@ -292,7 +292,7 @@ class TestMassShellClampingDynamics:
                 gamma=gamma_initial, separation=2.0
             )
 
-            trajectory, _ = retarded_integrator(
+            trajectory, _, *_soa_out = retarded_integrator(
                 steps=10,
                 h_step=1e-8,
                 wall_z=1e6,
@@ -341,7 +341,7 @@ class TestMassShellClampingDocumentation:
         gamma = 50.0
         init_state = create_two_particle_collision(gamma=gamma, separation=0.5)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=100,
             h_step=1e-9,
             wall_z=1e6,
@@ -385,7 +385,7 @@ class TestMassShellClampingDocumentation:
             verbosity=0,
         )
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=30,
             h_step=1e-8,
             wall_z=1e6,

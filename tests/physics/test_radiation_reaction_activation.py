@@ -163,7 +163,7 @@ class TestRadiationReactionTriggers:
 
         init_state = create_close_encounter_state(gamma, separation)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=100,
             h_step=h_step,
             wall_z=1e6,
@@ -210,7 +210,7 @@ class TestRadiationReactionTriggers:
             gamma, separation, transverse_offset=transverse_offset
         )
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=150,
             h_step=1e-11,
             wall_z=1e6,
@@ -250,7 +250,7 @@ class TestRadiationReactionTriggers:
         for sep in separations:
             init_state = create_close_encounter_state(gamma, sep)
 
-            trajectory, _ = retarded_integrator(
+            trajectory, _, *_soa_out = retarded_integrator(
                 steps=100,
                 h_step=1e-11,
                 wall_z=1e6,
@@ -308,7 +308,7 @@ class TestRadiationReactionWithMassShell:
 
         init_state = create_close_encounter_state(gamma, separation)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=200,
             h_step=1e-11,
             wall_z=1e6,
@@ -386,7 +386,7 @@ class TestRadiationReactionWithMassShell:
 
         init_state = create_close_encounter_state(gamma, separation)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=50,  # Fewer steps due to computational cost
             h_step=h_step,
             wall_z=1e6,
@@ -448,7 +448,7 @@ class TestRadiationReactionPhysics:
 
         init_state = create_close_encounter_state(gamma, separation)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=150,
             h_step=1e-11,
             wall_z=1e6,

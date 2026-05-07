@@ -167,7 +167,7 @@ class LienardWiechertIntegrator:
                 self.config.use_image_weighting if self.config else True
             )
 
-        trajectory, driver = retarded_integrator(
+        trajectory, driver, *_soa_out = retarded_integrator(
             steps=total_steps,
             h_step=float(h_step),
             wall_z=float(wall_Z),

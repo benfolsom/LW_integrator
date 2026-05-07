@@ -299,17 +299,23 @@ def chrono_match_indices_soa(
     """SOA fast path for chrono_match_indices.
 
     Uses direct 2-D array indexing instead of per-step dict access.
-    Falls back to state_at() shims only for the nhat computation (pending
-    full SOA migration of compute_instantaneous_distance).
     """
     effective_tolerance = tolerance
     if adaptive_tolerance and timestep_h is not None and timestep_h > 0:
         effective_tolerance = 0.1 * timestep_h
 
-    # nhat still uses dict shim (will be fully vectorized in Phase 4)
-    obs_state = traj.state_at(index_traj)
-    ext_state = traj_ext.state_at(index_traj)
-    nhat = compute_instantaneous_distance(obs_state, ext_state, index_part)
+    dx = traj.x[index_traj, index_part] - traj_ext.x[index_traj, :]
+    dy = traj.y[index_traj, index_part] - traj_ext.y[index_traj, :]
+    dz = traj.z[index_traj, index_part] - traj_ext.z[index_traj, :]
+    distance = np.sqrt(dx**2 + dy**2 + dz**2)
+    too_close = distance < NUMERICAL_EPSILON
+    safe_dist = np.where(too_close, NUMERICAL_EPSILON, distance)
+    nhat = {
+        "R": safe_dist,
+        "nx": np.where(too_close, 0.0, dx / safe_dist),
+        "ny": np.where(too_close, 0.0, dy / safe_dist),
+        "nz": np.where(too_close, 0.0, dz / safe_dist),
+    }
 
     n_particles = traj_ext.n_particles
     index_traj_new = np.empty(n_particles, dtype=int)

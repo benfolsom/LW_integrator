@@ -108,7 +108,7 @@ def test_ensure_startup_metadata_ignores_none_and_empty_states() -> None:
 def test_retarded_integrator_initializes_step_zero_and_reports_progress() -> None:
     calls: list[tuple[int, int]] = []
 
-    trajectory, trajectory_drv = retarded_integrator(
+    trajectory, trajectory_drv, *_soa_out = retarded_integrator(
         steps=1,
         h_step=1e-3,
         wall_z=0.0,

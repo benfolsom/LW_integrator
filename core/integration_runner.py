@@ -248,7 +248,7 @@ def retarded_integrator(
     cancel_callback: Optional[Callable[[], bool]] = None,
     logger: Optional[Any] = None,
     use_numba: bool = True,
-) -> Tuple[Trajectory, Trajectory]:
+) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
     Parameters
@@ -412,7 +412,7 @@ def retarded_integrator(
                         else:
                             logger.info("Using Numba-optimized integrator (expected ~20x speedup)")
 
-                    return retarded_integrator_numba(
+                    numba_result = retarded_integrator_numba(
                         steps=steps,
                         h_step=h_step,
                         wall_z=wall_z,
@@ -429,6 +429,7 @@ def retarded_integrator(
                         image_subcharge_count=image_subcharge_count,
                         use_image_weighting=use_conducting_image_weighting,
                     )
+                    return numba_result[0], numba_result[1], None, None
             else:
                 if logger:
                     if callable(logger):
@@ -1279,7 +1280,7 @@ def retarded_integrator(
                 )
                 _traj_soa = _traj_builder.build()
                 _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
-                return trajectory, trajectory_drv
+                return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
 
             # Post-step gamma check for individual particles
             # Mark any particle with extreme gamma as dead
@@ -1408,7 +1409,7 @@ def retarded_integrator(
                 )
                 _traj_soa = _traj_builder.build()
                 _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
-                return trajectory_truncated, trajectory_drv_truncated
+                return trajectory_truncated, trajectory_drv_truncated, _traj_soa, _traj_drv_soa
 
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
         if (
@@ -1447,7 +1448,8 @@ def retarded_integrator(
 
     _traj_soa = _traj_builder.build()
     _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
-    return trajectory, trajectory_drv
+    return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
+
 
 
 def run_integrator(
@@ -1460,7 +1462,7 @@ def run_integrator(
     space_charge: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
-) -> Tuple[Trajectory, Trajectory]:
+) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
     """Convenience wrapper using :class:`IntegratorConfig`.
 
     All parameters are supplied via ``config`` which mirrors the keyword

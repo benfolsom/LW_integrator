@@ -9,12 +9,14 @@ conjugate momenta Pt which is used internally in the covariant formulation.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
 from .constants import C_MMNS
-from .types import ParticleState, Trajectory
+from .types import ParticleState, Trajectory, TrajectoryArrays
+
+TrajectoryInput = Union[Trajectory, TrajectoryArrays]
 
 
 def compute_total_energy(state: ParticleState) -> float:
@@ -119,7 +121,7 @@ def compute_total_momentum(state: ParticleState) -> Tuple[float, float, float]:
 
 
 def analyze_trajectory_energy(
-    trajectory: Trajectory,
+    trajectory: TrajectoryInput,
     check_interval: int = 1,
     relative_threshold: float = 1.0,
 ) -> Dict[str, any]:
@@ -171,27 +173,46 @@ def analyze_trajectory_energy(
     relative_changes = []
     jumps_detected = []
 
-    for i in range(0, len(trajectory), check_interval):
-        try:
-            energy = compute_total_energy(trajectory[i])
-            ke = compute_kinetic_energy(trajectory[i])
+    if isinstance(trajectory, TrajectoryArrays):
+        n_steps = trajectory.n_steps
+        gamma_all = trajectory.gamma  # [n_steps, n_particles]
+        mass_all = trajectory.m       # [n_particles]
+        for i in range(0, n_steps, check_interval):
+            energy = float(np.sum(gamma_all[i] * mass_all * C_MMNS * C_MMNS))
+            ke = float(np.sum((gamma_all[i] - 1.0) * mass_all * C_MMNS * C_MMNS))
             energies.append(energy)
             kinetic_energies.append(ke)
             step_indices.append(i)
-
             if len(energies) > 1:
                 prev_energy = energies[-2]
                 if prev_energy > 0:
                     rel_change = abs(energy - prev_energy) / prev_energy
                     relative_changes.append(rel_change)
-
                     if rel_change > relative_threshold:
                         jumps_detected.append((i, rel_change))
                 else:
                     relative_changes.append(0.0)
-        except (ValueError, KeyError):
-            # Skip steps that don't have required fields
-            continue
+    else:
+        for i in range(0, len(trajectory), check_interval):
+            try:
+                energy = compute_total_energy(trajectory[i])
+                ke = compute_kinetic_energy(trajectory[i])
+                energies.append(energy)
+                kinetic_energies.append(ke)
+                step_indices.append(i)
+
+                if len(energies) > 1:
+                    prev_energy = energies[-2]
+                    if prev_energy > 0:
+                        rel_change = abs(energy - prev_energy) / prev_energy
+                        relative_changes.append(rel_change)
+
+                        if rel_change > relative_threshold:
+                            jumps_detected.append((i, rel_change))
+                    else:
+                        relative_changes.append(0.0)
+            except (ValueError, KeyError):
+                continue
 
     initial_energy = energies[0] if energies else 0.0
     final_energy = energies[-1] if energies else 0.0
@@ -250,7 +271,7 @@ def print_energy_analysis(
     print("=" * 70 + "\n")
 
 
-def check_superluminal_velocities(trajectory: Trajectory) -> Dict[str, any]:
+def check_superluminal_velocities(trajectory: TrajectoryInput) -> Dict[str, any]:
     """Check for beta >= 1.0 (superluminal velocities) in trajectory.
 
     Parameters
@@ -271,18 +292,25 @@ def check_superluminal_velocities(trajectory: Trajectory) -> Dict[str, any]:
     max_beta = 0.0
     max_beta_step = 0
 
-    for i, state in enumerate(trajectory):
-        if "bx" in state and "by" in state and "bz" in state:
-            beta_squared = state["bx"] ** 2 + state["by"] ** 2 + state["bz"] ** 2
-            beta = np.sqrt(beta_squared)
-            beta_max_this_step = float(np.max(beta))
+    if isinstance(trajectory, TrajectoryArrays):
+        beta_sq = trajectory.bx**2 + trajectory.by**2 + trajectory.bz**2  # [n_steps, n_particles]
+        beta_max_per_step = np.sqrt(np.max(beta_sq, axis=1))  # [n_steps]
+        max_beta_step = int(np.argmax(beta_max_per_step))
+        max_beta = float(beta_max_per_step[max_beta_step])
+        violations = [i for i in range(trajectory.n_steps) if beta_max_per_step[i] >= 1.0]
+    else:
+        for i, state in enumerate(trajectory):
+            if "bx" in state and "by" in state and "bz" in state:
+                beta_squared = state["bx"] ** 2 + state["by"] ** 2 + state["bz"] ** 2
+                beta = np.sqrt(beta_squared)
+                beta_max_this_step = float(np.max(beta))
 
-            if beta_max_this_step > max_beta:
-                max_beta = beta_max_this_step
-                max_beta_step = i
+                if beta_max_this_step > max_beta:
+                    max_beta = beta_max_this_step
+                    max_beta_step = i
 
-            if beta_max_this_step >= 1.0:
-                violations.append(i)
+                if beta_max_this_step >= 1.0:
+                    violations.append(i)
 
     return {
         "violations_found": len(violations) > 0,
@@ -293,7 +321,7 @@ def check_superluminal_velocities(trajectory: Trajectory) -> Dict[str, any]:
 
 
 def check_gamma_consistency(
-    trajectory: Trajectory, tolerance: float = 1e-6
+    trajectory: TrajectoryInput, tolerance: float = 1e-6
 ) -> Dict[str, any]:
     """Check that gamma is consistent with beta throughout the trajectory.
 
@@ -319,31 +347,44 @@ def check_gamma_consistency(
     max_rel_error = 0.0
     max_error_step = 0
 
-    for i, state in enumerate(trajectory):
-        if not all(k in state for k in ["bx", "by", "bz", "gamma"]):
-            continue
+    if isinstance(trajectory, TrajectoryArrays):
+        beta_sq = np.minimum(
+            trajectory.bx**2 + trajectory.by**2 + trajectory.bz**2, 0.9999999999
+        )  # [n_steps, n_particles]
+        gamma_calc = 1.0 / np.sqrt(1.0 - beta_sq)
+        gamma_stored = trajectory.gamma
+        rel_err = np.abs(gamma_calc - gamma_stored) / gamma_stored
+        max_err_per_step = np.max(rel_err, axis=1)  # [n_steps]
+        for i in range(trajectory.n_steps):
+            if max_err_per_step[i] > max_rel_error:
+                max_rel_error = float(max_err_per_step[i])
+                max_error_step = i
+            if max_err_per_step[i] > tolerance:
+                inconsistent_steps.append(i)
+    else:
+        for i, state in enumerate(trajectory):
+            if not all(k in state for k in ["bx", "by", "bz", "gamma"]):
+                continue
 
-        bx = np.asarray(state["bx"])
-        by = np.asarray(state["by"])
-        bz = np.asarray(state["bz"])
-        gamma_stored = np.asarray(state["gamma"])
+            bx = np.asarray(state["bx"])
+            by = np.asarray(state["by"])
+            bz = np.asarray(state["bz"])
+            gamma_stored = np.asarray(state["gamma"])
 
-        beta_squared = bx**2 + by**2 + bz**2
-        # Clamp to prevent numerical issues
-        beta_squared = np.minimum(beta_squared, 0.9999999999)
+            beta_squared = bx**2 + by**2 + bz**2
+            beta_squared = np.minimum(beta_squared, 0.9999999999)
 
-        gamma_calculated = 1.0 / np.sqrt(1.0 - beta_squared)
+            gamma_calculated = 1.0 / np.sqrt(1.0 - beta_squared)
 
-        # Check relative error
-        rel_error = np.abs(gamma_calculated - gamma_stored) / gamma_stored
-        max_rel_this_step = float(np.max(rel_error))
+            rel_error = np.abs(gamma_calculated - gamma_stored) / gamma_stored
+            max_rel_this_step = float(np.max(rel_error))
 
-        if max_rel_this_step > max_rel_error:
-            max_rel_error = max_rel_this_step
-            max_error_step = i
+            if max_rel_this_step > max_rel_error:
+                max_rel_error = max_rel_this_step
+                max_error_step = i
 
-        if max_rel_this_step > tolerance:
-            inconsistent_steps.append(i)
+            if max_rel_this_step > tolerance:
+                inconsistent_steps.append(i)
 
     return {
         "consistent": len(inconsistent_steps) == 0,
@@ -354,7 +395,7 @@ def check_gamma_consistency(
 
 
 def validate_trajectory(
-    trajectory: Trajectory,
+    trajectory: TrajectoryInput,
     energy_threshold: float = 1.0,
     conservation_tolerance: float = 0.01,
     verbose: bool = True,
@@ -469,7 +510,7 @@ def validate_trajectory(
 
 
 def find_radiation_reaction_activations(
-    trajectory: Trajectory,
+    trajectory: TrajectoryInput,
 ) -> List[Tuple[int, int]]:
     """Identify steps where radiation reaction force was likely active.
 
@@ -489,23 +530,27 @@ def find_radiation_reaction_activations(
     """
     activations = []
 
-    for i in range(1, len(trajectory)):
-        if "bdotz" not in trajectory[i] or "bdotz" not in trajectory[i - 1]:
-            continue
+    if isinstance(trajectory, TrajectoryArrays):
+        threshold = 1e-3
+        delta_bdotz = np.abs(np.diff(trajectory.bdotz, axis=0))  # [n_steps-1, n_particles]
+        step_indices, particle_indices = np.where(delta_bdotz > threshold)
+        for i, p in zip(step_indices, particle_indices):
+            activations.append((int(i) + 1, int(p)))
+    else:
+        for i in range(1, len(trajectory)):
+            if "bdotz" not in trajectory[i] or "bdotz" not in trajectory[i - 1]:
+                continue
 
-        bdotz_curr = np.asarray(trajectory[i]["bdotz"])
-        bdotz_prev = np.asarray(trajectory[i - 1]["bdotz"])
+            bdotz_curr = np.asarray(trajectory[i]["bdotz"])
+            bdotz_prev = np.asarray(trajectory[i - 1]["bdotz"])
 
-        # Look for sudden changes in acceleration
-        delta_bdotz = np.abs(bdotz_curr - bdotz_prev)
+            delta_bdotz = np.abs(bdotz_curr - bdotz_prev)
 
-        # Threshold based on magnitude (radiation reaction typically adds
-        # significant damping when active)
-        threshold = 1e-3  # amu·mm/ns³ characteristic scale
+            threshold = 1e-3
 
-        activated = np.where(delta_bdotz > threshold)[0]
-        for particle_idx in activated:
-            activations.append((i, int(particle_idx)))
+            activated = np.where(delta_bdotz > threshold)[0]
+            for particle_idx in activated:
+                activations.append((i, int(particle_idx)))
 
     return activations
 

@@ -4,6 +4,14 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### SOA Trajectory Refactor — Phase 3–5 Completion (June 2026)
+
+- **Perf** — Vectorized `gather_external_samples_soa` inner gather and interpolation loops: replaced 10 per-field Python list comprehensions with NumPy fancy indexing (`traj_ext.bx[indices, particle_indices]`) and replaced the per-particle interpolation loop with a masked vectorized blend; eliminates all remaining Python-level loops in the SOA gather path
+- **Refactor** — Removed `state_at()` dict shim from `chrono_match_indices_soa`: replaced `traj.state_at()` + `compute_instantaneous_distance()` with inline direct SOA field access (`traj.x[index_traj, index_part] - traj_ext.x[index_traj, :]`); no dict allocation per chrono-match call
+- **API** — `retarded_integrator` now returns a 4-tuple `(trajectory, trajectory_drv, traj_soa, traj_drv_soa)` where the last two elements are `TrajectoryArrays | None`; the Numba fast-path returns `None` for the SOA slots; all call sites updated to `traj, drv, *_soa_out = retarded_integrator(...)`
+- **API** — `diagnostics.py` functions (`analyze_trajectory_energy`, `check_superluminal_velocities`, `check_gamma_consistency`, `validate_trajectory`, `find_radiation_reaction_activations`) now accept `TrajectoryInput = Union[Trajectory, TrajectoryArrays]`; SOA branches use fully vectorized NumPy operations; legacy dict-list paths preserved
+- **Files modified** — `core/vectorized_interactions.py`, `core/distances.py`, `core/integration_runner.py`, `core/diagnostics.py`, `core/performance.py`, `core/trajectory_integrator.py`, `lw_integrator/cli.py`, `lw_integrator/testbed_runner.py`, `examples/adaptive_timestep_example.py`, `examples/energy_monitoring_example.py`, all affected test files
+
 - **Bug** — SC particle-slice `{k: v[[j]] for k, v in step.items()}` failed with `IndexError` when any state-dict array had a different length than `n_particles` (e.g. metadata or per-step scalars); replaced with `_slice_step()` which only indexes arrays whose first-axis length equals `n_particles`
 - **Files modified** — `core/equations.py`
 

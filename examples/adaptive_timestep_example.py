@@ -123,7 +123,7 @@ def run_with_adaptive_timestep():
     print("\nRunning simulation with adaptive timestep...\n")
 
     # Run the simulation
-    trajectory, _ = retarded_integrator(
+    trajectory, _, *_soa_out = retarded_integrator(
         steps=200,
         h_step=1e-7,  # Base timestep in ns
         wall_z=1000.0,
@@ -239,7 +239,7 @@ def comparison_run():
     for name, adaptive_config in configs:
         print(f"\nRunning: {name}")
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=100,
             h_step=1e-7,
             wall_z=1000.0,

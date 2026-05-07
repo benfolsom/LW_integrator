@@ -112,7 +112,7 @@ def test_retarded_integrator_uses_numba_path_when_supported(
         use_numba=True,
     )
 
-    assert result == ([{"mode": "numba"}], [{"driver": "numba"}])
+    assert result == ([{"mode": "numba"}], [{"driver": "numba"}], None, None)
     assert calls["steps"] == 2
     assert calls["image_subcharge_count"] == 8
     assert calls["use_image_weighting"] is False
@@ -151,7 +151,7 @@ def test_retarded_integrator_logs_proximity_transition_zone(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=2,
         h_step=1.0,
         wall_z=0.0,
@@ -193,7 +193,7 @@ def test_retarded_integrator_falls_back_from_numba_for_unsupported_features(
     monkeypatch.setitem(sys.modules, "core.performance", module)
 
     messages: list[str] = []
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=1,
         h_step=1e-3,
         wall_z=0.0,
@@ -229,7 +229,7 @@ def test_retarded_integrator_logs_when_numba_is_unavailable(
     monkeypatch.setitem(sys.modules, "core.performance", module)
 
     logger = _LoggerRecorder()
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=1,
         h_step=1e-3,
         wall_z=0.0,
@@ -271,7 +271,7 @@ def test_retarded_integrator_logs_when_numba_import_fails(
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     logger = _LoggerRecorder()
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=1,
         h_step=1e-3,
         wall_z=0.0,
@@ -387,7 +387,7 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, _ = retarded_integrator(
+    trajectory, _, *_soa_out = retarded_integrator(
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -449,7 +449,7 @@ def test_retarded_integrator_accepts_energy_jump_after_max_refinement_attempts(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -512,7 +512,7 @@ def test_retarded_integrator_accepts_energy_jump_at_minimum_timestep(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -574,7 +574,7 @@ def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -629,7 +629,7 @@ def test_retarded_integrator_gamma_blowup_at_min_timestep_marks_particle_dead(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -701,7 +701,7 @@ def test_retarded_integrator_gamma_blowup_retries_with_reduced_timestep(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=2,
         h_step=1.0,
         wall_z=100.0,
@@ -765,7 +765,7 @@ def test_retarded_integrator_gamma_blowup_hits_max_retries(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=2,
         h_step=1.0,
         wall_z=100.0,
@@ -831,7 +831,7 @@ def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=4,
         h_step=1.0,
         wall_z=100.0,
@@ -907,7 +907,7 @@ def test_retarded_integrator_unstable_probe_restarts_cooldown(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=4,
         h_step=1.0,
         wall_z=100.0,
@@ -966,7 +966,7 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
 
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -1015,7 +1015,7 @@ def test_retarded_integrator_logs_relative_cutoff_debug_message(
 
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=2,
         h_step=1.0,
         wall_z=0.0,
@@ -1070,7 +1070,7 @@ def test_retarded_integrator_halts_when_all_particles_dead(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=4,
         h_step=1.0,
         wall_z=100.0,
@@ -1194,7 +1194,7 @@ def test_retarded_integrator_switching_wall_advances_cutoff_and_wall(
         fake_switching_image,
     )
 
-    trajectory, driver = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=3,
         h_step=1.0,
         wall_z=0.0,
@@ -1245,7 +1245,7 @@ def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, _ = retarded_integrator(
+    trajectory, _, *_soa_out = retarded_integrator(
         steps=2,
         h_step=1.0,
         wall_z=0.0,

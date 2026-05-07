@@ -457,7 +457,7 @@ def test_run_integrator_matches_direct_invocation_for_simple_case():
         z_cutoff=0.0,
     )
 
-    direct_traj, direct_drv = retarded_integrator(
+    direct_traj, direct_drv, *_soa_out = retarded_integrator(
         steps=config.steps,
         h_step=config.time_step,
         wall_z=config.wall_position,
@@ -474,7 +474,7 @@ def test_run_integrator_matches_direct_invocation_for_simple_case():
         use_numba=False,
     )
 
-    wrapped_traj, wrapped_drv = run_integrator(config, copy.deepcopy(rider), None)
+    wrapped_traj, wrapped_drv, *_soa_out = run_integrator(config, copy.deepcopy(rider), None)
 
     assert len(direct_traj) == config.steps
     assert len(wrapped_traj) == config.steps

@@ -144,7 +144,7 @@ def test_retarded_integrator_conservation_metrics() -> None:
 
     rider_state = create_bunch_uniform_distribution(BASIC_TWO_PARTICLE, PROTON, "line")
 
-    trajectory, _ = retarded_integrator(
+    trajectory, _, *_soa_out = retarded_integrator(
         steps=config.steps,
         h_step=config.time_step,
         wall_z=config.wall_position,

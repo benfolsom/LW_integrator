@@ -597,7 +597,7 @@ def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
 # ---------------------------------------------------------------------------
 
 
-def run_simulation(request: SimulationRequest) -> Tuple[Trajectory, Trajectory]:
+def run_simulation(request: SimulationRequest) -> tuple:
     return retarded_integrator(
         steps=request.config.steps,
         h_step=request.config.time_step,
@@ -786,7 +786,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
-    trajectory, driver = run_simulation(request)
+    trajectory, driver, *_soa_out = run_simulation(request)
     report = build_report(trajectory, driver)
 
     if args.output is not None:

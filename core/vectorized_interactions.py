@@ -247,17 +247,17 @@ def gather_external_samples_soa(
     valid_mask = np.ones(n_ext, dtype=bool)
     valid_mask &= (indices >= 0) & (indices < traj_ext.n_steps)
 
-    # TODO: vectorize with fancy indexing: traj_ext.bx[indices, np.arange(n_ext)]
-    bx = np.array([traj_ext.bx[indices[j], j] for j in range(n_ext)])
-    by = np.array([traj_ext.by[indices[j], j] for j in range(n_ext)])
-    bz = np.array([traj_ext.bz[indices[j], j] for j in range(n_ext)])
-    bdotx = np.array([traj_ext.bdotx[indices[j], j] for j in range(n_ext)])
-    bdoty = np.array([traj_ext.bdoty[indices[j], j] for j in range(n_ext)])
-    bdotz = np.array([traj_ext.bdotz[indices[j], j] for j in range(n_ext)])
-    gamma = np.array([traj_ext.gamma[indices[j], j] for j in range(n_ext)])
-    x = np.array([traj_ext.x[indices[j], j] for j in range(n_ext)])
-    y = np.array([traj_ext.y[indices[j], j] for j in range(n_ext)])
-    z = np.array([traj_ext.z[indices[j], j] for j in range(n_ext)])
+    particle_indices = np.arange(n_ext)
+    bx = traj_ext.bx[indices, particle_indices]
+    by = traj_ext.by[indices, particle_indices]
+    bz = traj_ext.bz[indices, particle_indices]
+    bdotx = traj_ext.bdotx[indices, particle_indices]
+    bdoty = traj_ext.bdoty[indices, particle_indices]
+    bdotz = traj_ext.bdotz[indices, particle_indices]
+    gamma = traj_ext.gamma[indices, particle_indices]
+    x = traj_ext.x[indices, particle_indices]
+    y = traj_ext.y[indices, particle_indices]
+    z = traj_ext.z[indices, particle_indices]
     charge = traj_ext.q.copy()
 
     if (
@@ -266,22 +266,22 @@ def gather_external_samples_soa(
         and needs_interpolation is not None
         and np.any(needs_interpolation)
     ):
-        for j in range(n_ext):
-            if not needs_interpolation[j] or indices_next[j] < 0:
-                continue
-            ni = indices_next[j]
-            w = weights[j]
+        interp_mask = needs_interpolation & (indices_next >= 0)
+        if np.any(interp_mask):
+            ni = indices_next[interp_mask]
+            pi = particle_indices[interp_mask]
+            w = weights[interp_mask]
             w1 = 1.0 - w
-            bx[j] = w * bx[j] + w1 * traj_ext.bx[ni, j]
-            by[j] = w * by[j] + w1 * traj_ext.by[ni, j]
-            bz[j] = w * bz[j] + w1 * traj_ext.bz[ni, j]
-            bdotx[j] = w * bdotx[j] + w1 * traj_ext.bdotx[ni, j]
-            bdoty[j] = w * bdoty[j] + w1 * traj_ext.bdoty[ni, j]
-            bdotz[j] = w * bdotz[j] + w1 * traj_ext.bdotz[ni, j]
-            gamma[j] = w * gamma[j] + w1 * traj_ext.gamma[ni, j]
-            x[j] = w * x[j] + w1 * traj_ext.x[ni, j]
-            y[j] = w * y[j] + w1 * traj_ext.y[ni, j]
-            z[j] = w * z[j] + w1 * traj_ext.z[ni, j]
+            bx[interp_mask] = w * bx[interp_mask] + w1 * traj_ext.bx[ni, pi]
+            by[interp_mask] = w * by[interp_mask] + w1 * traj_ext.by[ni, pi]
+            bz[interp_mask] = w * bz[interp_mask] + w1 * traj_ext.bz[ni, pi]
+            bdotx[interp_mask] = w * bdotx[interp_mask] + w1 * traj_ext.bdotx[ni, pi]
+            bdoty[interp_mask] = w * bdoty[interp_mask] + w1 * traj_ext.bdoty[ni, pi]
+            bdotz[interp_mask] = w * bdotz[interp_mask] + w1 * traj_ext.bdotz[ni, pi]
+            gamma[interp_mask] = w * gamma[interp_mask] + w1 * traj_ext.gamma[ni, pi]
+            x[interp_mask] = w * x[interp_mask] + w1 * traj_ext.x[ni, pi]
+            y[interp_mask] = w * y[interp_mask] + w1 * traj_ext.y[ni, pi]
+            z[interp_mask] = w * z[interp_mask] + w1 * traj_ext.z[ni, pi]
 
     return ExternalSampleBatch(
         bx=bx,

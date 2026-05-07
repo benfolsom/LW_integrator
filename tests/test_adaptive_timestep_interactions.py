@@ -105,7 +105,7 @@ def test_sweep_timestep_with_adaptive_disabled():
 
     # Run with adaptive disabled
     print("\nRunning integration with adaptive timestep DISABLED...")
-    traj, _ = retarded_integrator(
+    traj, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,
         wall_z=200.0,  # Well beyond target
@@ -195,7 +195,7 @@ def test_sweep_timestep_with_proximity_refinement():
     print(
         f"  Refinement zone: {aperture_radius * 5.0:.1f} mm from wall (5 aperture radii)"
     )
-    traj, _ = retarded_integrator(
+    traj, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,  # Use sweep-calculated timestep as INITIAL value
         wall_z=wall_z,
@@ -279,7 +279,7 @@ def test_sweep_timestep_with_energy_jump_refinement():
     )
 
     print("\nRunning integration with ENERGY-JUMP adaptive timestep...")
-    traj, _ = retarded_integrator(
+    traj, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,  # Use sweep-calculated timestep as INITIAL value
         wall_z=200.0,
@@ -351,7 +351,7 @@ def test_fixed_vs_adaptive_comparison():
 
     # Run 1: No adaptive
     print("\nRun 1: Adaptive DISABLED")
-    traj_fixed, _ = retarded_integrator(
+    traj_fixed, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,
         wall_z=100.0,
@@ -374,7 +374,7 @@ def test_fixed_vs_adaptive_comparison():
         proximity_reduction_factor=5,
         debug=False,
     )
-    traj_adaptive, _ = retarded_integrator(
+    traj_adaptive, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,
         wall_z=100.0,

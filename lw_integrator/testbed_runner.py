@@ -1327,7 +1327,7 @@ def run_testbed(
                 )
 
         # Run core integrator directly
-        core_traj_rider, core_traj_driver = retarded_integrator(
+        core_traj_rider, core_traj_driver, *_soa_out = retarded_integrator(
             steps=_actual_steps,
             h_step=_actual_h_step,
             wall_z=filtered_core_params.get("wall_z", 1e5),

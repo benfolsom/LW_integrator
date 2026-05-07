@@ -154,7 +154,7 @@ class TestSingleRunAPI:
 
         rider = create_test_particle(gamma=1000.0, z_position=0.0)
 
-        trajectory_rider, trajectory_driver = run_integrator(
+        trajectory_rider, trajectory_driver, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -184,7 +184,7 @@ class TestSingleRunAPI:
 
         rider = create_test_particle(gamma=1000.0, z_position=0.0)
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -225,7 +225,7 @@ class TestSingleRunAPI:
             gamma=1000.0, z_position=0.0, transverse_offset=0.2
         )
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -275,7 +275,7 @@ class TestSingleRunAPI:
         )
 
         # Should complete even with jumps detected
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -319,7 +319,7 @@ class TestAdaptiveTimestep:
 
         rider = create_test_particle(gamma=5000.0, z_position=0.0)
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -591,7 +591,7 @@ class TestEnergyMonitoringIntegration:
             gamma=10000.0, z_position=0.0, transverse_offset=0.1
         )
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,

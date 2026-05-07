@@ -656,7 +656,7 @@ def run_optimised_integrator(
         import time
 
         start = time.time()
-        base_traj, base_drv = retarded_integrator(
+        base_traj, base_drv, *_soa_out = retarded_integrator(
             config.steps,
             config.time_step,
             config.wall_position,
