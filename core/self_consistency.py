@@ -313,6 +313,7 @@ def self_consistent_step(
     chrono_mode: ChronoMatchingMode,
     startup_mode: StartupMode,
     step_idx: Optional[int] = None,
+    space_charge: Optional[Any] = None,
     cancel_callback: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
@@ -377,6 +378,7 @@ def self_consistent_step(
         config,
         step_idx,
         cancel_callback,
+        **({"space_charge": space_charge} if space_charge is not None else {}),
     )
 
     return result

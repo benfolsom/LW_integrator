@@ -249,8 +249,17 @@ class IntegratorGUITabMixin:
         row = 0
 
         ttk.Label(core_frame, text="Steps:").grid(row=row, column=0, sticky="w", pady=2)
-        steps_widget = ttk.Entry(core_frame, textvariable=self.steps_var, width=16)
-        steps_widget.grid(row=row, column=1, sticky="ew", pady=2)
+        self.steps_entry = ttk.Entry(core_frame, textvariable=self.steps_var, width=16)
+        self.steps_entry.grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+        self.steps_auto_hint = ttk.Label(
+            core_frame,
+            text="(computed by auto-duration)",
+            foreground="gray",
+            font=("TkDefaultFont", 8, "italic"),
+        )
+        self.steps_auto_hint.grid(row=row, column=1, sticky="w", pady=(0, 2))
+        self.steps_auto_hint.grid_remove()
         row += 1
 
         ttk.Label(core_frame, text="Seed:").grid(row=row, column=0, sticky="w", pady=2)
@@ -290,6 +299,17 @@ class IntegratorGUITabMixin:
             widget.grid(row=row, column=1, sticky="ew", pady=2)
             self.core_param_widgets[name] = widget
             row += 1
+
+            if name == "time_step":
+                self.time_step_auto_hint = ttk.Label(
+                    core_frame,
+                    text="(computed by auto-duration)",
+                    foreground="gray",
+                    font=("TkDefaultFont", 8, "italic"),
+                )
+                self.time_step_auto_hint.grid(row=row, column=1, sticky="w", pady=(0, 2))
+                self.time_step_auto_hint.grid_remove()
+                row += 1
 
         ttk.Separator(core_frame, orient="horizontal").grid(
             row=row, column=0, columnspan=2, sticky="ew", pady=(10, 10)
@@ -636,6 +656,8 @@ class IntegratorGUITabMixin:
 
         self._build_self_consistency_section(stability_frame)
         self._build_adaptive_timestep_section(stability_frame)
+        self._build_space_charge_section(stability_frame)
+        self._build_auto_duration_section(stability_frame)
 
         # Help text removed - was obscuring Adaptive Timestep Refinement section
         # All parameter help is now available via ⓘ tooltips
@@ -644,6 +666,8 @@ class IntegratorGUITabMixin:
         self._toggle_self_consistency_controls()
         self._toggle_chrono_controls()
         self._toggle_adaptive_timestep_controls()
+        self._toggle_space_charge_controls()
+        self._toggle_auto_duration_controls()
 
     def _build_self_consistency_section(self, stability_frame: ttk.Frame) -> None:
         """Build self-consistency and gamma reconciliation controls."""
@@ -1444,4 +1468,153 @@ class IntegratorGUITabMixin:
         self.adaptive_max_substeps_display.grid(
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
+
+    def _build_space_charge_section(self, stability_frame: ttk.Frame) -> None:
+        """Build intra-bunch space-charge controls."""
+        from .gui import Tooltip
+
+        sc_frame = ttk.LabelFrame(
+            stability_frame, text="Intra-Bunch Space Charge", padding=8
+        )
+        sc_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        sc_frame.columnconfigure(1, weight=1)
+
+        self.space_charge_enable_check = ttk.Checkbutton(
+            sc_frame,
+            text="Enable intra-bunch space-charge forces (rider-rider)",
+            variable=self.space_charge_enabled_var,
+            command=self._toggle_space_charge_controls,
+        )
+        self.space_charge_enable_check.grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=2
+        )
+
+        ret_frame = ttk.Frame(sc_frame)
+        ret_frame.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.space_charge_retarded_label = ttk.Label(ret_frame, text="Use retarded fields:")
+        self.space_charge_retarded_label.pack(side="left")
+        ret_help = ttk.Label(ret_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        ret_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            ret_help,
+            "When enabled (default), rider-rider forces use full retarded\n"
+            "Liénard-Wiechert fields (causal, relativistically correct).\n\n"
+            "When disabled, instantaneous Coulomb forces are used instead\n"
+            "(faster but not Lorentz-covariant).\n\n"
+            "Recommended: keep enabled.",
+        )
+        self.space_charge_retarded_check = ttk.Checkbutton(
+            sc_frame,
+            variable=self.space_charge_retarded_var,
+        )
+        self.space_charge_retarded_check.grid(row=1, column=1, sticky="w", pady=2)
+
+        soft_frame = ttk.Frame(sc_frame)
+        soft_frame.grid(row=2, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.space_charge_softening_label = ttk.Label(
+            soft_frame, text="Plummer softening (mm):"
+        )
+        self.space_charge_softening_label.pack(side="left")
+        soft_help = ttk.Label(soft_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        soft_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            soft_help,
+            "Plummer softening length ε (mm).\n\n"
+            "Replaces R with sqrt(R² + ε²) in force computation,\n"
+            "preventing divergence when two macroparticles are very close.\n\n"
+            "0.0 = no softening (exact Coulomb/LW, default).\n"
+            "Set to ~10% of typical inter-particle spacing for\n"
+            "macroparticle runs with pcount > 4.",
+        )
+        self.space_charge_softening_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.space_charge_softening_mm_var,
+            width=16,
+        )
+        self.space_charge_softening_entry.grid(row=2, column=1, sticky="ew", pady=2)
+
+        self._space_charge_sub_widgets = [
+            self.space_charge_retarded_label,
+            self.space_charge_retarded_check,
+            self.space_charge_softening_label,
+            self.space_charge_softening_entry,
+        ]
+
+    def _toggle_space_charge_controls(self) -> None:
+        enabled = self.space_charge_enabled_var.get()
+        state = "normal" if enabled else "disabled"
+        for widget in getattr(self, "_space_charge_sub_widgets", []):
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _build_auto_duration_section(self, stability_frame: ttk.Frame) -> None:
+        """Build auto-duration crossing mode controls."""
+        from .gui import Tooltip
+
+        ad_frame = ttk.LabelFrame(
+            stability_frame,
+            text="Auto-Duration Crossing (BUNCH_TO_BUNCH)",
+            padding=8,
+        )
+        ad_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ad_frame.columnconfigure(1, weight=1)
+
+        enable_frame = ttk.Frame(ad_frame)
+        enable_frame.grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+        self.auto_duration_enable_check = ttk.Checkbutton(
+            enable_frame,
+            text="Auto-compute timestep and steps from crossing geometry",
+            variable=self.auto_duration_enabled_var,
+            command=self._toggle_auto_duration_controls,
+        )
+        self.auto_duration_enable_check.pack(side="left")
+        ad_help = ttk.Label(enable_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        ad_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            ad_help,
+            "Derives h_step and total steps from the actual particle betas and separation\n"
+            "so the simulation always covers the full crossing window.\n"
+            "Overrides manual time_step and steps when enabled.",
+        )
+
+        steps_label_frame = ttk.Frame(ad_frame)
+        steps_label_frame.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.auto_duration_steps_label = ttk.Label(
+            steps_label_frame, text="Crossing steps target:"
+        )
+        self.auto_duration_steps_label.pack(side="left")
+        self.auto_duration_steps_spin = ttk.Spinbox(
+            ad_frame,
+            from_=10,
+            to=5000,
+            textvariable=self.auto_duration_crossing_steps_var,
+            width=8,
+        )
+        self.auto_duration_steps_spin.grid(row=1, column=1, sticky="w", pady=2)
+
+        factor_label_frame = ttk.Frame(ad_frame)
+        factor_label_frame.grid(row=2, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.auto_duration_factor_label = ttk.Label(
+            factor_label_frame, text="Post-crossing factor:"
+        )
+        self.auto_duration_factor_label.pack(side="left")
+        self.auto_duration_factor_entry = ttk.Entry(
+            ad_frame,
+            textvariable=self.auto_duration_post_factor_var,
+            width=8,
+        )
+        self.auto_duration_factor_entry.grid(row=2, column=1, sticky="w", pady=2)
+
+        self._auto_duration_sub_widgets = [
+            self.auto_duration_steps_label,
+            self.auto_duration_steps_spin,
+            self.auto_duration_factor_label,
+            self.auto_duration_factor_entry,
+        ]
+
+    def _toggle_auto_duration_controls(self) -> None:
+        # Implemented in gui_state_mixins.IntegratorGUIStateMixin
+        pass
 

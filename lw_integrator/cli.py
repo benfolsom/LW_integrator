@@ -168,6 +168,40 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.set_defaults(adaptive_debug=None)
     parser.add_argument(
+        "--space-charge",
+        action="store_true",
+        default=False,
+        help="Enable intra-bunch space-charge forces (rider-rider retarded Liénard-Wiechert).",
+    )
+    parser.add_argument(
+        "--space-charge-softening-mm",
+        type=float,
+        default=0.0,
+        metavar="MM",
+        help="Plummer softening length (mm) for space-charge interactions. Default: 0 (no softening).",
+    )
+    parser.add_argument(
+        "--auto-duration",
+        action="store_true",
+        default=False,
+        dest="auto_duration",
+        help="Auto-compute timestep and steps to cover the BUNCH_TO_BUNCH crossing window.",
+    )
+    parser.add_argument(
+        "--auto-duration-steps",
+        type=int,
+        default=None,
+        dest="auto_duration_crossing_steps",
+        help="Target steps to cover the approach (default: 200).",
+    )
+    parser.add_argument(
+        "--auto-duration-post-factor",
+        type=float,
+        default=None,
+        dest="auto_duration_post_factor",
+        help="Total steps = crossing_steps * post_factor (default: 2.0).",
+    )
+    parser.add_argument(
         "--steps",
         type=int,
         help="Total number of integration steps (overrides configuration/default).",
@@ -377,6 +411,18 @@ def _merge_simulation_payload(
     for key in override_keys:
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
+
+    if getattr(args, "space_charge", False):
+        result["space_charge_enabled"] = True
+    if getattr(args, "space_charge_softening_mm", 0.0) != 0.0:
+        result["space_charge_softening_mm"] = args.space_charge_softening_mm
+
+    if getattr(args, "auto_duration", False):
+        result["auto_duration_enabled"] = True
+    if getattr(args, "auto_duration_crossing_steps", None) is not None:
+        result["auto_duration_crossing_steps"] = args.auto_duration_crossing_steps
+    if getattr(args, "auto_duration_post_factor", None) is not None:
+        result["auto_duration_post_factor"] = args.auto_duration_post_factor
 
     return result
 

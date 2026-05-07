@@ -192,6 +192,22 @@ class IntegratorConfig:
     bunch_transv_mom: float = 0.0
 
 
+@dataclass
+class SpaceChargeConfig:
+    """Configuration for intra-bunch space-charge forces.
+
+    When enabled, each rider particle also receives retarded Liénard-Wiechert
+    forces from all *other* rider particles (j ≠ i) in addition to the
+    driver/image forces already computed.  The Numba hot-path is bypassed
+    automatically; the feature uses the same vectorised Python kernel as
+    self-consistency and adaptive-timestep modes.
+    """
+
+    enabled: bool = True
+    retarded: bool = True        # full retarded fields; False → instantaneous Coulomb
+    softening_mm: float = 0.0    # Plummer softening ε (mm); 0 = no softening
+
+
 __all__ = [
     "ParticleState",
     "Trajectory",
@@ -200,5 +216,6 @@ __all__ = [
     "ChronoMatchingMode",
     "StartupMode",
     "IntegratorConfig",
+    "SpaceChargeConfig",
     "C_MMNS",
 ]

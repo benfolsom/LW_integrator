@@ -13,6 +13,7 @@ terminals that do not default to UTF-8.
 from __future__ import annotations
 
 import json
+import math
 import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
@@ -335,6 +336,16 @@ class SimulationOptions:
     # Note: max_substeps_per_step is now auto-calculated in AdaptiveTimestepConfig
     # from min_timestep_factor to prevent time discontinuities
 
+    # Intra-bunch space-charge options
+    space_charge_enabled: bool = False
+    space_charge_retarded: bool = True
+    space_charge_softening_mm: float = 0.0
+
+    # Auto-duration crossing mode (BUNCH_TO_BUNCH only)
+    auto_duration_enabled: bool = False
+    auto_duration_crossing_steps: int = 200
+    auto_duration_post_factor: float = 2.0
+
     # Logging options
     save_log_file: bool = False
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
@@ -412,6 +423,12 @@ class SimulationOptions:
             "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
             # max_substeps no longer stored - auto-calculated from min_timestep_factor
+            "space_charge_enabled": self.space_charge_enabled,
+            "space_charge_retarded": self.space_charge_retarded,
+            "space_charge_softening_mm": self.space_charge_softening_mm,
+            "auto_duration_enabled": self.auto_duration_enabled,
+            "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
+            "auto_duration_post_factor": self.auto_duration_post_factor,
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -577,6 +594,12 @@ class SimulationOptions:
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
             # max_substeps no longer loaded - auto-calculated from min_timestep_factor
+            space_charge_enabled=_bool("space_charge_enabled", False),
+            space_charge_retarded=_bool("space_charge_retarded", True),
+            space_charge_softening_mm=_float("space_charge_softening_mm", 0.0),
+            auto_duration_enabled=_bool("auto_duration_enabled", False),
+            auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
+            auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
             self_consistency_gamma_reconciliation_method=_str(
                 "self_consistency_gamma_reconciliation_method", "DISABLED"
             ),
@@ -1045,6 +1068,23 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
     )
 
 
+def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
+    """Build SpaceChargeConfig from SimulationOptions.
+
+    Returns None if space charge is disabled.
+    """
+    if not options.space_charge_enabled:
+        return None
+
+    from core.types import SpaceChargeConfig
+
+    return SpaceChargeConfig(
+        enabled=True,
+        retarded=options.space_charge_retarded,
+        softening_mm=options.space_charge_softening_mm,
+    )
+
+
 def build_chrono_mode_enum(chrono_mode_str: str) -> object:
     """Convert chrono mode string to ChronoMatchingMode enum."""
     from core.types import ChronoMatchingMode
@@ -1213,6 +1253,7 @@ def run_testbed(
     self_consistency_config = build_self_consistency_config(options)
     energy_monitor_config = build_energy_monitor_config(options)
     adaptive_timestep_config = build_adaptive_timestep_config(options)
+    space_charge_config = build_space_charge_config(options)
     chrono_mode_enum = build_chrono_mode_enum(
         options.self_consistency_chrono_matching_mode
     )
@@ -1245,10 +1286,50 @@ def run_testbed(
             else None
         )
 
+        _actual_h_step = filtered_core_params.get("time_step", 2.2e-7)
+        _actual_steps = options.steps
+        if options.auto_duration_enabled and sim_type == SimulationType.BUNCH_TO_BUNCH:
+            _rider_pz = float(np.asarray(rider_initial["Pz"]).mean())
+            _rider_m = float(np.asarray(rider_initial["m"]).mean())
+            _rider_gamma = float(np.asarray(rider_initial["gamma"]).mean())
+            _rider_beta_z = abs(_rider_pz) / (_rider_gamma * _rider_m * C_MMNS)
+            _driver_beta_z = 0.0
+            if driver_initial is not None:
+                _drv_pz = float(np.asarray(driver_initial["Pz"]).mean())
+                _drv_m = float(np.asarray(driver_initial["m"]).mean())
+                _drv_gamma = float(np.asarray(driver_initial["gamma"]).mean())
+                _driver_beta_z = abs(_drv_pz) / (_drv_gamma * _drv_m * C_MMNS)
+            _closing_speed = (_rider_beta_z + _driver_beta_z) * C_MMNS  # mm/ns
+            _rider_z0 = float(np.asarray(rider_initial["z"]).mean())
+            _driver_z0 = (
+                float(np.asarray(driver_initial["z"]).mean())
+                if driver_initial is not None
+                else 0.0
+            )
+            _separation = abs(_driver_z0 - _rider_z0)
+            if _closing_speed > 0 and _separation > 0:
+                _actual_h_step = _separation / (
+                    _closing_speed * options.auto_duration_crossing_steps
+                )
+                _actual_steps = max(
+                    10,
+                    int(
+                        math.ceil(
+                            options.auto_duration_crossing_steps
+                            * options.auto_duration_post_factor
+                        )
+                    ),
+                )
+                _log(
+                    f"  Auto-duration: sep={_separation:.4f} mm, "
+                    f"closing={_closing_speed:.4f} mm/ns, "
+                    f"h_step={_actual_h_step:.3e} ns, steps={_actual_steps}"
+                )
+
         # Run core integrator directly
         core_traj_rider, core_traj_driver = retarded_integrator(
-            steps=options.steps,
-            h_step=filtered_core_params.get("time_step", 2.2e-7),
+            steps=_actual_steps,
+            h_step=_actual_h_step,
             wall_z=filtered_core_params.get("wall_z", 1e5),
             aperture_radius=filtered_core_params.get("aperture_radius", 1e5),
             sim_type=sim_type,
@@ -1263,6 +1344,7 @@ def run_testbed(
             startup_mode=startup_mode_enum,
             energy_monitor=energy_monitor_config,
             adaptive_timestep=adaptive_timestep_config,
+            space_charge=space_charge_config,
             image_subcharge_count=int(options.image_subcharge_count),
             use_conducting_image_weighting=bool(options.use_image_weighting),
             macroparticle_charge_multiplier=float(

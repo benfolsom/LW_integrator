@@ -4,6 +4,21 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Intra-Bunch Space Charge (May 2026)
+
+- **Feature** — Added retarded intra-bunch space-charge forces: each rider particle now receives Liénard-Wiechert fields from all other rider particles (j ≠ i) in addition to the driver/image forces already computed
+- **New type** — `core.types.SpaceChargeConfig` dataclass with `enabled`, `retarded` (default `True`), and `softening_mm` (Plummer softening length, default `0.0`) fields
+- **Core physics** — Second accumulation pass in `retarded_equations_of_motion` (`core/equations.py`) reuses the existing `compute_retarded_distance` / `gather_external_samples` / `compute_vectorized_contributions` pipeline; no new force kernel required
+- **Integration runner** — `retarded_integrator` and `run_integrator` accept a new `space_charge: Optional[SpaceChargeConfig]` parameter; when enabled, the Numba hot-path is bypassed (same behaviour as self-consistency and adaptive-timestep modes)
+- **Self-consistency threading** — `self_consistent_step` forwards `space_charge` to the step function via keyword argument, preserving backward compatibility with all existing call sites and test fakes
+- **Config surface** — `SimulationOptions` gains `space_charge_enabled`, `space_charge_retarded`, and `space_charge_softening_mm` fields; all serialised through `to_dict` / `from_dict`; `build_space_charge_config` builder follows the established `build_*_config` pattern
+- **CLI** — `--space-charge` flag (store_true) and `--space-charge-softening-mm` float option added to `lw-simulate` / `python -m lw_integrator`
+- **GUI** — New "Intra-Bunch Space Charge" section in the Stability tab with enable checkbox, retarded-fields toggle, and softening-length entry; wired through `_apply_options_to_ui` / `_build_options_from_ui` round-trip
+- **Defaults** — Feature is off by default (`space_charge_enabled = False`); all existing runs and configs are unaffected
+- **Performance note** — Intra-bunch space charge is not Numba-optimised and runs on the Python path only. The per-step cost scales as O(N²) in rider pcount. This is acceptable for the small pcounts used in feasibility studies (1–16 particles) but will be slow for large bunches.
+- **Files modified** — `core/types.py`, `core/equations.py`, `core/self_consistency.py`, `core/integration_runner.py`, `lw_integrator/testbed_runner.py`, `lw_integrator/cli.py`, `lw_integrator/gui.py`, `lw_integrator/gui_tab_mixins.py`, `lw_integrator/gui_config_mixins.py`
+
+
 ### Sweep/Optimization Logging Policy Fixes (April 2026)
 
 - **Bug** — CLI sweep `--quiet` and `log_verbosity` policy paths still emitted per-run progress/detail/debug lines through direct `print()` and uncapped callbacks

@@ -224,6 +224,7 @@ def retarded_integrator(
     bunch_transv_mom: float = 0.0,
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
+    space_charge: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
     logger: Optional[Any] = None,
@@ -369,6 +370,18 @@ def retarded_integrator(
                         else:
                             logger.info(
                                 "Macroparticle mode not supported in Numba path, using Python"
+                            )
+                    use_numba_path = False
+
+                if space_charge is not None and space_charge.enabled:
+                    if logger:
+                        if callable(logger):
+                            logger(
+                                "Space charge not supported in Numba path, using Python"
+                            )
+                        else:
+                            logger.info(
+                                "Space charge not supported in Numba path, using Python"
                             )
                     use_numba_path = False
 
@@ -751,6 +764,7 @@ def retarded_integrator(
                             startup_mode,
                             step_idx=i,  # Pass main step index for error messages
                             cancel_callback=cancel_callback,  # Pass cancellation check through
+                            **({"space_charge": space_charge} if space_charge is not None else {}),
                         )
                     except GammaBlowupError as e:
                         # Soft gamma blowup detected - reduce timestep and retry
@@ -1294,6 +1308,7 @@ def retarded_integrator(
                     chrono_mode,
                     startup_mode,
                     step_idx=i,  # Pass step index for error messages
+                    **({"space_charge": space_charge} if space_charge is not None else {}),
                 )
             _ensure_startup_metadata(trajectory_drv[i])
 
@@ -1370,6 +1385,7 @@ def run_integrator(
     self_consistency: Optional[SelfConsistencyConfig] = None,
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
+    space_charge: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Trajectory, Trajectory]:
@@ -1427,6 +1443,7 @@ def run_integrator(
         bunch_transv_mom=config.bunch_transv_mom,
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
+        space_charge=space_charge,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
     )

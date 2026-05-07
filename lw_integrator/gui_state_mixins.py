@@ -265,6 +265,42 @@ class IntegratorGUIStateMixin:
                 fg_color = "black" if adaptive_enabled else "gray"
                 control.configure(foreground=fg_color)
 
+    def _toggle_auto_duration_controls(self) -> None:
+        if not hasattr(self, "auto_duration_enable_check"):
+            return
+
+        enabled = self.auto_duration_enabled_var.get()
+        sub_state = "normal" if enabled else "disabled"
+        core_state = "disabled" if enabled else "normal"
+
+        # Grey / restore the section's own sub-widgets (crossing steps, post factor)
+        for widget in getattr(self, "_auto_duration_sub_widgets", []):
+            try:
+                if isinstance(widget, ttk.Label):
+                    widget.configure(foreground="black" if enabled else "gray")
+                else:
+                    widget.configure(state=sub_state)
+            except Exception:
+                pass
+
+        # Grey / restore the Steps field in the Core tab
+        if hasattr(self, "steps_entry"):
+            self.steps_entry.configure(state=core_state)
+        if hasattr(self, "steps_auto_hint"):
+            if enabled:
+                self.steps_auto_hint.grid()
+            else:
+                self.steps_auto_hint.grid_remove()
+
+        # Grey / restore the Time step field in the Core tab
+        if hasattr(self, "core_param_widgets") and "time_step" in self.core_param_widgets:
+            self.core_param_widgets["time_step"].configure(state=core_state)
+        if hasattr(self, "time_step_auto_hint"):
+            if enabled:
+                self.time_step_auto_hint.grid()
+            else:
+                self.time_step_auto_hint.grid_remove()
+
     def _on_trajectory_save_toggled(self) -> None:
         if not hasattr(self, "trajectory_stride_entry"):
             return

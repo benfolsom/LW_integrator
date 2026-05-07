@@ -263,6 +263,14 @@ class IntegratorGUIConfigMixin:
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
         self._update_max_substeps_display()
+        self.space_charge_enabled_var.set(getattr(options, "space_charge_enabled", False))
+        self.space_charge_retarded_var.set(getattr(options, "space_charge_retarded", True))
+        self.space_charge_softening_mm_var.set(getattr(options, "space_charge_softening_mm", 0.0))
+        self.auto_duration_enabled_var.set(getattr(options, "auto_duration_enabled", False))
+        self.auto_duration_crossing_steps_var.set(getattr(options, "auto_duration_crossing_steps", 200))
+        self.auto_duration_post_factor_var.set(getattr(options, "auto_duration_post_factor", 2.0))
+        self._toggle_space_charge_controls()
+        self._toggle_auto_duration_controls()
         self.save_log_file_var.set(options.save_log_file)
 
         if not preserve_directories:
@@ -476,6 +484,12 @@ class IntegratorGUIConfigMixin:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
+            space_charge_enabled=bool(self.space_charge_enabled_var.get()),
+            space_charge_retarded=bool(self.space_charge_retarded_var.get()),
+            space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
+            auto_duration_enabled=bool(self.auto_duration_enabled_var.get()),
+            auto_duration_crossing_steps=int(self.auto_duration_crossing_steps_var.get()),
+            auto_duration_post_factor=float(self.auto_duration_post_factor_var.get()),
             save_log_file=bool(self.save_log_file_var.get()),
         )
 

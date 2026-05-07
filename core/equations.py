@@ -936,6 +936,7 @@ def retarded_equations_of_motion(
     self_consistency: Optional[SelfConsistencyConfig] = None,
     step_idx: Optional[int] = None,
     cancel_callback: Optional[Any] = None,
+    space_charge: Optional[Any] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1346,6 +1347,73 @@ def retarded_equations_of_motion(
                         f"      After forces: ΔPt={delta_momentum_t:.15e}, "
                         f"accumulated_pt={accumulated_momentum_t:.15e}"
                     )
+
+            # ================================================================
+            # STEP 4b: Intra-bunch space-charge forces (rider-rider, j ≠ i)
+            # ================================================================
+            if (
+                space_charge is not None
+                and space_charge.enabled
+                and apply_forces
+                and len(trajectory) > 1
+            ):
+                n_particles = current_state["x"].shape[0]
+                if n_particles > 1:
+                    sc_softening = float(space_charge.softening_mm)
+                    for j in range(n_particles):
+                        if j == particle_idx:
+                            continue
+                        if space_charge.retarded:
+                            sc_traj_ext = [
+                                {k: v[[j]] for k, v in step.items()}
+                                for step in trajectory[:index_traj + 1]
+                            ]
+                        else:
+                            sc_traj_ext = [
+                                {k: v[[j]] for k, v in trajectory[index_traj].items()}
+                            ]
+                        sc_nhat = compute_retarded_distance(
+                            trajectory,
+                            sc_traj_ext,
+                            index_traj,
+                            particle_idx,
+                            np.array([len(sc_traj_ext) - 1]),
+                        )
+                        sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                        if sc_softening > 0.0:
+                            sc_R = np.sqrt(sc_R ** 2 + sc_softening ** 2)
+                            sc_nhat = dict(sc_nhat)
+                            sc_nhat["R"] = sc_R
+                        sc_samples = gather_external_samples(
+                            sc_traj_ext,
+                            np.array([len(sc_traj_ext) - 1]),
+                        )
+                        (
+                            sc_dp_x, sc_dp_y, sc_dp_z, sc_dp_t,
+                            sc_df_x, sc_df_y, sc_df_z,
+                            sc_dscalar,
+                        ) = compute_vectorized_contributions(
+                            h=h,
+                            charge_i=float(particle_charge),
+                            mass_i=float(particle_mass),
+                            gamma_i=particle_gamma,
+                            beta_vec=particle_beta,
+                            nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
+                            nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
+                            nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
+                            R_separation=sc_R,
+                            samples=sc_samples,
+                            apply_external=True,
+                            verbosity=0,
+                        )
+                        accumulated_momentum_x += sc_dp_x
+                        accumulated_momentum_y += sc_dp_y
+                        accumulated_momentum_z += sc_dp_z
+                        accumulated_momentum_t += sc_dp_t
+                        accumulated_field_x += sc_df_x
+                        accumulated_field_y += sc_df_y
+                        accumulated_field_z += sc_df_z
+                        accumulated_scalar_potential += sc_dscalar
 
             # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt

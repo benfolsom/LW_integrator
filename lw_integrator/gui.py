@@ -505,6 +505,14 @@ class IntegratorGUI(
         # max_substeps is now calculated from min_timestep_factor (read-only display)
         self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 
+        self.space_charge_enabled_var = tk.BooleanVar(value=False)
+        self.space_charge_retarded_var = tk.BooleanVar(value=True)
+        self.space_charge_softening_mm_var = tk.DoubleVar(value=0.0)
+
+        self.auto_duration_enabled_var = tk.BooleanVar(value=False)
+        self.auto_duration_crossing_steps_var = tk.IntVar(value=200)
+        self.auto_duration_post_factor_var = tk.DoubleVar(value=2.0)
+
         # Use preferences for directories
         self.output_dir_var = tk.StringVar(value=self._last_output_dir)
         self.config_dir_var = tk.StringVar(value=self._last_config_dir)
