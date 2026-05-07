@@ -150,11 +150,11 @@ def _locate_retarded_index(
     if target_time <= 0.0:
         return index_traj
 
-    times = np.array([trajectory_ext[k]["t"][sample_index] for k in range(index_traj + 1)])
-    idx = int(np.searchsorted(times, target_time, side="left"))
-    if idx > index_traj:
-        idx = index_traj
-    return idx
+    for k in range(index_traj, -1, -1):
+        candidate_index = index_traj - k
+        if trajectory_ext[candidate_index]["t"][sample_index] >= target_time:
+            return candidate_index
+    return 0
 
 
 def compute_instantaneous_distance(
