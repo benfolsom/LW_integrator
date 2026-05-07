@@ -386,7 +386,7 @@ class TestCliSweepEntryPoint:
         captured = {}
 
         def fake_run_sweep_from_config(
-            *, config_path, output_dir, verbose, verbosity_overrides
+            *, config_path, output_dir, verbose, verbosity_overrides, workers=None
         ):
             captured["config_path"] = config_path
             captured["output_dir"] = output_dir

@@ -208,6 +208,212 @@ class SpaceChargeConfig:
     softening_mm: float = 0.0    # Plummer softening ε (mm); 0 = no softening
 
 
+@dataclass
+class TrajectoryArrays:
+    """Struct-of-arrays trajectory representation.
+
+    All kinematic fields have shape ``[n_steps, n_particles]``.
+    Particle-constant fields (``q``, ``m``, ``char_time``) have shape
+    ``[n_particles]``.  Per-step scalar metadata has shape ``[n_steps]``.
+    """
+
+    # Kinematic — [n_steps, n_particles]
+    x: np.ndarray
+    y: np.ndarray
+    z: np.ndarray
+    t: np.ndarray
+    Px: np.ndarray
+    Py: np.ndarray
+    Pz: np.ndarray
+    Pt: np.ndarray
+    gamma: np.ndarray
+    bx: np.ndarray
+    by: np.ndarray
+    bz: np.ndarray
+    bdotx: np.ndarray
+    bdoty: np.ndarray
+    bdotz: np.ndarray
+    origin_x: np.ndarray
+    origin_y: np.ndarray
+    origin_z: np.ndarray
+    beta_avg_x: np.ndarray
+    beta_avg_y: np.ndarray
+    beta_avg_z: np.ndarray
+    beta_samples: np.ndarray
+
+    # Dead-particle mask — [n_steps, n_particles], bool
+    dead: np.ndarray
+
+    # Particle constants — [n_particles]
+    q: np.ndarray
+    m: np.ndarray
+    char_time: np.ndarray
+
+    # Per-step scalars — [n_steps]
+    halted_early: np.ndarray   # dtype bool
+    halt_step: np.ndarray      # dtype int64, -1 if not halted
+
+    # Non-array side-channels
+    halt_reason: list           # length n_steps, str or None
+    particle_failure_info: dict  # keyed by (step, particle_idx)
+
+    @property
+    def n_steps(self) -> int:
+        return self.x.shape[0]
+
+    @property
+    def n_particles(self) -> int:
+        return self.x.shape[1]
+
+    def state_at(self, step: int) -> ParticleState:
+        """Return a legacy ``ParticleState`` dict for *step*."""
+        s: ParticleState = {
+            "x": self.x[step],
+            "y": self.y[step],
+            "z": self.z[step],
+            "t": self.t[step],
+            "Px": self.Px[step],
+            "Py": self.Py[step],
+            "Pz": self.Pz[step],
+            "Pt": self.Pt[step],
+            "gamma": self.gamma[step],
+            "bx": self.bx[step],
+            "by": self.by[step],
+            "bz": self.bz[step],
+            "bdotx": self.bdotx[step],
+            "bdoty": self.bdoty[step],
+            "bdotz": self.bdotz[step],
+            "q": self.q,
+            "m": self.m,
+            "char_time": self.char_time,
+            "origin_x": self.origin_x[step],
+            "origin_y": self.origin_y[step],
+            "origin_z": self.origin_z[step],
+            "beta_avg_x": self.beta_avg_x[step],
+            "beta_avg_y": self.beta_avg_y[step],
+            "beta_avg_z": self.beta_avg_z[step],
+            "beta_samples": self.beta_samples[step],
+            "_dead_particles": self.dead[step],
+        }
+        if self.halted_early[step]:
+            s["_halted_early"] = bool(self.halted_early[step])
+            s["_halt_step"] = int(self.halt_step[step])
+            s["_halt_reason"] = self.halt_reason[step]
+        return s
+
+    def to_legacy(self) -> "Trajectory":
+        """Return a full ``List[ParticleState]`` compatible with legacy consumers."""
+        return [self.state_at(i) for i in range(self.n_steps)]
+
+
+class TrajectoryBuilder:
+    """Incremental accumulator for building a :class:`TrajectoryArrays`.
+
+    Pre-allocates all arrays at construction time; each integration step
+    writes one row via :meth:`set_step`.
+    """
+
+    # Fields present in legacy state dicts that map to 2-D kinematic arrays
+    _KINEMATIC_FIELDS: tuple = (
+        "x", "y", "z", "t",
+        "Px", "Py", "Pz", "Pt",
+        "gamma",
+        "bx", "by", "bz",
+        "bdotx", "bdoty", "bdotz",
+        "origin_x", "origin_y", "origin_z",
+        "beta_avg_x", "beta_avg_y", "beta_avg_z",
+        "beta_samples",
+    )
+    _PARTICLE_CONST_FIELDS: tuple = ("q", "m", "char_time")
+
+    def __init__(self, n_steps: int, n_particles: int) -> None:
+        self._n_steps = n_steps
+        self._n_particles = n_particles
+
+        self._arrays: dict = {
+            field: np.zeros((n_steps, n_particles), dtype=np.float64)
+            for field in self._KINEMATIC_FIELDS
+        }
+        self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
+
+        for field in self._PARTICLE_CONST_FIELDS:
+            self._arrays[field] = np.zeros(n_particles, dtype=np.float64)
+
+        self._halted_early = np.zeros(n_steps, dtype=bool)
+        self._halt_step_arr = np.full(n_steps, -1, dtype=np.int64)
+        self._halt_reason: list = [None] * n_steps
+        self._particle_failure_info: dict = {}
+
+    def set_step(self, step: int, state: ParticleState) -> None:
+        """Copy *state* fields into row *step* of the pre-allocated arrays."""
+        for field in self._KINEMATIC_FIELDS:
+            if field in state:
+                self._arrays[field][step] = state[field]
+            # else leave as zero (already pre-allocated)
+
+        dead = state.get("_dead_particles")
+        if dead is not None:
+            self._arrays["dead"][step] = dead
+
+        if step == 0:
+            for field in self._PARTICLE_CONST_FIELDS:
+                if field in state:
+                    self._arrays[field][:] = state[field]
+
+    def set_halt_metadata(
+        self,
+        step: int,
+        reason: str,
+        halt_step: int,
+        requested_steps: int,  # noqa: ARG002 — retained for API symmetry
+    ) -> None:
+        """Record halt information for *step*."""
+        self._halted_early[step] = True
+        self._halt_step_arr[step] = halt_step
+        self._halt_reason[step] = reason
+
+    def set_particle_failure(
+        self, step: int, particle_idx: int, info: dict
+    ) -> None:
+        """Store per-particle failure info keyed by ``(step, particle_idx)``."""
+        self._particle_failure_info[(step, particle_idx)] = info
+
+    def build(self) -> TrajectoryArrays:
+        """Finalise and return the accumulated :class:`TrajectoryArrays`."""
+        return TrajectoryArrays(
+            x=self._arrays["x"],
+            y=self._arrays["y"],
+            z=self._arrays["z"],
+            t=self._arrays["t"],
+            Px=self._arrays["Px"],
+            Py=self._arrays["Py"],
+            Pz=self._arrays["Pz"],
+            Pt=self._arrays["Pt"],
+            gamma=self._arrays["gamma"],
+            bx=self._arrays["bx"],
+            by=self._arrays["by"],
+            bz=self._arrays["bz"],
+            bdotx=self._arrays["bdotx"],
+            bdoty=self._arrays["bdoty"],
+            bdotz=self._arrays["bdotz"],
+            origin_x=self._arrays["origin_x"],
+            origin_y=self._arrays["origin_y"],
+            origin_z=self._arrays["origin_z"],
+            beta_avg_x=self._arrays["beta_avg_x"],
+            beta_avg_y=self._arrays["beta_avg_y"],
+            beta_avg_z=self._arrays["beta_avg_z"],
+            beta_samples=self._arrays["beta_samples"],
+            dead=self._arrays["dead"],
+            q=self._arrays["q"],
+            m=self._arrays["m"],
+            char_time=self._arrays["char_time"],
+            halted_early=self._halted_early,
+            halt_step=self._halt_step_arr,
+            halt_reason=self._halt_reason,
+            particle_failure_info=self._particle_failure_info,
+        )
+
+
 __all__ = [
     "ParticleState",
     "Trajectory",
@@ -218,4 +424,6 @@ __all__ = [
     "IntegratorConfig",
     "SpaceChargeConfig",
     "C_MMNS",
+    "TrajectoryArrays",
+    "TrajectoryBuilder",
 ]

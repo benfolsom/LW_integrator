@@ -1,0 +1,188 @@
+"""Unit tests for TrajectoryArrays and TrajectoryBuilder."""
+
+import numpy as np
+import pytest
+
+from core.types import TrajectoryArrays, TrajectoryBuilder
+
+
+N_STEPS = 5
+N_PARTICLES = 3
+
+
+def _make_state(step: int, n: int, include_optional: bool = True) -> dict:
+    """Return a minimal legacy ParticleState for *step* with *n* particles."""
+    rng = np.random.default_rng(step)
+    state = {
+        "x": rng.random(n),
+        "y": rng.random(n),
+        "z": rng.random(n),
+        "t": rng.random(n),
+        "Px": rng.random(n),
+        "Py": rng.random(n),
+        "Pz": rng.random(n),
+        "Pt": rng.random(n),
+        "gamma": rng.random(n) + 1.0,
+        "bx": rng.random(n) * 0.1,
+        "by": rng.random(n) * 0.1,
+        "bz": rng.random(n) * 0.9,
+        "bdotx": rng.random(n),
+        "bdoty": rng.random(n),
+        "bdotz": rng.random(n),
+        "q": np.ones(n) * float(step + 1),
+        "m": np.ones(n) * 1.0,
+        "char_time": np.ones(n) * 0.5,
+        "_dead_particles": np.zeros(n, dtype=bool),
+    }
+    if include_optional:
+        state["origin_x"] = rng.random(n)
+        state["origin_y"] = rng.random(n)
+        state["origin_z"] = rng.random(n)
+        state["beta_avg_x"] = rng.random(n)
+        state["beta_avg_y"] = rng.random(n)
+        state["beta_avg_z"] = rng.random(n)
+        state["beta_samples"] = rng.random(n)
+    return state
+
+
+def _build_trajectory(include_optional: bool = True) -> tuple:
+    builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+    states = []
+    for step in range(N_STEPS):
+        s = _make_state(step, N_PARTICLES, include_optional=include_optional)
+        builder.set_step(step, s)
+        states.append(s)
+    traj = builder.build()
+    return traj, states
+
+
+class TestShapeProperties:
+    def test_n_steps(self):
+        traj, _ = _build_trajectory()
+        assert traj.n_steps == N_STEPS
+
+    def test_n_particles(self):
+        traj, _ = _build_trajectory()
+        assert traj.n_particles == N_PARTICLES
+
+    def test_kinematic_array_shapes(self):
+        traj, _ = _build_trajectory()
+        for field in ("x", "y", "z", "t", "Px", "Py", "Pz", "Pt",
+                      "gamma", "bx", "by", "bz"):
+            arr = getattr(traj, field)
+            assert arr.shape == (N_STEPS, N_PARTICLES), field
+
+    def test_dead_shape(self):
+        traj, _ = _build_trajectory()
+        assert traj.dead.shape == (N_STEPS, N_PARTICLES)
+        assert traj.dead.dtype == bool
+
+    def test_particle_const_shapes(self):
+        traj, _ = _build_trajectory()
+        for field in ("q", "m", "char_time"):
+            arr = getattr(traj, field)
+            assert arr.shape == (N_PARTICLES,), field
+
+
+class TestRoundTrip:
+    def test_state_at_kinematic_values(self):
+        traj, states = _build_trajectory()
+        for step in range(N_STEPS):
+            s = traj.state_at(step)
+            np.testing.assert_array_equal(s["x"], states[step]["x"])
+            np.testing.assert_array_equal(s["z"], states[step]["z"])
+            np.testing.assert_array_equal(s["gamma"], states[step]["gamma"])
+
+    def test_particle_consts_from_step0(self):
+        traj, states = _build_trajectory()
+        # q is written from step=0 state
+        np.testing.assert_array_equal(traj.q, states[0]["q"])
+        np.testing.assert_array_equal(traj.m, states[0]["m"])
+
+    def test_state_at_particle_consts_are_1d(self):
+        traj, _ = _build_trajectory()
+        s = traj.state_at(2)
+        assert s["q"].shape == (N_PARTICLES,)
+        assert s["m"].shape == (N_PARTICLES,)
+
+    def test_to_legacy_length(self):
+        traj, _ = _build_trajectory()
+        legacy = traj.to_legacy()
+        assert len(legacy) == N_STEPS
+
+    def test_to_legacy_correct_dicts(self):
+        traj, states = _build_trajectory()
+        legacy = traj.to_legacy()
+        for step in range(N_STEPS):
+            np.testing.assert_array_equal(legacy[step]["x"], states[step]["x"])
+            np.testing.assert_array_equal(legacy[step]["bz"], states[step]["bz"])
+
+    def test_dead_particles_round_trip(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        for step in range(N_STEPS):
+            s = _make_state(step, N_PARTICLES)
+            if step == 2:
+                s["_dead_particles"] = np.array([True, False, True])
+            builder.set_step(step, s)
+        traj = builder.build()
+        assert traj.dead[2, 0] is np.bool_(True)
+        assert traj.dead[2, 1] is np.bool_(False)
+        assert not traj.dead[1].any()
+
+
+class TestHaltMetadata:
+    def test_halt_round_trip(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        for step in range(N_STEPS):
+            builder.set_step(step, _make_state(step, N_PARTICLES))
+        builder.set_halt_metadata(step=3, reason="diverged", halt_step=3,
+                                  requested_steps=N_STEPS)
+        traj = builder.build()
+
+        assert traj.halted_early[3]
+        assert int(traj.halt_step[3]) == 3
+        assert traj.halt_reason[3] == "diverged"
+        assert not traj.halted_early[0]
+        assert int(traj.halt_step[0]) == -1
+        assert traj.halt_reason[0] is None
+
+    def test_state_at_includes_halt_keys(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        for step in range(N_STEPS):
+            builder.set_step(step, _make_state(step, N_PARTICLES))
+        builder.set_halt_metadata(step=1, reason="exploded", halt_step=1,
+                                  requested_steps=N_STEPS)
+        traj = builder.build()
+
+        s_halted = traj.state_at(1)
+        assert s_halted["_halted_early"] is True
+        assert s_halted["_halt_reason"] == "exploded"
+
+        s_normal = traj.state_at(0)
+        assert "_halted_early" not in s_normal
+
+
+class TestMissingOptionalFields:
+    def test_origin_defaults_to_zero(self):
+        traj, _ = _build_trajectory(include_optional=False)
+        assert traj.origin_x.shape == (N_STEPS, N_PARTICLES)
+        np.testing.assert_array_equal(traj.origin_x, 0.0)
+
+    def test_beta_avg_defaults_to_zero(self):
+        traj, _ = _build_trajectory(include_optional=False)
+        np.testing.assert_array_equal(traj.beta_avg_z, 0.0)
+
+    def test_beta_samples_defaults_to_zero(self):
+        traj, _ = _build_trajectory(include_optional=False)
+        np.testing.assert_array_equal(traj.beta_samples, 0.0)
+
+
+class TestParticleFailureInfo:
+    def test_set_and_retrieve(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        for step in range(N_STEPS):
+            builder.set_step(step, _make_state(step, N_PARTICLES))
+        builder.set_particle_failure(2, 1, {"reason": "nan", "value": float("nan")})
+        traj = builder.build()
+        assert (2, 1) in traj.particle_failure_info
+        assert traj.particle_failure_info[(2, 1)]["reason"] == "nan"

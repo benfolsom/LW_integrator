@@ -29,6 +29,7 @@ from .types import (
     SimulationType,
     StartupMode,
     Trajectory,
+    TrajectoryBuilder,
 )
 
 
@@ -433,6 +434,10 @@ def retarded_integrator(
 
     trajectory: Trajectory = [{} for _ in range(steps)]
     trajectory_drv: Trajectory = [{} for _ in range(steps)]
+    _n_particles_rider = len(init_rider["x"])
+    _n_particles_drv: int | None = None
+    _traj_builder = TrajectoryBuilder(steps, _n_particles_rider)
+    _traj_drv_builder: TrajectoryBuilder | None = None
 
     # Initialize energy monitoring
     previous_energy: Optional[float] = None
@@ -473,6 +478,7 @@ def retarded_integrator(
         if i == 0:
             trajectory[i] = init_rider
             _ensure_startup_metadata(trajectory[i])
+            _traj_builder.set_step(i, trajectory[i])
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
                     init_rider,
@@ -499,6 +505,9 @@ def retarded_integrator(
                     )
                 trajectory_drv[i] = init_driver
             _ensure_startup_metadata(trajectory_drv[i])
+            _n_particles_drv = len(trajectory_drv[i]["x"])
+            _traj_drv_builder = TrajectoryBuilder(steps, _n_particles_drv)
+            _traj_drv_builder.set_step(i, trajectory_drv[i])
         else:
             # Adaptive timestep refinement with sub-stepping and hysteresis:
             # If timestep is reduced, we stay reduced for several steps before probing return
@@ -1199,6 +1208,7 @@ def retarded_integrator(
             # Accept the final sub-step state as the step result
             trajectory[i] = temp_trajectory[-1]
             _ensure_startup_metadata(trajectory[i])
+            _traj_builder.set_step(i, trajectory[i])
 
             # Check if all particles are dead
             if all_particles_dead(trajectory[i]):
@@ -1230,6 +1240,15 @@ def retarded_integrator(
                 )
                 trajectory[-1]["_halt_step"] = i
                 trajectory[-1]["_requested_steps"] = steps
+                _traj_builder.set_halt_metadata(
+                    step=i,
+                    reason=f"all_particles_dead at step {i}/{steps}. {failure_summary}",
+                    halt_step=i,
+                    requested_steps=steps,
+                )
+                _ = _traj_builder.build()
+                if _traj_drv_builder is not None:
+                    _ = _traj_drv_builder.build()
                 return trajectory, trajectory_drv
 
             # Post-step gamma check for individual particles
@@ -1307,10 +1326,12 @@ def retarded_integrator(
                     self_consistency,
                     chrono_mode,
                     startup_mode,
-                    step_idx=i,  # Pass step index for error messages
+                    step_idx=i,
                     **({"space_charge": space_charge} if space_charge is not None else {}),
                 )
             _ensure_startup_metadata(trajectory_drv[i])
+            if _traj_drv_builder is not None:
+                _traj_drv_builder.set_step(i, trajectory_drv[i])
 
         # Check for early termination in BUNCH_TO_BUNCH relative mode
         if (
@@ -1338,6 +1359,15 @@ def retarded_integrator(
                 )
                 trajectory_truncated[-1]["_halt_step"] = i
                 trajectory_truncated[-1]["_requested_steps"] = steps
+                _traj_builder.set_halt_metadata(
+                    step=i,
+                    reason=f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})",
+                    halt_step=i,
+                    requested_steps=steps,
+                )
+                _ = _traj_builder.build()
+                if _traj_drv_builder is not None:
+                    _ = _traj_drv_builder.build()
                 return trajectory_truncated, trajectory_drv_truncated
 
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
@@ -1375,6 +1405,9 @@ def retarded_integrator(
         if progress_callback is not None:
             progress_callback(i + 1, steps)
 
+    _ = _traj_builder.build()
+    if _traj_drv_builder is not None:
+        _ = _traj_drv_builder.build()
     return trajectory, trajectory_drv
 
 
