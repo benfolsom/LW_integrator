@@ -17,6 +17,7 @@ Enable self-consistency checks when:
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -46,6 +47,17 @@ StepFunction = Callable[
 ]
 
 
+def canonicalize_self_consistency_mode(mode: object) -> str:
+    """Return the maintained self-consistency mode name."""
+
+    mode_str = str(mode)
+    aliases = {
+        "mass_shell_only": "fixed_geometry",
+        "full_iteration": "variable_geometry",
+    }
+    return aliases.get(mode_str, mode_str)
+
+
 @dataclass
 class SelfConsistencyConfig:
     """Configuration for self-consistency iterations.
@@ -60,13 +72,13 @@ class SelfConsistencyConfig:
     CONVERGENCE STRATEGY:
     Two convergence modes with distinct behaviors:
 
-    1. "fixed_geometry" (formerly "mass_shell_only"):
+    1. "fixed_geometry":
        - Fixed geometry (positions, retarded distances computed once)
        - Pt projected onto mass shell each iteration
        - One-way mass-shell convergence check
        - Fastest, use for most cases
 
-    2. "variable_geometry" (formerly "full_iteration"):
+    2. "variable_geometry":
        - Variable geometry (positions/distances recomputed each iteration)
        - Pt projected onto mass shell each iteration
        - One-way mass-shell convergence check
@@ -91,9 +103,7 @@ class SelfConsistencyConfig:
         - fixed_geometry: Geometry computed once, Pt projected, one-way check
         - variable_geometry: Geometry recomputed each iteration, Pt projected, one-way check
 
-        Legacy aliases supported: "mass_shell_only" → "fixed_geometry",
-                                  "full_iteration" → "variable_geometry"
-
+        Historical aliases are still normalized when loading older configs.
         Default is "fixed_geometry".
     target_ms_tolerance : float
         TARGET mass-shell convergence criterion used inside the iteration loop.
@@ -115,7 +125,7 @@ class SelfConsistencyConfig:
         Enable interpolation in chrono-matching when time residual exceeds tolerance.
         When True, source-particle quantities (velocity, acceleration, gamma) are
         linearly interpolated between bracketing trajectory indices.
-        Default is False (legacy behavior: use nearest discrete sample).
+        Default is False (use nearest discrete sample).
     chrono_tolerance : float
         Time residual tolerance for chrono-matching, in nanoseconds.
         If |t_matched - t_target| > chrono_tolerance, interpolation is applied
@@ -123,10 +133,10 @@ class SelfConsistencyConfig:
         Default is 1e-3 ns (1 picosecond).
     chrono_matching_mode : str
         Chrono-matching algorithm mode. Options:
-        - "FAST": Single-sample delay Δt = R(1 + β·n̂)/c (default, legacy behavior)
+        - "FAST": Single-sample delay Δt = R(1 + β·n̂)/c (default)
         - "AVERAGED": Reserved for APPROXIMATE_BACK_HISTORY startup mode only.
           Not recommended for general use until fully validated (~2-5× slower).
-        Default is "FAST" (matches legacy implementation).
+        Default is "FAST".
     chrono_high_precision : bool
         Enable high-precision chrono-matching features. When True:
         - Uses cubic (Catmull-Rom) interpolation instead of linear
@@ -170,12 +180,12 @@ class SelfConsistencyConfig:
     Aggressive convergence for ultra-relativistic particles::
 
         config = SelfConsistencyConfig(
-            convergence_mode="full_iteration",  # Variable geometry for accuracy
+            convergence_mode="variable_geometry",
             target_ms_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
-            mass_shell_relaxation=1.0,  # Full projection
+            mass_shell_relaxation=1.0,
             max_iterations=20,
-            verbosity=2
+            verbosity=2,
         )
 
     Disable for testing/comparison::
@@ -191,7 +201,7 @@ class SelfConsistencyConfig:
 
     # Gamma reconciliation parameters
     gamma_reconciliation_method: GammaReconciliationMethod = (
-        GammaReconciliationMethod.DISABLED  # Default: disabled (v0.4.8 legacy behavior)
+        GammaReconciliationMethod.DISABLED
     )
     gamma_reconciliation_low_beta_threshold: float = 0.9  # Below this: trust energy
     gamma_reconciliation_high_beta_threshold: float = 0.99  # Above this: trust velocity
@@ -210,34 +220,21 @@ class SelfConsistencyConfig:
     max_iterations: int = 10  # Maximum SC iterations per particle per step
     verbosity: int = 0
 
-    # Mode name aliases for backwards compatibility
-    _MODE_ALIASES = {
-        "mass_shell_only": "fixed_geometry",
-        "full_iteration": "variable_geometry",
-    }
-
     def __post_init__(self):
-        """Normalize mode name using aliases."""
-        if self.convergence_mode in self._MODE_ALIASES:
-            object.__setattr__(
-                self, "convergence_mode", self._MODE_ALIASES[self.convergence_mode]
-            )
-
-    @property
-    def gamma_reconciliation_enabled(self) -> bool:
-        """Backward compatibility property for gamma_reconciliation_enabled.
-
-        Returns True if reconciliation method is not DISABLED.
-        """
-        return self.gamma_reconciliation_method != GammaReconciliationMethod.DISABLED
+        """Normalize mode name using historical aliases."""
+        object.__setattr__(
+            self,
+            "convergence_mode",
+            canonicalize_self_consistency_mode(self.convergence_mode),
+        )
 
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":
         """Return standard configuration for typical relativistic simulations.
 
-        This is the default configuration: enabled with mass-shell projection
-        and mass-shell-only convergence check (no velocity check).
-        Suitable for most high-energy particle tracking applications.
+        This is the default configuration: enabled with fixed-geometry
+        self-consistency. Suitable for most high-energy particle tracking
+        applications.
         """
         return cls(
             enabled=True,
@@ -252,7 +249,7 @@ class SelfConsistencyConfig:
     def disabled(cls) -> "SelfConsistencyConfig":
         """Return configuration with self-consistency disabled.
 
-        Use only for testing, benchmarking, or comparison with legacy code.
+        Use only for testing, benchmarking, or controlled reference comparisons.
         Not recommended for production simulations.
         """
         return cls(enabled=False)
@@ -265,7 +262,7 @@ class SelfConsistencyConfig:
         energy jumps in challenging scenarios (ultra-relativistic particles,
         narrow apertures, or close approaches to conducting boundaries).
 
-        Uses full iteration mode for maximum accuracy.
+        Uses variable-geometry mode for maximum accuracy.
         """
         return cls(
             enabled=True,
@@ -278,11 +275,11 @@ class SelfConsistencyConfig:
         )
 
     @classmethod
-    def full_iteration(cls, tolerance: float = 1e-6) -> "SelfConsistencyConfig":
-        """Return full position/momentum iteration configuration.
+    def variable_geometry(cls, tolerance: float = 1e-6) -> "SelfConsistencyConfig":
+        """Return variable-geometry iteration configuration.
 
         Recomputes positions, retarded distances, and forces at each SC iteration.
-        Most accurate but computationally expensive. Use when light iteration modes
+        Most accurate but computationally expensive. Use when lighter iteration modes
         fail to converge or when geometric changes during the timestep are significant.
 
         Parameters
@@ -293,7 +290,7 @@ class SelfConsistencyConfig:
         Returns
         -------
         SelfConsistencyConfig
-            Configuration using full iteration mode.
+            Configuration using variable-geometry mode.
         """
         return cls(
             enabled=True,
@@ -304,10 +301,6 @@ class SelfConsistencyConfig:
             max_iterations=20,
             verbosity=0,
         )
-
-
-__all__ = ["SelfConsistencyConfig", "self_consistent_step"]
-
 
 def self_consistent_step(
     step_function: StepFunction,
@@ -321,7 +314,10 @@ def self_consistent_step(
     chrono_mode: ChronoMatchingMode,
     startup_mode: StartupMode,
     step_idx: Optional[int] = None,
+    space_charge: Optional[Any] = None,
     cancel_callback: Optional[Any] = None,
+    traj_soa: Optional[Any] = None,
+    traj_ext_soa: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -371,8 +367,12 @@ def self_consistent_step(
         gamma converged.
     """
 
-    # Simply call the step function and pass the config through
-    # The iteration logic is now INSIDE retarded_equations_of_motion
+    # Check whether step_function accepts SOA keyword arguments
+    _sig_params = inspect.signature(step_function).parameters
+    _accepts_soa = "traj_soa" in _sig_params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
+    )
+
     result = step_function(
         h_step,
         trajectory,
@@ -385,9 +385,16 @@ def self_consistent_step(
         config,
         step_idx,
         cancel_callback,
+        **({"space_charge": space_charge} if space_charge is not None else {}),
+        **({"traj_soa": traj_soa} if _accepts_soa and traj_soa is not None else {}),
+        **({"traj_ext_soa": traj_ext_soa} if _accepts_soa and traj_ext_soa is not None else {}),
     )
 
     return result
 
 
-__all__ = ["SelfConsistencyConfig", "self_consistent_step"]
+__all__ = [
+    "SelfConsistencyConfig",
+    "canonicalize_self_consistency_mode",
+    "self_consistent_step",
+]

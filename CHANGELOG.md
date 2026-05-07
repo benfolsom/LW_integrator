@@ -2,6 +2,163 @@
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
+## Unreleased
+
+### Integrator Architecture Simplification (June 2026)
+
+- **Refactor** — Removed `core/performance.py` and its alternate integrator wrapper (`retarded_integrator_numba` / `run_optimised_integrator`) to eliminate redundant orchestration paths
+- **Refactor** — `retarded_integrator` now always runs the canonical integration orchestration; Numba acceleration remains at the force-kernel layer in `core/vectorized_interactions.py`
+- **Tests** — Updated control-flow and Numba feature tests to validate canonical-path behavior without monkeypatching `core.performance`
+- **Docs** — Removed the performance API page from Sphinx toctrees and updated overview wording to describe kernel-level Numba acceleration
+- **Note** — This supersedes the historical `retarded_integrator_numba` wrapper notes below; feature support now applies to the canonical path.
+
+### Historical: Numba Path Full Feature Support (June 2026)
+
+- **Feature** — Energy monitoring (`EnergyMonitorConfig`) is now supported in the Numba path: `retarded_integrator_numba` performs the same per-step energy check (warn or raise `EnergyJumpDetected`) as the Python path; the `use_numba_path = False` gate removed
+- **Feature** — Macroparticle mode (`macroparticle_charge_multiplier != 1.0`) is now supported in the Numba path: all `generate_conducting_image` calls inside `retarded_integrator_numba` forward `macroparticle_charge_multiplier`, `macroparticle_sigma_multiplier`, and `macroparticle_use_momentum_errors`; gate removed
+- **Feature** — Space charge (`SpaceChargeConfig`) is now supported in the Numba path: `space_charge` kwarg forwarded to all `retarded_equations_of_motion` calls inside `retarded_integrator_numba`; gate removed
+- **Feature** — Adaptive timestep (`AdaptiveTimestepConfig`) is now supported in the Numba path: extracted ~400 lines of per-step adaptive logic (substep subdivision, proximity refinement, energy-jump retries, gamma blowup handling, cooldown hysteresis) from `retarded_integrator` into a new `_run_adaptive_step(...)` helper and `_AdaptiveStepState` dataclass; both `retarded_integrator` and `retarded_integrator_numba` now call this shared helper; the final `use_numba_path = False` gate removed
+- **Tests** — Added `tests/unit/test_numba_mode_features.py` with 9 tests covering each newly-enabled mode individually, in combination, and verifying Python/Numba parity
+- **Files modified** — `core/performance.py`, `core/integration_runner.py`, `tests/unit/test_numba_mode_features.py`, `tests/unit/test_integration_runner_control_flow.py`
+
+### SOA Trajectory Refactor — Phase 3–5 Completion (June 2026)
+
+- **Perf** — Vectorized `gather_external_samples_soa` inner gather and interpolation loops: replaced 10 per-field Python list comprehensions with NumPy fancy indexing (`traj_ext.bx[indices, particle_indices]`) and replaced the per-particle interpolation loop with a masked vectorized blend; eliminates all remaining Python-level loops in the SOA gather path
+- **Refactor** — Removed `state_at()` dict shim from `chrono_match_indices_soa`: replaced `traj.state_at()` + `compute_instantaneous_distance()` with inline direct SOA field access (`traj.x[index_traj, index_part] - traj_ext.x[index_traj, :]`); no dict allocation per chrono-match call
+- **API** — `retarded_integrator` now returns a 4-tuple `(trajectory, trajectory_drv, traj_soa, traj_drv_soa)` where the last two elements are `TrajectoryArrays | None`; the Numba fast-path returns `None` for the SOA slots; all call sites updated to `traj, drv, *_soa_out = retarded_integrator(...)`
+- **API** — `diagnostics.py` functions (`analyze_trajectory_energy`, `check_superluminal_velocities`, `check_gamma_consistency`, `validate_trajectory`, `find_radiation_reaction_activations`) now accept `TrajectoryInput = Union[Trajectory, TrajectoryArrays]`; SOA branches use fully vectorized NumPy operations; legacy dict-list paths preserved
+- **Files modified** — `core/vectorized_interactions.py`, `core/distances.py`, `core/integration_runner.py`, `core/diagnostics.py`, `core/performance.py`, `core/trajectory_integrator.py`, `lw_integrator/cli.py`, `lw_integrator/testbed_runner.py`, `examples/adaptive_timestep_example.py`, `examples/energy_monitoring_example.py`, all affected test files
+
+- **Bug** — SC particle-slice `{k: v[[j]] for k, v in step.items()}` failed with `IndexError` when any state-dict array had a different length than `n_particles` (e.g. metadata or per-step scalars); replaced with `_slice_step()` which only indexes arrays whose first-axis length equals `n_particles`
+- **Files modified** — `core/equations.py`
+
+### Space-Charge Startup Fix and Physics-Driven Retarded Threshold (May 2026)
+
+- **Bug** — Intra-bunch SC forces were never applied: the `apply_forces` driver-startup gate blocked the rider→rider SC block, and the `len(trajectory) > 1` guard was always `False` because the substep buffer starts with one entry per main step
+- **Impact** — All SC-enabled runs were silently equivalent to SC-off; paired SC-on/SC-off smoke runs produced bit-identical results regardless of pcount or charge weight
+- **Fix 1** — Removed `apply_forces` from the SC guard; rider→rider SC is independent of whether the external driver force is currently gated by startup logic
+- **Fix 2** — Replaced the `len(trajectory) > 1` guard with `len(trajectory) >= 1`; instantaneous Coulomb is now used as a startup approximation from step 0 onward
+- **Fix 3** — Fixed `IndexError` in the `retarded=False` branch of SC: `sc_traj_ext` had length 1 but `compute_retarded_distance` was indexed with `index_traj` (which grows > 0); fixed by padding `sc_traj_ext = [sc_step] * (index_traj + 1)`
+- **Feature** — Added physics-driven instantaneous→retarded transition threshold to `SpaceChargeConfig`: new fields `bunch_sigma_mm` (default `0.01` mm) and `min_retarded_steps` (`None` = auto). The resolver `resolve_min_retarded_steps(h_step)` computes `ceil(bunch_sigma_mm / (c × h_step))` — the number of steps for light to cross the bunch — as the minimum history required before switching from instantaneous Coulomb to the full retarded LW kernel. Setting `min_retarded_steps=0` restores the old minimal behaviour; `retarded=False` keeps instantaneous permanently.
+- **Verified** — SC-on now produces measurably different `Px` and `x` from SC-off at `Q=1e10` total bunch charge with pcount=8 and σ=0.01 mm
+- **Files modified** — `core/equations.py`, `core/types.py`
+
+### Intra-Bunch Space Charge (May 2026)
+
+- **Feature** — Added retarded intra-bunch space-charge forces: each rider particle now receives Liénard-Wiechert fields from all other rider particles (j ≠ i) in addition to the driver/image forces already computed
+- **New type** — `core.types.SpaceChargeConfig` dataclass with `enabled`, `retarded` (default `True`), and `softening_mm` (Plummer softening length, default `0.0`) fields
+- **Core physics** — Second accumulation pass in `retarded_equations_of_motion` (`core/equations.py`) reuses the existing `compute_retarded_distance` / `gather_external_samples` / `compute_vectorized_contributions` pipeline; no new force kernel required
+- **Integration runner** — `retarded_integrator` and `run_integrator` accept a new `space_charge: Optional[SpaceChargeConfig]` parameter; when enabled, the Numba hot-path is bypassed (same behaviour as self-consistency and adaptive-timestep modes)
+- **Self-consistency threading** — `self_consistent_step` forwards `space_charge` to the step function via keyword argument, preserving backward compatibility with all existing call sites and test fakes
+- **Config surface** — `SimulationOptions` gains `space_charge_enabled`, `space_charge_retarded`, and `space_charge_softening_mm` fields; all serialised through `to_dict` / `from_dict`; `build_space_charge_config` builder follows the established `build_*_config` pattern
+- **CLI** — `--space-charge` flag (store_true) and `--space-charge-softening-mm` float option added to `lw-simulate` / `python -m lw_integrator`
+- **GUI** — New "Intra-Bunch Space Charge" section in the Stability tab with enable checkbox, retarded-fields toggle, and softening-length entry; wired through `_apply_options_to_ui` / `_build_options_from_ui` round-trip
+- **Defaults** — Feature is off by default (`space_charge_enabled = False`); all existing runs and configs are unaffected
+- **Performance note** — Intra-bunch space charge is not Numba-optimised and runs on the Python path only. The per-step cost scales as O(N²) in rider pcount. This is acceptable for the small pcounts used in feasibility studies (1–16 particles) but will be slow for large bunches.
+- **Files modified** — `core/types.py`, `core/equations.py`, `core/self_consistency.py`, `core/integration_runner.py`, `lw_integrator/testbed_runner.py`, `lw_integrator/cli.py`, `lw_integrator/gui.py`, `lw_integrator/gui_tab_mixins.py`, `lw_integrator/gui_config_mixins.py`
+
+
+### Sweep/Optimization Logging Policy Fixes (April 2026)
+
+- **Bug** — CLI sweep `--quiet` and `log_verbosity` policy paths still emitted per-run progress/detail/debug lines through direct `print()` and uncapped callbacks
+- **Impact** — Headless sweeps could produce noisy stdout and oversized logs even when users requested quiet or truncated logging, making post-processing and live-monitoring output harder to trust
+- **Fix** — Routed CLI sweep output through the runner logging policy, preserving compact metric lines for truncated logging while limiting full timestep/progress/stability diagnostics to `log_verbosity="full"`
+- **Bug** — The GUI sweep stability confirmation dialog silently converted self-consistency verbosity `0` to `1` and adaptive-timestep debug `False` to `True`
+- **Impact** — Loading or confirming otherwise quiet sweep configs could unexpectedly enable lower-level debug output for later full-logging runs
+- **Fix** — Preserve loaded/current stability logging values by default, keep sweep-default enabling only behind the explicit override path, and remove duplicate/unconditional GUI config debug prints
+- **Regression coverage** — Added focused tests for quiet CLI sweep logging and stability-dialog logging defaults
+- **Files modified** — `lw_integrator/sweep_runner.py`, `optimization/plugin_control_mixins.py`, `optimization/plugin_config_mixins.py`, `optimization/plugin_ui_mixins.py`, `optimization/config.py`, `tests/test_sweep_runner_logging.py`, `tests/test_optimization_plugin.py`
+
+### Critical: Macroparticle Image Charge Multiplier Fix (April 2026)
+
+- **Bug** — `generate_conducting_image()` applied `macroparticle_charge_multiplier` twice, so image charges scaled as `multiplier²` instead of `multiplier`
+- **Impact** — Macroparticle conducting-wall runs could over-amplify image-charge strength by large factors; for example, a multiplier of `2` produced a `4×` image charge
+- **Fix** — Removed the second post-loop scaling path so the multiplier is applied exactly once per generated image charge
+- **Regression coverage** — Added unit coverage for single-application scaling, geometry-driven charge suppression, and the surrounding integration control-flow paths
+- **Files modified** — `core/images.py`, `tests/unit/test_trajectory_integrator_helpers.py`, `tests/unit/test_integration_runner_control_flow.py`
+
+### Critical: Equation State Copy Isolation Fix (April 2026)
+
+- **Bug** — `_initialize_result_state()` in `core.equations` reused the previous state's `q` array instead of copying it
+- **Impact** — Marking a particle dead in the new step could silently mutate the previous step as well, corrupting trajectory history and retry logic by retroactively zeroing old charges
+- **Fix** — Copy `q`, `m`, and `char_time` when building the next-step state so dead-particle handling and later mutations remain isolated to the new state
+- **Regression coverage** — Added helper and control-flow coverage for state copying, scalar extractors, retarded-distance helpers, gamma reconciliation, convergence logging, cancellation, blowup handling, and final mass-shell projection
+- **Files modified** — `core/equations.py`, `tests/unit/test_equations_helpers.py`
+
+### Numba Force-Kernel Parity Fix (April 2026)
+
+- **Bug** — `_compute_forces_numba_kernel()` in `core.vectorized_interactions` computed local `bdot_scalar` as `bdot·bdot` instead of the maintained NumPy path's `beta·bdot`
+- **Impact** — The default JIT-accelerated force path could drift from the validated Python implementation on nonzero-acceleration trajectories, producing inconsistent momentum updates depending on whether Numba was active
+- **Fix** — Corrected `bdot_scalar` to `bx*bdotx + by*bdoty + bz*bdotz`, aligning the Numba kernel with the NumPy implementation, and added parity coverage for hard-cutoff, small-k, verbose diagnostics, interpolation branches, and nonzero-acceleration kernels
+- **Files modified** — `core/vectorized_interactions.py`, `tests/unit/test_vectorized_interactions_helpers.py`, `tests/unit/test_images_helpers.py`
+
+### Adaptive Gamma-Blowup Retry Fix (April 2026)
+
+- **Bug** — The adaptive gamma-blowup recovery path in `core.integration_runner` could raise `UnboundLocalError` before retrying with a smaller timestep
+- **Impact** — Instead of recovering or cleanly marking a particle dead, some gamma blowups aborted the integration loop from the control-flow layer itself
+- **Fix** — Removed the invalid `trial_state` propagation in the retry branch and added regression coverage for no-adaptive, minimum-timestep, and hard-blowup retry paths
+- **Files modified** — `core/integration_runner.py`, `tests/unit/test_integration_runner_control_flow.py`
+
+### Adaptive Refinement Bookkeeping Fixes (April 2026)
+
+- **Bug** — Adaptive gamma-blowup retries were not incrementing `refinement_attempt`, so the configured max-retry limit was not actually enforced
+- **Impact** — Some repeated gamma-blowup cases could keep refining until minimum timestep rather than honoring the intended retry cap
+- **Fix** — Count gamma-blowup refinement attempts the same way energy-jump retries are counted, and added regression coverage for max-retry fallback
+
+- **Bug** — Probe-stability checks in reduced-timestep mode compared the accepted step against the already-updated `previous_energy`, which collapsed the measured `ΔE/E` to zero
+- **Impact** — The “unstable during probing” path was effectively unreachable, making timestep recovery look stable even when step-to-step energy drift remained large
+- **Fix** — Preserve the pre-step reference energy for probing decisions, and added regression coverage for both stable return-to-normal and unstable-cooldown restart behavior
+
+- **Files modified** — `core/integration_runner.py`, `tests/unit/test_integration_runner_control_flow.py`
+
+### BUNCH_TO_BUNCH Transverse Offset Mode Fix (April 2026)
+
+- **Bug** — Optimization and sweep run-control code sometimes compared `SimulationType.BUNCH_TO_BUNCH` enum values to the string `"BUNCH_TO_BUNCH"`
+- **Impact** — Enum-backed BUNCH_TO_BUNCH configs could take the conducting-wall offset path, treating an absolute bunch offset as an aperture fraction and scaling it by aperture radius
+- **Fix** — Centralized simulation-mode detection in `optimization.simulation_type_helpers.is_bunch_to_bunch()` and routed transverse-offset, sweep-grid, timestep, result-export, CLI sweep, and sweep run-control branches through the normalized check
+- **Regression coverage** — Added tests covering enum and string mode values so BUNCH_TO_BUNCH offsets remain absolute, BUNCH_TO_BUNCH sweeps keep driver parameters, CLI sweep grids stay in BUNCH_TO_BUNCH mode, and auto-distance timestep calculations use driver distance
+- **Files modified** — `lw_integrator/sweep_runner.py`, `optimization/config.py`, `optimization/plugin_config_mixins.py`, `optimization/plugin_control_mixins.py`, `optimization/results_mixins.py`, `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `optimization/simulation_type_helpers.py`, `optimization/sweep_helpers.py`, `optimization/sweep_result_helpers.py`, `tests/test_cli_gui_parity.py`, `tests/test_optimization.py`, `tests/test_optimization_config_helpers.py`, `tests/test_optimization_run_parameter_helpers.py`, `tests/test_sweep_result_helpers.py`
+
+### Optimization Soft-Penalty Threshold Fix (April 2026)
+
+- **Bug** — The optimization run path used a duplicate soft-penalty implementation with a hard-coded high-energy threshold instead of the tested mass-aware helper
+- **Impact** — Proton and heavier-ion optimizations could be penalized at electron-like energies, biasing objective values away from otherwise valid high-energy parameter regions
+- **Fix** — Routed optimization evaluations through `optimization.penalties.compute_soft_penalty()` and removed the duplicate mixin method
+- **Regression coverage** — Kept focused penalty coverage for electron/proton threshold behavior and added an API guard so the duplicate control-mixin penalty method is not reintroduced
+- **Files modified** — `optimization/run_mixins.py`, `optimization/plugin_control_mixins.py`, `tests/test_optimization_plugin.py`
+
+### CLI Conducting-Wall Energy Convention Fix (April 2026)
+
+- **Bug** — The CLI sweep runner converted conducting-wall particle energy with the BUNCH_TO_BUNCH kinetic-energy convention when building `SimulationOptions.rider_params["starting_Pz"]`
+- **Impact** — Headless conducting-wall sweeps could initialize riders with too-large longitudinal momentum relative to the GUI/single-run convention, breaking CLI/GUI parity for wall-mode runs
+- **Fix** — Reused the shared single-integration Pz helper in `lw_integrator.sweep_runner`, preserving kinetic-energy semantics for BUNCH_TO_BUNCH and total-energy semantics for wall modes
+- **Regression coverage** — Added CLI option-construction coverage that captures the generated `SimulationOptions` and asserts conducting-wall Pz matches the shared GUI helper, not the BUNCH_TO_BUNCH convention
+- **Files modified** — `lw_integrator/sweep_runner.py`, `tests/test_cli_gui_parity.py`
+
+### Maintained Plotting and Validation Surface Cleanup (April 2026)
+
+- **Plotting surface** — Added focused CLI coverage for `lw-generate-sweep-heatmap`, `lw-plot-latest-live`, `lw-plot-from-logcache-live`, and `lw-plot-trajectory`
+- **Sweep plotting behavior** — Stopped auto-generating sweep heatmaps from the GUI save path; sweep saves now point users to `lw-generate-sweep-heatmap` for explicit post-processing
+- **Legacy isolation** — Removed standalone legacy comparison and legacy plotting Python scripts from active examples and the `legacy/` tree; legacy notebooks remain as historical reference material
+- **Config surface** — Removed stale legacy/overlay/difference comparison keys from tracked example configs while keeping loader tolerance for old user configs
+- **Test discovery** — Fixed pytest configuration to collect from the actual `tests/` tree instead of stale `lw_integrator/tests`
+- **Files modified** — `lw_integrator/sweep_heatmap.py`, `tests/test_plotting_tools.py`, `tests/test_adaptive_timestep_interactions.py`, `tests/test_repository_surface.py`, `docs/source/validation.rst`, `docs/source/notebooks.rst`, `docs/source/overview.rst`, `docs/source/theory.rst`, `docs/source/recent_changes.rst`, `pyproject.toml`, `examples/validation/`, `legacy/`
+
+### CLI Config Compatibility Fix (April 2026)
+
+- **Bug** — CLI JSON config parsing stopped accepting integer `SimulationType` flags (`0`, `1`, `2`) and historical chrono/startup aliases even though master accepted these values
+- **Fix** — Restored integer mode parsing while rejecting boolean values and invalid integer flags; restored config-file aliases for older chrono/startup values without re-advertising them in help text
+- **Regression coverage** — Added CLI parser coverage for all integer simulation modes, invalid integer inputs, and historical chrono/startup aliases
+- **Files modified** — `lw_integrator/cli.py`, `tests/test_cli.py`
+
+### Optimization Top-N Trajectory Regeneration Fix (April 2026)
+
+- **Bug** — Top-N optimization trajectory regeneration used a stale local parameter mapper instead of the same resolver used by objective evaluations
+- **Impact** — Regenerated trajectories for swept rider/driver parameters could differ from the parameter set that was actually optimized, especially for BUNCH_TO_BUNCH driver energy, mass, and starting-distance sweeps
+- **Fix** — Route top-N regeneration through `resolve_optimization_run_parameters()` and always restore the temporary trajectory-saving flag after reruns
+- **Regression coverage** — Extended BUNCH_TO_BUNCH top-N trajectory coverage to assert swept rider and driver parameters are passed through
+- **Files modified** — `optimization/results_mixins.py`, `tests/test_optimization.py`
+
 ## v0.6.0 — March 2026
 
 ### CLI / GUI Parity (March 2026)
@@ -22,7 +179,7 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Contour alpha** reduced from 0.35 → 0.18 for less visual clutter
 - **Edge-aware label clamping** — Labels whose centres fall outside the axes data limits are hidden; a one-shot `draw_event` callback shifts overflowing labels inward after the final Matplotlib layout pass
 - **Overlap culling** — A second pass hides labels that genuinely intersect previously-accepted labels (negative pixel padding of −4 px, so merely-touching labels are kept)
-- **Files modified** — `generate_sweep_heatmap.py`
+- **Files modified** — `lw_integrator/sweep_heatmap.py`
 
 ### Driver Energy Sweep Fix (February–March 2026)
 
@@ -63,9 +220,9 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 - **Bug** - Sweeping `driver_energy_gev` in BUNCH_TO_BUNCH mode had no effect on simulation results; all runs produced identical rider energy gains regardless of driver energy
 - **Root cause** - The sweep code path in `_run_sweep_background()` built `driver_params_dict` using `params_dict.get("driver_starting_Pz", -4925.0)`, but the sweep grid populated the key `"driver_energy_gev"` (in GeV). Since `"driver_starting_Pz"` was never in `params_dict`, every run used the hardcoded default Pz of -4925.0
-- **Scope** - Affected both `optimization_plugin.py` (GUI sweep path) and `optimization/run_mixins.py` (mixin sweep path). The optimization path (`_run_optimization_background`) was already correct
-- **Fix** - When building `driver_params_dict`, check for `"driver_energy_gev"` in `params_dict` first and convert to Pz via `calculate_starting_pz_from_energy()`, falling back to legacy `"driver_starting_Pz"` key
-- **Files modified** - `lw_integrator/optimization_plugin.py` (sweep path ~L7465-7490), `optimization/run_mixins.py` (sweep path ~L1334-1390, optimization path ~L497-504, added `_calculate_starting_pz_from_energy` helper)
+- **Scope** - Affected the sweep run-control path when building BUNCH_TO_BUNCH driver parameters from sweep-grid values
+- **Fix** - When building driver parameters, check for `"driver_energy_gev"` in `params_dict` first and convert to Pz via the shared energy-to-Pz helper, falling back to `"driver_starting_Pz"` only for older configs
+- **Files modified** - `optimization/run_mixins.py`, `optimization/run_parameter_helpers.py`, `optimization/sweep_run_helpers.py`, `optimization/sweep_helpers.py`, and related regression tests
 
 ### Optimization Plugin Fixes (February 26, 2026)
 
@@ -95,7 +252,7 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Solution** - Restructured config panel to use grid layout with explicit weight distribution:
   - Row 0 (weight=1): Scrollable canvas container - expands to fill space
   - Row 1-3 (weight=0): Control elements (Run Mode, RUN/CANCEL buttons, Status) - fixed height, always visible
-- **Testing** - Created `local/test_gui_button_visibility.py` to verify buttons remain visible at various window sizes
+- **Testing** - Added a local resize check to verify buttons remain visible at various window sizes
 - **Files modified** - `lw_integrator/gui.py` (\_build_config_panel method, lines ~2608-2910)
 
 ### CLI Logging Fixes (February 25, 2026)
@@ -160,7 +317,7 @@ Step 130: travel = 65mm,  R = 135mm, threshold = 45mm  → forces ON ✓
 Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 ```
 
-**Impact**: Low-velocity simulations (β < 0.5) had severely incorrect gating. Non-relativistic particles would have forces suppressed until far past physical interaction regions, producing wrong results. High-β simulations (β > 0.9) unaffected. See `local/COLD_START_FIX_IMPLEMENTED.md` for detailed analysis and verification.
+**Impact**: Low-velocity simulations (β < 0.5) had severely incorrect gating. Non-relativistic particles would have forces suppressed until far past physical interaction regions, producing wrong results. High-β simulations (β > 0.9) unaffected.
 
 ### Transverse Offset Sweep Bug Fix (February 23, 2026)
 
@@ -227,7 +384,7 @@ Step 200: travel = 100mm, R = 100mm, threshold = 33mm  → forces ON
 - **Opt-in feature** - Reconciliation methods (ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, etc.) still available but require explicit enablement
 - **Legacy behavior restored** - Default configuration matches v0.4.8 stable behavior: `gamma_reconciliation_method = DISABLED`
 
-**Impact**: Eliminates silent energy non-conservation for users upgrading from v0.4.8. Feature requires redesign before safe re-enablement (see `local/GAMMA_RECONCILIATION_FIX.md`).
+**Impact**: Eliminates silent energy non-conservation for users upgrading from v0.4.8. Feature requires redesign before safe re-enablement.
 
 ### Sweep Plotting and Heatmap Tools (February 5-8, 2026)
 
@@ -390,7 +547,7 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Opt-in feature** - Five methods still available (ADAPTIVE_WEIGHTED, FIXED_WEIGHTED, USE_VELOCITY, USE_ENERGY, DISABLED) but require explicit enablement
 - **Momentum rescaling removed** - Spatial momentum no longer rescaled by default, preventing trajectory alterations
 - **Legacy behavior restored** - Default matches v0.4.8 stable version behavior
-- **Detailed documentation** - See `local/GAMMA_RECONCILIATION_FIX.md` for analysis and migration guide
+- **Detailed documentation** - Changelog and configuration notes document the safe migration path
 
 ## January 2025
 
@@ -400,7 +557,7 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Velocity-dependent weighting** - ADAPTIVE_WEIGHTED method uses β-dependent weights: trust energy at low β (<0.9), trust velocity at high β (>0.99), balanced in mid-range
 - **Custom threshold tuning** - All thresholds and weights configurable via API and GUI for ultra-relativistic particles or specific physics regimes
 - **GUI controls** - Gamma Reconciliation panel in Stability → Self-Consistency with method dropdown and parameter fields that show/hide dynamically
-- **Backward compatibility** - Old `gamma_reconciliation_enabled` boolean replaced with method enum; legacy property still works for compatibility
+- **Backward compatibility** - Old `gamma_reconciliation_enabled` boolean replaced with method enum; historical configs should now use the enum directly
 - **Important note** - Feature disabled by default (Feb 2026) due to energy conservation issues; requires redesign before safe re-enablement
 
 ### Transverse Offset GUI Improvements (January 2025)
@@ -416,7 +573,7 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Transverse offset parameters** - New `transv_offset_x` and `transv_offset_y` fields separate beam center position from beam spread
 - **Beam positioning** - Particles now distributed in `[offset ± spread]` allowing off-axis beams with controllable size
 - **Core bunch initialization** - New `input_output.bunch_initialization.create_bunch_from_params()` replaces legacy initialization for normal operation
-- **Legacy code isolation** - Legacy initialization (`legacy/bunch_inits.py`) now ONLY runs when "Enable legacy comparison" is checked in GUI
+- **Legacy code isolation** - Legacy initialization was isolated from normal operation; active legacy comparison code has since been removed in favor of maintained core paths and reference notebooks
 - **GUI integration** - Offset fields automatically appear in Particles tab for both rider and driver bunches
 - **Optimization plugin fix** - "Transverse Offset" now correctly sets beam **position** (not spread), with separate `transv_dist` for beam size
 - **Backward compatibility** - Old configs without offset parameters default to 0.0 (on-axis), no breaking changes
@@ -443,6 +600,6 @@ This ensures that diagnostic information is always visible during runs when requ
 - **Fixed self-consistency convergence** - Iterations now enforce the mass-shell constraint Pt² = P² + (mc)² through projection
 - **Improved numerical precision** - Float64 throughout, relaxed k_factor threshold to 1e-20 for extreme angles
 - **Self-consistency enabled by default** - Essential for energy conservation in high-energy simulations
-- **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`. See `local/CHRONO_INTERPOLATION_SUMMARY.md` for details.
+- **Chrono-match interpolation** - Sub-timestep accuracy for retarded field calculations, providing 10-100× reduction in time residual. Critical for ultra-relativistic simulations (γ > 100). Enabled via `SelfConsistencyConfig(chrono_interpolate=True)`.
 
 **Overall Impact**: The LW Integrator has evolved from a research prototype to a production-ready tool with comprehensive GUI, robust numerical methods, and extensive validation. Energy conservation improved by 3+ orders of magnitude. COLD_START gating fixes ensure correct physics across all velocity regimes. Optimization system enables practical parameter searches. GUI provides intuitive access to all features with real-time monitoring. Self-consistency iterations maintain physical correctness in challenging scenarios. The codebase now includes significant numerical methods and features beyond the original publication.

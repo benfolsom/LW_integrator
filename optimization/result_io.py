@@ -210,8 +210,6 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
     # Copy debug log from logcache to results directory
     if hasattr(plugin, "_log_file_path") and plugin._log_file_path is not None:
         if plugin._log_file_path.exists():
-            import shutil
-
             dest_log = opt_dir / plugin._log_file_path.name
             try:
                 shutil.copy2(plugin._log_file_path, dest_log)
@@ -220,8 +218,6 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
                 plugin._log_result(f"[WARNING] Failed to copy debug log: {e}")
     else:
         # Try to find the most recent logcache file for this context
-        import glob
-
         logcache_dir = Path(plugin.config.output_dir).parent.parent / "logcache"
         if logcache_dir.exists():
             # Find most recent optimization log
@@ -230,7 +226,6 @@ def save_optimization_results(plugin: Any, result: Any, param_names: List[str]):
             )
             if log_files:
                 most_recent_log = log_files[-1]
-                import shutil
 
                 dest_log = opt_dir / most_recent_log.name
                 try:
@@ -344,7 +339,6 @@ def generate_optimization_plots(
 ):
     """Generate optimization visualization plots."""
     import matplotlib.pyplot as plt
-    import numpy as np
 
     try:
         if hasattr(result, "convergence_history") and result.convergence_history:
@@ -478,7 +472,6 @@ def generate_optimization_heatmap(
 ):
     """Generate sparse heatmap from optimization evaluations."""
     import matplotlib.pyplot as plt
-    import numpy as np
     from scipy.interpolate import griddata
 
     try:
@@ -549,7 +542,7 @@ def generate_optimization_heatmap(
                 extend="both",
             )
 
-            scatter = ax.scatter(
+            ax.scatter(
                 x_vals,
                 y_vals,
                 c=z_vals,
@@ -610,8 +603,6 @@ def save_top_n_optimization_trajectories(
     plugin: Any, result: Any, param_names: List[str]
 ):
     """Re-run top N parameter sets and save trajectories to timestamped directory."""
-    from pathlib import Path
-
     if getattr(plugin, "_was_cancelled", False):
         plugin._log_result("")
         plugin._log_result(
@@ -687,10 +678,7 @@ def save_top_n_optimization_trajectories(
 
 def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[dict]):
     """Generate comparison plot showing all top N trajectories overlaid."""
-    from pathlib import Path
-
     import matplotlib.pyplot as plt
-    import numpy as np
 
     try:
         output_dir = getattr(
@@ -703,7 +691,6 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
         for i, item in enumerate(trajectory_data_list):
             rank = item["rank"]
             traj = item["trajectory"]
-            fitness = item["fitness"]
             color = colors[i]
 
             z = np.array(traj.get("z", []))
@@ -832,8 +819,6 @@ def save_partial_optimization_results(
     status: str = "PARTIAL",
 ):
     """Save partial optimization results when cancelled or failed."""
-    from datetime import datetime
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if plugin.config.mode == "optimization":
@@ -996,11 +981,6 @@ def relocate_incomplete_sweep(
 
 __all__ = [
     "save_optimization_results",
-    "save_top_trajectories_summary_table",
-    "generate_optimization_plots",
-    "generate_optimization_heatmap",
-    "save_top_n_optimization_trajectories",
-    "generate_trajectory_comparison_plot",
     "save_partial_optimization_results",
     "relocate_incomplete_sweep",
 ]

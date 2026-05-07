@@ -21,8 +21,8 @@ For the full history see [CHANGELOG.md](CHANGELOG.md).
 
 The LW Integrator is a covariant charged-particle tracking code that evaluates
 retarded Liénard–Wiechert potentials to obtain first-principles beam dynamics.
-The repository contains a modernised `core` implementation that mirrors the
-validated legacy solver, an updated Sphinx documentation set, and a collection
+The repository contains a modernised `core` implementation that preserves the
+validated reference physics, an updated Sphinx documentation set, and a collection
 of validation scripts and notebooks. The methodology is documented in the
 peer-reviewed article _Relativistic beam loading, recoil-reduction, and
 residual-wake acceleration with a covariant retarded-potential integrator_
@@ -50,14 +50,14 @@ residual-wake acceleration with a covariant retarded-potential integrator_
 
 - **Physics focus.** The code integrates particle trajectories using
   retarded-vector potentials and conjugate-momentum dynamics. The `core`
-  package is a faithful transcription of the proven legacy solver and is kept in
+  package is a faithful transcription of the validated reference implementation and is kept in
   numerical lockstep by an integration test suite.
 - **Self-consistency and energy conservation.** The integrator enforces the
   relativistic mass-shell constraint Pt² = P² + (mc)² through iterative
   projection during each timestep. Two modes are available:
-  - **mass_shell_only (default)**: Fast iteration with fixed geometry—retarded
+  - **fixed_geometry (default)**: Fast iteration with fixed geometry—retarded
     distances computed once per step. Suitable for most simulations.
-  - **full_iteration**: Updates particle positions and recomputes retarded
+  - **variable_geometry**: Updates particle positions and recomputes retarded
     distances each iteration for maximum accuracy when particles move
     significantly (|Δx| ~ 0.1×R_separation). Computationally expensive but
     accounts for geometric changes during the timestep.
@@ -71,10 +71,10 @@ residual-wake acceleration with a covariant retarded-potential integrator_
     thresholds and weights. Trusts energy at low β, velocity at high β.
   - **FIXED_WEIGHTED**: Fixed 50/50 blend (or custom weight).
   - **USE_VELOCITY** / **USE_ENERGY**: Use one calculation exclusively.
-  - **DISABLED**: No reconciliation (legacy, not recommended).
+  - **DISABLED**: No reconciliation. This is the maintained default for the
+    current solver path.
     Configurable via API (`self_consistency_gamma_reconciliation_method` and related
     parameters) and GUI (Stability → Self-Consistency → Gamma Reconciliation).
-    See `local/gamma_reconciliation_config.md` for detailed usage.
 - **Adaptive timestep and beta clamping.** The integrator includes numerical
   safety features for extreme relativistic regimes (γ > 10⁶):
   - **Beta clamping** prevents particle velocities from reaching the speed of
@@ -96,7 +96,7 @@ residual-wake acceleration with a covariant retarded-potential integrator_
   from physical behavior and is essential for unattended sweep and optimization
   runs. Configured via `SmoothnessConfig` with presets for strict,
   balanced, and permissive validation. See `core/smoothness_analyzer.py`
-  and `local/smoothness_checking_implementation.md` for details.
+  for implementation details.
 - **Macroparticle simulation.** For conducting-wall simulations, the integrator
   supports macroparticle mode where test particle charges are scaled by a
   configurable multiplier and image subcharge positions receive stochastic errors
@@ -124,14 +124,12 @@ LW_integrator/
 ├── configs/              # JSON run and sweep configuration files
 ├── docs/                 # Sphinx configuration, sources, and build script
 ├── examples/
-│   └── validation/       # CLI and notebook-based comparison studies
+│   └── validation/       # Reference notebooks and validation examples
 ├── input_output/         # Particle bunch initialisation utilities
-├── legacy/               # Archived original solver and notebooks
-│                         # (deprecated — kept for regression comparisons)
+├── legacy/               # Archived notebooks (historical reference only)
 ├── lw_integrator/        # CLI, GUI, sweep runner, and testbed runner
 ├── optimization/         # Sweep/optimization engine, metrics, result I/O
 ├── results/              # Sweep and optimization output (git-ignored)
-├── scripts/              # Monitoring and helper scripts
 ├── tests/                # Pytest suite covering physics and helper modules
 ├── .github/workflows/    # Continuous-integration pipelines (docs publishing)
 ├── core/_version.py      # Single source of truth for the project version
@@ -302,7 +300,7 @@ The GUI provides three operational modes:
 - For radiation reaction physics (stripped_ions > 10), use timestep ≤ 3e-7 ns with self-consistency enabled
 - Nelder-Mead is fastest for local optimization (~15-50 min), GA/DE are thorough but slower (~1-3 hours)
 
-Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergence history, best parameters, and optional trajectory data. See `local/SWEEP_AND_OPTIMIZATION_GUIDE.md` for detailed usage.
+Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergence history, best parameters, and optional trajectory data.
 
 ### Command-line entry point
 
@@ -344,20 +342,16 @@ parameters, particle bunches, and physics options. Example structure:
 
 ```json
 {
-  "simulation": {
-    "steps": 1000,
-    "time_step": 3e-7,
-    "simulation_type": "conducting-wall",
-    "aperture_radius": 0.01,
-    "wall_position": 100.0
-  },
+  "steps": 1000,
+  "time_step": 3e-7,
+  "simulation_type": "conducting-wall",
+  "aperture_radius": 0.01,
+  "wall_position": 100.0,
   "rider": {
-    "mass": 1.0,
-    "charge": 1.0,
-    "energy": 5.0,
-    "x0": 0.0,
-    "y0": 0.0,
-    "z0": 0.0
+    "kinetic_energy_mev": 5.0,
+    "mass_amu": 1.0,
+    "charge_sign": 1.0,
+    "position_z": 0.0
   }
 }
 ```
@@ -377,7 +371,7 @@ Run `lw-simulate --help` for complete option listing.
 
 Conducting-wall runs apply radial weighting to image subcharges by default for
 better agreement with the aperture geometry. Pass `--no-image-weighting` to
-recover the legacy uniform distribution when benchmarking or debugging.
+recover the historical uniform distribution when benchmarking or debugging.
 
 Programmatic usage mirrors the console invocation: call
 `lw_integrator.cli.main` with a list of CLI-style arguments. See
@@ -387,18 +381,46 @@ both patterns.
 ### Sweep heatmap generation
 
 After a sweep completes you can generate publication-quality heatmaps with
-`generate_sweep_heatmap.py`:
+the maintained packaged command `lw-generate-sweep-heatmap`:
 
 ```bash
-python generate_sweep_heatmap.py results/sweeps/<sweep_dir> \
+lw-generate-sweep-heatmap results/sweeps/<sweep_dir> \
     --no-title --output gains.png --absolute-gains --log-param2 \
-    --energy-max 1000 --num-contours 8 --no-markers --grey-zero \
-    --grey-centre 0 --gain-max 200 --energy-min 1 --log-colorbar
+    --param1-max 1000 --num-contours 8 --no-markers --grey-zero \
+    --grey-centre 0 --gain-max 200 --param1-min 1 --log-colorbar
 ```
 
 Contour lines use reduced alpha (0.18) and labels are automatically clamped
 to stay within the axes. Overlapping labels are culled after the final
 layout pass so they never stack on top of each other.
+
+### Live sweep plotting
+
+The maintained live sweep plotting commands are:
+
+```bash
+lw-plot-latest-live
+lw-plot-from-logcache-live logcache/<sweep_log>.log
+```
+
+`lw-plot-latest-live` follows the most recent sweep log automatically.
+`lw-plot-from-logcache-live` can run in static mode by default or in live mode
+with `--live`.
+
+### Saved trajectory plotting
+
+Saved single-run trajectory files from the GUI/testbed can be plotted from the
+CLI with `lw-plot-trajectory`:
+
+```bash
+lw-plot-trajectory results/testbed_runs/<run_dir>/trajectory_data_<timestamp>.json
+lw-plot-trajectory results/testbed_runs/<run_dir>/trajectory_data_<timestamp>.npz
+```
+
+JSON trajectory files preserve rider/driver separation and the full core-state
+history needed by the maintained plotting tools.
+NPZ files use the standard compact `z/r/pz/pr/gamma` format shared with the
+optimization tooling.
 
 ---
 

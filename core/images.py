@@ -1,8 +1,8 @@
 """Mirror-image computations used by the retarded integrator.
 
 Conducting boundaries can be represented via image charges. The helpers here
-construct those synthetic bunches while preserving the exact behaviour of the
-legacy solver (including its stochastic aperture spill model).
+construct those synthetic bunches while preserving the validated reference
+behavior, including the stochastic aperture spill model.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def _random_sign() -> int:
     return 1 if random.random() < 0.5 else -1
 
 
-def zeros_like_state(vector: ParticleState) -> ParticleState:
+def _zeros_like_state(vector: ParticleState) -> ParticleState:
     """Return an empty particle state dictionary with the same layout."""
 
     result: ParticleState = {
@@ -300,7 +300,7 @@ def generate_conducting_image(
                 # Perfectly on-axis: enforce zero weight
                 weights = np.zeros(count, dtype=float)
 
-            # Combine legacy solid-angle reduction (in base_charge_per_sub)
+            # Combine the archived-reference solid-angle reduction (in base_charge_per_sub)
             # with rho-shift weighting that emphasizes off-axis behaviour.
             charge_values = (base_charge_per_sub * weights).astype(
                 result["q"].dtype, copy=False
@@ -338,9 +338,6 @@ def generate_conducting_image(
 
     if charges_suppressed:
         result["q"].fill(0.0)
-    elif macroparticle_charge_multiplier != 1.0 and not charges_suppressed:
-        # Also scale any remaining charges if multiplier is active
-        result["q"] = result["q"] * macroparticle_charge_multiplier
 
     return result
 
@@ -355,7 +352,7 @@ def generate_switching_image(
     to emulate an opening absorber.
     """
 
-    result = zeros_like_state(vector)
+    result = _zeros_like_state(vector)
     result["q"] = -np.copy(vector["q"])
 
     for i in range(len(vector["x"])):
@@ -388,5 +385,4 @@ def generate_switching_image(
 __all__ = [
     "generate_conducting_image",
     "generate_switching_image",
-    "zeros_like_state",
 ]

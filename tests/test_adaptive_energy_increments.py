@@ -12,19 +12,15 @@ Key test scenarios:
 """
 
 import json
-import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import numpy as np
 
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
 from core.constants import C_MMNS
-from core.types import ParticleState, SimulationType
 from lw_integrator.testbed_runner import SimulationOptions, run_testbed
+
+project_root = Path(__file__).parent.parent
 
 
 def load_base_config() -> Dict:
@@ -260,7 +256,7 @@ def run_energy_sweep_test(
             results.append(analysis)
 
             # Print summary
-            print(f"\n  Results:")
+            print("\n  Results:")
             print(f"    Steps taken: {analysis['steps_taken']}")
             print(f"    Distance traveled: {analysis['distance_traveled']:.2f} mm")
             print(

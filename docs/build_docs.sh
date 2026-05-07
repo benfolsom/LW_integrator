@@ -17,6 +17,11 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 DOCS_DIR="$SCRIPT_DIR"
 SOURCE_DIR="$DOCS_DIR/source"
 BUILD_DIR="$DOCS_DIR/build"
+PYTHON_BIN="${PYTHON:-python}"
+
+if [ ! -x "$(command -v "$PYTHON_BIN" 2>/dev/null)" ] && [ -x "$SCRIPT_DIR/../.venv/bin/python" ]; then
+    PYTHON_BIN="$SCRIPT_DIR/../.venv/bin/python"
+fi
 
 # Check if we're in the right directory
 if [ ! -f "$SOURCE_DIR/conf.py" ]; then
@@ -72,16 +77,16 @@ fi
 
 # Check for required packages
 echo "Checking dependencies..."
-python -c "import sphinx; import sphinx_rtd_theme; import nbsphinx" 2>/dev/null || {
+"$PYTHON_BIN" -c "import sphinx; import sphinx_rtd_theme; import nbsphinx" 2>/dev/null || {
     echo -e "${RED}Error: Missing required packages${NC}"
-    echo "Please install: pip install sphinx sphinx-rtd-theme nbsphinx"
+    echo "Please install: $PYTHON_BIN -m pip install -e \".[docs]\""
     exit 1
 }
 
 if [ "$WATCH" = true ]; then
-    python -c "import sphinx_autobuild" 2>/dev/null || {
+    "$PYTHON_BIN" -c "import sphinx_autobuild" 2>/dev/null || {
         echo -e "${RED}Error: sphinx-autobuild is required for --watch${NC}"
-        echo "Install it with: pip install -e \".[docs]\""
+        echo "Install it with: $PYTHON_BIN -m pip install -e \".[docs]\""
         exit 1
     }
 fi
@@ -93,13 +98,13 @@ if [ "$WATCH" = true ]; then
     echo "Starting auto-build with live reload..."
     echo "Documentation will be available at http://localhost:8000"
     echo "Press Ctrl+C to stop"
-    sphinx-autobuild "$SOURCE_DIR" "$BUILD_DIR/html" \
+    "$PYTHON_BIN" -m sphinx_autobuild "$SOURCE_DIR" "$BUILD_DIR/html" \
         --host 0.0.0.0 \
         --port 8000 \
         --open-browser
 else
     # Standard build
-    sphinx-build -b "$BUILD_TYPE" "$SOURCE_DIR" "$BUILD_DIR/$BUILD_TYPE" \
+    "$PYTHON_BIN" -m sphinx -b "$BUILD_TYPE" "$SOURCE_DIR" "$BUILD_DIR/$BUILD_TYPE" \
         -W \
         --keep-going
 

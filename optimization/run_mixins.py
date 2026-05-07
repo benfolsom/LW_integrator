@@ -9,63 +9,54 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from core.constants import C_MMNS  # type: ignore[import]
-
-# Physical constants for energy-momentum conversion
-AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
-from core.debug_logger import set_logging_context  # type: ignore[import]
-from core.smoothness_analyzer import (  # type: ignore[import]
-    SmoothnessConfig,
-    analyze_trajectory_smoothness,
-    filter_stable_trajectories,
-)
-from core.types import SimulationType  # type: ignore[import]
+from core.debug_logger import initialize_debug_logging  # type: ignore[import]
 from lw_integrator.testbed_runner import (  # type: ignore[import]
-    RunResult,
     SimulationOptions,
     run_testbed,
 )
-from optimization.config import (  # type: ignore[import]
-    calculate_auto_steps,
-    calculate_auto_timestep,
+from optimization.logging_policy import (
+    apply_run_logging_policy,
+    describe_run_logging_policy,
+    restore_run_logging_policy,
 )
-
-
-def _calculate_starting_pz_from_energy(
-    energy_gev: float, mass_amu: float, negative: bool = False
-) -> float:
-    """Calculate starting Pz from kinetic energy and mass.
-
-    Uses the kinetic-energy convention (γ = KE / E_rest + 1) which matches
-    the convention used by ``create_bunch_from_energy`` throughout the
-    codebase.
-
-    Parameters
-    ----------
-    energy_gev : float
-        Kinetic energy in GeV.  Negative values are treated as their
-        absolute value (energy is always positive; use the ``negative``
-        flag for direction).
-    mass_amu : float
-        Particle mass in amu
-    negative : bool, optional
-        If True, return negative Pz (particle moving in -z direction,
-        e.g. driver).  Default: False.
-
-    Returns
-    -------
-    float
-        Starting Pz in amu·mm/ns (sign determined by ``negative`` flag)
-    """
-    energy_gev = abs(energy_gev)  # energy is always a positive magnitude
-    rest_energy_mev = mass_amu * AMU_TO_MEV
-    # Kinetic energy convention: γ = KE / E_rest + 1
-    gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-    if gamma < 1.0:
-        gamma = 1.0
-    beta = np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.0
-    pz = gamma * mass_amu * C_MMNS * beta
-    return -pz if negative else pz
+from optimization.penalties import compute_soft_penalty
+from optimization.run_parameter_helpers import (
+    build_optimization_evaluation_outcome,
+    collect_optimization_parameter_selection,
+    resolve_optimization_run_parameters,
+    resolve_objective_metric,
+)
+from optimization.run_logging_helpers import (
+    build_progress_log_line,
+    build_small_aperture_diagnostic_line,
+    build_stability_config_log_lines,
+    should_emit_verbose_run_log,
+)
+from optimization.simulation_type_helpers import is_bunch_to_bunch
+from optimization.single_integration_helpers import (
+    build_integration_metrics,
+    build_final_z_check_log_lines,
+    build_halted_integration_output,
+    build_integration_trajectory_output,
+    build_single_integration_setup,
+)
+from optimization.sweep_helpers import build_parameter_grids
+from optimization.sweep_run_helpers import (
+    build_full_debug_parameter_log_lines,
+    resolve_sweep_run_parameters,
+    resolve_sweep_timestep,
+)
+from optimization.sweep_result_helpers import (
+    build_failed_sweep_run_record,
+    build_full_debug_sweep_result_log_lines,
+    build_sweep_completion_log_lines,
+    build_sweep_run_data,
+    build_timeout_sweep_run_record,
+    build_truncated_sweep_log_params,
+    classify_sweep_attempt_result,
+    extract_actual_distance,
+    extract_sweep_metric_summary,
+)
 
 
 class OptimizationRunMixin:
@@ -75,7 +66,10 @@ class OptimizationRunMixin:
         """Run optimization in background using selected algorithm."""
         # Set logging context for this optimization run
         method = self.config.optimization_method
-        set_logging_context(f"optimization_{method}")
+        initialize_debug_logging(
+            context=f"optimization_{method}",
+            force_new_log=True,
+        )
 
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
@@ -99,256 +93,16 @@ class OptimizationRunMixin:
             self._log_result("=" * 80)
             self._log_result("")
 
-            # Apply log verbosity settings (same as sweep mode)
-            # Save original values to restore later
-            original_sc_verbosity = self.config.self_consistency_verbosity
-            original_adaptive_debug = self.config.adaptive_timestep_debug
-
-            use_no_logging = self.config.log_verbosity == "none"
-            use_truncated_logging = self.config.log_verbosity == "truncated"
-            use_full_logging = self.config.log_verbosity == "full"
-
-            # Apply log verbosity settings - control what gets logged
-            # "full" mode INHERITS stability settings from config/GUI
-            # Other modes override to reduce output
-            if use_full_logging:
-                # INHERIT stability verbosity settings from config (don't override)
-                # Use whatever was set in Stability tab or loaded from config
-                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-                self._log_result(
-                    "  Full debug logging enabled (inherits Stability tab settings)"
-                )
-                self._log_result(
-                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
-                )
-                self._log_result(
-                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
-                )
-            elif use_truncated_logging:
-                # Disable verbose logging for optimizations with many evaluations
-                self.config.self_consistency_verbosity = 0
-                self.config.adaptive_timestep_debug = False
-                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-                self._log_result(
-                    "  Truncated logging (parameters + metrics + errors only)"
-                )
-            elif use_no_logging:
-                # Completely disable all debug logging
-                self.config.self_consistency_verbosity = 0
-                self.config.adaptive_timestep_debug = False
-                self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-                self._log_result("  Debug logging disabled")
-            else:
-                # Unknown log verbosity - use config file values
-                self._log_result(
-                    f"Log verbosity: {self.config.log_verbosity} (unknown, using config values)"
-                )
-                self._log_result(
-                    f"  adaptive_timestep_debug: {self.config.adaptive_timestep_debug}"
-                )
-                self._log_result(
-                    f"  self_consistency_verbosity: {self.config.self_consistency_verbosity}"
-                )
+            logging_policy = apply_run_logging_policy(self.config)
+            for line in describe_run_logging_policy(logging_policy):
+                self._log_result(line)
             self._log_result("")
 
-            # Build parameter names and bounds from config
-            param_names = []
-            param_bounds = []
-
-            # Debug logging for aperture decision
-            self._log_result("[DEBUG] Optimization parameter setup:")
-            self._log_result(f"  simulation_type = {self.config.simulation_type}")
-            self._log_result(f"  aperture_points = {self.config.aperture_points}")
-            self._log_result(
-                f"  Is BUNCH_TO_BUNCH? {self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH}"
-            )
-
-            # Aperture (not used in BUNCH_TO_BUNCH mode)
-            if (
-                self.config.aperture_points > 1
-                and self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH
-            ):
-                param_names.append("aperture_radius")
-                param_bounds.append(self.config.aperture_range)
-                self._log_result(f"  → Aperture INCLUDED in optimization")
-                self._log_result(
-                    f"    Added: aperture_radius, range={self.config.aperture_range}"
-                )
-            else:
-                self._log_result(f"  → Aperture EXCLUDED from optimization")
-
-            # Energy
-            if self.config.energy_points > 1:
-                param_names.append("initial_energy_gev")
-                param_bounds.append(self.config.energy_range)
-                self._log_result(
-                    f"    Added: initial_energy_gev, range={self.config.energy_range}, points={self.config.energy_points}"
-                )
-
-            # Transverse momentum (if enabled as sweep parameter)
-            if (
-                self.config.transverse_momentum_range is not None
-                and self.config.transverse_momentum_points > 1
-            ):
-                param_names.append("transverse_momentum")
-                param_bounds.append(self.config.transverse_momentum_range)
-                self._log_result(
-                    f"    Added: transverse_momentum, range={self.config.transverse_momentum_range}, points={self.config.transverse_momentum_points}"
-                )
-
-            # Timestep (if enabled as sweep parameter)
-            if (
-                self.config.timestep_range is not None
-                and self.config.timestep_points > 1
-            ):
-                param_names.append("timestep")
-                param_bounds.append(self.config.timestep_range)
-
-            # Rider transverse distance (spread) - if enabled as sweep parameter
-            if (
-                self.config.transverse_spread_range is not None
-                and self.config.transverse_spread_points > 1
-            ):
-                param_names.append("rider_transv_dist")
-                param_bounds.append(self.config.transverse_spread_range)
-                self._log_result(
-                    f"    Added: rider_transv_dist, range={self.config.transverse_spread_range}, points={self.config.transverse_spread_points}"
-                )
-
-            # Macroparticle charge multiplier - if enabled as sweep parameter
-            if (
-                self.config.macroparticle_charge_range is not None
-                and self.config.macroparticle_charge_points > 1
-            ):
-                param_names.append("macroparticle_charge_multiplier")
-                param_bounds.append(self.config.macroparticle_charge_range)
-
-            # Macroparticle sigma multiplier - if enabled as sweep parameter
-            if (
-                self.config.macroparticle_sigma_range is not None
-                and self.config.macroparticle_sigma_points > 1
-            ):
-                param_names.append("macroparticle_sigma_multiplier")
-                param_bounds.append(self.config.macroparticle_sigma_range)
-
-            # Wall z position - if enabled as sweep parameter
-            if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
-                param_names.append("wall_z")
-                param_bounds.append(self.config.wall_z_range)
-
-            # Rider stripped ions - if enabled as sweep parameter
-            if (
-                self.config.rider_stripped_ions_range is not None
-                and self.config.rider_stripped_ions_points > 1
-            ):
-                param_names.append("rider_stripped_ions")
-                param_bounds.append(self.config.rider_stripped_ions_range)
-
-            # Driver stripped ions - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_stripped_ions_range is not None
-                and self.config.driver_stripped_ions_points > 1
-            ):
-                param_names.append("driver_stripped_ions")
-                param_bounds.append(self.config.driver_stripped_ions_range)
-
-            # Rider particle mass - if enabled as sweep parameter
-            if (
-                self.config.particle_mass_range is not None
-                and self.config.particle_mass_points > 1
-            ):
-                param_names.append("rider_m_particle")
-                param_bounds.append(self.config.particle_mass_range)
-                self._log_result(
-                    f"    Added: rider_m_particle, range={self.config.particle_mass_range}, points={self.config.particle_mass_points}"
-                )
-
-            # Rider charge sign - if enabled as sweep parameter
-            if (
-                self.config.particle_charge_range is not None
-                and self.config.particle_charge_points > 1
-            ):
-                param_names.append("rider_charge_sign")
-                param_bounds.append(self.config.particle_charge_range)
-
-            # Rider particle count - if enabled as sweep parameter
-            if (
-                self.config.particle_count_range is not None
-                and self.config.particle_count_points > 1
-            ):
-                param_names.append("rider_pcount")
-                param_bounds.append(self.config.particle_count_range)
-                self._log_result(
-                    f"    Added: rider_pcount, range={self.config.particle_count_range}, points={self.config.particle_count_points}"
-                )
-
-            # Driver particle mass - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_mass_range is not None
-                and self.config.driver_mass_points > 1
-            ):
-                param_names.append("driver_m_particle")
-                param_bounds.append(self.config.driver_mass_range)
-                self._log_result(
-                    f"    Added: driver_m_particle, range={self.config.driver_mass_range}, points={self.config.driver_mass_points}"
-                )
-
-            # Driver charge sign - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_charge_sign_range is not None
-                and self.config.driver_charge_sign_points > 1
-            ):
-                param_names.append("driver_charge_sign")
-                param_bounds.append(self.config.driver_charge_sign_range)
-
-            # Driver particle count - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_pcount_range is not None
-                and self.config.driver_pcount_points > 1
-            ):
-                param_names.append("driver_pcount")
-                param_bounds.append(self.config.driver_pcount_range)
-                self._log_result(
-                    f"    Added: driver_pcount, range={self.config.driver_pcount_range}, points={self.config.driver_pcount_points}"
-                )
-
-            # Driver transverse momentum - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_transv_mom_range is not None
-                and self.config.driver_transv_mom_points > 1
-            ):
-                param_names.append("driver_transv_mom")
-                param_bounds.append(self.config.driver_transv_mom_range)
-                self._log_result(
-                    f"    Added: driver_transv_mom, range={self.config.driver_transv_mom_range}, points={self.config.driver_transv_mom_points}"
-                )
-
-            # Driver transverse distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_transv_dist_range is not None
-                and self.config.driver_transv_dist_points > 1
-            ):
-                param_names.append("driver_transv_dist")
-                param_bounds.append(self.config.driver_transv_dist_range)
-                self._log_result(
-                    f"    Added: driver_transv_dist, range={self.config.driver_transv_dist_range}, points={self.config.driver_transv_dist_points}"
-                )
-
-            # Driver starting distance - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_starting_distance_range is not None
-                and self.config.driver_starting_distance_points > 1
-            ):
-                param_names.append("driver_starting_distance")
-                param_bounds.append(self.config.driver_starting_distance_range)
-
-            # Driver starting Pz - if enabled as sweep parameter (BUNCH_TO_BUNCH only)
-            if (
-                self.config.driver_starting_Pz_range is not None
-                and self.config.driver_starting_Pz_points > 1
-            ):
-                param_names.append("driver_starting_Pz")
-                param_bounds.append(self.config.driver_starting_Pz_range)
+            selection = collect_optimization_parameter_selection(self.config)
+            param_names = selection.names
+            param_bounds = selection.bounds
+            for line in selection.log_lines:
+                self._log_result(line)
 
             if len(param_names) == 0:
                 self._log_result(
@@ -379,15 +133,7 @@ class OptimizationRunMixin:
                 # Add other fixed parameters
             }
 
-            # Determine metric name from objective
-            metric_name = "max_energy_gain_gev"
-            maximize = True
-
-            if self.config.objective == "max_percent_energy_gain":
-                metric_name = "max_percent_energy_gain"
-                maximize = True
-            elif "min" in self.config.objective.lower():
-                maximize = False
+            metric_name, maximize = resolve_objective_metric(self.config.objective)
 
             # Run optimization based on selected method
             method = self.config.optimization_method
@@ -425,490 +171,42 @@ class OptimizationRunMixin:
                         return np.inf
 
                 try:
-                    # Map parameters
-                    # For BUNCH_TO_BUNCH, aperture is not used (set dummy value)
-                    aperture = (
-                        1.0e-4
-                        if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
-                        else self.config.aperture_range[0]
+                    run_params = resolve_optimization_run_parameters(
+                        self.config, param_names, x
                     )
-                    energy = self.config.energy_range[0]  # default
-                    start_z = (
-                        self.config.starting_z_positions[0]
-                        if self.config.starting_z_positions
-                        else 0.0
-                    )
-                    offset_frac = (
-                        self.config.transverse_offset_fractions[0]
-                        if self.config.transverse_offset_fractions
-                        else 0.0
-                    )
-                    timestep = self.config.timestep
-                    steps = self.config.steps
-                    rider_transv_dist = self.config.transv_dist  # default
+                    aperture = run_params.aperture
+                    energy = run_params.energy_gev
                     macroparticle_charge_mult = (
-                        self.config.macroparticle_charge_multiplier
-                    )  # default
-                    macroparticle_sigma_mult = (
-                        self.config.macroparticle_sigma_multiplier
-                    )  # default
-                    wall_z = self.config.wall_z  # default
-                    rider_stripped_ions = self.config.stripped_ions  # default
-                    driver_stripped_ions = self.config.driver_stripped_ions  # default
-                    rider_m_particle = self.config.m_particle  # default
-                    rider_charge_sign = self.config.charge_sign  # default
-                    rider_pcount = self.config.pcount  # default
-                    rider_transv_mom = self.config.transv_mom  # default
-                    driver_m_particle = self.config.driver_m_particle  # default
-                    driver_charge_sign = self.config.driver_charge_sign  # default
-                    driver_pcount = self.config.driver_pcount  # default
-                    driver_transv_mom = self.config.driver_transv_mom  # default
-                    driver_transv_dist = self.config.driver_transv_dist  # default
-                    driver_starting_distance = (
-                        self.config.driver_starting_distance
-                    )  # default
-                    driver_starting_Pz = self.config.driver_starting_Pz  # default
+                        run_params.macroparticle_charge_multiplier
+                    )
 
-                    for i, param_name in enumerate(param_names):
-                        if param_name == "aperture_radius":
-                            aperture = x[i]
-                        elif param_name == "initial_energy_gev":
-                            energy = x[i]
-                        elif param_name == "start_z":
-                            start_z = x[i]
-                        elif param_name == "transverse_offset":
-                            offset_frac = x[i]
-                        elif param_name == "timestep":
-                            timestep = x[i]
-                        elif param_name == "transverse_momentum":
-                            rider_transv_mom = x[i]
-                        elif param_name == "rider_transv_dist":
-                            rider_transv_dist = x[i]
-                        elif param_name == "macroparticle_charge_multiplier":
-                            macroparticle_charge_mult = x[i]
-                        elif param_name == "macroparticle_sigma_multiplier":
-                            macroparticle_sigma_mult = x[i]
-                        elif param_name == "wall_z":
-                            wall_z = x[i]
-                        elif param_name == "rider_stripped_ions":
-                            rider_stripped_ions = x[i]
-                        elif param_name == "driver_stripped_ions":
-                            driver_stripped_ions = x[i]
-                        elif param_name == "rider_m_particle":
-                            rider_m_particle = x[i]
-                        elif param_name == "rider_charge_sign":
-                            rider_charge_sign = x[i]
-                        elif param_name == "rider_pcount":
-                            rider_pcount = int(x[i])
-                        elif param_name == "driver_m_particle":
-                            driver_m_particle = x[i]
-                        elif param_name == "driver_charge_sign":
-                            driver_charge_sign = x[i]
-                        elif param_name == "driver_pcount":
-                            driver_pcount = int(x[i])
-                        elif param_name == "driver_transv_mom":
-                            driver_transv_mom = x[i]
-                        elif param_name == "driver_transv_dist":
-                            driver_transv_dist = x[i]
-                        elif param_name == "driver_starting_distance":
-                            driver_starting_distance = x[i]
-                        elif param_name == "driver_energy_gev":
-                            driver_energy_gev = x[i]
-                            # Convert energy to Pz for internal use
-                            driver_starting_Pz = _calculate_starting_pz_from_energy(
-                                driver_energy_gev, driver_m_particle
-                            )
-                        elif param_name == "driver_starting_Pz":
-                            # Legacy support if old configs still use Pz
-                            driver_starting_Pz = x[i]
-
-                    # Calculate transverse offset in mm from fraction
-                    transv_offset = offset_frac * aperture
-
-                    # Build driver_params if BUNCH_TO_BUNCH mode
-                    driver_params_dict = None
-                    if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-                        driver_params_dict = {
-                            "m_particle": driver_m_particle,
-                            "charge_sign": driver_charge_sign,
-                            "pcount": int(driver_pcount),
-                            "transv_mom": driver_transv_mom,
-                            "transv_dist": driver_transv_dist,
-                            "starting_distance": driver_starting_distance,
-                            "starting_Pz": driver_starting_Pz,
-                            "stripped_ions": driver_stripped_ions,
-                        }
-
-                    # Calculate timestep if using auto_distance strategy
-                    if self.config.timestep_strategy == "auto_distance":
-                        timestep = self.config.calculate_timestep_for_energy(
-                            energy,
-                            self.config.m_particle,
-                            wall_z=wall_z,
-                            start_z=start_z,
-                        )
-                        steps = self.config.steps
-
-                    # Run integration with timeout if enabled
-                    result = None
-                    timed_out = False
-
-                    if self.config.per_run_timeout > 0:
-                        result_container = [None]
-                        error_container = [None]
-                        cancel_flag = [False]
-
-                        def run_integration():
-                            try:
-                                result_container[0] = self._run_single_integration(
-                                    aperture=aperture,
-                                    energy_gev=energy,
-                                    start_z=start_z,
-                                    transv_offset=transv_offset,
-                                    timestep=timestep,
-                                    steps=steps,
-                                    rider_m_particle=rider_m_particle,
-                                    rider_charge_sign=rider_charge_sign,
-                                    rider_pcount=int(rider_pcount),
-                                    rider_transv_mom=rider_transv_mom,
-                                    rider_transv_dist=rider_transv_dist,
-                                    rider_stripped_ions=rider_stripped_ions,
-                                    macroparticle_charge_multiplier=macroparticle_charge_mult,
-                                    macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                                    driver_params=driver_params_dict,
-                                    wall_z=wall_z,
-                                    run_num=eval_num,
-                                    cancel_flag=cancel_flag,
-                                )
-                            except Exception as e:  # pragma: no cover - passthrough
-                                error_container[0] = e
-
-                        thread = threading.Thread(target=run_integration)
-                        thread.daemon = True
-                        thread.start()
-                        thread.join(timeout=self.config.per_run_timeout)
-
-                        if thread.is_alive():
-                            timed_out = True
-                            cancel_flag[0] = True
-                            self._log_result(
-                                f"[WARNING] Evaluation timed out for params {x} after {self.config.per_run_timeout}s"
-                            )
-                            self._log_result(
-                                f"[WARNING] Signaling integration to cancel..."
-                            )
-                            # Give it a brief moment to respond
-                            thread.join(timeout=2.0)
-                            return np.inf
-                        elif error_container[0] is not None:
-                            raise error_container[0]
-                        else:
-                            result = result_container[0]
-                    else:
-                        # No timeout - run directly
-                        result = self._run_single_integration(
-                            aperture=aperture,
-                            energy_gev=energy,
-                            start_z=start_z,
-                            transv_offset=transv_offset,
-                            timestep=timestep,
-                            steps=steps,
-                            rider_m_particle=rider_m_particle,
-                            rider_charge_sign=rider_charge_sign,
-                            rider_pcount=int(rider_pcount),
-                            rider_transv_mom=rider_transv_mom,
-                            rider_transv_dist=rider_transv_dist,
-                            rider_stripped_ions=rider_stripped_ions,
-                            macroparticle_charge_multiplier=macroparticle_charge_mult,
-                            macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                            driver_params=driver_params_dict,
-                            wall_z=wall_z,
-                            run_num=eval_num,
-                            cancel_flag=None,
-                        )
-
-                    if result is None or "metrics" not in result:
-                        # Store failed evaluation
-                        eval_record = {
-                            "evaluation": eval_num,
-                            "parameters": dict(zip(param_names, x)),
-                            "failed": True,
-                            "halted_early": (
-                                result.get("halted_early", False) if result else False
-                            ),
-                            "halt_reason": (
-                                result.get("halt_reason", None) if result else None
-                            ),
-                            "objective_value": float("inf"),
-                        }
-                        all_evaluations.append(eval_record)
+                    result, timed_out = self._run_optimization_evaluation_integration(
+                        run_params, eval_num, x
+                    )
+                    if timed_out:
                         return np.inf
 
-                    # Check if run was halted early
-                    if result.get("halted_early", False):
-                        self._log_result(
-                            f"[INFO] Evaluation {eval_num} halted early: {result.get('halt_reason', 'unknown')}"
-                        )
-                        self._log_result(
-                            f"[INFO] Returning inf (rejecting halted evaluation)"
-                        )
-                        # Store halted evaluation
-                        eval_record = {
-                            "evaluation": eval_num,
-                            "parameters": dict(zip(param_names, x)),
-                            "failed": False,
-                            "halted_early": True,
-                            "halt_reason": result.get("halt_reason"),
-                            "objective_value": float("inf"),
-                        }
-                        all_evaluations.append(eval_record)
-                        return np.inf
-
-                    # Extract metric value
-                    metrics = result["metrics"]
-                    value = metrics.get(metric_name, np.nan)
-
-                    # Hard rejection for unphysical energy gains > 100%
-                    if "max_percent_energy_gain" in metrics:
-                        pct_gain = metrics["max_percent_energy_gain"]
-                        if pct_gain > 100.0:
-                            self._log_result(
-                                f"[REJECT] Evaluation {eval_num} DISQUALIFIED: "
-                                f"energy gain {pct_gain:.1f}% > 100% (unphysical)"
-                            )
-                            # Store rejected evaluation
-                            eval_record = {
-                                "evaluation": eval_num,
-                                "parameters": dict(zip(param_names, x)),
-                                "failed": True,
-                                "halted_early": False,
-                                "reject_reason": f"Unphysical energy gain: {pct_gain:.1f}% > 100%",
-                                "objective_value": float("inf"),
-                                "metrics": result.get("metrics", {}),
-                            }
-                            all_evaluations.append(eval_record)
-                            return np.inf
-
-                        # Penalize negative energy gains (deceleration)
-                        # Make them worse than minimal positive gains but better than failures
-                        if pct_gain < 0.0:
-                            # Map negative gains to large positive penalty values
-                            # Worse deceleration → larger penalty, but still finite (unlike blowups)
-                            # Scale: -0.001% → penalty ~1.0, -1.0% → penalty ~1000, -10% → penalty ~10000
-                            penalty_magnitude = (
-                                abs(pct_gain) * 1000.0
-                            )  # Scale to reasonable range
-
-                            self._log_result(
-                                f"[PENALTY] Evaluation {eval_num}: Negative energy gain "
-                                f"({pct_gain:.6f}%) → penalty {penalty_magnitude:.3e}"
-                            )
-
-                            # Store evaluation with large penalty
-                            eval_record = {
-                                "evaluation": eval_num,
-                                "parameters": dict(zip(param_names, x)),
-                                "failed": False,
-                                "halted_early": False,
-                                "negative_gain": True,
-                                "objective_value": penalty_magnitude,  # Large positive = bad for minimization
-                                "raw_objective_value": pct_gain,
-                                "metrics": result.get("metrics", {}),
-                            }
-                            all_evaluations.append(eval_record)
-
-                            # Return penalty that's worse than any positive gain but better than inf
-                            # For maximization, we'll return large positive value (gets negated later)
-                            return penalty_magnitude
-
-                    if np.isnan(value) or np.isinf(value):
-                        self._log_result(
-                            f"[WARNING] Evaluation {eval_num} returned {'NaN' if np.isnan(value) else 'inf'} for metric '{metric_name}'"
-                        )
-                        self._log_result(
-                            f"[WARNING] Available metrics: {list(metrics.keys())}"
-                        )
-                        if len(metrics) > 0:
-                            self._log_result(f"[WARNING] Metric values:")
-                            for k, v in metrics.items():
-                                self._log_result(f"  {k}: {v}")
-                        self._log_result(
-                            f"[WARNING] Returning inf (rejecting this evaluation)"
-                        )
-                        # Store failed evaluation
-                        eval_record = {
-                            "evaluation": eval_num,
-                            "parameters": dict(zip(param_names, x)),
-                            "failed": True,
-                            "objective_value": float("inf"),
-                            "metrics": result.get("metrics", {}),
-                        }
-                        all_evaluations.append(eval_record)
-                        return np.inf
-
-                    penalty = self._compute_soft_penalty(
+                    penalty = compute_soft_penalty(
+                        self.config,
                         aperture_radius=aperture,
                         macroparticle_charge_multiplier=macroparticle_charge_mult,
                         initial_energy_gev=energy,
                     )
-
-                    # Add stability-based penalty using continuous sliding scale
-                    stability_penalty = 0.0
-                    if "smoothness_metrics" in result:
-                        smoothness = result["smoothness_metrics"]
-                        quality = smoothness.get("quality_summary", "")
-
-                        # Get quantitative metrics for sliding scale
-                        max_oscillation = smoothness.get("oscillation_score", 0.0)
-                        max_trend_residual = smoothness.get(
-                            "trend_smoothness_score", 0.0
-                        )
-
-                        # Compute penalty factor based on continuous scale (0.0 = no penalty, 1.0 = full penalty)
-                        # Oscillation contribution (0.7+ is severe, 0.3-0.7 is concerning, <0.3 is acceptable)
-                        osc_factor = 0.0
-                        if max_oscillation > 0.7:
-                            osc_factor = 1.0  # Severe
-                        elif max_oscillation > 0.3:
-                            # Linear scale from 0.3 (0.0 penalty) to 0.7 (1.0 penalty)
-                            osc_factor = (max_oscillation - 0.3) / 0.4
-
-                        # Trend residual contribution (0.5+ is highly erratic, 0.2-0.5 is concerning, <0.2 is acceptable)
-                        trend_factor = 0.0
-                        if max_trend_residual > 0.5:
-                            trend_factor = 1.0  # Highly erratic
-                        elif max_trend_residual > 0.2:
-                            # Linear scale from 0.2 (0.0 penalty) to 0.5 (1.0 penalty)
-                            trend_factor = (max_trend_residual - 0.2) / 0.3
-
-                        # Combined penalty factor (take worst of the two)
-                        penalty_factor = max(osc_factor, trend_factor)
-
-                        # Apply penalty with scaling: 0% penalty at factor=0, 99% penalty at factor=1
-                        if penalty_factor > 0.0:
-                            # Exponential scaling for more aggressive penalties at higher factors
-                            # penalty_factor^2 gives: 0.25 → 6.25%, 0.5 → 25%, 0.75 → 56%, 1.0 → 99%
-                            scaled_penalty = penalty_factor**2
-                            stability_penalty = value * min(0.99, scaled_penalty)
-
-                            # Log penalty with details
-                            if penalty_factor > 0.8:
-                                self._log_result(
-                                    f"[WARNING] Heavy stability penalty: {stability_penalty:.3e} "
-                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f}, "
-                                    f"factor={penalty_factor:.3f}, quality: {quality})"
-                                )
-                            elif penalty_factor > 0.4:
-                                self._log_result(
-                                    f"[INFO] Moderate stability penalty: {stability_penalty:.3e} "
-                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f}, "
-                                    f"factor={penalty_factor:.3f})"
-                                )
-                            elif penalty_factor > 0.1:
-                                self._log_result(
-                                    f"[INFO] Light stability penalty: {stability_penalty:.3e} "
-                                    f"(osc={max_oscillation:.3f}, trend={max_trend_residual:.3f})"
-                                )
-                        # penalty_factor = 0 → no penalty (Good quality)
-
-                    # Also add penalty for unphysically high energy gains
-                    energy_gain_penalty = 0.0
-                    if "max_percent_energy_gain" in metrics:
-                        pct_gain = metrics["max_percent_energy_gain"]
-                        if pct_gain > 500.0:  # >500% likely unphysical
-                            # Scale penalty with how extreme the gain is
-                            excess = (pct_gain - 500.0) / 500.0
-                            energy_gain_penalty = (
-                                value * min(0.95, excess * 0.5)
-                                if maximize
-                                else value * min(0.95, excess * 0.5)
-                            )
-                            self._log_result(
-                                f"[WARNING] Unphysical energy gain penalty: {energy_gain_penalty:.3e} "
-                                f"(gain: {pct_gain:.1f}% > 500% threshold)"
-                            )
-
-                    # Add penalty for particle deaths (scales by fraction lost)
-                    particle_death_penalty = 0.0
-                    if "num_particles_dead" in metrics:
-                        num_dead = metrics["num_particles_dead"]
-                        if num_dead > 0:
-                            # Get total particle count from config
-                            total_particles = int(self.config.pcount)
-                            if total_particles > 0:
-                                # Penalty scales 1:1 with fraction lost: 10% lost → 10% penalty
-                                # particle_death_penalty_fraction is a multiplier (default 1.0)
-                                # Examples with default 1.0:
-                                #   10% particles lost → 10% penalty
-                                #   50% particles lost → 50% penalty
-                                #   100% particles lost → 100% penalty
-                                # Set to 0.5 for gentler: 10% lost → 5% penalty
-                                # Set to 2.0 for stricter: 10% lost → 20% penalty
-                                penalty_multiplier = getattr(
-                                    self.config, "particle_death_penalty_fraction", 1.0
-                                )
-                                fraction_lost = num_dead / total_particles
-                                particle_death_penalty = (
-                                    value * fraction_lost * penalty_multiplier
-                                )
-                                self._log_result(
-                                    f"[INFO] Particle death penalty: {particle_death_penalty:.3e} "
-                                    f"({num_dead}/{total_particles} = {fraction_lost * 100:.1f}% lost, "
-                                    f"penalty = {fraction_lost * penalty_multiplier * 100:.1f}% of objective)"
-                                )
-
-                    total_penalty = (
-                        penalty
-                        + stability_penalty
-                        + energy_gain_penalty
-                        + particle_death_penalty
+                    outcome = build_optimization_evaluation_outcome(
+                        result,
+                        eval_num=eval_num,
+                        param_names=param_names,
+                        values=x,
+                        metric_name=metric_name,
+                        maximize=maximize,
+                        penalty=penalty,
+                        objective_name=self.config.objective,
+                        save_trajectory=self.config.save_all_trajectories,
                     )
-                    adjusted_value = value
-                    if total_penalty > 0:
-                        if maximize:
-                            adjusted_value = value - total_penalty
-                        else:
-                            adjusted_value = value + total_penalty
-                        if penalty > 0:
-                            self._log_result(
-                                "[INFO] Applied parameter soft penalty of "
-                                f"{penalty:.3e} to {self.config.objective} (risk-prone parameters)"
-                            )
-
-                    # Return value to minimize (negate if maximizing)
-                    result_value = -adjusted_value if maximize else adjusted_value
-
-                    # Store successful evaluation
-                    eval_record = {
-                        "evaluation": eval_num,
-                        "parameters": dict(zip(param_names, x)),
-                        "objective_value": adjusted_value,
-                        "raw_objective_value": value,
-                        "soft_penalty": penalty,
-                        "stability_penalty": stability_penalty,
-                        "energy_gain_penalty": energy_gain_penalty,
-                        "particle_death_penalty": particle_death_penalty,
-                        "total_penalty": total_penalty,
-                        "fitness": result_value,  # Store fitness (for minimization)
-                        "failed": False,
-                        "halted_early": False,
-                        "metrics": result.get("metrics", {}),
-                    }
-
-                    # Store stability quality if available
-                    if "smoothness_metrics" in result:
-                        eval_record["stability_quality"] = result[
-                            "smoothness_metrics"
-                        ].get("quality_summary", "Unknown")
-
-                    # Save trajectory if requested and available
-                    if self.config.save_all_trajectories and "trajectory" in result:
-                        # We'll save these after optimization dir is created
-                        eval_record["trajectory"] = result["trajectory"]
-
-                    all_evaluations.append(eval_record)
-
-                    return result_value
+                    for line in outcome.log_lines:
+                        self._log_result(line)
+                    all_evaluations.append(outcome.record)
+                    return outcome.fitness
 
                 except Exception as e:
                     import traceback
@@ -917,7 +215,7 @@ class OptimizationRunMixin:
                         f"[ERROR] Evaluation {eval_num} failed for params {x}"
                     )
                     self._log_result(f"[ERROR] Exception: {type(e).__name__}: {e}")
-                    self._log_result(f"[ERROR] Traceback:")
+                    self._log_result("[ERROR] Traceback:")
                     for line in traceback.format_exc().splitlines():
                         self._log_result(f"  {line}")
 
@@ -933,39 +231,40 @@ class OptimizationRunMixin:
 
                     return np.inf
 
-            if method == "genetic_algorithm":
-
-                def log_convergence_progress(
-                    generation,
-                    best_value,
-                    improvement,
-                    tolerance,
-                    patience_remaining,
-                    converged,
-                ):
-                    """Log convergence progress after each generation."""
-                    # Filter out inf values in logging
-                    if np.isfinite(best_value):
+            # Define progress callback for convergence monitoring (used by all methods)
+            def log_convergence_progress(
+                generation,
+                best_value,
+                improvement,
+                tolerance,
+                patience_remaining,
+                converged,
+            ):
+                """Log convergence progress after each generation."""
+                # Filter out inf values in logging
+                if np.isfinite(best_value):
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                else:
+                    self._log_result(
+                        f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
+                        f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                    )
+                if generation >= self.config.optimization_convergence_patience:
+                    if converged:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best={best_value:.6e}, "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
+                            f"< tolerance ({tolerance:.6e})"
                         )
                     else:
                         self._log_result(
-                            f"[OPTIMIZATION] Generation {generation}: best=inf (no valid solutions yet), "
-                            f"improvement={improvement:.6e}, tolerance={tolerance:.6e}"
+                            f"[CONVERGENCE] Progress: {patience_remaining} generations "
+                            f"remaining before early stop check"
                         )
-                    if generation >= self.config.optimization_convergence_patience:
-                        if converged:
-                            self._log_result(
-                                f"[CONVERGENCE] Converged! Improvement ({improvement:.6e}) "
-                                f"< tolerance ({tolerance:.6e})"
-                            )
-                        else:
-                            self._log_result(
-                                f"[CONVERGENCE] Progress: {patience_remaining} generations "
-                                f"remaining before early stop check"
-                            )
+
+            if method == "genetic_algorithm":
 
                 result = genetic_algorithm(
                     config_template=config_template,
@@ -994,19 +293,6 @@ class OptimizationRunMixin:
                     maximize=maximize,
                     maxiter=self.config.optimization_maxiter,
                     popsize=self.config.optimization_population_size,
-                    objective_function=evaluate_params,
-                    progress_callback=log_convergence_progress,
-                )
-
-            elif method == "nelder_mead":
-                result = optimize_parameters(
-                    config_template=config_template,
-                    parameter_names=param_names,
-                    parameter_bounds=param_bounds,
-                    metric_name=metric_name,
-                    method="nelder_mead",
-                    maximize=maximize,
-                    maxiter=self.config.optimization_maxiter,
                     objective_function=evaluate_params,
                     progress_callback=log_convergence_progress,
                 )
@@ -1142,11 +428,8 @@ class OptimizationRunMixin:
                         f"[WARNING] Failed to save partial results: {save_err}"
                     )
         finally:
-            # Restore original verbosity settings
-            if "original_sc_verbosity" in locals():
-                self.config.self_consistency_verbosity = original_sc_verbosity
-            if "original_adaptive_debug" in locals():
-                self.config.adaptive_timestep_debug = original_adaptive_debug
+            if "logging_policy" in locals():
+                restore_run_logging_policy(self.config, logging_policy)
 
             self.running = False
             self._update_progress(100, "Done")
@@ -1154,11 +437,171 @@ class OptimizationRunMixin:
             if self._log_file is not None:
                 self._close_log_file()
 
+    def _run_optimization_evaluation_integration(
+        self, run_params, eval_num: int, original_params
+    ):
+        """Run one optimizer evaluation, optionally with a per-run timeout."""
+        integration_kwargs = {
+            "aperture": run_params.aperture,
+            "energy_gev": run_params.energy_gev,
+            "start_z": run_params.start_z,
+            "transv_offset": run_params.transv_offset,
+            "timestep": run_params.timestep,
+            "steps": run_params.steps,
+            "rider_m_particle": run_params.rider_m_particle,
+            "rider_charge_sign": run_params.rider_charge_sign,
+            "rider_pcount": int(run_params.rider_pcount),
+            "rider_transv_mom": run_params.rider_transv_mom,
+            "rider_transv_dist": run_params.rider_transv_dist,
+            "rider_stripped_ions": run_params.rider_stripped_ions,
+            "macroparticle_charge_multiplier": (
+                run_params.macroparticle_charge_multiplier
+            ),
+            "macroparticle_sigma_multiplier": run_params.macroparticle_sigma_multiplier,
+            "driver_params": run_params.driver_params,
+            "wall_z": run_params.wall_z,
+            "run_num": eval_num,
+        }
+
+        if self.config.per_run_timeout <= 0:
+            result = self._run_single_integration(
+                **integration_kwargs,
+                cancel_flag=None,
+            )
+            return result, False
+
+        result_container = [None]
+        error_container = [None]
+        cancel_flag = [False]
+
+        def run_integration():
+            try:
+                result_container[0] = self._run_single_integration(
+                    **integration_kwargs,
+                    cancel_flag=cancel_flag,
+                )
+            except Exception as e:
+                error_container[0] = e
+
+        thread = threading.Thread(target=run_integration)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout=self.config.per_run_timeout)
+
+        if thread.is_alive():
+            cancel_flag[0] = True
+            self._log_result(
+                f"[WARNING] Evaluation timed out for params {original_params} "
+                f"after {self.config.per_run_timeout}s"
+            )
+            self._log_result("[WARNING] Signaling integration to cancel...")
+            thread.join(timeout=2.0)
+            return None, True
+
+        if error_container[0] is not None:
+            raise error_container[0]
+
+        return result_container[0], False
+
+    def _run_sweep_integration_attempt(
+        self,
+        run_params,
+        params_dict: Dict[str, Any],
+        *,
+        timestep: float,
+        steps: int,
+        run_num: int,
+        seed_override: int,
+    ):
+        """Run one sweep integration attempt, optionally under a timeout."""
+
+        def run_single(cancel_flag):
+            return self._run_single_integration(
+                aperture=run_params.aperture,
+                energy_gev=run_params.energy,
+                start_z=run_params.start_z,
+                transv_offset=run_params.transv_offset,
+                timestep=timestep,
+                steps=steps,
+                rider_m_particle=run_params.rider_m_particle,
+                rider_charge_sign=run_params.rider_charge_sign,
+                rider_pcount=int(run_params.rider_pcount),
+                rider_transv_mom=run_params.rider_transv_mom,
+                rider_transv_dist=run_params.rider_transv_dist,
+                rider_stripped_ions=run_params.rider_stripped_ions,
+                macroparticle_charge_multiplier=(
+                    run_params.macroparticle_charge_multiplier
+                ),
+                macroparticle_sigma_multiplier=(
+                    run_params.macroparticle_sigma_multiplier
+                ),
+                driver_params=run_params.driver_params,
+                wall_z=params_dict.get("wall_z", self.config.wall_z),
+                run_num=run_num,
+                cancel_flag=cancel_flag,
+                seed_override=seed_override,
+            )
+
+        if self.config.per_run_timeout <= 0:
+            return run_single(None), None, False
+
+        result_container = [None]
+        error_container = [None]
+        cancel_flag = [False]
+
+        if run_params.aperture < 0.1 and run_params.macroparticle_charge_multiplier > 1000:
+            self._log_result(
+                f"  [WARNING] Run {run_num}: Very small aperture ({run_params.aperture:.4f} mm) "
+                f"with large charge multiplier ({run_params.macroparticle_charge_multiplier:.0f})"
+            )
+            self._log_result(
+                "    This may cause numerical instability or slow convergence"
+            )
+
+        def run_with_exception_handling():
+            try:
+                result_container[0] = run_single(cancel_flag)
+            except Exception as exc:
+                error_container[0] = exc
+
+        integration_thread = threading.Thread(target=run_with_exception_handling)
+        integration_thread.daemon = True
+        integration_thread.start()
+        integration_thread.join(timeout=self.config.per_run_timeout)
+
+        timed_out = False
+        if integration_thread.is_alive():
+            timed_out = True
+            cancel_flag[0] = True
+            self._log_result(
+                f"  [TIMEOUT] Run {run_num} exceeded timeout of {self.config.per_run_timeout}s"
+            )
+            self._log_result(
+                "    Signaling integration to cancel (thread will terminate when it checks cancel flag)"
+            )
+            integration_thread.join(timeout=2.0)
+            if integration_thread.is_alive():
+                self._log_result(
+                    "    Warning: Integration thread still running after cancel signal"
+                )
+                self._log_result(
+                    "    Thread will be abandoned (daemon thread will terminate with main thread)"
+                )
+
+        if error_container[0] is not None:
+            return None, error_container[0], timed_out
+        return result_container[0], None, timed_out
+
     def _run_sweep_background(self, is_finetune: bool = False, finetune_regions=None):
-        """Run parameter sweep in background with real integration."""
+        """Run parameter sweep in background with real integration.
+
+        Args:
+            is_finetune: If True, this is a fine-tuning sweep
+            finetune_regions: List of parameter regions for fine-tuning
+        """
         # Set logging context for this sweep run
         context = "sweep_finetune" if is_finetune else "sweep"
-        set_logging_context(context)
+        initialize_debug_logging(context=context, force_new_log=True)
 
         # Open log file in temporary location (will be moved when results are saved)
         import tempfile
@@ -1183,50 +626,16 @@ class OptimizationRunMixin:
             for values in param_grids.values():
                 total_runs *= len(values)
 
-            # Determine verbosity level from config
-            use_no_logging = self.config.log_verbosity == "none"
-            use_truncated_logging = self.config.log_verbosity == "truncated"
-            use_full_debug = self.config.log_verbosity == "full"
-
-            # Override config verbosity settings based on log mode
-            # Save original values to restore later
-            original_sc_verbosity = self.config.self_consistency_verbosity
-            original_adaptive_debug = self.config.adaptive_timestep_debug
-
-            if use_no_logging or use_truncated_logging:
-                # Suppress SC iteration output and adaptive timestep refinement output
-                self.config.self_consistency_verbosity = 0
-                self.config.adaptive_timestep_debug = False
-            # else: full debug mode - INHERIT stability settings from config/GUI (don't override)
+            logging_policy = apply_run_logging_policy(self.config)
+            use_no_logging = logging_policy.suppress_run_logs
+            use_truncated_logging = logging_policy.use_truncated_run_logs
+            use_full_debug = logging_policy.use_full_run_logs
 
             self._log_result(
                 f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs"
             )
-            self._log_result(f"Log verbosity: {self.config.log_verbosity}")
-
-            # Log linked energy sweep mode if enabled
-            if getattr(self.config, "linked_energy_sweep", False):
-                self._log_result(
-                    "[LINKED ENERGY MODE] Driver energy will follow rider energy for each sweep point"
-                )
-                self._log_result(
-                    f"  Energy range: {self.config.energy_range[0]:.4f} - {self.config.energy_range[1]:.4f} GeV"
-                )
-                self._log_result(
-                    f"  Both rider and driver particles will have matching kinetic energy"
-                )
-
-            # Log inherited stability settings in full debug mode
-            if use_full_debug:
-                self._log_result(
-                    "  Full debug logging enabled (inherits Stability tab settings)"
-                )
-                self._log_result(
-                    f"    SC verbosity: {self.config.self_consistency_verbosity}"
-                )
-                self._log_result(
-                    f"    Adaptive timestep debug: {self.config.adaptive_timestep_debug}"
-                )
+            for line in describe_run_logging_policy(logging_policy):
+                self._log_result(line)
 
             # Only log detailed config in full debug mode
             if use_full_debug:
@@ -1259,7 +668,7 @@ class OptimizationRunMixin:
                         f"    Target distance: {self.config.target_distance_mm:.1f} mm (wall_z + target)"
                     )
                     self._log_result(
-                        f"    All particles will travel to consistent z regardless of energy"
+                        "    All particles will travel to consistent z regardless of energy"
                     )
                 elif self.config.auto_steps:
                     self._log_result(
@@ -1316,259 +725,61 @@ class OptimizationRunMixin:
 
                 # Extract parameters from combination
                 params_dict = dict(zip(param_names, param_combo))
+                run_params = resolve_sweep_run_parameters(self.config, params_dict)
+                if run_params is None:
+                    self._log_result(
+                        f"[ERROR] Run {run_num}: No energy parameter found in params_dict!"
+                    )
+                    self._log_result(
+                        f"  Available parameters: {list(params_dict.keys())}"
+                    )
+                    self._log_result(
+                        f"  Simulation type: {self.config.simulation_type}"
+                    )
+                    continue  # Skip this run
 
-                # Aperture is not present in BUNCH_TO_BUNCH mode
-                aperture = params_dict.get(
-                    "aperture", 1.0e-4
-                )  # dummy value for BUNCH_TO_BUNCH
-                energy = params_dict["energy"]
-                start_z = params_dict["start_z"]
-                offset_frac = params_dict["transverse_offset_fraction"]
-
-                # Get rider particle parameters (either from sweep or fixed values)
-                rider_m_particle = params_dict.get(
-                    "rider_m_particle", self.config.m_particle
+                aperture = run_params.aperture
+                energy = run_params.energy
+                start_z = run_params.start_z
+                offset_frac = run_params.offset_frac
+                rider_m_particle = run_params.rider_m_particle
+                rider_charge_sign = run_params.rider_charge_sign
+                rider_pcount = run_params.rider_pcount
+                rider_transv_mom = run_params.rider_transv_mom
+                rider_transv_dist = run_params.rider_transv_dist
+                rider_stripped_ions = run_params.rider_stripped_ions
+                macroparticle_charge_multiplier = (
+                    run_params.macroparticle_charge_multiplier
                 )
-                rider_charge_sign = params_dict.get(
-                    "rider_charge_sign", self.config.charge_sign
+                macroparticle_sigma_multiplier = (
+                    run_params.macroparticle_sigma_multiplier
                 )
-                rider_pcount = params_dict.get("rider_pcount", self.config.pcount)
-                rider_transv_mom = params_dict.get(
-                    "rider_transv_mom", self.config.transv_mom
-                )
-                rider_transv_dist = params_dict.get(
-                    "rider_transv_dist", self.config.transv_dist
-                )
-                rider_stripped_ions = params_dict.get(
-                    "rider_stripped_ions", self.config.stripped_ions
-                )
-
-                # Get macroparticle parameters (either from sweep or fixed values)
-                macroparticle_charge_multiplier = params_dict.get(
-                    "macroparticle_charge_multiplier",
-                    self.config.macroparticle_charge_multiplier,
-                )
-                macroparticle_sigma_multiplier = params_dict.get(
-                    "macroparticle_sigma_multiplier",
-                    self.config.macroparticle_sigma_multiplier,
-                )
+                driver_params_dict = run_params.driver_params
+                transv_offset = run_params.transv_offset
 
                 # Log parameter values based on verbosity
                 if use_full_debug:
-                    # Log ALL swept parameter values for this run
-                    self._log_result(
-                        f"  [PARAMS] Run {run_num}/{total_runs} - All parameters:"
-                    )
-                    self._log_result(f"    aperture: {aperture:.4e} mm")
-                    self._log_result(f"    energy: {energy:.4f} GeV")
-                    self._log_result(f"    start_z: {start_z:.4f} mm")
-                    self._log_result(f"    transv_offset_frac: {offset_frac:.4f}")
-                    self._log_result(
-                        f"    rider_m_particle: {rider_m_particle:.4e} amu"
-                    )
-                    self._log_result(f"    rider_charge_sign: {rider_charge_sign:.1f}")
-                    self._log_result(f"    rider_pcount: {rider_pcount}")
-                    self._log_result(
-                        f"    rider_transv_mom: {rider_transv_mom:.4e} amu·mm/ns"
-                    )
-                    self._log_result(
-                        f"    rider_transv_dist: {rider_transv_dist:.4e} mm"
-                    )
-                    self._log_result(
-                        f"    rider_stripped_ions: {rider_stripped_ions:.2f}"
-                    )
-                    if self.config.macroparticle_enabled:
-                        self._log_result(f"    macroparticle_enabled: True")
-                        self._log_result(
-                            f"    macroparticle_charge_multiplier: {macroparticle_charge_multiplier:.4f}"
-                        )
-                        self._log_result(
-                            f"    macroparticle_sigma_multiplier: {macroparticle_sigma_multiplier:.4f}"
-                        )
-                        self._log_result(
-                            f"    macroparticle_use_momentum_errors: {self.config.macroparticle_use_momentum_errors}"
-                        )
+                    for line in build_full_debug_parameter_log_lines(
+                        self.config,
+                        run_params,
+                        run_num=run_num,
+                        total_runs=total_runs,
+                        params_dict=params_dict,
+                    ):
+                        self._log_result(line)
 
-                # Get driver particle parameters if BUNCH_TO_BUNCH
-                driver_params_dict = None
-                if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-                    driver_m = params_dict.get(
-                        "driver_m_particle", self.config.driver_m_particle
-                    )
-
-                    # Determine driver energy based on linked_energy_sweep mode
-                    # When linked, driver energy follows rider energy (from 'energy' key)
-                    if getattr(self.config, "linked_energy_sweep", False):
-                        # Use rider energy for driver (linked sweep mode)
-                        driver_energy_gev = (
-                            energy  # 'energy' is rider energy from params_dict
-                        )
-                        driver_pz = _calculate_starting_pz_from_energy(
-                            driver_energy_gev,
-                            driver_m,
-                            negative=True,
-                        )
-                        if use_full_debug:
-                            self._log_result(
-                                f"    [LINKED ENERGY] driver_energy_gev = rider_energy = {driver_energy_gev:.4f} GeV"
-                            )
-                    elif "driver_energy_gev" in params_dict:
-                        # Convert driver_energy_gev to starting_Pz if present,
-                        # otherwise fall back to legacy driver_starting_Pz key.
-                        # Driver travels in -z → negative Pz.
-                        driver_pz = _calculate_starting_pz_from_energy(
-                            params_dict["driver_energy_gev"],
-                            driver_m,
-                            negative=True,
-                        )
-                    else:
-                        driver_pz = params_dict.get(
-                            "driver_starting_Pz", self.config.driver_starting_Pz
-                        )
-
-                    driver_params_dict = {
-                        "m_particle": driver_m,
-                        "charge_sign": params_dict.get(
-                            "driver_charge_sign", self.config.driver_charge_sign
-                        ),
-                        "pcount": int(
-                            params_dict.get("driver_pcount", self.config.driver_pcount)
-                        ),
-                        "transv_mom": params_dict.get(
-                            "driver_transv_mom", self.config.driver_transv_mom
-                        ),
-                        "transv_dist": params_dict.get(
-                            "driver_transv_dist", self.config.driver_transv_dist
-                        ),
-                        "starting_distance": params_dict.get(
-                            "driver_starting_distance",
-                            self.config.driver_starting_distance,
-                        ),
-                        "starting_Pz": driver_pz,
-                        "stripped_ions": params_dict.get(
-                            "driver_stripped_ions", self.config.driver_stripped_ions
-                        ),
-                    }
-
-                    # Log driver parameters if BUNCH_TO_BUNCH and full debug
-                    if use_full_debug:
-                        self._log_result(
-                            f"    driver_m_particle: {driver_params_dict['m_particle']:.4e} amu"
-                        )
-                        self._log_result(
-                            f"    driver_charge_sign: {driver_params_dict['charge_sign']:.1f}"
-                        )
-                        self._log_result(
-                            f"    driver_pcount: {driver_params_dict['pcount']}"
-                        )
-                        self._log_result(
-                            f"    driver_transv_mom: {driver_params_dict['transv_mom']:.4e} amu·mm/ns"
-                        )
-                        self._log_result(
-                            f"    driver_transv_dist: {driver_params_dict['transv_dist']:.4e} mm"
-                        )
-                        self._log_result(
-                            f"    driver_starting_distance: {driver_params_dict['starting_distance']:.4f} mm"
-                        )
-                        self._log_result(
-                            f"    driver_starting_Pz: {driver_params_dict['starting_Pz']:.4e} amu·mm/ns"
-                        )
-                        self._log_result(
-                            f"    driver_stripped_ions: {driver_params_dict['stripped_ions']:.2f}"
-                        )
-
-                # Calculate transverse offset
-                transv_offset = offset_frac * aperture
-
-                # Calculate timestep based on strategy
-                if self.config.timestep_strategy != "fixed":
-                    # Use energy-aware timestep calculation
-                    # Get wall_z for this run (it may be swept)
-                    wall_z_for_calc = params_dict.get("wall_z", self.config.wall_z)
-                    timestep = self.config.calculate_timestep_for_energy(
-                        energy,
-                        rider_m_particle,
-                        wall_z=wall_z_for_calc,
-                        start_z=start_z,
-                    )
-                    steps = self.config.steps
-
-                    # Calculate gamma for diagnostics (ALWAYS log for debugging)
-                    AMU_TO_MEV = 931.494
-                    rest_energy_mev = rider_m_particle * AMU_TO_MEV
-                    gamma = (energy * 1e3) / rest_energy_mev
-                    beta = (
-                        np.sqrt(1.0 - 1.0 / (gamma * gamma)) if gamma > 1.0 else 0.999
-                    )
-                    distance_per_step = beta * gamma * C_MMNS * timestep
-                    expected_distance = distance_per_step * steps
-
-                    if use_full_debug:
-                        self._log_result(
-                            f"  [TIMESTEP] Run {run_num} strategy '{self.config.timestep_strategy}':"
-                        )
-                        self._log_result(
-                            f"    E={energy:.4f} GeV, m={rider_m_particle:.4e} amu"
-                        )
-                        self._log_result(f"    gamma={gamma:.2f}, beta={beta:.8f}")
-                        self._log_result(
-                            f"    timestep h={timestep:.4e} ns (proper time = dt/gamma)"
-                        )
-                        self._log_result(f"    steps={steps}")
-                        self._log_result(
-                            f"    distance_per_step = β·γ·c·h = {distance_per_step:.4f} mm"
-                        )
-                        self._log_result(
-                            f"    expected_total_distance = {expected_distance:.2f} mm"
-                        )
-                        # Use wall_z from grid if available, otherwise use config default
-                        current_wall_z = params_dict.get("wall_z", self.config.wall_z)
-                        self._log_result(
-                            f"    wall_z={current_wall_z:.2f} mm, start_z={start_z:.2f} mm"
-                        )
-                        self._log_result(
-                            f"    distance_to_wall = {abs(current_wall_z - start_z):.2f} mm"
-                        )
-                        if self.config.timestep_strategy == "auto_distance":
-                            self._log_result(
-                                f"    target_distance={self.config.target_distance_mm:.2f} mm"
-                            )
-                elif self.config.auto_steps:
-                    # Legacy auto_steps mode (deprecated, but keep for compatibility)
-                    current_wall_z = params_dict.get("wall_z", self.config.wall_z)
-                    distance_to_wall = abs(current_wall_z - start_z)
-                    total_distance = (
-                        distance_to_wall + self.config.auto_steps_distance_past_wall
-                    )
-
-                    timestep = calculate_auto_timestep(
-                        start_z=start_z,
-                        wall_z=current_wall_z,
-                        distance_past_wall=self.config.auto_steps_distance_past_wall,
-                        particle_energy_gev=energy,
-                        particle_mass_amu=rider_m_particle,
-                        target_steps=self.config.auto_steps_target,
-                    )
-                    steps = calculate_auto_steps(
-                        start_z=start_z,
-                        wall_z=current_wall_z,
-                        distance_past_wall=self.config.auto_steps_distance_past_wall,
-                        timestep=timestep,
-                        particle_energy_gev=energy,
-                        particle_mass_amu=rider_m_particle,
-                    )
-                else:
-                    timestep = self.config.timestep
-                    steps = self.config.steps
-
-                # Enforce minimum of 5% of requested steps (absolute floor of 20)
-                min_steps = max(20, int(self.config.steps * 0.05))
-                if steps < min_steps:
-                    if use_full_debug:
-                        self._log_result(
-                            f"  [WARNING] Steps adjusted from {steps} to {min_steps} (minimum floor)"
-                        )
-                    steps = min_steps
+                timestep_resolution = resolve_sweep_timestep(
+                    self.config,
+                    params_dict,
+                    run_params,
+                    run_num=run_num,
+                    use_full_debug=use_full_debug,
+                )
+                timestep = timestep_resolution.timestep
+                steps = timestep_resolution.steps
+                expected_distance = timestep_resolution.expected_distance
+                for line in timestep_resolution.log_lines:
+                    self._log_result(line)
 
                 # Log run start summary (only in full debug mode - truncated mode logs after completion)
                 if use_full_debug:
@@ -1585,11 +796,29 @@ class OptimizationRunMixin:
                 retry_attempt = 0
                 max_retries = self.config.failed_run_retry_attempts
 
-                # Loop for retry attempts
+                # Loop for retry attempts (1 original + max_retries additional attempts)
                 while retry_attempt <= max_retries:
-                    # Generate new seed for retries (original run uses config seed)
-                    if retry_attempt > 0:
-                        # Use a deterministic but different seed based on run number and retry attempt
+                    # Check for global cancellation before starting a retry
+                    if not self.running:
+                        self._log_result(
+                            f"  [CANCEL] Run {run_num}: Cancellation requested"
+                        )
+                        break
+                    if self.gui_controller and hasattr(
+                        self.gui_controller, "_cancel_requested"
+                    ):
+                        if self.gui_controller._cancel_requested:
+                            self._log_result(
+                                f"  [CANCEL] Run {run_num}: Cancellation requested"
+                            )
+                            break
+
+                    # Generate seed for this attempt
+                    if retry_attempt == 0:
+                        # First attempt uses config seed
+                        current_seed = self.config.seed
+                    else:
+                        # Retry attempts use deterministic but different seed
                         current_seed = (
                             self.config.seed + run_num * 10000 + retry_attempt * 100
                         )
@@ -1597,8 +826,6 @@ class OptimizationRunMixin:
                             self._log_result(
                                 f"  [RETRY] Run {run_num}, attempt {retry_attempt}/{max_retries} with new seed {current_seed}"
                             )
-                    else:
-                        current_seed = self.config.seed
 
                     # Reset error/timeout flags for this attempt
                     attempt_result = None
@@ -1606,401 +833,248 @@ class OptimizationRunMixin:
                     attempt_timed_out = False
 
                     try:
-                        # Check if timeout is enabled
-                        if self.config.per_run_timeout > 0:
-                            # Container for result (mutable for thread access)
-                            result_container: List[Optional[RunResult]] = [None]
-                            error_container: List[Optional[Exception]] = [None]
-                            cancel_flag = [False]
+                        (
+                            attempt_result,
+                            attempt_error,
+                            attempt_timed_out,
+                        ) = self._run_sweep_integration_attempt(
+                            run_params,
+                            params_dict,
+                            timestep=timestep,
+                            steps=steps,
+                            run_num=run_num,
+                            seed_override=current_seed,
+                            )
+                    except Exception as e:
+                        attempt_error = e
+                        if use_full_debug:
+                            import traceback
 
-                            def run_integration():
-                                try:
-                                    result_container[0] = self._run_single_integration(
-                                        aperture=aperture,
-                                        energy_gev=energy,
-                                        start_z=start_z,
-                                        transv_offset=transv_offset,
-                                        timestep=timestep,
-                                        steps=steps,
-                                        rider_m_particle=rider_m_particle,
-                                        rider_charge_sign=rider_charge_sign,
-                                        rider_pcount=int(rider_pcount),
-                                        rider_transv_mom=rider_transv_mom,
-                                        rider_transv_dist=rider_transv_dist,
-                                        rider_stripped_ions=rider_stripped_ions,
-                                        macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                                        macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                                        driver_params=driver_params_dict,
-                                        wall_z=params_dict.get(
-                                            "wall_z", self.config.wall_z
-                                        ),
-                                        run_num=run_num,
-                                        cancel_flag=cancel_flag,
-                                        seed_override=current_seed,
-                                    )
-                                except Exception as e:  # pragma: no cover - passthrough
-                                    error_container[0] = e
-
-                            thread = threading.Thread(target=run_integration)
-                            thread.daemon = True
-                            thread.start()
-
-                            # Wait for completion or timeout
-                            thread.join(timeout=self.config.per_run_timeout)
-
-                            if thread.is_alive():
-                                attempt_timed_out = True
-                                cancel_flag[0] = True
-                                self._log_result(
-                                    f"  [TIMEOUT] Run {run_num}: exceeded {self.config.per_run_timeout}s, requesting cancel..."
-                                )
-                                # Give integration a brief moment to stop
-                                thread.join(timeout=2.0)
-
-                            if error_container[0] is not None:
-                                attempt_error = error_container[0]
-                            else:
-                                attempt_result = result_container[0]
-                        else:
-                            # No timeout - run directly
-                            attempt_result = self._run_single_integration(
-                                aperture=aperture,
-                                energy_gev=energy,
-                                start_z=start_z,
-                                transv_offset=transv_offset,
-                                timestep=timestep,
-                                steps=steps,
-                                rider_m_particle=rider_m_particle,
-                                rider_charge_sign=rider_charge_sign,
-                                rider_pcount=int(rider_pcount),
-                                rider_transv_mom=rider_transv_mom,
-                                rider_transv_dist=rider_transv_dist,
-                                rider_stripped_ions=rider_stripped_ions,
-                                macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                                macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                                driver_params=driver_params_dict,
-                                wall_z=params_dict.get("wall_z", self.config.wall_z),
-                                run_num=run_num,
-                                seed_override=current_seed,
+                            self._log_result(
+                                f"  [ERROR] Run {run_num} attempt {retry_attempt} exception: {type(e).__name__}: {e}"
+                            )
+                            self._log_result(
+                                f"    Traceback:\n{traceback.format_exc()}"
                             )
 
-                    except Exception as e:  # pragma: no cover - integration path
-                        attempt_error = e
-
                     # Check if this attempt succeeded
+                    attempt_succeeded = False
                     if (
                         not attempt_timed_out
                         and attempt_error is None
                         and attempt_result is not None
                     ):
-                        # Check if result has valid metrics (not all particles dead)
-                        # A run is considered failed if:
-                        # 1. It was halted early (all particles died)
-                        # 2. Metrics dict is empty or missing key metrics
+                        attempt_classification = classify_sweep_attempt_result(
+                            attempt_result,
+                            run_num=run_num,
+                            retry_attempt=retry_attempt,
+                            include_debug_logs=(
+                                use_full_debug or use_truncated_logging
+                            ),
+                        )
+                        for line in attempt_classification.log_lines:
+                            self._log_result(line)
 
-                        is_halted = attempt_result.get("halted_early", False)
-                        metrics = attempt_result.get("metrics", {})
-
-                        has_useful_metrics = False
-                        if not is_halted and metrics:
-                            # Check for key optimization metrics
-                            if metrics.get("max_percent_energy_gain") is not None:
-                                has_useful_metrics = True
-                            elif (
-                                metrics.get("rider_gamma_final") is not None
-                                and metrics.get("rider_gamma_final") > 0
-                            ):
-                                has_useful_metrics = True
-                            elif metrics.get("delta_e_mev") is not None:
-                                has_useful_metrics = True
-
-                        if has_useful_metrics:
+                        if attempt_classification.succeeded:
                             # Success! Use this result
                             result = attempt_result
                             run_error = None
                             run_timed_out = False
+                            attempt_succeeded = True
                             if retry_attempt > 0:
                                 self._log_result(
                                     f"  [SUCCESS] Run {run_num} succeeded on retry attempt {retry_attempt}"
-                                )
+                            )
                             break
                         else:
                             # No useful metrics - all particles died or halted early
-                            halt_reason = attempt_result.get("halt_reason", "unknown")
-                            attempt_error = Exception(
-                                f"Run failed: halted_early={is_halted}, reason={halt_reason}"
-                            )
-                            if use_full_debug or use_truncated_logging:
-                                self._log_result(
-                                    f"  [FAILED] Run {run_num} attempt {retry_attempt}: halted={is_halted}, no useful metrics"
-                                )
+                            attempt_error = attempt_classification.error
 
-                    # This attempt failed - decide whether to retry
-                    if retry_attempt < max_retries:
-                        # Will retry
-                        retry_attempt += 1
-                        continue
-                    else:
-                        # No more retries - record the final failure
-                        result = attempt_result
-                        run_error = attempt_error
-                        run_timed_out = attempt_timed_out
-                        break
+                    # If we got here without breaking, the attempt failed
+                    if not attempt_succeeded:
+                        if use_full_debug:
+                            error_msg = f"  [DEBUG] Run {run_num} attempt {retry_attempt} failed: timeout={attempt_timed_out}, error={attempt_error is not None}"
+                            if attempt_error is not None:
+                                error_msg += f" ({type(attempt_error).__name__}: {attempt_error})"
+                            self._log_result(error_msg)
+
+                        # Decide whether to retry
+                        if retry_attempt < max_retries:
+                            # Will retry
+                            retry_attempt += 1
+                            continue
+                        else:
+                            # No more retries - record the final failure
+                            result = attempt_result
+                            run_error = attempt_error
+                            run_timed_out = attempt_timed_out
+                            break
 
                 # Handle results (after all retry attempts)
-                if run_timed_out:
-                    # Treat timeout as failed run
-                    failed_runs.append(
-                        {
-                            "run_number": run_num,
-                            "parameters": params_dict,
-                            "error": f"Timeout after {self.config.per_run_timeout}s (tried {retry_attempt + 1} time(s))",
-                            "timed_out": True,
-                            "retry_attempts": retry_attempt,
-                        }
-                    )
-                    self._log_result(
-                        f"  [TIMEOUT] Run {run_num}: Timeout after {self.config.per_run_timeout}s"
-                    )
-                elif run_error is not None:
-                    failed_runs.append(
-                        {
-                            "run_number": run_num,
-                            "parameters": params_dict,
-                            "error": str(run_error),
-                            "timed_out": False,
-                            "retry_attempts": retry_attempt,
-                        }
-                    )
-                    self._log_result(
-                        f"  [ERROR] Run {run_num}: Error during integration: {run_error}"
-                    )
-                elif result is None:
-                    failed_runs.append(
-                        {
-                            "run_number": run_num,
-                            "parameters": params_dict,
-                            "error": "Integration returned no result",
-                            "timed_out": False,
-                            "retry_attempts": retry_attempt,
-                        }
-                    )
-                    self._log_result(
-                        f"  [ERROR] Run {run_num}: No result returned from integration"
-                    )
-                else:
-                    # Calculate metrics and store results
-                    metrics = result.metrics
-
-                    # Add run metadata
-                    result_data = {
-                        "run_number": run_num,
-                        "parameters": {
-                            "particle_energy_gev": energy,
-                            "starting_z_mm": start_z,
-                            "transverse_offset_fraction": offset_frac,
-                            "timestep": timestep,
-                            "steps": steps,
-                            "retry_attempts": retry_attempt,
-                        },
-                        "metrics": metrics,
-                    }
-
-                    # Add aperture_radius only for non-BUNCH_TO_BUNCH modes
-                    if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
-                        result_data["parameters"]["aperture_radius"] = aperture
-
-                    # Include additional swept parameters if present
-                    if "wall_z" in params_dict:
-                        result_data["parameters"]["wall_z"] = params_dict["wall_z"]
-
-                    # Add rider particle parameters (always include, may be swept)
-                    if "rider_m_particle" in params_dict:
-                        result_data["parameters"]["rider_m_particle"] = rider_m_particle
-                    if "rider_charge_sign" in params_dict:
-                        result_data["parameters"]["rider_charge_sign"] = (
-                            rider_charge_sign
-                        )
-                    if "rider_pcount" in params_dict:
-                        result_data["parameters"]["rider_pcount"] = rider_pcount
-                    if "rider_transv_mom" in params_dict:
-                        result_data["parameters"]["rider_transv_mom"] = rider_transv_mom
-                    if "rider_transv_dist" in params_dict:
-                        result_data["parameters"]["rider_transv_dist"] = (
-                            rider_transv_dist
-                        )
-                    if "rider_stripped_ions" in params_dict:
-                        result_data["parameters"]["rider_stripped_ions"] = (
-                            rider_stripped_ions
+                try:
+                    if result is not None and use_full_debug:
+                        self._log_result(
+                            f"  [DEBUG] Run {run_num} integration completed"
                         )
 
-                    # Add driver particle parameters if BUNCH_TO_BUNCH (always include, may be swept)
-                    if self.config.simulation_type == SimulationType.BUNCH_TO_BUNCH:
-                        if driver_params_dict is not None:
-                            # Always store all driver parameters (whether swept or fixed)
-                            result_data["parameters"]["driver_m_particle"] = (
-                                driver_params_dict["m_particle"]
-                            )
-                            result_data["parameters"]["driver_charge_sign"] = (
-                                driver_params_dict["charge_sign"]
-                            )
-                            result_data["parameters"]["driver_pcount"] = (
-                                driver_params_dict["pcount"]
-                            )
-                            result_data["parameters"]["driver_transv_mom"] = (
-                                driver_params_dict["transv_mom"]
-                            )
-                            result_data["parameters"]["driver_transv_dist"] = (
-                                driver_params_dict["transv_dist"]
-                            )
-                            result_data["parameters"]["driver_starting_distance"] = (
-                                driver_params_dict["starting_distance"]
-                            )
-                            result_data["parameters"]["driver_starting_Pz"] = (
-                                driver_params_dict["starting_Pz"]
-                            )
-                            result_data["parameters"]["driver_stripped_ions"] = (
-                                driver_params_dict["stripped_ions"]
-                            )
-                            # Store driver_energy_gev if it was in the sweep or linked mode
-                            if "driver_energy_gev" in params_dict:
-                                result_data["parameters"]["driver_energy_gev"] = (
-                                    params_dict["driver_energy_gev"]
-                                )
-                            elif getattr(self.config, "linked_energy_sweep", False):
-                                # In linked mode, driver energy = rider energy
-                                result_data["parameters"]["driver_energy_gev"] = energy
-                                result_data["parameters"]["linked_energy_sweep"] = True
+                    if not run_timed_out and result is not None:
+                        metric_summary = extract_sweep_metric_summary(result)
 
-                    if self.config.macroparticle_enabled:
-                        result_data["parameters"]["macroparticle_charge_multiplier"] = (
-                            macroparticle_charge_multiplier
-                        )
-                        result_data["parameters"]["macroparticle_sigma_multiplier"] = (
-                            macroparticle_sigma_multiplier
+                        # Create run_data structure (used regardless of logging mode)
+                        run_data = build_sweep_run_data(
+                            run_number=run_num,
+                            params_dict=params_dict,
+                            simulation_type=self.config.simulation_type,
+                            aperture=aperture,
+                            energy=energy,
+                            start_z=start_z,
+                            transv_offset=transv_offset,
+                            offset_frac=offset_frac,
+                            timestep=timestep,
+                            steps=steps,
+                            retry_attempts=retry_attempt,
+                            default_wall_z=self.config.wall_z,
+                            rider_m_particle=rider_m_particle,
+                            rider_charge_sign=rider_charge_sign,
+                            rider_pcount=rider_pcount,
+                            rider_transv_mom=rider_transv_mom,
+                            rider_transv_dist=rider_transv_dist,
+                            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                            metrics=result.get("metrics", {}),
+                            driver_params=driver_params_dict,
                         )
 
-                    # Stability analysis only if trajectory is present
-                    if result.trajectory is not None:
-                        traj = result.trajectory
-
-                        # Compute smoothness metrics
-                        smoothness_config = SmoothnessConfig(
-                            enabled=self.config.smoothness_enabled,
-                            window_size=int(self.config.smoothness_window_size),
-                            reject_on_violation=self.config.smoothness_reject_on_violation,
-                            gamma_threshold=self.config.smoothness_gamma_threshold,
-                            radius_threshold=self.config.smoothness_radius_threshold,
-                        )
-
-                        smoothness_result = analyze_trajectory_smoothness(
-                            trajectory=traj,
-                            smoothness_config=smoothness_config,
-                            enable_logging=True,
-                        )
-
-                        # Filter stable trajectories if enabled
-                        if self.config.stability_filter_enabled:
-                            stable = filter_stable_trajectories(
-                                trajectories=[traj],
-                                smoothness_config=smoothness_config,
-                                enable_logging=True,
+                        # Log based on verbosity mode
+                        if use_no_logging:
+                            # No logging mode: skip all run-level logs
+                            pass
+                        elif use_truncated_logging:
+                            # Truncated mode: 1-2 lines with key info
+                            log_params = build_truncated_sweep_log_params(
+                                param_grids=param_grids,
+                                params_dict=params_dict,
+                                simulation_type=self.config.simulation_type,
+                                aperture=aperture,
+                                energy=energy,
+                                wall_z=self.config.wall_z,
                             )
-                            result_data["is_stable"] = len(stable) > 0
-                        else:
-                            result_data["is_stable"] = True
+                            self._log_truncated_run(
+                                run_num,
+                                params=log_params,
+                                metrics={
+                                    "ΔE": metric_summary.delta_e,
+                                    "Δγ": metric_summary.delta_gamma,
+                                    "γ_i": metric_summary.gamma_initial,
+                                    "γ_f": metric_summary.gamma_final,
+                                },
+                            )
+                        elif use_full_debug:
+                            # Full debug mode: all details
+                            actual_distance = extract_actual_distance(result)
+                            for line in build_full_debug_sweep_result_log_lines(
+                                run_num=run_num,
+                                total_runs=total_runs,
+                                expected_distance=expected_distance,
+                                actual_distance=actual_distance,
+                                metrics=metric_summary,
+                            ):
+                                self._log_result(line)
 
-                        # Store smoothness metrics
-                        result_data["smoothness_metrics"] = smoothness_result.to_dict()
-
-                        # Store trajectory with stride (for saving)
-                        # Only save trajectory arrays if trajectory saving is enabled or stability enabled
+                        # Add trajectory if requested (check if any trajectory saving is enabled)
+                        # Note: save_top_n_trajectories only applies to optimization mode, not sweeps
                         save_traj = (
                             self.config.save_all_trajectories
                             or self.config.save_failed_trajectories
-                            or self.config.smoothness_enabled
                         )
-                        if save_traj:
-                            stride = self.config.trajectory_stride
-                            try:
-                                result_data["trajectory"] = {
-                                    "z": np.asarray(traj["z"])[::stride].tolist(),
-                                    "r": np.asarray(traj["r"])[::stride].tolist(),
-                                    "pz": np.asarray(traj["pz"])[::stride].tolist(),
-                                    "pr": np.asarray(traj["pr"])[::stride].tolist(),
-                                    "t": np.asarray(traj["t"])[::stride].tolist(),
-                                    "gamma": np.asarray(traj["gamma"])[
-                                        ::stride
-                                    ].tolist(),
-                                }
-                            except Exception as e:
-                                self._log_result(
-                                    f"    [WARNING] Failed to downsample trajectory: {e}"
-                                )
-                    else:
-                        result_data["is_stable"] = True  # No trajectory to check
+                        if save_traj and "trajectory" in result:
+                            run_data["trajectory"] = result["trajectory"]
 
-                    all_results.append(result_data)
+                        all_results.append(run_data)
 
-                    # Log run completion summary (Truncated mode logs here)
-                    if use_truncated_logging:
-                        self._log_result(
-                            f"  [RESULT] Run {run_num}/{total_runs}: ΔE={metrics.get('rider_delta_e_mev', 0):.3f} MeV, "
-                            f"z_final={metrics.get('rider_z_final', 0):.3f} mm"
-                        )
-
-            # Save results to JSON file
-            self._save_sweep_results(all_results, failed_runs)
-
-            # Close log file before moving directory
-            if self._log_file is not None:
-                self._close_log_file()
-
-            # Move log file to sweep directory
-            if self._log_file_path is not None and self._log_file_path.exists():
-                import shutil
-
-                log_dest = Path(self.config.output_dir) / self._log_file_path.name
-                try:
-                    shutil.copy2(self._log_file_path, log_dest)
-                    self._log_result(f"Log file saved to: {log_dest}")
                 except Exception as e:
-                    self._log_result(
-                        f"[WARNING] Failed to move log file to sweep directory: {e}"
-                    )
+                    import traceback
 
-            elapsed_time = time.time() - start_time
-            hours = int(elapsed_time // 3600)
-            minutes = int((elapsed_time % 3600) // 60)
-            seconds = elapsed_time % 60
+                    error_details = traceback.format_exc()
+                    run_error = str(e)
 
-            self._log_result("[OK] Sweep completed!")
-            self._log_result(f"  Results saved to: {self.config.output_dir}")
-            self._log_result(f"  Successful runs: {len(all_results)}")
-            if failed_runs:
-                self._log_result(f"  Failed/timed-out runs: {len(failed_runs)}")
-            if hours > 0:
-                self._log_result(
-                    f"  Total time: {hours}h {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
-                )
-            elif minutes > 0:
-                self._log_result(
-                    f"  Total time: {minutes}m {seconds:.1f}s ({elapsed_time:.1f}s)"
-                )
-            else:
-                self._log_result(f"  Total time: {elapsed_time:.1f}s")
-            self._update_progress(100, "Complete!")
-        except Exception as e:  # pragma: no cover - integration path
+                    if self.config.skip_failed_runs:
+                        self._log_result(f"[WARNING] Run {run_num} failed: {e}")
+                        self._log_result(f"    Error details: {error_details}")
+                        self._log_result(
+                            "    Skipping and continuing with next run..."
+                        )
+
+                        # Record failed run
+                        failed_runs.append(
+                            build_failed_sweep_run_record(
+                                run_num=run_num,
+                                aperture=aperture,
+                                energy=energy,
+                                start_z=start_z,
+                                transv_offset=transv_offset,
+                                timestep=timestep,
+                                steps=steps,
+                                wall_z=params_dict.get("wall_z", self.config.wall_z),
+                                error=run_error,
+                                error_details=error_details,
+                            )
+                        )
+                    else:
+                        # Don't skip - re-raise and stop sweep
+                        self._log_result(f"[ERROR] Run {run_num} failed: {e}")
+                        self._log_result(f"    Error details: {error_details}")
+                        self._log_result(
+                            "    Stopping sweep (skip_failed_runs is disabled)"
+                        )
+                        raise
+
+                # Handle timeout case
+                if run_timed_out:
+                    if self.config.skip_failed_runs:
+                        self._log_result(
+                            "    Skipping and continuing with next run..."
+                        )
+                        failed_runs.append(
+                            build_timeout_sweep_run_record(
+                                run_num=run_num,
+                                aperture=aperture,
+                                energy=energy,
+                                start_z=start_z,
+                                transv_offset=transv_offset,
+                                timestep=timestep,
+                                steps=steps,
+                                timeout_seconds=self.config.per_run_timeout,
+                            )
+                        )
+                    else:
+                        self._log_result(
+                            "    Stopping sweep (skip_failed_runs is disabled)"
+                        )
+                        break
+
+            # Save results
+            if all_results and self.config.save_results:
+                self._save_sweep_results(all_results, failed_runs)
+
+            if self.running:
+                elapsed_time = time.time() - start_time
+                for line in build_sweep_completion_log_lines(
+                    output_dir=self.config.output_dir,
+                    successful_runs=len(all_results),
+                    failed_runs=len(failed_runs),
+                    elapsed_time=elapsed_time,
+                ):
+                    self._log_result(line)
+                self._update_progress(100, "Complete!")
+        except Exception as e:
             self._log_result(f"[ERROR] Error during sweep: {e}")
             import traceback
 
             self._log_result(traceback.format_exc())
         finally:
-            # Restore original verbosity settings
-            if "original_sc_verbosity" in locals():
-                self.config.self_consistency_verbosity = original_sc_verbosity
-            if "original_adaptive_debug" in locals():
-                self.config.adaptive_timestep_debug = original_adaptive_debug
+            if "logging_policy" in locals():
+                restore_run_logging_policy(self.config, logging_policy)
 
             self.running = False
             # Ensure log file is closed
@@ -2015,89 +1089,7 @@ class OptimizationRunMixin:
 
     def _generate_parameter_grids(self):
         """Generate all parameter grids including sweepable parameters."""
-        grids = {}
-
-        # Aperture: only for non-BUNCH_TO_BUNCH modes
-        if self.config.simulation_type != SimulationType.BUNCH_TO_BUNCH:
-            grids["aperture"] = self._generate_range(
-                self.config.aperture_range[0],
-                self.config.aperture_range[1],
-                self.config.aperture_points,
-                self.config.aperture_log_scale,
-            )
-
-        # Energy: always swept
-        grids["energy"] = self._generate_range(
-            self.config.energy_range[0],
-            self.config.energy_range[1],
-            self.config.energy_points,
-            self.config.energy_log_scale,
-        )
-
-        # Transverse offset is ALWAYS a single (x,y) configuration, NOT a sweep parameter
-        # For both CONDUCTING_WALL and BUNCH_TO_BUNCH:
-        # - If config has [0.0, 0.0], this represents a single (x=0, y=0) configuration
-        # - If config has [0.1], this represents (x=0.1, y=0) configuration
-        # - We use only the first value as the scalar offset for this sweep configuration
-        if len(self.config.transverse_offset_fractions) > 0:
-            grids["transverse_offset_fraction"] = [
-                self.config.transverse_offset_fractions[0]
-            ]
-        else:
-            # No offset provided, default to 0.0
-            grids["transverse_offset_fraction"] = [0.0]
-
-        # Starting z positions: always swept if multiple values
-        grids["start_z"] = self.config.starting_z_positions
-
-        # Wall z (optional sweep)
-        if self.config.wall_z_range is not None and self.config.wall_z_points > 1:
-            grids["wall_z"] = self._generate_range(
-                self.config.wall_z_range[0],
-                self.config.wall_z_range[1],
-                self.config.wall_z_points,
-                False,  # wall_z doesn't need log scale
-            )
-
-        # Optional sweeps for rider and driver particle parameters
-        sim_type = self.config.simulation_type
-        for param_name, controls in self.sweep_params.items():
-            # Skip driver params if not BUNCH_TO_BUNCH
-            if (
-                param_name.startswith("driver_")
-                and sim_type != SimulationType.BUNCH_TO_BUNCH
-            ):
-                continue
-
-            if controls["sweep_var"].get():
-                min_val = float(controls["min_var"].get())
-                max_val = float(controls["max_var"].get())
-                points = int(controls["points_var"].get())
-                log_scale = controls["log_var"].get()
-
-                # Energy is always a positive magnitude; accept negative
-                # input gracefully (sign encodes Pz direction, not energy)
-                if param_name == "driver_energy_gev":
-                    min_val = abs(min_val)
-                    max_val = abs(max_val)
-                    if min_val > max_val:
-                        min_val, max_val = max_val, min_val
-
-                grids[param_name] = self._generate_range(
-                    min_val, max_val, points, log_scale
-                )
-
-        return grids
-
-    def _generate_range(
-        self, min_val: float, max_val: float, points: int, log_scale: bool
-    ) -> List[float]:
-        """Generate parameter range (linear or log scale)."""
-        if points == 1:
-            return [(min_val + max_val) / 2.0]
-        if log_scale:
-            return np.logspace(np.log10(min_val), np.log10(max_val), points).tolist()
-        return np.linspace(min_val, max_val, points).tolist()
+        return build_parameter_grids(self.config, self.sweep_params)
 
     def _run_single_integration(
         self,
@@ -2123,228 +1115,205 @@ class OptimizationRunMixin:
     ) -> Dict[str, Any]:
         """Run a single integration with given parameters."""
         # Log stability analysis configuration for debugging
-        self._log_result(f"  [CONFIG] Run {run_num} stability settings:")
-        self._log_result(f"    smoothness_enabled: {self.config.smoothness_enabled}")
-        if self.config.smoothness_enabled:
-            self._log_result(
-                f"    smoothness_window_size: {self.config.smoothness_window_size}"
-            )
-            self._log_result(
-                f"    smoothness_reject_on_violation: {self.config.smoothness_reject_on_violation}"
-            )
-
-        # Use provided rider values or fall back to config defaults
-        rider_m_particle = (
-            rider_m_particle if rider_m_particle is not None else self.config.m_particle
-        )
-        rider_charge_sign = (
-            rider_charge_sign
-            if rider_charge_sign is not None
-            else self.config.charge_sign
-        )
-        rider_pcount = (
-            rider_pcount if rider_pcount is not None else int(self.config.pcount)
-        )
-        rider_transv_mom = (
-            rider_transv_mom if rider_transv_mom is not None else self.config.transv_mom
-        )
-        rider_transv_dist = (
-            rider_transv_dist
-            if rider_transv_dist is not None
-            else self.config.transv_dist
-        )
-        wall_z = wall_z if wall_z is not None else self.config.wall_z
-        macroparticle_charge_multiplier = (
-            macroparticle_charge_multiplier
-            if macroparticle_charge_multiplier is not None
-            else self.config.macroparticle_charge_multiplier
-        )
-        macroparticle_sigma_multiplier = (
-            macroparticle_sigma_multiplier
-            if macroparticle_sigma_multiplier is not None
-            else self.config.macroparticle_sigma_multiplier
-        )
-        rider_stripped_ions = (
-            rider_stripped_ions
-            if rider_stripped_ions is not None
-            else self.config.stripped_ions
-        )
-
-        # Build rider params
-        rider_params = {
-            "starting_distance": start_z,
-            "transv_mom": rider_transv_mom,
-            "transv_dist": rider_transv_dist,
-            "transv_offset_x": transv_offset,
-            "transv_offset_y": 0.0,
-            "m_particle": rider_m_particle,
-            "charge_sign": rider_charge_sign,
-            "pcount": rider_pcount,
-            "stripped_ions": rider_stripped_ions,
-            "starting_Pz": 0.0,
-        }
-
-        # Calculate initial Pz from energy
-        AMU_TO_MEV = 931.494
-        rest_energy_mev = rider_m_particle * AMU_TO_MEV
-        gamma = (energy_gev * 1e3) / rest_energy_mev
-        rider_params["starting_Pz"] = C_MMNS * np.sqrt(gamma * gamma - 1.0)
-
-        core_params = {
-            "time_step": timestep,
-            "wall_z": wall_z,
-            "aperture_radius": aperture,
-            "mean": 1.0e5,
-            "cav_spacing": 1.0e5,
-            "z_cutoff": (
-                self.config.target_distance_mm
-                if self.config.z_cutoff_mode == "relative"
-                else 0.0
-            ),
-            "z_cutoff_mode": self.config.z_cutoff_mode,
-        }
+        for line in build_stability_config_log_lines(self.config, run_num=run_num):
+            self._log_result(line)
 
         # Create a temporary subdirectory for this run's outputs (will be cleaned up)
         from datetime import datetime
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
+        # Create a temporary subdirectory for this run's outputs (will be cleaned up)
+        # IMPORTANT: This must live under the same base directory that the orphan-cleanup
+        # routine scans (self.sweep_output_dir), otherwise temp dirs will only be cleaned
+        # up when the GUI starts (or never, if output_dir differs).
         run_output_dir = (
             Path(self.sweep_output_dir) / f"_temp_run_{run_num}_{timestamp}"
         )
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use seed override if provided (for retries), otherwise use config seed + run_num
-        actual_seed = (
-            seed_override if seed_override is not None else (self.config.seed + run_num)
-        )
-
-        options = SimulationOptions(
+        setup = build_single_integration_setup(
+            self.config,
+            aperture=aperture,
+            energy_gev=energy_gev,
+            start_z=start_z,
+            transv_offset=transv_offset,
+            timestep=timestep,
             steps=steps,
-            seed=actual_seed,  # Unique seed per run for varied particle distributions
-            simulation_type=self.config.simulation_type,
-            rider_params=rider_params,
+            run_output_dir=run_output_dir,
+            run_num=run_num,
             driver_params=driver_params,
-            core_params=core_params,
-            legacy_enabled=False,
-            trajectory_save=False,
-            trajectory_interval=self.config.trajectory_stride,
-            energy_display=False,
-            energy_save=False,
-            transverse_display=False,
-            transverse_save=True,
-            beta_display=False,
-            beta_save=False,
-            momentum_display=False,
-            momentum_save=False,
-            gamma_display=False,
-            gamma_save=False,
-            zposition_display=False,
-            zposition_save=False,
-            macroparticle_enabled=self.config.macroparticle_enabled,
+            rider_m_particle=rider_m_particle,
+            rider_charge_sign=rider_charge_sign,
+            rider_pcount=rider_pcount,
+            rider_transv_mom=rider_transv_mom,
+            rider_transv_dist=rider_transv_dist,
+            rider_stripped_ions=rider_stripped_ions,
             macroparticle_charge_multiplier=macroparticle_charge_multiplier,
             macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-            macroparticle_use_momentum_errors=self.config.macroparticle_use_momentum_errors,
-            overlay_display=False,
-            overlay_save=False,
-            difference_display=False,
-            difference_save=False,
-            use_adaptive_timestep=self.config.use_adaptive_timestep,
-            adaptive_timestep_min=self.config.adaptive_timestep_min,
-            adaptive_timestep_max=self.config.adaptive_timestep_max,
-            adaptive_timestep_target=self.config.adaptive_timestep_target,
-            adaptive_timestep_debug=self.config.adaptive_timestep_debug,
-            per_run_timeout=self.config.per_run_timeout,
-            cancel_flag=cancel_flag,
+            wall_z=wall_z,
+            seed_override=seed_override,
+            simulation_options_cls=SimulationOptions,
         )
+        options = setup.options
+        rider_m_particle = setup.rider_m_particle
+        wall_z = setup.wall_z
+        macroparticle_charge_multiplier = setup.macroparticle_charge_multiplier
 
+        # Create progress callback to track integration
+        def progress_callback(current: int, total: int, run_id=run_num):
+            """Log progress periodically."""
+            line = build_progress_log_line(
+                run_num=run_id,
+                current=current,
+                total=total,
+            )
+            if line is not None:
+                self._log_result(line)
+
+        # Run the integration with progress tracking
+        #
+        # NOTE: We must always clean up the per-run temp directory, even when returning
+        # early (halted runs) or raising exceptions. We do that by wrapping the entire
+        # run/analysis section in a try/finally.
         try:
-            result: RunResult = run_testbed(options=options, output_dir=run_output_dir)
-            self._log_result(f"  [DEBUG] Integration complete for Run {run_num}")
+            # Log diagnostic info for potentially problematic configurations
+            # Only check aperture for CONDUCTING_WALL modes
+            if (
+                not is_bunch_to_bunch(self.config.simulation_type)
+                and aperture < 0.1
+            ):
+                diagnostic_line = build_small_aperture_diagnostic_line(
+                    run_num=run_num,
+                    aperture=aperture,
+                )
+                if diagnostic_line is not None:
+                    self._log_result(diagnostic_line)
+            if macroparticle_charge_multiplier > 1000:
+                self._log_result(
+                    f"  [DIAGNOSTIC] Run {run_num}: Large charge multiplier ({macroparticle_charge_multiplier:.0f})"
+                )
+                self._log_result(
+                    "    Note: This may significantly slow integration due to strong image forces"
+                )
 
-            output = {
-                "metrics": result.metrics,
-                "parameters": {
-                    "aperture_radius": aperture,
-                    "particle_energy_gev": energy_gev,
-                    "starting_z_mm": start_z,
-                    "transverse_offset_fraction": (
-                        transv_offset / aperture if aperture != 0 else 0
-                    ),
-                    "timestep": timestep,
-                    "steps": steps,
-                },
-            }
+            self._log_result(f"  [DEBUG] Calling run_testbed for Run {run_num}...")
 
-            # Attach trajectory if available
-            if result.trajectory is not None:
-                traj = result.trajectory
-                output["trajectory"] = traj
+            # Create cancel callback if cancel_flag is provided
+            cancel_callback = None
+            if cancel_flag is not None:
 
-                # Stability analysis (smoothness)
-                if self.config.smoothness_enabled:
-                    smoothness_config = SmoothnessConfig(
-                        enabled=self.config.smoothness_enabled,
-                        window_size=int(self.config.smoothness_window_size),
-                        reject_on_violation=self.config.smoothness_reject_on_violation,
-                        gamma_threshold=self.config.smoothness_gamma_threshold,
-                        radius_threshold=self.config.smoothness_radius_threshold,
-                    )
-
-                    smoothness_result = analyze_trajectory_smoothness(
-                        trajectory=traj,
-                        smoothness_config=smoothness_config,
-                        enable_logging=True,
-                    )
-
-                    # Filter stable trajectories if enabled
-                    if self.config.stability_filter_enabled:
-                        stable = filter_stable_trajectories(
-                            trajectories=[traj],
-                            smoothness_config=smoothness_config,
-                            enable_logging=True,
+                def check_cancel():
+                    if cancel_flag[0]:
+                        self._log_result(
+                            f"  [CANCEL] Run {run_num}: Cancellation requested"
                         )
-                        output["is_stable"] = len(stable) > 0
-                    else:
-                        output["is_stable"] = True
+                    return cancel_flag[0] if cancel_flag else False
 
-                    # Store smoothness metrics
-                    output["smoothness_metrics"] = smoothness_result.to_dict()
+                cancel_callback = check_cancel
 
-                # Only save full trajectory arrays if explicitly requested
-                save_traj = (
+            # Create log callback to stream verbose SC/adaptive timestep output to GUI
+            # This ensures logs are visible in real-time even when not saved to file
+            log_callback = None
+            if (
+                self.config.self_consistency_verbosity > 0
+                or self.config.adaptive_timestep_debug
+            ):
+
+                def verbose_log(message: str):
+                    # Filter for SC and adaptive timestep related messages
+                    if should_emit_verbose_run_log(message):
+                        self._log_result(f"    [VERBOSE] {message}")
+
+                log_callback = verbose_log
+
+            result = run_testbed(
+                options,
+                log=log_callback,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
+            )
+            self._log_result(f"  [DEBUG] run_testbed completed for Run {run_num}")
+
+            # Check if integration was halted early
+            if result.halted_early:
+                self._log_result(
+                    f"  [WARNING] Run {run_num} halted early: {result.halt_reason}"
+                )
+                self._log_result(
+                    "    Trajectory contains partial data and will still be analyzed"
+                )
+
+            # Sanity check: Verify final z position doesn't exceed expected distance
+            if self.config.timestep_strategy == "auto_distance":
+                for line in build_final_z_check_log_lines(
+                    trajectory=result.rider_trajectory,
+                    simulation_type=self.config.simulation_type,
+                    driver_params=driver_params,
+                    target_distance_mm=self.config.target_distance_mm,
+                    wall_z=wall_z,
+                    run_num=run_num,
+                ):
+                    self._log_result(line)
+
+            # No figures should be generated during sweeps (all display/save flags set to False)
+            # If any figures were created (shouldn't happen), close them as a safety measure
+            if result.figures:
+                self._log_result(
+                    f"  [WARNING] Run {run_num}: Unexpected figures generated ({len(result.figures)}), closing them"
+                )
+                import matplotlib.pyplot as plt
+
+                for fig_name, fig in result.figures.items():
+                    try:
+                        plt.close(fig)
+                        self._log_result(f"    Closed unexpected figure: {fig_name}")
+                    except Exception as e:
+                        self._log_result(f"    Error closing figure {fig_name}: {e}")
+
+            # Check if run was halted early - if so, skip metrics calculation
+            if result.halted_early:
+                halted = build_halted_integration_output(
+                    result,
+                    run_num=run_num,
+                    save_trajectory=(
+                        self.config.save_all_trajectories
+                        or self.config.save_failed_trajectories
+                    ),
+                    trajectory_stride=self.config.trajectory_stride,
+                )
+                for line in halted.log_lines:
+                    self._log_result(line)
+                return halted.output
+
+            # Extract metrics (only for non-halted runs)
+            self._log_result(f"  [DEBUG] Extracting metrics for Run {run_num}...")
+            metrics_outcome = build_integration_metrics(
+                result,
+                rider_m_particle=rider_m_particle,
+                run_num=run_num,
+                optimization_mode=getattr(self.config, "mode", None) == "optimization",
+            )
+            for line in metrics_outcome.log_lines:
+                self._log_result(line)
+
+            output = {"metrics": metrics_outcome.metrics}
+            trajectory_outcome = build_integration_trajectory_output(
+                result,
+                self.config,
+                run_num=run_num,
+                rider_m_particle=rider_m_particle,
+                metrics=output["metrics"],
+                save_trajectory=(
                     self.config.save_all_trajectories
                     or self.config.save_failed_trajectories
-                )
-                if save_traj:
-                    stride = self.config.trajectory_stride
-                    try:
-                        output["trajectory"] = {
-                            "z": np.asarray(traj["z"])[::stride].tolist(),
-                            "r": np.asarray(traj["r"])[::stride].tolist(),
-                            "pz": np.asarray(traj["pz"])[::stride].tolist(),
-                            "pr": np.asarray(traj["pr"])[::stride].tolist(),
-                            "t": np.asarray(traj["t"])[::stride].tolist(),
-                            "gamma": np.asarray(traj["gamma"])[::stride].tolist(),
-                        }
-                    except Exception as e:
-                        self._log_result(
-                            f"    [WARNING] Failed to save trajectory arrays: {e}"
-                        )
-
-                if result.halted_early:
-                    output["halted_early"] = True
-                    output["halt_reason"] = result.halt_reason
-            else:
-                self._log_result(
-                    f"  [WARNING] No trajectory data available for Run {run_num}"
-                )
-                if self.config.smoothness_enabled:
-                    self._log_result(
-                        f"  [WARNING] Stability analysis SKIPPED - no trajectory data returned from integration"
-                    )
-                    self._log_result(
-                        f"    Check that transverse_save=True in SimulationOptions"
-                    )
+                ),
+                trajectory_stride=self.config.trajectory_stride,
+            )
+            for line in trajectory_outcome.debug_print_lines:
+                print(line)
+            for line in trajectory_outcome.log_lines:
+                self._log_result(line)
+            output.update(trajectory_outcome.output_updates)
 
             self._log_result(
                 f"  [DEBUG] _run_single_integration returning for Run {run_num}"
@@ -2352,6 +1321,7 @@ class OptimizationRunMixin:
 
             return output
         finally:
+            # Always clean up temporary run directory (success, halt, exception, cancel)
             try:
                 import shutil
 
@@ -2366,14 +1336,20 @@ class OptimizationRunMixin:
                 )
 
     def _cleanup_orphaned_temp_dirs(self):
-        """Clean up any orphaned _temp_run directories from previous runs."""
+        """Clean up any orphaned _temp_run directories from previous runs.
+
+        This is called on plugin initialization to remove temp directories
+        that weren't cleaned up due to crashes or interruptions.
+        """
         import shutil
+        from pathlib import Path
 
         try:
             output_dir = Path(self.sweep_output_dir)
             if not output_dir.exists():
                 return
 
+            # Find all _temp_run directories
             temp_dirs = list(output_dir.glob("_temp_run_*"))
 
             if temp_dirs:

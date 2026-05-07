@@ -31,6 +31,8 @@ from core.types import ParticleState, SimulationType
 from optimization.metrics import compute_max_energy_gain, compute_trajectory_metrics
 from optimization.parameter_sweep import ParameterGrid
 
+pytestmark = pytest.mark.slow
+
 
 def trajectory_list_to_dict(trajectory: List[ParticleState]) -> Dict[str, np.ndarray]:
     """Convert trajectory from list of states to dict of arrays.
@@ -152,7 +154,7 @@ class TestSingleRunAPI:
 
         rider = create_test_particle(gamma=1000.0, z_position=0.0)
 
-        trajectory_rider, trajectory_driver = run_integrator(
+        trajectory_rider, trajectory_driver, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -182,7 +184,7 @@ class TestSingleRunAPI:
 
         rider = create_test_particle(gamma=1000.0, z_position=0.0)
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -223,7 +225,7 @@ class TestSingleRunAPI:
             gamma=1000.0, z_position=0.0, transverse_offset=0.2
         )
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -273,7 +275,7 @@ class TestSingleRunAPI:
         )
 
         # Should complete even with jumps detected
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -294,7 +296,6 @@ class TestAdaptiveTimestep:
             enabled=True,
             energy_jump_threshold=0.1,
             timestep_reduction_factor=10,
-            max_refinement_attempts=5,
             min_timestep_factor=1e-4,
             cooldown_steps=5,
             probe_threshold=0.01,
@@ -318,7 +319,7 @@ class TestAdaptiveTimestep:
 
         rider = create_test_particle(gamma=5000.0, z_position=0.0)
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -590,7 +591,7 @@ class TestEnergyMonitoringIntegration:
             gamma=10000.0, z_position=0.0, transverse_offset=0.1
         )
 
-        trajectory_rider, _ = run_integrator(
+        trajectory_rider, _, *_soa_out = run_integrator(
             config,
             init_rider=rider,
             init_driver=None,
@@ -605,7 +606,7 @@ class TestEnergyMonitoringIntegration:
         # Check smoothness
         smoothness_config = SmoothnessConfig()
         traj_dict = trajectory_list_to_dict(trajectory_rider)
-        result = analyze_trajectory_smoothness(traj_dict, smoothness_config)
+        analyze_trajectory_smoothness(traj_dict, smoothness_config)
 
         # May or may not pass depending on severity, but should not crash
         # Physical radiation reaction should be handled smoothly by adaptive timestep

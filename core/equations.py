@@ -1,7 +1,7 @@
 """Retarded equations of motion for the Liénard–Wiechert solver.
 
-The implementation intentionally mirrors the behaviour of the validated legacy
-code so that historical regression data remains applicable.  The heavy lifting
+The implementation preserves the validated reference behavior so historical
+regression data remains applicable. The heavy lifting
 is performed inside :func:`retarded_equations_of_motion`, which calculates the
 covariant updates for momentum, position, and acceleration for each particle.
 
@@ -76,15 +76,21 @@ from typing import Any, Optional
 
 import numpy as np
 
+import inspect
+
 from .constants import C_MMNS
 from .distances import (
     ChronoMatchResult,
     chrono_match_indices,
+    chrono_match_indices_soa,
     compute_instantaneous_distance,
     compute_retarded_distance,
+    compute_retarded_distance_soa,
 )
-from .particle_status import mark_particle_dead
-from .self_consistency import SelfConsistencyConfig
+from .self_consistency import (
+    SelfConsistencyConfig,
+    canonicalize_self_consistency_mode,
+)
 from .types import (
     ChronoMatchingMode,
     GammaReconciliationMethod,
@@ -92,10 +98,12 @@ from .types import (
     SimulationType,
     StartupMode,
     Trajectory,
+    TrajectoryArrays,
 )
 from .vectorized_interactions import (
     compute_vectorized_contributions,
     gather_external_samples,
+    gather_external_samples_soa,
 )
 
 
@@ -175,8 +183,9 @@ def _extract_self_consistency_params(
     convergence_mode = (
         self_consistency.convergence_mode
         if self_consistency is not None
-        else "mass_shell_only"
+        else "fixed_geometry"
     )
+    convergence_mode = canonicalize_self_consistency_mode(convergence_mode)
     target_ms_tolerance = (
         self_consistency.target_ms_tolerance if self_consistency is not None else 1e-6
     )
@@ -231,9 +240,11 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "bdotx": np.copy(current_state["bdotx"]),
         "bdoty": np.copy(current_state["bdoty"]),
         "bdotz": np.copy(current_state["bdotz"]),
-        "q": current_state["q"],
-        "char_time": current_state.get("char_time", np.zeros_like(current_state["x"])),
-        "m": current_state.get("m", np.ones_like(current_state["x"])),
+        "q": np.copy(current_state["q"]),
+        "char_time": np.copy(
+            current_state.get("char_time", np.zeros_like(current_state["x"]))
+        ),
+        "m": np.copy(current_state.get("m", np.ones_like(current_state["x"]))),
         "dummy": np.zeros_like(current_state["bdotz"]),
         "origin_x": np.copy(current_state["origin_x"]),
         "origin_y": np.copy(current_state["origin_y"]),
@@ -376,6 +387,8 @@ def _compute_full_retarded_distance(
     chrono_mode: ChronoMatchingMode,
     self_consistency: Optional[SelfConsistencyConfig] = None,
     timestep_h: float = 1e-3,
+    traj_soa: Optional[TrajectoryArrays] = None,
+    traj_ext_soa: Optional[TrajectoryArrays] = None,
 ) -> tuple[dict, np.ndarray, Optional[ChronoMatchResult]]:
     """Compute retarded distance using full chronological matching.
 
@@ -406,21 +419,36 @@ def _compute_full_retarded_distance(
         )
         verbosity = self_consistency.verbosity
 
-    retarded_result = chrono_match_indices(
-        trajectory,
-        trajectory_ext,
-        time_step_idx,
-        particle_idx,
-        mode=chrono_mode,
-        interpolate=chrono_interpolate,
-        tolerance=chrono_tolerance,
-        verbosity=verbosity,
-        high_precision=chrono_high_precision,
-        adaptive_tolerance=chrono_adaptive_tolerance,
-        timestep_h=timestep_h,
-    )
+    if traj_soa is not None and traj_ext_soa is not None:
+        retarded_result = chrono_match_indices_soa(
+            traj_soa,
+            traj_ext_soa,
+            time_step_idx,
+            particle_idx,
+            mode=chrono_mode,
+            interpolate=chrono_interpolate,
+            tolerance=chrono_tolerance,
+            verbosity=verbosity,
+            high_precision=chrono_high_precision,
+            adaptive_tolerance=chrono_adaptive_tolerance,
+            timestep_h=timestep_h,
+        )
+    else:
+        retarded_result = chrono_match_indices(
+            trajectory,
+            trajectory_ext,
+            time_step_idx,
+            particle_idx,
+            mode=chrono_mode,
+            interpolate=chrono_interpolate,
+            tolerance=chrono_tolerance,
+            verbosity=verbosity,
+            high_precision=chrono_high_precision,
+            adaptive_tolerance=chrono_adaptive_tolerance,
+            timestep_h=timestep_h,
+        )
 
-    # Handle both legacy (array) and new (ChronoMatchResult) returns
+    # Handle both plain index-array returns and ChronoMatchResult payloads.
     if isinstance(retarded_result, ChronoMatchResult):
         retarded_indices = retarded_result.indices
         chrono_match_result = retarded_result
@@ -431,13 +459,18 @@ def _compute_full_retarded_distance(
     max_external_idx = len(trajectory_ext) - 1
     indices_bounded = np.minimum(np.maximum(retarded_indices, 0), max_external_idx)
 
-    nhat = compute_retarded_distance(
-        trajectory,
-        trajectory_ext,
-        time_step_idx,
-        particle_idx,
-        indices_bounded,
-    )
+    if traj_soa is not None and traj_ext_soa is not None:
+        nhat = compute_retarded_distance_soa(
+            traj_soa, traj_ext_soa, time_step_idx, particle_idx, indices_bounded
+        )
+    else:
+        nhat = compute_retarded_distance(
+            trajectory,
+            trajectory_ext,
+            time_step_idx,
+            particle_idx,
+            indices_bounded,
+        )
 
     return nhat, indices_bounded, chrono_match_result
 
@@ -821,7 +854,7 @@ def _print_convergence_info(
     max_iterations: int,
     verbosity: int = 1,
     step_idx: Optional[int] = None,
-    convergence_mode: str = "mass_shell_only",
+    convergence_mode: str = "fixed_geometry",
     particle_position: Optional[tuple[float, float, float]] = None,
     particle_time: Optional[float] = None,
 ) -> None:
@@ -849,7 +882,7 @@ def _print_convergence_info(
     step_idx : Optional[int]
         Integration step number for context in error messages
     convergence_mode : str
-        Convergence mode: "mass_shell_only" or "dual"
+        Convergence mode: "fixed_geometry" or "variable_geometry"
     """
     if verbosity == 0:
         return
@@ -866,7 +899,7 @@ def _print_convergence_info(
     # Adjust output based on convergence mode
     if verbosity == 1:
         # Summary: one line per particle
-        if convergence_mode == "mass_shell_only":
+        if convergence_mode == "fixed_geometry":
             print(
                 f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}"
             )
@@ -885,13 +918,13 @@ def _print_convergence_info(
                 x, y, z = particle_position
                 print(f"      Position: x={x:.6e} mm, y={y:.6e} mm, z={z:.6e} mm")
                 print(f"      Time: t={particle_time:.6e} ns")
-            # Only print gamma values, no "dual convergence" or gamma consistency messages
+            # Only print gamma values here, not the convergence-criteria summary.
             print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
             print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
             print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
         else:
             # For converged steps at verbosity 2, just show summary
-            if convergence_mode == "mass_shell_only":
+            if convergence_mode == "fixed_geometry":
                 print(
                     f"    {step_prefix}P{particle_idx}: {status}, E_ms={mass_shell_error:.3e}"
                 )
@@ -913,7 +946,7 @@ def _print_convergence_info(
             x, y, z = particle_position
             print(f"      Position: x={x:.6e} mm, y={y:.6e} mm, z={z:.6e} mm")
             print(f"      Time: t={particle_time:.6e} ns")
-        # Only print gamma values, no "dual convergence" or gamma consistency messages
+        # Only print gamma values here, not the convergence-criteria summary.
         print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
         print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
         print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
@@ -931,8 +964,11 @@ def retarded_equations_of_motion(
     self_consistency: Optional[SelfConsistencyConfig] = None,
     step_idx: Optional[int] = None,
     cancel_callback: Optional[Any] = None,
+    space_charge: Optional[Any] = None,
+    traj_soa: Optional[TrajectoryArrays] = None,
+    traj_ext_soa: Optional[TrajectoryArrays] = None,
 ) -> ParticleState:
-    """Core equations of motion mirroring the validated legacy implementation.
+    """Core equations of motion preserving the validated reference behavior.
 
     Parameters
     ----------
@@ -949,7 +985,7 @@ def retarded_equations_of_motion(
     sim_type:
         Simulation boundary type encoded as :class:`SimulationType`.
     chrono_mode:
-        Retardation sampling strategy; ``FAST`` retains the legacy single
+        Retardation sampling strategy; ``FAST`` retains the validated single
         sample, whereas ``AVERAGED`` blends ``R / c`` and ``2R / c`` emission
         times for the external bunch.
     startup_mode:
@@ -1042,10 +1078,6 @@ def retarded_equations_of_motion(
         working_beta_y = current_state["by"][particle_idx]
         working_beta_z = current_state["bz"][particle_idx]
         working_gamma = current_state["gamma"][particle_idx]
-        working_Px = current_state["Px"][particle_idx]
-        working_Py = current_state["Py"][particle_idx]
-        working_Pz = current_state["Pz"][particle_idx]
-        working_Pt = current_state["Pt"][particle_idx]
         working_x = current_state["x"][particle_idx]
         working_y = current_state["y"][particle_idx]
         working_z = current_state["z"][particle_idx]
@@ -1077,10 +1109,7 @@ def retarded_equations_of_motion(
             # ================================================================
             # In variable_geometry mode, use position from previous iteration
             # In fixed_geometry mode, use initial position for all iterations
-            if (
-                sc_convergence_mode in ("variable_geometry", "full_iteration")
-                and sc_iteration > 0
-            ):
+            if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
                 # Create temporary state with updated position for retarded distance calc
                 observer_state = {
                     "x": np.array([working_x]),
@@ -1192,13 +1221,13 @@ def retarded_equations_of_motion(
                     )
                 else:
                     # For variable geometry modes, need to create trajectory with observer_state
-                    if (
-                        sc_convergence_mode in ("variable_geometry", "full_iteration")
-                        and sc_iteration > 0
-                    ):
+                    if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
                         # Create temporary trajectory for retarded distance calculation
                         temp_trajectory = trajectory.copy()
                         temp_trajectory[index_traj] = observer_state
+                        _cfd_accepts_soa = "traj_soa" in inspect.signature(
+                            _compute_full_retarded_distance
+                        ).parameters
                         nhat, indices_bounded, chrono_result = (
                             _compute_full_retarded_distance(
                                 temp_trajectory,
@@ -1208,9 +1237,14 @@ def retarded_equations_of_motion(
                                 chrono_mode,
                                 self_consistency,
                                 timestep_h=h,
+                                **({"traj_soa": traj_soa} if _cfd_accepts_soa and traj_soa is not None else {}),
+                                **({"traj_ext_soa": traj_ext_soa} if _cfd_accepts_soa and traj_ext_soa is not None else {}),
                             )
                         )
                     else:
+                        _cfd_accepts_soa = "traj_soa" in inspect.signature(
+                            _compute_full_retarded_distance
+                        ).parameters
                         nhat, indices_bounded, chrono_result = (
                             _compute_full_retarded_distance(
                                 trajectory,
@@ -1220,6 +1254,8 @@ def retarded_equations_of_motion(
                                 chrono_mode,
                                 self_consistency,
                                 timestep_h=h,
+                                **({"traj_soa": traj_soa} if _cfd_accepts_soa and traj_soa is not None else {}),
+                                **({"traj_ext_soa": traj_ext_soa} if _cfd_accepts_soa and traj_ext_soa is not None else {}),
                             )
                         )
 
@@ -1275,7 +1311,15 @@ def retarded_equations_of_motion(
             # ================================================================
             if apply_forces and nhat["R"].size > 0:
                 # Gather external particle data at retarded times (with interpolation if enabled)
-                if chrono_result is not None:
+                if traj_ext_soa is not None and chrono_result is not None:
+                    external_samples = gather_external_samples_soa(
+                        traj_ext_soa,
+                        indices_bounded,
+                        indices_next=chrono_result.indices_next,
+                        weights=chrono_result.weights,
+                        needs_interpolation=chrono_result.needs_interpolation,
+                    )
+                elif chrono_result is not None:
                     # Use interpolation (with cubic and position interpolation if high-precision)
                     external_samples = gather_external_samples(
                         trajectory_ext,
@@ -1286,6 +1330,11 @@ def retarded_equations_of_motion(
                         indices_next2=chrono_result.indices_next2,
                         use_cubic=chrono_result.use_cubic,
                         interpolate_positions=chrono_high_precision,
+                    )
+                elif traj_ext_soa is not None:
+                    external_samples = gather_external_samples_soa(
+                        traj_ext_soa,
+                        indices_bounded,
                     )
                 else:
                     # Legacy path: no interpolation
@@ -1353,6 +1402,92 @@ def retarded_equations_of_motion(
                     )
 
             # ================================================================
+            # STEP 4b: Intra-bunch space-charge forces (rider-rider, j ≠ i)
+            # ================================================================
+            if (
+                space_charge is not None
+                and space_charge.enabled
+                and len(trajectory) >= 1
+            ):
+                n_particles = current_state["x"].shape[0]
+                if n_particles > 1:
+                    sc_softening = float(space_charge.softening_mm)
+                    # Use retarded SC only once sufficient history has accumulated
+                    # (at least one light-crossing time of the bunch width).
+                    # resolve_min_retarded_steps returns the step threshold; below
+                    # it we use instantaneous Coulomb as a physically motivated
+                    # startup approximation.
+                    _sc_threshold = space_charge.resolve_min_retarded_steps(h)
+                    use_retarded_sc = len(trajectory) > _sc_threshold
+
+                    def _slice_step(step: dict, idx: int) -> dict:
+                        out: dict = {}
+                        for k, v in step.items():
+                            try:
+                                arr = np.asarray(v)
+                                if arr.ndim >= 1 and arr.shape[0] == n_particles:
+                                    out[k] = arr[[idx]]
+                                else:
+                                    out[k] = v
+                            except (TypeError, ValueError):
+                                out[k] = v
+                        return out
+
+                    for j in range(n_particles):
+                        if j == particle_idx:
+                            continue
+                        if use_retarded_sc:
+                            sc_traj_ext = [
+                                _slice_step(step, j)
+                                for step in trajectory[:index_traj + 1]
+                            ]
+                        else:
+                            sc_step = _slice_step(trajectory[index_traj], j)
+                            sc_traj_ext = [sc_step] * (index_traj + 1)
+                        sc_nhat = compute_retarded_distance(
+                            trajectory,
+                            sc_traj_ext,
+                            index_traj,
+                            particle_idx,
+                            np.array([len(sc_traj_ext) - 1]),
+                        )
+                        sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                        if sc_softening > 0.0:
+                            sc_R = np.sqrt(sc_R ** 2 + sc_softening ** 2)
+                            sc_nhat = dict(sc_nhat)
+                            sc_nhat["R"] = sc_R
+                        sc_samples = gather_external_samples(
+                            sc_traj_ext,
+                            np.array([len(sc_traj_ext) - 1]),
+                        )
+                        (
+                            sc_dp_x, sc_dp_y, sc_dp_z, sc_dp_t,
+                            sc_df_x, sc_df_y, sc_df_z,
+                            sc_dscalar,
+                        ) = compute_vectorized_contributions(
+                            h=h,
+                            charge_i=float(particle_charge),
+                            mass_i=float(particle_mass),
+                            gamma_i=particle_gamma,
+                            beta_vec=particle_beta,
+                            nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
+                            nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
+                            nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
+                            R_separation=sc_R,
+                            samples=sc_samples,
+                            apply_external=True,
+                            verbosity=0,
+                        )
+                        accumulated_momentum_x += sc_dp_x
+                        accumulated_momentum_y += sc_dp_y
+                        accumulated_momentum_z += sc_dp_z
+                        accumulated_momentum_t += sc_dp_t
+                        accumulated_field_x += sc_df_x
+                        accumulated_field_y += sc_df_y
+                        accumulated_field_z += sc_df_z
+                        accumulated_scalar_potential += sc_dscalar
+
+            # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt
             # ================================================================
             result["Px"][particle_idx] = accumulated_momentum_x
@@ -1377,28 +1512,13 @@ def retarded_equations_of_motion(
                 Pt_before_correction = np.float64(result["Pt"][particle_idx])
 
                 # Determine Pt and P correction based on mode
-                if sc_convergence_mode in (
-                    "fixed_geometry",
-                    "variable_geometry",
-                    "mass_shell_only",
-                    "full_iteration",
-                ):
+                if sc_convergence_mode in ("fixed_geometry", "variable_geometry"):
                     # Modes 1 & 2: Project Pt onto mass-shell (asymmetric relaxation)
                     Pt_corrected = Pt_from_mass_shell
 
                     if sc_verbosity >= 3:
-                        mode_name = (
-                            sc_convergence_mode
-                            if sc_convergence_mode
-                            in ("fixed_geometry", "variable_geometry")
-                            else (
-                                "fixed_geometry"
-                                if sc_convergence_mode == "mass_shell_only"
-                                else "variable_geometry"
-                            )
-                        )
                         print(
-                            f"      Mode: {mode_name}, Pt_ms={Pt_from_mass_shell:.6e}"
+                            f"      Mode: {sc_convergence_mode}, Pt_ms={Pt_from_mass_shell:.6e}"
                         )
 
                     # Apply relaxation to Pt only (asymmetric)
@@ -1566,7 +1686,8 @@ def retarded_equations_of_motion(
             if (
                 sc_enabled
                 and self_consistency is not None
-                and self_consistency.gamma_reconciliation_enabled
+                and self_consistency.gamma_reconciliation_method
+                != GammaReconciliationMethod.DISABLED
             ):
                 gamma_from_energy = result["gamma"][particle_idx]
                 beta_total = np.sqrt(
@@ -1576,12 +1697,7 @@ def retarded_equations_of_motion(
                 # Determine reconciliation method
                 method = self_consistency.gamma_reconciliation_method
 
-                if method == GammaReconciliationMethod.DISABLED:
-                    # No reconciliation - use energy-based gamma (already set)
-                    gamma_reconciled = gamma_from_energy
-                    alpha = 1.0  # For logging
-
-                elif method == GammaReconciliationMethod.USE_VELOCITY:
+                if method == GammaReconciliationMethod.USE_VELOCITY:
                     # Always use velocity-based gamma
                     gamma_reconciled = gamma_from_velocity
                     alpha = 0.0  # For logging
@@ -1855,10 +1971,6 @@ def retarded_equations_of_motion(
             working_beta_y = new_working_beta_y
             working_beta_z = new_working_beta_z
             working_gamma = new_working_gamma
-            working_Px = result["Px"][particle_idx]
-            working_Py = result["Py"][particle_idx]
-            working_Pz = result["Pz"][particle_idx]
-            working_Pt = result["Pt"][particle_idx]
             working_x = result["x"][particle_idx]
             working_y = result["y"][particle_idx]
             working_z = result["z"][particle_idx]

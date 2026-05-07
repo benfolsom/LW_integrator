@@ -16,11 +16,11 @@ def test_impractical_timestep_config():
     """Test that impractical timestep config parameters are available."""
     config = AdaptiveTimestepConfig(
         enabled=True,
-        max_substeps_per_step=500,
+        min_timestep_factor=1e-3,
         skip_cooldown_on_particle_death=True,
     )
 
-    assert config.max_substeps_per_step == 500
+    assert config.max_substeps_per_step == 1100
     assert config.skip_cooldown_on_particle_death is True
 
 
@@ -28,7 +28,7 @@ def test_impractical_timestep_detection():
     """Test detection logic for impractical timesteps."""
     config = AdaptiveTimestepConfig(
         enabled=True,
-        max_substeps_per_step=1000,
+        min_timestep_factor=1e-3,
     )
 
     # Normal timestep
@@ -108,9 +108,8 @@ def test_combined_scenario_simulation():
     config = AdaptiveTimestepConfig(
         enabled=True,
         timestep_reduction_factor=3,
-        min_timestep_factor=1e-4,
+        min_timestep_factor=1e-3,
         cooldown_steps=10,
-        max_substeps_per_step=1000,
         skip_cooldown_on_particle_death=True,
     )
 
@@ -172,7 +171,7 @@ def test_default_config_values():
     config = AdaptiveTimestepConfig(enabled=True)
 
     # Check defaults
-    assert config.max_substeps_per_step == 1000
+    assert config.max_substeps_per_step == 11000
     assert config.skip_cooldown_on_particle_death is False
     assert config.cooldown_steps == 10
     assert config.max_probe_steps == 3

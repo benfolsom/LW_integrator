@@ -6,19 +6,16 @@ all energies reach similar endpoints or travel similar distances.
 """
 
 import json
-import sys
 from pathlib import Path
-from typing import Dict, List
 
 import numpy as np
-
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+import pytest
 
 from core.constants import C_MMNS
 from lw_integrator.optimization_plugin import OptimizationConfig
 from lw_integrator.testbed_runner import SimulationOptions, run_testbed
+
+project_root = Path(__file__).parent.parent
 
 
 def test_fixed_timestep_problem():
@@ -68,7 +65,7 @@ def test_fixed_timestep_problem():
 
     print(f"\n  Distance spread: {min(distances):.2f} - {max(distances):.2f} mm")
     print(f"  Ratio (max/min): {distance_ratio:.2f}x")
-    print(f"  ❌ PROBLEM: Different energies travel vastly different distances!")
+    print("  ❌ PROBLEM: Different energies travel vastly different distances!")
 
     return results
 
@@ -121,7 +118,7 @@ def test_energy_scaled_strategy():
 
     print(f"\n  Distance spread: {min(distances):.2f} - {max(distances):.2f} mm")
     print(f"  Ratio (max/min): {distance_ratio:.2f}x")
-    print(f"  ✓ SUCCESS: All energies travel approximately same distance!")
+    print("  ✓ SUCCESS: All energies travel approximately same distance!")
 
     return results
 
@@ -169,12 +166,11 @@ def test_auto_distance_strategy():
 
     # Calculate distance spread
     distances = [r["distance_mm"] for r in results]
-    distance_ratio = max(distances) / min(distances)
     avg_distance = np.mean(distances)
 
     print(f"\n  Average distance: {avg_distance:.2f} mm (target: 2200.00 mm)")
     print(f"  Distance spread: ±{(max(distances) - min(distances)) / 2:.2e} mm")
-    print(f"  ✓ SUCCESS: All energies reach target distance!")
+    print("  ✓ SUCCESS: All energies reach target distance!")
 
     return results
 
@@ -189,6 +185,9 @@ def test_bunch_to_bunch_relative_cutoff():
     config_path = (
         project_root / "configs" / "run_configs" / "electronwallv11_60micron.json"
     )
+    if not config_path.exists():
+        pytest.skip(f"Required reference config not present: {config_path}")
+
     with open(config_path, "r") as f:
         base_dict = json.load(f)
 
@@ -233,7 +232,7 @@ def test_bunch_to_bunch_relative_cutoff():
             distance = abs(z_end - z_start)
             steps_taken = len(z_arr)
 
-            print(f"\n  Results:")
+            print("\n  Results:")
             print(f"    Starting z: {z_start:.6f} mm")
             print(f"    Ending z: {z_end:.6f} mm")
             print(f"    Distance traveled: {distance:.2f} mm")

@@ -2,9 +2,9 @@ Overview
 ========
 
 The LW Integrator is a covariant electromagnetic particle tracking code tuned for
-accelerator physics studies.  The validated implementation still lives in the
-``legacy/`` tree, but the modern ``core/`` package mirrors the same physics with
-clearer structure, type hints, and unit-tested helper utilities.  The method is
+accelerator physics studies.  The maintained implementation lives in ``core/``,
+with CLI and GUI workflows layered on top through ``lw_integrator/`` and
+``optimization/``.  The method is
 described in *Relativistic beam loading, recoil-reduction, and residual-wake
 acceleration with a covariant retarded-potential integrator*
 (``https://doi.org/10.1016/j.nima.2024.169988`` / ``https://arxiv.org/abs/2310.03850``).
@@ -18,9 +18,10 @@ High-level anatomy
     The maintained implementation of the retarded Liénard–Wiechert solver.
     ``trajectory_integrator.py`` retains the original algorithm but exposes it
     through typed helper functions (image charge generators, retarded-distance
-    utilities, and the ``IntegratorConfig`` data class).  ``performance.py``
-    bundles optional Numba kernels that accelerate large runs without changing
-    the underlying physics.  ``self_consistency.py`` holds the fixed-point
+    utilities, and the ``IntegratorConfig`` data class).  Kernel-level Numba
+    acceleration lives in ``vectorized_interactions.py`` and is used by the
+    canonical integrator path without changing the underlying physics.
+    ``self_consistency.py`` holds the fixed-point
     iteration used for radiation-reaction corrections and ensuring gamma
     consistency between energy and velocity calculations (enabled by default
     as of December 2025).  ``images.py`` implements conducting-wall image charge
@@ -33,23 +34,19 @@ High-level anatomy
     options, and verbosity settings consumed by both the CLI and GUI runners.
 
 ``legacy/``
-  Archived notebooks and scripts from the original codebase.  They are kept
-  for regression comparisons and historical reference.  Production workflows
-  should use ``core/`` unless you are debugging a discrepancy.  The historical
-  "static" integrator lives here for completeness; it is considered deprecated
-  and is not exercised by the modern documentation or tooling.
+    Archived notebooks from the original codebase.  They are kept for
+    historical reference only; production workflows should use ``core/`` and the
+    maintained CLI/GUI entry points.
 
 ``examples/``
-    Ready-to-run validation material.  The ``validation/`` folder contains both
-    Python scripts and Jupyter notebooks that reproduce the legacy vs. core
-    comparisons.  The ``comparison/`` folder houses CLI benchmarks that report
-    metrics (maximum Δγ, Δz, etc.) across seeded simulation suites.
+    Ready-to-run examples and reference validation material.  The
+    ``validation/`` folder keeps historical notebooks and supporting examples,
+    while maintained command-line workflows live under ``lw_integrator/``.
 
 ``tests/``
-    Automated regression coverage.  ``tests/integration/test_core_integrators.py``
-    verifies equivalence between the core solver, its self-consistent variant,
-    and the legacy implementation.  ``tests/unit`` hosts deterministic unit
-    tests for helper functions such as ``generate_conducting_image``.
+    Automated regression coverage.  ``tests/unit`` hosts deterministic unit
+    tests for helper functions, ``tests/physics`` covers numerical behavior, and
+    top-level tests cover CLI/GUI parity plus plotting entry points.
 
 ``input_output/``
     Utilities for constructing particle bunch dictionaries in the format the
@@ -77,10 +74,6 @@ High-level anatomy
     sweep directories with fewer than 100 completed runs to
     ``results/archive/incomplete/``.
 
-``scripts/``
-    Monitoring helpers, smooth-heatmap generation utilities, and other
-    operational scripts used during long-running sweeps.
-
 ``results/``
     Output location for sweep and optimization runs (git-ignored).  Completed
     sweeps land in ``results/sweeps/``; incomplete or cancelled sweeps are
@@ -94,24 +87,25 @@ High-level anatomy
 Key ideas to keep in mind
 -------------------------
 
-* **Physics parity matters.**  The core code is intentionally a transcription of
-  the legacy solver, with critical corrections applied in December 2025 to fix
-  gamma calculation and scalar potential handling. Recent changes include proper
-  separation of conjugate and kinetic energy, corrected self-consistency
-  convergence tests, and improved numerical precision for extreme relativistic
-  scenarios. Any behavioural change should come with matching updates to the
-  validation scripts and the integration tests.
+* **Physics parity matters.**  The core code is intentionally close to the
+  validated reference solver, with critical corrections applied in December
+  2025 to fix gamma calculation and scalar potential handling. Recent changes
+  include proper separation of conjugate and kinetic energy, corrected
+  self-consistency convergence tests, and improved numerical precision for
+  extreme relativistic scenarios. Any behavioural change should come with
+  focused regression tests.
 * **Particle states are dictionaries of NumPy arrays.**  Whenever you initialize
   particles manually, fill every expected key (``x``, ``Pz``, ``gamma``, ``q``,
-  ``char_time`` …) or use ``input_output.create_bunch_from_energy`` to obtain a
+  ``char_time`` …) or use
+  ``input_output.bunch_initialization.create_bunch_from_energy`` to obtain a
   correctly shaped state.
 * **Simulation modes are enumerated.**  ``SimulationType`` enumerates the three
-  supported wall configurations.  The solver mirrors the legacy integer flags so
-  comparison runs remain straightforward.
+  supported wall configurations.  The enum still accepts the historical integer
+  values for compatibility.
 * **Startup modes are configurable.**  ``StartupMode`` switches between
   ``COLD_START`` (the default, suppressing early retarded forces) and
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
-  mirrors the legacy solver's behaviour).  CLI commands, scripts, and notebooks
+  matches the archived reference treatment).  Maintained CLI and GUI workflows
   surface the enum so you can pick the right transient treatment per study.
 * **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
   (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
@@ -144,30 +138,35 @@ Key ideas to keep in mind
   Particles are distributed uniformly in [offset ± spread] for both x and y.
   Critical for aperture tolerance studies and beam halo analysis. The
   optimization plugin's "Transverse Offset" fractions are converted to absolute
-  positions (offset = fraction × aperture_radius). Legacy initialization
-  (``legacy/bunch_inits.py``) now only runs when "Enable legacy comparison" is
-  checked in the GUI or ``use_legacy=True`` is passed to
-  ``prepare_particle_bunches()``. Default behavior uses modern core
-  initialization (``input_output.bunch_initialization.create_bunch_from_params``).
+  positions (offset = fraction × aperture_radius). Maintained GUI and CLI
+  workflows always use the modern core initialization path in
+  ``input_output.bunch_initialization.create_bunch_from_params``; archived
+  notebooks remain in the repository only as historical reference material.
 * **GUI application for all workflows.**  The Tkinter-based GUI (``python -m
   lw_integrator.gui``) supports single runs, parameter sweeps, and optimization
   with real-time progress tracking and trajectory visualization. It provides
   full control over particle properties, boundary conditions, physics parameters,
   and numerical methods. Results can be exported in CSV, JSON, or NPZ formats.
   The GUI is the recommended interface for interactive work, with the CLI
-  (``lw-simulate``) and notebook options available for scripting and batch
-  processing.
-* **Heatmap and contour tools.**  ``generate_sweep_heatmap.py`` produces
-  publication-quality heatmaps from sweep results.  Contour lines use a low
+  (``lw-simulate``) available for scripting and batch processing.
+* **Heatmap and contour tools.**  ``lw-generate-sweep-heatmap`` is the
+  maintained command for producing
+  publication-quality heatmaps from sweep results. Contour lines use a low
   alpha (0.18), labels are clamped to stay inside the axes after the final
   layout pass, and overlapping labels are culled automatically.
-* **Notebook tooling is first-class.**  The validation notebooks are kept in
-  sync with the scripts and expose colourblind-friendly plots, high-DPI export,
-  and configuration widgets.  Use them to explore scenarios before committing to
-  scripted sweeps.
+* **Live sweep plotting.**  ``lw-plot-latest-live`` follows the newest sweep
+  log automatically, while ``lw-plot-from-logcache-live`` can watch a specific
+  log file or render a one-shot static plot from it.
+* **Saved trajectory plotting.**  ``lw-plot-trajectory`` turns saved single-run
+  JSON or NPZ trajectory files into publication-ready PNG summaries, including
+  rider/driver views for JSON payloads and compact momentum/gamma panels for
+  NPZ payloads.
+* **Reference notebooks remain available.**  Historical validation notebooks are
+  retained for context, while maintained CLI and GUI workflows should be the
+  baseline for new scripted sweeps.
 * **Need the math?**  See :doc:`theory` for the derivation of the covariant
   equations of motion implemented in ``core/trajectory_integrator.py`` and the
   approximations used in the benchmark studies.
 
 With the map in hand, continue to :doc:`quickstart` to set up a development
-environment or jump to :doc:`validation` for the comparison workflows.
+environment or jump to :doc:`validation` for the maintained validation workflow.

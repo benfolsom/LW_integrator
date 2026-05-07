@@ -63,7 +63,7 @@ def example_without_protections():
     print("Energy monitoring: DISABLED")
 
     try:
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=1000,
             h_step=1e-5,  # ns
             wall_z=1.0,  # mm
@@ -123,7 +123,7 @@ def example_with_self_consistency():
     print("Energy monitoring: DISABLED")
 
     try:
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=1000,
             h_step=1e-5,
             wall_z=1.0,
@@ -187,7 +187,7 @@ def example_with_energy_monitoring():
     )
 
     try:
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=1000,
             h_step=1e-5,
             wall_z=1.0,
@@ -259,7 +259,7 @@ def example_with_full_protection():
     )
 
     try:
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=1000,
             h_step=1e-5,
             wall_z=1.0,

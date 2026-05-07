@@ -304,10 +304,12 @@ class TestBetaClamping:
 
         gamma_recovered = _calculate_gamma_from_beta(bx, by, bz)
 
-        # Should recover gamma accurately
+        # At β this close to 1, float64 has limited representable spacing near
+        # 1.0; the recovered γ should stay in the intended ultra-relativistic
+        # regime without being clamped to a much lower ceiling.
         np.testing.assert_allclose(
             gamma_recovered,
             gamma_extreme,
-            rtol=1e-6,
+            rtol=2e-3,
             err_msg=f"Should accurately recover γ={gamma_extreme:.2e}",
         )

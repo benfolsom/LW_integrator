@@ -3,16 +3,58 @@
 Basic tests to verify optimization functionality works correctly.
 """
 
+import importlib
+import optimization
+import optimization.result_io as optimization_result_io_module
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
+from core.types import SimulationType
+from optimization.config import OptimizationConfig
 from optimization.metrics import (
     compute_energy_at_position,
     compute_max_energy_gain,
     compute_relative_energy_gain,
     detect_transverse_deflection,
 )
+from optimization.plugin_config_helpers import (
+    apply_sweep_parameter_overrides,
+    parse_float_list,
+    parse_float_range,
+    parse_offset_pair,
+)
+from optimization.plugin_persistence_helpers import (
+    apply_persisted_config_overrides,
+    build_saved_config_payload,
+    metrics_export_settings_from_data,
+    resolve_loaded_sweep_state,
+)
+from optimization.plugin_results_helpers import (
+    build_summary_heatmap_grid,
+    build_trajectory_plot_data,
+    collect_summary_plot_data,
+    parse_results_payload,
+    summarize_optimization_evaluation_counts,
+    summarize_result_row,
+    summarize_optimization_top_results,
+    summarize_saved_results,
+)
+from optimization.optimizer import (
+    adaptive_grid_search,
+    genetic_algorithm,
+    multi_start_optimize,
+    optimize_parameters,
+)
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
+from optimization.results_mixins import OptimizationResultsMixin
+from optimization.sweep_helpers import (
+    build_parameter_grids,
+    calculate_energy_from_pz,
+    calculate_starting_pz_from_energy,
+    generate_parameter_range,
+)
 
 
 def create_mock_trajectory(n_steps=10, gamma_values=None):
@@ -54,6 +96,49 @@ def create_mock_trajectory(n_steps=10, gamma_values=None):
         trajectory.append(state)
 
     return trajectory
+
+
+def test_optimization_config_hides_internal_threshold_constants():
+    import optimization.config as optimization_config_module
+
+    assert "_ELECTRON_MASS_AMU" not in optimization_config_module.__all__
+    assert "_PROTON_MASS_AMU" not in optimization_config_module.__all__
+    assert "_ENERGY_THRESHOLD_EXPONENT" not in optimization_config_module.__all__
+
+
+def test_removed_optimization_ui_mixins_module_is_not_importable():
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("optimization.ui_mixins")
+
+
+@pytest.mark.parametrize(
+    ("func", "api_name", "kwargs"),
+    [
+        (optimize_parameters, "optimize_parameters", {"maxiter": 1}),
+        (multi_start_optimize, "multi_start_optimize", {"n_starts": 1, "maxiter": 1}),
+        (
+            adaptive_grid_search,
+            "adaptive_grid_search",
+            {"initial_points_per_dim": 2, "refinement_levels": 0},
+        ),
+        (
+            genetic_algorithm,
+            "genetic_algorithm",
+            {"population_size": 2, "n_generations": 1, "seed": 1},
+        ),
+    ],
+)
+def test_optimizer_entrypoints_require_explicit_objective_function(
+    func, api_name, kwargs
+):
+    with pytest.raises(NotImplementedError, match=api_name):
+        func(
+            config_template={},
+            parameter_names=["x"],
+            parameter_bounds=[(0.0, 1.0)],
+            objective_function=None,
+            **kwargs,
+        )
 
 
 class TestMetrics:
@@ -217,6 +302,742 @@ class TestParameterMapping:
         configs = list(grid)
         assert len(configs) == 1
         assert configs[0]["initial_energy_gev"] == 10.0
+
+
+class _MockVar:
+    def __init__(self, value):
+        self._value = value
+
+    def get(self):
+        return self._value
+
+
+class TestSweepHelpers:
+    """Test extracted optimization sweep helpers."""
+
+    def test_calculate_starting_pz_round_trip(self):
+        """Energy and Pz conversions should round-trip for kinetic energy."""
+        energy_gev = 2.5
+        mass_amu = 1.0
+
+        pz = calculate_starting_pz_from_energy(energy_gev, mass_amu)
+
+        assert calculate_energy_from_pz(pz, mass_amu) == pytest.approx(energy_gev)
+        assert calculate_energy_from_pz(-pz, mass_amu) == pytest.approx(energy_gev)
+
+    def test_calculate_starting_pz_respects_negative_direction(self):
+        """Negative direction should only flip the Pz sign."""
+        positive = calculate_starting_pz_from_energy(1.0, 1.0, negative=False)
+        negative = calculate_starting_pz_from_energy(1.0, 1.0, negative=True)
+
+        assert positive == pytest.approx(-negative)
+
+    def test_generate_parameter_range_linear_and_log(self):
+        """Parameter range generation should support midpoint, linear, and log modes."""
+        assert generate_parameter_range(2.0, 6.0, 1, False) == [4.0]
+        assert generate_parameter_range(1.0, 3.0, 3, False) == pytest.approx(
+            [1.0, 2.0, 3.0]
+        )
+        assert generate_parameter_range(1e-3, 1e1, 3, True) == pytest.approx(
+            [1e-3, 1e-1, 1e1]
+        )
+        assert generate_parameter_range(0.0, 2.0, 3, True) == pytest.approx(
+            [0.0, 1.0, 2.0]
+        )
+
+    @pytest.mark.parametrize(
+        "simulation_type", [SimulationType.BUNCH_TO_BUNCH, "BUNCH_TO_BUNCH"]
+    )
+    def test_build_parameter_grids_for_bunch_to_bunch(self, simulation_type):
+        """Bunch-to-bunch sweeps should omit aperture and normalize driver energy."""
+        config = SimpleNamespace(
+            simulation_type=simulation_type,
+            aperture_range=(0.01, 0.1),
+            aperture_points=3,
+            aperture_log_scale=False,
+            energy_range=(1.0, 3.0),
+            energy_points=3,
+            energy_log_scale=False,
+            transverse_offset_fractions=[],
+            starting_z_positions=[10.0, 20.0],
+            wall_z_range=None,
+            wall_z_points=1,
+        )
+        sweep_params = {
+            "driver_energy_gev": {
+                "sweep_var": _MockVar(True),
+                "min_var": _MockVar(-4.0),
+                "max_var": _MockVar(-1.0),
+                "points_var": _MockVar(4),
+                "log_var": _MockVar(False),
+            },
+            "driver_transv_mom": {
+                "sweep_var": _MockVar(True),
+                "min_var": _MockVar(0.0),
+                "max_var": _MockVar(2.0),
+                "points_var": _MockVar(3),
+                "log_var": _MockVar(False),
+            },
+        }
+
+        grids = build_parameter_grids(config, sweep_params)
+
+        assert "aperture" not in grids
+        assert grids["initial_energy_gev"] == pytest.approx([1.0, 2.0, 3.0])
+        assert grids["transverse_offset_fraction"] == [0.0]
+        assert grids["start_z"] == [10.0, 20.0]
+        assert grids["driver_energy_gev"] == pytest.approx([1.0, 2.0, 3.0, 4.0])
+        assert grids["driver_transv_mom"] == pytest.approx([0.0, 1.0, 2.0])
+
+    def test_build_parameter_grids_skips_driver_controls_outside_b2b(self):
+        """Driver-specific sweep controls should be ignored for wall simulations."""
+        config = SimpleNamespace(
+            simulation_type=SimulationType.CONDUCTING_WALL,
+            aperture_range=(0.01, 0.1),
+            aperture_points=2,
+            aperture_log_scale=False,
+            energy_range=(5.0, 10.0),
+            energy_points=2,
+            energy_log_scale=False,
+            transverse_offset_fractions=[0.25],
+            starting_z_positions=[0.0],
+            wall_z_range=(50.0, 70.0),
+            wall_z_points=3,
+        )
+        sweep_params = {
+            "driver_energy_gev": {
+                "sweep_var": _MockVar(True),
+                "min_var": _MockVar(1.0),
+                "max_var": _MockVar(2.0),
+                "points_var": _MockVar(2),
+                "log_var": _MockVar(False),
+            }
+        }
+
+        grids = build_parameter_grids(config, sweep_params)
+
+        assert grids["aperture"] == pytest.approx([0.01, 0.1])
+        assert grids["energy"] == pytest.approx([5.0, 10.0])
+        assert grids["transverse_offset_fraction"] == [0.25]
+        assert grids["wall_z"] == pytest.approx([50.0, 60.0, 70.0])
+        assert "driver_energy_gev" not in grids
+
+
+class TestPluginConfigHelpers:
+    """Test extracted optimization plugin config helpers."""
+
+    def test_parse_float_list(self):
+        assert parse_float_list("1, 2.5, -3") == [1.0, 2.5, -3.0]
+
+    def test_parse_float_list_rejects_invalid_input(self):
+        with pytest.raises(ValueError, match="Invalid list format"):
+            parse_float_list("1, two")
+
+    def test_parse_float_range(self):
+        assert parse_float_range("1, 3") == (1.0, 3.0)
+        assert parse_float_range("  ") is None
+
+    def test_parse_offset_pair(self):
+        assert parse_offset_pair("1.5, -2.0") == (1.5, -2.0)
+        assert parse_offset_pair("4.0") == (4.0, 0.0)
+        assert parse_offset_pair("bad") == (0.0, 0.0)
+
+    def test_apply_sweep_parameter_overrides(self):
+        config = OptimizationConfig()
+        debug_messages = []
+        sweep_params = {
+            "rider_transv_mom": _make_sweep_controls(
+                enabled=True, min_val=1.0, max_val=3.0, points=5
+            ),
+            "rider_transv_dist": _make_sweep_controls(enabled=False),
+            "macroparticle_charge_multiplier": _make_sweep_controls(enabled=False),
+            "macroparticle_sigma_multiplier": _make_sweep_controls(enabled=False),
+            "rider_m_particle": _make_sweep_controls(enabled=False),
+            "rider_charge_sign": _make_sweep_controls(enabled=False),
+            "rider_pcount": _make_sweep_controls(
+                enabled=True, min_val=2, max_val=8, points=4
+            ),
+            "rider_stripped_ions": _make_sweep_controls(enabled=False),
+            "driver_m_particle": _make_sweep_controls(enabled=False, fixed_val=131.0),
+            "driver_charge_sign": _make_sweep_controls(enabled=False),
+            "driver_pcount": _make_sweep_controls(enabled=False),
+            "driver_transv_mom": _make_sweep_controls(enabled=False),
+            "driver_transv_dist": _make_sweep_controls(enabled=False),
+            "driver_starting_distance": _make_sweep_controls(
+                enabled=True, min_val=50.0, max_val=500.0, points=3, log=True
+            ),
+            "driver_energy_gev": _make_sweep_controls(
+                enabled=True, min_val=-8.0, max_val=-2.0, points=4
+            ),
+            "driver_stripped_ions": _make_sweep_controls(enabled=False),
+        }
+
+        updated = apply_sweep_parameter_overrides(
+            config,
+            sweep_params,
+            driver_negative=False,
+            linked_energy_sweep=True,
+            debug=debug_messages.append,
+        )
+
+        assert updated is config
+        assert config.linked_energy_sweep is True
+        assert config.transverse_momentum_range == (1.0, 3.0)
+        assert config.transverse_momentum_points == 5
+        assert config.particle_count_range == (2, 8)
+        assert config.particle_count_points == 4
+        assert config.driver_starting_distance_range == (50.0, 500.0)
+        assert config.driver_starting_distance_points == 3
+        assert config.driver_starting_distance_log_scale is True
+        assert config.driver_direction == "+z"
+        assert config.driver_energy_range == (2.0, 8.0)
+        assert config.driver_energy_points == 4
+        assert config.driver_starting_Pz_range[0] < 0
+        assert config.driver_starting_Pz_range[1] < 0
+        assert any("Linked energy sweep ENABLED" in msg for msg in debug_messages)
+
+    def test_apply_sweep_parameter_overrides_fixed_driver_energy(self):
+        config = OptimizationConfig()
+        sweep_params = {
+            "rider_transv_mom": _make_sweep_controls(enabled=False),
+            "rider_transv_dist": _make_sweep_controls(enabled=False),
+            "macroparticle_charge_multiplier": _make_sweep_controls(enabled=False),
+            "macroparticle_sigma_multiplier": _make_sweep_controls(enabled=False),
+            "rider_m_particle": _make_sweep_controls(enabled=False),
+            "rider_charge_sign": _make_sweep_controls(enabled=False),
+            "rider_pcount": _make_sweep_controls(enabled=False),
+            "rider_stripped_ions": _make_sweep_controls(enabled=False),
+            "driver_m_particle": _make_sweep_controls(enabled=False, fixed_val=10.0),
+            "driver_charge_sign": _make_sweep_controls(enabled=False),
+            "driver_pcount": _make_sweep_controls(enabled=False),
+            "driver_transv_mom": _make_sweep_controls(enabled=False),
+            "driver_transv_dist": _make_sweep_controls(enabled=False),
+            "driver_starting_distance": _make_sweep_controls(enabled=False),
+            "driver_energy_gev": _make_sweep_controls(enabled=False, fixed_val=-1.25),
+            "driver_stripped_ions": _make_sweep_controls(enabled=False),
+        }
+
+        apply_sweep_parameter_overrides(
+            config,
+            sweep_params,
+            driver_negative=True,
+            linked_energy_sweep=False,
+        )
+
+        assert config.driver_energy_gev == 1.25
+        assert config.driver_starting_Pz < 0
+
+
+class TestPluginPersistenceHelpers:
+    """Test extracted optimization plugin persistence helpers."""
+
+    def test_metrics_export_settings_uses_maintained_keys(self):
+        export_format, export_scope = metrics_export_settings_from_data(
+            {
+                "metrics_export_format": "none",
+                "metrics_export_scope": "top_n",
+            }
+        )
+
+        assert export_format == "none"
+        assert export_scope == "top_n"
+
+    def test_apply_persisted_config_overrides_sets_saved_values_and_defaults(self):
+        config = OptimizationConfig()
+
+        apply_persisted_config_overrides(
+            config,
+            {
+                "self_consistency_enabled": False,
+                "adaptive_timestep_threshold": 0.25,
+                "per_run_timeout": 12.5,
+            },
+        )
+
+        assert config.self_consistency_enabled is False
+        assert config.adaptive_timestep_threshold == pytest.approx(0.25)
+        assert config.per_run_timeout == pytest.approx(12.5)
+        assert config.smoothness_enabled is True
+        assert config.energy_monitor_enabled is False
+        assert config.energy_monitor_threshold == pytest.approx(2.0)
+
+    def test_build_saved_config_payload_captures_config_and_ui_fields(self):
+        config = OptimizationConfig(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            mode="optimization",
+            aperture_range=(0.1, 0.2),
+            energy_range=(1.0, 2.0),
+            transverse_offset_fractions=[0.3],
+            starting_z_positions=[5.0],
+            save_top_n_trajectories=True,
+            linked_energy_sweep=True,
+            transv_offset_x=1.2,
+            transv_offset_y=-1.3,
+            driver_transv_offset_x=2.4,
+            driver_transv_offset_y=-2.5,
+        )
+
+        payload = build_saved_config_payload(
+            config,
+            timestep_mode="duration",
+            auto_steps_distance=42.0,
+            rider_stripped_ions=3.0,
+            driver_stripped_ions=54.0,
+            driver_direction="+z",
+            sweep_state={"driver_energy_gev": {"enabled": False, "fixed_value": "7"}},
+        )
+
+        assert payload["simulation_type"] == "BUNCH_TO_BUNCH"
+        assert payload["mode"] == "optimization"
+        assert payload["save_top_n_trajectories"] is True
+        assert payload["driver_direction"] == "+z"
+        assert payload["linked_energy_sweep"] is True
+        assert payload["auto_steps_distance"] == pytest.approx(42.0)
+        assert payload["rider_offset_x"] == pytest.approx(1.2)
+        assert payload["driver_offset_y"] == pytest.approx(-2.5)
+        assert payload["sweep_parameters"]["driver_energy_gev"]["fixed_value"] == "7"
+
+    def test_resolve_loaded_sweep_state_converts_legacy_driver_pz(self):
+        state = resolve_loaded_sweep_state(
+            {
+                "driver_starting_Pz": {
+                    "enabled": True,
+                    "points": "5",
+                    "log": True,
+                }
+            },
+            "driver_energy_gev",
+        )
+
+        assert state == {
+            "enabled": True,
+            "min": "50.0",
+            "max": "200.0",
+            "points": "5",
+            "log": True,
+            "fixed_value": "112.5",
+        }
+
+
+class TestPluginResultsHelpers:
+    """Test extracted optimization plugin result helpers."""
+
+    def test_summarize_result_row_normalizes_distance_and_metrics(self):
+        row = summarize_result_row(
+            {
+                "run_number": 7,
+                "parameters": {
+                    "aperture_radius": 0.03,
+                    "particle_energy_gev": 12.0,
+                    "starting_z": 4.0,
+                },
+                "metrics": {
+                    "rider_delta_e_mev": 1.5,
+                    "rider_gamma_initial": 100.0,
+                    "rider_gamma_final": 101.0,
+                },
+                "_distance_info": {"z_start": 20.0, "z_end": 5.0},
+            }
+        )
+
+        assert row["run_num"] == 7
+        assert row["aperture"] == pytest.approx(0.03)
+        assert row["energy"] == pytest.approx(12.0)
+        assert row["start_z"] == pytest.approx(4.0)
+        assert row["delta_e"] == pytest.approx(1.5)
+        assert row["traveled"] == pytest.approx(15.0)
+        assert row["gamma_initial"] == pytest.approx(100.0)
+        assert row["gamma_final"] == pytest.approx(101.0)
+
+    def test_build_summary_heatmap_grid_maps_results_to_grid(self):
+        results = [
+            {
+                "parameters": {"aperture_radius": 0.1, "particle_energy_gev": 1.0},
+                "metrics": {"rider_delta_e_mev": 10.0},
+            },
+            {
+                "parameters": {"aperture_radius": 0.2, "particle_energy_gev": 1.0},
+                "metrics": {"rider_delta_e_mev": 20.0},
+            },
+            {
+                "parameters": {"aperture_radius": 0.1, "particle_energy_gev": 2.0},
+                "metrics": {"rider_delta_e_mev": 30.0},
+            },
+            {
+                "parameters": {"aperture_radius": 0.2, "particle_energy_gev": 2.0},
+                "metrics": {"rider_delta_e_mev": 40.0},
+            },
+        ]
+
+        plot_data = collect_summary_plot_data(results)
+        assert plot_data == {
+            "apertures": [0.1, 0.2, 0.1, 0.2],
+            "energies": [1.0, 1.0, 2.0, 2.0],
+            "delta_es": [10.0, 20.0, 30.0, 40.0],
+        }
+
+        unique_a, unique_e, grid = build_summary_heatmap_grid(results)
+        assert unique_a == [0.1, 0.2]
+        assert unique_e == [1.0, 2.0]
+        assert grid.tolist() == [[10.0, 20.0], [30.0, 40.0]]
+
+    def test_build_trajectory_plot_data_prepares_energy_delta_series(self):
+        plot_data = build_trajectory_plot_data(
+            [
+                {
+                    "run_number": 3,
+                    "parameters": {
+                        "aperture_radius": 0.05,
+                        "particle_energy_gev": 15.0,
+                    },
+                    "metrics": {
+                        "rider_delta_e_mev": 2.0,
+                        "rider_gamma_initial": 10.0,
+                    },
+                    "trajectory": {
+                        "z": [0.0, 5.0, 10.0],
+                        "r": [0.1, 0.2, 0.3],
+                    },
+                }
+            ],
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+
+        assert len(plot_data["series"]) == 1
+        series = plot_data["series"][0]
+        assert series["run_num"] == 3
+        assert series["aperture"] == pytest.approx(0.05)
+        assert series["energy"] == pytest.approx(15.0)
+        assert series["energy_delta"].tolist() == pytest.approx([0.0, 1.0, 2.0])
+        assert plot_data["heatmap"] == {
+            "apertures": [0.05],
+            "energies": [15.0],
+            "delta_es": [2.0],
+        }
+
+    def test_parse_results_payload_classifies_saved_formats(self):
+        sweep = parse_results_payload(
+            {"results": [{"trajectory": {"z": [0.0]}}]},
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+        optimization = parse_results_payload(
+            {"all_evaluations": []},
+            m_particle_amu=1.0,
+            amu_to_mev=931.494,
+        )
+
+        assert sweep["kind"] == "sweep"
+        assert len(sweep["results_with_trajectories"]) == 1
+        assert optimization["kind"] == "optimization"
+
+    def test_parse_results_payload_rejects_legacy_trajectory_payloads(self):
+        with pytest.raises(ValueError, match="Cannot parse this file format"):
+            parse_results_payload(
+                {"core": {"rider": {"positions_mm": {}, "conjugate_momenta": {}}}},
+                m_particle_amu=1.0,
+                amu_to_mev=931.494,
+            )
+
+    def test_summarize_saved_results_handles_sweep_and_optimization_payloads(self):
+        sweep_summary = summarize_saved_results(
+            {
+                "kind": "sweep",
+                "results": [
+                    {
+                        "run_number": 2,
+                        "parameters": {
+                            "aperture_radius": 0.1,
+                            "particle_energy_gev": 5.0,
+                        },
+                        "metrics": {"rider_delta_e_mev": 1.5},
+                        "trajectory": {"z": [0.0]},
+                    }
+                ],
+                "results_with_trajectories": [{"trajectory": {"z": [0.0]}}],
+            }
+        )
+        optimization_summary = summarize_saved_results(
+            {
+                "kind": "optimization",
+                "payload": {
+                    "objective": "max_energy_gain",
+                    "optimization_method": "genetic_algorithm",
+                    "best_value": 2.5,
+                    "success": True,
+                    "total_evaluations": 3,
+                    "all_evaluations": [
+                        {"objective_value": 1.0},
+                        {"objective_value": float("inf")},
+                    ],
+                    "top_n_count": 1,
+                    "top_n_results": [
+                        {"metrics": {"rider_delta_e_mev": 4.0}},
+                    ],
+                    "best_parameters": {"initial_energy_gev": 6.0},
+                },
+                "results": [],
+                "results_with_trajectories": [],
+            }
+        )
+
+        assert sweep_summary == {
+            "result_type": "sweep",
+            "run_count": 1,
+            "trajectory_count": 1,
+            "best_run_number": 2,
+            "best_delta_e_mev": 1.5,
+            "best_energy_gev": 5.0,
+            "best_aperture_mm": 0.1,
+        }
+        assert optimization_summary["result_type"] == "optimization"
+        assert optimization_summary["evaluation_count"] == 3
+        assert optimization_summary["finite_evaluation_count"] == 1
+        assert optimization_summary["successful_evaluation_count"] == 2
+        assert optimization_summary["halted_evaluation_count"] == 0
+        assert optimization_summary["failed_evaluation_count"] == 0
+        assert optimization_summary["best_delta_e_mev"] == pytest.approx(4.0)
+        assert optimization_summary["best_parameters"] == {"initial_energy_gev": 6.0}
+        assert optimization_summary["top_results"][0]["rank"] == 1
+        assert optimization_summary["top_results"][0]["delta_e_mev"] == pytest.approx(
+            4.0
+        )
+
+    def test_summarize_optimization_top_results_falls_back_to_all_evaluations(self):
+        top_results = summarize_optimization_top_results(
+            {
+                "objective": "max_energy_gain",
+                "all_evaluations": [
+                    {
+                        "evaluation": 5,
+                        "failed": False,
+                        "halted_early": False,
+                        "raw_objective_value": 2.5,
+                        "fitness": -2.5,
+                        "parameters": {"initial_energy_gev": 7.0},
+                        "metrics": {
+                            "rider_delta_e_mev": 3.0,
+                            "max_percent_energy_gain": 1.2,
+                        },
+                    },
+                    {
+                        "evaluation": 6,
+                        "failed": False,
+                        "halted_early": False,
+                        "raw_objective_value": 1.5,
+                        "fitness": -1.5,
+                        "parameters": {"initial_energy_gev": 6.0},
+                        "metrics": {
+                            "rider_delta_e_mev": 2.0,
+                            "max_percent_energy_gain": 1.0,
+                        },
+                    },
+                ],
+            }
+        )
+
+        assert top_results == [
+            {
+                "rank": 1,
+                "evaluation": 5,
+                "metric_value": 2.5,
+                "fitness": -2.5,
+                "parameters": {"initial_energy_gev": 7.0},
+                "delta_e_mev": 3.0,
+                "percent_energy_gain": 1.2,
+                "metrics": {
+                    "rider_delta_e_mev": 3.0,
+                    "max_percent_energy_gain": 1.2,
+                },
+            },
+            {
+                "rank": 2,
+                "evaluation": 6,
+                "metric_value": 1.5,
+                "fitness": -1.5,
+                "parameters": {"initial_energy_gev": 6.0},
+                "delta_e_mev": 2.0,
+                "percent_energy_gain": 1.0,
+                "metrics": {
+                    "rider_delta_e_mev": 2.0,
+                    "max_percent_energy_gain": 1.0,
+                },
+            },
+        ]
+
+    def test_summarize_optimization_evaluation_counts_tracks_outcomes(self):
+        counts = summarize_optimization_evaluation_counts(
+            {
+                "all_evaluations": [
+                    {"evaluation": 1, "failed": False, "halted_early": False},
+                    {"evaluation": 2, "failed": False, "halted_early": True},
+                    {"evaluation": 3, "failed": True, "halted_early": False},
+                ]
+            }
+        )
+
+        assert counts == {
+            "successful_evaluation_count": 1,
+            "halted_evaluation_count": 1,
+            "failed_evaluation_count": 1,
+        }
+
+
+def test_optimization_package_exposes_only_maintained_lazy_exports():
+    assert optimization.__all__ == ["__version__"]
+    retired_exports = [
+        "run_parameter_sweep",
+        "load_sweep_results",
+        "create_interactive_plot",
+        "plot_dual_energy_curves",
+        "plot_energy_heatmap",
+        "plot_optimization_summary",
+        "plot_parameter_slice",
+        "ParameterGrid",
+        "create_energy_aperture_grid",
+        "compute_energy_at_position",
+        "compute_max_energy_gain",
+        "compute_trajectory_metrics",
+        "optimize_parameters",
+    ]
+
+    for name in retired_exports:
+        assert name not in optimization.__all__
+        with pytest.raises(AttributeError):
+            getattr(optimization, name)
+
+
+def test_result_io_hides_internal_plotting_helpers_from_wildcard_api():
+    assert optimization_result_io_module.__all__ == [
+        "save_optimization_results",
+        "save_partial_optimization_results",
+        "relocate_incomplete_sweep",
+    ]
+    for name in [
+        "generate_optimization_plots",
+        "generate_optimization_heatmap",
+        "save_top_n_optimization_trajectories",
+        "generate_trajectory_comparison_plot",
+    ]:
+        assert name not in optimization_result_io_module.__all__
+
+
+class TestOptimizationResultsMixin:
+    """Test extracted optimization results helpers."""
+
+    def test_save_single_trajectory_handles_bunch_to_bunch_driver_params(
+        self, tmp_path
+    ):
+        config = OptimizationConfig(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            output_dir=str(tmp_path),
+            aperture_range=(0.1, 0.2),
+            energy_range=(1.0, 2.0),
+            starting_z_positions=[5.0],
+            transverse_offset_fractions=[0.25],
+            m_particle=1.0,
+            charge_sign=-1.0,
+            pcount=3,
+            transv_mom=0.01,
+            transv_dist=0.02,
+            driver_m_particle=10.0,
+            driver_charge_sign=1.0,
+            driver_pcount=4,
+            driver_transv_mom=0.03,
+            driver_transv_dist=0.04,
+            driver_starting_distance=123.0,
+            driver_starting_Pz=-456.0,
+            driver_stripped_ions=5.0,
+            driver_transv_offset_x=0.6,
+            driver_transv_offset_y=-0.7,
+        )
+        harness = _ResultsMixinHarness(config, tmp_path)
+
+        params = {
+            "transverse_offset": 0.5,
+            "initial_energy_gev": 1.5,
+            "rider_m_particle": 2.0,
+            "rider_charge_sign": 1.0,
+            "rider_pcount": 5.0,
+            "rider_stripped_ions": 9.0,
+            "driver_m_particle": 20.0,
+            "driver_energy_gev": 12.0,
+            "driver_starting_distance": 321.0,
+        }
+
+        trajectory = harness._save_single_optimization_trajectory(
+            params,
+            list(params),
+            rank=1,
+            fitness=0.123,
+        )
+
+        assert trajectory is not None
+        assert harness.captured_run["transv_offset"] == pytest.approx(0.5)
+        assert harness.captured_run["rider_m_particle"] == pytest.approx(2.0)
+        assert harness.captured_run["rider_charge_sign"] == pytest.approx(1.0)
+        assert harness.captured_run["rider_pcount"] == 5
+        assert harness.captured_run["rider_stripped_ions"] == pytest.approx(9.0)
+        assert harness.captured_run["driver_params"] == {
+            "m_particle": 20.0,
+            "charge_sign": 1.0,
+            "pcount": 4,
+            "transv_mom": 0.03,
+            "transv_dist": 0.04,
+            "starting_distance": 321.0,
+            "starting_Pz": pytest.approx(
+                calculate_starting_pz_from_energy(12.0, 20.0, negative=True)
+            ),
+            "stripped_ions": 5.0,
+            "transv_offset_x": 0.6,
+            "transv_offset_y": -0.7,
+        }
+        assert (tmp_path / "trajectory_rank1_best.npz").exists()
+        assert (tmp_path / "trajectory_rank1_best.png").exists()
+
+
+def _make_sweep_controls(
+    *,
+    enabled: bool,
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+    points: int = 2,
+    fixed_val: float = 0.0,
+    log: bool = False,
+):
+    return {
+        "sweep_var": _MockVar(enabled),
+        "min_var": _MockVar(min_val),
+        "max_var": _MockVar(max_val),
+        "points_var": _MockVar(points),
+        "fixed_var": _MockVar(fixed_val),
+        "log_var": _MockVar(log),
+    }
+
+
+class _ResultsMixinHarness(OptimizationResultsMixin):
+    def __init__(self, config, output_dir):
+        self.config = config
+        self._last_optimization_dir = output_dir
+        self.captured_run = None
+        self.logged_messages = []
+
+    def _run_single_integration(self, **kwargs):
+        self.captured_run = kwargs
+        return {
+            "trajectory": {
+                "z": [0.0, 1.0],
+                "t": [0.0, 0.1],
+                "r": [0.0, 0.2],
+                "gamma": [2.0, 2.5],
+                "pr": [0.0, 0.01],
+            },
+            "metrics": {},
+        }
+
+    def _log_result(self, message: str):
+        self.logged_messages.append(message)
 
 
 if __name__ == "__main__":

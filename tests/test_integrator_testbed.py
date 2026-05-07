@@ -1,25 +1,16 @@
-"""
-Tests for the integrator testbed notebook functionality.
-
-This test suite validates the key functionality of the integrator testbed
-widget without requiring the full Jupyter environment.
-"""
+"""Tests for maintained testbed trajectory helper functionality."""
 
 import json
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "examples" / "validation"))
-
 from core.types import ParticleState  # noqa: E402
-from examples.validation.core_vs_legacy_benchmark import (  # noqa: E402
+import lw_integrator.testbed_runner as testbed_runner
+from lw_integrator.testbed_runner import SimulationOptions  # noqa: E402
+from lw_integrator.trajectory_metrics import (  # noqa: E402
     compute_delta_energy_series,
+    normalize_state,
 )
 
 
@@ -100,32 +91,48 @@ class TestComputeDeltaEnergySeries:
         assert z_series[1] > z_series[0]
 
 
+class TestNormalizeState:
+    def test_normalize_state_wraps_scalars_and_preserves_metadata(self):
+        normalized = normalize_state(
+            {
+                "gamma": 10.0,
+                "z": [1.0, 2.0],
+                "_halt_reason": "jump",
+            }
+        )
+
+        np.testing.assert_array_equal(normalized["gamma"], np.array([10.0]))
+        np.testing.assert_array_equal(normalized["z"], np.array([1.0, 2.0]))
+        assert normalized["_halt_reason"] == "jump"
+
+
 class TestFilenameGeneration:
     """Test filename generation with config name and timestamp."""
 
-    def test_filename_with_timestamp(self):
-        """Test that filenames include timestamp."""
-        from datetime import datetime
+    def test_filename_base_strips_json_extension(self, monkeypatch):
+        """Test that generated filename bases include sanitized config names."""
+        monkeypatch.setattr(testbed_runner.time, "strftime", lambda *_args: "20251022_123456")
 
-        config_name = "electronwall10.3gev.json"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        assert (
+            testbed_runner.generate_filename_base("electronwall10.3gev.json")
+            == "electronwall10.3gev_20251022_123456"
+        )
+        assert (
+            testbed_runner.generate_filename_base("my_config")
+            == "my_config_20251022_123456"
+        )
+        assert (
+            testbed_runner.generate_filename_base("my.json.backup")
+            == "my.json.backup_20251022_123456"
+        )
 
-        # Test energy filename
-        expected_base = config_name.replace(".json", "")
-        filename = f"{expected_base}_energy_{timestamp}.png"
+    def test_filename_base_defaults_empty_config_name(self, monkeypatch):
+        monkeypatch.setattr(testbed_runner.time, "strftime", lambda *_args: "20251022_123456")
 
-        assert expected_base in filename
-        assert "energy" in filename
-        assert ".png" in filename
-        assert len(timestamp) == 15  # YYYYMMDD_HHMMSS
-
-    def test_filename_without_json_extension(self):
-        """Test config name without .json extension."""
-        config_name = "my_config"
-        timestamp = "20251022_123456"
-
-        filename = f"{config_name}_energy_{timestamp}.png"
-        assert filename == "my_config_energy_20251022_123456.png"
+        assert (
+            testbed_runner.generate_filename_base("  ")
+            == "testbed_config_20251022_123456"
+        )
 
 
 class TestPlotValidation:
@@ -175,18 +182,30 @@ class TestPlotValidation:
 class TestConfigManagement:
     """Test configuration save/load functionality."""
 
+    @pytest.mark.parametrize(
+        ("raw_mode", "expected_mode"),
+        [
+            ("fixed_geometry", "fixed_geometry"),
+            ("variable_geometry", "variable_geometry"),
+            ("mass_shell_only", "fixed_geometry"),
+            ("full_iteration", "variable_geometry"),
+        ],
+    )
+    def test_simulation_options_canonicalizes_self_consistency_mode(
+        self, raw_mode, expected_mode
+    ):
+        options = SimulationOptions.from_dict(
+            {"self_consistency_convergence_mode": raw_mode}
+        )
+
+        assert options.self_consistency_convergence_mode == expected_mode
+
     def test_config_snapshot_structure(self):
         """Test that config snapshot has all required fields."""
         config_snapshot = {
             "steps": 1000,
             "seed": 12345,
             "simulation_type": "BUNCH_TO_BUNCH",
-            "legacy_enabled": False,
-            "overlay_display": False,
-            "overlay_save": False,
-            "difference_display": False,
-            "difference_save": False,
-            "metrics_save": False,
             "energy_save": True,
             "energy_display": True,
             "transverse_display": False,
@@ -226,28 +245,5 @@ class TestConfigManagement:
         assert loaded["steps"] == 1000
         assert loaded["seed"] == 12345
         assert loaded["energy_save"] is True
-
-
-class TestLegacyOverlayPlots:
-    """Test legacy overlay plot functionality."""
-
-    def test_overlay_requires_legacy_enabled(self):
-        """Test that overlay plots require legacy to be enabled."""
-        legacy_enabled = False
-        overlay_display = True
-
-        # Overlay should only work if legacy is enabled
-        should_show_overlay = legacy_enabled and overlay_display
-        assert should_show_overlay is False
-
-    def test_overlay_with_legacy(self):
-        """Test overlay plots when legacy is enabled."""
-        legacy_enabled = True
-        overlay_display = True
-
-        should_show_overlay = legacy_enabled and overlay_display
-        assert should_show_overlay is True
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

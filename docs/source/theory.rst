@@ -103,8 +103,8 @@ Position updates follow directly from the Hamiltonian identity
 
 which the solver evaluates after each momentum update to keep particle states in
 sync.  Proper-time stepping avoids runaway behaviour at high :math:`\gamma`
-while keeping the integration scheme close to the legacy implementation (see
-``legacy/covariant_integrator_library.py`` for a verbatim reference).
+while keeping the integration scheme close to the historical reference
+implementation.
 
 Relativistic position updates in coordinate time
 ------------------------------------------------
@@ -333,12 +333,9 @@ The mathematical relationships above surface in the codebase as follows:
   :func:`core.trajectory_integrator.generate_switching_image` encode the
   boundary conditions assumed when taking the head-on limit to model conducting
   apertures and switching walls.
-- :mod:`examples.validation.core_vs_legacy_benchmark` and the accompanying
-   notebooks reproduce the asymptotic field growth predicted by
-   :eq:`eq-headon-limit`, offering numerical confirmation of the paper's
-   scenarios.
-- The legacy "static" integrator remains available under ``legacy/`` for
-   historical investigations, but it is deprecated and not part of the modern
-   retarded-field workflows.
+- The reference notebooks under ``examples/validation/`` document historical
+  comparisons and exploratory studies related to :eq:`eq-headon-limit`.
+- The notebooks under ``legacy/`` are retained for historical investigations,
+  but they are not part of the modern retarded-field workflows.
 
 For deeper derivations and experimental context, see `<https://doi.org/10.1016/j.nima.2024.169988>`_.

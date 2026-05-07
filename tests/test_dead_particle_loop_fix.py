@@ -50,9 +50,9 @@ def test_propagate_dead_particle_status():
 
     # Check that particle 1 is now marked dead in current_state
     assert "_dead_particles" in current_state
-    assert current_state["_dead_particles"][1] == True
-    assert current_state["_dead_particles"][0] == False
-    assert current_state["_dead_particles"][2] == False
+    assert current_state["_dead_particles"][1]
+    assert not current_state["_dead_particles"][0]
+    assert not current_state["_dead_particles"][2]
 
     # Check that failure info was copied
     assert "_particle_failure_info" in current_state
@@ -71,16 +71,15 @@ def test_mark_particle_dead_idempotent():
     # Mark particle 1 dead for the first time
     mark_particle_dead(state, 1, step=100, reason="gamma_blowup_hard", gamma_value=1e25)
 
-    assert state["_dead_particles"][1] == True
+    assert state["_dead_particles"][1]
     assert state["q"][1] == 0.0
     assert 1 in state["_particle_failure_info"]
-    original_info = state["_particle_failure_info"][1].copy()
 
     # Mark the same particle dead again (simulating the bug)
     mark_particle_dead(state, 1, step=101, reason="gamma_blowup_hard", gamma_value=1e26)
 
     # Should still be dead
-    assert state["_dead_particles"][1] == True
+    assert state["_dead_particles"][1]
     # Charge should still be zero
     assert state["q"][1] == 0.0
     # Failure info gets updated (last failure wins)
@@ -116,7 +115,7 @@ def test_temp_trajectory_copy_and_propagate():
     assert temp_trajectory[0]["x"] is not previous_step["x"]
 
     # Verify dead particle status is propagated
-    assert temp_trajectory[0]["_dead_particles"][1] == True
+    assert temp_trajectory[0]["_dead_particles"][1]
     assert temp_trajectory[0]["q"][1] == 0.0
 
     # Modifying temp_trajectory[0] should NOT affect previous_step
@@ -191,8 +190,8 @@ def test_integration_scenario():
     propagate_dead_particle_status(temp_trajectory_base, trajectory_878)
 
     # Verify propagation worked
-    assert temp_trajectory_base["_dead_particles"][2] == True
-    assert temp_trajectory_base["_dead_particles"][7] == True
+    assert temp_trajectory_base["_dead_particles"][2]
+    assert temp_trajectory_base["_dead_particles"][7]
 
     # Simulate equations being called multiple times (as would happen in substeps)
     # This should NOT re-mark particles as dead
@@ -285,9 +284,9 @@ def test_retry_preserves_dead_particles():
     )
 
     # Verify they're marked dead
-    assert attempt1_state["_dead_particles"][1] == True
-    assert attempt1_state["_dead_particles"][2] == True
-    assert attempt1_state["_dead_particles"][3] == True
+    assert attempt1_state["_dead_particles"][1]
+    assert attempt1_state["_dead_particles"][2]
+    assert attempt1_state["_dead_particles"][3]
 
     # Update base with dead particles from first attempt (THE FIX)
     if "_dead_particles" not in temp_trajectory_base:
@@ -307,9 +306,9 @@ def test_retry_preserves_dead_particles():
     }
 
     # Verify dead particles are already marked in the base for attempt 2
-    assert attempt2_state["_dead_particles"][1] == True
-    assert attempt2_state["_dead_particles"][2] == True
-    assert attempt2_state["_dead_particles"][3] == True
+    assert attempt2_state["_dead_particles"][1]
+    assert attempt2_state["_dead_particles"][2]
+    assert attempt2_state["_dead_particles"][3]
 
     # Simulate processing particles in attempt 2
     particles_processed = []

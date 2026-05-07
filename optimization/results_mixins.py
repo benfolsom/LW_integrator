@@ -8,31 +8,25 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Any, Dict, List
 
-import matplotlib.patheffects as PathEffects
 import numpy as np
-from matplotlib.colors import LogNorm
-
-AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
-
-from scipy.interpolate import griddata
-from scipy.ndimage import gaussian_filter
-from scipy.spatial import KDTree
 
 from optimization.result_io import (  # type: ignore[import]
     generate_optimization_heatmap,
     generate_optimization_plots,
     generate_trajectory_comparison_plot,
     save_optimization_results,
-    save_partial_optimization_results,
     save_top_n_optimization_trajectories,
     save_top_trajectories_summary_table,
 )
+from optimization.run_parameter_helpers import resolve_optimization_run_parameters
 from optimization.ui_helpers import (  # type: ignore[import]
     show_error_dialog as _show_error_dialog,
 )
 from optimization.ui_helpers import (
     show_info_dialog as _show_info_dialog,
 )
+
+AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 
 
 class OptimizationResultsMixin:
@@ -66,87 +60,48 @@ class OptimizationResultsMixin:
         self, params_dict, param_names, rank, fitness
     ):
         """Re-run a single parameter set and save its trajectory."""
-        from pathlib import Path
-
-        import numpy as np
-
         try:
-            # Set up run parameters (similar to evaluate_params)
-            aperture = self.config.aperture_range[0]
-            energy = self.config.energy_range[0]
-            start_z = (
-                self.config.starting_z_positions[0]
-                if self.config.starting_z_positions
-                else 0.0
+            ordered_names = [name for name in param_names if name in params_dict]
+            seen_names = set(ordered_names)
+            for name in params_dict:
+                if name not in seen_names:
+                    ordered_names.append(name)
+                    seen_names.add(name)
+            ordered_values = [params_dict[name] for name in ordered_names]
+            run_params = resolve_optimization_run_parameters(
+                self.config, ordered_names, ordered_values
             )
-            offset_frac = (
-                self.config.transverse_offset_fractions[0]
-                if self.config.transverse_offset_fractions
-                else 0.0
-            )
-            timestep = self.config.timestep
-            steps = self.config.steps
-            wall_z = self.config.wall_z
-            rider_transv_mom = self.config.transv_mom  # default
-            rider_transv_dist = self.config.transv_dist  # default
-            macroparticle_charge_mult = (
-                self.config.macroparticle_charge_multiplier
-            )  # default
-            macroparticle_sigma_mult = (
-                self.config.macroparticle_sigma_multiplier
-            )  # default
-
-            # Map parameters
-            for param_name, value in params_dict.items():
-                if param_name == "aperture_radius":
-                    aperture = value
-                elif param_name == "initial_energy_gev":
-                    energy = value
-                elif param_name == "start_z":
-                    start_z = value
-                elif param_name == "transverse_offset":
-                    offset_frac = value
-                elif param_name == "timestep":
-                    timestep = value
-                elif param_name == "wall_z":
-                    wall_z = value
-                elif param_name == "transverse_momentum":
-                    rider_transv_mom = value
-                elif param_name == "rider_transv_dist":
-                    rider_transv_dist = value
-                elif param_name == "macroparticle_charge_multiplier":
-                    macroparticle_charge_mult = value
-                elif param_name == "macroparticle_sigma_multiplier":
-                    macroparticle_sigma_mult = value
-
-            transv_offset = offset_frac * aperture
 
             # Temporarily enable trajectory saving
             save_all_backup = self.config.save_all_trajectories
             self.config.save_all_trajectories = True
 
-            # Run integration
-            result_data = self._run_single_integration(
-                aperture=aperture,
-                energy_gev=energy,
-                start_z=start_z,
-                transv_offset=transv_offset,
-                timestep=timestep,
-                steps=steps,
-                rider_m_particle=self.config.m_particle,
-                rider_charge_sign=self.config.charge_sign,
-                rider_pcount=int(self.config.pcount),
-                rider_transv_mom=rider_transv_mom,
-                rider_transv_dist=rider_transv_dist,
-                macroparticle_charge_multiplier=macroparticle_charge_mult,
-                macroparticle_sigma_multiplier=macroparticle_sigma_mult,
-                driver_params=None,
-                wall_z=wall_z,
-                run_num=9999 + rank,
-            )
-
-            # Restore trajectory setting
-            self.config.save_all_trajectories = save_all_backup
+            try:
+                result_data = self._run_single_integration(
+                    aperture=run_params.aperture,
+                    energy_gev=run_params.energy_gev,
+                    start_z=run_params.start_z,
+                    transv_offset=run_params.transv_offset,
+                    timestep=run_params.timestep,
+                    steps=run_params.steps,
+                    rider_m_particle=run_params.rider_m_particle,
+                    rider_charge_sign=run_params.rider_charge_sign,
+                    rider_pcount=run_params.rider_pcount,
+                    rider_transv_mom=run_params.rider_transv_mom,
+                    rider_transv_dist=run_params.rider_transv_dist,
+                    rider_stripped_ions=run_params.rider_stripped_ions,
+                    macroparticle_charge_multiplier=(
+                        run_params.macroparticle_charge_multiplier
+                    ),
+                    macroparticle_sigma_multiplier=(
+                        run_params.macroparticle_sigma_multiplier
+                    ),
+                    driver_params=run_params.driver_params,
+                    wall_z=run_params.wall_z,
+                    run_num=9999 + rank,
+                )
+            finally:
+                self.config.save_all_trajectories = save_all_backup
 
             if result_data and "trajectory" in result_data:
                 output_dir = getattr(
@@ -157,8 +112,6 @@ class OptimizationResultsMixin:
                 import matplotlib.pyplot as plt
 
                 traj = result_data["trajectory"]
-                metrics = result_data.get("metrics", {})
-
                 fig, axes = plt.subplots(3, 2, figsize=(14, 14))
 
                 z = np.array(traj["z"])
@@ -458,9 +411,6 @@ class OptimizationResultsMixin:
     ) -> None:
         """Generate summary plots for the sweep results."""
         try:
-            import subprocess
-            import sys
-
             # Count how many parameters were actually swept
             # (have more than 1 unique value across all results)
             # Collect all unique parameter values across all results
@@ -488,44 +438,18 @@ class OptimizationResultsMixin:
                 if len(unique_values) > 1:
                     num_swept_params += 1
 
-            # Only generate heatmap if exactly 2 parameters were swept
+            # Sweep heatmaps are intentionally post-processing tools now.  The
+            # automatic path was historically fragile and could obscure the
+            # saved sweep result with a plotting failure.
             if num_swept_params == 2:
-                # Use the new smooth heatmap generator script
-                script_path = Path(__file__).parent.parent / "generate_sweep_heatmap.py"
-
-                try:
-                    # Call the script with --gain-filter all to show both positive and negative gains
-                    result = subprocess.run(
-                        [
-                            sys.executable,
-                            str(script_path),
-                            str(output_dir),
-                            "--gain-filter",
-                            "all",
-                            "--output",
-                            "sweep_heatmap.png",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=120,  # 2 minute timeout
-                    )
-
-                    if result.returncode == 0:
-                        self._log_result(
-                            f"[OK] Heatmap saved to: {output_dir / 'sweep_heatmap.png'}"
-                        )
-                    else:
-                        self._log_result(
-                            f"[WARNING] Heatmap generation failed: {result.stderr}"
-                        )
-
-                except subprocess.TimeoutExpired:
-                    self._log_result("[WARNING] Heatmap generation timed out")
-                except Exception as e:
-                    self._log_result(f"[WARNING] Failed to generate heatmap: {e}")
+                self._log_result(
+                    "[INFO] Sweep heatmap not generated automatically; run "
+                    f"`lw-generate-sweep-heatmap {output_dir} --gain-filter all` "
+                    "for post-processing."
+                )
             else:
                 self._log_result(
-                    f"[INFO] Skipping heatmap generation ({num_swept_params} parameters swept; heatmap only generated for 2-parameter sweeps)"
+                    f"[INFO] Skipping heatmap guidance ({num_swept_params} parameters swept; heatmaps require 2 swept parameters)"
                 )
 
             results_with_traj = [
@@ -550,215 +474,6 @@ class OptimizationResultsMixin:
         except Exception as e:  # pragma: no cover - plotting path
             self._log_result(f"[WARNING] Failed to generate summary plots: {e}")
 
-    def _generate_smooth_sweep_heatmap(
-        self,
-        energies: List[float],
-        apertures: List[float],
-        percent_gains: List[float],
-        output_dir: Path,
-    ) -> None:
-        """Generate smooth interpolated heatmap for sweep results."""
-        import matplotlib.pyplot as plt
-
-        # Filter out points without valid gains
-        valid_data = [
-            (e, a, g) for e, a, g in zip(energies, apertures, percent_gains) if g != 0
-        ]
-
-        if len(valid_data) < 10:
-            self._log_result(
-                "[INFO] Not enough valid data points for smooth heatmap (need at least 10)"
-            )
-            return
-
-        energies_filt, apertures_filt, gains_filt = zip(*valid_data)
-
-        self._log_result(
-            f"Creating smooth heatmap with {len(gains_filt)} data points..."
-        )
-
-        # Determine if log scale is appropriate for energy
-        log_energy = (
-            max(energies_filt) / min(energies_filt) > 10
-            if min(energies_filt) > 0
-            else False
-        )
-
-        # Work in log space for energy if appropriate
-        if log_energy:
-            x_data = np.log10(energies_filt)
-        else:
-            x_data = np.array(energies_filt)
-
-        y_data = np.array(apertures_filt)
-
-        # Create fine grid
-        grid_resolution = 800
-        x_grid_1d = np.linspace(min(x_data), max(x_data), grid_resolution)
-        y_grid_1d = np.linspace(min(y_data), max(y_data), grid_resolution)
-        X_grid, Y_grid = np.meshgrid(x_grid_1d, y_grid_1d)
-
-        # Interpolate gains onto grid
-        points = np.array([x_data, y_data]).T
-        values = np.array(gains_filt)
-
-        # Cubic interpolation
-        gain_grid = griddata(points, values, (X_grid, Y_grid), method="cubic")
-
-        # Fill NaN values with nearest neighbor
-        nan_mask = np.isnan(gain_grid)
-        if nan_mask.any():
-            gain_grid_nearest = griddata(
-                points, values, (X_grid, Y_grid), method="nearest"
-            )
-            gain_grid[nan_mask] = gain_grid_nearest[nan_mask]
-
-        # Build KDTree for density checking
-        x_range = max(x_data) - min(x_data)
-        y_range = max(y_data) - min(y_data)
-
-        grid_points = np.array([X_grid.flatten(), Y_grid.flatten()]).T
-        grid_points_normalized = grid_points.copy()
-        grid_points_normalized[:, 0] = (grid_points[:, 0] - min(x_data)) / x_range
-        grid_points_normalized[:, 1] = (grid_points[:, 1] - min(y_data)) / y_range
-
-        points_normalized = points.copy()
-        points_normalized[:, 0] = (points[:, 0] - min(x_data)) / x_range
-        points_normalized[:, 1] = (points[:, 1] - min(y_data)) / y_range
-
-        tree_normalized = KDTree(points_normalized)
-
-        # Calculate distances and neighbor counts
-        distances, _ = tree_normalized.query(grid_points_normalized)
-        distances_2d = distances.reshape(X_grid.shape)
-
-        neighbor_radius = 0.12
-        neighbor_counts = tree_normalized.query_ball_point(
-            grid_points_normalized, neighbor_radius, return_length=True
-        )
-        neighbor_counts_2d = neighbor_counts.reshape(X_grid.shape)
-
-        # Create smooth alpha channel
-        max_distance = 0.10
-        alpha_dist = 1.0 - (distances_2d / max_distance)
-        alpha_dist = np.clip(alpha_dist, 0, 1)
-
-        min_neighbors = 2
-        alpha_neighbors = neighbor_counts_2d / (min_neighbors * 2.0)
-        alpha_neighbors = np.clip(alpha_neighbors, 0, 1)
-
-        alpha = np.maximum(alpha_dist, alpha_neighbors)
-
-        # Apply multiple blur passes for ultra-smooth edges
-        for _ in range(5):
-            alpha = gaussian_filter(alpha, sigma=4.0)
-
-        # Smooth gain data
-        gain_grid_smooth = gaussian_filter(gain_grid, sigma=3.0)
-
-        # Apply alpha mask
-        alpha_threshold = 0.02
-        gain_grid_final = np.ma.masked_where(alpha < alpha_threshold, gain_grid_smooth)
-
-        # Handle negative/zero values for log scale
-        has_positive = np.any(np.array(gains_filt) > 0)
-        has_negative = np.any(np.array(gains_filt) < 0)
-
-        if has_positive and not has_negative:
-            gain_grid_final = np.ma.masked_where(gain_grid_final <= 0, gain_grid_final)
-
-        # Create figure
-        fig, ax = plt.subplots(figsize=(12, 8))
-
-        # Determine color scale
-        if has_positive and not has_negative:
-            vmin = max(np.min(gains_filt), 0.001)
-            vmax = np.max(gains_filt)
-            norm = LogNorm(vmin=vmin, vmax=vmax)
-            color_label = "Energy Gain (%)"
-        else:
-            vmin = np.min(gains_filt)
-            vmax = np.max(gains_filt)
-            norm = None
-            color_label = "Energy Gain (%)"
-
-        # Convert back to linear energy for plotting if needed
-        if log_energy:
-            X_plot = 10**X_grid
-        else:
-            X_plot = X_grid
-
-        # Plot with pcolormesh for smooth continuous colorbar
-        im = ax.pcolormesh(
-            X_plot,
-            Y_grid,
-            gain_grid_final,
-            cmap="viridis",
-            norm=norm,
-            shading="gouraud",
-            edgecolors="none",
-            linewidth=0,
-        )
-        cbar = plt.colorbar(im, ax=ax, label=color_label)
-
-        # Create contour levels
-        if has_positive and not has_negative:
-            contour_threshold = 1.0
-            low_levels = np.logspace(np.log10(vmin), np.log10(contour_threshold), 4)
-            high_levels = np.logspace(np.log10(contour_threshold), np.log10(vmax), 7)
-            high_levels = high_levels[high_levels <= vmax]
-            contour_levels = np.sort(
-                np.unique(np.concatenate([low_levels, high_levels]))
-            )
-        else:
-            contour_levels = np.linspace(vmin, vmax, 11)
-
-        # Draw contours
-        contours = ax.contour(
-            X_plot,
-            Y_grid,
-            gain_grid_final,
-            levels=contour_levels,
-            colors="white",
-            alpha=0.35,
-            linewidths=0.5,
-        )
-
-        # Add contour labels with subtle outline
-        labels = ax.clabel(
-            contours, inline=True, fontsize=8, fmt="%.2f%%", inline_spacing=10
-        )
-
-        for label in labels:
-            label.set_path_effects(
-                [
-                    PathEffects.withStroke(
-                        linewidth=1.2, foreground="black", alpha=0.3
-                    ),
-                    PathEffects.Normal(),
-                ]
-            )
-            label.set_color("#CCCCCC")
-
-        # Set scales and labels
-        if log_energy:
-            ax.set_xscale("log")
-
-        ax.set_xlabel("Initial Energy (GeV)", fontsize=12)
-        ax.set_ylabel("Aperture Radius (mm)", fontsize=12)
-        ax.set_title(
-            "Parameter Space Exploration: Energy Gain", fontsize=14, fontweight="bold"
-        )
-        ax.grid(True, alpha=0.2, which="both")
-
-        plt.tight_layout()
-
-        heatmap_file = output_dir / "sweep_heatmap.png"
-        plt.savefig(heatmap_file, dpi=300, bbox_inches="tight")
-        plt.close(fig)
-
-        self._log_result(f"[OK] Smooth heatmap saved to: {heatmap_file}")
-
     def _plot_single_trajectory(
         self, result: Dict[str, Any], output_file: Path
     ) -> None:
@@ -780,15 +495,12 @@ class OptimizationResultsMixin:
             energy = params.get("particle_energy_gev", 0)
             delta_e = metrics.get("rider_delta_e_mev", 0)
             gamma_initial = metrics.get("rider_gamma_initial", 1)
-            gamma_final = metrics.get("rider_gamma_final", 1)
 
             # KE = (γ - 1) · mc² — use actual particle rest energy
             _rest_mev = (
                 getattr(self.config, "m_particle", 0.00054857990907) * AMU_TO_MEV
             )
             energy_mev_initial = (gamma_initial - 1) * _rest_mev
-            energy_mev_final = (gamma_final - 1) * _rest_mev
-
             if len(z) > 1 and abs(z[-1] - z[0]) > 1e-6:
                 energy_mev = energy_mev_initial + delta_e * (z - z[0]) / (z[-1] - z[0])
             else:

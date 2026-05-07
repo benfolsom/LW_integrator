@@ -54,6 +54,12 @@ docs = [
 
 [project.scripts]
 lw-simulate = "lw_integrator.cli:main"
+lw-monitor-optimization = "lw_integrator.optimization_monitor:main"
+lw-tabulate-best-runs = "lw_integrator.optimization_results:main"
+lw-generate-sweep-heatmap = "lw_integrator.sweep_heatmap:main"
+lw-plot-from-logcache-live = "lw_integrator.logcache_plotter:main"
+lw-plot-latest-live = "lw_integrator.plot_latest_live:main"
+lw-plot-trajectory = "lw_integrator.trajectory_plotter:main"
 
 [project.urls]
 Homepage = "https://github.com/username/LW_integrator"
@@ -88,11 +94,15 @@ extend-exclude = '''
 [tool.ruff]
 line-length = 88
 target-version = "py38"
+extend-exclude = [
+    ".local_compat",
+    "docs/build",
+    "legacy",
+    "local",
+    "examples/validation",
+]
 
 [tool.ruff.lint.per-file-ignores]
-"examples/comparison/legacy_vs_core_systematic_comparison.py" = ["E402"]
-"examples/comparison/legacy_vs_core_trajectory_comparison.py" = ["E402"]
-"examples/validation/core_vs_legacy_benchmark.py" = ["E402"]
 "examples/validation/core_vs_legacy_benchmark.ipynb" = ["E402"]
 "examples/validation/integrator_testbed.ipynb" = ["E402"]
 
@@ -127,8 +137,8 @@ exclude = [
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --strict-markers"
-testpaths = ["lw_integrator/tests"]
+addopts = "-ra -q --strict-markers -m 'not slow'"
+testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "gpu: marks tests as requiring GPU",

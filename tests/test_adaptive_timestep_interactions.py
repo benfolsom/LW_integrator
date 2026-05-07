@@ -13,22 +13,54 @@ The key insight is:
 """
 
 import sys
-from pathlib import Path
 
 import numpy as np
-
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from core.constants import C_MMNS
 from core.integration_runner import (
     AdaptiveTimestepConfig,
-    EnergyMonitorConfig,
     retarded_integrator,
 )
-from core.types import ParticleState, SimulationType
-from examples.validation.core_vs_legacy_benchmark import prepare_two_particle_demo
+from core.types import SimulationType
+from input_output.bunch_initialization import create_bunch_from_params
+
+
+DEFAULT_RIDER_PARAMS = {
+    "starting_distance": 1.0e-6,
+    "transv_mom": 0.0,
+    "starting_Pz": 1.01e6,
+    "stripped_ions": 1.0,
+    "m_particle": 1.007319468,
+    "transv_dist": 2.0e-4,
+    "pcount": 5,
+    "charge_sign": -1.0,
+}
+
+DEFAULT_DRIVER_PARAMS = {
+    "starting_distance": 1000.0,
+    "transv_mom": 0.0,
+    "starting_Pz": -1.01e6 / 207.2 * 1.007319468,
+    "stripped_ions": 54.0,
+    "m_particle": 207.2,
+    "transv_dist": 2.0e-4 - 8.0e-2,
+    "pcount": 5,
+    "charge_sign": 1.0,
+}
+
+
+def prepare_two_particle_demo(seed, *, rider_params=None, driver_params=None):
+    """Create deterministic demo bunches without importing legacy comparison code."""
+    np.random.seed(seed)
+    resolved_rider = dict(DEFAULT_RIDER_PARAMS)
+    resolved_driver = dict(DEFAULT_DRIVER_PARAMS)
+    if rider_params:
+        resolved_rider.update(rider_params)
+    if driver_params:
+        resolved_driver.update(driver_params)
+
+    rider_state, rider_rest_mev = create_bunch_from_params(**resolved_rider)
+    driver_state, driver_rest_mev = create_bunch_from_params(**resolved_driver)
+    return rider_state, driver_state, rider_rest_mev, driver_rest_mev
 
 
 def test_sweep_timestep_with_adaptive_disabled():
@@ -73,7 +105,7 @@ def test_sweep_timestep_with_adaptive_disabled():
 
     # Run with adaptive disabled
     print("\nRunning integration with adaptive timestep DISABLED...")
-    traj, _ = retarded_integrator(
+    traj, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,
         wall_z=200.0,  # Well beyond target
@@ -93,7 +125,7 @@ def test_sweep_timestep_with_adaptive_disabled():
     z_final = float(traj[-1]["z"][0])
     distance_traveled = z_final - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Initial z: {z_initial:.3f} mm")
     print(f"  Final z: {z_final:.3f} mm")
     print(f"  Distance traveled: {distance_traveled:.2f} mm")
@@ -163,7 +195,7 @@ def test_sweep_timestep_with_proximity_refinement():
     print(
         f"  Refinement zone: {aperture_radius * 5.0:.1f} mm from wall (5 aperture radii)"
     )
-    traj, _ = retarded_integrator(
+    traj, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,  # Use sweep-calculated timestep as INITIAL value
         wall_z=wall_z,
@@ -183,7 +215,7 @@ def test_sweep_timestep_with_proximity_refinement():
     z_final = float(traj[-1]["z"][0])
     distance_traveled = z_final - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Distance traveled: {distance_traveled:.2f} mm")
     print(f"  Target distance: {target_distance_mm:.2f} mm")
 
@@ -241,14 +273,13 @@ def test_sweep_timestep_with_energy_jump_refinement():
         enabled=True,  # ENABLE energy jump refinement
         energy_jump_threshold=0.10,  # Refine if energy changes by >10%
         timestep_reduction_factor=10,
-        max_refinement_attempts=5,
         cooldown_steps=10,
         proximity_refinement_enabled=False,  # Disable proximity for this test
         debug=False,  # Don't spam output
     )
 
     print("\nRunning integration with ENERGY-JUMP adaptive timestep...")
-    traj, _ = retarded_integrator(
+    traj, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,  # Use sweep-calculated timestep as INITIAL value
         wall_z=200.0,
@@ -267,7 +298,7 @@ def test_sweep_timestep_with_energy_jump_refinement():
     z_final = float(np.mean(traj[-1]["z"]))
     distance_traveled = z_final - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Distance traveled: {distance_traveled:.2f} mm")
     print(f"  Target distance: {target_distance_mm:.2f} mm")
 
@@ -320,7 +351,7 @@ def test_fixed_vs_adaptive_comparison():
 
     # Run 1: No adaptive
     print("\nRun 1: Adaptive DISABLED")
-    traj_fixed, _ = retarded_integrator(
+    traj_fixed, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,
         wall_z=100.0,
@@ -343,7 +374,7 @@ def test_fixed_vs_adaptive_comparison():
         proximity_reduction_factor=5,
         debug=False,
     )
-    traj_adaptive, _ = retarded_integrator(
+    traj_adaptive, _, *_ = retarded_integrator(
         steps=steps,
         h_step=h_sweep,
         wall_z=100.0,
@@ -364,7 +395,7 @@ def test_fixed_vs_adaptive_comparison():
     dist_fixed = z_fixed - z_initial
     dist_adaptive = z_adaptive - z_initial
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Fixed timestep:    distance = {dist_fixed:.2f} mm")
     print(f"  Adaptive timestep: distance = {dist_adaptive:.2f} mm")
     print(f"  Difference: {abs(dist_fixed - dist_adaptive):.2f} mm")

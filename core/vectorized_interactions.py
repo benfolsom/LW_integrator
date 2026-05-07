@@ -61,10 +61,11 @@ from typing import Dict, Sequence, Tuple
 import numpy as np
 
 from .constants import C_MMNS
+from .types import TrajectoryArrays
 
 # Try to import numba for JIT compilation
 try:
-    from numba import jit
+    from numba import jit, prange
 
     NUMBA_AVAILABLE = True
 except ImportError:
@@ -76,6 +77,8 @@ except ImportError:
             return func
 
         return decorator
+
+    prange = range
 
 
 # K-factor thresholds for series approximation
@@ -219,10 +222,100 @@ class ExternalSampleBatch:
     bdoty: np.ndarray
     bdotz: np.ndarray
     valid_mask: np.ndarray
+    x: np.ndarray | None = None
+    y: np.ndarray | None = None
+    z: np.ndarray | None = None
 
     @property
     def any_valid(self) -> bool:
         return bool(self.valid_mask.any())
+
+
+def gather_external_samples_soa(
+    traj_ext: TrajectoryArrays,
+    indices: np.ndarray,
+    *,
+    indices_next: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
+    needs_interpolation: np.ndarray | None = None,
+) -> ExternalSampleBatch:
+    """SOA fast path for gather_external_samples.
+
+    Replaces per-particle dict/list access with direct 2-D array slicing.
+    """
+    n_ext = traj_ext.n_particles
+    valid_mask = np.ones(n_ext, dtype=bool)
+    valid_mask &= (indices >= 0) & (indices < traj_ext.n_steps)
+
+    particle_indices = np.arange(n_ext)
+    safe_indices = np.where(valid_mask, indices, 0)
+    bx = traj_ext.bx[safe_indices, particle_indices].copy()
+    by = traj_ext.by[safe_indices, particle_indices].copy()
+    bz = traj_ext.bz[safe_indices, particle_indices].copy()
+    bdotx = traj_ext.bdotx[safe_indices, particle_indices].copy()
+    bdoty = traj_ext.bdoty[safe_indices, particle_indices].copy()
+    bdotz = traj_ext.bdotz[safe_indices, particle_indices].copy()
+    gamma = traj_ext.gamma[safe_indices, particle_indices].copy()
+    x = traj_ext.x[safe_indices, particle_indices].copy()
+    y = traj_ext.y[safe_indices, particle_indices].copy()
+    z = traj_ext.z[safe_indices, particle_indices].copy()
+    charge = traj_ext.q.copy()
+
+    if not np.all(valid_mask):
+        bx[~valid_mask] = 0.0
+        by[~valid_mask] = 0.0
+        bz[~valid_mask] = 0.0
+        bdotx[~valid_mask] = 0.0
+        bdoty[~valid_mask] = 0.0
+        bdotz[~valid_mask] = 0.0
+        gamma[~valid_mask] = 0.0
+        x[~valid_mask] = 0.0
+        y[~valid_mask] = 0.0
+        z[~valid_mask] = 0.0
+        charge[~valid_mask] = 0.0
+
+    if (
+        weights is not None
+        and indices_next is not None
+        and needs_interpolation is not None
+        and np.any(needs_interpolation)
+    ):
+        interp_mask = (
+            valid_mask
+            & needs_interpolation
+            & (indices_next >= 0)
+            & (indices_next < traj_ext.n_steps)
+        )
+        if np.any(interp_mask):
+            ni = indices_next[interp_mask]
+            pi = particle_indices[interp_mask]
+            w = weights[interp_mask]
+            w1 = 1.0 - w
+            bx[interp_mask] = w * bx[interp_mask] + w1 * traj_ext.bx[ni, pi]
+            by[interp_mask] = w * by[interp_mask] + w1 * traj_ext.by[ni, pi]
+            bz[interp_mask] = w * bz[interp_mask] + w1 * traj_ext.bz[ni, pi]
+            bdotx[interp_mask] = w * bdotx[interp_mask] + w1 * traj_ext.bdotx[ni, pi]
+            bdoty[interp_mask] = w * bdoty[interp_mask] + w1 * traj_ext.bdoty[ni, pi]
+            bdotz[interp_mask] = w * bdotz[interp_mask] + w1 * traj_ext.bdotz[ni, pi]
+            gamma[interp_mask] = w * gamma[interp_mask] + w1 * traj_ext.gamma[ni, pi]
+            x[interp_mask] = w * x[interp_mask] + w1 * traj_ext.x[ni, pi]
+            y[interp_mask] = w * y[interp_mask] + w1 * traj_ext.y[ni, pi]
+            z[interp_mask] = w * z[interp_mask] + w1 * traj_ext.z[ni, pi]
+
+    return ExternalSampleBatch(
+        bx=bx,
+        by=by,
+        bz=bz,
+        bdotx=bdotx,
+        bdoty=bdoty,
+        bdotz=bdotz,
+        gamma=gamma,
+        x=x,
+        y=y,
+        z=z,
+        charge=charge,
+        valid_mask=valid_mask,
+    )
 
 
 def gather_external_samples(
@@ -330,7 +423,6 @@ def gather_external_samples(
                 # Get all 4 trajectory states
                 idx_prev = indices_prev[j]
                 idx_next = indices_next[j]
-                idx_curr = ext_idx
                 idx_next2 = indices_next2[j]
 
                 if (
@@ -536,7 +628,7 @@ def compute_vectorized_contributions(
 
     # DEBUG: Log input parameters for force sign debugging
     if verbosity >= 4:
-        print(f"\n  [DEBUG] compute_vectorized_contributions called:")
+        print("\n  [DEBUG] compute_vectorized_contributions called:")
         print(f"    charge_i = {charge_i:.6e}")
         print(f"    mass_i = {mass_i:.6e}")
         print(f"    gamma_i = {gamma_i:.6e}")
@@ -762,7 +854,7 @@ def compute_vectorized_contributions(
 
         # DEBUG: Log charge factor sign
         if verbosity >= 4:
-            print(f"\n  [DEBUG] Force calculation (normal k regime):")
+            print("\n  [DEBUG] Force calculation (normal k regime):")
             print(f"    k_normal = {k_normal}")
             print(f"    charge_i = {charge_i:.6e}")
             print(f"    charge_ext = {charge_ext[normal_k_mask]}")
@@ -868,7 +960,7 @@ def compute_vectorized_contributions(
 
         # DEBUG: Log computed force components
         if verbosity >= 4:
-            print(f"\n  [DEBUG] Force components (normal k regime):")
+            print("\n  [DEBUG] Force components (normal k regime):")
             print(f"    term_px_normal = {term_px_normal}")
             print(f"    term_py_normal = {term_py_normal}")
             print(f"    term_pz_normal = {term_pz_normal}")
@@ -972,7 +1064,7 @@ def compute_vectorized_contributions(
 
 
 # Numba-accelerated force calculation kernel
-@jit(nopython=True, fastmath=True, cache=True)
+@jit(nopython=True, fastmath=True, cache=True, parallel=True)
 def _compute_forces_numba_kernel(
     h,
     charge_i,
@@ -1011,7 +1103,7 @@ def _compute_forces_numba_kernel(
     c_sq = c * c
     c_cu = c_sq * c
 
-    for j in range(n_ext):
+    for j in prange(n_ext):
         # k-factor with float64 precision
         beta_dot_nhat = bx_ext[j] * nx[j] + by_ext[j] * ny[j] + bz_ext[j] * nz[j]
         k_factor = 1.0 - beta_dot_nhat
@@ -1026,9 +1118,9 @@ def _compute_forces_numba_kernel(
 
         # Scalar products
         bdot_scalar = (
-            bdotx_ext[j] * bdotx_ext[j]
-            + bdoty_ext[j] * bdoty_ext[j]
-            + bdotz_ext[j] * bdotz_ext[j]
+            bx_ext[j] * bdotx_ext[j]
+            + by_ext[j] * bdoty_ext[j]
+            + bz_ext[j] * bdotz_ext[j]
         )
         betas_scalar = bx_ext[j] * bx_i + by_ext[j] * by_i + bz_ext[j] * bz_i
 

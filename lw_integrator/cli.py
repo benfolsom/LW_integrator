@@ -12,6 +12,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 
@@ -28,6 +29,11 @@ from core.types import (
     Trajectory,
 )
 from input_output.bunch_initialization import create_bunch_from_energy
+from optimization.plugin_results_helpers import (
+    parse_results_payload,
+    summarize_result_row,
+    summarize_saved_results,
+)
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -128,6 +134,20 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Path to a JSON sweep configuration file for parameter sweeps.",
     )
     parser.add_argument(
+        "-j",
+        "--workers",
+        type=int,
+        default=None,
+        dest="workers",
+        help="Number of parallel worker processes for sweep execution. Default is sequential.",
+    )
+    parser.add_argument(
+        "--results-file",
+        type=Path,
+        dest="results_file",
+        help="Path to a saved sweep or optimization results JSON file to summarize.",
+    )
+    parser.add_argument(
         "--log-verbosity",
         type=str,
         dest="log_verbosity",
@@ -155,6 +175,40 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Disable adaptive timestep debug output.",
     )
     parser.set_defaults(adaptive_debug=None)
+    parser.add_argument(
+        "--space-charge",
+        action="store_true",
+        default=False,
+        help="Enable intra-bunch space-charge forces (rider-rider retarded Liénard-Wiechert).",
+    )
+    parser.add_argument(
+        "--space-charge-softening-mm",
+        type=float,
+        default=0.0,
+        metavar="MM",
+        help="Plummer softening length (mm) for space-charge interactions. Default: 0 (no softening).",
+    )
+    parser.add_argument(
+        "--auto-duration",
+        action="store_true",
+        default=False,
+        dest="auto_duration",
+        help="Auto-compute timestep and steps to cover the BUNCH_TO_BUNCH crossing window.",
+    )
+    parser.add_argument(
+        "--auto-duration-steps",
+        type=int,
+        default=None,
+        dest="auto_duration_crossing_steps",
+        help="Target steps to cover the approach (default: 200).",
+    )
+    parser.add_argument(
+        "--auto-duration-post-factor",
+        type=float,
+        default=None,
+        dest="auto_duration_post_factor",
+        help="Total steps = crossing_steps * post_factor (default: 2.0).",
+    )
     parser.add_argument(
         "--steps",
         type=int,
@@ -186,7 +240,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--bunch-mean",
         type=float,
         dest="bunch_mean",
-        help="Initial bunch separation parameter (legacy compatibility).",
+        help="Initial bunch separation parameter.",
     )
     parser.add_argument(
         "--cavity-spacing",
@@ -205,7 +259,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         choices=("averaged", "fast"),
         help=(
             "Retardation sampling strategy: 'averaged' blends R/c and 2R/c, "
-            "'fast' reproduces legacy single-sample behaviour."
+            "'fast' uses the single-sample matching path."
         ),
     )
     parser.add_argument(
@@ -366,6 +420,18 @@ def _merge_simulation_payload(
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
 
+    if getattr(args, "space_charge", False):
+        result["space_charge_enabled"] = True
+    if getattr(args, "space_charge_softening_mm", 0.0) != 0.0:
+        result["space_charge_softening_mm"] = args.space_charge_softening_mm
+
+    if getattr(args, "auto_duration", False):
+        result["auto_duration_enabled"] = True
+    if getattr(args, "auto_duration_crossing_steps", None) is not None:
+        result["auto_duration_crossing_steps"] = args.auto_duration_crossing_steps
+    if getattr(args, "auto_duration_post_factor", None) is not None:
+        result["auto_duration_post_factor"] = args.auto_duration_post_factor
+
     return result
 
 
@@ -401,71 +467,20 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             f"Simulation configuration missing required fields: {', '.join(missing)}"
         )
 
-    chrono_mode_raw = payload.get("chrono_mode", ChronoMatchingMode.AVERAGED)
-    if isinstance(chrono_mode_raw, str):
-        key = chrono_mode_raw.strip().lower()
-        if key in {"fast", "legacy"}:
-            chrono_mode = ChronoMatchingMode.FAST
-        elif key in {"averaged", "average", "blended"}:
-            chrono_mode = ChronoMatchingMode.AVERAGED
-        else:  # pragma: no cover - defensive parsing
-            raise SimulationConfigError(
-                f"Unknown chrono_mode value: {chrono_mode_raw!r}. Expected 'fast' or 'averaged'."
-            )
-    elif isinstance(chrono_mode_raw, ChronoMatchingMode):
-        chrono_mode = chrono_mode_raw
-    else:  # pragma: no cover - defensive parsing
-        raise SimulationConfigError(
-            "chrono_mode must be a string or ChronoMatchingMode instance"
-        )
-
-    startup_mode_raw = payload.get("startup_mode", StartupMode.COLD_START)
-    if isinstance(startup_mode_raw, str):
-        key = startup_mode_raw.strip().lower()
-        if key in STARTUP_MODE_ALIASES:
-            startup_mode = STARTUP_MODE_ALIASES[key]
-        else:  # pragma: no cover - defensive parsing
-            raise SimulationConfigError(
-                f"Unknown startup_mode value: {startup_mode_raw!r}. Expected 'cold-start' or 'approximate-back-history'."
-            )
-    elif isinstance(startup_mode_raw, StartupMode):
-        startup_mode = startup_mode_raw
-    else:  # pragma: no cover - defensive parsing
-        raise SimulationConfigError(
-            "startup_mode must be a string or StartupMode instance"
-        )
-
-    try:
-        image_subcharge_count = int(
-            payload.get(
-                "image_subcharge_count", DEFAULT_SIMULATION["image_subcharge_count"]
-            )
-        )
-    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
-        raise SimulationConfigError("image_subcharge_count must be an integer") from exc
-
-    if not 4 <= image_subcharge_count <= 128:
-        raise SimulationConfigError(
-            "image_subcharge_count must be between 4 and 128 inclusive"
-        )
-
-    raw_weighting = payload.get(
-        "use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"]
+    chrono_mode = _parse_chrono_mode(
+        payload.get("chrono_mode", ChronoMatchingMode.AVERAGED)
     )
-    if raw_weighting is None:
-        use_image_weighting = DEFAULT_SIMULATION["use_image_weighting"]
-    elif isinstance(raw_weighting, str):
-        key = raw_weighting.strip().lower()
-        if key in {"1", "true", "yes", "on"}:
-            use_image_weighting = True
-        elif key in {"0", "false", "no", "off"}:
-            use_image_weighting = False
-        else:  # pragma: no cover - defensive parsing
-            raise SimulationConfigError(
-                "use_image_weighting must be a boolean or truthy/falsey string"
-            )
-    else:
-        use_image_weighting = bool(raw_weighting)
+    startup_mode = _parse_startup_mode(
+        payload.get("startup_mode", StartupMode.COLD_START)
+    )
+    image_subcharge_count = _parse_image_subcharge_count(
+        payload.get(
+            "image_subcharge_count", DEFAULT_SIMULATION["image_subcharge_count"]
+        )
+    )
+    use_image_weighting = _parse_image_weighting(
+        payload.get("use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"])
+    )
 
     return IntegratorConfig(
         steps=int(payload["steps"]),
@@ -488,10 +503,10 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
 def _parse_simulation_type(value: Any) -> SimulationType:
     if isinstance(value, SimulationType):
         return value
-    if isinstance(value, int):  # support legacy integer flags
+    if isinstance(value, Integral) and not isinstance(value, bool):
         try:
-            return SimulationType(value)
-        except ValueError as exc:  # pragma: no cover - defensive
+            return SimulationType(int(value))
+        except ValueError as exc:
             raise SimulationConfigError(
                 f"Unknown simulation type integer: {value}"
             ) from exc
@@ -500,6 +515,64 @@ def _parse_simulation_type(value: Any) -> SimulationType:
         if key in SIMULATION_TYPE_ALIASES:
             return SIMULATION_TYPE_ALIASES[key]
     raise SimulationConfigError(f"Unknown simulation type: {value!r}")
+
+
+def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
+    if isinstance(value, ChronoMatchingMode):
+        return value
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in {"fast", "legacy"}:
+            return ChronoMatchingMode.FAST
+        if key in {"averaged", "average", "blended"}:
+            return ChronoMatchingMode.AVERAGED
+        raise SimulationConfigError(
+            f"Unknown chrono_mode value: {value!r}. Expected 'fast' or 'averaged'."
+        )
+    raise SimulationConfigError(
+        "chrono_mode must be a string or ChronoMatchingMode instance"
+    )
+
+
+def _parse_startup_mode(value: Any) -> StartupMode:
+    if isinstance(value, StartupMode):
+        return value
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in STARTUP_MODE_ALIASES:
+            return STARTUP_MODE_ALIASES[key]
+        raise SimulationConfigError(
+            f"Unknown startup_mode value: {value!r}. Expected 'cold-start' or 'approximate-back-history'."
+        )
+    raise SimulationConfigError("startup_mode must be a string or StartupMode instance")
+
+
+def _parse_image_subcharge_count(value: Any) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError("image_subcharge_count must be an integer") from exc
+
+    if not 4 <= count <= 128:
+        raise SimulationConfigError(
+            "image_subcharge_count must be between 4 and 128 inclusive"
+        )
+    return count
+
+
+def _parse_image_weighting(value: Any) -> bool:
+    if value is None:
+        return bool(DEFAULT_SIMULATION["use_image_weighting"])
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in {"1", "true", "yes", "on"}:
+            return True
+        if key in {"0", "false", "no", "off"}:
+            return False
+        raise SimulationConfigError(
+            "use_image_weighting must be a boolean or truthy/falsey string"
+        )
+    return bool(value)
 
 
 def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
@@ -524,7 +597,7 @@ def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
 # ---------------------------------------------------------------------------
 
 
-def run_simulation(request: SimulationRequest) -> Tuple[Trajectory, Trajectory]:
+def run_simulation(request: SimulationRequest) -> tuple:
     return retarded_integrator(
         steps=request.config.steps,
         h_step=request.config.time_step,
@@ -553,16 +626,34 @@ def summarise_trajectory(trajectory: Trajectory) -> Dict[str, Any]:
     def _max_abs(value: np.ndarray) -> float:
         return float(np.max(np.abs(np.asarray(value, dtype=float))))
 
+    initial_z = _mean(initial.get("z", np.array([0.0])))
+    final_z = _mean(final.get("z", np.array([0.0])))
+    initial_gamma = _mean(initial.get("gamma", np.array([1.0])))
+    final_gamma = _mean(final.get("gamma", np.array([1.0])))
+    summary_row = summarize_result_row(
+        {
+            "parameters": {"start_z": initial_z},
+            "metrics": {
+                "rider_gamma_initial": initial_gamma,
+                "rider_gamma_final": final_gamma,
+            },
+            "_distance_info": {
+                "z_start": initial_z,
+                "z_end": final_z,
+            },
+        }
+    )
+
     return {
         "steps_completed": len(trajectory),
         "initial_time_ns": _mean(initial.get("t", np.array([0.0]))),
         "final_time_ns": _mean(final.get("t", np.array([0.0]))),
-        "initial_z_mm": _mean(initial.get("z", np.array([0.0]))),
-        "final_z_mm": _mean(final.get("z", np.array([0.0]))),
-        "initial_gamma_mean": _mean(initial.get("gamma", np.array([1.0]))),
-        "final_gamma_mean": _mean(final.get("gamma", np.array([1.0]))),
-        "delta_gamma_mean": _mean(final.get("gamma", np.array([1.0])))
-        - _mean(initial.get("gamma", np.array([1.0]))),
+        "initial_z_mm": initial_z,
+        "final_z_mm": final_z,
+        "traveled_distance_mm": summary_row["traveled"],
+        "initial_gamma_mean": summary_row["gamma_initial"],
+        "final_gamma_mean": summary_row["gamma_final"],
+        "delta_gamma_mean": summary_row["gamma_final"] - summary_row["gamma_initial"],
         "max_absolute_velocity": _max_abs(final.get("bz", np.array([0.0]))),
     }
 
@@ -575,6 +666,7 @@ def print_summary(summary: Mapping[str, Any]) -> None:
         "final_time_ns",
         "initial_z_mm",
         "final_z_mm",
+        "traveled_distance_mm",
         "initial_gamma_mean",
         "final_gamma_mean",
         "delta_gamma_mean",
@@ -593,6 +685,73 @@ def _format_value(value: Any) -> Any:
     return value
 
 
+def build_report(
+    trajectory: Trajectory, driver: Optional[Trajectory] = None
+) -> Dict[str, Any]:
+    """Build the CLI report payload for rider and optional driver trajectories."""
+    report = dict(summarise_trajectory(trajectory))
+    if driver is not None:
+        report["driver_summary"] = summarise_trajectory(driver)
+    return report
+
+
+def _load_results_report(path: Path) -> Dict[str, Any]:
+    """Load a saved results JSON file and build a normalized summary report."""
+    payload = _load_config(path)
+    parsed = parse_results_payload(
+        payload, m_particle_amu=ELECTRON_MASS_AMU, amu_to_mev=931.494
+    )
+    report = summarize_saved_results(parsed)
+    report["source"] = str(path)
+    return report
+
+
+def _print_results_report(report: Mapping[str, Any]) -> None:
+    """Print a human-readable summary for a saved results file."""
+    lines = ["LW Integrator saved-results summary:"]
+    for key in (
+        "result_type",
+        "source",
+        "config_name",
+        "run_count",
+        "trajectory_count",
+        "optimization_method",
+        "objective",
+        "evaluation_count",
+        "finite_evaluation_count",
+        "successful_evaluation_count",
+        "halted_evaluation_count",
+        "failed_evaluation_count",
+        "top_result_count",
+        "success",
+        "best_run_number",
+        "best_delta_e_mev",
+        "best_energy_gev",
+        "best_aperture_mm",
+        "best_value",
+    ):
+        if key in report:
+            lines.append(
+                f"  {key.replace('_', ' ').title()}: {_format_value(report[key])}"
+            )
+
+    top_results = report.get("top_results", [])
+    if top_results:
+        lines.append("  Top Results:")
+        for result in top_results:
+            parts = [f"rank={result.get('rank')}"]
+            if result.get("metric_value") is not None:
+                parts.append(f"metric={_format_value(result['metric_value'])}")
+            if result.get("delta_e_mev") is not None:
+                parts.append(f"delta_e_mev={_format_value(result['delta_e_mev'])}")
+            if result.get("percent_energy_gain") is not None:
+                parts.append(
+                    f"percent_gain={_format_value(result['percent_energy_gain'])}"
+                )
+            lines.append("    " + ", ".join(parts))
+    print("\n".join(lines))
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -600,6 +759,21 @@ def _format_value(value: Any) -> Any:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.results_file is not None:
+        try:
+            report = _load_results_report(args.results_file)
+        except (SimulationConfigError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+        if not args.quiet:
+            _print_results_report(report)
+        return 0
 
     # Check if this is a sweep configuration
     if args.sweep_config is not None:
@@ -612,15 +786,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
-    trajectory, driver = run_simulation(request)
-    summary = summarise_trajectory(trajectory)
+    trajectory, driver, *_soa_out = run_simulation(request)
+    report = build_report(trajectory, driver)
 
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     if not args.quiet:
-        print_summary(summary)
+        print_summary(report)
         if driver is not None:
             print(f"Driver trajectory generated with {len(driver)} integration steps.")
 
@@ -637,17 +811,8 @@ def run_sweep(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # Determine quiet mode from args
     quiet = getattr(args, "quiet", False)
-
-    # Build verbosity overrides dict
-    verbosity_overrides = {}
-    if hasattr(args, "log_verbosity") and args.log_verbosity is not None:
-        verbosity_overrides["log_verbosity"] = args.log_verbosity
-    if hasattr(args, "sc_verbosity") and args.sc_verbosity is not None:
-        verbosity_overrides["self_consistency_verbosity"] = args.sc_verbosity
-    if hasattr(args, "adaptive_debug") and args.adaptive_debug is not None:
-        verbosity_overrides["adaptive_timestep_debug"] = args.adaptive_debug
+    verbosity_overrides = _build_sweep_verbosity_overrides(args)
 
     # Run the sweep
     try:
@@ -656,6 +821,7 @@ def run_sweep(args: argparse.Namespace) -> int:
             output_dir=None,
             verbose=not quiet,
             verbosity_overrides=verbosity_overrides,
+            workers=getattr(args, "workers", None),
         )
         return 0 if success else 1
     except Exception as exc:
@@ -664,6 +830,20 @@ def run_sweep(args: argparse.Namespace) -> int:
 
         traceback.print_exc()
         return 2
+
+
+def _build_sweep_verbosity_overrides(
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    """Collect sweep verbosity-related overrides from CLI arguments."""
+    overrides: Dict[str, Any] = {}
+    if getattr(args, "log_verbosity", None) is not None:
+        overrides["log_verbosity"] = args.log_verbosity
+    if getattr(args, "sc_verbosity", None) is not None:
+        overrides["self_consistency_verbosity"] = args.sc_verbosity
+    if getattr(args, "adaptive_debug", None) is not None:
+        overrides["adaptive_timestep_debug"] = args.adaptive_debug
+    return overrides
 
 
 if __name__ == "__main__":  # pragma: no cover - manual invocation

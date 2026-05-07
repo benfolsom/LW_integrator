@@ -6,6 +6,7 @@ programmatic entry points for running the modern Liénard–Wiechert integrator.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple
 
@@ -29,11 +30,29 @@ from .types import (
     SimulationType,
     StartupMode,
     Trajectory,
+    TrajectoryArrays,
+    TrajectoryBuilder,
 )
 
 
 class IntegrationCancelled(RuntimeError):
     """Raised when an integration is cancelled by an external caller."""
+
+
+def _build_partial_soa(
+    trajectory: Trajectory, up_to_step: int
+) -> "TrajectoryArrays | None":
+    """Build a TrajectoryArrays from trajectory[0:up_to_step]."""
+    if up_to_step < 1 or not trajectory[0]:
+        return None
+    try:
+        n_p = len(trajectory[0]["x"])
+        builder = TrajectoryBuilder(up_to_step, n_p)
+        for idx in range(up_to_step):
+            builder.set_step(idx, trajectory[idx])
+        return builder.build()
+    except Exception:
+        return None
 
 
 class EnergyJumpDetected(RuntimeError):
@@ -200,6 +219,580 @@ def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     _ensure("beta_samples", None, fill_value=1.0)
 
 
+@dataclass
+class _AdaptiveStepState:
+    """Mutable cross-step state for adaptive timestep logic."""
+
+    reduced_timestep_mode: bool = False
+    reduced_h_step: float = 0.0
+    cooldown_counter: int = 0
+    stable_steps_counter: int = 0
+    last_particle_death_step: int = -1
+    previous_energy: Optional[float] = None
+    current_h_step: float = 0.0
+
+
+def _run_adaptive_step(
+    *,
+    i: int,
+    steps: int,
+    h_step: float,
+    wall_z: float,
+    aperture_radius: float,
+    sim_type: SimulationType,
+    chrono_mode: ChronoMatchingMode,
+    startup_mode: StartupMode,
+    self_consistency: Optional[SelfConsistencyConfig],
+    adaptive_timestep: Optional[AdaptiveTimestepConfig],
+    space_charge: Optional[Any],
+    image_subcharge_count: int,
+    use_conducting_image_weighting: bool,
+    macroparticle_charge_multiplier: float,
+    macroparticle_sigma_multiplier: float,
+    macroparticle_use_momentum_errors: bool,
+    bunch_transv_dist: float,
+    bunch_transv_mom: float,
+    z_cutoff: float,
+    trajectory: Trajectory,
+    trajectory_drv: Trajectory,
+    _traj_drv_builder: Optional[TrajectoryBuilder],
+    cancel_callback: Optional[Callable],
+    logger: Optional[Any],
+    adaptive_state: "_AdaptiveStepState",
+) -> ParticleState:
+    """Run one adaptive step, updating adaptive_state in-place.
+
+    Returns the new ParticleState for step i.
+    Reads trajectory[i-1] and trajectory_drv[i-1] as the previous step.
+    """
+    reduced_timestep_mode = adaptive_state.reduced_timestep_mode
+    reduced_h_step = adaptive_state.reduced_h_step
+    cooldown_counter = adaptive_state.cooldown_counter
+    stable_steps_counter = adaptive_state.stable_steps_counter
+    last_particle_death_step = adaptive_state.last_particle_death_step
+    previous_energy = adaptive_state.previous_energy
+    current_h_step = adaptive_state.current_h_step
+
+    step_accepted = False
+    refinement_attempt = 0
+
+    temp_trajectory: Trajectory = []
+    temp_driver: Trajectory = []
+
+    proximity_reduction_active = False
+    proximity_factor = 1.0
+    if (
+        adaptive_timestep is not None
+        and adaptive_timestep.proximity_refinement_enabled
+        and aperture_radius is not None
+        and wall_z is not None
+        and sim_type != SimulationType.BUNCH_TO_BUNCH
+    ):
+        current_z = float(np.mean(trajectory[i - 1]["z"]))
+        distance_to_wall = abs(wall_z - current_z)
+        interaction_distance = (
+            aperture_radius * adaptive_timestep.proximity_distance_aperture_radii
+        )
+        transition_distance = (
+            aperture_radius * adaptive_timestep.proximity_transition_zone
+        )
+
+        if distance_to_wall <= interaction_distance:
+            proximity_reduction_active = True
+            if distance_to_wall < (interaction_distance - transition_distance):
+                proximity_factor = adaptive_timestep.proximity_reduction_factor
+            else:
+                ramp = (interaction_distance - distance_to_wall) / transition_distance
+                proximity_factor = (
+                    1.0 + (adaptive_timestep.proximity_reduction_factor - 1.0) * ramp
+                )
+
+            if adaptive_timestep.debug:
+                in_transition = distance_to_wall >= (
+                    interaction_distance - transition_distance
+                )
+                zone_name = "transition" if in_transition else "full reduction"
+                msg = (
+                    f"Step {i}: Proximity refinement active ({zone_name} zone). "
+                    f"Distance to wall: {distance_to_wall:.6e} mm "
+                    f"({distance_to_wall / aperture_radius:.1f} aperture radii). "
+                    f"Reduction factor: {proximity_factor:.4f}x"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+
+    if cancel_callback is not None and cancel_callback():
+        raise IntegrationCancelled("Integration cancelled by caller.")
+
+    if reduced_timestep_mode and adaptive_timestep is not None:
+        expected_substeps = int(np.ceil(h_step / reduced_h_step))
+        impractical_timestep = (
+            expected_substeps > adaptive_timestep.max_substeps_per_step
+        )
+        skip_cooldown = (
+            adaptive_timestep.skip_cooldown_on_particle_death
+            and last_particle_death_step == i - 1
+        )
+
+        if impractical_timestep:
+            if adaptive_timestep.debug:
+                msg = (
+                    f"Step {i}: Impractical timestep detected ({expected_substeps} sub-steps required). "
+                    f"Skipping cooldown and attempting recovery to {h_step:.6e} ns"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+            cooldown_counter = adaptive_timestep.cooldown_steps
+        elif skip_cooldown:
+            if adaptive_timestep.debug:
+                msg = (
+                    f"Step {i}: Particle died last step. Skipping cooldown for survivors, "
+                    f"attempting recovery to {h_step:.6e} ns"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+            cooldown_counter = adaptive_timestep.cooldown_steps
+        elif cooldown_counter < adaptive_timestep.cooldown_steps:
+            current_h_step = reduced_h_step
+            cooldown_counter += 1
+            if adaptive_timestep.debug:
+                msg = (
+                    f"Step {i}: Cooldown mode ({cooldown_counter}/{adaptive_timestep.cooldown_steps}), "
+                    f"using reduced timestep {current_h_step:.6e} ns"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+        else:
+            current_h_step = reduced_h_step
+            if adaptive_timestep.debug:
+                msg = (
+                    f"Step {i}: Probing stability with reduced timestep "
+                    f"({stable_steps_counter}/{adaptive_timestep.max_probe_steps} stable)"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+    else:
+        current_h_step = h_step
+        if proximity_reduction_active and adaptive_timestep is not None:
+            current_h_step = h_step / proximity_factor
+            if adaptive_timestep.debug:
+                msg = (
+                    f"Step {i}: Applying proximity refinement: "
+                    f"{h_step:.6e} \u2192 {current_h_step:.6e} ns"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+
+    temp_trajectory_base = {
+        k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+        for k, v in trajectory[i - 1].items()
+    }
+    probe_reference_energy = previous_energy
+
+    if i > 0:
+        propagate_dead_particle_status(temp_trajectory_base, trajectory[i - 1])
+
+    def propagate_deaths_to_base(state_with_deaths):
+        if "_dead_particles" in state_with_deaths:
+            if "_dead_particles" not in temp_trajectory_base:
+                num_particles = len(state_with_deaths.get("gamma", []))
+                temp_trajectory_base["_dead_particles"] = np.zeros(
+                    num_particles, dtype=bool
+                )
+                temp_trajectory_base["_particle_failure_info"] = {}
+            temp_trajectory_base["_dead_particles"] |= state_with_deaths[
+                "_dead_particles"
+            ]
+            if "_particle_failure_info" in state_with_deaths:
+                temp_trajectory_base["_particle_failure_info"].update(
+                    state_with_deaths["_particle_failure_info"]
+                )
+
+    while not step_accepted:
+        if cancel_callback is not None and cancel_callback():
+            raise IntegrationCancelled("Integration cancelled by caller.")
+
+        num_substeps_raw = int(np.round(h_step / current_h_step))
+
+        if adaptive_timestep is not None:
+            num_substeps = min(
+                num_substeps_raw, adaptive_timestep.max_substeps_per_step
+            )
+            if (
+                num_substeps_raw > adaptive_timestep.max_substeps_per_step
+                and adaptive_timestep.debug
+            ):
+                msg = (
+                    f"Step {i}: Sub-step limit reached ({adaptive_timestep.max_substeps_per_step}). "
+                    f"Timestep {current_h_step:.6e} ns would require {num_substeps_raw} sub-steps. "
+                    f"This step may not fully cover the base timestep interval."
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+        else:
+            num_substeps = num_substeps_raw
+
+        if num_substeps < 1:
+            num_substeps = 1
+
+        temp_trajectory = [
+            {
+                k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                for k, v in temp_trajectory_base.items()
+            }
+        ]
+        temp_driver = [trajectory_drv[i - 1]]
+
+        _n_p_rider = len(temp_trajectory[0]["x"])
+        _temp_traj_builder = TrajectoryBuilder(num_substeps + 1, _n_p_rider)
+        _temp_traj_builder.set_step(0, temp_trajectory[0])
+        _temp_drv_soa = _traj_drv_builder.build_partial(i) if _traj_drv_builder is not None else None
+        _scs_accepts_soa = "traj_soa" in inspect.signature(self_consistent_step).parameters
+
+        energy_jump_detected = False
+        gamma_blowup_detected = False
+        max_refinement_reached = False
+        min_timestep_reached = False
+
+        for substep_idx in range(num_substeps):
+            if cancel_callback is not None and cancel_callback():
+                raise IntegrationCancelled("Integration cancelled by caller.")
+
+            try:
+                trial_state = self_consistent_step(
+                    retarded_equations_of_motion,
+                    current_h_step,
+                    temp_trajectory,
+                    temp_driver,
+                    substep_idx,
+                    aperture_radius,
+                    sim_type,
+                    self_consistency,
+                    chrono_mode,
+                    startup_mode,
+                    step_idx=i,
+                    cancel_callback=cancel_callback,
+                    **({"space_charge": space_charge} if space_charge is not None else {}),
+                    **({"traj_soa": _temp_traj_builder.build_partial(substep_idx + 1)} if _scs_accepts_soa else {}),
+                    **({"traj_ext_soa": _temp_drv_soa} if _scs_accepts_soa else {}),
+                )
+            except GammaBlowupError as e:
+                if adaptive_timestep is None or not adaptive_timestep.enabled:
+                    msg = (
+                        f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
+                        f"Gamma blowup (\u03b3={e.gamma_value:.2e}) with no adaptive timestep available. "
+                        f"Marking particle as dead."
+                    )
+                    if logger:
+                        logger(msg)
+                    else:
+                        print(msg)
+                    if len(temp_trajectory) > 0:
+                        trial_state = {
+                            k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                            for k, v in temp_trajectory[-1].items()
+                        }
+                    else:
+                        trial_state = {
+                            k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                            for k, v in trajectory[i - 1].items()
+                        }
+
+                    mark_particle_dead(
+                        trial_state, e.particle_idx, i, "gamma_blowup_no_adaptive",
+                        gamma_value=e.gamma_value, iteration=e.iteration,
+                    )
+
+                    temp_trajectory.append(trial_state)
+                    _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
+                    temp_driver.append(temp_driver[-1] if temp_driver else trajectory_drv[i - 1])
+                    last_particle_death_step = i
+                    gamma_blowup_detected = False
+                    break
+                else:
+                    gamma_blowup_detected = True
+                    refinement_attempt += 1
+
+                    if refinement_attempt > adaptive_timestep.max_refinement_attempts:
+                        msg = (
+                            f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
+                            f"Max refinement attempts reached after gamma blowup (\u03b3={e.gamma_value:.6e}). "
+                            f"Marking particle as dead."
+                        )
+                        if logger:
+                            logger(msg)
+                        else:
+                            print(msg)
+                        if len(temp_trajectory) > 0:
+                            trial_state = {
+                                k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                for k, v in temp_trajectory[-1].items()
+                            }
+                        else:
+                            trial_state = {
+                                k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                for k, v in trajectory[i - 1].items()
+                            }
+
+                        mark_particle_dead(
+                            trial_state, e.particle_idx, i, "gamma_blowup_max_retries",
+                            gamma_value=e.gamma_value, iteration=e.iteration,
+                        )
+
+                        temp_trajectory.append(trial_state)
+                        _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
+                        temp_driver.append(temp_driver[-1] if temp_driver else trajectory_drv[i - 1])
+                        last_particle_death_step = i
+                        gamma_blowup_detected = False
+                        break
+                    else:
+                        min_h = h_step * adaptive_timestep.min_timestep_factor
+                        new_h_step = current_h_step / adaptive_timestep.timestep_reduction_factor
+
+                        if new_h_step < min_h:
+                            msg = (
+                                f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
+                                f"Minimum timestep reached after gamma blowup (\u03b3={e.gamma_value:.6e}). "
+                                f"Marking particle as dead."
+                            )
+                            if logger:
+                                logger(msg)
+                            else:
+                                print(msg)
+                            if len(temp_trajectory) > 0:
+                                trial_state = {
+                                    k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                    for k, v in temp_trajectory[-1].items()
+                                }
+                            else:
+                                trial_state = {
+                                    k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                    for k, v in trajectory[i - 1].items()
+                                }
+
+                            mark_particle_dead(
+                                trial_state, e.particle_idx, i, "gamma_blowup_min_timestep",
+                                gamma_value=e.gamma_value, iteration=e.iteration,
+                            )
+
+                            temp_trajectory.append(trial_state)
+                            _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
+                            temp_driver.append(temp_driver[-1] if temp_driver else trajectory_drv[i - 1])
+                            last_particle_death_step = i
+                            gamma_blowup_detected = False
+                            break
+                        else:
+                            if hasattr(e, "is_hard_blowup") and e.is_hard_blowup:
+                                reduction_factor = adaptive_timestep.timestep_reduction_factor ** 2
+                                severity = "HARD"
+                            else:
+                                reduction_factor = adaptive_timestep.timestep_reduction_factor
+                                severity = "soft"
+
+                            new_h_step = current_h_step / reduction_factor
+                            if new_h_step < min_h:
+                                new_h_step = min_h
+
+                            current_h_step = new_h_step
+                            if adaptive_timestep.debug:
+                                msg = (
+                                    f"Step {i}.{substep_idx}: {severity} gamma blowup detected (\u03b3={e.gamma_value:.6e}). "
+                                    f"Reducing timestep by {reduction_factor}x "
+                                    f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
+                                )
+                                if logger:
+                                    logger(msg)
+                                else:
+                                    print(msg)
+
+                            reduced_timestep_mode = True
+                            reduced_h_step = current_h_step
+                            cooldown_counter = 0
+                            stable_steps_counter = 0
+                            break
+
+            propagate_deaths_to_base(trial_state)
+
+            if sim_type == SimulationType.SWITCHING_WALL:
+                trial_driver = generate_switching_image(
+                    trial_state, wall_z, aperture_radius, z_cutoff
+                )
+            elif sim_type == SimulationType.CONDUCTING_WALL:
+                trial_driver = generate_conducting_image(
+                    trial_state,
+                    wall_z,
+                    aperture_radius,
+                    subcharge_count=image_subcharge_count,
+                    use_weighting=use_conducting_image_weighting,
+                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                    macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                    bunch_transv_dist=bunch_transv_dist,
+                    bunch_transv_mom=bunch_transv_mom,
+                    timestep=current_h_step,
+                    step_number=i,
+                )
+            else:
+                trial_driver = temp_driver[-1]
+
+            if adaptive_timestep is not None and adaptive_timestep.enabled:
+                current_energy = _compute_total_energy(trial_state)
+
+                if previous_energy is not None and previous_energy > 0:
+                    relative_change = (
+                        abs(current_energy - previous_energy) / previous_energy
+                    )
+
+                    if relative_change > adaptive_timestep.energy_jump_threshold:
+                        energy_jump_detected = True
+                        refinement_attempt += 1
+
+                        if refinement_attempt > adaptive_timestep.max_refinement_attempts:
+                            if adaptive_timestep.debug and not max_refinement_reached:
+                                msg = (
+                                    f"Step {i}: Max refinement attempts ({adaptive_timestep.max_refinement_attempts}) reached. "
+                                    f"Accepting remaining substeps (\u0394E/E = {relative_change:.6e})"
+                                )
+                                if logger:
+                                    logger(msg)
+                                else:
+                                    print(msg)
+                                max_refinement_reached = True
+                            energy_jump_detected = False
+                        else:
+                            min_h = h_step * adaptive_timestep.min_timestep_factor
+                            new_h_step = current_h_step / adaptive_timestep.timestep_reduction_factor
+
+                            if new_h_step < min_h:
+                                if adaptive_timestep.debug and not min_timestep_reached:
+                                    msg = (
+                                        f"Step {i}: Minimum timestep reached. "
+                                        f"Accepting remaining substeps (\u0394E/E = {relative_change:.6e})"
+                                    )
+                                    if logger:
+                                        logger(msg)
+                                    else:
+                                        print(msg)
+                                    min_timestep_reached = True
+                                energy_jump_detected = False
+                            else:
+                                current_h_step = new_h_step
+                                if adaptive_timestep.debug:
+                                    msg = (
+                                        f"Step {i}: Energy jump (\u0394E/E = {relative_change:.6e}). "
+                                        f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
+                                        f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
+                                    )
+                                    if logger:
+                                        logger(msg)
+                                    else:
+                                        print(msg)
+
+                                reduced_timestep_mode = True
+                                reduced_h_step = current_h_step
+                                cooldown_counter = 0
+                                stable_steps_counter = 0
+
+                                propagate_deaths_to_base(temp_trajectory[-1])
+                                break
+
+                previous_energy = current_energy
+
+            temp_trajectory.append(trial_state)
+            _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
+            temp_driver.append(trial_driver)
+
+        if not energy_jump_detected and not gamma_blowup_detected:
+            step_accepted = True
+            if (
+                adaptive_timestep is not None
+                and adaptive_timestep.debug
+                and refinement_attempt > 0
+            ):
+                msg = f"Step {i}: Completed {num_substeps} sub-step(s) with timestep {current_h_step:.6e} ns"
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+
+            if (
+                adaptive_timestep is not None
+                and adaptive_timestep.enabled
+                and reduced_timestep_mode
+                and cooldown_counter >= adaptive_timestep.cooldown_steps
+            ):
+                if probe_reference_energy is not None:
+                    current_energy = _compute_total_energy(temp_trajectory[-1])
+                    relative_change = (
+                        abs(current_energy - probe_reference_energy)
+                        / probe_reference_energy
+                    )
+
+                    if relative_change < adaptive_timestep.probe_threshold:
+                        stable_steps_counter += 1
+                        if adaptive_timestep.debug:
+                            msg = (
+                                f"Step {i}: Stable (\u0394E/E = {relative_change:.6e} < {adaptive_timestep.probe_threshold:.6e}), "
+                                f"count = {stable_steps_counter}/{adaptive_timestep.max_probe_steps}"
+                            )
+                            if logger:
+                                logger(msg)
+                            else:
+                                print(msg)
+
+                        if stable_steps_counter >= adaptive_timestep.max_probe_steps:
+                            reduced_timestep_mode = False
+                            stable_steps_counter = 0
+                            cooldown_counter = 0
+                            if adaptive_timestep.debug:
+                                msg = (
+                                    f"Step {i}: Returning to normal timestep {h_step:.6e} ns "
+                                    f"after {adaptive_timestep.max_probe_steps} stable steps"
+                                )
+                                if logger:
+                                    logger(msg)
+                                else:
+                                    print(msg)
+                    else:
+                        stable_steps_counter = 0
+                        cooldown_counter = 0
+                        if adaptive_timestep.debug:
+                            msg = (
+                                f"Step {i}: Unstable during probing (\u0394E/E = {relative_change:.6e}), "
+                                f"restarting cooldown"
+                            )
+                            if logger:
+                                logger(msg)
+                            else:
+                                print(msg)
+
+                        propagate_deaths_to_base(temp_trajectory[-1])
+
+    adaptive_state.reduced_timestep_mode = reduced_timestep_mode
+    adaptive_state.reduced_h_step = reduced_h_step
+    adaptive_state.cooldown_counter = cooldown_counter
+    adaptive_state.stable_steps_counter = stable_steps_counter
+    adaptive_state.last_particle_death_step = last_particle_death_step
+    adaptive_state.previous_energy = previous_energy
+    adaptive_state.current_h_step = current_h_step
+
+    return temp_trajectory[-1]
+
+
 def retarded_integrator(
     steps: int,
     h_step: float,
@@ -224,11 +817,12 @@ def retarded_integrator(
     bunch_transv_mom: float = 0.0,
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
+    space_charge: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
     logger: Optional[Any] = None,
     use_numba: bool = True,
-) -> Tuple[Trajectory, Trajectory]:
+) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
     Parameters
@@ -306,16 +900,16 @@ def retarded_integrator(
     logger:
         Optional logger instance for integration diagnostics.
     use_numba:
-        Whether to use Numba JIT-compiled integration kernels for performance.
-        Default True. If Numba is unavailable, falls back to pure Python.
-        Note: Numba path currently has limited self-consistency support.
+        Compatibility flag retained after removal of the legacy alternate
+        integrator path. The canonical path is always used; this flag controls
+        only logging intent, while actual kernel availability follows
+        ``core.vectorized_interactions.NUMBA_AVAILABLE``.
 
     Returns
     -------
-    Tuple[Trajectory, Trajectory]
-        A pair of trajectories: ``(rider_trajectory, driver_trajectory)``.
-        Each trajectory is a tuple of :class:`ParticleState` dictionaries,
-        one per integration step.
+    Tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None]
+        Rider and driver trajectories plus optional SOA views:
+        ``(rider_trajectory, driver_trajectory, rider_soa, driver_soa)``.
 
     Raises
     ------
@@ -326,120 +920,41 @@ def retarded_integrator(
         threshold (with ``halt_on_jump=True``).
     """
 
-    # Try to use Numba-optimized path if requested and available
-    if use_numba:
-        try:
-            from .performance import NUMBA_AVAILABLE, retarded_integrator_numba
+    from . import vectorized_interactions as _vectorized_interactions
 
-            if NUMBA_AVAILABLE:
-                # Check if numba path supports current configuration
-                use_numba_path = True
+    numba_kernels_enabled = bool(use_numba and _vectorized_interactions.NUMBA_AVAILABLE)
 
-                # Numba path doesn't support some advanced features yet
-                if energy_monitor is not None and energy_monitor.enabled:
-                    if logger:
-                        if callable(logger):
-                            logger(
-                                "Energy monitoring not supported in Numba path, using Python"
-                            )
-                        else:
-                            logger.info(
-                                "Energy monitoring not supported in Numba path, using Python"
-                            )
-                    use_numba_path = False
-
-                if adaptive_timestep is not None and adaptive_timestep.enabled:
-                    if logger:
-                        if callable(logger):
-                            logger(
-                                "Adaptive timestep not supported in Numba path, using Python"
-                            )
-                        else:
-                            logger.info(
-                                "Adaptive timestep not supported in Numba path, using Python"
-                            )
-                    use_numba_path = False
-
-                if macroparticle_charge_multiplier != 1.0:
-                    if logger:
-                        if callable(logger):
-                            logger(
-                                "Macroparticle mode not supported in Numba path, using Python"
-                            )
-                        else:
-                            logger.info(
-                                "Macroparticle mode not supported in Numba path, using Python"
-                            )
-                    use_numba_path = False
-
-                # Use numba if all checks passed
-                if use_numba_path:
-                    if logger:
-                        if callable(logger):
-                            logger(
-                                f"Using Numba-optimized integrator (expected ~20x speedup)"
-                            )
-                        else:
-                            logger.info(
-                                f"Using Numba-optimized integrator (expected ~20x speedup)"
-                            )
-
-                    return retarded_integrator_numba(
-                        steps=steps,
-                        h_step=h_step,
-                        wall_z=wall_z,
-                        aperture_radius=aperture_radius,
-                        sim_type=sim_type,
-                        init_rider=init_rider,
-                        init_driver=init_driver,
-                        mean=mean,
-                        cav_spacing=cav_spacing,
-                        z_cutoff=z_cutoff,
-                        self_consistency=self_consistency,
-                        chrono_mode=chrono_mode,
-                        startup_mode=startup_mode,
-                        image_subcharge_count=image_subcharge_count,
-                        use_image_weighting=use_conducting_image_weighting,
-                    )
+    if logger:
+        if numba_kernels_enabled:
+            message = "Using Numba-optimized kernels in canonical integrator path"
+            if callable(logger):
+                logger(message)
             else:
-                if logger:
-                    if callable(logger):
-                        logger(
-                            "Numba not available, falling back to pure Python integrator"
-                        )
-                    else:
-                        logger.warning(
-                            "Numba not available, falling back to pure Python integrator"
-                        )
-        except ImportError:
-            if logger:
-                if callable(logger):
-                    logger("Could not import Numba integrator, using pure Python")
-                else:
-                    logger.warning(
-                        "Could not import Numba integrator, using pure Python"
-                    )
+                logger.info(message)
+        elif use_numba:
+            message = "Numba not available, using pure Python kernels"
+            if callable(logger):
+                logger(message)
+            else:
+                logger.warning(message)
+        else:
+            message = "use_numba=False requested; running canonical path without forcing kernel changes"
+            if callable(logger):
+                logger(message)
+            else:
+                logger.info(message)
 
-    # Fall back to pure Python implementation
+    # Canonical integration implementation
 
     trajectory: Trajectory = [{} for _ in range(steps)]
     trajectory_drv: Trajectory = [{} for _ in range(steps)]
+    _n_particles_rider = len(init_rider["x"])
+    _n_particles_drv: int | None = None
+    _traj_builder = TrajectoryBuilder(steps, _n_particles_rider)
+    _traj_drv_builder: TrajectoryBuilder | None = None
 
     # Initialize energy monitoring
     previous_energy: Optional[float] = None
-
-    # Track actual timestep (may be modified by adaptive refinement)
-    current_h_step = h_step
-
-    # Hysteresis tracking for adaptive timestep
-    # When timestep is reduced, we stay reduced for cooldown_steps before probing
-    reduced_timestep_mode = False
-    reduced_h_step = h_step
-    cooldown_counter = 0
-    stable_steps_counter = 0  # Count consecutive stable steps during probing
-    last_particle_death_step = (
-        -1
-    )  # Track when particles die to handle timestep recovery
 
     # Store initial z position for relative cutoff mode
     z_initial: Optional[float] = None
@@ -458,12 +973,14 @@ def retarded_integrator(
     if progress_callback is not None:
         progress_callback(0, steps)
 
+    _adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
     for i in range(steps):
         if cancel_callback is not None and cancel_callback():
             raise IntegrationCancelled("Integration cancelled by caller.")
         if i == 0:
             trajectory[i] = init_rider
             _ensure_startup_metadata(trajectory[i])
+            _traj_builder.set_step(i, trajectory[i])
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
                     init_rider,
@@ -490,705 +1007,39 @@ def retarded_integrator(
                     )
                 trajectory_drv[i] = init_driver
             _ensure_startup_metadata(trajectory_drv[i])
+            _n_particles_drv = len(trajectory_drv[i]["x"])
+            _traj_drv_builder = TrajectoryBuilder(steps, _n_particles_drv)
+            _traj_drv_builder.set_step(i, trajectory_drv[i])
         else:
-            # Adaptive timestep refinement with sub-stepping and hysteresis:
-            # If timestep is reduced, we stay reduced for several steps before probing return
-            step_accepted = False
-            refinement_attempt = 0  # Track energy jump detections for this step
-
-            # Initialize to satisfy type checker (will be assigned in loop)
-            temp_trajectory: Trajectory = []
-            temp_driver: Trajectory = []
-
-            # Proximity-based timestep refinement: detect nearness to walls/apertures
-            # Only applies to simulations with actual walls (CONDUCTING_WALL, SWITCHING_WALL)
-            # NOT for BUNCH_TO_BUNCH (free space interaction)
-            proximity_reduction_active = False
-            if (
-                adaptive_timestep is not None
-                and adaptive_timestep.proximity_refinement_enabled
-                and aperture_radius is not None
-                and wall_z is not None
-                and sim_type != SimulationType.BUNCH_TO_BUNCH
-            ):
-                # Get current particle position (use mean z for bunch)
-                current_z = float(np.mean(trajectory[i - 1]["z"]))
-                distance_to_wall = abs(wall_z - current_z)
-
-                # Define interaction region in terms of aperture radii
-                interaction_distance = (
-                    aperture_radius
-                    * adaptive_timestep.proximity_distance_aperture_radii
-                )
-                transition_distance = (
-                    aperture_radius * adaptive_timestep.proximity_transition_zone
-                )
-
-                # Check if we're in or approaching the interaction region
-                if distance_to_wall <= interaction_distance:
-                    proximity_reduction_active = True
-
-                    # Smooth transition: full reduction close to wall, gradual outside
-                    if distance_to_wall < (interaction_distance - transition_distance):
-                        # Full reduction in strong interaction region
-                        proximity_factor = adaptive_timestep.proximity_reduction_factor
-                    else:
-                        # Linear ramp in transition zone
-                        ramp = (
-                            interaction_distance - distance_to_wall
-                        ) / transition_distance
-                        proximity_factor = (
-                            1.0
-                            + (adaptive_timestep.proximity_reduction_factor - 1.0)
-                            * ramp
-                        )
-
-                    if adaptive_timestep.debug:
-                        # Determine which zone we're in for clearer logging
-                        in_transition = distance_to_wall >= (
-                            interaction_distance - transition_distance
-                        )
-                        zone_name = "transition" if in_transition else "full reduction"
-
-                        msg = (
-                            f"Step {i}: Proximity refinement active ({zone_name} zone). "
-                            f"Distance to wall: {distance_to_wall:.6e} mm "
-                            f"({distance_to_wall / aperture_radius:.1f} aperture radii). "
-                            f"Reduction factor: {proximity_factor:.4f}x"
-                        )
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-
-            # Check for cancellation before cooldown/hysteresis logic
-            # This allows interruption during long cooldown periods
-            if cancel_callback is not None and cancel_callback():
-                raise IntegrationCancelled("Integration cancelled by caller.")
-
-            # Hysteresis logic: decide starting timestep for this step
-            if reduced_timestep_mode and adaptive_timestep is not None:
-                # Check if timestep is impractically small (would require too many sub-steps)
-                expected_substeps = int(np.ceil(h_step / reduced_h_step))
-                # Note: max_substeps_per_step also serves as hard cap to prevent discontinuities
-                impractical_timestep = (
-                    expected_substeps > adaptive_timestep.max_substeps_per_step
-                )
-
-                # Skip cooldown if a particle just died and we have the skip flag enabled
-                skip_cooldown = (
-                    adaptive_timestep.skip_cooldown_on_particle_death
-                    and last_particle_death_step == i - 1
-                )
-
-                if impractical_timestep:
-                    # Timestep is too small - skip cooldown and try to recover immediately
-                    if adaptive_timestep.debug:
-                        msg = (
-                            f"Step {i}: Impractical timestep detected ({expected_substeps} sub-steps required). "
-                            f"Skipping cooldown and attempting recovery to {h_step:.6e} ns"
-                        )
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-                    cooldown_counter = (
-                        adaptive_timestep.cooldown_steps
-                    )  # Jump to probing phase
-                elif skip_cooldown:
-                    # Particle just died - skip cooldown for survivors
-                    if adaptive_timestep.debug:
-                        msg = (
-                            f"Step {i}: Particle died last step. Skipping cooldown for survivors, "
-                            f"attempting recovery to {h_step:.6e} ns"
-                        )
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-                    cooldown_counter = (
-                        adaptive_timestep.cooldown_steps
-                    )  # Jump to probing phase
-                elif cooldown_counter < adaptive_timestep.cooldown_steps:
-                    # Still in cooldown - use reduced timestep
-                    current_h_step = reduced_h_step
-                    cooldown_counter += 1
-                    if adaptive_timestep.debug:
-                        msg = (
-                            f"Step {i}: Cooldown mode ({cooldown_counter}/{adaptive_timestep.cooldown_steps}), "
-                            f"using reduced timestep {current_h_step:.6e} ns"
-                        )
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-                else:
-                    # Cooldown complete - probe whether we can return to normal
-                    current_h_step = reduced_h_step  # Still use reduced for now
-                    if adaptive_timestep.debug:
-                        msg = (
-                            f"Step {i}: Probing stability with reduced timestep "
-                            f"({stable_steps_counter}/{adaptive_timestep.max_probe_steps} stable)"
-                        )
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-            else:
-                # Normal mode or adaptive disabled
-                current_h_step = h_step
-
-                # Apply proximity-based reduction if active
-                if proximity_reduction_active and adaptive_timestep is not None:
-                    current_h_step = h_step / proximity_factor
-                    if adaptive_timestep.debug:
-                        msg = (
-                            f"Step {i}: Applying proximity refinement: "
-                            f"{h_step:.6e} → {current_h_step:.6e} ns"
-                        )
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-
-            # Initialize temp_trajectory base ONCE before retry loop
-            # This preserves dead particle status across retry attempts within this step
-            temp_trajectory_base = {
-                k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
-                for k, v in trajectory[i - 1].items()
-            }
-
-            # Propagate dead particle status from previous step ONCE
-            if i > 0:
-                propagate_dead_particle_status(temp_trajectory_base, trajectory[i - 1])
-
-            def propagate_deaths_to_base(state_with_deaths):
-                """Helper to propagate dead particles from a state to temp_trajectory_base."""
-                if "_dead_particles" in state_with_deaths:
-                    if "_dead_particles" not in temp_trajectory_base:
-                        num_particles = len(state_with_deaths.get("gamma", []))
-                        temp_trajectory_base["_dead_particles"] = np.zeros(
-                            num_particles, dtype=bool
-                        )
-                        temp_trajectory_base["_particle_failure_info"] = {}
-                    temp_trajectory_base["_dead_particles"] |= state_with_deaths[
-                        "_dead_particles"
-                    ]
-                    if "_particle_failure_info" in state_with_deaths:
-                        temp_trajectory_base["_particle_failure_info"].update(
-                            state_with_deaths["_particle_failure_info"]
-                        )
-
-            while not step_accepted:
-                # Check for cancellation inside retry loop
-                if cancel_callback is not None and cancel_callback():
-                    raise IntegrationCancelled("Integration cancelled by caller.")
-
-                # Determine number of sub-steps needed to cover base timestep interval
-                num_substeps_raw = int(np.round(h_step / current_h_step))
-
-                # Apply cap to prevent runaway subdivision (uses max_substeps_per_step)
-                if adaptive_timestep is not None:
-                    num_substeps = min(
-                        num_substeps_raw, adaptive_timestep.max_substeps_per_step
-                    )
-
-                    # Warn if cap is hit (indicates pathological region)
-                    if (
-                        num_substeps_raw > adaptive_timestep.max_substeps_per_step
-                        and adaptive_timestep.debug
-                    ):
-                        msg = (
-                            f"Step {i}: Sub-step limit reached ({adaptive_timestep.max_substeps_per_step}). "
-                            f"Timestep {current_h_step:.6e} ns would require {num_substeps_raw} sub-steps. "
-                            f"This step may not fully cover the base timestep interval."
-                        )
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-                else:
-                    # No adaptive timestep - use raw count
-                    num_substeps = num_substeps_raw
-
-                if num_substeps < 1:
-                    num_substeps = 1
-
-                # Build temporary trajectory for sub-stepping
-                # Start with a COPY of the base (which already has dead particle status)
-                # This ensures dead particles from previous retry attempts are preserved
-                temp_trajectory = [
-                    {
-                        k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
-                        for k, v in temp_trajectory_base.items()
-                    }
-                ]
-                temp_driver = [trajectory_drv[i - 1]]
-
-                energy_jump_detected = False
-                gamma_blowup_detected = False
-                max_refinement_reached = (
-                    False  # Track if we've already warned about max refinement
-                )
-                min_timestep_reached = (
-                    False  # Track if we've already warned about minimum timestep
-                )
-
-                for substep_idx in range(num_substeps):
-                    # Check for cancellation inside substep loop
-                    if cancel_callback is not None and cancel_callback():
-                        raise IntegrationCancelled("Integration cancelled by caller.")
-
-                    # Compute one sub-step, catching soft gamma blowups
-                    try:
-                        trial_state = self_consistent_step(
-                            retarded_equations_of_motion,
-                            current_h_step,
-                            temp_trajectory,
-                            temp_driver,
-                            substep_idx,  # Use correct index in temp trajectory
-                            aperture_radius,
-                            sim_type,
-                            self_consistency,
-                            chrono_mode,
-                            startup_mode,
-                            step_idx=i,  # Pass main step index for error messages
-                            cancel_callback=cancel_callback,  # Pass cancellation check through
-                        )
-                    except GammaBlowupError as e:
-                        # Soft gamma blowup detected - reduce timestep and retry
-                        # Only handle this if adaptive timestep is enabled
-                        if adaptive_timestep is None or not adaptive_timestep.enabled:
-                            # No adaptive timestep available - treat as hard blowup
-                            msg = (
-                                f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
-                                f"Gamma blowup (γ={e.gamma_value:.2e}) with no adaptive timestep available. "
-                                f"Marking particle as dead."
-                            )
-                            if logger:
-                                logger(msg)
-                            else:
-                                print(msg)
-                            # Get or create trial_state from previous step to mark particle dead
-                            if len(temp_trajectory) > 0:
-                                trial_state = {
-                                    k: (
-                                        v.copy()
-                                        if isinstance(v, (dict, np.ndarray))
-                                        else v
-                                    )
-                                    for k, v in temp_trajectory[-1].items()
-                                }
-                            else:
-                                trial_state = {
-                                    k: (
-                                        v.copy()
-                                        if isinstance(v, (dict, np.ndarray))
-                                        else v
-                                    )
-                                    for k, v in trajectory[i - 1].items()
-                                }
-
-                            mark_particle_dead(
-                                trial_state,
-                                e.particle_idx,
-                                i,
-                                "gamma_blowup_no_adaptive",
-                                gamma_value=e.gamma_value,
-                                iteration=e.iteration,
-                            )
-
-                            # Append the state with dead particle to trajectory
-                            temp_trajectory.append(trial_state)
-                            temp_driver.append(
-                                temp_driver[-1]
-                                if temp_driver
-                                else trajectory_drv[i - 1]
-                            )
-
-                            # Track particle death for timestep recovery logic
-                            last_particle_death_step = i
-
-                            # Don't retry - accept step with dead particle
-                            gamma_blowup_detected = False
-                            break  # Exit substep loop, step will be accepted below
-                        else:
-                            # Adaptive timestep available - try to reduce and retry
-                            gamma_blowup_detected = True
-
-                            if (
-                                refinement_attempt
-                                > adaptive_timestep.max_refinement_attempts
-                            ):
-                                # Exhausted retry attempts - convert to hard blowup
-                                msg = (
-                                    f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
-                                    f"Max refinement attempts reached after gamma blowup (γ={e.gamma_value:.6e}). "
-                                    f"Marking particle as dead."
-                                )
-                                if logger:
-                                    logger(msg)
-                                else:
-                                    print(msg)
-                                # Get or create trial_state from previous step
-                                if len(temp_trajectory) > 0:
-                                    trial_state = {
-                                        k: (
-                                            v.copy()
-                                            if isinstance(v, (dict, np.ndarray))
-                                            else v
-                                        )
-                                        for k, v in temp_trajectory[-1].items()
-                                    }
-                                else:
-                                    trial_state = {
-                                        k: (
-                                            v.copy()
-                                            if isinstance(v, (dict, np.ndarray))
-                                            else v
-                                        )
-                                        for k, v in trajectory[i - 1].items()
-                                    }
-
-                                mark_particle_dead(
-                                    trial_state,
-                                    e.particle_idx,
-                                    i,
-                                    "gamma_blowup_max_retries",
-                                    gamma_value=e.gamma_value,
-                                    iteration=e.iteration,
-                                )
-
-                                # Append the state with dead particle to trajectory
-                                temp_trajectory.append(trial_state)
-                                temp_driver.append(
-                                    temp_driver[-1]
-                                    if temp_driver
-                                    else trajectory_drv[i - 1]
-                                )
-
-                                # Track particle death for timestep recovery logic
-                                last_particle_death_step = i
-
-                                # Don't retry - accept step with dead particle
-                                gamma_blowup_detected = False
-                                break  # Exit substep loop, step will be accepted below
-                            else:
-                                # Check minimum timestep limit
-                                min_h = h_step * adaptive_timestep.min_timestep_factor
-                                new_h_step = (
-                                    current_h_step
-                                    / adaptive_timestep.timestep_reduction_factor
-                                )
-
-                                if new_h_step < min_h:
-                                    # Minimum timestep reached - convert to hard blowup
-                                    msg = (
-                                        f"    [CRITICAL] Step {i}, Particle {e.particle_idx}: "
-                                        f"Minimum timestep reached after gamma blowup (γ={e.gamma_value:.6e}). "
-                                        f"Marking particle as dead."
-                                    )
-                                    if logger:
-                                        logger(msg)
-                                    else:
-                                        print(msg)
-                                    # Get or create trial_state from previous step
-                                    if len(temp_trajectory) > 0:
-                                        trial_state = {
-                                            k: (
-                                                v.copy()
-                                                if isinstance(v, (dict, np.ndarray))
-                                                else v
-                                            )
-                                            for k, v in temp_trajectory[-1].items()
-                                        }
-                                    else:
-                                        trial_state = {
-                                            k: (
-                                                v.copy()
-                                                if isinstance(v, (dict, np.ndarray))
-                                                else v
-                                            )
-                                            for k, v in trajectory[i - 1].items()
-                                        }
-
-                                    mark_particle_dead(
-                                        trial_state,
-                                        e.particle_idx,
-                                        i,
-                                        "gamma_blowup_min_timestep",
-                                        gamma_value=e.gamma_value,
-                                        iteration=e.iteration,
-                                    )
-
-                                    # Append the state with dead particle to trajectory
-                                    temp_trajectory.append(trial_state)
-                                    temp_driver.append(
-                                        temp_driver[-1]
-                                        if temp_driver
-                                        else trajectory_drv[i - 1]
-                                    )
-
-                                    # Track particle death for timestep recovery logic
-                                    last_particle_death_step = i
-
-                                    # Don't retry - accept step with dead particle
-                                    gamma_blowup_detected = False
-                                    break  # Exit substep loop, step will be accepted below
-                                else:
-                                    # Reduce timestep and retry
-                                    # For hard blowups (NaN/Inf or gamma > 1e20), use more aggressive reduction
-                                    if (
-                                        hasattr(e, "is_hard_blowup")
-                                        and e.is_hard_blowup
-                                    ):
-                                        # Hard blowup: reduce by factor squared for more aggressive stepping
-                                        reduction_factor = (
-                                            adaptive_timestep.timestep_reduction_factor
-                                            ** 2
-                                        )
-                                        severity = "HARD"
-                                    else:
-                                        # Soft blowup: use normal reduction factor
-                                        reduction_factor = (
-                                            adaptive_timestep.timestep_reduction_factor
-                                        )
-                                        severity = "soft"
-
-                                    new_h_step = current_h_step / reduction_factor
-
-                                    # Ensure we don't go below minimum
-                                    if new_h_step < min_h:
-                                        new_h_step = min_h
-
-                                    current_h_step = new_h_step
-                                    if adaptive_timestep.debug:
-                                        msg = (
-                                            f"Step {i}.{substep_idx}: {severity} gamma blowup detected (γ={e.gamma_value:.6e}). "
-                                            f"Reducing timestep by {reduction_factor}x "
-                                            f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
-                                        )
-                                        if logger:
-                                            logger(msg)
-                                        else:
-                                            print(msg)
-
-                                    # Enter or stay in reduced timestep mode
-                                    reduced_timestep_mode = True
-                                    reduced_h_step = current_h_step
-                                    cooldown_counter = 0
-                                    stable_steps_counter = 0
-
-                                    # Propagate dead particles to base before breaking
-                                    propagate_deaths_to_base(trial_state)
-
-                                    break  # Exit sub-step loop to retry with smaller timestep
-
-                    # After substep completes, propagate any newly-dead particles back to base
-                    # so subsequent retries will skip them
-                    propagate_deaths_to_base(trial_state)
-
-                    # Update driver state for this substep
-                    if sim_type == SimulationType.SWITCHING_WALL:
-                        trial_driver = generate_switching_image(
-                            trial_state, wall_z, aperture_radius, z_cutoff
-                        )
-                    elif sim_type == SimulationType.CONDUCTING_WALL:
-                        trial_driver = generate_conducting_image(
-                            trial_state,
-                            wall_z,
-                            aperture_radius,
-                            subcharge_count=image_subcharge_count,
-                            use_weighting=use_conducting_image_weighting,
-                            macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                            macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                            macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
-                            bunch_transv_dist=bunch_transv_dist,
-                            bunch_transv_mom=bunch_transv_mom,
-                            timestep=current_h_step,
-                            step_number=i,
-                        )
-                    else:  # BUNCH_TO_BUNCH - driver doesn't change during substeps
-                        trial_driver = temp_driver[-1]
-
-                    # Check for energy jump if adaptive timestep is enabled
-                    if adaptive_timestep is not None and adaptive_timestep.enabled:
-                        current_energy = _compute_total_energy(trial_state)
-
-                        if previous_energy is not None and previous_energy > 0:
-                            relative_change = (
-                                abs(current_energy - previous_energy) / previous_energy
-                            )
-
-                            # If energy jump exceeds threshold, abort and refine
-                            if (
-                                relative_change
-                                > adaptive_timestep.energy_jump_threshold
-                            ):
-                                energy_jump_detected = True
-                                refinement_attempt += 1
-
-                                if (
-                                    refinement_attempt
-                                    > adaptive_timestep.max_refinement_attempts
-                                ):
-                                    # Max refinement attempts reached - accept step and continue substeps
-                                    if (
-                                        adaptive_timestep.debug
-                                        and not max_refinement_reached
-                                    ):
-                                        msg = (
-                                            f"Step {i}: Max refinement attempts ({adaptive_timestep.max_refinement_attempts}) reached. "
-                                            f"Accepting remaining substeps (ΔE/E = {relative_change:.6e})"
-                                        )
-                                        if logger:
-                                            logger(msg)
-                                        else:
-                                            print(msg)
-                                        max_refinement_reached = (
-                                            True  # Only print once per step
-                                        )
-                                    energy_jump_detected = (
-                                        False  # Don't retry, accept this substep
-                                    )
-                                else:
-                                    # Check minimum timestep limit
-                                    min_h = (
-                                        h_step * adaptive_timestep.min_timestep_factor
-                                    )
-                                    new_h_step = (
-                                        current_h_step
-                                        / adaptive_timestep.timestep_reduction_factor
-                                    )
-
-                                    if new_h_step < min_h:
-                                        if (
-                                            adaptive_timestep.debug
-                                            and not min_timestep_reached
-                                        ):
-                                            msg = (
-                                                f"Step {i}: Minimum timestep reached. "
-                                                f"Accepting remaining substeps (ΔE/E = {relative_change:.6e})"
-                                            )
-                                            if logger:
-                                                logger(msg)
-                                            else:
-                                                print(msg)
-                                            min_timestep_reached = (
-                                                True  # Only print once per retry
-                                            )
-                                        energy_jump_detected = False  # Accept anyway
-                                    else:
-                                        current_h_step = new_h_step
-                                        if adaptive_timestep.debug:
-                                            msg = (
-                                                f"Step {i}: Energy jump (ΔE/E = {relative_change:.6e}). "
-                                                f"Reducing timestep by {adaptive_timestep.timestep_reduction_factor}x "
-                                                f"to {current_h_step:.6e} ns (attempt {refinement_attempt})"
-                                            )
-                                            if logger:
-                                                logger(msg)
-                                            else:
-                                                print(msg)
-
-                                        # Enter or stay in reduced timestep mode
-                                        reduced_timestep_mode = True
-                                        reduced_h_step = current_h_step
-                                        cooldown_counter = 0
-                                        stable_steps_counter = 0
-
-                                        # Propagate dead particles to base before breaking
-                                        propagate_deaths_to_base(temp_trajectory[-1])
-
-                                        break  # Exit sub-step loop to retry with smaller timestep
-
-                        # Update previous energy for next substep
-                        previous_energy = current_energy
-
-                    # Append this substep to the temporary trajectory
-                    temp_trajectory.append(trial_state)
-                    temp_driver.append(trial_driver)
-
-                # If no energy jump, gamma blowup, or we're accepting anyway, we're done
-                if not energy_jump_detected and not gamma_blowup_detected:
-                    step_accepted = True
-                    if (
-                        adaptive_timestep is not None
-                        and adaptive_timestep.debug
-                        and refinement_attempt > 0
-                    ):
-                        msg = f"Step {i}: Completed {num_substeps} sub-step(s) with timestep {current_h_step:.6e} ns"
-                        if logger:
-                            logger(msg)
-                        else:
-                            print(msg)
-
-                    # Hysteresis: check if we're in probing phase and can return to normal
-                    if (
-                        adaptive_timestep is not None
-                        and adaptive_timestep.enabled
-                        and reduced_timestep_mode
-                        and cooldown_counter >= adaptive_timestep.cooldown_steps
-                    ):
-                        # We're in probing phase - check energy stability
-                        if previous_energy is not None:
-                            # Use temp_trajectory[-1] which contains the current step result
-                            # (trajectory[i] hasn't been assigned yet at this point)
-                            current_energy = _compute_total_energy(temp_trajectory[-1])
-                            relative_change = (
-                                abs(current_energy - previous_energy) / previous_energy
-                            )
-
-                            if relative_change < adaptive_timestep.probe_threshold:
-                                # This step was stable
-                                stable_steps_counter += 1
-                                if adaptive_timestep.debug:
-                                    msg = (
-                                        f"Step {i}: Stable (ΔE/E = {relative_change:.6e} < {adaptive_timestep.probe_threshold:.6e}), "
-                                        f"count = {stable_steps_counter}/{adaptive_timestep.max_probe_steps}"
-                                    )
-                                    if logger:
-                                        logger(msg)
-                                    else:
-                                        print(msg)
-
-                                if (
-                                    stable_steps_counter
-                                    >= adaptive_timestep.max_probe_steps
-                                ):
-                                    # Safe to return to normal timestep
-                                    reduced_timestep_mode = False
-                                    stable_steps_counter = 0
-                                    cooldown_counter = 0
-                                    if adaptive_timestep.debug:
-                                        msg = (
-                                            f"Step {i}: Returning to normal timestep {h_step:.6e} ns "
-                                            f"after {adaptive_timestep.max_probe_steps} stable steps"
-                                        )
-                                        if logger:
-                                            logger(msg)
-                                        else:
-                                            print(msg)
-                            else:
-                                # Energy jump during probing - reset and stay reduced
-                                stable_steps_counter = 0
-                                cooldown_counter = 0  # Restart cooldown
-                                if adaptive_timestep.debug:
-                                    msg = (
-                                        f"Step {i}: Unstable during probing (ΔE/E = {relative_change:.6e}), "
-                                        f"restarting cooldown"
-                                    )
-                                    if logger:
-                                        logger(msg)
-                                    else:
-                                        print(msg)
-
-                                # Propagate dead particles to base before restarting cooldown
-                                propagate_deaths_to_base(temp_trajectory[-1])
-
-            # Accept the final sub-step state as the step result
-            trajectory[i] = temp_trajectory[-1]
+            trajectory[i] = _run_adaptive_step(
+                i=i,
+                steps=steps,
+                h_step=h_step,
+                wall_z=wall_z,
+                aperture_radius=aperture_radius,
+                sim_type=sim_type,
+                chrono_mode=chrono_mode,
+                startup_mode=startup_mode,
+                self_consistency=self_consistency,
+                adaptive_timestep=adaptive_timestep,
+                space_charge=space_charge,
+                image_subcharge_count=image_subcharge_count,
+                use_conducting_image_weighting=use_conducting_image_weighting,
+                macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                bunch_transv_dist=bunch_transv_dist,
+                bunch_transv_mom=bunch_transv_mom,
+                z_cutoff=z_cutoff,
+                trajectory=trajectory,
+                trajectory_drv=trajectory_drv,
+                _traj_drv_builder=_traj_drv_builder,
+                cancel_callback=cancel_callback,
+                logger=logger,
+                adaptive_state=_adaptive_state,
+            )
             _ensure_startup_metadata(trajectory[i])
+            _traj_builder.set_step(i, trajectory[i])
 
             # Check if all particles are dead
             if all_particles_dead(trajectory[i]):
@@ -1220,7 +1071,15 @@ def retarded_integrator(
                 )
                 trajectory[-1]["_halt_step"] = i
                 trajectory[-1]["_requested_steps"] = steps
-                return trajectory, trajectory_drv
+                _traj_builder.set_halt_metadata(
+                    step=i,
+                    reason=f"all_particles_dead at step {i}/{steps}. {failure_summary}",
+                    halt_step=i,
+                    requested_steps=steps,
+                )
+                _traj_soa = _traj_builder.build()
+                _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
+                return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
 
             # Post-step gamma check for individual particles
             # Mark any particle with extreme gamma as dead
@@ -1278,7 +1137,7 @@ def retarded_integrator(
                     macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
                     bunch_transv_dist=bunch_transv_dist,
                     bunch_transv_mom=bunch_transv_mom,
-                    timestep=current_h_step,
+                    timestep=_adaptive_state.current_h_step,
                     step_number=i,
                 )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
@@ -1286,6 +1145,9 @@ def retarded_integrator(
                     raise ValueError(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
+                _b2b_scs_accepts_soa = "traj_soa" in inspect.signature(
+                    self_consistent_step
+                ).parameters
                 trajectory_drv[i] = self_consistent_step(
                     retarded_equations_of_motion,
                     h_step,
@@ -1297,9 +1159,20 @@ def retarded_integrator(
                     self_consistency,
                     chrono_mode,
                     startup_mode,
-                    step_idx=i,  # Pass step index for error messages
+                    step_idx=i,
+                    **({
+                        "space_charge": space_charge
+                    } if space_charge is not None else {}),
+                    **({
+                        "traj_soa": _traj_drv_builder.build_partial(i)
+                    } if _b2b_scs_accepts_soa and _traj_drv_builder is not None else {}),
+                    **({
+                        "traj_ext_soa": _traj_builder.build_partial(i)
+                    } if _b2b_scs_accepts_soa else {}),
                 )
             _ensure_startup_metadata(trajectory_drv[i])
+            if _traj_drv_builder is not None:
+                _traj_drv_builder.set_step(i, trajectory_drv[i])
 
         # Check for early termination in BUNCH_TO_BUNCH relative mode
         if (
@@ -1327,7 +1200,15 @@ def retarded_integrator(
                 )
                 trajectory_truncated[-1]["_halt_step"] = i
                 trajectory_truncated[-1]["_requested_steps"] = steps
-                return trajectory_truncated, trajectory_drv_truncated
+                _traj_builder.set_halt_metadata(
+                    step=i,
+                    reason=f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})",
+                    halt_step=i,
+                    requested_steps=steps,
+                )
+                _traj_soa = _traj_builder.build()
+                _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
+                return trajectory_truncated, trajectory_drv_truncated, _traj_soa, _traj_drv_soa
 
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
         if (
@@ -1357,14 +1238,13 @@ def retarded_integrator(
                     )
             previous_energy = current_energy
 
-        # Update previous energy for adaptive timestep (even if energy_monitor is disabled)
-        if adaptive_timestep is not None and adaptive_timestep.enabled and i > 0:
-            previous_energy = _compute_total_energy(trajectory[i])
-
         if progress_callback is not None:
             progress_callback(i + 1, steps)
 
-    return trajectory, trajectory_drv
+    _traj_soa = _traj_builder.build()
+    _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
+    return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
+
 
 
 def run_integrator(
@@ -1374,9 +1254,10 @@ def run_integrator(
     self_consistency: Optional[SelfConsistencyConfig] = None,
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
+    space_charge: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
-) -> Tuple[Trajectory, Trajectory]:
+) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
     """Convenience wrapper using :class:`IntegratorConfig`.
 
     All parameters are supplied via ``config`` which mirrors the keyword
@@ -1403,8 +1284,8 @@ def run_integrator(
 
     Returns
     -------
-    Tuple[Trajectory, Trajectory]
-        Rider and driver trajectories
+    Tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None]
+        Rider and driver trajectories plus optional SOA views.
     """
 
     return retarded_integrator(
@@ -1431,6 +1312,7 @@ def run_integrator(
         bunch_transv_mom=config.bunch_transv_mom,
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
+        space_charge=space_charge,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
     )

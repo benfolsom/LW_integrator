@@ -6,7 +6,6 @@ status, and computing metrics with dead particles excluded.
 """
 
 import numpy as np
-import pytest
 
 from core.particle_status import (
     all_particles_dead,
@@ -64,7 +63,7 @@ class TestMarkParticleDead:
 
         # Check dead flag set
         assert "_dead_particles" in state
-        assert state["_dead_particles"][2] == True
+        assert state["_dead_particles"][2]
         assert np.sum(state["_dead_particles"]) == 1
 
         # Check charge zeroed
@@ -86,8 +85,8 @@ class TestMarkParticleDead:
         mark_particle_dead(state, 3, 75, "energy_jump")
 
         assert np.sum(state["_dead_particles"]) == 2
-        assert state["_dead_particles"][1] == True
-        assert state["_dead_particles"][3] == True
+        assert state["_dead_particles"][1]
+        assert state["_dead_particles"][3]
         assert state["stripped_ions"][1] == 0.0
         assert state["stripped_ions"][3] == 0.0
 
@@ -108,7 +107,7 @@ class TestPropagateDeadStatus:
 
         # Check status copied
         assert "_dead_particles" in current_state
-        assert current_state["_dead_particles"][2] == True
+        assert current_state["_dead_particles"][2]
         assert np.sum(current_state["_dead_particles"]) == 1
 
         # Check charge zeroed
@@ -156,7 +155,7 @@ class TestAliveParticleQueries:
         state = create_test_state(5)
         mark_particle_dead(state, 1, 100, "gamma_blowup")
 
-        assert all_particles_dead(state) == False
+        assert not all_particles_dead(state)
 
     def test_all_particles_dead_true(self):
         """Test all_particles_dead returns True when all dead."""
@@ -165,7 +164,7 @@ class TestAliveParticleQueries:
         mark_particle_dead(state, 1, 100, "gamma_blowup")
         mark_particle_dead(state, 2, 100, "gamma_blowup")
 
-        assert all_particles_dead(state) == True
+        assert all_particles_dead(state)
 
     def test_get_alive_values(self):
         """Test extracting values from alive particles only."""
@@ -304,7 +303,7 @@ if __name__ == "__main__":
     mark_particle_dead(state, 2, 100, "gamma_blowup", gamma_value=1e9)
     print(f"  Dead particles: {np.where(state['_dead_particles'])[0]}")
     print(f"  Charges: {state['stripped_ions']}")
-    assert state["_dead_particles"][2] == True
+    assert state["_dead_particles"][2]
     assert state["stripped_ions"][2] == 0.0
     print("  ✓ Passed")
 
@@ -312,7 +311,7 @@ if __name__ == "__main__":
     print("\nTest 2: Propagate dead status")
     next_state = create_test_state(5)
     propagate_dead_particle_status(next_state, state)
-    assert next_state["_dead_particles"][2] == True
+    assert next_state["_dead_particles"][2]
     assert next_state["stripped_ions"][2] == 0.0
     print("  ✓ Passed")
 
@@ -335,7 +334,7 @@ if __name__ == "__main__":
     mark_particle_dead(state, 0, 100, "gamma_blowup")
     mark_particle_dead(state, 1, 100, "gamma_blowup")
     mark_particle_dead(state, 2, 100, "gamma_blowup")
-    assert all_particles_dead(state) == True
+    assert all_particles_dead(state)
     print("  ✓ Passed")
 
     # Test 5: Failure summary

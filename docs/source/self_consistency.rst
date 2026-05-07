@@ -22,7 +22,7 @@ high-energy close-approach scenarios where mass-shell alone is insufficient.
    Without self-consistency iterations, the integrator can produce energy jumps
    exceeding 1000% in challenging scenarios (high-energy particles, close approaches,
    narrow apertures). **Always enable self-consistency** unless benchmarking or
-   testing legacy behavior.
+   testing reference behavior.
 
 Physical Motivation
 ===================
@@ -230,7 +230,7 @@ How Working Variables Are Calculated
          \beta^2 &= (\beta_x^{(k)})^2 + (\beta_y^{(k)})^2 + (\beta_z^{(k)})^2 \\
          \gamma_{\text{velocity}}^{(k)} &= \frac{1}{\sqrt{1 - \beta^2}}
 
-   9. **Check dual convergence** (see next section)
+   9. **Check both convergence criteria** (see next section)
 
    10. If **not converged**, update working variables for next iteration:
 
@@ -302,7 +302,7 @@ Flowchart
      ├─ [9] Compute gamma from velocity (kinematics)
      │       γ_velocity^(k) = 1 / √(1 - β²)
      │
-     └─ [10] Check dual convergence (if k > 0)
+     └─ [10] Check both convergence criteria (if k > 0)
               │
               ├─ Compute mass-shell error:
               │  E_ms = |Pt² - P² - (mc)²| / (mc)²
@@ -359,7 +359,7 @@ For a low-energy particle (γ=2, separation=10mm):
 Example: High Energy Close Approach
 ------------------------------------
 
-For a challenging case (γ=200, separation=1mm) **with dual convergence**:
+For a challenging case (γ=200, separation=1mm) **with both convergence criteria**:
 
 .. code-block:: text
 
@@ -396,19 +396,19 @@ For a challenging case (γ=200, separation=1mm) **with dual convergence**:
      → E_ms = 7.5e-13 ✓, E_gamma = 4.2e-7 ✓
      → CONVERGED in 5 iterations
 
-**Without dual convergence** (mass-shell only, legacy mode):
+**Without the gamma-consistency check**:
 
 .. code-block:: text
 
    Iteration 1:
      → E_ms = 5.2e-7 ✓ (< 1e-6)
-     → CONVERGED (mass-shell only)
+     → CONVERGED on mass-shell error alone
      → Gamma check: E_gamma = 3.1e-2 ⚠️ WARNING
 
    Subsequent steps:
      → Gamma error grows to 10⁶ (catastrophic failure)
 
-This demonstrates why dual convergence is essential for extreme regimes.
+This demonstrates why checking both convergence criteria is essential for extreme regimes.
 
 Safety Nets
 ===========
@@ -483,29 +483,30 @@ For ultra-relativistic particles (γ > 1000) or narrow apertures:
        verbosity=2                     # Detailed logging
    )
 
-Legacy Mode (Not Recommended)
-------------------------------
+Benchmarking Configuration
+--------------------------
 
-For comparison with legacy code or benchmarking:
+For comparison runs or lower-cost benchmarking:
 
 .. code-block:: python
 
    config = SelfConsistencyConfig(
        enabled=True,
-       convergence_mode="mass_shell_only",  # Only mass-shell criterion
+       convergence_mode="fixed_geometry",  # Fixed geometry, Pt projection
        target_ms_tolerance=1e-6,
        max_iterations=5,
        verbosity=0
    )
 
 .. warning::
-   Mass-shell-only mode can produce catastrophic gamma errors (10⁶) in high-energy
-   close-approach scenarios. Use only for testing/comparison, never in production.
+   Fixed-geometry self-consistency is the fast maintained path, but challenging
+   close-approach scenarios may still require tighter tolerances or more
+   iterations for stable convergence.
 
 Disabling Self-Consistency
 ---------------------------
 
-For debugging or legacy comparison:
+For debugging or reference comparisons:
 
 .. code-block:: python
 
@@ -513,8 +514,8 @@ For debugging or legacy comparison:
 
 .. danger::
    Disabling self-consistency can produce energy jumps exceeding 1000% and
-   non-physical particle trajectories. Only disable for testing or comparison
-   with legacy code. **Never use in production simulations.**
+   non-physical particle trajectories. Only disable for testing or controlled
+   reference comparisons. **Never use in production simulations.**
 
 Performance Considerations
 ==========================
@@ -672,7 +673,7 @@ via :py:class:`core.types.GammaReconciliationMethod`:
    Equivalent to DISABLED; provided for symmetry/clarity.
 
 **DISABLED (default as of February 2026)**
-   No reconciliation applied (v0.4.8 legacy behavior)
+   No reconciliation applied
 
    .. note::
       This is now the **recommended default** as of February 2026. The original
@@ -757,19 +758,14 @@ Backward Compatibility
 ----------------------
 
 The old boolean ``gamma_reconciliation_enabled`` parameter has been replaced with
-``gamma_reconciliation_method``. For backward compatibility:
+``gamma_reconciliation_method``. Historical configs should be updated to use the
+enum directly:
 
 .. code-block:: python
 
-   # Old style (deprecated)
-   config.gamma_reconciliation_enabled = True   # Now uses ADAPTIVE_WEIGHTED (opt-in)
-   config.gamma_reconciliation_enabled = False  # Now uses DISABLED
-
-   # New style (recommended)
+   # Maintained style
    config.gamma_reconciliation_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
-
-The ``gamma_reconciliation_enabled`` property still works (returns True if method != DISABLED)
-for legacy code compatibility.
+   config.gamma_reconciliation_method = GammaReconciliationMethod.DISABLED
 
 Recommendations
 ---------------
@@ -785,10 +781,6 @@ Recommendations
    - Lower ``high_beta_weight`` to 0.1 (trust velocity more)
 
 **Debugging**: Use USE_VELOCITY or USE_ENERGY to isolate problematic calculations
-
-**Not recommended**: DISABLED
-   - Only for legacy comparison or debugging
-   - Can cause catastrophic energy blowups
 
 Diagnostics
 -----------
@@ -816,8 +808,6 @@ References
 
 - :ref:`equations_of_motion` - Full equations of motion documentation
 - :ref:`integration_runner` - Integration loop and timestep management
-- Local documentation: ``local/GAMMA_CHECK_DECISION.md`` - Test results justifying dual convergence
-- Local documentation: ``local/WEIGHTED_CONVERGENCE_PROPOSAL.md`` - Design rationale
 
 See Also
 ========
@@ -826,5 +816,3 @@ See Also
 - :py:class:`core.types.GammaReconciliationMethod` - Reconciliation method enum
 - :py:func:`core.equations.retarded_equations_of_motion` - Main equations implementation
 - :py:func:`core.self_consistency.self_consistent_step` - Wrapper function
-- Local documentation: ``local/gamma_reconciliation_config.md`` - Comprehensive reconciliation guide
-- Local documentation: ``local/gamma_reconciliation_quickref.md`` - Quick parameter reference

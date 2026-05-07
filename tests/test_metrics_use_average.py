@@ -259,13 +259,6 @@ def test_initial_gamma_calculation_uses_particle_0():
     # This is expected behavior - initial conditions have all particles alive
     # So using particle 0 or average should be equivalent for initial state
 
-    initial_state = {
-        "Pz": np.array([100.0, 100.0, 100.0]),
-        "Px": np.array([0.0, 0.0, 0.0]),
-        "Py": np.array([0.0, 0.0, 0.0]),
-        "m": np.array([1.0, 1.0, 1.0]),
-    }
-
     # In testbed_runner, initial gamma is calculated from particle 0
     # This is OK because all particles should have same initial energy
     # (they're initialized with the same energy parameter)
@@ -289,13 +282,8 @@ def test_final_gamma_uses_alive_average():
 
     # Get alive particles
     Pz_alive = get_alive_particle_values(final_state, "Pz")
-    Px_alive = get_alive_particle_values(final_state, "Px")
-    Py_alive = get_alive_particle_values(final_state, "Py")
-
     # Average over alive particles
     Pz_avg = float(np.mean(Pz_alive))
-    Px_avg = float(np.mean(Px_alive))
-    Py_avg = float(np.mean(Py_alive))
 
     expected_Pz = (100.0 + 110.0) / 2.0
     assert Pz_avg == pytest.approx(expected_Pz)

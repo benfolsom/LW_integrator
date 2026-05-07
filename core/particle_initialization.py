@@ -1,8 +1,9 @@
 """
 Professional particle initialization module for electromagnetic field simulations.
 
-This module provides harmonized particle state initialization between legacy and modern
-integrator systems, ensuring consistent physics across both implementations.
+This module provides harmonized particle state initialization between the
+maintained solver and archived reference workflows, ensuring consistent
+physics across both paths.
 """
 
 from typing import Any, Dict, Mapping, Tuple, Union
@@ -27,7 +28,8 @@ def create_particle_state(
     charge_multiplier: float = 1.0,
 ) -> Tuple[Dict[str, Any], float]:
     """
-    Create particle state initialization compatible with both legacy and modern integrators.
+    Create particle state initialization compatible with both archived-reference
+    and modern integrator flows.
 
     Parameters:
     -----------
@@ -56,7 +58,7 @@ def create_particle_state(
         Particle state dictionary and rest energy in MeV
     """
 
-    # Physical constants (matching legacy values exactly)
+    # Physical constants matching the archived reference values exactly.
     amu_to_mev = 931.494  # Conversion factor
 
     # Calculate rest energy
@@ -71,7 +73,7 @@ def create_particle_state(
     momenta_y = np.zeros(particle_count)
     momenta_z = np.full(particle_count, starting_pz)
 
-    # Convert charge to amu-mm-ns units (must match legacy exactly!)
+    # Convert charge to amu-mm-ns units (must match the reference values exactly).
     charges = np.full(
         particle_count,
         charge_sign * ELEMENTARY_CHARGE * stripped_ions * charge_multiplier,
@@ -88,7 +90,7 @@ def create_particle_state(
     char_times = np.full(particle_count, char_time_value)
 
     # Calculate initial gamma and momenta from input momentum
-    # Following legacy initialization: Pt = sqrt(Px^2 + Py^2 + Pz^2 + (mc)^2)
+    # Match the archived reference initialization: Pt = sqrt(Px^2 + Py^2 + Pz^2 + (mc)^2)
     Px = momenta_x.copy()
     Py = momenta_y.copy()
     Pz = momenta_z.copy()

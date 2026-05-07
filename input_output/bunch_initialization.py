@@ -189,10 +189,11 @@ def create_bunch_from_params(
     charge_sign: float = 1.0,
     seed: int | None = None,
 ) -> Tuple[ParticleState, float]:
-    """Generate particle state from legacy-style parameters.
+    """Generate particle state from historical parameter names.
 
-    This function provides a non-legacy alternative to legacy.bunch_inits.init_bunch
-    with support for transverse offset.
+    This function is the maintained particle-bunch initializer for configs that
+    still use the original parameter naming scheme, with support for transverse
+    offset.
 
     Parameters
     ----------

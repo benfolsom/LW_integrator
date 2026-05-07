@@ -164,7 +164,7 @@ class TestExtremeGamma:
 
         init_state = create_extreme_encounter_state(gamma, separation)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=50,
             h_step=h_step,
             wall_z=1e6,
@@ -233,7 +233,7 @@ class TestNanometerSeparations:
         init_state = create_extreme_encounter_state(gamma, separation_mm)
 
         try:
-            trajectory, _ = retarded_integrator(
+            trajectory, _, *_soa_out = retarded_integrator(
                 steps=20,  # Fewer steps due to computational cost
                 h_step=h_step,
                 wall_z=1e6,
@@ -316,7 +316,7 @@ class TestCombinedExtreme:
         init_state = create_extreme_encounter_state(gamma, separation_mm)
 
         try:
-            trajectory, _ = retarded_integrator(
+            trajectory, _, *_soa_out = retarded_integrator(
                 steps=15,  # Very few steps - this is expensive
                 h_step=h_step,
                 wall_z=1e6,
@@ -375,7 +375,7 @@ class TestCombinedExtreme:
         # Show error evolution
         if violation_count > 0:
             print(f"  Error history (first 10 steps): {error_history[:10]}")
-            print(f"  ⚠️  VIOLATION DETECTED - Additional clamping may be needed")
+            print("  ⚠️  VIOLATION DETECTED - Additional clamping may be needed")
 
         # Very loose tolerance - we expect this might fail
         assert max_error < 1.0, (
@@ -405,7 +405,7 @@ class TestRadiationReactionStrength:
             init_state = create_extreme_encounter_state(gamma, sep_mm)
 
             try:
-                trajectory, _ = retarded_integrator(
+                trajectory, _, *_soa_out = retarded_integrator(
                     steps=20,
                     h_step=h_step,
                     wall_z=1e6,

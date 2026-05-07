@@ -1,6 +1,6 @@
 """Compatibility facade exposing the retarded integrator public API.
 
-The legacy codebase imported functionality directly from
+Earlier project layouts imported functionality directly from
 ``core.trajectory_integrator``. The implementation has since been modularised
 into smaller, focused modules. This wrapper re-exports the public symbols to
 maintain import compatibility while also providing a light-weight class based
@@ -39,7 +39,7 @@ from .types import (
 
 
 class LienardWiechertIntegrator:
-    """Compatibility wrapper mimicking the legacy integrator facade.
+    """Compatibility wrapper mimicking the historical integrator facade.
 
     The historic API exposed a mutable class with helper methods that several
     notebooks and regression tests relied upon. The present codebase is
@@ -119,7 +119,7 @@ class LienardWiechertIntegrator:
     ) -> tuple[Trajectory, Trajectory]:
         """Execute retarded-field integration using the modern core runner.
 
-        Parameters mirror the legacy signature but are forwarded to
+        Parameters mirror the historical signature but are forwarded to
         :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
             preserved for backwards compatibility and contributes to the total step
             count.
@@ -167,7 +167,7 @@ class LienardWiechertIntegrator:
                 self.config.use_image_weighting if self.config else True
             )
 
-        trajectory, driver = retarded_integrator(
+        trajectory, driver, *_soa_out = retarded_integrator(
             steps=total_steps,
             h_step=float(h_step),
             wall_z=float(wall_Z),

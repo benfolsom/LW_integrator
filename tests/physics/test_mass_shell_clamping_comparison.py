@@ -185,7 +185,7 @@ class TestMassShellClampingBasics:
         """Test that mass-shell constraint is maintained across energy scales."""
         init_state = create_two_particle_collision(gamma=gamma, separation=2.0)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=20,
             h_step=1e-8,
             wall_z=1e6,
@@ -218,7 +218,7 @@ class TestMassShellClampingBasics:
         for sep in separations:
             init_state = create_two_particle_collision(gamma=gamma, separation=sep)
 
-            trajectory, _ = retarded_integrator(
+            trajectory, _, *_soa_out = retarded_integrator(
                 steps=30,
                 h_step=1e-9,
                 wall_z=1e6,
@@ -252,7 +252,7 @@ class TestMassShellClampingDynamics:
         gamma = 10.0
         init_state = create_two_particle_collision(gamma=gamma, separation=1.0)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=50,
             h_step=1e-9,
             wall_z=1e6,
@@ -275,7 +275,7 @@ class TestMassShellClampingDynamics:
         energy_final = energies[-1]
         energy_drift = abs(energy_final - energy_initial) / energy_initial
 
-        print(f"\nEnergy conservation with mass-shell clamping:")
+        print("\nEnergy conservation with mass-shell clamping:")
         print(f"  Initial energy: {energy_initial:.10e}")
         print(f"  Final energy:   {energy_final:.10e}")
         print(f"  Relative drift: {energy_drift:.3e}")
@@ -292,7 +292,7 @@ class TestMassShellClampingDynamics:
                 gamma=gamma_initial, separation=2.0
             )
 
-            trajectory, _ = retarded_integrator(
+            trajectory, _, *_soa_out = retarded_integrator(
                 steps=10,
                 h_step=1e-8,
                 wall_z=1e6,
@@ -341,7 +341,7 @@ class TestMassShellClampingDocumentation:
         gamma = 50.0
         init_state = create_two_particle_collision(gamma=gamma, separation=0.5)
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=100,
             h_step=1e-9,
             wall_z=1e6,
@@ -381,11 +381,11 @@ class TestMassShellClampingDocumentation:
         sc_config = SelfConsistencyConfig(
             enabled=True,
             max_iterations=10,
-            target_tolerance=1e-6,
+            target_ms_tolerance=1e-6,
             verbosity=0,
         )
 
-        trajectory, _ = retarded_integrator(
+        trajectory, _, *_soa_out = retarded_integrator(
             steps=30,
             h_step=1e-8,
             wall_z=1e6,

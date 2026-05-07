@@ -1,7 +1,7 @@
 """Test suite for scalar potential gamma calculation fix.
 
 This module validates that gamma is computed correctly using the scalar
-potential correction: γ = (Pt - q²·Φ) / (mc)
+potential correction: γ = (Pt - q·Φ) / (mc)
 """
 
 import numpy as np
@@ -9,10 +9,10 @@ import numpy as np
 
 def test_scalar_potential_gamma_basic():
     """Test that gamma is computed correctly with scalar potential correction."""
-    # Physical constants
-    c = 299.792458  # mm/ns
-    m_electron = 9.1093837015e-31 * 1e18  # kg -> pg
-    q_electron = -1.602176634e-19 * 1e21  # C -> pC (negative!)
+    # Normalized units keep the cancellation test deterministic.
+    c = 1.0
+    m_electron = 1.0
+    q_electron = -1.0
 
     # Particle state
     gamma_true = 2000.0
@@ -22,7 +22,7 @@ def test_scalar_potential_gamma_basic():
 
     # Add scalar potential contribution
     # Φ = q_ext / (R_sep * k_factor)
-    q_ext = 1.602176634e-19 * 1e21  # proton charge in pC
+    q_ext = 0.1
     R_sep = 5.0  # mm
     k_factor = 0.9
 
@@ -35,7 +35,7 @@ def test_scalar_potential_gamma_basic():
     gamma_wrong = Pt_with_field / (m_electron * c)
 
     # Compute gamma CORRECTLY (new way)
-    scalar_potential_contribution = q_electron * q_electron * Phi
+    scalar_potential_contribution = q_electron * Phi
     kinetic_energy = Pt_with_field - scalar_potential_contribution
     gamma_correct = kinetic_energy / (m_electron * c)
 
@@ -56,15 +56,15 @@ def test_scalar_potential_gamma_basic():
     print(f"  Gamma (wrong): {gamma_wrong:.6e} (includes potential)")
     print(f"  Gamma (correct): {gamma_correct:.6e} (potential corrected)")
     print(f"  Scalar potential Φ: {Phi:.6e}")
-    print(f"  Correction q²Φ: {scalar_potential_contribution:.6e}")
+    print(f"  Correction qΦ: {scalar_potential_contribution:.6e}")
 
 
 def test_multiple_charges_scalar_potential():
     """Test scalar potential sum from multiple external charges."""
-    # Physical constants
-    c = 299.792458  # mm/ns
-    m_electron = 9.1093837015e-31 * 1e18  # kg -> pg
-    q_electron = -1.602176634e-19 * 1e21  # C -> pC
+    # Normalized units keep the cancellation test deterministic.
+    c = 1.0
+    m_electron = 1.0
+    q_electron = -1.0
 
     # True gamma
     gamma_true = 5000.0
@@ -75,9 +75,9 @@ def test_multiple_charges_scalar_potential():
     # Multiple external charges
     charges_ext = np.array(
         [
-            1.602176634e-19 * 1e21,  # proton
-            1.602176634e-19 * 1e21,  # proton
-            -1.602176634e-19 * 1e21,  # electron
+            1.0,
+            1.0,
+            -1.0,
         ]
     )
     R_separations = np.array([10.0, 15.0, 8.0])  # mm
@@ -90,7 +90,7 @@ def test_multiple_charges_scalar_potential():
     Pt_with_field = Pt_base + q_electron * Phi_sum
 
     # Correct gamma calculation
-    scalar_potential_contribution = q_electron * q_electron * Phi_sum
+    scalar_potential_contribution = q_electron * Phi_sum
     kinetic_energy = Pt_with_field - scalar_potential_contribution
     gamma_correct = kinetic_energy / (m_electron * c)
 
@@ -103,16 +103,16 @@ def test_multiple_charges_scalar_potential():
 
     print(f"  Number of external charges: {len(charges_ext)}")
     print(f"  Scalar potential sum Φ: {Phi_sum:.6e}")
-    print(f"  Correction q²Σ(Φ): {scalar_potential_contribution:.6e}")
+    print(f"  Correction qΣ(Φ): {scalar_potential_contribution:.6e}")
     print(f"  Recovered gamma: {gamma_correct:.6e}")
 
 
 def test_zero_potential_limit():
     """Test that with no external field, gamma is computed correctly."""
-    # Physical constants
-    c = 299.792458  # mm/ns
-    m_electron = 9.1093837015e-31 * 1e18  # kg -> pg
-    q_electron = -1.602176634e-19 * 1e21  # C -> pC
+    # Normalized units keep the cancellation test deterministic.
+    c = 1.0
+    m_electron = 1.0
+    q_electron = -1.0
 
     # True gamma
     gamma_true = 100.0
@@ -124,7 +124,7 @@ def test_zero_potential_limit():
     Phi_sum = 0.0
 
     # Gamma calculation
-    scalar_potential_contribution = q_electron * q_electron * Phi_sum
+    scalar_potential_contribution = q_electron * Phi_sum
     kinetic_energy = Pt - scalar_potential_contribution
     gamma = kinetic_energy / (m_electron * c)
 
@@ -138,10 +138,10 @@ def test_zero_potential_limit():
 
 def test_strong_field_regime():
     """Test gamma calculation in strong electromagnetic field."""
-    # Physical constants
-    c = 299.792458  # mm/ns
-    m_electron = 9.1093837015e-31 * 1e18  # kg -> pg
-    q_electron = -1.602176634e-19 * 1e21  # C -> pC
+    # Normalized units keep the cancellation test deterministic.
+    c = 1.0
+    m_electron = 1.0
+    q_electron = -1.0
 
     # True gamma (high energy electron)
     gamma_true = 20000.0  # ~10 GeV
@@ -150,7 +150,7 @@ def test_strong_field_regime():
     Pt_base = gamma_true * m_electron * c
 
     # Strong field: close approach to highly charged object
-    q_ext = 1.602176634e-19 * 1e21 * 50  # 50 proton charges
+    q_ext = 50.0
     R_sep = 0.1  # mm (very close!)
     k_factor = 0.5  # strong retardation
 
@@ -163,7 +163,7 @@ def test_strong_field_regime():
     gamma_wrong = Pt_with_field / (m_electron * c)
 
     # Correct calculation
-    scalar_potential_contribution = q_electron * q_electron * Phi
+    scalar_potential_contribution = q_electron * Phi
     kinetic_energy = Pt_with_field - scalar_potential_contribution
     gamma_correct = kinetic_energy / (m_electron * c)
 
@@ -188,17 +188,17 @@ def test_strong_field_regime():
 
 def test_adaptive_timestep_relevance():
     """Demonstrate why this fix matters for adaptive timestep."""
-    # Physical constants
-    c = 299.792458  # mm/ns
-    m_electron = 9.1093837015e-31 * 1e18  # kg -> pg
-    q_electron = -1.602176634e-19 * 1e21  # C -> pC
+    # Normalized units keep the cancellation test deterministic.
+    c = 1.0
+    m_electron = 1.0
+    q_electron = -1.0
 
     # Scenario: electron approaching wall
     gamma_initial = 10000.0
     gamma_during_interaction = 10050.0  # small change in kinetic energy
 
     # External field during interaction
-    q_ext = 1.602176634e-19 * 1e21 * 100  # 100 charges
+    q_ext = 100.0
     R_sep = 1.0  # mm
     k_factor = 0.8
     Phi = q_ext / (R_sep * k_factor)
@@ -215,7 +215,7 @@ def test_adaptive_timestep_relevance():
     delta_gamma_wrong = gamma_interaction_wrong - gamma_initial_wrong
 
     # CORRECT: Use scalar potential correction
-    scalar_contrib = q_electron * q_electron * Phi
+    scalar_contrib = q_electron * Phi
     gamma_interaction_correct = (Pt_interaction - scalar_contrib) / (m_electron * c)
     delta_gamma_correct = gamma_interaction_correct - gamma_initial
 
@@ -258,4 +258,4 @@ if __name__ == "__main__":
     print("   ✓ PASSED\n")
 
     print("✅ All scalar potential gamma tests passed!")
-    print("\nKey takeaway: γ = (Pt - q²·Φ)/(mc) is essential for correct dynamics!")
+    print("\nKey takeaway: γ = (Pt - q·Φ)/(mc) is essential for correct dynamics!")

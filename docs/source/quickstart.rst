@@ -25,15 +25,14 @@ simulation, and confirm that the regression tooling works on your machine.
    The ``dev`` extra mirrors the dependencies used in CI (NumPy, SciPy,
    Matplotlib, pytest, Sphinx, nbsphinx, etc.).
 
-4. (Optional) Launch the validation notebook for interactive comparison:
+4. (Optional) Open the historical validation notebook for reference:
 
    .. code-block:: bash
 
       code examples/validation/core_vs_legacy_benchmark.ipynb
 
-   From VS Code or Jupyter Lab, execute the cells and experiment with the
-   widgets. The notebook runs the same ``run_benchmark`` helper that the CLI
-   uses and can save overlay plots and ΔE scatter figures directly.
+   Use it as a historical reference for the archived comparison workflow.  For
+   current validation, prefer the pytest and CLI checks in :doc:`validation`.
 
 5. Launch the GUI application:
 
@@ -54,8 +53,6 @@ simulation, and confirm that the regression tooling works on your machine.
    * **Optimization Mode** (Sweep/Optimization tab): Global optimization using
      Genetic Algorithm, Differential Evolution, Nelder-Mead, or Multi-start
      methods with convergence detection and top-N result saving.
-
-   For detailed optimization workflows, see ``local/SWEEP_AND_OPTIMIZATION_GUIDE.md``.
 
 6. Exercise the command-line entry point:
 
@@ -85,20 +82,16 @@ simulation, and confirm that the regression tooling works on your machine.
    .. code-block:: json
 
       {
-        "simulation": {
-          "steps": 1000,
-          "time_step": 3e-7,
-          "simulation_type": "conducting-wall",
-          "aperture_radius": 0.01,
-          "wall_position": 100.0
-        },
+        "steps": 1000,
+        "time_step": 3e-7,
+        "simulation_type": "conducting-wall",
+        "aperture_radius": 0.01,
+        "wall_position": 100.0,
         "rider": {
-          "mass": 1.0,
-          "charge": 1.0,
-          "energy": 5.0,
-          "x0": 0.0,
-          "y0": 0.0,
-          "z0": 0.0
+          "kinetic_energy_mev": 5.0,
+          "mass_amu": 1.0,
+          "charge_sign": 1.0,
+          "position_z": 0.0
         }
       }
 
@@ -146,14 +139,15 @@ simulation, and confirm that the regression tooling works on your machine.
 
    Open ``docs/build/html/index.html`` in a browser to browse the rendered pages.
 
-8. Run the integration test suite to validate physics parity:
+8. Run the integration and CLI/GUI parity checks relevant to your change:
 
    .. code-block:: bash
 
-      pytest tests/integration/test_core_integrators.py -k two_particle
+      pytest tests/test_integration_e2e.py
+      pytest tests/test_cli_gui_parity.py
 
-   The tests confirm that the core and legacy solvers agree on canonical
-   benchmarks to within floating-point tolerances.
+   These tests exercise maintained end-to-end solver paths and the intended
+   headless baseline for sweep behavior.
 
 9. Run a macroparticle simulation (conducting-wall mode):
 
@@ -222,8 +216,8 @@ simulation, and confirm that the regression tooling works on your machine.
 Next steps
 ----------
 
-* :doc:`validation` details the scripts and notebooks that compare the core and
-  legacy implementations across multiple seeds and integration lengths.
+* :doc:`validation` details the maintained pytest, CLI, GUI, and plotting checks
+  used as the current regression baseline.
 * :doc:`notebooks` provides guidance on using the interactive assets efficiently
   (plot styling, DPI control, output directories, etc.).
 * :doc:`recent_changes` describes the macroparticle simulation feature and other

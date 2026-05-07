@@ -41,8 +41,6 @@ wired into all save points:
 * GUI mixin (``optimization/results_mixins.py``) — after
   ``_save_sweep_results``.
 * GUI plugin (``lw_integrator/optimization_plugin.py``) — after saving results.
-* Library API (``optimization/parameter_sweep.py``) — after
-  ``_save_sweep_results`` in ``run_parameter_sweep``.
 
 The threshold (``min_runs=100``) is currently hard-coded at each call site.
 Directory-name collisions are resolved by appending ``_1``, ``_2``, etc.
@@ -50,7 +48,7 @@ Directory-name collisions are resolved by appending ``_1``, ``_2``, etc.
 Heatmap Contour Improvements (March 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``generate_sweep_heatmap.py`` received several visual-quality fixes:
+``lw-generate-sweep-heatmap`` received several visual-quality fixes:
 
 * **Contour line alpha** reduced from 0.35 → 0.18 for less visual clutter.
 * **Edge-aware label clamping** — labels whose centres fall outside the axes
@@ -118,7 +116,7 @@ with β > 0.5.
 
 Original (incorrect) formula:
 
-.. code-block:: python
+.. code-block:: text
 
    threshold = R * (1.0 - beta_dot_nhat)  # WRONG: multiplication
 
@@ -237,8 +235,6 @@ All validation tests pass:
 
 **References**
 
-* Detailed analysis: ``local/COLD_START_FIX.md``
-* Test script: ``local/test_gating_fix.py``
 * Affected config: ``configs/run_configs/two_particle_demo6.json``
 
 Fix 2: Missing β Factor for Low-Velocity Particles (February 25, 2026)
@@ -400,11 +396,8 @@ obtain accurate results.
 
 **References**
 
-* Implementation report: ``local/COLD_START_FIX_IMPLEMENTED.md``
-* Bug report: ``local/COLD_START_GATING_BUG_REPORT.md``
-* Fix specification: ``local/COLD_START_FIX_SPECIFICATION.md``
-* Verification test: ``local/test_gating_fix_verification.py``
-* Analytical test: ``local/test_low_beta_gating_issue.py``
+Implementation details were recorded during development; the maintained docs
+capture the final corrected behavior.
 
 Adaptive Timestep Auto-Calculation (February 10, 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -559,12 +552,8 @@ Analysis revealed the original implementation violated energy conservation:
 
 **Detailed Analysis**
 
-See ``local/GAMMA_RECONCILIATION_FIX.md`` for:
-
-* Root cause analysis
-* Comparison with v0.4.8 stable results
-* Migration guide
-* Future redesign recommendations
+The maintained self-consistency and gamma-reconciliation documentation reflects
+the current supported configuration surface.
 
 Optimization Plugin Fix (February 10, 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -731,13 +720,26 @@ which define bunch center positions and are only meaningful in BUNCH_TO_BUNCH mo
 Behavior by Simulation Type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-============== ============== =================== ==============================
-Mode           Driver Params  Transverse Offsets  Use Case
-============== ============== =================== ==============================
-CONDUCTING_WALL Disabled      **Disabled**        Single bunch vs conducting wall
-SWITCHING_WALL  Enabled       **Disabled**        Two bunches, no transverse offset
-BUNCH_TO_BUNCH  Enabled       **Enabled**         Two bunches with separation
-============== ============== =================== ==============================
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 22 38
+
+   * - Mode
+     - Driver Params
+     - Transverse Offsets
+     - Use Case
+   * - CONDUCTING_WALL
+     - Disabled
+     - **Disabled**
+     - Single bunch vs conducting wall
+   * - SWITCHING_WALL
+     - Enabled
+     - **Disabled**
+     - Two bunches, no transverse offset
+   * - BUNCH_TO_BUNCH
+     - Enabled
+     - **Enabled**
+     - Two bunches with separation
 
 Original Demo Compatibility
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -787,8 +789,8 @@ studies:
 
 * **New offset parameters**: ``transv_offset_x`` and ``transv_offset_y`` specify beam center position in mm
 * **Beam positioning**: Particles distributed in [offset ± spread] for both x and y coordinates
-* **Core initialization**: New ``input_output.bunch_initialization.create_bunch_from_params()`` replaces legacy initialization
-* **Legacy isolation**: Legacy code (``legacy/bunch_inits.py``) now ONLY runs when "Enable legacy comparison" is checked
+* **Core initialization**: ``input_output.bunch_initialization.create_bunch_from_params()`` is the maintained initializer for configs using historical parameter names
+* **Legacy isolation**: Active legacy comparison code has since been removed; historical notebooks remain as reference material
 * **GUI integration**: Offset fields automatically appear in Particles tab for rider and driver bunches
 * **Optimization fix**: "Transverse Offset" fractions now correctly set beam **position**, not spread
 * **Backward compatibility**: Old configs without offset parameters default to 0.0 (on-axis)
@@ -873,23 +875,17 @@ The offset and spread are applied in ``input_output/bunch_initialization.py``:
            pcount
        )
 
-Legacy Code Isolation
-~~~~~~~~~~~~~~~~~~~~~
+Legacy Reference Isolation
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Legacy initialization is now only used when explicitly requested:
-
-* **GUI**: "Enable legacy comparison" checkbox in Output tab
-* **API**: ``use_legacy=True`` in ``prepare_particle_bunches()``
-* **Default behavior**: Core initialization (``create_bunch_from_params()``)
-
-When legacy mode is disabled (default), the modern core implementation handles
-all particle initialization, ensuring offset parameters are supported and
-transverse momentum spread is properly applied.
+Active workflows now use the maintained core initializer
+(``create_bunch_from_params()``).  Historical comparison notebooks remain in the
+repository for reference, but legacy Python comparison modes are no longer part
+of the supported API surface.
 
 **Impact**: Enables off-axis beam studies for aperture tolerance analysis, beam
-halo characterization, and beam dynamics research. Legacy code isolation ensures
-the modern core implementation is used by default while maintaining validation
-capability against historical results.
+halo characterization, and beam dynamics research while keeping active
+validation centered on maintained code paths.
 
 
 Macroparticle Simulation (January 2025)
@@ -1012,8 +1008,7 @@ The GUI now provides comprehensive optimization capabilities:
 * **Real-time logging**: Progress tracking with convergence monitoring
 * **Timestep requirements**: Critical timestep ≤ 3e-7 ns for radiation reaction physics with stripped_ions > 10
 
-See ``local/SWEEP_AND_OPTIMIZATION_GUIDE.md`` for detailed usage and
-``local/EARLY_STOPPING_IMPLEMENTATION.md`` for technical details.
+See the README and sweep/optimization CLI help for maintained usage details.
 
 Physics Corrections (December 2024)
 ------------------------------------
@@ -1093,7 +1088,7 @@ quantities: energy-derived gamma vs. velocity-derived gamma. Previously, the
 code only checked if the energy-derived gamma stopped changing between
 iterations.
 
-.. code-block:: python
+.. code-block:: text
 
    # Old (WRONG): Compare current vs. previous iteration
    converged = |gamma_energy[i] - gamma_energy[i-1]| < tolerance
@@ -1241,11 +1236,8 @@ Validation and Testing
 Test Scripts
 ~~~~~~~~~~~~
 
-Comprehensive validation scripts are available in ``local/``:
-
-* ``test_precision_fix.py`` - Beta precision, k_factor, gamma self-consistency
-* ``calculate_clamping_energy.py`` - Energy thresholds for beta clamping
-* ``calculate_kfactor_limit.py`` - k_factor threshold exploration
+Validation coverage for these changes lives in the tracked test suite under
+``tests/``.
 
 Canonical Test Case
 ~~~~~~~~~~~~~~~~~~~
@@ -1288,7 +1280,7 @@ Summary table of updated thresholds:
      - 7.0710678e7
      - (removed)
      - Now uses soft floor on denominator
-   * SC tolerance
+   * - SC tolerance
      - 1e-6
      - 1e-4
      - Default relaxed for performance
@@ -1365,9 +1357,6 @@ Updating Existing Code
 Further Reading
 ---------------
 
-* Optimization guide: ``local/SWEEP_AND_OPTIMIZATION_GUIDE.md``
-* Early stopping implementation: ``local/EARLY_STOPPING_IMPLEMENTATION.md``
-* Optimization status: ``local/OPTIMIZATION_GUI_STATUS.md``
 * Theoretical background: :doc:`theory`
 * API reference: :doc:`api/index`
 * Validation workflows: :doc:`validation`

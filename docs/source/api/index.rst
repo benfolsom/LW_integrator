@@ -9,6 +9,5 @@ material for the main modules.
    :maxdepth: 1
 
    core
-   performance
    input_output
    images

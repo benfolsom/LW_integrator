@@ -10,6 +10,7 @@ import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
 from core.types import SimulationType  # type: ignore[import]
+from optimization.simulation_type_helpers import is_bunch_to_bunch
 
 _ELECTRON_MASS_AMU = 0.00054857990907
 _PROTON_MASS_AMU = 1.0
@@ -34,7 +35,9 @@ class OptimizationConfig:
     mode: str = "blind_sweep"  # "blind_sweep" or "optimization"
 
     # Optimization settings (only used when mode="optimization")
-    optimization_method: str = "differential_evolution"  # "differential_evolution", "genetic_algorithm", "multi_start", "adaptive_grid"
+    optimization_method: str = (
+        "differential_evolution"  # "differential_evolution", "genetic_algorithm", "multi_start", "adaptive_grid"
+    )
     optimization_maxiter: int = 50  # Max iterations/generations
     optimization_population_size: int = (
         20  # For genetic algorithm and differential evolution
@@ -227,7 +230,7 @@ class OptimizationConfig:
     # none = no debug logs saved
     # truncated = 1-2 lines per run with parameters + metrics + errors/warnings only
     # full = complete debug output with SC iterations and adaptive timestep refinements
-    # top_n_only = logs only for top N trajectories
+    # top_n_only = compact sweep logs; detailed output is limited to Top-N reruns
 
     # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
@@ -267,7 +270,9 @@ class OptimizationConfig:
     # Sweep robustness options
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
     skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
-    failed_run_retry_attempts: int = 1  # Number of retry attempts for failed runs with new random seeds (0 = no retries)
+    failed_run_retry_attempts: int = (
+        1  # Number of retry attempts for failed runs with new random seeds (0 = no retries)
+    )
 
     # Trajectory stability checking (multi-step numerical validation)
     smoothness_enabled: bool = True  # Enable trajectory stability analysis
@@ -322,7 +327,7 @@ class OptimizationConfig:
         rest_energy_mev = m_particle_amu * 931.494  # amu to MeV
 
         # For BUNCH_TO_BUNCH, energy is kinetic energy; for others, it's total energy
-        if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+        if is_bunch_to_bunch(self.simulation_type):
             # Kinetic energy: γ = (KE / E_rest) + 1
             gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
         else:
@@ -340,7 +345,7 @@ class OptimizationConfig:
                 wall_z = self.wall_z
 
             # Calculate target distance based on simulation type
-            if self.simulation_type == SimulationType.BUNCH_TO_BUNCH:
+            if is_bunch_to_bunch(self.simulation_type):
                 # For BUNCH_TO_BUNCH: rider travels to driver_start + target_distance
                 # This ensures rider reaches interaction region with driver
                 total_distance = abs(driver_start_z - start_z) + self.target_distance_mm
@@ -470,10 +475,4 @@ __all__ = [
     "calculate_auto_timestep",
     "calculate_auto_steps",
     "calculate_steps_from_duration",
-    "_ELECTRON_MASS_AMU",
-    "_PROTON_MASS_AMU",
-    "_ELECTRON_ENERGY_THRESHOLD_GEV",
-    "_PROTON_ENERGY_THRESHOLD_GEV",
-    "_ENERGY_THRESHOLD_EXPONENT",
-    "_ENERGY_THRESHOLD_SCALE",
 ]
