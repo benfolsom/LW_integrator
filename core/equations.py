@@ -1419,18 +1419,30 @@ def retarded_equations_of_motion(
                     # startup approximation.
                     _sc_threshold = space_charge.resolve_min_retarded_steps(h)
                     use_retarded_sc = len(trajectory) > _sc_threshold
+
+                    def _slice_step(step: dict, idx: int) -> dict:
+                        out: dict = {}
+                        for k, v in step.items():
+                            try:
+                                arr = np.asarray(v)
+                                if arr.ndim >= 1 and arr.shape[0] == n_particles:
+                                    out[k] = arr[[idx]]
+                                else:
+                                    out[k] = v
+                            except (TypeError, ValueError):
+                                out[k] = v
+                        return out
+
                     for j in range(n_particles):
                         if j == particle_idx:
                             continue
                         if use_retarded_sc:
                             sc_traj_ext = [
-                                {k: v[[j]] for k, v in step.items()}
+                                _slice_step(step, j)
                                 for step in trajectory[:index_traj + 1]
                             ]
                         else:
-                            sc_step = {
-                                k: v[[j]] for k, v in trajectory[index_traj].items()
-                            }
+                            sc_step = _slice_step(trajectory[index_traj], j)
                             sc_traj_ext = [sc_step] * (index_traj + 1)
                         sc_nhat = compute_retarded_distance(
                             trajectory,

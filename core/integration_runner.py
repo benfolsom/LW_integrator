@@ -795,8 +795,8 @@ def retarded_integrator(
                             step_idx=i,  # Pass main step index for error messages
                             cancel_callback=cancel_callback,  # Pass cancellation check through
                             **({"space_charge": space_charge} if space_charge is not None else {}),
-                            **({"traj_soa": _build_partial_soa(temp_trajectory, substep_idx)} if _scs_accepts_soa else {}),
-                            **({"traj_ext_soa": _build_partial_soa(temp_driver, substep_idx)} if _scs_accepts_soa else {}),
+                            **({"traj_soa": _build_partial_soa(temp_trajectory, substep_idx + 1)} if _scs_accepts_soa else {}),
+                            **({"traj_ext_soa": _build_partial_soa(temp_driver, substep_idx + 1)} if _scs_accepts_soa else {}),
                         )
                     except GammaBlowupError as e:
                         # Soft gamma blowup detected - reduce timestep and retry
