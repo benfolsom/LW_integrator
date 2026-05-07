@@ -134,6 +134,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Path to a JSON sweep configuration file for parameter sweeps.",
     )
     parser.add_argument(
+        "-j",
+        "--workers",
+        type=int,
+        default=None,
+        dest="workers",
+        help="Number of parallel worker processes for sweep execution. Default is sequential.",
+    )
+    parser.add_argument(
         "--results-file",
         type=Path,
         dest="results_file",
@@ -813,6 +821,7 @@ def run_sweep(args: argparse.Namespace) -> int:
             output_dir=None,
             verbose=not quiet,
             verbosity_overrides=verbosity_overrides,
+            workers=getattr(args, "workers", None),
         )
         return 0 if success else 1
     except Exception as exc:

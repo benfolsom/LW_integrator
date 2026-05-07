@@ -150,11 +150,11 @@ def _locate_retarded_index(
     if target_time <= 0.0:
         return index_traj
 
-    for k in range(index_traj, -1, -1):
-        candidate_index = index_traj - k
-        if trajectory_ext[candidate_index]["t"][sample_index] >= target_time:
-            return candidate_index
-    return 0
+    times = np.array([trajectory_ext[k]["t"][sample_index] for k in range(index_traj + 1)])
+    idx = int(np.searchsorted(times, target_time, side="left"))
+    if idx > index_traj:
+        idx = index_traj
+    return idx
 
 
 def compute_instantaneous_distance(
@@ -173,29 +173,20 @@ def compute_instantaneous_distance(
         ``vector_ext`` bunch.
     """
 
-    result: DistanceResult = {
-        "R": np.zeros_like(vector_ext["x"]),
-        "nx": np.zeros_like(vector_ext["x"]),
-        "ny": np.zeros_like(vector_ext["x"]),
-        "nz": np.zeros_like(vector_ext["x"]),
-    }
+    result: DistanceResult = {}
 
-    for j in range(len(vector_ext["x"])):
-        dx = vector["x"][index] - vector_ext["x"][j]
-        dy = vector["y"][index] - vector_ext["y"][j]
-        dz = vector["z"][index] - vector_ext["z"][j]
-        distance = np.sqrt(dx**2 + dy**2 + dz**2)
-        if distance < NUMERICAL_EPSILON:
-            result["R"][j] = NUMERICAL_EPSILON
-            result["nx"][j] = 0.0
-            result["ny"][j] = 0.0
-            result["nz"][j] = 0.0
-            continue
+    dx = vector["x"][index] - vector_ext["x"]
+    dy = vector["y"][index] - vector_ext["y"]
+    dz = vector["z"][index] - vector_ext["z"]
+    distance = np.sqrt(dx**2 + dy**2 + dz**2)
 
-        result["R"][j] = distance
-        result["nx"][j] = dx / distance
-        result["ny"][j] = dy / distance
-        result["nz"][j] = dz / distance
+    too_close = distance < NUMERICAL_EPSILON
+    safe_dist = np.where(too_close, NUMERICAL_EPSILON, distance)
+
+    result["R"] = safe_dist
+    result["nx"] = np.where(too_close, 0.0, dx / safe_dist)
+    result["ny"] = np.where(too_close, 0.0, dy / safe_dist)
+    result["nz"] = np.where(too_close, 0.0, dz / safe_dist)
 
     return result
 

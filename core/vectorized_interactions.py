@@ -64,7 +64,7 @@ from .constants import C_MMNS
 
 # Try to import numba for JIT compilation
 try:
-    from numba import jit
+    from numba import jit, prange
 
     NUMBA_AVAILABLE = True
 except ImportError:
@@ -76,6 +76,8 @@ except ImportError:
             return func
 
         return decorator
+
+    prange = range
 
 
 # K-factor thresholds for series approximation
@@ -971,7 +973,7 @@ def compute_vectorized_contributions(
 
 
 # Numba-accelerated force calculation kernel
-@jit(nopython=True, fastmath=True, cache=True)
+@jit(nopython=True, fastmath=True, cache=True, parallel=True)
 def _compute_forces_numba_kernel(
     h,
     charge_i,
@@ -1010,7 +1012,7 @@ def _compute_forces_numba_kernel(
     c_sq = c * c
     c_cu = c_sq * c
 
-    for j in range(n_ext):
+    for j in prange(n_ext):
         # k-factor with float64 precision
         beta_dot_nhat = bx_ext[j] * nx[j] + by_ext[j] * ny[j] + bz_ext[j] * nz[j]
         k_factor = 1.0 - beta_dot_nhat

@@ -29,10 +29,12 @@ and debugging workflows.
 
 from __future__ import annotations
 
+import concurrent.futures
 import itertools
 import json
 import shutil
 import time
+import traceback as _traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -517,6 +519,47 @@ def _build_cli_sweep_start_log_lines(
     return lines
 
 
+def _worker_run_combo(payload: dict) -> dict:
+    """Top-level picklable worker for parallel sweep execution."""
+    config: OptimizationConfig = payload["config"]
+    output_dir: Path = payload["output_dir"]
+    run_num: int = payload["run_num"]
+    total_runs: int = payload["total_runs"]
+    aperture: float = payload["aperture"]
+    energy_gev: float = payload["energy_gev"]
+    start_z: float = payload["start_z"]
+    transv_offset_frac: float = payload["transv_offset_frac"]
+    sweep_overrides: dict = payload["sweep_overrides"]
+    params_dict: dict = payload["params_dict"]
+
+    runner = SweepRunner(config=config, output_dir=output_dir, verbose=False)
+    try:
+        result = runner._run_single_integration(
+            aperture=aperture,
+            energy_gev=energy_gev,
+            start_z=start_z,
+            transv_offset_frac=transv_offset_frac,
+            run_num=run_num,
+            total_runs=total_runs,
+            sweep_overrides=sweep_overrides,
+            emit_run_diagnostics=False,
+            emit_run_summary=False,
+        )
+    except Exception as exc:
+        result = {
+            "success": False,
+            "error": str(exc),
+            "error_details": _traceback.format_exc(),
+        }
+
+    result["run_number"] = run_num
+    if result.get("parameters") is None:
+        result["parameters"] = {}
+    result["parameters"].update(params_dict)
+    result["_params_dict"] = params_dict
+    return result
+
+
 class SweepRunner:
     """Execute parameter sweeps from configuration files without GUI.
 
@@ -527,11 +570,16 @@ class SweepRunner:
     """
 
     def __init__(
-        self, config: OptimizationConfig, output_dir: Path, verbose: bool = True
+        self,
+        config: OptimizationConfig,
+        output_dir: Path,
+        verbose: bool = True,
+        workers: Optional[int] = None,
     ):
         self.config = config
         self.output_dir = Path(output_dir)
         self.verbose = verbose
+        self.workers = workers
         self.results: List[Dict[str, Any]] = []
         self.log_file = None
 
@@ -885,114 +933,238 @@ class SweepRunner:
             param_values_lists = [param_grids[name] for name in param_names]
             _positional_keys = {"aperture", "energy", "start_z", "transv_offset_frac"}
 
+            # Pre-build the full list of combos so we can dispatch all at once
+            all_combos = list(itertools.product(*param_values_lists))
+
             # Run sweep
             start_time = time.time()
-            run_num = 0
             failed_count = 0
 
-            for param_combo in itertools.product(*param_values_lists):
-                run_num += 1
-                params_dict = dict(zip(param_names, param_combo))
+            use_parallel = self.workers is not None and self.workers > 1
 
-                aperture = params_dict.get("aperture", 0.001)
-                energy = params_dict["energy"]
-                start_z = params_dict["start_z"]
-                transv_offset_frac = params_dict.get("transv_offset_frac", 0.0)
-
-                sweep_overrides = {
-                    k: v for k, v in params_dict.items() if k not in _positional_keys
-                }
-                helper_params = {
-                    **params_dict,
-                    "transverse_offset_fraction": transv_offset_frac,
-                }
-                run_params = resolve_sweep_run_parameters(self.config, helper_params)
-                if run_params is None:
-                    raise ValueError("Sweep run parameters are missing energy")
-
-                rider_m_particle = run_params.rider_m_particle
-                rider_transv_dist = run_params.rider_transv_dist
-
-                if use_full_debug:
-                    for line in build_full_debug_parameter_log_lines(
-                        self.config,
-                        run_params,
-                        run_num=run_num,
-                        total_runs=total_runs,
-                        params_dict=helper_params,
-                    ):
-                        self._log(line)
-
-                # ── Run integration ──
-                try:
-                    result = self._run_single_integration(
-                        aperture=aperture,
-                        energy_gev=energy,
-                        start_z=start_z,
-                        transv_offset_frac=transv_offset_frac,
-                        run_num=run_num,
-                        total_runs=total_runs,
-                        sweep_overrides=sweep_overrides,
-                        emit_run_diagnostics=use_full_debug,
-                        emit_run_summary=not use_no_logging,
+            if use_parallel:
+                # ── Build payloads for worker processes ──
+                payloads = []
+                for run_num, param_combo in enumerate(all_combos, start=1):
+                    params_dict = dict(zip(param_names, param_combo))
+                    aperture = params_dict.get("aperture", 0.001)
+                    energy = params_dict["energy"]
+                    start_z = params_dict["start_z"]
+                    transv_offset_frac = params_dict.get("transv_offset_frac", 0.0)
+                    sweep_overrides = {
+                        k: v
+                        for k, v in params_dict.items()
+                        if k not in _positional_keys
+                    }
+                    payloads.append(
+                        {
+                            "config": self.config,
+                            "output_dir": self.output_dir,
+                            "run_num": run_num,
+                            "total_runs": total_runs,
+                            "aperture": aperture,
+                            "energy_gev": energy,
+                            "start_z": start_z,
+                            "transv_offset_frac": transv_offset_frac,
+                            "sweep_overrides": sweep_overrides,
+                            "params_dict": params_dict,
+                        }
                     )
 
-                    result["run_number"] = run_num
-                    if result.get("parameters") is None:
-                        result["parameters"] = {}
-                    result["parameters"].update(params_dict)
+                # ── Dispatch all combos in parallel ──
+                raw_results: Dict[int, dict] = {}
+                with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=self.workers
+                ) as executor:
+                    future_to_run = {
+                        executor.submit(_worker_run_combo, p): p["run_num"]
+                        for p in payloads
+                    }
+                    try:
+                        for future in concurrent.futures.as_completed(future_to_run):
+                            rn = future_to_run[future]
+                            try:
+                                raw_results[rn] = future.result()
+                            except Exception as exc:
+                                raw_results[rn] = {
+                                    "success": False,
+                                    "run_number": rn,
+                                    "error": str(exc),
+                                    "error_details": _traceback.format_exc(),
+                                    "parameters": payloads[rn - 1]["params_dict"],
+                                    "_params_dict": payloads[rn - 1]["params_dict"],
+                                }
+                    except KeyboardInterrupt:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        raise
+
+                # ── Replay results in run_num order for logging ──
+                for run_num in range(1, total_runs + 1):
+                    result = raw_results[run_num]
+                    params_dict = result["_params_dict"]
+                    energy = params_dict["energy"]
+                    transv_offset_frac = params_dict.get("transv_offset_frac", 0.0)
+                    sweep_overrides = {
+                        k: v
+                        for k, v in params_dict.items()
+                        if k not in _positional_keys
+                    }
+                    helper_params = {
+                        **params_dict,
+                        "transverse_offset_fraction": transv_offset_frac,
+                    }
+                    run_params = resolve_sweep_run_parameters(self.config, helper_params)
+                    if run_params is None:
+                        raise ValueError("Sweep run parameters are missing energy")
+                    rider_m_particle = run_params.rider_m_particle
+                    rider_transv_dist = run_params.rider_transv_dist
+
                     self.results.append(result)
 
-                    if not result["success"]:
+                    if not result.get("success"):
                         failed_count += 1
-                        error_msg = result.get("error", "Unknown error")
-                        self._log(f"  [FAILED] Run {run_num}/{total_runs}: {error_msg}")
-
-                except Exception as e:
-                    failed_count += 1
-                    import traceback
-
-                    error_detail = traceback.format_exc()
-                    for line in build_exception_sweep_run_log_lines(
-                        run_num=run_num,
-                        total_runs=total_runs,
-                        error=e,
-                        error_detail=error_detail,
-                    ):
-                        self._log(line)
-                    self.results.append(
-                        build_exception_sweep_run_record(
+                        if "error_details" in result and not result.get("success"):
+                            for line in build_exception_sweep_run_log_lines(
+                                run_num=run_num,
+                                total_runs=total_runs,
+                                error=Exception(result.get("error", "unknown")),
+                                error_detail=result.get("error_details", ""),
+                            ):
+                                self._log(line)
+                        else:
+                            error_msg = result.get("error", "Unknown error")
+                            self._log(
+                                f"  [FAILED] Run {run_num}/{total_runs}: {error_msg}"
+                            )
+                    else:
+                        metrics = result.get("metrics", {})
+                        log_output = build_successful_sweep_run_log(
                             run_num=run_num,
+                            total_runs=total_runs,
+                            metrics=metrics,
+                            rest_energy_mev=rider_m_particle * AMU_TO_MEV,
+                            param_names=param_names,
+                            energy=energy,
+                            rider_transv_dist=rider_transv_dist,
+                            sweep_overrides=sweep_overrides,
+                            default_driver_energy_gev=self.config.driver_energy_gev,
+                        )
+                        if use_truncated_logging or use_full_debug:
+                            for line in log_output.optimization_lines:
+                                self._log_line(line)
+                            if use_full_debug:
+                                for line in log_output.detail_lines:
+                                    self._log(line)
+                            self._log(log_output.compact_line)
+
+            else:
+                # ── Sequential path (unchanged behavior) ──
+                run_num = 0
+                for param_combo in all_combos:
+                    run_num += 1
+                    params_dict = dict(zip(param_names, param_combo))
+
+                    aperture = params_dict.get("aperture", 0.001)
+                    energy = params_dict["energy"]
+                    start_z = params_dict["start_z"]
+                    transv_offset_frac = params_dict.get("transv_offset_frac", 0.0)
+
+                    sweep_overrides = {
+                        k: v
+                        for k, v in params_dict.items()
+                        if k not in _positional_keys
+                    }
+                    helper_params = {
+                        **params_dict,
+                        "transverse_offset_fraction": transv_offset_frac,
+                    }
+                    run_params = resolve_sweep_run_parameters(self.config, helper_params)
+                    if run_params is None:
+                        raise ValueError("Sweep run parameters are missing energy")
+
+                    rider_m_particle = run_params.rider_m_particle
+                    rider_transv_dist = run_params.rider_transv_dist
+
+                    if use_full_debug:
+                        for line in build_full_debug_parameter_log_lines(
+                            self.config,
+                            run_params,
+                            run_num=run_num,
+                            total_runs=total_runs,
+                            params_dict=helper_params,
+                        ):
+                            self._log(line)
+
+                    # ── Run integration ──
+                    try:
+                        result = self._run_single_integration(
+                            aperture=aperture,
+                            energy_gev=energy,
+                            start_z=start_z,
+                            transv_offset_frac=transv_offset_frac,
+                            run_num=run_num,
+                            total_runs=total_runs,
+                            sweep_overrides=sweep_overrides,
+                            emit_run_diagnostics=use_full_debug,
+                            emit_run_summary=not use_no_logging,
+                        )
+
+                        result["run_number"] = run_num
+                        if result.get("parameters") is None:
+                            result["parameters"] = {}
+                        result["parameters"].update(params_dict)
+                        self.results.append(result)
+
+                        if not result["success"]:
+                            failed_count += 1
+                            error_msg = result.get("error", "Unknown error")
+                            self._log(
+                                f"  [FAILED] Run {run_num}/{total_runs}: {error_msg}"
+                            )
+
+                    except Exception as e:
+                        failed_count += 1
+                        error_detail = _traceback.format_exc()
+                        for line in build_exception_sweep_run_log_lines(
+                            run_num=run_num,
+                            total_runs=total_runs,
                             error=e,
                             error_detail=error_detail,
-                            params_dict=params_dict,
+                        ):
+                            self._log(line)
+                        self.results.append(
+                            build_exception_sweep_run_record(
+                                run_num=run_num,
+                                error=e,
+                                error_detail=error_detail,
+                                params_dict=params_dict,
+                            )
                         )
-                    )
-                    result = self.results[-1]
+                        result = self.results[-1]
 
-                # ── Log results ──
-                if result.get("success"):
-                    metrics = result.get("metrics", {})
-                    log_output = build_successful_sweep_run_log(
-                        run_num=run_num,
-                        total_runs=total_runs,
-                        metrics=metrics,
-                        rest_energy_mev=rider_m_particle * AMU_TO_MEV,
-                        param_names=param_names,
-                        energy=energy,
-                        rider_transv_dist=rider_transv_dist,
-                        sweep_overrides=sweep_overrides,
-                        default_driver_energy_gev=self.config.driver_energy_gev,
-                    )
+                    # ── Log results ──
+                    if result.get("success"):
+                        metrics = result.get("metrics", {})
+                        log_output = build_successful_sweep_run_log(
+                            run_num=run_num,
+                            total_runs=total_runs,
+                            metrics=metrics,
+                            rest_energy_mev=rider_m_particle * AMU_TO_MEV,
+                            param_names=param_names,
+                            energy=energy,
+                            rider_transv_dist=rider_transv_dist,
+                            sweep_overrides=sweep_overrides,
+                            default_driver_energy_gev=self.config.driver_energy_gev,
+                        )
 
-                    if use_truncated_logging or use_full_debug:
-                        # Keep metric/start/compact lines for live plotting.
-                        for line in log_output.optimization_lines:
-                            self._log_line(line)
-                        if use_full_debug:
-                            for line in log_output.detail_lines:
-                                self._log(line)
-                        self._log(log_output.compact_line)
+                        if use_truncated_logging or use_full_debug:
+                            # Keep metric/start/compact lines for live plotting.
+                            for line in log_output.optimization_lines:
+                                self._log_line(line)
+                            if use_full_debug:
+                                for line in log_output.detail_lines:
+                                    self._log(line)
+                            self._log(log_output.compact_line)
 
             # ── Save results ──
             elapsed_time = (time.time() - start_time) if start_time is not None else 0.0
@@ -1276,6 +1448,7 @@ def run_sweep_from_config(
     output_dir: Optional[Path] = None,
     verbose: bool = True,
     verbosity_overrides: Optional[Dict[str, Any]] = None,
+    workers: Optional[int] = None,
 ) -> bool:
     """Run a parameter sweep from a configuration file.
 
@@ -1290,6 +1463,8 @@ def run_sweep_from_config(
     verbosity_overrides : Dict[str, Any], optional
         Dictionary of verbosity settings to override config values.
         Supported keys: 'log_verbosity', 'self_consistency_verbosity', 'adaptive_timestep_debug'
+    workers : int, optional
+        Number of parallel worker processes. None or 1 runs sequentially.
 
     Returns
     -------
@@ -1327,5 +1502,5 @@ def run_sweep_from_config(
         output_dir = Path(config.output_dir) / f"{timestamp}_{config_name}"
 
     # Create and run sweep
-    runner = SweepRunner(config, output_dir, verbose=verbose)
+    runner = SweepRunner(config, output_dir, verbose=verbose, workers=workers)
     return runner.run()
