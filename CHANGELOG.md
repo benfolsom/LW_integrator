@@ -4,6 +4,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Space-Charge Startup Fix and Physics-Driven Retarded Threshold (May 2026)
+
+- **Bug** — Intra-bunch SC forces were never applied: the `apply_forces` driver-startup gate blocked the rider→rider SC block, and the `len(trajectory) > 1` guard was always `False` because the substep buffer starts with one entry per main step
+- **Impact** — All SC-enabled runs were silently equivalent to SC-off; paired SC-on/SC-off smoke runs produced bit-identical results regardless of pcount or charge weight
+- **Fix 1** — Removed `apply_forces` from the SC guard; rider→rider SC is independent of whether the external driver force is currently gated by startup logic
+- **Fix 2** — Replaced the `len(trajectory) > 1` guard with `len(trajectory) >= 1`; instantaneous Coulomb is now used as a startup approximation from step 0 onward
+- **Fix 3** — Fixed `IndexError` in the `retarded=False` branch of SC: `sc_traj_ext` had length 1 but `compute_retarded_distance` was indexed with `index_traj` (which grows > 0); fixed by padding `sc_traj_ext = [sc_step] * (index_traj + 1)`
+- **Feature** — Added physics-driven instantaneous→retarded transition threshold to `SpaceChargeConfig`: new fields `bunch_sigma_mm` (default `0.01` mm) and `min_retarded_steps` (`None` = auto). The resolver `resolve_min_retarded_steps(h_step)` computes `ceil(bunch_sigma_mm / (c × h_step))` — the number of steps for light to cross the bunch — as the minimum history required before switching from instantaneous Coulomb to the full retarded LW kernel. Setting `min_retarded_steps=0` restores the old minimal behaviour; `retarded=False` keeps instantaneous permanently.
+- **Verified** — SC-on now produces measurably different `Px` and `x` from SC-off at `Q=1e10` total bunch charge with pcount=8 and σ=0.01 mm
+- **Files modified** — `core/equations.py`, `core/types.py`
+
 ### Intra-Bunch Space Charge (May 2026)
 
 - **Feature** — Added retarded intra-bunch space-charge forces: each rider particle now receives Liénard-Wiechert fields from all other rider particles (j ≠ i) in addition to the driver/image forces already computed

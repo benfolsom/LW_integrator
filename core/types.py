@@ -201,11 +201,40 @@ class SpaceChargeConfig:
     driver/image forces already computed.  The Numba hot-path is bypassed
     automatically; the feature uses the same vectorised Python kernel as
     self-consistency and adaptive-timestep modes.
+
+    The transition from instantaneous Coulomb (startup) to full retarded fields
+    is governed by ``min_retarded_steps``:
+
+    - ``None`` (default): auto-compute as ``ceil(bunch_sigma_mm / (c · h_step))``
+      i.e. the number of steps needed for light to cross the bunch width.  This
+      requires ``bunch_sigma_mm`` and the integrator ``h_step`` to be known at
+      runtime; the equations module resolves it on first use.
+    - ``0``: use retarded fields from step 1 onward (original minimal behaviour).
+    - ``N > 0``: hold instantaneous Coulomb for at least N steps regardless of
+      bunch size.
     """
 
     enabled: bool = True
-    retarded: bool = True        # full retarded fields; False → instantaneous Coulomb
+    retarded: bool = True        # full retarded fields; False → always instantaneous Coulomb
     softening_mm: float = 0.0    # Plummer softening ε (mm); 0 = no softening
+    bunch_sigma_mm: float = 0.01 # transverse RMS of the bunch (mm); used for auto threshold
+    min_retarded_steps: int | None = None  # None = auto from bunch_sigma_mm / (c * h_step)
+
+    def resolve_min_retarded_steps(self, h_step: float) -> int:
+        """Return the step threshold below which instantaneous Coulomb is used.
+
+        If ``min_retarded_steps`` is explicitly set, return it directly.
+        Otherwise compute ``ceil(bunch_sigma_mm / (C_MMNS * h_step))`` so that
+        retarded fields are only used once the trajectory spans at least one
+        light-crossing time of the bunch.
+        """
+        if not self.retarded:
+            return 10**9  # retarded never requested — always instantaneous
+        if self.min_retarded_steps is not None:
+            return self.min_retarded_steps
+        import math
+        light_crossing_ns = self.bunch_sigma_mm / C_MMNS
+        return max(1, math.ceil(light_crossing_ns / h_step))
 
 
 @dataclass

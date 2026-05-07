@@ -1412,9 +1412,13 @@ def retarded_equations_of_motion(
                 n_particles = current_state["x"].shape[0]
                 if n_particles > 1:
                     sc_softening = float(space_charge.softening_mm)
-                    # Use retarded SC only once sufficient history has accumulated;
-                    # fall back to instantaneous Coulomb at startup.
-                    use_retarded_sc = space_charge.retarded and len(trajectory) > 1
+                    # Use retarded SC only once sufficient history has accumulated
+                    # (at least one light-crossing time of the bunch width).
+                    # resolve_min_retarded_steps returns the step threshold; below
+                    # it we use instantaneous Coulomb as a physically motivated
+                    # startup approximation.
+                    _sc_threshold = space_charge.resolve_min_retarded_steps(h)
+                    use_retarded_sc = len(trajectory) > _sc_threshold
                     for j in range(n_particles):
                         if j == particle_idx:
                             continue
