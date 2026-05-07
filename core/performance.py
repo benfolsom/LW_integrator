@@ -563,16 +563,20 @@ def retarded_integrator_numba(
 
     from .equations import retarded_equations_of_motion
     from .integration_runner import (
+        EnergyJumpDetected,
         _AdaptiveStepState,
-        _run_adaptive_step,
+        _compute_total_energy,
         _ensure_startup_metadata,
+        _run_adaptive_step,
     )
 
     trajectory = [dict() for _ in range(steps)]
     trajectory_drv = [dict() for _ in range(steps)]
 
-    previous_energy: Optional[float] = None
+    previous_energy_rider: Optional[float] = None
+    previous_energy_driver: Optional[float] = None
     _adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
+    _drv_adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
 
     wall_position = wall_z
     switching_cutoff = z_cutoff
@@ -651,19 +655,17 @@ def retarded_integrator_numba(
             )
 
         if energy_monitor is not None and energy_monitor.enabled and i % energy_monitor.check_interval == 0:
-            from .integration_runner import _compute_total_energy, EnergyJumpDetected
             current_energy = _compute_total_energy(trajectory[i])
-            if previous_energy is not None and previous_energy > 0:
-                relative_change = abs(current_energy - previous_energy) / previous_energy
+            if previous_energy_rider is not None and previous_energy_rider > 0:
+                relative_change = abs(current_energy - previous_energy_rider) / previous_energy_rider
                 if relative_change > energy_monitor.relative_threshold:
                     msg = f"Energy jump detected at step {i}/{steps}: ΔE/E = {relative_change:.2e}"
                     if energy_monitor.halt_on_jump:
                         raise EnergyJumpDetected(msg)
-                    else:
-                        print(f"WARNING: {msg}")
+                    print(f"WARNING: {msg}")
                 elif energy_monitor.debug:
                     print(f"Step {i}: Energy = {current_energy:.6e} MeV, ΔE/E = {relative_change:.6e}")
-            previous_energy = current_energy
+            previous_energy_rider = current_energy
 
         if sim_type == SimulationType.SWITCHING_WALL:
             trajectory_drv[i] = generate_switching_image(
@@ -687,7 +689,6 @@ def retarded_integrator_numba(
             if init_driver is None:
                 raise ValueError("Driver bunch required for bunch-to-bunch mode")
             if adaptive_timestep is not None and adaptive_timestep.enabled:
-                _drv_adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
                 trajectory_drv[i] = _run_adaptive_step(
                     i=i,
                     steps=steps,
@@ -733,16 +734,20 @@ def retarded_integrator_numba(
                 )
 
             if energy_monitor is not None and energy_monitor.enabled and i % energy_monitor.check_interval == 0:
-                from .integration_runner import _compute_total_energy, EnergyJumpDetected
                 current_energy_drv = _compute_total_energy(trajectory_drv[i])
-                if previous_energy is not None and previous_energy > 0:
-                    relative_change = abs(current_energy_drv - previous_energy) / previous_energy
+                if previous_energy_driver is not None and previous_energy_driver > 0:
+                    relative_change = abs(current_energy_drv - previous_energy_driver) / previous_energy_driver
                     if relative_change > energy_monitor.relative_threshold:
                         msg = f"Energy jump detected (driver) at step {i}/{steps}: ΔE/E = {relative_change:.2e}"
                         if energy_monitor.halt_on_jump:
                             raise EnergyJumpDetected(msg)
-                        else:
-                            print(f"WARNING: {msg}")
+                        print(f"WARNING: {msg}")
+                    elif energy_monitor.debug:
+                        print(
+                            f"Step {i} (driver): Energy = {current_energy_drv:.6e} MeV, "
+                            f"ΔE/E = {relative_change:.6e}"
+                        )
+                previous_energy_driver = current_energy_drv
 
     return tuple(trajectory), tuple(trajectory_drv)
 
@@ -764,21 +769,21 @@ def run_optimised_integrator(
 
         start = time.time()
         base_traj, base_drv, *_soa_out = retarded_integrator(
-            config.steps,
-            config.time_step,
-            config.wall_position,
-            config.aperture_radius,
-            config.simulation_type,
-            init_rider,
-            init_driver,
-            config.bunch_mean,
-            config.cavity_spacing,
-            config.z_cutoff,
-            opts.self_consistency,
-            config.chrono_mode,
-            config.startup_mode,
-            config.image_subcharge_count,
-            config.use_image_weighting,
+            steps=config.steps,
+            h_step=config.time_step,
+            wall_z=config.wall_position,
+            aperture_radius=config.aperture_radius,
+            sim_type=config.simulation_type,
+            init_rider=init_rider,
+            init_driver=init_driver,
+            mean=config.bunch_mean,
+            cav_spacing=config.cavity_spacing,
+            z_cutoff=config.z_cutoff,
+            self_consistency=opts.self_consistency,
+            chrono_mode=config.chrono_mode,
+            startup_mode=config.startup_mode,
+            image_subcharge_count=config.image_subcharge_count,
+            use_conducting_image_weighting=config.use_image_weighting,
         )
         base_elapsed = time.time() - start
 
@@ -828,23 +833,24 @@ def run_optimised_integrator(
             config.use_image_weighting,
         )
 
-    return retarded_integrator(
-        config.steps,
-        config.time_step,
-        config.wall_position,
-        config.aperture_radius,
-        config.simulation_type,
-        init_rider,
-        init_driver,
-        config.bunch_mean,
-        config.cavity_spacing,
-        config.z_cutoff,
-        opts.self_consistency,
-        config.chrono_mode,
-        config.startup_mode,
-        config.image_subcharge_count,
-        config.use_image_weighting,
+    trajectory, trajectory_drv, *_soa_out = retarded_integrator(
+        steps=config.steps,
+        h_step=config.time_step,
+        wall_z=config.wall_position,
+        aperture_radius=config.aperture_radius,
+        sim_type=config.simulation_type,
+        init_rider=init_rider,
+        init_driver=init_driver,
+        mean=config.bunch_mean,
+        cav_spacing=config.cavity_spacing,
+        z_cutoff=config.z_cutoff,
+        self_consistency=opts.self_consistency,
+        chrono_mode=config.chrono_mode,
+        startup_mode=config.startup_mode,
+        image_subcharge_count=config.image_subcharge_count,
+        use_conducting_image_weighting=config.use_image_weighting,
     )
+    return tuple(trajectory), tuple(trajectory_drv)
 
 
 __all__ = [

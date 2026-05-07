@@ -5,6 +5,7 @@ import pytest
 
 import core.vectorized_interactions as vectorized_interactions
 from core.constants import C_MMNS
+from core.types import TrajectoryBuilder
 
 
 def _make_external_state(
@@ -138,6 +139,47 @@ def test_gather_external_samples_supports_cubic_interpolation() -> None:
     assert samples.gamma.tolist() == pytest.approx([2.5])
     assert samples.bx.tolist() == pytest.approx([1.5])
     assert samples.bdotx.tolist() == pytest.approx([15.0])
+
+
+def test_gather_external_samples_soa_skips_negative_and_out_of_range_indices() -> None:
+    builder = TrajectoryBuilder(2, 2)
+    state0 = {
+        "x": np.array([0.0, 1.0], dtype=float),
+        "y": np.zeros(2, dtype=float),
+        "z": np.zeros(2, dtype=float),
+        "t": np.zeros(2, dtype=float),
+        "Px": np.zeros(2, dtype=float),
+        "Py": np.zeros(2, dtype=float),
+        "Pz": np.zeros(2, dtype=float),
+        "Pt": np.ones(2, dtype=float),
+        "gamma": np.array([2.0, 3.0], dtype=float),
+        "bx": np.array([0.1, 0.2], dtype=float),
+        "by": np.zeros(2, dtype=float),
+        "bz": np.zeros(2, dtype=float),
+        "bdotx": np.array([1.0, 2.0], dtype=float),
+        "bdoty": np.zeros(2, dtype=float),
+        "bdotz": np.zeros(2, dtype=float),
+        "q": np.array([1.0, 2.0], dtype=float),
+        "m": np.array([1.0, 1.0], dtype=float),
+        "char_time": np.array([1e-3, 1e-3], dtype=float),
+    }
+    state1 = {k: (v + 1.0 if isinstance(v, np.ndarray) and k in {"x", "gamma", "bx", "bdotx"} else v.copy() if isinstance(v, np.ndarray) else v) for k, v in state0.items()}
+    builder.set_step(0, state0)
+    builder.set_step(1, state1)
+    traj_ext = builder.build()
+
+    samples = vectorized_interactions.gather_external_samples_soa(
+        traj_ext,
+        indices=np.array([1, 5]),
+        indices_next=np.array([0, 10]),
+        weights=np.array([0.25, 0.25]),
+        needs_interpolation=np.array([True, True]),
+    )
+
+    assert samples.valid_mask.tolist() == [True, False]
+    assert samples.charge.tolist() == pytest.approx([1.0, 0.0])
+    assert samples.gamma.tolist()[1] == pytest.approx(0.0)
+    assert samples.bx.tolist()[1] == pytest.approx(0.0)
 
 
 def test_gather_external_samples_skips_negative_and_out_of_range_indices() -> None:

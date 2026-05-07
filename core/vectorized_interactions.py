@@ -248,17 +248,31 @@ def gather_external_samples_soa(
     valid_mask &= (indices >= 0) & (indices < traj_ext.n_steps)
 
     particle_indices = np.arange(n_ext)
-    bx = traj_ext.bx[indices, particle_indices]
-    by = traj_ext.by[indices, particle_indices]
-    bz = traj_ext.bz[indices, particle_indices]
-    bdotx = traj_ext.bdotx[indices, particle_indices]
-    bdoty = traj_ext.bdoty[indices, particle_indices]
-    bdotz = traj_ext.bdotz[indices, particle_indices]
-    gamma = traj_ext.gamma[indices, particle_indices]
-    x = traj_ext.x[indices, particle_indices]
-    y = traj_ext.y[indices, particle_indices]
-    z = traj_ext.z[indices, particle_indices]
+    safe_indices = np.where(valid_mask, indices, 0)
+    bx = traj_ext.bx[safe_indices, particle_indices].copy()
+    by = traj_ext.by[safe_indices, particle_indices].copy()
+    bz = traj_ext.bz[safe_indices, particle_indices].copy()
+    bdotx = traj_ext.bdotx[safe_indices, particle_indices].copy()
+    bdoty = traj_ext.bdoty[safe_indices, particle_indices].copy()
+    bdotz = traj_ext.bdotz[safe_indices, particle_indices].copy()
+    gamma = traj_ext.gamma[safe_indices, particle_indices].copy()
+    x = traj_ext.x[safe_indices, particle_indices].copy()
+    y = traj_ext.y[safe_indices, particle_indices].copy()
+    z = traj_ext.z[safe_indices, particle_indices].copy()
     charge = traj_ext.q.copy()
+
+    if not np.all(valid_mask):
+        bx[~valid_mask] = 0.0
+        by[~valid_mask] = 0.0
+        bz[~valid_mask] = 0.0
+        bdotx[~valid_mask] = 0.0
+        bdoty[~valid_mask] = 0.0
+        bdotz[~valid_mask] = 0.0
+        gamma[~valid_mask] = 0.0
+        x[~valid_mask] = 0.0
+        y[~valid_mask] = 0.0
+        z[~valid_mask] = 0.0
+        charge[~valid_mask] = 0.0
 
     if (
         weights is not None
@@ -266,7 +280,12 @@ def gather_external_samples_soa(
         and needs_interpolation is not None
         and np.any(needs_interpolation)
     ):
-        interp_mask = needs_interpolation & (indices_next >= 0)
+        interp_mask = (
+            valid_mask
+            & needs_interpolation
+            & (indices_next >= 0)
+            & (indices_next < traj_ext.n_steps)
+        )
         if np.any(interp_mask):
             ni = indices_next[interp_mask]
             pi = particle_indices[interp_mask]

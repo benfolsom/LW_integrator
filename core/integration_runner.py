@@ -902,14 +902,13 @@ def retarded_integrator(
     use_numba:
         Whether to use Numba JIT-compiled integration kernels for performance.
         Default True. If Numba is unavailable, falls back to pure Python.
-        Note: Numba path currently has limited self-consistency support.
 
     Returns
     -------
-    Tuple[Trajectory, Trajectory]
-        A pair of trajectories: ``(rider_trajectory, driver_trajectory)``.
-        Each trajectory is a tuple of :class:`ParticleState` dictionaries,
-        one per integration step.
+    Tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None]
+        Rider and driver trajectories plus optional SOA views:
+        ``(rider_trajectory, driver_trajectory, rider_soa, driver_soa)``.
+        Numba-path returns set the SOA values to ``None``.
 
     Raises
     ------
@@ -926,84 +925,43 @@ def retarded_integrator(
             from .performance import NUMBA_AVAILABLE, retarded_integrator_numba
 
             if NUMBA_AVAILABLE:
-                # Check if numba path supports current configuration
-                use_numba_path = True
-
-                # Numba path doesn't support some advanced features yet
-                if energy_monitor is not None and energy_monitor.enabled:
-                    if logger:
-                        if callable(logger):
-                            logger(
-                                "Energy monitoring not supported in Numba path, using Python"
-                            )
-                        else:
-                            logger.info(
-                                "Energy monitoring not supported in Numba path, using Python"
-                            )
-                    use_numba_path = False
-
                 if adaptive_timestep is not None and adaptive_timestep.enabled:
                     if logger:
                         if callable(logger):
-                            logger(
-                                "Using adaptive timestep in Numba path"
-                            )
+                            logger("Using adaptive timestep in Numba path")
                         else:
-                            logger.info(
-                                "Using adaptive timestep in Numba path"
-                            )
+                            logger.info("Using adaptive timestep in Numba path")
 
-                if macroparticle_charge_multiplier != 1.0:
-                    if logger:
-                        if callable(logger):
-                            logger(
-                                "Macroparticle mode not supported in Numba path, using Python"
-                            )
-                        else:
-                            logger.info(
-                                "Macroparticle mode not supported in Numba path, using Python"
-                            )
-                    use_numba_path = False
+                if logger:
+                    if callable(logger):
+                        logger("Using Numba-optimized integrator (expected ~20x speedup)")
+                    else:
+                        logger.info("Using Numba-optimized integrator (expected ~20x speedup)")
 
-                if space_charge is not None and space_charge.enabled:
-                    if logger:
-                        if callable(logger):
-                            logger(
-                                "Space charge not supported in Numba path, using Python"
-                            )
-                        else:
-                            logger.info(
-                                "Space charge not supported in Numba path, using Python"
-                            )
-                    use_numba_path = False
-
-                # Use numba if all checks passed
-                if use_numba_path:
-                    if logger:
-                        if callable(logger):
-                            logger("Using Numba-optimized integrator (expected ~20x speedup)")
-                        else:
-                            logger.info("Using Numba-optimized integrator (expected ~20x speedup)")
-
-                    numba_result = retarded_integrator_numba(
-                        steps=steps,
-                        h_step=h_step,
-                        wall_z=wall_z,
-                        aperture_radius=aperture_radius,
-                        sim_type=sim_type,
-                        init_rider=init_rider,
-                        init_driver=init_driver,
-                        mean=mean,
-                        cav_spacing=cav_spacing,
-                        z_cutoff=z_cutoff,
-                        self_consistency=self_consistency,
-                        chrono_mode=chrono_mode,
-                        startup_mode=startup_mode,
-                        image_subcharge_count=image_subcharge_count,
-                        use_image_weighting=use_conducting_image_weighting,
-                        adaptive_timestep=adaptive_timestep,
-                    )
-                    return numba_result[0], numba_result[1], None, None
+                numba_result = retarded_integrator_numba(
+                    steps=steps,
+                    h_step=h_step,
+                    wall_z=wall_z,
+                    aperture_radius=aperture_radius,
+                    sim_type=sim_type,
+                    init_rider=init_rider,
+                    init_driver=init_driver,
+                    mean=mean,
+                    cav_spacing=cav_spacing,
+                    z_cutoff=z_cutoff,
+                    self_consistency=self_consistency,
+                    chrono_mode=chrono_mode,
+                    startup_mode=startup_mode,
+                    image_subcharge_count=image_subcharge_count,
+                    use_image_weighting=use_conducting_image_weighting,
+                    energy_monitor=energy_monitor,
+                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                    macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                    space_charge=space_charge,
+                    adaptive_timestep=adaptive_timestep,
+                )
+                return numba_result[0], numba_result[1], None, None
             else:
                 if logger:
                     if callable(logger):
@@ -1363,8 +1321,8 @@ def run_integrator(
 
     Returns
     -------
-    Tuple[Trajectory, Trajectory]
-        Rider and driver trajectories
+    Tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None]
+        Rider and driver trajectories plus optional SOA views.
     """
 
     return retarded_integrator(

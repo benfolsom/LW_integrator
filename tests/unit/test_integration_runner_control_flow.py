@@ -18,7 +18,7 @@ from core.integration_runner import (
     retarded_integrator,
     run_integrator,
 )
-from core.types import SimulationType
+from core.types import SimulationType, SpaceChargeConfig
 
 
 def _make_particle_state(
@@ -190,7 +190,6 @@ def test_retarded_integrator_uses_numba_for_adaptive_timestep(
 
     def _fake_numba(**kwargs):
         numba_called[0] = True
-        n_p = len(kwargs["init_rider"]["x"])
         state = {k: v.copy() for k, v in kwargs["init_rider"].items()}
         steps = kwargs["steps"]
         traj = tuple([state] * steps)
@@ -220,6 +219,51 @@ def test_retarded_integrator_uses_numba_for_adaptive_timestep(
 
     assert numba_called[0], "Expected numba path to be called with adaptive_timestep"
     assert any("adaptive timestep" in m.lower() for m in messages)
+
+
+def test_retarded_integrator_passes_feature_flags_into_numba_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+    module = types.ModuleType("core.performance")
+
+    def _fake_numba(**kwargs):
+        calls.update(kwargs)
+        state = {k: v.copy() for k, v in kwargs["init_rider"].items()}
+        steps = kwargs["steps"]
+        return tuple([state] * steps), tuple([state] * steps)
+
+    module.NUMBA_AVAILABLE = True
+    module.retarded_integrator_numba = _fake_numba
+    monkeypatch.setitem(sys.modules, "core.performance", module)
+
+    monitor = EnergyMonitorConfig(enabled=True, relative_threshold=0.25)
+    sc = SpaceChargeConfig(enabled=True, retarded=False)
+
+    retarded_integrator(
+        steps=2,
+        h_step=1e-3,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        init_rider=_make_particle_state(z=-1.0),
+        init_driver=None,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        energy_monitor=monitor,
+        macroparticle_charge_multiplier=2.0,
+        macroparticle_sigma_multiplier=1.5,
+        macroparticle_use_momentum_errors=False,
+        space_charge=sc,
+        use_numba=True,
+    )
+
+    assert calls["energy_monitor"] is monitor
+    assert calls["macroparticle_charge_multiplier"] == 2.0
+    assert calls["macroparticle_sigma_multiplier"] == 1.5
+    assert calls["macroparticle_use_momentum_errors"] is False
+    assert calls["space_charge"] is sc
 
 
 def test_retarded_integrator_logs_when_numba_is_unavailable(
