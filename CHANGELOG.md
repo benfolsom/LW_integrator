@@ -4,7 +4,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
-### Numba Path: Full Feature Support (June 2026)
+### Integrator Architecture Simplification (June 2026)
+
+- **Refactor** — Removed `core/performance.py` and its alternate integrator wrapper (`retarded_integrator_numba` / `run_optimised_integrator`) to eliminate redundant orchestration paths
+- **Refactor** — `retarded_integrator` now always runs the canonical integration orchestration; Numba acceleration remains at the force-kernel layer in `core/vectorized_interactions.py`
+- **Tests** — Updated control-flow and Numba feature tests to validate canonical-path behavior without monkeypatching `core.performance`
+- **Docs** — Removed the performance API page from Sphinx toctrees and updated overview wording to describe kernel-level Numba acceleration
+- **Note** — This supersedes the historical `retarded_integrator_numba` wrapper notes below; feature support now applies to the canonical path.
+
+### Historical: Numba Path Full Feature Support (June 2026)
 
 - **Feature** — Energy monitoring (`EnergyMonitorConfig`) is now supported in the Numba path: `retarded_integrator_numba` performs the same per-step energy check (warn or raise `EnergyJumpDetected`) as the Python path; the `use_numba_path = False` gate removed
 - **Feature** — Macroparticle mode (`macroparticle_charge_multiplier != 1.0`) is now supported in the Numba path: all `generate_conducting_image` calls inside `retarded_integrator_numba` forward `macroparticle_charge_multiplier`, `macroparticle_sigma_multiplier`, and `macroparticle_use_momentum_errors`; gate removed

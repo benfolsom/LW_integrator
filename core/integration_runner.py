@@ -900,15 +900,16 @@ def retarded_integrator(
     logger:
         Optional logger instance for integration diagnostics.
     use_numba:
-        Whether to use Numba JIT-compiled integration kernels for performance.
-        Default True. If Numba is unavailable, falls back to pure Python.
+        Compatibility flag retained after removal of the legacy alternate
+        integrator path. The canonical path is always used; this flag controls
+        only logging intent, while actual kernel availability follows
+        ``core.vectorized_interactions.NUMBA_AVAILABLE``.
 
     Returns
     -------
     Tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None]
         Rider and driver trajectories plus optional SOA views:
         ``(rider_trajectory, driver_trajectory, rider_soa, driver_soa)``.
-        Numba-path returns set the SOA values to ``None``.
 
     Raises
     ------
@@ -919,69 +920,31 @@ def retarded_integrator(
         threshold (with ``halt_on_jump=True``).
     """
 
-    # Try to use Numba-optimized path if requested and available
-    if use_numba:
-        try:
-            from .performance import NUMBA_AVAILABLE, retarded_integrator_numba
+    from . import vectorized_interactions as _vectorized_interactions
 
-            if NUMBA_AVAILABLE:
-                if adaptive_timestep is not None and adaptive_timestep.enabled:
-                    if logger:
-                        if callable(logger):
-                            logger("Using adaptive timestep in Numba path")
-                        else:
-                            logger.info("Using adaptive timestep in Numba path")
+    numba_kernels_enabled = bool(use_numba and _vectorized_interactions.NUMBA_AVAILABLE)
 
-                if logger:
-                    if callable(logger):
-                        logger("Using Numba-optimized integrator (expected ~20x speedup)")
-                    else:
-                        logger.info("Using Numba-optimized integrator (expected ~20x speedup)")
-
-                numba_result = retarded_integrator_numba(
-                    steps=steps,
-                    h_step=h_step,
-                    wall_z=wall_z,
-                    aperture_radius=aperture_radius,
-                    sim_type=sim_type,
-                    init_rider=init_rider,
-                    init_driver=init_driver,
-                    mean=mean,
-                    cav_spacing=cav_spacing,
-                    z_cutoff=z_cutoff,
-                    self_consistency=self_consistency,
-                    chrono_mode=chrono_mode,
-                    startup_mode=startup_mode,
-                    image_subcharge_count=image_subcharge_count,
-                    use_image_weighting=use_conducting_image_weighting,
-                    energy_monitor=energy_monitor,
-                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
-                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-                    macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
-                    space_charge=space_charge,
-                    adaptive_timestep=adaptive_timestep,
-                )
-                return numba_result[0], numba_result[1], None, None
+    if logger:
+        if numba_kernels_enabled:
+            message = "Using Numba-optimized kernels in canonical integrator path"
+            if callable(logger):
+                logger(message)
             else:
-                if logger:
-                    if callable(logger):
-                        logger(
-                            "Numba not available, falling back to pure Python integrator"
-                        )
-                    else:
-                        logger.warning(
-                            "Numba not available, falling back to pure Python integrator"
-                        )
-        except ImportError:
-            if logger:
-                if callable(logger):
-                    logger("Could not import Numba integrator, using pure Python")
-                else:
-                    logger.warning(
-                        "Could not import Numba integrator, using pure Python"
-                    )
+                logger.info(message)
+        elif use_numba:
+            message = "Numba not available, using pure Python kernels"
+            if callable(logger):
+                logger(message)
+            else:
+                logger.warning(message)
+        else:
+            message = "use_numba=False requested; running canonical path without forcing kernel changes"
+            if callable(logger):
+                logger(message)
+            else:
+                logger.info(message)
 
-    # Fall back to pure Python implementation
+    # Canonical integration implementation
 
     trajectory: Trajectory = [{} for _ in range(steps)]
     trajectory_drv: Trajectory = [{} for _ in range(steps)]

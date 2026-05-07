@@ -18,9 +18,10 @@ High-level anatomy
     The maintained implementation of the retarded Liénard–Wiechert solver.
     ``trajectory_integrator.py`` retains the original algorithm but exposes it
     through typed helper functions (image charge generators, retarded-distance
-    utilities, and the ``IntegratorConfig`` data class).  ``performance.py``
-    bundles optional Numba kernels that accelerate large runs without changing
-    the underlying physics.  ``self_consistency.py`` holds the fixed-point
+    utilities, and the ``IntegratorConfig`` data class).  Kernel-level Numba
+    acceleration lives in ``vectorized_interactions.py`` and is used by the
+    canonical integrator path without changing the underlying physics.
+    ``self_consistency.py`` holds the fixed-point
     iteration used for radiation-reaction corrections and ensuring gamma
     consistency between energy and velocity calculations (enabled by default
     as of December 2025).  ``images.py`` implements conducting-wall image charge

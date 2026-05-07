@@ -9,11 +9,7 @@ from core.integration_runner import (
     retarded_integrator,
 )
 from core.types import SimulationType, SpaceChargeConfig, StartupMode
-
-try:
-    from core.performance import NUMBA_AVAILABLE
-except ImportError:
-    NUMBA_AVAILABLE = False
+from core.vectorized_interactions import NUMBA_AVAILABLE
 
 pytestmark = pytest.mark.skipif(
     not NUMBA_AVAILABLE, reason="Numba not available in this environment"

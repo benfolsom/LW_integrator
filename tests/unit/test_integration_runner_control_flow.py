@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import copy
-import builtins
-import sys
-import types
 
 import numpy as np
 import pytest
@@ -18,7 +15,7 @@ from core.integration_runner import (
     retarded_integrator,
     run_integrator,
 )
-from core.types import SimulationType, SpaceChargeConfig
+from core.types import SimulationType
 
 
 def _make_particle_state(
@@ -80,22 +77,15 @@ class _LoggerRecorder:
         return True
 
 
-def test_retarded_integrator_uses_numba_path_when_supported(
+def test_retarded_integrator_logs_numba_kernel_usage_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: dict[str, object] = {}
-    module = types.ModuleType("core.performance")
+    import core.vectorized_interactions as vectorized_interactions
 
-    def fake_numba(**kwargs: object) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-        calls.update(kwargs)
-        return ([{"mode": "numba"}], [{"driver": "numba"}])
-
-    module.NUMBA_AVAILABLE = True
-    module.retarded_integrator_numba = fake_numba
-    monkeypatch.setitem(sys.modules, "core.performance", module)
+    monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", True)
 
     messages: list[str] = []
-    result = retarded_integrator(
+    trajectory, driver, *_soa_out = retarded_integrator(
         steps=2,
         h_step=1e-3,
         wall_z=0.0,
@@ -112,11 +102,9 @@ def test_retarded_integrator_uses_numba_path_when_supported(
         use_numba=True,
     )
 
-    assert result == ([{"mode": "numba"}], [{"driver": "numba"}], None, None)
-    assert calls["steps"] == 2
-    assert calls["image_subcharge_count"] == 8
-    assert calls["use_image_weighting"] is False
-    assert any("Using Numba-optimized integrator" in message for message in messages)
+    assert len(trajectory) == 2
+    assert len(driver) == 2
+    assert any("Using Numba-optimized kernels in canonical integrator path" in message for message in messages)
 
 
 def test_retarded_integrator_logs_proximity_transition_zone(
@@ -182,99 +170,12 @@ def test_retarded_integrator_logs_proximity_transition_zone(
     assert any("Reduction factor: 2.5000x" in message for message in messages)
 
 
-def test_retarded_integrator_uses_numba_for_adaptive_timestep(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With adaptive_timestep enabled, the numba path is now used (not bypassed)."""
-    numba_called = [False]
-
-    def _fake_numba(**kwargs):
-        numba_called[0] = True
-        state = {k: v.copy() for k, v in kwargs["init_rider"].items()}
-        steps = kwargs["steps"]
-        traj = tuple([state] * steps)
-        return traj, traj
-
-    module = types.ModuleType("core.performance")
-    module.NUMBA_AVAILABLE = True
-    module.retarded_integrator_numba = _fake_numba
-    monkeypatch.setitem(sys.modules, "core.performance", module)
-
-    messages: list[str] = []
-    retarded_integrator(
-        steps=1,
-        h_step=1e-3,
-        wall_z=0.0,
-        aperture_radius=0.5,
-        sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0),
-        init_driver=None,
-        mean=0.0,
-        cav_spacing=0.0,
-        z_cutoff=0.0,
-        adaptive_timestep=AdaptiveTimestepConfig(enabled=True),
-        logger=messages.append,
-        use_numba=True,
-    )
-
-    assert numba_called[0], "Expected numba path to be called with adaptive_timestep"
-    assert any("adaptive timestep" in m.lower() for m in messages)
-
-
-def test_retarded_integrator_passes_feature_flags_into_numba_kwargs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, object] = {}
-    module = types.ModuleType("core.performance")
-
-    def _fake_numba(**kwargs):
-        calls.update(kwargs)
-        state = {k: v.copy() for k, v in kwargs["init_rider"].items()}
-        steps = kwargs["steps"]
-        return tuple([state] * steps), tuple([state] * steps)
-
-    module.NUMBA_AVAILABLE = True
-    module.retarded_integrator_numba = _fake_numba
-    monkeypatch.setitem(sys.modules, "core.performance", module)
-
-    monitor = EnergyMonitorConfig(enabled=True, relative_threshold=0.25)
-    sc = SpaceChargeConfig(enabled=True, retarded=False)
-
-    retarded_integrator(
-        steps=2,
-        h_step=1e-3,
-        wall_z=0.0,
-        aperture_radius=0.5,
-        sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0),
-        init_driver=None,
-        mean=0.0,
-        cav_spacing=0.0,
-        z_cutoff=0.0,
-        energy_monitor=monitor,
-        macroparticle_charge_multiplier=2.0,
-        macroparticle_sigma_multiplier=1.5,
-        macroparticle_use_momentum_errors=False,
-        space_charge=sc,
-        use_numba=True,
-    )
-
-    assert calls["energy_monitor"] is monitor
-    assert calls["macroparticle_charge_multiplier"] == 2.0
-    assert calls["macroparticle_sigma_multiplier"] == 1.5
-    assert calls["macroparticle_use_momentum_errors"] is False
-    assert calls["space_charge"] is sc
-
-
 def test_retarded_integrator_logs_when_numba_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = types.ModuleType("core.performance")
-    module.NUMBA_AVAILABLE = False
-    module.retarded_integrator_numba = lambda **kwargs: pytest.fail(
-        "numba path should not be called"
-    )
-    monkeypatch.setitem(sys.modules, "core.performance", module)
+    import core.vectorized_interactions as vectorized_interactions
+
+    monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", False)
 
     logger = _LoggerRecorder()
     trajectory, driver, *_soa_out = retarded_integrator(
@@ -295,49 +196,7 @@ def test_retarded_integrator_logs_when_numba_is_unavailable(
     assert len(trajectory) == 1
     assert len(driver) == 1
     assert any(
-        "Numba not available, falling back to pure Python integrator" in message
-        for message in logger.warnings
-    )
-
-
-def test_retarded_integrator_logs_when_numba_import_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_import = builtins.__import__
-
-    def fake_import(
-        name: str,
-        globals: object = None,
-        locals: object = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> object:
-        if level == 1 and name == "performance":
-            raise ImportError("synthetic import failure")
-        return original_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-
-    logger = _LoggerRecorder()
-    trajectory, driver, *_soa_out = retarded_integrator(
-        steps=1,
-        h_step=1e-3,
-        wall_z=0.0,
-        aperture_radius=0.5,
-        sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0),
-        init_driver=None,
-        mean=0.0,
-        cav_spacing=0.0,
-        z_cutoff=0.0,
-        logger=logger,
-        use_numba=True,
-    )
-
-    assert len(trajectory) == 1
-    assert len(driver) == 1
-    assert any(
-        "Could not import Numba integrator, using pure Python" in message
+        "Numba not available, using pure Python kernels" in message
         for message in logger.warnings
     )
 
