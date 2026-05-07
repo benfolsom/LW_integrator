@@ -536,6 +536,12 @@ def retarded_integrator_numba(
     startup_mode: StartupMode = StartupMode.COLD_START,
     image_subcharge_count: int = 12,
     use_image_weighting: bool = True,
+    energy_monitor: Optional[Any] = None,
+    macroparticle_charge_multiplier: float = 1.0,
+    macroparticle_sigma_multiplier: float = 1.0,
+    macroparticle_use_momentum_errors: bool = True,
+    space_charge: Optional[Any] = None,
+    adaptive_timestep: Optional[Any] = None,
 ) -> Tuple[Tuple[ParticleState, ...], Tuple[ParticleState, ...]]:
     """Hybrid numba-accelerated retarded integrator.
 
@@ -555,12 +561,18 @@ def retarded_integrator_numba(
     """
     warnings.filterwarnings("ignore")
 
-    # Import the Python equations of motion which has full SC support
-    # It will automatically use numba-optimized forces when available
     from .equations import retarded_equations_of_motion
+    from .integration_runner import (
+        _AdaptiveStepState,
+        _run_adaptive_step,
+        _ensure_startup_metadata,
+    )
 
     trajectory = [dict() for _ in range(steps)]
     trajectory_drv = [dict() for _ in range(steps)]
+
+    previous_energy: Optional[float] = None
+    _adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
 
     wall_position = wall_z
     switching_cutoff = z_cutoff
@@ -575,6 +587,9 @@ def retarded_integrator_numba(
                     aperture_radius,
                     subcharge_count=image_subcharge_count,
                     use_weighting=use_image_weighting,
+                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                    macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -590,19 +605,65 @@ def retarded_integrator_numba(
 
         # Use Python equations with full SC support
         # Numba optimization happens inside the force calculation
-        trajectory[i] = retarded_equations_of_motion(
-            h_step,
-            trajectory,
-            trajectory_drv,
-            i - 1,
-            aperture_radius,
-            sim_type,
-            chrono_mode,
-            startup_mode,
-            self_consistency,
-            step_idx=i,
-            cancel_callback=None,
-        )
+        if adaptive_timestep is not None and adaptive_timestep.enabled:
+            trajectory[i] = _run_adaptive_step(
+                i=i,
+                steps=steps,
+                h_step=h_step,
+                wall_z=wall_position,
+                aperture_radius=aperture_radius,
+                sim_type=sim_type,
+                chrono_mode=chrono_mode,
+                startup_mode=startup_mode,
+                self_consistency=self_consistency,
+                adaptive_timestep=adaptive_timestep,
+                space_charge=space_charge,
+                image_subcharge_count=image_subcharge_count,
+                use_conducting_image_weighting=use_image_weighting,
+                macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                bunch_transv_dist=0.0,
+                bunch_transv_mom=0.0,
+                z_cutoff=switching_cutoff,
+                trajectory=trajectory,
+                trajectory_drv=trajectory_drv,
+                _traj_drv_builder=None,
+                cancel_callback=None,
+                logger=None,
+                adaptive_state=_adaptive_state,
+            )
+            _ensure_startup_metadata(trajectory[i])
+        else:
+            trajectory[i] = retarded_equations_of_motion(
+                h_step,
+                trajectory,
+                trajectory_drv,
+                i - 1,
+                aperture_radius,
+                sim_type,
+                chrono_mode,
+                startup_mode,
+                self_consistency,
+                step_idx=i,
+                cancel_callback=None,
+                space_charge=space_charge,
+            )
+
+        if energy_monitor is not None and energy_monitor.enabled and i % energy_monitor.check_interval == 0:
+            from .integration_runner import _compute_total_energy, EnergyJumpDetected
+            current_energy = _compute_total_energy(trajectory[i])
+            if previous_energy is not None and previous_energy > 0:
+                relative_change = abs(current_energy - previous_energy) / previous_energy
+                if relative_change > energy_monitor.relative_threshold:
+                    msg = f"Energy jump detected at step {i}/{steps}: ΔE/E = {relative_change:.2e}"
+                    if energy_monitor.halt_on_jump:
+                        raise EnergyJumpDetected(msg)
+                    else:
+                        print(f"WARNING: {msg}")
+                elif energy_monitor.debug:
+                    print(f"Step {i}: Energy = {current_energy:.6e} MeV, ΔE/E = {relative_change:.6e}")
+            previous_energy = current_energy
 
         if sim_type == SimulationType.SWITCHING_WALL:
             trajectory_drv[i] = generate_switching_image(
@@ -618,24 +679,70 @@ def retarded_integrator_numba(
                 aperture_radius,
                 subcharge_count=image_subcharge_count,
                 use_weighting=use_image_weighting,
+                macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
             )
         elif sim_type == SimulationType.BUNCH_TO_BUNCH:
             if init_driver is None:
                 raise ValueError("Driver bunch required for bunch-to-bunch mode")
-            # Driver bunch evolution with full SC support
-            trajectory_drv[i] = retarded_equations_of_motion(
-                h_step,
-                trajectory_drv,
-                trajectory,
-                i - 1,
-                aperture_radius,
-                sim_type,
-                chrono_mode,
-                startup_mode,
-                self_consistency,
-                step_idx=i,
-                cancel_callback=None,
-            )
+            if adaptive_timestep is not None and adaptive_timestep.enabled:
+                _drv_adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
+                trajectory_drv[i] = _run_adaptive_step(
+                    i=i,
+                    steps=steps,
+                    h_step=h_step,
+                    wall_z=wall_position,
+                    aperture_radius=aperture_radius,
+                    sim_type=sim_type,
+                    chrono_mode=chrono_mode,
+                    startup_mode=startup_mode,
+                    self_consistency=self_consistency,
+                    adaptive_timestep=adaptive_timestep,
+                    space_charge=space_charge,
+                    image_subcharge_count=image_subcharge_count,
+                    use_conducting_image_weighting=use_image_weighting,
+                    macroparticle_charge_multiplier=macroparticle_charge_multiplier,
+                    macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
+                    macroparticle_use_momentum_errors=macroparticle_use_momentum_errors,
+                    bunch_transv_dist=0.0,
+                    bunch_transv_mom=0.0,
+                    z_cutoff=switching_cutoff,
+                    trajectory=trajectory_drv,
+                    trajectory_drv=trajectory,
+                    _traj_drv_builder=None,
+                    cancel_callback=None,
+                    logger=None,
+                    adaptive_state=_drv_adaptive_state,
+                )
+                _ensure_startup_metadata(trajectory_drv[i])
+            else:
+                trajectory_drv[i] = retarded_equations_of_motion(
+                    h_step,
+                    trajectory_drv,
+                    trajectory,
+                    i - 1,
+                    aperture_radius,
+                    sim_type,
+                    chrono_mode,
+                    startup_mode,
+                    self_consistency,
+                    step_idx=i,
+                    cancel_callback=None,
+                    space_charge=space_charge,
+                )
+
+            if energy_monitor is not None and energy_monitor.enabled and i % energy_monitor.check_interval == 0:
+                from .integration_runner import _compute_total_energy, EnergyJumpDetected
+                current_energy_drv = _compute_total_energy(trajectory_drv[i])
+                if previous_energy is not None and previous_energy > 0:
+                    relative_change = abs(current_energy_drv - previous_energy) / previous_energy
+                    if relative_change > energy_monitor.relative_threshold:
+                        msg = f"Energy jump detected (driver) at step {i}/{steps}: ΔE/E = {relative_change:.2e}"
+                        if energy_monitor.halt_on_jump:
+                            raise EnergyJumpDetected(msg)
+                        else:
+                            print(f"WARNING: {msg}")
 
     return tuple(trajectory), tuple(trajectory_drv)
 

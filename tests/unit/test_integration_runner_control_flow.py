@@ -182,18 +182,27 @@ def test_retarded_integrator_logs_proximity_transition_zone(
     assert any("Reduction factor: 2.5000x" in message for message in messages)
 
 
-def test_retarded_integrator_falls_back_from_numba_for_unsupported_features(
+def test_retarded_integrator_uses_numba_for_adaptive_timestep(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """With adaptive_timestep enabled, the numba path is now used (not bypassed)."""
+    numba_called = [False]
+
+    def _fake_numba(**kwargs):
+        numba_called[0] = True
+        n_p = len(kwargs["init_rider"]["x"])
+        state = {k: v.copy() for k, v in kwargs["init_rider"].items()}
+        steps = kwargs["steps"]
+        traj = tuple([state] * steps)
+        return traj, traj
+
     module = types.ModuleType("core.performance")
     module.NUMBA_AVAILABLE = True
-    module.retarded_integrator_numba = lambda **kwargs: pytest.fail(
-        "numba path should not be used"
-    )
+    module.retarded_integrator_numba = _fake_numba
     monkeypatch.setitem(sys.modules, "core.performance", module)
 
     messages: list[str] = []
-    trajectory, driver, *_soa_out = retarded_integrator(
+    retarded_integrator(
         steps=1,
         h_step=1e-3,
         wall_z=0.0,
@@ -204,18 +213,13 @@ def test_retarded_integrator_falls_back_from_numba_for_unsupported_features(
         mean=0.0,
         cav_spacing=0.0,
         z_cutoff=0.0,
-        energy_monitor=EnergyMonitorConfig(enabled=True),
         adaptive_timestep=AdaptiveTimestepConfig(enabled=True),
-        macroparticle_charge_multiplier=2.0,
         logger=messages.append,
         use_numba=True,
     )
 
-    assert len(trajectory) == 1
-    assert len(driver) == 1
-    assert any("Energy monitoring not supported in Numba path" in message for message in messages)
-    assert any("Adaptive timestep not supported in Numba path" in message for message in messages)
-    assert any("Macroparticle mode not supported in Numba path" in message for message in messages)
+    assert numba_called[0], "Expected numba path to be called with adaptive_timestep"
+    assert any("adaptive timestep" in m.lower() for m in messages)
 
 
 def test_retarded_integrator_logs_when_numba_is_unavailable(

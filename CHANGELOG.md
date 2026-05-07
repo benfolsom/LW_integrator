@@ -4,6 +4,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Numba Path: Full Feature Support (June 2026)
+
+- **Feature** — Energy monitoring (`EnergyMonitorConfig`) is now supported in the Numba path: `retarded_integrator_numba` performs the same per-step energy check (warn or raise `EnergyJumpDetected`) as the Python path; the `use_numba_path = False` gate removed
+- **Feature** — Macroparticle mode (`macroparticle_charge_multiplier != 1.0`) is now supported in the Numba path: all `generate_conducting_image` calls inside `retarded_integrator_numba` forward `macroparticle_charge_multiplier`, `macroparticle_sigma_multiplier`, and `macroparticle_use_momentum_errors`; gate removed
+- **Feature** — Space charge (`SpaceChargeConfig`) is now supported in the Numba path: `space_charge` kwarg forwarded to all `retarded_equations_of_motion` calls inside `retarded_integrator_numba`; gate removed
+- **Feature** — Adaptive timestep (`AdaptiveTimestepConfig`) is now supported in the Numba path: extracted ~400 lines of per-step adaptive logic (substep subdivision, proximity refinement, energy-jump retries, gamma blowup handling, cooldown hysteresis) from `retarded_integrator` into a new `_run_adaptive_step(...)` helper and `_AdaptiveStepState` dataclass; both `retarded_integrator` and `retarded_integrator_numba` now call this shared helper; the final `use_numba_path = False` gate removed
+- **Tests** — Added `tests/unit/test_numba_mode_features.py` with 9 tests covering each newly-enabled mode individually, in combination, and verifying Python/Numba parity
+- **Files modified** — `core/performance.py`, `core/integration_runner.py`, `tests/unit/test_numba_mode_features.py`, `tests/unit/test_integration_runner_control_flow.py`
+
 ### SOA Trajectory Refactor — Phase 3–5 Completion (June 2026)
 
 - **Perf** — Vectorized `gather_external_samples_soa` inner gather and interpolation loops: replaced 10 per-field Python list comprehensions with NumPy fancy indexing (`traj_ext.bx[indices, particle_indices]`) and replaced the per-particle interpolation loop with a masked vectorized blend; eliminates all remaining Python-level loops in the SOA gather path
