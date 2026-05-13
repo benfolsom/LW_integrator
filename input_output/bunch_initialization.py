@@ -8,9 +8,20 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-C_MMNS = 299.792458  # Speed of light in mm/ns (matches legacy constant)
+from core.constants import (
+    C_MMNS,
+    ELEMENTARY_CHARGE,
+    ELEMENTARY_CHARGE_STATC,
+)
+
 AMU_TO_MEV = 931.49410242  # Atomic mass unit → MeV/c^2 conversion
-ELEMENTARY_CHARGE_GU = 4.803204712570263e-10  # Elementary charge (Gaussian units)
+ELEMENTARY_CHARGE_GU = ELEMENTARY_CHARGE_STATC
+"""Elementary charge in statcoulombs, retained for cgs analysis compatibility.
+
+Do not use this value directly in particle states. The integrator evolves
+charges in native solver units, so state dictionaries must use
+``ELEMENTARY_CHARGE``.
+"""
 
 ParticleState = Dict[str, np.ndarray]
 
@@ -94,7 +105,7 @@ def create_bunch_from_energy(
     gamma = _compute_gamma(kinetic_energy_mev, mass_amu)
     beta = math.sqrt(1.0 - 1.0 / (gamma**2)) if gamma > 1.0 else 0.0
     particle_mass = mass_amu
-    macro_charge = charge_sign * ELEMENTARY_CHARGE_GU
+    macro_charge = charge_sign * ELEMENTARY_CHARGE
     char_time = 2.0 / 3.0 * macro_charge**2 / (particle_mass * C_MMNS**3)
 
     count = particle_count
@@ -230,7 +241,7 @@ def create_bunch_from_params(
     if seed is not None:
         np.random.seed(seed)
 
-    macro_charge = charge_sign * stripped_ions * ELEMENTARY_CHARGE_GU
+    macro_charge = charge_sign * stripped_ions * ELEMENTARY_CHARGE
     char_time = 2.0 / 3.0 * macro_charge**2 / (m_particle * C_MMNS**3)
 
     # Generate transverse momentum with spread
