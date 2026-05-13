@@ -39,6 +39,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    :caption: Physics background
 
    theory
+   radiation_reaction_plan
    self_consistency
    adaptive_timestep
    recent_changes

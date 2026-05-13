@@ -509,15 +509,15 @@ def validate_trajectory(
     }
 
 
-def find_radiation_reaction_activations(
+def find_large_bdot_changes(
     trajectory: TrajectoryInput,
 ) -> List[Tuple[int, int]]:
     """Identify historical large-acceleration-change markers.
 
-    This legacy diagnostic looks for sudden changes in stored acceleration
-    (``bdot``). It no longer indicates that a radiation-reaction self-force was
-    applied; use ``radiation_power`` / ``radiation_energy_applied`` fields for
-    the current radiation bookkeeping.
+    This diagnostic looks for sudden changes in stored ``bdotz`` values. It
+    does not indicate that a radiation-reaction self-force was applied; use
+    ``radiation_power`` / ``radiation_energy_applied`` fields for the current
+    radiation bookkeeping.
 
     Parameters
     ----------
@@ -527,8 +527,8 @@ def find_radiation_reaction_activations(
     Returns
     -------
     list[tuple[int, int]]
-        List of (step_index, particle_index) tuples where radiation
-        reaction likely activated.
+        List of (step_index, particle_index) tuples where the stored ``bdotz``
+        change exceeded the diagnostic threshold.
     """
     activations = []
 
@@ -557,6 +557,17 @@ def find_radiation_reaction_activations(
     return activations
 
 
+def find_radiation_reaction_activations(
+    trajectory: TrajectoryInput,
+) -> List[Tuple[int, int]]:
+    """Backward-compatible alias for :func:`find_large_bdot_changes`.
+
+    The historical name is retained for downstream scripts, but the diagnostic
+    no longer reports radiation-reaction activation.
+    """
+    return find_large_bdot_changes(trajectory)
+
+
 __all__ = [
     "compute_total_energy",
     "compute_kinetic_energy",
@@ -566,5 +577,6 @@ __all__ = [
     "check_superluminal_velocities",
     "check_gamma_consistency",
     "validate_trajectory",
+    "find_large_bdot_changes",
     "find_radiation_reaction_activations",
 ]

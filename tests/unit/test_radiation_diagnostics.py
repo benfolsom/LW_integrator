@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from core import diagnostics
 from core import equations
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 
@@ -89,3 +91,14 @@ def test_power_matched_damping_does_not_cross_rest_energy() -> None:
 
     assert new_gamma == pytest.approx(1.0)
     assert applied == pytest.approx((gamma - 1.0) * mass * C_MMNS**2)
+
+
+def test_large_bdot_change_diagnostic_has_legacy_alias() -> None:
+    trajectory = [
+        {"bdotz": np.array([0.0, 0.0])},
+        {"bdotz": np.array([2.0e-3, 5.0e-4])},
+    ]
+
+    expected = [(1, 0)]
+    assert diagnostics.find_large_bdot_changes(trajectory) == expected
+    assert diagnostics.find_radiation_reaction_activations(trajectory) == expected
