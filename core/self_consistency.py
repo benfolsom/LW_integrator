@@ -318,6 +318,7 @@ def self_consistent_step(
     cancel_callback: Optional[Any] = None,
     traj_soa: Optional[Any] = None,
     traj_ext_soa: Optional[Any] = None,
+    radiation_reaction_mode: Optional[str] = "legacy_bdot",
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -388,6 +389,12 @@ def self_consistent_step(
         **({"space_charge": space_charge} if space_charge is not None else {}),
         **({"traj_soa": traj_soa} if _accepts_soa and traj_soa is not None else {}),
         **({"traj_ext_soa": traj_ext_soa} if _accepts_soa and traj_ext_soa is not None else {}),
+        **(
+            {"radiation_reaction_mode": radiation_reaction_mode}
+            if "radiation_reaction_mode" in _sig_params
+            or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values())
+            else {}
+        ),
     )
 
     return result

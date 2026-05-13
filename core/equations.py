@@ -149,7 +149,6 @@ class GammaBlowupError(Exception):
             f"γ={gamma_value:.2e} (iteration {iteration})"
         )
 
-
 def _ensure_startup_metadata(state: ParticleState) -> None:
     """Initialize origin positions and beta averaging metadata if not present."""
     if "origin_x" not in state:
@@ -166,6 +165,14 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
         state["beta_avg_z"] = np.copy(state.get("bz", np.array([])))
     if "beta_samples" not in state:
         state["beta_samples"] = np.ones_like(state.get("x", np.array([])), dtype=float)
+    if "radiation_power" not in state:
+        state["radiation_power"] = np.zeros_like(state.get("x", np.array([])), dtype=float)
+    if "radiation_energy" not in state:
+        state["radiation_energy"] = np.zeros_like(state.get("x", np.array([])), dtype=float)
+    if "radiation_energy_applied" not in state:
+        state["radiation_energy_applied"] = np.zeros_like(
+            state.get("x", np.array([])), dtype=float
+        )
 
 
 def _extract_self_consistency_params(
@@ -253,6 +260,9 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "beta_avg_y": np.copy(current_state["beta_avg_y"]),
         "beta_avg_z": np.copy(current_state["beta_avg_z"]),
         "beta_samples": np.copy(current_state["beta_samples"]),
+        "radiation_power": np.zeros_like(current_state["x"]),
+        "radiation_energy": np.zeros_like(current_state["x"]),
+        "radiation_energy_applied": np.zeros_like(current_state["x"]),
     }
 
     # Preserve dead particle metadata to prevent redundant logging
@@ -769,6 +779,98 @@ def _compute_radiation_reaction_term(
     return lhs_term, rhs_term
 
 
+def _canonicalize_radiation_reaction_mode(mode: Optional[str]) -> str:
+    """Normalize radiation-reaction mode names."""
+    if mode is None:
+        return "legacy_bdot"
+
+    normalized = str(mode).strip().lower().replace("-", "_")
+    aliases = {
+        "none": "off",
+        "disabled": "off",
+        "diagnostic": "diagnostic_only",
+        "diagnostics": "diagnostic_only",
+        "power_damping": "power_matched_damping",
+        "damping": "power_matched_damping",
+        "legacy": "legacy_bdot",
+    }
+    normalized = aliases.get(normalized, normalized)
+    valid_modes = {
+        "off",
+        "legacy_bdot",
+        "diagnostic_only",
+        "power_matched_damping",
+    }
+    if normalized not in valid_modes:
+        raise ValueError(
+            f"Unknown radiation_reaction_mode {mode!r}; expected one of "
+            f"{sorted(valid_modes)}"
+        )
+    return normalized
+
+
+def _compute_lienard_radiated_power(
+    charge: float,
+    beta: tuple[float, float, float],
+    beta_dot_t: tuple[float, float, float],
+    gamma: float,
+) -> float:
+    """Return instantaneous Liénard radiated power in native energy/ns units.
+
+    ``beta_dot_t`` is dβ/dt in coordinate time. The solver's stored ``bdot``
+    fields are dβ/d(ct), so callers should multiply stored ``bdot`` by
+    :data:`C_MMNS` before calling this helper.
+    """
+    beta_vec = np.asarray(beta, dtype=float)
+    beta_dot_vec = np.asarray(beta_dot_t, dtype=float)
+    accel_sq = float(np.dot(beta_dot_vec, beta_dot_vec))
+    if accel_sq <= 0.0 or charge == 0.0 or gamma <= 0.0:
+        return 0.0
+
+    cross = np.cross(beta_vec, beta_dot_vec)
+    transverse_term = accel_sq - float(np.dot(cross, cross))
+    if transverse_term <= 0.0:
+        return 0.0
+
+    return float((2.0 * charge**2 / (3.0 * C_MMNS)) * gamma**6 * transverse_term)
+
+
+def _apply_power_matched_radiation_damping(
+    mechanical_momentum: tuple[float, float, float],
+    mass: float,
+    gamma: float,
+    radiated_energy: float,
+) -> tuple[tuple[float, float, float], float, float]:
+    """Remove radiated energy from mechanical momentum by scaling its magnitude.
+
+    Returns ``(new_mechanical_momentum, new_gamma, applied_energy)``. Energy is
+    represented in native mechanical-energy units (``amu * mm^2 / ns^2``), while
+    momentum is represented in the solver's ``amu * mm / ns`` units.
+    """
+    if radiated_energy <= 0.0 or mass <= 0.0 or gamma <= 1.0:
+        return mechanical_momentum, gamma, 0.0
+
+    rest_energy = mass * C_MMNS**2
+    mechanical_energy = gamma * rest_energy
+    available_energy = max(0.0, mechanical_energy - rest_energy)
+    applied_energy = min(radiated_energy, available_energy)
+    if applied_energy <= 0.0:
+        return mechanical_momentum, gamma, 0.0
+
+    new_gamma = max(1.0, (mechanical_energy - applied_energy) / rest_energy)
+    old_momentum = np.asarray(mechanical_momentum, dtype=float)
+    old_momentum_mag = float(np.linalg.norm(old_momentum))
+    new_momentum_mag_sq = max(0.0, new_gamma**2 - 1.0) * (mass * C_MMNS) ** 2
+    new_momentum_mag = float(np.sqrt(new_momentum_mag_sq))
+
+    if old_momentum_mag > 0.0:
+        new_momentum = tuple(old_momentum * (new_momentum_mag / old_momentum_mag))
+    else:
+        new_momentum = mechanical_momentum
+
+    return new_momentum, new_gamma, applied_energy
+
+
 def _update_beta_running_average(
     previous_avg: tuple[float, float, float],
     previous_sample_count: float,
@@ -967,6 +1069,7 @@ def retarded_equations_of_motion(
     space_charge: Optional[Any] = None,
     traj_soa: Optional[TrajectoryArrays] = None,
     traj_ext_soa: Optional[TrajectoryArrays] = None,
+    radiation_reaction_mode: Optional[str] = "legacy_bdot",
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1014,6 +1117,7 @@ def retarded_equations_of_motion(
     # Initialize result state as a copy of current state
     current_state = trajectory[index_traj]
     result = _initialize_result_state(current_state)
+    radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
 
     num_particles = len(current_state["x"])
 
@@ -1782,89 +1886,190 @@ def retarded_equations_of_motion(
                 result["bz"][particle_idx] - current_state["bz"][particle_idx]
             )
 
-            # β-dot = dβ/dt where dt is coordinate time
-            # Use the same coordinate-time interval employed for β
+            # Stored bdot is dβ/d(ct), matching the historical LW force
+            # expressions. Liénard power diagnostics convert it back to dβ/dt.
             time_factor = C_MMNS * coordinate_dt
             result["bdotx"][particle_idx] = beta_change_x / time_factor
             result["bdoty"][particle_idx] = beta_change_y / time_factor
             result["bdotz"][particle_idx] = beta_change_z / time_factor
 
             # ================================================================
-            # STEP 8: Apply radiation reaction corrections
+            # STEP 8: Radiation diagnostics and optional reaction corrections
             # ================================================================
-            particle_char_time = _get_particle_char_time(current_state, particle_idx)
-
-            # Compute current and previous beta_dot magnitudes
-            beta_dot_magnitude = np.sqrt(
-                result["bdotx"][particle_idx] ** 2
-                + result["bdoty"][particle_idx] ** 2
-                + result["bdotz"][particle_idx] ** 2
+            beta_tuple = (
+                float(result["bx"][particle_idx]),
+                float(result["by"][particle_idx]),
+                float(result["bz"][particle_idx]),
             )
-            beta_dot_prev_magnitude = np.sqrt(
-                current_state["bdotx"][particle_idx] ** 2
-                + current_state["bdoty"][particle_idx] ** 2
-                + current_state["bdotz"][particle_idx] ** 2
+            beta_dot_t = (
+                float(result["bdotx"][particle_idx] * C_MMNS),
+                float(result["bdoty"][particle_idx] * C_MMNS),
+                float(result["bdotz"][particle_idx] * C_MMNS),
             )
-
-            # Apply radiation reaction if beta_dot has changed significantly (0.1% default)
-            beta_dot_change_fraction = (
-                abs(beta_dot_magnitude - beta_dot_prev_magnitude)
-                / beta_dot_prev_magnitude
-                if beta_dot_prev_magnitude > 0.0
-                else 0.0
+            radiation_power = _compute_lienard_radiated_power(
+                float(particle_charge),
+                beta_tuple,
+                beta_dot_t,
+                float(result["gamma"][particle_idx]),
             )
-            if beta_dot_change_fraction >= 0.001:  # 0.1% threshold
-                # Compute radiation reaction for all three axes
-                rad_lhs_x, rad_rhs_x = _compute_radiation_reaction_term(
-                    axis="x",
-                    beta_component=result["bx"][particle_idx],
-                    beta_dot_component=result["bdotx"][particle_idx],
-                    gamma_current=result["gamma"][particle_idx],
-                    gamma_previous=current_state["gamma"][particle_idx],
-                    time_step=h,
-                    mass=float(particle_mass),
+            radiation_energy = radiation_power * max(float(coordinate_dt), 0.0)
+            result["radiation_power"][particle_idx] = radiation_power
+            result["radiation_energy"][particle_idx] = radiation_energy
+
+            if radiation_mode == "power_matched_damping" and radiation_energy > 0.0:
+                mechanical_px = (
+                    result["Px"][particle_idx] - accumulated_field_x * particle_mass
+                )
+                mechanical_py = (
+                    result["Py"][particle_idx] - accumulated_field_y * particle_mass
+                )
+                mechanical_pz = (
+                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass
+                )
+                (
+                    damped_mechanical_momentum,
+                    damped_gamma,
+                    applied_radiation_energy,
+                ) = _apply_power_matched_radiation_damping(
+                    (
+                        float(mechanical_px),
+                        float(mechanical_py),
+                        float(mechanical_pz),
+                    ),
+                    float(particle_mass),
+                    float(result["gamma"][particle_idx]),
+                    float(radiation_energy),
+                )
+                result["radiation_energy_applied"][particle_idx] = (
+                    applied_radiation_energy
+                )
+                if applied_radiation_energy > 0.0:
+                    (
+                        mechanical_px,
+                        mechanical_py,
+                        mechanical_pz,
+                    ) = damped_mechanical_momentum
+                    result["Px"][particle_idx] = (
+                        mechanical_px + accumulated_field_x * particle_mass
+                    )
+                    result["Py"][particle_idx] = (
+                        mechanical_py + accumulated_field_y * particle_mass
+                    )
+                    result["Pz"][particle_idx] = (
+                        mechanical_pz + accumulated_field_z * particle_mass
+                    )
+                    result["gamma"][particle_idx] = damped_gamma
+                    scalar_potential_contribution = np.float64(
+                        particle_charge * accumulated_scalar_potential
+                    )
+                    result["Pt"][particle_idx] = (
+                        damped_gamma * particle_mass * C_MMNS
+                        + scalar_potential_contribution
+                    )
+
+                    beta_denom = damped_gamma * particle_mass * C_MMNS
+                    if beta_denom > 0.0:
+                        beta_x_limited = float(mechanical_px / beta_denom)
+                        beta_y_limited = float(mechanical_py / beta_denom)
+                        beta_z_limited = float(mechanical_pz / beta_denom)
+                        (
+                            beta_x_limited,
+                            beta_y_limited,
+                            beta_z_limited,
+                        ) = _limit_beta_magnitude(
+                            beta_x_limited,
+                            beta_y_limited,
+                            beta_z_limited,
+                        )
+                        result["bx"][particle_idx] = beta_x_limited
+                        result["by"][particle_idx] = beta_y_limited
+                        result["bz"][particle_idx] = beta_z_limited
+                        result["bdotx"][particle_idx] = (
+                            beta_x_limited - current_state["bx"][particle_idx]
+                        ) / time_factor
+                        result["bdoty"][particle_idx] = (
+                            beta_y_limited - current_state["by"][particle_idx]
+                        ) / time_factor
+                        result["bdotz"][particle_idx] = (
+                            beta_z_limited - current_state["bz"][particle_idx]
+                        ) / time_factor
+
+            if radiation_mode == "legacy_bdot":
+                particle_char_time = _get_particle_char_time(
+                    current_state, particle_idx
                 )
 
-                rad_lhs_y, rad_rhs_y = _compute_radiation_reaction_term(
-                    axis="y",
-                    beta_component=result["by"][particle_idx],
-                    beta_dot_component=result["bdoty"][particle_idx],
-                    gamma_current=result["gamma"][particle_idx],
-                    gamma_previous=current_state["gamma"][particle_idx],
-                    time_step=h,
-                    mass=float(particle_mass),
+                # Compute current and previous beta_dot magnitudes
+                beta_dot_magnitude = np.sqrt(
+                    result["bdotx"][particle_idx] ** 2
+                    + result["bdoty"][particle_idx] ** 2
+                    + result["bdotz"][particle_idx] ** 2
+                )
+                beta_dot_prev_magnitude = np.sqrt(
+                    current_state["bdotx"][particle_idx] ** 2
+                    + current_state["bdoty"][particle_idx] ** 2
+                    + current_state["bdotz"][particle_idx] ** 2
                 )
 
-                rad_lhs_z, rad_rhs_z = _compute_radiation_reaction_term(
-                    axis="z",
-                    beta_component=result["bz"][particle_idx],
-                    beta_dot_component=result["bdotz"][particle_idx],
-                    gamma_current=result["gamma"][particle_idx],
-                    gamma_previous=current_state["gamma"][particle_idx],
-                    time_step=h,
-                    mass=float(particle_mass),
+                # Apply legacy correction if beta_dot changed significantly.
+                beta_dot_change_fraction = (
+                    abs(beta_dot_magnitude - beta_dot_prev_magnitude)
+                    / beta_dot_prev_magnitude
+                    if beta_dot_prev_magnitude > 0.0
+                    else 0.0
                 )
+                if beta_dot_change_fraction >= 0.001:  # 0.1% threshold
+                    # Compute radiation reaction for all three axes
+                    rad_lhs_x, rad_rhs_x = _compute_radiation_reaction_term(
+                        axis="x",
+                        beta_component=result["bx"][particle_idx],
+                        beta_dot_component=result["bdotx"][particle_idx],
+                        gamma_current=result["gamma"][particle_idx],
+                        gamma_previous=current_state["gamma"][particle_idx],
+                        time_step=h,
+                        mass=float(particle_mass),
+                    )
 
-                # Apply corrections to all three axes
-                radiation_correction_x = (
-                    particle_char_time
-                    * (rad_lhs_x + rad_rhs_x)
-                    / (particle_mass * C_MMNS)
-                )
-                radiation_correction_y = (
-                    particle_char_time
-                    * (rad_lhs_y + rad_rhs_y)
-                    / (particle_mass * C_MMNS)
-                )
-                radiation_correction_z = (
-                    particle_char_time
-                    * (rad_lhs_z + rad_rhs_z)
-                    / (particle_mass * C_MMNS)
-                )
+                    rad_lhs_y, rad_rhs_y = _compute_radiation_reaction_term(
+                        axis="y",
+                        beta_component=result["by"][particle_idx],
+                        beta_dot_component=result["bdoty"][particle_idx],
+                        gamma_current=result["gamma"][particle_idx],
+                        gamma_previous=current_state["gamma"][particle_idx],
+                        time_step=h,
+                        mass=float(particle_mass),
+                    )
 
-                result["bdotx"][particle_idx] += radiation_correction_x
-                result["bdoty"][particle_idx] += radiation_correction_y
-                result["bdotz"][particle_idx] += radiation_correction_z
+                    rad_lhs_z, rad_rhs_z = _compute_radiation_reaction_term(
+                        axis="z",
+                        beta_component=result["bz"][particle_idx],
+                        beta_dot_component=result["bdotz"][particle_idx],
+                        gamma_current=result["gamma"][particle_idx],
+                        gamma_previous=current_state["gamma"][particle_idx],
+                        time_step=h,
+                        mass=float(particle_mass),
+                    )
+
+                    # Apply corrections to all three axes
+                    radiation_correction_x = (
+                        particle_char_time
+                        * (rad_lhs_x + rad_rhs_x)
+                        / (particle_mass * C_MMNS)
+                    )
+                    radiation_correction_y = (
+                        particle_char_time
+                        * (rad_lhs_y + rad_rhs_y)
+                        / (particle_mass * C_MMNS)
+                    )
+                    radiation_correction_z = (
+                        particle_char_time
+                        * (rad_lhs_z + rad_rhs_z)
+                        / (particle_mass * C_MMNS)
+                    )
+
+                    result["bdotx"][particle_idx] += radiation_correction_x
+                    result["bdoty"][particle_idx] += radiation_correction_y
+                    result["bdotz"][particle_idx] += radiation_correction_z
 
             # ================================================================
             # STEP 9: Update running average of beta

@@ -259,6 +259,7 @@ def _run_adaptive_step(
     cancel_callback: Optional[Callable],
     logger: Optional[Any],
     adaptive_state: "_AdaptiveStepState",
+    radiation_reaction_mode: str,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -486,6 +487,7 @@ def _run_adaptive_step(
                     startup_mode,
                     step_idx=i,
                     cancel_callback=cancel_callback,
+                    radiation_reaction_mode=radiation_reaction_mode,
                     **({"space_charge": space_charge} if space_charge is not None else {}),
                     **({"traj_soa": _temp_traj_builder.build_partial(substep_idx + 1)} if _scs_accepts_soa else {}),
                     **({"traj_ext_soa": _temp_drv_soa} if _scs_accepts_soa else {}),
@@ -822,6 +824,7 @@ def retarded_integrator(
     cancel_callback: Optional[Callable[[], bool]] = None,
     logger: Optional[Any] = None,
     use_numba: bool = True,
+    radiation_reaction_mode: str = "legacy_bdot",
 ) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -904,6 +907,12 @@ def retarded_integrator(
         integrator path. The canonical path is always used; this flag controls
         only logging intent, while actual kernel availability follows
         ``core.vectorized_interactions.NUMBA_AVAILABLE``.
+    radiation_reaction_mode:
+        Radiation bookkeeping/reaction mode. ``legacy_bdot`` preserves the
+        historical acceleration-history correction, ``diagnostic_only`` records
+        Liénard radiated power without changing momentum, and
+        ``power_matched_damping`` removes the radiated energy from mechanical
+        momentum after the normal LW update.
 
     Returns
     -------
@@ -1037,6 +1046,7 @@ def retarded_integrator(
                 cancel_callback=cancel_callback,
                 logger=logger,
                 adaptive_state=_adaptive_state,
+                radiation_reaction_mode=radiation_reaction_mode,
             )
             _ensure_startup_metadata(trajectory[i])
             _traj_builder.set_step(i, trajectory[i])
@@ -1160,6 +1170,7 @@ def retarded_integrator(
                     chrono_mode,
                     startup_mode,
                     step_idx=i,
+                    radiation_reaction_mode=radiation_reaction_mode,
                     **({
                         "space_charge": space_charge
                     } if space_charge is not None else {}),

@@ -262,6 +262,9 @@ class TrajectoryArrays:
     bdotx: np.ndarray
     bdoty: np.ndarray
     bdotz: np.ndarray
+    radiation_power: np.ndarray
+    radiation_energy: np.ndarray
+    radiation_energy_applied: np.ndarray
     origin_x: np.ndarray
     origin_y: np.ndarray
     origin_z: np.ndarray
@@ -312,6 +315,9 @@ class TrajectoryArrays:
             "bdotx": self.bdotx[step],
             "bdoty": self.bdoty[step],
             "bdotz": self.bdotz[step],
+            "radiation_power": self.radiation_power[step],
+            "radiation_energy": self.radiation_energy[step],
+            "radiation_energy_applied": self.radiation_energy_applied[step],
             "q": self.q,
             "m": self.m,
             "char_time": self.char_time,
@@ -349,6 +355,7 @@ class TrajectoryBuilder:
         "gamma",
         "bx", "by", "bz",
         "bdotx", "bdoty", "bdotz",
+        "radiation_power", "radiation_energy", "radiation_energy_applied",
         "origin_x", "origin_y", "origin_z",
         "beta_avg_x", "beta_avg_y", "beta_avg_z",
         "beta_samples",
@@ -432,6 +439,9 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"][:s],
             bdoty=self._arrays["bdoty"][:s],
             bdotz=self._arrays["bdotz"][:s],
+            radiation_power=self._arrays["radiation_power"][:s],
+            radiation_energy=self._arrays["radiation_energy"][:s],
+            radiation_energy_applied=self._arrays["radiation_energy_applied"][:s],
             origin_x=self._arrays["origin_x"][:s],
             origin_y=self._arrays["origin_y"][:s],
             origin_z=self._arrays["origin_z"][:s],
@@ -467,6 +477,9 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"],
             bdoty=self._arrays["bdoty"],
             bdotz=self._arrays["bdotz"],
+            radiation_power=self._arrays["radiation_power"],
+            radiation_energy=self._arrays["radiation_energy"],
+            radiation_energy_applied=self._arrays["radiation_energy_applied"],
             origin_x=self._arrays["origin_x"],
             origin_y=self._arrays["origin_y"],
             origin_z=self._arrays["origin_z"],
