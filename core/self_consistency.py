@@ -318,7 +318,7 @@ def self_consistent_step(
     cancel_callback: Optional[Any] = None,
     traj_soa: Optional[Any] = None,
     traj_ext_soa: Optional[Any] = None,
-    radiation_reaction_mode: Optional[str] = "legacy_bdot",
+    radiation_reaction_mode: Optional[str] = "off",
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 

@@ -6,6 +6,18 @@ from core import equations
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 
 
+def test_radiation_mode_defaults_to_off_and_rejects_legacy_bdot() -> None:
+    assert equations._canonicalize_radiation_reaction_mode(None) == "off"
+    assert equations._canonicalize_radiation_reaction_mode("none") == "off"
+    assert (
+        equations._canonicalize_radiation_reaction_mode("power-damping")
+        == "power_matched_damping"
+    )
+
+    with pytest.raises(ValueError):
+        equations._canonicalize_radiation_reaction_mode("legacy_bdot")
+
+
 def test_lienard_power_zero_for_unaccelerated_motion() -> None:
     power = equations._compute_lienard_radiated_power(
         ELEMENTARY_CHARGE,

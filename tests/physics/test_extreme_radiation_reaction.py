@@ -1,14 +1,8 @@
-"""
-Tests for extreme radiation reaction regimes to determine if additional mass-shell
-clamping is needed after radiation reaction forces are applied.
+"""Tests for extreme high-acceleration regimes and radiation diagnostics.
 
 This tests truly extreme scenarios:
 - γ > 10,000 (ultra-ultra relativistic)
 - Separations down to 0.1 nm (0.0001 mm)
-- Strong radiation reaction expected
-
-Goal: Determine if current single mass-shell clamping point (Step 4a) is sufficient,
-or if we need additional clamping after radiation reaction modifies bdot (Step 8).
 """
 
 from __future__ import annotations
@@ -102,10 +96,10 @@ def check_mass_shell_constraint(state: dict[str, np.ndarray]) -> np.ndarray:
     return errors
 
 
-def detect_radiation_reaction(
+def detect_large_bdot_changes(
     trajectory: list[dict[str, np.ndarray]], threshold: float = 0.001
 ) -> tuple[int, list[int], list[float]]:
-    """Detect radiation reaction activation and measure bdot changes.
+    """Detect large step-to-step bdot changes.
 
     Parameters
     ----------
@@ -185,12 +179,11 @@ class TestExtremeGamma:
             errors = check_mass_shell_constraint(state)
             max_error = max(max_error, np.max(errors))
 
-        # Detect radiation reaction
-        activations, steps, _ = detect_radiation_reaction(trajectory)
+        activations, steps, _ = detect_large_bdot_changes(trajectory)
 
         print(f"\nγ={gamma:.0f}:")
         print(f"  Max mass-shell error: {max_error:.3e}")
-        print(f"  Radiation reaction activations: {activations}/{len(trajectory) - 1}")
+        print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(
             f"  Mass-shell violations > 1e-2: {sum(1 for s in trajectory for e in check_mass_shell_constraint(s) if e > 1e-2)}"
         )
@@ -208,7 +201,7 @@ class TestExtremeGamma:
         # This might fail at extreme gamma - that's what we want to find out!
         assert max_error < 0.1, (
             f"Severe mass-shell violation at γ={gamma}: {max_error:.3e}. "
-            f"May need additional clamping after radiation reaction."
+            f"May need additional clamping in high-acceleration regimes."
         )
 
 
@@ -259,8 +252,7 @@ class TestNanometerSeparations:
             if np.max(errors) > 1e-2:
                 violation_count += 1
 
-        # Detect radiation reaction
-        activations, _, bdot_changes = detect_radiation_reaction(trajectory)
+        activations, _, bdot_changes = detect_large_bdot_changes(trajectory)
 
         # Compute maximum acceleration
         max_bdot = 0.0
@@ -276,7 +268,7 @@ class TestNanometerSeparations:
         print(f"\nSeparation={separation_nm:.1f} nm (γ={gamma}):")
         print(f"  Max mass-shell error: {max_error:.3e}")
         print(f"  Steps with violation > 1e-2: {violation_count}/{len(trajectory)}")
-        print(f"  Radiation reaction activations: {activations}/{len(trajectory) - 1}")
+        print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(f"  Max acceleration: {max_bdot:.3e} c/ns")
         if bdot_changes:
             print(f"  Max bdot change: {max(bdot_changes):.3e}")
@@ -288,7 +280,7 @@ class TestNanometerSeparations:
         # Looser tolerance for nanometer scales - may need additional clamping
         assert max_error < 0.5, (
             f"Severe mass-shell violation at {separation_nm} nm: {max_error:.3e}. "
-            f"Strong radiation reaction regime may require additional clamping."
+            f"Strong high-acceleration regime may require additional clamping."
         )
 
 
@@ -348,7 +340,7 @@ class TestCombinedExtreme:
             if step_max > 1e-2:
                 violation_count += 1
 
-        activations, activation_steps, bdot_changes = detect_radiation_reaction(
+        activations, activation_steps, bdot_changes = detect_large_bdot_changes(
             trajectory
         )
 
@@ -366,7 +358,7 @@ class TestCombinedExtreme:
         print(f"\nCombined extreme: γ={gamma:.0f}, sep={separation_nm:.1f} nm:")
         print(f"  Max mass-shell error: {max_error:.3e}")
         print(f"  Steps with violation > 1e-2: {violation_count}/{len(trajectory)}")
-        print(f"  Radiation reaction activations: {activations}/{len(trajectory) - 1}")
+        print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(f"  Max acceleration: {max_bdot:.3e} c/ns")
         if bdot_changes:
             print(f"  Max bdot change: {max(bdot_changes):.3e}")
@@ -380,18 +372,18 @@ class TestCombinedExtreme:
         # Very loose tolerance - we expect this might fail
         assert max_error < 1.0, (
             f"Critical mass-shell violation at γ={gamma}, sep={separation_nm} nm: {max_error:.3e}. "
-            f"\nThis extreme regime REQUIRES additional mass-shell clamping after radiation reaction (Step 8)."
+            f"\nThis extreme regime requires additional mass-shell clamping."
         )
 
 
 @pytest.mark.physics
-class TestRadiationReactionStrength:
-    """Measure radiation reaction strength in extreme regimes."""
+class TestHighAccelerationStrength:
+    """Measure high-acceleration strength in extreme regimes."""
 
-    def test_radiation_reaction_scaling(self):
-        """Test how radiation reaction strength scales with separation.
+    def test_large_bdot_change_scaling(self):
+        """Test how large bdot changes scale with separation.
 
-        Goal: Find the regime where radiation reaction becomes dominant.
+        Goal: Find regimes where force changes become numerically severe.
         """
         gamma = 10000.0
         separations_nm = [100.0, 50.0, 20.0, 10.0, 5.0, 2.0, 1.0]
@@ -423,7 +415,7 @@ class TestRadiationReactionStrength:
                 continue
 
             max_error = max(np.max(check_mass_shell_constraint(s)) for s in trajectory)
-            activations, _, bdot_changes = detect_radiation_reaction(trajectory)
+            activations, _, bdot_changes = detect_large_bdot_changes(trajectory)
 
             max_bdot = max(
                 np.sqrt(s["bdotx"][i] ** 2 + s["bdoty"][i] ** 2 + s["bdotz"][i] ** 2)
@@ -435,20 +427,20 @@ class TestRadiationReactionStrength:
                 {
                     "separation_nm": sep_nm,
                     "max_mass_shell_error": max_error,
-                    "rr_activations": activations,
-                    "rr_rate": activations / (len(trajectory) - 1),
+                    "bdot_change_steps": activations,
+                    "bdot_change_rate": activations / (len(trajectory) - 1),
                     "max_bdot": max_bdot,
                     "max_bdot_change": max(bdot_changes) if bdot_changes else 0.0,
                 }
             )
 
-        print(f"\nRadiation reaction scaling at γ={gamma}:")
-        print("  Sep(nm) | Mass-shell | RR rate | Max bdot  | Max Δbdot")
+        print(f"\nLarge bdot-change scaling at γ={gamma}:")
+        print("  Sep(nm) | Mass-shell | Rate    | Max bdot  | Max Δbdot")
         print("  --------|------------|---------|-----------|----------")
         for r in results:
             print(
                 f"  {r['separation_nm']:7.1f} | {r['max_mass_shell_error']:10.3e} | "
-                f"{r['rr_rate']:6.1%} | {r['max_bdot']:9.3e} | {r['max_bdot_change']:9.3e}"
+                f"{r['bdot_change_rate']:6.1%} | {r['max_bdot']:9.3e} | {r['max_bdot_change']:9.3e}"
             )
 
         # Check if we found a regime with violations
@@ -458,7 +450,7 @@ class TestRadiationReactionStrength:
                 f"\n⚠️  Found {len(violations)} regimes with mass-shell violations > 1e-2"
             )
             print(
-                "   Additional mass-shell clamping after radiation reaction IS NEEDED"
+                "   Additional mass-shell clamping is needed"
             )
 
 

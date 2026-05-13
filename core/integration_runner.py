@@ -824,7 +824,7 @@ def retarded_integrator(
     cancel_callback: Optional[Callable[[], bool]] = None,
     logger: Optional[Any] = None,
     use_numba: bool = True,
-    radiation_reaction_mode: str = "legacy_bdot",
+    radiation_reaction_mode: str = "off",
 ) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -908,9 +908,8 @@ def retarded_integrator(
         only logging intent, while actual kernel availability follows
         ``core.vectorized_interactions.NUMBA_AVAILABLE``.
     radiation_reaction_mode:
-        Radiation bookkeeping/reaction mode. ``legacy_bdot`` preserves the
-        historical acceleration-history correction, ``diagnostic_only`` records
-        Liénard radiated power without changing momentum, and
+        Radiation reaction mode. ``off`` and ``diagnostic_only`` record
+        Liénard radiated power without changing momentum.
         ``power_matched_damping`` removes the radiated energy from mechanical
         momentum after the normal LW update.
 

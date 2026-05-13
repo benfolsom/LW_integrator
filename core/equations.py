@@ -721,68 +721,10 @@ def _calculate_gamma_from_beta(beta_x: float, beta_y: float, beta_z: float) -> f
     return float(1.0 / np.sqrt(np.float64(one_minus_beta_sq)))
 
 
-def _compute_radiation_reaction_term(
-    axis: str,
-    beta_component: float,
-    beta_dot_component: float,
-    gamma_current: float,
-    gamma_previous: float,
-    time_step: float,
-    mass: float,
-) -> tuple[float, float]:
-    """Compute radiation reaction force component for a given axis.
-
-    The radiation reaction has two terms:
-    - LHS: Change in gamma times acceleration times velocity
-    - RHS: Cubic gamma times acceleration squared times velocity
-
-    Parameters
-    ----------
-    axis : str
-        Axis name ('x', 'y', or 'z') for debug purposes.
-    beta_component : float
-        Velocity component (βx, βy, or βz).
-    beta_dot_component : float
-        Acceleration component (β̇x, β̇y, or β̇z).
-    gamma_current : float
-        Current Lorentz factor.
-    gamma_previous : float
-        Lorentz factor from previous time step.
-    time_step : float
-        Time step size.
-    mass : float
-        Particle rest mass.
-
-    Returns
-    -------
-    tuple[float, float]
-        The (lhs_term, rhs_term) of the radiation reaction force.
-    """
-    # Left-hand side: change in gamma contribution
-    lhs_term = (
-        (gamma_current - gamma_previous)
-        / (time_step * gamma_current)
-        * mass
-        * beta_dot_component
-        * beta_component
-        * C_MMNS**2
-    )
-
-    # Right-hand side: cubic gamma contribution
-    rhs_term = (
-        -(gamma_current**3)
-        * (mass * beta_dot_component**2 * C_MMNS**2)
-        * beta_component
-        * C_MMNS
-    )
-
-    return lhs_term, rhs_term
-
-
 def _canonicalize_radiation_reaction_mode(mode: Optional[str]) -> str:
     """Normalize radiation-reaction mode names."""
     if mode is None:
-        return "legacy_bdot"
+        return "off"
 
     normalized = str(mode).strip().lower().replace("-", "_")
     aliases = {
@@ -792,12 +734,10 @@ def _canonicalize_radiation_reaction_mode(mode: Optional[str]) -> str:
         "diagnostics": "diagnostic_only",
         "power_damping": "power_matched_damping",
         "damping": "power_matched_damping",
-        "legacy": "legacy_bdot",
     }
     normalized = aliases.get(normalized, normalized)
     valid_modes = {
         "off",
-        "legacy_bdot",
         "diagnostic_only",
         "power_matched_damping",
     }
@@ -1069,7 +1009,7 @@ def retarded_equations_of_motion(
     space_charge: Optional[Any] = None,
     traj_soa: Optional[TrajectoryArrays] = None,
     traj_ext_soa: Optional[TrajectoryArrays] = None,
-    radiation_reaction_mode: Optional[str] = "legacy_bdot",
+    radiation_reaction_mode: Optional[str] = "off",
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1993,83 +1933,6 @@ def retarded_equations_of_motion(
                         result["bdotz"][particle_idx] = (
                             beta_z_limited - current_state["bz"][particle_idx]
                         ) / time_factor
-
-            if radiation_mode == "legacy_bdot":
-                particle_char_time = _get_particle_char_time(
-                    current_state, particle_idx
-                )
-
-                # Compute current and previous beta_dot magnitudes
-                beta_dot_magnitude = np.sqrt(
-                    result["bdotx"][particle_idx] ** 2
-                    + result["bdoty"][particle_idx] ** 2
-                    + result["bdotz"][particle_idx] ** 2
-                )
-                beta_dot_prev_magnitude = np.sqrt(
-                    current_state["bdotx"][particle_idx] ** 2
-                    + current_state["bdoty"][particle_idx] ** 2
-                    + current_state["bdotz"][particle_idx] ** 2
-                )
-
-                # Apply legacy correction if beta_dot changed significantly.
-                beta_dot_change_fraction = (
-                    abs(beta_dot_magnitude - beta_dot_prev_magnitude)
-                    / beta_dot_prev_magnitude
-                    if beta_dot_prev_magnitude > 0.0
-                    else 0.0
-                )
-                if beta_dot_change_fraction >= 0.001:  # 0.1% threshold
-                    # Compute radiation reaction for all three axes
-                    rad_lhs_x, rad_rhs_x = _compute_radiation_reaction_term(
-                        axis="x",
-                        beta_component=result["bx"][particle_idx],
-                        beta_dot_component=result["bdotx"][particle_idx],
-                        gamma_current=result["gamma"][particle_idx],
-                        gamma_previous=current_state["gamma"][particle_idx],
-                        time_step=h,
-                        mass=float(particle_mass),
-                    )
-
-                    rad_lhs_y, rad_rhs_y = _compute_radiation_reaction_term(
-                        axis="y",
-                        beta_component=result["by"][particle_idx],
-                        beta_dot_component=result["bdoty"][particle_idx],
-                        gamma_current=result["gamma"][particle_idx],
-                        gamma_previous=current_state["gamma"][particle_idx],
-                        time_step=h,
-                        mass=float(particle_mass),
-                    )
-
-                    rad_lhs_z, rad_rhs_z = _compute_radiation_reaction_term(
-                        axis="z",
-                        beta_component=result["bz"][particle_idx],
-                        beta_dot_component=result["bdotz"][particle_idx],
-                        gamma_current=result["gamma"][particle_idx],
-                        gamma_previous=current_state["gamma"][particle_idx],
-                        time_step=h,
-                        mass=float(particle_mass),
-                    )
-
-                    # Apply corrections to all three axes
-                    radiation_correction_x = (
-                        particle_char_time
-                        * (rad_lhs_x + rad_rhs_x)
-                        / (particle_mass * C_MMNS)
-                    )
-                    radiation_correction_y = (
-                        particle_char_time
-                        * (rad_lhs_y + rad_rhs_y)
-                        / (particle_mass * C_MMNS)
-                    )
-                    radiation_correction_z = (
-                        particle_char_time
-                        * (rad_lhs_z + rad_rhs_z)
-                        / (particle_mass * C_MMNS)
-                    )
-
-                    result["bdotx"][particle_idx] += radiation_correction_x
-                    result["bdoty"][particle_idx] += radiation_correction_y
-                    result["bdotz"][particle_idx] += radiation_correction_z
 
             # ================================================================
             # STEP 9: Update running average of beta

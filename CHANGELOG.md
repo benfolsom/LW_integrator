@@ -4,6 +4,13 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Radiation Bookkeeping Cleanup (June 2026)
+
+- **Physics** — Removed the legacy component-wise `bdot` radiation-reaction correction. It was gated on step-to-step acceleration-magnitude changes and only modified stored acceleration history, not particle mechanical momentum or energy.
+- **API** — `radiation_reaction_mode` now defaults to `off`; passive Liénard radiation diagnostics remain available through `radiation_power` and `radiation_energy`, while `power_matched_damping` is the only current opt-in self-force approximation.
+- **Tests** — Relabelled old radiation-reaction activation tests as high-acceleration / large-`bdot` diagnostics so they no longer imply that a self-force was applied.
+- **Files modified** — `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `core/diagnostics.py`, `tests/physics/test_radiation_reaction_activation.py`, `tests/physics/test_extreme_radiation_reaction.py`
+
 ### Integrator Architecture Simplification (June 2026)
 
 - **Refactor** — Removed `core/performance.py` and its alternate integrator wrapper (`retarded_integrator_numba` / `run_optimised_integrator`) to eliminate redundant orchestration paths

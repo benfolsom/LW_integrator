@@ -312,23 +312,7 @@ def test_beta_helpers_limit_and_recover_gamma() -> None:
     assert equations._calculate_one_minus_beta_squared(1.0, 0.0, 0.0) > 0.0
 
 
-def test_radiation_and_running_average_helpers_match_closed_forms() -> None:
-    lhs, rhs = equations._compute_radiation_reaction_term(
-        axis="x",
-        beta_component=0.25,
-        beta_dot_component=0.5,
-        gamma_current=3.0,
-        gamma_previous=2.0,
-        time_step=0.2,
-        mass=4.0,
-    )
-
-    expected_lhs = (1.0 / (0.2 * 3.0)) * 4.0 * 0.5 * 0.25 * C_MMNS**2
-    expected_rhs = -(3.0**3) * (4.0 * 0.5**2 * C_MMNS**2) * 0.25 * C_MMNS
-
-    assert lhs == pytest.approx(expected_lhs)
-    assert rhs == pytest.approx(expected_rhs)
-
+def test_running_average_helper_matches_closed_form() -> None:
     average, sample_count = equations._update_beta_running_average(
         previous_avg=(0.2, 0.4, 0.6),
         previous_sample_count=2.0,

@@ -512,10 +512,12 @@ def validate_trajectory(
 def find_radiation_reaction_activations(
     trajectory: TrajectoryInput,
 ) -> List[Tuple[int, int]]:
-    """Identify steps where radiation reaction force was likely active.
+    """Identify historical large-acceleration-change markers.
 
-    Looks for sudden changes in acceleration (bdot) that indicate the
-    radiation reaction force was triggered.
+    This legacy diagnostic looks for sudden changes in stored acceleration
+    (``bdot``). It no longer indicates that a radiation-reaction self-force was
+    applied; use ``radiation_power`` / ``radiation_energy_applied`` fields for
+    the current radiation bookkeeping.
 
     Parameters
     ----------
