@@ -217,6 +217,9 @@ def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     _ensure("beta_avg_y", "by")
     _ensure("beta_avg_z", "bz")
     _ensure("beta_samples", None, fill_value=1.0)
+    _ensure("radiation_power")
+    _ensure("radiation_energy")
+    _ensure("radiation_energy_applied")
 
 
 @dataclass
