@@ -14,7 +14,7 @@ three separate concepts:
 
 * passive Lienard radiated-power diagnostics,
 * an optional power-matched damping approximation, and
-* future candidate self-force models that act on mechanical momentum before
+* explicit candidate self-force models that act on mechanical momentum before
   recomposing canonical momentum.
 
 The legacy ``bdot`` correction has been removed. It was a post-step edit to a
@@ -214,6 +214,11 @@ Ordered Tasks
    * synchrotron-like gamma scaling for transverse acceleration, and
    * prescribed magnetic-bend timestep convergence.
 
+   Remaining coverage gap:
+
+   * timestep convergence of active ``medina_lad`` energy/momentum changes,
+     separately from passive Lienard power integration.
+
 4. Make the provisional damping model deliberately narrow. **Status: in progress.**
 
    The existing ``power_matched_damping`` mode should remain labeled as an
@@ -231,7 +236,7 @@ Ordered Tasks
      matches the observed gamma reduction.
 
 5. Derive the Medina implementation in native units. **Status: first draft
-   complete; needs review before coding.**
+   complete; needs continued review.**
 
    Produce a short derivation note before coding. It should define native units
    for charge, mass, force, acceleration, time, and energy; state whether the
@@ -265,8 +270,6 @@ Ordered Tasks
 
    Remaining work before treating this as physics evidence:
 
-   * extend prescribed electric-field benchmarks where ``dgamma/dt`` is
-     nonzero,
    * add timestep convergence tests for ``medina_lad`` itself,
    * record when the numerical impulse cap activates in controlled tests, and
    * evaluate whether the mechanical-force estimator is adequate for retarded
@@ -309,8 +312,8 @@ Ordered Tasks
    * explicit documentation that this is not yet a full external-potential or
      time-dependent field-map system.
 
-8. Benchmark self-force candidates against controlled systems. **Status: not
-   started.**
+8. Benchmark self-force candidates against controlled systems. **Status: in
+   progress.**
 
    Start with tests that do not require wall images or retarded multi-particle
    edge cases:
@@ -320,6 +323,23 @@ Ordered Tasks
    * ultra-relativistic transverse acceleration,
    * a low-energy case where reaction is negligible, and
    * a high-gamma case where the reaction term is visible but stable.
+
+   Current coverage:
+
+   * direct Medina helper test for longitudinal cancellation,
+   * direct Medina helper test for transverse/synchrotron-style damping,
+   * prescribed longitudinal electric acceleration with nonzero
+     ``dgamma/dt``, verifying diagnostic-only neutrality and small Medina
+     longitudinal applied energy,
+   * short high-gamma prescribed magnetic bend, and
+   * several-hundred-mm prescribed transverse magnetic bend.
+
+   Remaining coverage gap:
+
+   * active-mode timestep convergence for ``medina_lad``,
+   * mixed longitudinal/transverse prescribed fields, and
+   * low-energy negligible-reaction and ultra-relativistic visible-reaction
+     brackets with explicit acceptance thresholds.
 
 9. Revisit conducting-surface collision cases. **Status: not started.**
 
@@ -347,8 +367,9 @@ The immediate low-risk work is now validation rather than new physics:
 
 * keep the Medina/native-units derivation under review as the primary
   implementation target,
-* add prescribed electric-field benchmarks where ``dgamma/dt`` is nonzero,
-* compare ``off``, ``diagnostic_only``, ``power_matched_damping``, and
-  ``medina_lad`` under known prescribed external forces, and
+* add active-mode timestep convergence tests for ``medina_lad`` under known
+  prescribed external forces,
+* add mixed-field and low/high-energy benchmark brackets with explicit
+  tolerances, and
 * refine the mechanical-force extraction API before using ``medina_lad`` as
   evidence in conducting-wall collision cases.

@@ -183,17 +183,23 @@ reported configurations:
    For the millimetre-to-micron geometries in this repository, this quantity is
    orders of magnitude smaller than the Lorentz force recovered from
    :eq:`eq-headon-limit`.
-* **Radiation reaction.**  Medina's reduced-order form of the
-  Lorentz–Abraham–Dirac force is used to damp numerical instabilities near
-  conducting boundaries:
+* **Radiation reaction.**  Passive Liénard radiation diagnostics are tracked
+  separately from any optional self-force.  The provisional
+  ``power_matched_damping`` mode removes the computed radiated energy by
+  scaling mechanical momentum magnitude; it is an energy-bookkeeping
+  approximation, not a LAD model.  The experimental ``medina_lad`` mode applies
+  Medina's reduced-order Lorentz–Abraham–Dirac force to mechanical momentum:
 
   .. math::
 
      \mathbf{F}_{\text{rad}} = \frac{2}{3}\frac{e^{2}}{m c^{3}}\left[\frac{d\gamma}{dt}\,\mathbf{F}_{\text{ext}} - \frac{\gamma^{3}}{c^{2}} (\mathbf{F}_{\text{ext}} \cdot \mathbf{a})\, \mathbf{v}\right].
 
-  The implementation only activates this term when image-charge interactions
-  drive :math:`R` toward the micron scale so that the retarded integrator can
-  report a stable pre-impact energy.
+  This mode is opt-in and currently validated only against controlled
+  prescribed-field cases.  Longitudinal acceleration should show the expected
+  near-cancellation of the Medina terms, while transverse bending gives the
+  synchrotron-style recoil mostly opposite the particle velocity.  Conducting
+  boundary cases still require dedicated convergence checks before
+  ``medina_lad`` should be treated as physics evidence.
 
 COLD_START gating mechanism
 ---------------------------

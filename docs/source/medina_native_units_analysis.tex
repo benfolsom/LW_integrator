@@ -5,7 +5,6 @@
 \usepackage{amssymb}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
-\usepackage{hyperref}
 
 \title{Radiation Reaction Model Supplement: Native-Units Mapping}
 \author{LW Integrator Notes}
@@ -205,6 +204,25 @@ Medina instead computes a vector force from
 Thus, Medina can change both the magnitude and direction of mechanical
 momentum.
 
+For the current experimental implementation, \(d\boldsymbol{\beta}/dt\) and
+\(d\gamma/dt\) are derived from the estimated mechanical force:
+\begin{align}
+\frac{d\boldsymbol{\beta}}{dt}
+&=
+\frac{\mathbf{F}_{\mathrm{ext}}
+- \boldsymbol{\beta}(\boldsymbol{\beta}\cdot\mathbf{F}_{\mathrm{ext}})}
+{\gamma m c},
+\\
+\frac{d\gamma}{dt}
+&=
+\frac{\boldsymbol{\beta}\cdot\mathbf{F}_{\mathrm{ext}}}{m c}.
+\end{align}
+This keeps the one-dimensional longitudinal terms self-consistent. In the
+ideal collinear case, the two Medina bracket terms cancel to numerical
+precision. In a transverse bend, \(d\gamma/dt=0\) while
+\(\mathbf{F}_{\mathrm{ext}}\cdot\mathbf{a}\neq 0\), producing a recoil mostly
+opposite the particle velocity.
+
 \section{Practical Summary}
 
 \begin{description}
@@ -215,13 +233,14 @@ bookkeeping.
 
 \item[Medina/LAD candidate]
 Computes a radiation-reaction force vector, applies its impulse to mechanical
-momentum, may change both direction and magnitude, and requires a clean
-\(\mathbf{F}_{\mathrm{ext}}\) extraction API before implementation.
+momentum, may change both direction and magnitude, and remains experimental
+until the mechanical \(\mathbf{F}_{\mathrm{ext}}\) extraction API is validated
+for retarded image/source forces.
 \end{description}
 
 The first Medina implementation should use rest mass in \(\tau_0\) and
 explicitly state that the paper's dressed-mass caveat is not yet modeled. It
-should start with prescribed-field benchmarks before being applied to retarded
+has started with prescribed-field benchmarks before being applied to retarded
 image-charge collision cases.
 
 \end{document}
