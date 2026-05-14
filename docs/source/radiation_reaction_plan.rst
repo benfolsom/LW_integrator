@@ -1,6 +1,13 @@
 Radiation Reaction Plan
 =======================
 
+.. note::
+
+   This is a development-branch planning document. It can be committed on the
+   ``development`` branch, but should not be promoted to ``main`` or release
+   documentation until the implementation and validation tasks below are
+   complete.
+
 This plan tracks the remaining work needed to make radiation reaction in the
 integrator physically auditable. The current code should be treated as having
 three separate concepts:
@@ -56,7 +63,9 @@ Ordered Tasks
 
    Add regression tests for ``radiation_power``, ``radiation_energy``, and
    ``radiation_energy_applied`` in ``off`` and ``power_matched_damping`` modes.
-   Verify that diagnostic-only radiation never changes trajectory state.
+   Verify that diagnostic-only radiation never changes trajectory state. These
+   tests should cover both legacy list trajectories and ``TrajectoryArrays`` so
+   the bookkeeping remains compatible with the current SoA optimization path.
 
 3. Validate the Lienard power helper in isolation.
 
@@ -131,4 +140,3 @@ The immediate low-risk work is documentation and naming:
 * retain ``find_radiation_reaction_activations`` as a compatibility alias, and
 * update tests so old scripts continue to work while new code uses the clearer
   name.
-
