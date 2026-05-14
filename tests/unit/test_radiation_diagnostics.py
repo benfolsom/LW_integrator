@@ -140,6 +140,110 @@ def test_lienard_power_uses_coordinate_time_beta_dot() -> None:
     assert power == pytest.approx(expected)
 
 
+def test_lienard_power_parallel_acceleration_uses_gamma6_scaling() -> None:
+    gamma = 2.5
+    beta_dot_t = (4.0, 0.0, 0.0)
+
+    power = equations._compute_lienard_radiated_power(
+        ELEMENTARY_CHARGE,
+        beta=(0.6, 0.0, 0.0),
+        beta_dot_t=beta_dot_t,
+        gamma=gamma,
+    )
+
+    expected = (
+        2.0
+        * ELEMENTARY_CHARGE**2
+        / (3.0 * C_MMNS)
+        * gamma**6
+        * beta_dot_t[0] ** 2
+    )
+    assert power == pytest.approx(expected)
+
+
+def test_lienard_power_transverse_acceleration_uses_synchrotron_scaling() -> None:
+    gamma = 4.0
+    beta_x = np.sqrt(1.0 - 1.0 / gamma**2)
+    beta_dot_t = (0.0, 5.0, 0.0)
+
+    power = equations._compute_lienard_radiated_power(
+        ELEMENTARY_CHARGE,
+        beta=(beta_x, 0.0, 0.0),
+        beta_dot_t=beta_dot_t,
+        gamma=gamma,
+    )
+
+    expected = (
+        2.0
+        * ELEMENTARY_CHARGE**2
+        / (3.0 * C_MMNS)
+        * gamma**4
+        * beta_dot_t[1] ** 2
+    )
+    assert power == pytest.approx(expected)
+
+
+def test_lienard_power_converts_stored_bdot_to_coordinate_time() -> None:
+    gamma = 3.0
+    beta = (0.0, 0.0, np.sqrt(1.0 - 1.0 / gamma**2))
+    beta_dot_t = (2.0, 0.0, 0.0)
+    stored_bdot = tuple(component / C_MMNS for component in beta_dot_t)
+
+    direct = equations._compute_lienard_radiated_power(
+        ELEMENTARY_CHARGE,
+        beta=beta,
+        beta_dot_t=beta_dot_t,
+        gamma=gamma,
+    )
+    converted = equations._compute_lienard_radiated_power(
+        ELEMENTARY_CHARGE,
+        beta=beta,
+        beta_dot_t=tuple(component * C_MMNS for component in stored_bdot),
+        gamma=gamma,
+    )
+
+    assert converted == pytest.approx(direct)
+
+
+def test_integrated_lienard_power_converges_for_analytic_circular_motion() -> None:
+    gamma = 8.0
+    beta_mag = np.sqrt(1.0 - 1.0 / gamma**2)
+    omega = 3.0
+    duration = 0.2
+    coefficient = 2.0 * ELEMENTARY_CHARGE**2 / (3.0 * C_MMNS)
+    expected_power = coefficient * gamma**4 * (beta_mag * omega) ** 2
+    expected_energy = expected_power * duration
+
+    def integrated_energy(steps: int) -> float:
+        dt = duration / steps
+        total = 0.0
+        for step in range(steps):
+            time = (step + 0.5) * dt
+            beta = (
+                beta_mag * np.cos(omega * time),
+                beta_mag * np.sin(omega * time),
+                0.0,
+            )
+            beta_dot_t = (
+                -beta_mag * omega * np.sin(omega * time),
+                beta_mag * omega * np.cos(omega * time),
+                0.0,
+            )
+            total += (
+                equations._compute_lienard_radiated_power(
+                    ELEMENTARY_CHARGE,
+                    beta=beta,
+                    beta_dot_t=beta_dot_t,
+                    gamma=gamma,
+                )
+                * dt
+            )
+        return total
+
+    assert integrated_energy(8) == pytest.approx(expected_energy, rel=1.0e-12)
+    assert integrated_energy(64) == pytest.approx(expected_energy, rel=1.0e-12)
+
+
 def test_power_matched_damping_removes_energy_from_mechanical_momentum() -> None:
     gamma = 2.0
     mass = ELECTRON_MASS_AMU

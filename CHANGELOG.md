@@ -21,9 +21,11 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 - **Physics** — Removed the legacy component-wise `bdot` radiation-reaction correction. It was gated on step-to-step acceleration-magnitude changes and only modified stored acceleration history, not particle mechanical momentum or energy.
 - **API** — `radiation_reaction_mode` now defaults to `off`; passive Liénard radiation diagnostics remain available through `radiation_power` and `radiation_energy`, while `power_matched_damping` is the only current opt-in self-force approximation.
+- **Docs** — Updated the radiation-reaction roadmap with completed/in-progress status markers and reset the immediate next steps around validation and Medina native-units derivation.
+- **Tests** — Expanded Liénard radiation validation for parallel acceleration, transverse/synchrotron scaling, stored-`bdot` coordinate-time conversion, analytic circular-motion energy integration, and magnetic-bend timestep convergence.
 - **Bug** — Initial legacy trajectory states now receive zero-filled radiation bookkeeping fields during integration startup, matching the SoA trajectory builder and later integration steps.
 - **Tests** — Relabelled old radiation-reaction activation tests as high-acceleration / large-`bdot` diagnostics so they no longer imply that a self-force was applied. Added SoA/Numba-path regression coverage for radiation bookkeeping fields.
-- **Files modified** — `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `core/diagnostics.py`, `docs/source/radiation_reaction_plan.rst`, `tests/unit/test_radiation_diagnostics.py`, `tests/unit/test_trajectory_arrays.py`, `tests/unit/test_numba_mode_features.py`, `tests/physics/test_radiation_reaction_activation.py`, `tests/physics/test_extreme_radiation_reaction.py`
+- **Files modified** — `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `core/diagnostics.py`, `docs/source/radiation_reaction_plan.rst`, `tests/unit/test_external_fields.py`, `tests/unit/test_radiation_diagnostics.py`, `tests/unit/test_trajectory_arrays.py`, `tests/unit/test_numba_mode_features.py`, `tests/physics/test_radiation_reaction_activation.py`, `tests/physics/test_extreme_radiation_reaction.py`
 
 ### Integrator Architecture Simplification (June 2026)
 

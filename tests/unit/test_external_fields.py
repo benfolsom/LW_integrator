@@ -251,3 +251,41 @@ def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
         rel=1.0e-6,
         abs=1.0e-10,
     )
+
+
+def test_magnetic_bend_radiated_energy_converges_with_timestep_refinement() -> None:
+    field = ExternalFieldConfig(magnetic_field_native=(0.0, 1.0e6, 0.0))
+    duration = 1.0e-3
+    common_kwargs = dict(
+        wall_z=0.0,
+        aperture_radius=1.0e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1.0e9,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        use_numba=True,
+        external_field=field,
+        radiation_reaction_mode="diagnostic_only",
+    )
+
+    def radiated_energy(steps: int) -> float:
+        _, _, soa, _ = retarded_integrator(
+            **common_kwargs,
+            steps=steps,
+            h_step=duration / steps,
+            init_rider=_single_particle_state(gamma=20.0),
+        )
+        assert soa is not None
+        return float(np.sum(soa.radiation_energy[:, 0]))
+
+    energy_100 = radiated_energy(100)
+    energy_200 = radiated_energy(200)
+    energy_400 = radiated_energy(400)
+
+    assert energy_100 > 0.0
+    assert energy_200 > 0.0
+    assert energy_400 > 0.0
+    assert abs(energy_400 - energy_200) < abs(energy_200 - energy_100)
+    assert energy_400 == pytest.approx(energy_200, rel=6.0e-3)

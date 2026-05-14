@@ -53,13 +53,19 @@ explicit:
 Ordered Tasks
 -------------
 
-1. Finish terminology cleanup.
+1. Finish terminology cleanup. **Status: complete.**
 
    Rename diagnostics that historically referred to "radiation reaction
    activation" when they only detect large changes in stored acceleration.
    Keep compatibility aliases until downstream scripts are updated.
 
-2. Lock down passive radiation bookkeeping.
+   Current implementation:
+
+   * ``find_large_bdot_changes`` is the maintained diagnostic name.
+   * ``find_radiation_reaction_activations`` remains as a compatibility alias.
+   * legacy ``bdot`` radiation-reaction mode names are rejected.
+
+2. Lock down passive radiation bookkeeping. **Status: in progress.**
 
    Add regression tests for ``radiation_power``, ``radiation_energy``, and
    ``radiation_energy_applied`` in ``off`` and ``power_matched_damping`` modes.
@@ -67,7 +73,13 @@ Ordered Tasks
    tests should cover both legacy list trajectories and ``TrajectoryArrays`` so
    the bookkeeping remains compatible with the current SoA optimization path.
 
-3. Validate the Lienard power helper in isolation.
+   Current coverage:
+
+   * ``off`` and ``diagnostic_only`` produce identical trajectory state.
+   * ``power_matched_damping`` records applied radiated energy separately.
+   * startup and SoA paths zero-fill radiation bookkeeping fields.
+
+3. Validate the Lienard power helper in isolation. **Status: in progress.**
 
    Required checks:
 
@@ -77,7 +89,15 @@ Ordered Tasks
    * coordinate-time ``bdot`` conversion from stored integrator values, and
    * timestep convergence of integrated radiated energy.
 
-4. Make the provisional damping model deliberately narrow.
+   Current coverage:
+
+   * zero acceleration,
+   * coordinate-time ``d beta / dt`` input,
+   * parallel and transverse acceleration scaling,
+   * synchrotron-like gamma scaling for transverse acceleration, and
+   * prescribed magnetic-bend timestep convergence.
+
+4. Make the provisional damping model deliberately narrow. **Status: in progress.**
 
    The existing ``power_matched_damping`` mode should remain labeled as an
    energy-bookkeeping approximation. It should have tests showing that it
@@ -85,14 +105,23 @@ Ordered Tasks
    preserves momentum direction by construction. It should not be presented as
    a LAD, Landau-Lifshitz, or Medina self-force model.
 
-5. Derive the Medina implementation in native units.
+   Current coverage:
+
+   * isolated damping helper preserves momentum direction by scaling mechanical
+     momentum magnitude,
+   * the helper cannot remove more than kinetic energy above rest energy, and
+   * the magnetic-bend integration test checks that applied damping energy
+     matches the observed gamma reduction.
+
+5. Derive the Medina implementation in native units. **Status: not started.**
 
    Produce a short derivation note before coding. It should define native units
    for charge, mass, force, acceleration, time, and energy; state whether the
    force is integrated over coordinate time or proper time; and include a
    dimension check for the final impulse.
 
-6. Implement the Medina candidate behind an explicit mode.
+6. Implement the Medina candidate behind an explicit mode. **Status: blocked by
+   Task 5.**
 
    The first code path should be opt-in, probably
    ``radiation_reaction_mode="medina_lad"``. It should:
@@ -104,7 +133,8 @@ Ordered Tasks
    * cap the impulse only as a numerical guard with diagnostics, and
    * recompose canonical momentum using the current potentials.
 
-7. Add prescribed external-field support for controlled benchmarks.
+7. Add prescribed external-field support for controlled benchmarks. **Status:
+   complete for uniform fields.**
 
    Radiation-reaction validation needs clean external accelerators that do not
    depend on image-charge or point-source artifacts. Start with uniform fields
@@ -130,7 +160,17 @@ Ordered Tasks
    momentum can be recomposed from the same potentials used to compute the
    mechanical Lorentz-force impulse.
 
-8. Benchmark self-force candidates against controlled systems.
+   Current implementation:
+
+   * uniform electric and magnetic fields in native solver units,
+   * SI-to-native conversion helper for electric fields,
+   * spatial and temporal field windows,
+   * canonical integrator, SoA/Numba, CLI, GUI, and config plumbing, and
+   * explicit documentation that this is not yet a full external-potential or
+     time-dependent field-map system.
+
+8. Benchmark self-force candidates against controlled systems. **Status: not
+   started.**
 
    Start with tests that do not require wall images or retarded multi-particle
    edge cases:
@@ -141,7 +181,7 @@ Ordered Tasks
    * a low-energy case where reaction is negligible, and
    * a high-gamma case where the reaction term is visible but stable.
 
-9. Revisit conducting-surface collision cases.
+9. Revisit conducting-surface collision cases. **Status: not started.**
 
    The paper motivates radiation reaction mostly as a way to prevent runaway
    behavior near image-charge collisions. After isolated benchmarks pass,
@@ -149,20 +189,23 @@ Ordered Tasks
    original aperture/image-charge scenarios. The acceptance criterion should be
    energy bookkeeping and timestep convergence, not just smoother trajectories.
 
-10. Evaluate alternatives only after the Medina track is measurable.
+10. Evaluate alternatives only after the Medina track is measurable. **Status:
+    not started.**
 
    Landau-Lifshitz reduced-order radiation reaction is likely the best
    conventional comparison model. Eliezer-Ford-O'Connell can remain a research
    track unless the Medina candidate shows instability or poor convergence in
    the near-surface regime.
 
-Low-Hanging Work
-----------------
+Next Best Steps
+---------------
 
-The immediate low-risk work is documentation and naming:
+The immediate low-risk work is now validation rather than new physics:
 
-* add this roadmap to the docs,
-* rename the old activation diagnostic to ``find_large_bdot_changes``,
-* retain ``find_radiation_reaction_activations`` as a compatibility alias, and
-* update tests so old scripts continue to work while new code uses the clearer
-  name.
+* add one more integration-level damping bound check:
+  ``sum(radiation_energy_applied) <= sum(radiation_energy)`` for a controlled
+  prescribed-field run,
+* add a native-units derivation note for the Medina candidate,
+* define the mechanical-force extraction API that Medina/LAD will consume, and
+* only then add ``radiation_reaction_mode="medina_lad"`` behind an explicit
+  opt-in.
