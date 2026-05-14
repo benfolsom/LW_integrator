@@ -319,6 +319,7 @@ def self_consistent_step(
     traj_soa: Optional[Any] = None,
     traj_ext_soa: Optional[Any] = None,
     radiation_reaction_mode: Optional[str] = "off",
+    external_field: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -387,6 +388,18 @@ def self_consistent_step(
         step_idx,
         cancel_callback,
         **({"space_charge": space_charge} if space_charge is not None else {}),
+        **(
+            {"external_field": external_field}
+            if external_field is not None
+            and (
+                "external_field" in _sig_params
+                or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD
+                    for p in _sig_params.values()
+                )
+            )
+            else {}
+        ),
         **({"traj_soa": traj_soa} if _accepts_soa and traj_soa is not None else {}),
         **({"traj_ext_soa": traj_ext_soa} if _accepts_soa and traj_ext_soa is not None else {}),
         **(

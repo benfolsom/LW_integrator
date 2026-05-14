@@ -4,6 +4,14 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Prescribed External Fields (June 2026)
+
+- **Feature** — Added `ExternalFieldConfig` for prescribed uniform external fields in native solver units, with optional spatial/temporal windows.
+- **Feature** — Added `core.external_fields.electric_field_v_per_m_to_native()` so SI gradients such as GV/m can be converted before use instead of guessed.
+- **Integrator** — Threaded external fields through the canonical integration path, self-consistency wrapper, adaptive substep runner, and SoA return path without adding a separate Numba orchestration path.
+- **Tests** — Added unit coverage for SI-to-native electric-field conversion, uniform electric/magnetic impulses, field windows, and a `use_numba=True` integration smoke test with SoA output.
+- **Files modified** — `core/external_fields.py`, `core/types.py`, `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `tests/unit/test_external_fields.py`
+
 ### Radiation Bookkeeping Cleanup (June 2026)
 
 - **Physics** — Removed the legacy component-wise `bdot` radiation-reaction correction. It was gated on step-to-step acceleration-magnitude changes and only modified stored acceleration history, not particle mechanical momentum or energy.

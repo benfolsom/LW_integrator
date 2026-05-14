@@ -87,6 +87,7 @@ from .distances import (
     compute_retarded_distance,
     compute_retarded_distance_soa,
 )
+from .external_fields import compute_uniform_external_field_impulse
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
@@ -1010,6 +1011,7 @@ def retarded_equations_of_motion(
     traj_soa: Optional[TrajectoryArrays] = None,
     traj_ext_soa: Optional[TrajectoryArrays] = None,
     radiation_reaction_mode: Optional[str] = "off",
+    external_field: Optional[Any] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1530,6 +1532,37 @@ def retarded_equations_of_motion(
                         accumulated_field_y += sc_df_y
                         accumulated_field_z += sc_df_z
                         accumulated_scalar_potential += sc_dscalar
+
+            # ================================================================
+            # STEP 4c: Prescribed external uniform fields
+            # ================================================================
+            if external_field is not None and getattr(external_field, "enabled", False):
+                (
+                    ext_dp_x,
+                    ext_dp_y,
+                    ext_dp_z,
+                    ext_dp_t,
+                ) = compute_uniform_external_field_impulse(
+                    external_field,
+                    charge=float(particle_charge),
+                    gamma=float(particle_gamma),
+                    beta=(
+                        float(particle_beta[0]),
+                        float(particle_beta[1]),
+                        float(particle_beta[2]),
+                    ),
+                    h_step=float(h),
+                    position=(
+                        float(working_x),
+                        float(working_y),
+                        float(working_z),
+                    ),
+                    time=float(current_state["t"][particle_idx]),
+                )
+                accumulated_momentum_x += ext_dp_x
+                accumulated_momentum_y += ext_dp_y
+                accumulated_momentum_z += ext_dp_z
+                accumulated_momentum_t += ext_dp_t
 
             # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt

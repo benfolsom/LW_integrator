@@ -104,7 +104,23 @@ Ordered Tasks
    * cap the impulse only as a numerical guard with diagnostics, and
    * recompose canonical momentum using the current potentials.
 
-7. Benchmark self-force candidates against controlled systems.
+7. Add prescribed external-field support for controlled benchmarks.
+
+   Radiation-reaction validation needs clean external accelerators that do not
+   depend on image-charge or point-source artifacts. Start with uniform fields
+   in native solver units, including the static longitudinal ``E_z`` case
+   discussed around Eq. 21 of the foundational paper. Required guardrails:
+
+   * provide explicit SI-to-native conversion helpers for electric fields,
+   * keep field configs compatible with the canonical SoA/Numba integrator path,
+   * support simple spatial and temporal windows, and
+   * document that the first implementation is a mechanical Lorentz-force
+     impulse, not yet a full external potential/map system.
+
+   Later extensions can add field maps, callable fields, and explicit
+   vector/scalar-potential providers for fully covariant canonical updates.
+
+8. Benchmark self-force candidates against controlled systems.
 
    Start with tests that do not require wall images or retarded multi-particle
    edge cases:
@@ -115,7 +131,7 @@ Ordered Tasks
    * a low-energy case where reaction is negligible, and
    * a high-gamma case where the reaction term is visible but stable.
 
-8. Revisit conducting-surface collision cases.
+9. Revisit conducting-surface collision cases.
 
    The paper motivates radiation reaction mostly as a way to prevent runaway
    behavior near image-charge collisions. After isolated benchmarks pass,
@@ -123,7 +139,7 @@ Ordered Tasks
    original aperture/image-charge scenarios. The acceptance criterion should be
    energy bookkeeping and timestep convergence, not just smoother trajectories.
 
-9. Evaluate alternatives only after the Medina track is measurable.
+10. Evaluate alternatives only after the Medina track is measurable.
 
    Landau-Lifshitz reduced-order radiation reaction is likely the best
    conventional comparison model. Eliezer-Ford-O'Connell can remain a research

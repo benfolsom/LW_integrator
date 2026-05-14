@@ -238,6 +238,50 @@ class SpaceChargeConfig:
 
 
 @dataclass
+class ExternalFieldConfig:
+    """Configuration for prescribed uniform external electromagnetic fields.
+
+    Field components use the solver's native units. Electric field components
+    are force per native charge, i.e. ``amu * mm / ns^2 / q_native``. Magnetic
+    field components are expressed in the same force-per-charge convention and
+    enter the Lorentz term as ``beta × B``.
+
+    This first implementation intentionally supports uniform fields with simple
+    spatial/temporal windows. More general field maps or callable field
+    providers can build on the same integrator hook later.
+    """
+
+    enabled: bool = True
+    electric_field_native: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    magnetic_field_native: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    z_min: float | None = None
+    z_max: float | None = None
+    t_min: float | None = None
+    t_max: float | None = None
+
+    def is_active(self, x: float, y: float, z: float, t: float) -> bool:
+        """Return whether the field should be applied at a particle location."""
+        if not self.enabled:
+            return False
+        bounds = (
+            (self.x_min, self.x_max, x),
+            (self.y_min, self.y_max, y),
+            (self.z_min, self.z_max, z),
+            (self.t_min, self.t_max, t),
+        )
+        for lower, upper, value in bounds:
+            if lower is not None and value < lower:
+                return False
+            if upper is not None and value > upper:
+                return False
+        return True
+
+
+@dataclass
 class TrajectoryArrays:
     """Struct-of-arrays trajectory representation.
 
@@ -507,6 +551,7 @@ __all__ = [
     "StartupMode",
     "IntegratorConfig",
     "SpaceChargeConfig",
+    "ExternalFieldConfig",
     "C_MMNS",
     "TrajectoryArrays",
     "TrajectoryBuilder",

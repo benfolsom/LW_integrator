@@ -55,6 +55,14 @@ def _build_partial_soa(
         return None
 
 
+def _call_accepts_kw(callable_obj: Callable, name: str) -> bool:
+    """Return whether *callable_obj* accepts a keyword argument."""
+    parameters = inspect.signature(callable_obj).parameters
+    return name in parameters or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+    )
+
+
 class EnergyJumpDetected(RuntimeError):
     """Raised when an energy jump exceeds the configured threshold."""
 
@@ -248,6 +256,7 @@ def _run_adaptive_step(
     self_consistency: Optional[SelfConsistencyConfig],
     adaptive_timestep: Optional[AdaptiveTimestepConfig],
     space_charge: Optional[Any],
+    external_field: Optional[Any],
     image_subcharge_count: int,
     use_conducting_image_weighting: bool,
     macroparticle_charge_multiplier: float,
@@ -465,7 +474,13 @@ def _run_adaptive_step(
         _temp_traj_builder = TrajectoryBuilder(num_substeps + 1, _n_p_rider)
         _temp_traj_builder.set_step(0, temp_trajectory[0])
         _temp_drv_soa = _traj_drv_builder.build_partial(i) if _traj_drv_builder is not None else None
-        _scs_accepts_soa = "traj_soa" in inspect.signature(self_consistent_step).parameters
+        _scs_accepts_soa = _call_accepts_kw(self_consistent_step, "traj_soa")
+        _scs_accepts_radiation = _call_accepts_kw(
+            self_consistent_step, "radiation_reaction_mode"
+        )
+        _scs_accepts_external_field = _call_accepts_kw(
+            self_consistent_step, "external_field"
+        )
 
         energy_jump_detected = False
         gamma_blowup_detected = False
@@ -490,8 +505,17 @@ def _run_adaptive_step(
                     startup_mode,
                     step_idx=i,
                     cancel_callback=cancel_callback,
-                    radiation_reaction_mode=radiation_reaction_mode,
+                    **(
+                        {"radiation_reaction_mode": radiation_reaction_mode}
+                        if _scs_accepts_radiation
+                        else {}
+                    ),
                     **({"space_charge": space_charge} if space_charge is not None else {}),
+                    **(
+                        {"external_field": external_field}
+                        if external_field is not None and _scs_accepts_external_field
+                        else {}
+                    ),
                     **({"traj_soa": _temp_traj_builder.build_partial(substep_idx + 1)} if _scs_accepts_soa else {}),
                     **({"traj_ext_soa": _temp_drv_soa} if _scs_accepts_soa else {}),
                 )
@@ -823,6 +847,7 @@ def retarded_integrator(
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
     space_charge: Optional[Any] = None,
+    external_field: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
     logger: Optional[Any] = None,
@@ -897,6 +922,10 @@ def retarded_integrator(
         Optional :class:`AdaptiveTimestepConfig` to enable adaptive timestep
         refinement. When an energy jump is detected, the step is discarded
         and retried with a smaller timestep.
+    external_field:
+        Optional prescribed external field configuration. The first supported
+        implementation is a uniform field in native solver units with simple
+        spatial/temporal gates.
     progress_callback:
         Optional callable invoked as ``progress_callback(current, steps)`` after
         each successful step. Used for progress bars or cancellation checks.
@@ -1034,6 +1063,7 @@ def retarded_integrator(
                 self_consistency=self_consistency,
                 adaptive_timestep=adaptive_timestep,
                 space_charge=space_charge,
+                external_field=external_field,
                 image_subcharge_count=image_subcharge_count,
                 use_conducting_image_weighting=use_conducting_image_weighting,
                 macroparticle_charge_multiplier=macroparticle_charge_multiplier,
@@ -1157,9 +1187,15 @@ def retarded_integrator(
                     raise ValueError(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
-                _b2b_scs_accepts_soa = "traj_soa" in inspect.signature(
-                    self_consistent_step
-                ).parameters
+                _b2b_scs_accepts_soa = _call_accepts_kw(
+                    self_consistent_step, "traj_soa"
+                )
+                _b2b_scs_accepts_radiation = _call_accepts_kw(
+                    self_consistent_step, "radiation_reaction_mode"
+                )
+                _b2b_scs_accepts_external_field = _call_accepts_kw(
+                    self_consistent_step, "external_field"
+                )
                 trajectory_drv[i] = self_consistent_step(
                     retarded_equations_of_motion,
                     h_step,
@@ -1172,10 +1208,15 @@ def retarded_integrator(
                     chrono_mode,
                     startup_mode,
                     step_idx=i,
-                    radiation_reaction_mode=radiation_reaction_mode,
+                    **({
+                        "radiation_reaction_mode": radiation_reaction_mode
+                    } if _b2b_scs_accepts_radiation else {}),
                     **({
                         "space_charge": space_charge
                     } if space_charge is not None else {}),
+                    **({
+                        "external_field": external_field
+                    } if external_field is not None and _b2b_scs_accepts_external_field else {}),
                     **({
                         "traj_soa": _traj_drv_builder.build_partial(i)
                     } if _b2b_scs_accepts_soa and _traj_drv_builder is not None else {}),
@@ -1268,6 +1309,7 @@ def run_integrator(
     energy_monitor: Optional[EnergyMonitorConfig] = None,
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None,
     space_charge: Optional[Any] = None,
+    external_field: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
@@ -1326,6 +1368,7 @@ def run_integrator(
         energy_monitor=energy_monitor,
         adaptive_timestep=adaptive_timestep,
         space_charge=space_charge,
+        external_field=external_field,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
     )
