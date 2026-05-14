@@ -509,6 +509,23 @@ class IntegratorGUI(
         self.space_charge_retarded_var = tk.BooleanVar(value=True)
         self.space_charge_softening_mm_var = tk.DoubleVar(value=0.0)
 
+        self.external_field_enabled_var = tk.BooleanVar(value=False)
+        self.external_field_input_mode_var = tk.StringVar(value="SI V/m")
+        self.external_electric_native_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_electric_si_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_magnetic_native_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_field_window_vars = {
+            f"{axis}_{bound}": tk.StringVar(value="")
+            for axis in ("x", "y", "z", "t")
+            for bound in ("min", "max")
+        }
+
         self.auto_duration_enabled_var = tk.BooleanVar(value=False)
         self.auto_duration_crossing_steps_var = tk.IntVar(value=200)
         self.auto_duration_post_factor_var = tk.DoubleVar(value=2.0)
@@ -607,6 +624,8 @@ class IntegratorGUI(
         self._build_core_tab()
 
         self._build_output_tab()
+
+        self._build_external_fields_tab()
 
         self._build_stability_tab()
 

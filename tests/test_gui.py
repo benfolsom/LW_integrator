@@ -185,6 +185,9 @@ def test_gui_inherits_tab_builders_from_tab_mixin():
     assert gui.IntegratorGUI._build_stability_tab is (
         IntegratorGUITabMixin._build_stability_tab
     )
+    assert gui.IntegratorGUI._build_external_fields_tab is (
+        IntegratorGUITabMixin._build_external_fields_tab
+    )
     assert gui.IntegratorGUI._build_self_consistency_section is (
         IntegratorGUITabMixin._build_self_consistency_section
     )
@@ -654,6 +657,62 @@ def test_toggle_z_cutoff_controls_disables_widgets_and_resets_cutoff():
     assert entry_calls == [{"state": "disabled"}]
     assert combo_calls == [{"state": "disabled"}]
     assert z_cutoff_var.get() == 0.0
+
+
+def test_toggle_external_field_controls_respects_enable_and_input_mode():
+    calls = {}
+
+    class _Widget:
+        def __init__(self, name):
+            self.name = name
+
+        def configure(self, **kwargs):
+            calls.setdefault(self.name, []).append(kwargs)
+
+    si_label = _Widget("si_label")
+    si_entry = _Widget("si_entry")
+    native_label = _Widget("native_label")
+    native_entry = _Widget("native_entry")
+    combo = _Widget("combo")
+    magnetic_entry = _Widget("magnetic_entry")
+    window_entry = _Widget("window_entry")
+    harness = SimpleNamespace(
+        external_field_enabled_var=_Var(True),
+        external_field_input_mode_var=_Var("SI V/m"),
+        external_field_input_mode_combo=combo,
+        external_electric_si_label=si_label,
+        external_electric_si_entries=[si_entry],
+        external_electric_native_label=native_label,
+        external_electric_native_entries=[native_entry],
+        _external_field_sub_widgets=[
+            combo,
+            si_label,
+            si_entry,
+            native_label,
+            native_entry,
+            magnetic_entry,
+            window_entry,
+        ],
+    )
+
+    gui.IntegratorGUI._toggle_external_field_controls(harness)
+
+    assert calls["combo"] == [{"state": "normal"}]
+    assert calls["si_label"] == [{"state": "normal"}, {"state": "normal"}]
+    assert calls["si_entry"] == [{"state": "normal"}, {"state": "normal"}]
+    assert calls["native_label"] == [{"state": "normal"}, {"state": "disabled"}]
+    assert calls["native_entry"] == [{"state": "normal"}, {"state": "disabled"}]
+    assert calls["magnetic_entry"] == [{"state": "normal"}]
+    assert calls["window_entry"] == [{"state": "normal"}]
+
+    calls.clear()
+    harness.external_field_enabled_var.set(False)
+
+    gui.IntegratorGUI._toggle_external_field_controls(harness)
+
+    assert calls["combo"] == [{"state": "disabled"}]
+    assert calls["si_entry"] == [{"state": "disabled"}]
+    assert calls["native_entry"] == [{"state": "disabled"}]
 
 
 def test_update_macroparticle_state_forces_disabled_outside_conducting_wall():

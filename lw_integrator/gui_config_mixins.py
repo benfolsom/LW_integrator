@@ -25,6 +25,28 @@ from .testbed_runner import (
 _SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
 
 
+def _format_gui_float(value: object) -> str:
+    return f"{float(value):.12g}"
+
+
+def _format_gui_optional_float(value: object) -> str:
+    return "" if value is None else _format_gui_float(value)
+
+
+def _parse_gui_float(text: object, label: str) -> float:
+    try:
+        return float(str(text).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be numeric.") from exc
+
+
+def _parse_gui_optional_float(text: object, label: str):
+    cleaned = str(text).strip()
+    if cleaned == "":
+        return None
+    return _parse_gui_float(cleaned, label)
+
+
 def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
     """Return true for configs that must be handled by the sweep/optim tab."""
     try:
@@ -266,10 +288,37 @@ class IntegratorGUIConfigMixin:
         self.space_charge_enabled_var.set(getattr(options, "space_charge_enabled", False))
         self.space_charge_retarded_var.set(getattr(options, "space_charge_retarded", True))
         self.space_charge_softening_mm_var.set(getattr(options, "space_charge_softening_mm", 0.0))
+        self.external_field_enabled_var.set(
+            getattr(options, "external_field_enabled", False)
+        )
+        electric_si = getattr(options, "external_electric_field_v_per_m", None)
+        self.external_field_input_mode_var.set("SI V/m" if electric_si else "Native")
+        for var, value in zip(
+            self.external_electric_native_vars,
+            getattr(options, "external_electric_field_native", (0.0, 0.0, 0.0)),
+        ):
+            var.set(_format_gui_float(value))
+        for var, value in zip(
+            self.external_electric_si_vars, electric_si or (0.0, 0.0, 0.0)
+        ):
+            var.set(_format_gui_float(value))
+        for var, value in zip(
+            self.external_magnetic_native_vars,
+            getattr(options, "external_magnetic_field_native", (0.0, 0.0, 0.0)),
+        ):
+            var.set(_format_gui_float(value))
+        for axis in ("x", "y", "z", "t"):
+            for bound in ("min", "max"):
+                key = f"{axis}_{bound}"
+                option_name = f"external_field_{key}"
+                self.external_field_window_vars[key].set(
+                    _format_gui_optional_float(getattr(options, option_name, None))
+                )
         self.auto_duration_enabled_var.set(getattr(options, "auto_duration_enabled", False))
         self.auto_duration_crossing_steps_var.set(getattr(options, "auto_duration_crossing_steps", 200))
         self.auto_duration_post_factor_var.set(getattr(options, "auto_duration_post_factor", 2.0))
         self._toggle_space_charge_controls()
+        self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
         self.save_log_file_var.set(options.save_log_file)
 
@@ -364,6 +413,29 @@ class IntegratorGUIConfigMixin:
             seed = random.randint(1, 2**31 - 1)
         else:
             seed = int(self.seed_var.get())
+
+        external_electric_native = tuple(
+            _parse_gui_float(var.get(), f"External E native {axis}")
+            for var, axis in zip(self.external_electric_native_vars, ("x", "y", "z"))
+        )
+        external_electric_si = None
+        if self.external_field_input_mode_var.get() == "SI V/m":
+            external_electric_si = tuple(
+                _parse_gui_float(var.get(), f"External E V/m {axis}")
+                for var, axis in zip(self.external_electric_si_vars, ("x", "y", "z"))
+            )
+        external_magnetic_native = tuple(
+            _parse_gui_float(var.get(), f"External B native {axis}")
+            for var, axis in zip(self.external_magnetic_native_vars, ("x", "y", "z"))
+        )
+        external_bounds = {
+            f"{axis}_{bound}": _parse_gui_optional_float(
+                self.external_field_window_vars[f"{axis}_{bound}"].get(),
+                f"External field {axis}_{bound}",
+            )
+            for axis in ("x", "y", "z", "t")
+            for bound in ("min", "max")
+        }
 
         return SimulationOptions(
             simulation_type=sim_type,
@@ -487,6 +559,18 @@ class IntegratorGUIConfigMixin:
             space_charge_enabled=bool(self.space_charge_enabled_var.get()),
             space_charge_retarded=bool(self.space_charge_retarded_var.get()),
             space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
+            external_field_enabled=bool(self.external_field_enabled_var.get()),
+            external_electric_field_native=external_electric_native,
+            external_electric_field_v_per_m=external_electric_si,
+            external_magnetic_field_native=external_magnetic_native,
+            external_field_x_min=external_bounds["x_min"],
+            external_field_x_max=external_bounds["x_max"],
+            external_field_y_min=external_bounds["y_min"],
+            external_field_y_max=external_bounds["y_max"],
+            external_field_z_min=external_bounds["z_min"],
+            external_field_z_max=external_bounds["z_max"],
+            external_field_t_min=external_bounds["t_min"],
+            external_field_t_max=external_bounds["t_max"],
             auto_duration_enabled=bool(self.auto_duration_enabled_var.get()),
             auto_duration_crossing_steps=int(self.auto_duration_crossing_steps_var.get()),
             auto_duration_post_factor=float(self.auto_duration_post_factor_var.get()),

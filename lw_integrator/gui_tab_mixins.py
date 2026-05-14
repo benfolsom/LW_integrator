@@ -631,6 +631,180 @@ class IntegratorGUITabMixin:
             foreground="gray50",
         ).grid(row=25, column=0, columnspan=2, sticky="w", padx=(20, 0))
 
+    def _build_external_fields_tab(self) -> None:
+        """Build prescribed external-field controls."""
+        from .gui import Tooltip
+
+        field_frame = self._create_scrollable_tab(
+            self.notebook, "External Fields", padding=12
+        )
+        field_frame.columnconfigure(1, weight=1)
+        field_frame.columnconfigure(2, weight=1)
+        field_frame.columnconfigure(3, weight=1)
+
+        ttk.Label(
+            field_frame,
+            text=(
+                "These settings apply to BOTH single runs and sweeps/optimizations. "
+                "Sweep runs inherit these fixed field settings for every point."
+            ),
+            font=("TkDefaultFont", 9, "bold"),
+            foreground="blue",
+            justify="left",
+            wraplength=720,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
+
+        enable_frame = ttk.Frame(field_frame)
+        enable_frame.grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        self.external_field_enable_check = ttk.Checkbutton(
+            enable_frame,
+            text="Enable prescribed uniform external field",
+            variable=self.external_field_enabled_var,
+            command=self._toggle_external_field_controls,
+        )
+        self.external_field_enable_check.pack(side="left")
+        enable_help = ttk.Label(
+            enable_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        enable_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            enable_help,
+            "Applies a prescribed uniform mechanical Lorentz-force field.\n\n"
+            "Current implementation supports fixed E and B vectors with optional\n"
+            "x/y/z/t windows. Time-dependent covariant potential providers are a\n"
+            "future extension, not this panel.",
+        )
+
+        ttk.Label(field_frame, text="Electric field input:").grid(
+            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_field_input_mode_combo = ttk.Combobox(
+            field_frame,
+            textvariable=self.external_field_input_mode_var,
+            values=("SI V/m", "Native"),
+            state="readonly",
+            width=12,
+        )
+        self.external_field_input_mode_combo.grid(row=2, column=1, sticky="w", pady=2)
+        self.external_field_input_mode_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._toggle_external_field_controls(),
+        )
+
+        for column, axis in enumerate(("x", "y", "z"), start=1):
+            ttk.Label(field_frame, text=axis).grid(row=3, column=column, sticky="w")
+
+        self.external_electric_si_labels = []
+        self.external_electric_si_entries = []
+        self.external_electric_native_labels = []
+        self.external_electric_native_entries = []
+        self.external_magnetic_labels = []
+        self.external_magnetic_entries = []
+
+        self.external_electric_si_label = ttk.Label(field_frame, text="E (V/m):")
+        self.external_electric_si_label.grid(
+            row=4, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_electric_si_labels.append(self.external_electric_si_label)
+        for column, var in enumerate(self.external_electric_si_vars, start=1):
+            entry = ttk.Entry(field_frame, textvariable=var, width=14)
+            entry.grid(row=4, column=column, sticky="ew", pady=2, padx=(0, 6))
+            self.external_electric_si_entries.append(entry)
+
+        self.external_electric_native_label = ttk.Label(
+            field_frame, text="E (native):"
+        )
+        self.external_electric_native_label.grid(
+            row=5, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_electric_native_labels.append(self.external_electric_native_label)
+        for column, var in enumerate(self.external_electric_native_vars, start=1):
+            entry = ttk.Entry(field_frame, textvariable=var, width=14)
+            entry.grid(row=5, column=column, sticky="ew", pady=2, padx=(0, 6))
+            self.external_electric_native_entries.append(entry)
+
+        self.external_magnetic_label = ttk.Label(field_frame, text="B (native):")
+        self.external_magnetic_label.grid(
+            row=6, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_magnetic_labels.append(self.external_magnetic_label)
+        for column, var in enumerate(self.external_magnetic_native_vars, start=1):
+            entry = ttk.Entry(field_frame, textvariable=var, width=14)
+            entry.grid(row=6, column=column, sticky="ew", pady=2, padx=(0, 6))
+            self.external_magnetic_entries.append(entry)
+
+        ttk.Label(
+            field_frame,
+            text="Optional field window bounds in native simulation coordinates. Leave blank for unbounded.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+            wraplength=720,
+        ).grid(row=7, column=0, columnspan=4, sticky="w", pady=(12, 4), padx=(20, 0))
+
+        window_frame = ttk.LabelFrame(field_frame, text="Field Window", padding=8)
+        window_frame.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(0, 12))
+        window_frame.columnconfigure(1, weight=1)
+        window_frame.columnconfigure(2, weight=1)
+        ttk.Label(window_frame, text="min").grid(row=0, column=1, sticky="w")
+        ttk.Label(window_frame, text="max").grid(row=0, column=2, sticky="w")
+
+        self.external_field_window_entries = []
+        for row, axis in enumerate(("x", "y", "z", "t"), start=1):
+            ttk.Label(window_frame, text=f"{axis}:").grid(
+                row=row, column=0, sticky="w", pady=2
+            )
+            for column, bound in enumerate(("min", "max"), start=1):
+                entry = ttk.Entry(
+                    window_frame,
+                    textvariable=self.external_field_window_vars[f"{axis}_{bound}"],
+                    width=16,
+                )
+                entry.grid(row=row, column=column, sticky="ew", pady=2, padx=(0, 8))
+                self.external_field_window_entries.append(entry)
+
+        self._external_field_sub_widgets = [
+            self.external_field_input_mode_combo,
+            self.external_electric_si_label,
+            *self.external_electric_si_entries,
+            self.external_electric_native_label,
+            *self.external_electric_native_entries,
+            self.external_magnetic_label,
+            *self.external_magnetic_entries,
+            *self.external_field_window_entries,
+        ]
+
+        self._toggle_external_field_controls()
+
+    def _toggle_external_field_controls(self) -> None:
+        enabled = self.external_field_enabled_var.get()
+        base_state = "normal" if enabled else "disabled"
+        electric_mode = self.external_field_input_mode_var.get()
+
+        for widget in getattr(self, "_external_field_sub_widgets", []):
+            try:
+                widget.configure(state=base_state)
+            except Exception:
+                pass
+
+        if not enabled:
+            return
+
+        native_state = "normal" if electric_mode == "Native" else "disabled"
+        si_state = "normal" if electric_mode == "SI V/m" else "disabled"
+        for widget in [
+            self.external_electric_native_label,
+            *self.external_electric_native_entries,
+        ]:
+            try:
+                widget.configure(state=native_state)
+            except Exception:
+                pass
+        for widget in [self.external_electric_si_label, *self.external_electric_si_entries]:
+            try:
+                widget.configure(state=si_state)
+            except Exception:
+                pass
+
     def _build_stability_tab(self) -> None:
         """Build self-consistency and adaptive timestep controls."""
         # Stability Settings tab ----------------------------------------
@@ -1617,4 +1791,3 @@ class IntegratorGUITabMixin:
     def _toggle_auto_duration_controls(self) -> None:
         # Implemented in gui_state_mixins.IntegratorGUIStateMixin
         pass
-
