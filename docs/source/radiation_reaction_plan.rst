@@ -53,6 +53,10 @@ explicit:
 Medina Native-Units Derivation Draft
 ------------------------------------
 
+A standalone TeX supplement with the same derivation is available as
+:download:`Radiation Reaction Model Supplement <medina_native_units_analysis.tex>`.
+
+
 The maintained solver uses the historical native system:
 
 * length: ``mm``,
@@ -260,9 +264,10 @@ Ordered Tasks
 
    Remaining work before treating this as physics evidence:
 
-   * compare against a Landau-Lifshitz reduced-order implementation,
-   * add prescribed electric-field benchmarks where ``dgamma/dt`` is nonzero,
-   * add timestep convergence tests for ``medina_lad`` itself, and
+   * extend prescribed electric-field benchmarks where ``dgamma/dt`` is
+     nonzero,
+   * add timestep convergence tests for ``medina_lad`` itself,
+   * record when the numerical impulse cap activates in controlled tests, and
    * evaluate whether the mechanical-force estimator is adequate for retarded
      image/source forces or whether those contributions need a more explicit
      force-decomposition API.
@@ -326,19 +331,23 @@ Ordered Tasks
 10. Evaluate alternatives only after the Medina track is measurable. **Status:
     not started.**
 
-   Landau-Lifshitz reduced-order radiation reaction is likely the best
-   conventional comparison model. Eliezer-Ford-O'Connell can remain a research
-   track unless the Medina candidate shows instability or poor convergence in
-   the near-surface regime.
+   Alternative reduced-order formalisms should remain literature cross-checks,
+   not the production target. In particular, Landau-Lifshitz is less aligned
+   with the maintained solver because it is normally written in terms of local
+   field-solution quantities, while this code's primary representation is
+   covariant Lienard-Wiechert potentials and canonical momentum. Keep any LL or
+   Eliezer-Ford-O'Connell work behind explicit comparison modes and use them
+   only if they clarify Medina stability, convergence, or near-surface behavior.
 
 Next Best Steps
 ---------------
 
 The immediate low-risk work is now validation rather than new physics:
 
-* review the Medina native-units derivation above,
+* keep the Medina/native-units derivation under review as the primary
+  implementation target,
 * add prescribed electric-field benchmarks where ``dgamma/dt`` is nonzero,
-* compare Medina against Landau-Lifshitz on the same prescribed-field cases,
-  and
+* compare ``off``, ``diagnostic_only``, ``power_matched_damping``, and
+  ``medina_lad`` under known prescribed external forces, and
 * refine the mechanical-force extraction API before using ``medina_lad`` as
   evidence in conducting-wall collision cases.

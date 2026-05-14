@@ -1,0 +1,227 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+
+\title{Radiation Reaction Model Supplement: Native-Units Mapping}
+\author{LW Integrator Notes}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Purpose}
+
+This note restates the candidate Medina radiation-reaction model in the
+solver's native unit system and contrasts it with the currently implemented
+\texttt{power\_matched\_damping} mode.
+
+\section{Native Units}
+
+The maintained solver uses the historical native system:
+
+\begin{align}
+x &: \mathrm{mm}, &
+t &: \mathrm{ns}, &
+v &: \mathrm{mm/ns},
+\\
+m &: \mathrm{amu}, &
+p &: \mathrm{amu\,mm/ns},
+\\
+F &: \mathrm{amu\,mm/ns^2}, &
+E_{\mathrm{mech}} &: \mathrm{amu\,mm^2/ns^2}.
+\end{align}
+
+The native elementary charge used by the solver is
+\begin{equation}
+e_{\mathrm{native}} = 1.178734 \times 10^{-5}.
+\end{equation}
+
+A native electric field is a force-per-charge quantity, so
+\begin{equation}
+qE \sim \mathrm{amu\,mm/ns^2}.
+\end{equation}
+
+\section{Time Variable}
+
+The solver step is proper time:
+\begin{equation}
+h = d\tau.
+\end{equation}
+
+Coordinate time advances as
+\begin{equation}
+dt = \gamma h.
+\end{equation}
+
+Mechanical momentum is
+\begin{equation}
+\mathbf{p} = \gamma m \mathbf{v}
+            = \gamma m c \boldsymbol{\beta}.
+\end{equation}
+
+The current prescribed external-field impulse is
+\begin{equation}
+\Delta \mathbf{p}_{\mathrm{ext}}
+= h q \gamma \left(\mathbf{E} + \boldsymbol{\beta} \times \mathbf{B}\right).
+\end{equation}
+
+Since \(dt = \gamma h\), this equals
+\begin{equation}
+\Delta \mathbf{p}_{\mathrm{ext}}
+= dt\,\mathbf{F}_{\mathrm{ext}},
+\end{equation}
+where
+\begin{equation}
+\mathbf{F}_{\mathrm{ext}}
+= q\left(\mathbf{E} + \boldsymbol{\beta} \times \mathbf{B}\right).
+\end{equation}
+
+\section{Medina Force}
+
+The Medina radiation-reaction force from the paper is
+\begin{equation}
+\mathbf{F}_{\mathrm{RAD}}
+=
+\frac{2}{3}\frac{q^2}{mc^3}
+\left[
+\frac{d\gamma}{dt}\mathbf{F}_{\mathrm{ext}}
+-
+\frac{\gamma^3}{c^2}
+\left(\mathbf{F}_{\mathrm{ext}}\cdot \mathbf{a}\right)
+\mathbf{v}
+\right].
+\end{equation}
+
+Define
+\begin{equation}
+\tau_0 = \frac{2}{3}\frac{q^2}{mc^3}.
+\end{equation}
+
+Then
+\begin{equation}
+\mathbf{F}_{\mathrm{RAD}}
+=
+\tau_0
+\left[
+\frac{d\gamma}{dt}\mathbf{F}_{\mathrm{ext}}
+-
+\frac{\gamma^3}{c^2}
+\left(\mathbf{F}_{\mathrm{ext}}\cdot \mathbf{a}\right)
+\mathbf{v}
+\right],
+\end{equation}
+with
+\begin{align}
+\mathbf{v} &= c\boldsymbol{\beta}, \\
+\mathbf{a} &= \frac{d\mathbf{v}}{dt}
+            = c\frac{d\boldsymbol{\beta}}{dt}.
+\end{align}
+
+The Medina impulse over one solver step would be
+\begin{equation}
+\Delta \mathbf{p}_{\mathrm{RAD}}
+=
+\mathbf{F}_{\mathrm{RAD}}\,dt
+=
+\mathbf{F}_{\mathrm{RAD}}\gamma h.
+\end{equation}
+
+Apply it to mechanical momentum:
+\begin{equation}
+\mathbf{p}_{\mathrm{new}}
+=
+\mathbf{p}_{\mathrm{nonrad}}
++
+\Delta \mathbf{p}_{\mathrm{RAD}}.
+\end{equation}
+
+Then recompute gamma:
+\begin{equation}
+\gamma_{\mathrm{new}}
+=
+\sqrt{
+1 +
+\frac{|\mathbf{p}_{\mathrm{new}}|^2}{(mc)^2}
+}.
+\end{equation}
+
+Then recompose canonical momentum:
+\begin{align}
+P_{i,\mathrm{new}}
+&=
+p_{i,\mathrm{new}}
++
+m A_{i,\mathrm{solver}},
+\\
+P_{t,\mathrm{new}}
+&=
+\gamma_{\mathrm{new}}mc
++
+q\Phi.
+\end{align}
+
+\section{Difference From Current Radiation-Reaction Mode}
+
+The current \texttt{power\_matched\_damping} mode is not Medina/LAD. It is an
+energy-bookkeeping approximation.
+
+It computes radiated energy:
+\begin{equation}
+E_{\mathrm{rad}}
+=
+P_{\mathrm{Lienard}}\,dt.
+\end{equation}
+
+Then it removes that much kinetic energy by scaling the mechanical momentum
+magnitude:
+\begin{equation}
+\mathbf{p}_{\mathrm{new}}
+=
+\mathbf{p}_{\mathrm{old}}
+\frac{|\mathbf{p}_{\mathrm{target}}|}{|\mathbf{p}_{\mathrm{old}}|}.
+\end{equation}
+
+So it preserves direction:
+\begin{equation}
+\hat{\mathbf{p}}_{\mathrm{new}}
+=
+\hat{\mathbf{p}}_{\mathrm{old}}.
+\end{equation}
+
+Medina instead computes a vector force from
+\begin{equation}
+\mathbf{F}_{\mathrm{ext}}, \qquad
+\frac{d\gamma}{dt}, \qquad
+\mathbf{a}, \qquad
+\mathbf{v}.
+\end{equation}
+
+Thus, Medina can change both the magnitude and direction of mechanical
+momentum.
+
+\section{Practical Summary}
+
+\begin{description}
+\item[Current \texttt{power\_matched\_damping}]
+Computes radiated energy, subtracts that energy from the mechanical momentum
+magnitude, preserves momentum direction, and is best treated as bounded energy
+bookkeeping.
+
+\item[Medina/LAD candidate]
+Computes a radiation-reaction force vector, applies its impulse to mechanical
+momentum, may change both direction and magnitude, and requires a clean
+\(\mathbf{F}_{\mathrm{ext}}\) extraction API before implementation.
+\end{description}
+
+The first Medina implementation should use rest mass in \(\tau_0\) and
+explicitly state that the paper's dressed-mass caveat is not yet modeled. It
+should start with prescribed-field benchmarks before being applied to retarded
+image-charge collision cases.
+
+\end{document}
