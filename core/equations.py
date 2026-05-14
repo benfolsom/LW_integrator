@@ -853,6 +853,38 @@ def _compute_medina_radiation_reaction_impulse(
     return (float(impulse[0]), float(impulse[1]), float(impulse[2])), capped
 
 
+def _derive_relativistic_kinematics_from_force(
+    external_force: tuple[float, float, float],
+    beta: tuple[float, float, float],
+    gamma: float,
+    mass: float,
+) -> tuple[tuple[float, float, float], float]:
+    """Return coordinate-time ``dβ/dt`` and ``dγ/dt`` from mechanical force.
+
+    ``external_force`` is ``dp/dt`` in native mechanical units. Inverting
+    ``dp/dt = mc d(γβ)/dt`` gives
+    ``dβ/dt = (F - β(β·F)) / (γmc)`` and ``dγ/dt = β·F / (mc)``.
+    """
+    if gamma <= 0.0 or mass <= 0.0:
+        return (0.0, 0.0, 0.0), 0.0
+
+    force_vec = np.asarray(external_force, dtype=float)
+    beta_vec = np.asarray(beta, dtype=float)
+    if not (np.all(np.isfinite(force_vec)) and np.all(np.isfinite(beta_vec))):
+        return (0.0, 0.0, 0.0), 0.0
+
+    beta_dot_force = float(np.dot(beta_vec, force_vec))
+    beta_dot_t = (force_vec - beta_vec * beta_dot_force) / (
+        float(gamma) * float(mass) * C_MMNS
+    )
+    dgamma_dt = beta_dot_force / (float(mass) * C_MMNS)
+
+    return (
+        (float(beta_dot_t[0]), float(beta_dot_t[1]), float(beta_dot_t[2])),
+        float(dgamma_dt),
+    )
+
+
 def _apply_power_matched_radiation_damping(
     mechanical_momentum: tuple[float, float, float],
     mass: float,
@@ -2091,19 +2123,19 @@ def retarded_equations_of_motion(
                         float((mechanical_py - previous_mechanical_py) / coordinate_dt),
                         float((mechanical_pz - previous_mechanical_pz) / coordinate_dt),
                     )
-                    dgamma_dt = float(
-                        result["gamma"][particle_idx] ** 3
-                        * (
-                            beta_tuple[0] * beta_dot_t[0]
-                            + beta_tuple[1] * beta_dot_t[1]
-                            + beta_tuple[2] * beta_dot_t[2]
+                    medina_beta_dot_t, dgamma_dt = (
+                        _derive_relativistic_kinematics_from_force(
+                            external_force,
+                            beta_tuple,
+                            float(result["gamma"][particle_idx]),
+                            float(particle_mass),
                         )
                     )
                     medina_impulse, medina_capped = (
                         _compute_medina_radiation_reaction_impulse(
                             external_force=external_force,
                             beta=beta_tuple,
-                            beta_dot_t=beta_dot_t,
+                            beta_dot_t=medina_beta_dot_t,
                             gamma=float(result["gamma"][particle_idx]),
                             dgamma_dt=dgamma_dt,
                             mass=float(particle_mass),

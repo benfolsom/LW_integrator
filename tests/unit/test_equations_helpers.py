@@ -324,6 +324,72 @@ def test_beta_helpers_limit_and_recover_gamma() -> None:
     assert equations._calculate_one_minus_beta_squared(1.0, 0.0, 0.0) > 0.0
 
 
+def test_medina_kinematics_preserve_longitudinal_cancellation() -> None:
+    gamma = 10.0
+    mass = 1.0
+    charge = 1.0
+    beta_z = np.sqrt(1.0 - 1.0 / gamma**2)
+    force_z = 5.0
+
+    beta_dot_t, dgamma_dt = equations._derive_relativistic_kinematics_from_force(
+        (0.0, 0.0, force_z),
+        (0.0, 0.0, beta_z),
+        gamma,
+        mass,
+    )
+
+    assert beta_dot_t[2] == pytest.approx(force_z / (gamma**3 * mass * C_MMNS))
+    assert dgamma_dt == pytest.approx(beta_z * force_z / (mass * C_MMNS))
+
+    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+        external_force=(0.0, 0.0, force_z),
+        beta=(0.0, 0.0, beta_z),
+        beta_dot_t=beta_dot_t,
+        gamma=gamma,
+        dgamma_dt=dgamma_dt,
+        mass=mass,
+        charge=charge,
+        coordinate_dt=1.0,
+        max_impulse_fraction=0.0,
+    )
+
+    assert capped is False
+    assert np.linalg.norm(impulse) == pytest.approx(0.0, abs=1.0e-20)
+
+
+def test_medina_kinematics_give_transverse_synchrotron_damping() -> None:
+    gamma = 10.0
+    mass = 1.0
+    charge = 1.0
+    beta_z = np.sqrt(1.0 - 1.0 / gamma**2)
+    force_x = 5.0
+
+    beta_dot_t, dgamma_dt = equations._derive_relativistic_kinematics_from_force(
+        (force_x, 0.0, 0.0),
+        (0.0, 0.0, beta_z),
+        gamma,
+        mass,
+    )
+    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+        external_force=(force_x, 0.0, 0.0),
+        beta=(0.0, 0.0, beta_z),
+        beta_dot_t=beta_dot_t,
+        gamma=gamma,
+        dgamma_dt=dgamma_dt,
+        mass=mass,
+        charge=charge,
+        coordinate_dt=1.0,
+        max_impulse_fraction=0.0,
+    )
+
+    assert capped is False
+    assert dgamma_dt == pytest.approx(0.0)
+    assert beta_dot_t[0] == pytest.approx(force_x / (gamma * mass * C_MMNS))
+    assert impulse[0] == pytest.approx(0.0)
+    assert impulse[1] == pytest.approx(0.0)
+    assert impulse[2] < 0.0
+
+
 def test_running_average_helper_matches_closed_form() -> None:
     average, sample_count = equations._update_beta_running_average(
         previous_avg=(0.2, 0.4, 0.6),

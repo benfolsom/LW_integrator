@@ -256,8 +256,9 @@ Ordered Tasks
    * ``radiation_reaction_mode="medina_lad"`` is accepted as an explicit mode,
    * the non-radiation mechanical force is estimated from the mass-shell
      projected mechanical momentum increment over coordinate time,
-   * ``dgamma/dt`` is computed from the coordinate-time kinematic identity
-     ``gamma^3 beta dot dbeta/dt`` rather than raw step-to-step energy drift,
+   * ``d beta/dt`` and ``dgamma/dt`` are derived from the mechanical force
+     estimate, keeping longitudinal Medina terms self-consistent and preserving
+     the expected near-cancellation for one-dimensional acceleration,
    * the impulse is applied to mechanical momentum and canonical momentum is
      recomposed with the existing vector/scalar potential terms, and
    * the impulse has a small numerical cap with a verbosity-gated diagnostic.

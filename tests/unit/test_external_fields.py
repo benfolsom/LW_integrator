@@ -194,7 +194,7 @@ def test_external_field_runs_through_numba_kernel_mode_and_soa() -> None:
     np.testing.assert_allclose(accelerated_soa.Pt[-1], accelerated[-1]["Pt"])
 
 
-def test_electric_acceleration_radiation_reaction_modes_with_nonzero_dgamma_dt() -> None:
+def test_longitudinal_electric_acceleration_medina_reaction_is_small() -> None:
     field = ExternalFieldConfig(electric_field_native=(0.0, 0.0, -1.0e8))
     common_kwargs = dict(
         steps=200,
@@ -246,10 +246,11 @@ def test_electric_acceleration_radiation_reaction_modes_with_nonzero_dgamma_dt()
     medina_applied_energy = float(np.sum(medina_soa.radiation_energy_applied[:, 0]))
 
     assert damped_applied_energy > 0.0
-    assert medina_applied_energy > 0.0
     assert damped_final_gamma < off_final_gamma
-    assert medina_final_gamma < off_final_gamma
-    assert medina_final_gamma == pytest.approx(damped_final_gamma, rel=1.0e-6)
+    assert np.isfinite(medina_final_gamma)
+    assert medina_final_gamma > 1.0
+    assert medina_applied_energy < damped_applied_energy * 1.0e-3
+
 
 def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
     field = ExternalFieldConfig(magnetic_field_native=(0.0, 3.0e7, 0.0))
@@ -325,6 +326,69 @@ def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
     assert medina_applied_energy <= medina_computed_energy
     assert medina_final_gamma < float(off_traj[-1]["gamma"][0])
     assert medina_final_gamma == pytest.approx(final_gamma, rel=1.0e-7)
+
+
+def test_long_transverse_bend_radiation_reaction_over_hundreds_of_mm() -> None:
+    field = ExternalFieldConfig(magnetic_field_native=(0.0, 3.0e5, 0.0))
+    common_kwargs = dict(
+        steps=1200,
+        h_step=5.0e-5,
+        wall_z=0.0,
+        aperture_radius=1.0e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1.0e9,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        use_numba=True,
+        external_field=field,
+    )
+
+    off_traj, _, off_soa, _ = retarded_integrator(
+        **common_kwargs,
+        init_rider=_single_particle_state(gamma=20.0),
+        radiation_reaction_mode="off",
+    )
+    damped_traj, _, damped_soa, _ = retarded_integrator(
+        **common_kwargs,
+        init_rider=_single_particle_state(gamma=20.0),
+        radiation_reaction_mode="power_matched_damping",
+    )
+    medina_traj, _, medina_soa, _ = retarded_integrator(
+        **common_kwargs,
+        init_rider=_single_particle_state(gamma=20.0),
+        radiation_reaction_mode="medina_lad",
+    )
+
+    assert off_soa is not None
+    assert damped_soa is not None
+    assert medina_soa is not None
+
+    path_mm = float(
+        np.sum(
+            np.sqrt(
+                np.diff(off_soa.x[:, 0]) ** 2
+                + np.diff(off_soa.y[:, 0]) ** 2
+                + np.diff(off_soa.z[:, 0]) ** 2
+            )
+        )
+    )
+    assert path_mm > 300.0
+    assert abs(float(off_traj[-1]["x"][0])) > 100.0
+
+    off_final_gamma = float(off_traj[-1]["gamma"][0])
+    damped_final_gamma = float(damped_traj[-1]["gamma"][0])
+    medina_final_gamma = float(medina_traj[-1]["gamma"][0])
+    damped_applied_energy = float(np.sum(damped_soa.radiation_energy_applied[:, 0]))
+    medina_applied_energy = float(np.sum(medina_soa.radiation_energy_applied[:, 0]))
+
+    assert float(np.sum(off_soa.radiation_energy[:, 0])) > 0.0
+    assert damped_applied_energy > 0.0
+    assert medina_applied_energy > 0.0
+    assert damped_final_gamma < off_final_gamma
+    assert medina_final_gamma < off_final_gamma
+    assert medina_final_gamma == pytest.approx(damped_final_gamma, rel=1.0e-9)
 
 
 def test_magnetic_bend_radiated_energy_converges_with_timestep_refinement() -> None:
