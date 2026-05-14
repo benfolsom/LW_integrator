@@ -1222,15 +1222,16 @@ class IntegratorGUITabMixin:
         Tooltip(
             method_help,
             "Gamma Reconciliation Method:\n\n"
-            "DISABLED - No reconciliation (not recommended; may cause blowups)\n\n"
-            "ADAPTIVE_WEIGHTED - Velocity-dependent weighting (recommended)\n"
+            "DISABLED - Default baseline. Keeps mass-shell projection without\n"
+            "  additional γ blending.\n\n"
+            "ADAPTIVE_WEIGHTED - Velocity-dependent blending.\n"
             "  • β < 0.9: Trust energy (weight=0.8)\n"
             "  • β > 0.99: Trust velocity (weight=0.2)\n"
             "  • Mid-range: Balanced (weight=0.5)\n\n"
-            "USE_VELOCITY - Always use γ from β (breaks energy)\n\n"
+            "USE_VELOCITY - Always use γ from β (can break energy consistency)\n\n"
             "USE_ENERGY - Always use γ from Pt\n\n"
             "FIXED_WEIGHTED - Fixed 50/50 blend\n\n"
-            "Recommended: ADAPTIVE_WEIGHTED",
+            "If you need strict baseline behavior, keep DISABLED.",
         )
 
         # Adaptive weighted parameters

@@ -47,6 +47,23 @@ def _parse_gui_optional_float(text: object, label: str):
     return _parse_gui_float(cleaned, label)
 
 
+def _parse_gui_float_lenient(text: object, default: float) -> float:
+    try:
+        return float(str(text).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_gui_optional_float_lenient(text: object):
+    cleaned = str(text).strip()
+    if cleaned == "":
+        return None
+    try:
+        return float(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+
 def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
     """Return true for configs that must be handled by the sweep/optim tab."""
     try:
@@ -233,7 +250,7 @@ class IntegratorGUIConfigMixin:
             getattr(
                 options,
                 "self_consistency_gamma_reconciliation_method",
-                "ADAPTIVE_WEIGHTED",
+                "DISABLED",
             )
         )
         self.self_consistency_gamma_reconciliation_low_beta_threshold_var.set(
@@ -414,28 +431,58 @@ class IntegratorGUIConfigMixin:
         else:
             seed = int(self.seed_var.get())
 
-        external_electric_native = tuple(
-            _parse_gui_float(var.get(), f"External E native {axis}")
-            for var, axis in zip(self.external_electric_native_vars, ("x", "y", "z"))
-        )
-        external_electric_si = None
-        if self.external_field_input_mode_var.get() == "SI V/m":
-            external_electric_si = tuple(
-                _parse_gui_float(var.get(), f"External E V/m {axis}")
-                for var, axis in zip(self.external_electric_si_vars, ("x", "y", "z"))
+        external_field_enabled = bool(self.external_field_enabled_var.get())
+        external_input_mode = self.external_field_input_mode_var.get()
+
+        if external_field_enabled:
+            external_electric_native = tuple(
+                _parse_gui_float(var.get(), f"External E native {axis}")
+                for var, axis in zip(
+                    self.external_electric_native_vars, ("x", "y", "z")
+                )
             )
-        external_magnetic_native = tuple(
-            _parse_gui_float(var.get(), f"External B native {axis}")
-            for var, axis in zip(self.external_magnetic_native_vars, ("x", "y", "z"))
-        )
-        external_bounds = {
-            f"{axis}_{bound}": _parse_gui_optional_float(
-                self.external_field_window_vars[f"{axis}_{bound}"].get(),
-                f"External field {axis}_{bound}",
+            external_electric_si = None
+            if external_input_mode == "SI V/m":
+                external_electric_si = tuple(
+                    _parse_gui_float(var.get(), f"External E V/m {axis}")
+                    for var, axis in zip(self.external_electric_si_vars, ("x", "y", "z"))
+                )
+            external_magnetic_native = tuple(
+                _parse_gui_float(var.get(), f"External B native {axis}")
+                for var, axis in zip(
+                    self.external_magnetic_native_vars, ("x", "y", "z")
+                )
             )
-            for axis in ("x", "y", "z", "t")
-            for bound in ("min", "max")
-        }
+            external_bounds = {
+                f"{axis}_{bound}": _parse_gui_optional_float(
+                    self.external_field_window_vars[f"{axis}_{bound}"].get(),
+                    f"External field {axis}_{bound}",
+                )
+                for axis in ("x", "y", "z", "t")
+                for bound in ("min", "max")
+            }
+        else:
+            external_electric_native = tuple(
+                _parse_gui_float_lenient(var.get(), 0.0)
+                for var in self.external_electric_native_vars
+            )
+            external_electric_si = None
+            if external_input_mode == "SI V/m":
+                external_electric_si = tuple(
+                    _parse_gui_float_lenient(var.get(), 0.0)
+                    for var in self.external_electric_si_vars
+                )
+            external_magnetic_native = tuple(
+                _parse_gui_float_lenient(var.get(), 0.0)
+                for var in self.external_magnetic_native_vars
+            )
+            external_bounds = {
+                f"{axis}_{bound}": _parse_gui_optional_float_lenient(
+                    self.external_field_window_vars[f"{axis}_{bound}"].get()
+                )
+                for axis in ("x", "y", "z", "t")
+                for bound in ("min", "max")
+            }
 
         return SimulationOptions(
             simulation_type=sim_type,
@@ -559,7 +606,7 @@ class IntegratorGUIConfigMixin:
             space_charge_enabled=bool(self.space_charge_enabled_var.get()),
             space_charge_retarded=bool(self.space_charge_retarded_var.get()),
             space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
-            external_field_enabled=bool(self.external_field_enabled_var.get()),
+            external_field_enabled=external_field_enabled,
             external_electric_field_native=external_electric_native,
             external_electric_field_v_per_m=external_electric_si,
             external_magnetic_field_native=external_magnetic_native,

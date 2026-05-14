@@ -412,7 +412,7 @@ class IntegratorGUI(
             value=getattr(
                 self.options,
                 "self_consistency_gamma_reconciliation_method",
-                "ADAPTIVE_WEIGHTED",
+                "DISABLED",
             )
         )
         self.self_consistency_gamma_reconciliation_low_beta_threshold_var = (

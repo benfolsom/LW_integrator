@@ -715,6 +715,40 @@ def test_toggle_external_field_controls_respects_enable_and_input_mode():
     assert calls["native_entry"] == [{"state": "disabled"}]
 
 
+def test_build_options_tolerates_invalid_external_field_inputs_when_disabled():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        app.external_field_enabled_var.set(False)
+        app.external_field_input_mode_var.set("SI V/m")
+
+        for var in (
+            app.external_electric_native_vars
+            + app.external_electric_si_vars
+            + app.external_magnetic_native_vars
+        ):
+            var.set("not-a-number")
+
+        for var in app.external_field_window_vars.values():
+            var.set("bad-bound")
+
+        options = app._build_options_from_ui()
+
+        assert options.external_field_enabled is False
+        assert options.external_electric_field_native == pytest.approx((0.0, 0.0, 0.0))
+        assert options.external_electric_field_v_per_m == pytest.approx((0.0, 0.0, 0.0))
+        assert options.external_magnetic_field_native == pytest.approx((0.0, 0.0, 0.0))
+        assert options.external_field_x_min is None
+        assert options.external_field_t_max is None
+    finally:
+        root.destroy()
+
+
 def test_update_macroparticle_state_forces_disabled_outside_conducting_wall():
     check_calls = []
     entry_calls = []
