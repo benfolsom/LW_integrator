@@ -192,3 +192,62 @@ def test_external_field_runs_through_numba_kernel_mode_and_soa() -> None:
     assert accelerated[-1]["Pt"][0] > baseline[-1]["Pt"][0]
     np.testing.assert_allclose(accelerated_soa.Pz[-1], accelerated[-1]["Pz"])
     np.testing.assert_allclose(accelerated_soa.Pt[-1], accelerated[-1]["Pt"])
+
+
+def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
+    field = ExternalFieldConfig(magnetic_field_native=(0.0, 3.0e7, 0.0))
+    common_kwargs = dict(
+        steps=200,
+        h_step=1.0e-6,
+        wall_z=0.0,
+        aperture_radius=1.0e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1.0e9,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        use_numba=True,
+        external_field=field,
+    )
+
+    off_traj, _, off_soa, _ = retarded_integrator(
+        **common_kwargs,
+        init_rider=_single_particle_state(gamma=200.0),
+        radiation_reaction_mode="off",
+    )
+    diagnostic_traj, _, diagnostic_soa, _ = retarded_integrator(
+        **common_kwargs,
+        init_rider=_single_particle_state(gamma=200.0),
+        radiation_reaction_mode="diagnostic_only",
+    )
+    damped_traj, _, damped_soa, _ = retarded_integrator(
+        **common_kwargs,
+        init_rider=_single_particle_state(gamma=200.0),
+        radiation_reaction_mode="power_matched_damping",
+    )
+
+    assert off_soa is not None
+    assert diagnostic_soa is not None
+    assert damped_soa is not None
+
+    np.testing.assert_allclose(diagnostic_soa.gamma, off_soa.gamma)
+    np.testing.assert_allclose(diagnostic_soa.Px, off_soa.Px)
+    np.testing.assert_allclose(diagnostic_soa.Pz, off_soa.Pz)
+    assert float(np.sum(off_soa.radiation_energy[:, 0])) > 0.0
+    assert float(np.sum(off_soa.radiation_energy_applied[:, 0])) == pytest.approx(0.0)
+
+    initial_gamma = float(damped_traj[0]["gamma"][0])
+    final_gamma = float(damped_traj[-1]["gamma"][0])
+    applied_energy = float(np.sum(damped_soa.radiation_energy_applied[:, 0]))
+    rest_energy = ELECTRON_MASS_AMU * C_MMNS**2
+    expected_gamma_drop = applied_energy / rest_energy
+
+    assert applied_energy > 0.0
+    assert final_gamma < float(off_traj[-1]["gamma"][0])
+    assert final_gamma > 199.99
+    assert initial_gamma - final_gamma == pytest.approx(
+        expected_gamma_drop,
+        rel=1.0e-6,
+        abs=1.0e-10,
+    )

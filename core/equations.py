@@ -232,38 +232,47 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
     ParticleState
         A deep copy with all arrays duplicated, including dead particle metadata.
     """
+    def _float_copy(name: str) -> np.ndarray:
+        return np.array(current_state[name], dtype=float, copy=True)
+
     result = {
-        "x": np.copy(current_state["x"]),
-        "y": np.copy(current_state["y"]),
-        "z": np.copy(current_state["z"]),
-        "t": np.copy(current_state["t"]),
-        "Px": np.copy(current_state["Px"]),
-        "Py": np.copy(current_state["Py"]),
-        "Pz": np.copy(current_state["Pz"]),
-        "Pt": np.copy(current_state["Pt"]),
-        "gamma": np.copy(current_state["gamma"]),
-        "bx": np.copy(current_state["bx"]),
-        "by": np.copy(current_state["by"]),
-        "bz": np.copy(current_state["bz"]),
-        "bdotx": np.copy(current_state["bdotx"]),
-        "bdoty": np.copy(current_state["bdoty"]),
-        "bdotz": np.copy(current_state["bdotz"]),
-        "q": np.copy(current_state["q"]),
-        "char_time": np.copy(
-            current_state.get("char_time", np.zeros_like(current_state["x"]))
+        "x": _float_copy("x"),
+        "y": _float_copy("y"),
+        "z": _float_copy("z"),
+        "t": _float_copy("t"),
+        "Px": _float_copy("Px"),
+        "Py": _float_copy("Py"),
+        "Pz": _float_copy("Pz"),
+        "Pt": _float_copy("Pt"),
+        "gamma": _float_copy("gamma"),
+        "bx": _float_copy("bx"),
+        "by": _float_copy("by"),
+        "bz": _float_copy("bz"),
+        "bdotx": _float_copy("bdotx"),
+        "bdoty": _float_copy("bdoty"),
+        "bdotz": _float_copy("bdotz"),
+        "q": np.array(current_state["q"], dtype=float, copy=True),
+        "char_time": np.array(
+            current_state.get("char_time", np.zeros_like(current_state["x"])),
+            dtype=float,
+            copy=True,
         ),
-        "m": np.copy(current_state.get("m", np.ones_like(current_state["x"]))),
-        "dummy": np.zeros_like(current_state["bdotz"]),
-        "origin_x": np.copy(current_state["origin_x"]),
-        "origin_y": np.copy(current_state["origin_y"]),
-        "origin_z": np.copy(current_state["origin_z"]),
-        "beta_avg_x": np.copy(current_state["beta_avg_x"]),
-        "beta_avg_y": np.copy(current_state["beta_avg_y"]),
-        "beta_avg_z": np.copy(current_state["beta_avg_z"]),
-        "beta_samples": np.copy(current_state["beta_samples"]),
-        "radiation_power": np.zeros_like(current_state["x"]),
-        "radiation_energy": np.zeros_like(current_state["x"]),
-        "radiation_energy_applied": np.zeros_like(current_state["x"]),
+        "m": np.array(
+            current_state.get("m", np.ones_like(current_state["x"])),
+            dtype=float,
+            copy=True,
+        ),
+        "dummy": np.zeros_like(current_state["bdotz"], dtype=float),
+        "origin_x": _float_copy("origin_x"),
+        "origin_y": _float_copy("origin_y"),
+        "origin_z": _float_copy("origin_z"),
+        "beta_avg_x": _float_copy("beta_avg_x"),
+        "beta_avg_y": _float_copy("beta_avg_y"),
+        "beta_avg_z": _float_copy("beta_avg_z"),
+        "beta_samples": _float_copy("beta_samples"),
+        "radiation_power": np.zeros_like(current_state["x"], dtype=float),
+        "radiation_energy": np.zeros_like(current_state["x"], dtype=float),
+        "radiation_energy_applied": np.zeros_like(current_state["x"], dtype=float),
     }
 
     # Preserve dead particle metadata to prevent redundant logging
@@ -1993,6 +2002,9 @@ def retarded_equations_of_motion(
             result["beta_avg_x"][particle_idx] = updated_beta_avg[0]
             result["beta_avg_y"][particle_idx] = updated_beta_avg[1]
             result["beta_avg_z"][particle_idx] = updated_beta_avg[2]
+
+            if not sc_enabled:
+                break
 
             # ================================================================
             # STEP 10: Update working state and check convergence

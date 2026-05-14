@@ -9,8 +9,10 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Feature** — Added `ExternalFieldConfig` for prescribed uniform external fields in native solver units, with optional spatial/temporal windows.
 - **Feature** — Added `core.external_fields.electric_field_v_per_m_to_native()` so SI gradients such as GV/m can be converted before use instead of guessed.
 - **Integrator** — Threaded external fields through the canonical integration path, self-consistency wrapper, adaptive substep runner, and SoA return path without adding a separate Numba orchestration path.
-- **Tests** — Added unit coverage for SI-to-native electric-field conversion, uniform electric/magnetic impulses, field windows, and a `use_numba=True` integration smoke test with SoA output.
-- **Files modified** — `core/external_fields.py`, `core/types.py`, `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `tests/unit/test_external_fields.py`
+- **Bug** — Non-self-consistent equation updates now exit after one physical iteration, preventing non-idempotent corrections such as radiation damping from being applied repeatedly inside one step.
+- **Bug** — Result-state initialization now casts continuous trajectory arrays to floating dtype so integer-valued input fixtures cannot silently truncate updated gamma, momentum, or radiation fields.
+- **Tests** — Added unit coverage for SI-to-native electric-field conversion, uniform electric/magnetic impulses, field windows, a `use_numba=True` integration smoke test with SoA output, and a magnetic-bend radiation-reaction regression.
+- **Files modified** — `core/external_fields.py`, `core/types.py`, `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `tests/unit/test_external_fields.py`, `tests/unit/test_equations_helpers.py`
 
 ### Radiation Bookkeeping Cleanup (June 2026)
 

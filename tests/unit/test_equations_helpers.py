@@ -89,6 +89,18 @@ def test_initialize_result_state_copies_charge_arrays_before_death_marking() -> 
     assert result["char_time"] is not state["char_time"]
 
 
+def test_initialize_result_state_casts_continuous_fields_to_float() -> None:
+    state = _make_state()
+    for key in ("gamma", "Pt", "Pz", "x", "radiation_power"):
+        if key in state:
+            state[key] = state[key].astype(int)
+
+    result = equations._initialize_result_state(state)
+
+    for key in ("gamma", "Pt", "Pz", "x", "radiation_power"):
+        assert np.issubdtype(result[key].dtype, np.floating), key
+
+
 def test_particle_scalar_extractors_handle_arrays_and_scalars() -> None:
     array_state = _make_state(charge=[1.0, 2.0], mass=[3.0, 4.0], char_time=[5.0, 6.0])
     scalar_state = {
