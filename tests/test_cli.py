@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import lw_integrator
+from core.external_fields import electric_field_v_per_m_to_native
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 from lw_integrator import cli
 
@@ -39,7 +40,14 @@ def _make_args(**overrides) -> argparse.Namespace:
         "driver_from_rider": False,
         "output": None,
         "quiet": False,
+        "external_field": False,
+        "external_e_field_native": None,
+        "external_e_field_v_per_m": None,
+        "external_b_field_native": None,
     }
+    for axis in ("x", "y", "z", "t"):
+        defaults[f"external_field_{axis}_min"] = None
+        defaults[f"external_field_{axis}_max"] = None
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -106,6 +114,29 @@ class TestCliConfigParsing:
         assert args.adaptive_debug is True
         assert args.use_image_weighting is True
         assert args.simulation_type == "wall"
+
+    def test_parse_args_accepts_external_field_options(self):
+        args = cli.parse_args(
+            [
+                "--external-e-field-v-per-m",
+                "0",
+                "0",
+                "-1.5e9",
+                "--external-b-field-native",
+                "0",
+                "3",
+                "0",
+                "--external-field-z-min",
+                "-0.2",
+                "--external-field-t-max",
+                "1e-6",
+            ]
+        )
+
+        assert args.external_e_field_v_per_m == [0.0, 0.0, -1.5e9]
+        assert args.external_b_field_native == [0.0, 3.0, 0.0]
+        assert args.external_field_z_min == pytest.approx(-0.2)
+        assert args.external_field_t_max == pytest.approx(1.0e-6)
 
     def test_parse_args_allows_disabling_boolean_flags(self):
         args = cli.parse_args(["--no-adaptive-debug", "--no-image-weighting"])
@@ -269,6 +300,57 @@ class TestCliBuildRequest:
         assert payload["steps"] == 77
         assert payload["simulation_type"] == "switching-wall"
         assert payload["z_cutoff"] == 4.5
+
+    def test_merge_simulation_payload_applies_external_field_overrides(self):
+        args = _make_args(
+            external_e_field_v_per_m=[0.0, 0.0, -1.5e9],
+            external_b_field_native=[0.0, 3.0, 0.0],
+            external_field_z_min=-0.2,
+            external_field_t_max=1.0e-6,
+        )
+
+        payload = cli._merge_simulation_payload({}, args)
+
+        assert payload["external_field"] == {
+            "enabled": True,
+            "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
+            "magnetic_field_native": [0.0, 3.0, 0.0],
+            "z_min": -0.2,
+            "t_max": 1.0e-6,
+        }
+
+    def test_build_request_parses_external_field_config(self, tmp_path: Path):
+        config_path = tmp_path / "external_field.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "external_field": {
+                        "enabled": True,
+                        "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
+                        "magnetic_field_native": [0.0, 3.0, 0.0],
+                        "z_min": -0.2,
+                        "z_max": 0.2,
+                        "t_min": 1.0e-6,
+                        "t_max": 2.0e-6,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+
+        assert request.external_field is not None
+        assert request.external_field.electric_field_native[2] == pytest.approx(
+            electric_field_v_per_m_to_native(-1.5e9)
+        )
+        assert request.external_field.magnetic_field_native == pytest.approx(
+            (0.0, 3.0, 0.0)
+        )
+        assert request.external_field.z_min == pytest.approx(-0.2)
+        assert request.external_field.z_max == pytest.approx(0.2)
+        assert request.external_field.t_min == pytest.approx(1.0e-6)
+        assert request.external_field.t_max == pytest.approx(2.0e-6)
 
     def test_build_request_clones_driver_from_rider(self):
         args = _make_args(
@@ -810,6 +892,7 @@ class TestCliRuntimeHelpers:
             captured["use_conducting_image_weighting"]
             == request.config.use_image_weighting
         )
+        assert captured["external_field"] is request.external_field
 
     def test_summarise_trajectory_uses_means_and_max_abs(self):
         trajectory = [

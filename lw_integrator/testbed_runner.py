@@ -341,6 +341,20 @@ class SimulationOptions:
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
 
+    # Prescribed external uniform field options
+    external_field_enabled: bool = False
+    external_electric_field_native: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    external_electric_field_v_per_m: Optional[Tuple[float, float, float]] = None
+    external_magnetic_field_native: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    external_field_x_min: Optional[float] = None
+    external_field_x_max: Optional[float] = None
+    external_field_y_min: Optional[float] = None
+    external_field_y_max: Optional[float] = None
+    external_field_z_min: Optional[float] = None
+    external_field_z_max: Optional[float] = None
+    external_field_t_min: Optional[float] = None
+    external_field_t_max: Optional[float] = None
+
     # Auto-duration crossing mode (BUNCH_TO_BUNCH only)
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
@@ -426,6 +440,22 @@ class SimulationOptions:
             "space_charge_enabled": self.space_charge_enabled,
             "space_charge_retarded": self.space_charge_retarded,
             "space_charge_softening_mm": self.space_charge_softening_mm,
+            "external_field_enabled": self.external_field_enabled,
+            "external_electric_field_native": list(self.external_electric_field_native),
+            "external_electric_field_v_per_m": (
+                list(self.external_electric_field_v_per_m)
+                if self.external_electric_field_v_per_m is not None
+                else None
+            ),
+            "external_magnetic_field_native": list(self.external_magnetic_field_native),
+            "external_field_x_min": self.external_field_x_min,
+            "external_field_x_max": self.external_field_x_max,
+            "external_field_y_min": self.external_field_y_min,
+            "external_field_y_max": self.external_field_y_max,
+            "external_field_z_min": self.external_field_z_min,
+            "external_field_z_max": self.external_field_z_max,
+            "external_field_t_min": self.external_field_t_min,
+            "external_field_t_max": self.external_field_t_max,
             "auto_duration_enabled": self.auto_duration_enabled,
             "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
             "auto_duration_post_factor": self.auto_duration_post_factor,
@@ -456,6 +486,26 @@ class SimulationOptions:
         def _str(name: str, default: str) -> str:
             value = payload.get(name, default)
             return str(value) if value is not None else default
+
+        def _optional_float(name: str) -> Optional[float]:
+            value = payload.get(name)
+            if value is None:
+                return None
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
+        def _tuple3(name: str) -> Optional[Tuple[float, float, float]]:
+            value = payload.get(name)
+            if value is None:
+                return None
+            if not isinstance(value, (list, tuple)) or len(value) != 3:
+                return None
+            try:
+                return (float(value[0]), float(value[1]), float(value[2]))
+            except (TypeError, ValueError):
+                return None
 
         sim_value = payload.get("simulation_type", "BUNCH_TO_BUNCH")
         if isinstance(sim_value, SimulationType):
@@ -597,6 +647,26 @@ class SimulationOptions:
             space_charge_enabled=_bool("space_charge_enabled", False),
             space_charge_retarded=_bool("space_charge_retarded", True),
             space_charge_softening_mm=_float("space_charge_softening_mm", 0.0),
+            external_field_enabled=_bool("external_field_enabled", False),
+            external_electric_field_native=_tuple3(
+                "external_electric_field_native"
+            )
+            or (0.0, 0.0, 0.0),
+            external_electric_field_v_per_m=_tuple3(
+                "external_electric_field_v_per_m"
+            ),
+            external_magnetic_field_native=_tuple3(
+                "external_magnetic_field_native"
+            )
+            or (0.0, 0.0, 0.0),
+            external_field_x_min=_optional_float("external_field_x_min"),
+            external_field_x_max=_optional_float("external_field_x_max"),
+            external_field_y_min=_optional_float("external_field_y_min"),
+            external_field_y_max=_optional_float("external_field_y_max"),
+            external_field_z_min=_optional_float("external_field_z_min"),
+            external_field_z_max=_optional_float("external_field_z_max"),
+            external_field_t_min=_optional_float("external_field_t_min"),
+            external_field_t_max=_optional_float("external_field_t_max"),
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
@@ -1085,6 +1155,41 @@ def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
     )
 
 
+def build_external_field_config(options: SimulationOptions) -> Optional[object]:
+    """Build ExternalFieldConfig from SimulationOptions.
+
+    Returns None if prescribed external fields are disabled.
+    """
+    if not options.external_field_enabled:
+        return None
+
+    from core.external_fields import electric_field_v_per_m_to_native
+    from core.types import ExternalFieldConfig
+
+    electric_native = tuple(float(v) for v in options.external_electric_field_native)
+    if options.external_electric_field_v_per_m is not None:
+        electric_native = tuple(
+            electric_field_v_per_m_to_native(float(v))
+            for v in options.external_electric_field_v_per_m
+        )
+
+    return ExternalFieldConfig(
+        enabled=True,
+        electric_field_native=electric_native,
+        magnetic_field_native=tuple(
+            float(v) for v in options.external_magnetic_field_native
+        ),
+        x_min=options.external_field_x_min,
+        x_max=options.external_field_x_max,
+        y_min=options.external_field_y_min,
+        y_max=options.external_field_y_max,
+        z_min=options.external_field_z_min,
+        z_max=options.external_field_z_max,
+        t_min=options.external_field_t_min,
+        t_max=options.external_field_t_max,
+    )
+
+
 def build_chrono_mode_enum(chrono_mode_str: str) -> object:
     """Convert chrono mode string to ChronoMatchingMode enum."""
     from core.types import ChronoMatchingMode
@@ -1254,6 +1359,7 @@ def run_testbed(
     energy_monitor_config = build_energy_monitor_config(options)
     adaptive_timestep_config = build_adaptive_timestep_config(options)
     space_charge_config = build_space_charge_config(options)
+    external_field_config = build_external_field_config(options)
     chrono_mode_enum = build_chrono_mode_enum(
         options.self_consistency_chrono_matching_mode
     )
@@ -1345,6 +1451,7 @@ def run_testbed(
             energy_monitor=energy_monitor_config,
             adaptive_timestep=adaptive_timestep_config,
             space_charge=space_charge_config,
+            external_field=external_field_config,
             image_subcharge_count=int(options.image_subcharge_count),
             use_conducting_image_weighting=bool(options.use_image_weighting),
             macroparticle_charge_multiplier=float(
@@ -2743,6 +2850,7 @@ __all__ = [
     "SPECIES_OPTIONS",
     "SPECIES_PRESETS",
     "apply_species_preset",
+    "build_external_field_config",
     "compute_initial_summary",
     "ensure_directory",
     "generate_filename_base",

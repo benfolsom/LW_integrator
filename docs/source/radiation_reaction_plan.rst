@@ -120,6 +120,16 @@ Ordered Tasks
    Later extensions can add field maps, callable fields, and explicit
    vector/scalar-potential providers for fully covariant canonical updates.
 
+   Time-dependent fields need their own model boundary. The static Eq. 21
+   longitudinal field used in the paper can be written as
+   ``E_z = partial^z A^0 - partial^0 A^z`` with the time derivative set to
+   zero. For any time-dependent extension, do not implement this as a scalar
+   field amplitude toggle alone. Add a potential-provider interface that can
+   evaluate ``A^0``, ``A^i``, and their derivatives at ``(x, y, z, t)`` so the
+   ``-partial^0 A^i`` contribution is represented explicitly and canonical
+   momentum can be recomposed from the same potentials used to compute the
+   mechanical Lorentz-force impulse.
+
 8. Benchmark self-force candidates against controlled systems.
 
    Start with tests that do not require wall images or retarded multi-particle

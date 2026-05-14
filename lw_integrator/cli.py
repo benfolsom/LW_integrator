@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from numbers import Integral
@@ -22,6 +23,7 @@ from core.constants import ELECTRON_MASS_AMU
 from core.integration_runner import retarded_integrator
 from core.types import (
     ChronoMatchingMode,
+    ExternalFieldConfig,
     IntegratorConfig,
     ParticleState,
     SimulationType,
@@ -99,6 +101,7 @@ class SimulationRequest:
     config: IntegratorConfig
     rider: ParticleState
     driver: Optional[ParticleState]
+    external_field: Optional[ExternalFieldConfig] = None
 
 
 class SimulationConfigError(RuntimeError):
@@ -121,6 +124,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "configuration file for advanced scenarios, or run parameter sweeps "
             "with --sweep-config."
         ),
+    )
+    # argparse's built-in negative-number matcher does not classify values like
+    # ``-1.5e9`` as numeric, so nargs vector options otherwise reject common
+    # scientific-notation field strengths.
+    parser._negative_number_matcher = re.compile(  # noqa: SLF001
+        r"^-\d+(\.\d*)?([eE][+-]?\d+)?$|^-\.\d+([eE][+-]?\d+)?$"
     )
     parser.add_argument(
         "--config",
@@ -188,6 +197,46 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         metavar="MM",
         help="Plummer softening length (mm) for space-charge interactions. Default: 0 (no softening).",
     )
+    parser.add_argument(
+        "--external-field",
+        action="store_true",
+        default=False,
+        help="Enable a prescribed uniform external field.",
+    )
+    parser.add_argument(
+        "--external-e-field-native",
+        type=float,
+        nargs=3,
+        metavar=("EX", "EY", "EZ"),
+        help="Uniform electric field vector in native solver units.",
+    )
+    parser.add_argument(
+        "--external-e-field-v-per-m",
+        type=float,
+        nargs=3,
+        metavar=("EX", "EY", "EZ"),
+        help="Uniform electric field vector in V/m, converted to native units.",
+    )
+    parser.add_argument(
+        "--external-b-field-native",
+        type=float,
+        nargs=3,
+        metavar=("BX", "BY", "BZ"),
+        help="Uniform magnetic field vector in native solver units.",
+    )
+    for axis in ("x", "y", "z", "t"):
+        parser.add_argument(
+            f"--external-field-{axis}-min",
+            type=float,
+            dest=f"external_field_{axis}_min",
+            help=f"Lower {axis} bound for applying the external field.",
+        )
+        parser.add_argument(
+            f"--external-field-{axis}-max",
+            type=float,
+            dest=f"external_field_{axis}_max",
+            help=f"Upper {axis} bound for applying the external field.",
+        )
     parser.add_argument(
         "--auto-duration",
         action="store_true",
@@ -349,6 +398,9 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
         )
 
     config = _build_integrator_config(simulation_payload)
+    external_field = _build_external_field_config(
+        simulation_payload.get("external_field")
+    )
     rider_state = _build_particle_state(rider_payload)
 
     driver_state: Optional[ParticleState] = None
@@ -365,7 +417,12 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
     elif driver_payload is not None:
         driver_state = _build_particle_state(driver_payload)
 
-    return SimulationRequest(config=config, rider=rider_state, driver=driver_state)
+    return SimulationRequest(
+        config=config,
+        rider=rider_state,
+        driver=driver_state,
+        external_field=external_field,
+    )
 
 
 def _load_config(path: Path) -> Dict[str, Any]:
@@ -400,6 +457,8 @@ def _merge_simulation_payload(
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
+    if "external_field" in file_payload:
+        result["external_field"] = file_payload["external_field"]
 
     override_keys = (
         "steps",
@@ -424,6 +483,33 @@ def _merge_simulation_payload(
         result["space_charge_enabled"] = True
     if getattr(args, "space_charge_softening_mm", 0.0) != 0.0:
         result["space_charge_softening_mm"] = args.space_charge_softening_mm
+
+    external_field = result.get("external_field")
+    if not isinstance(external_field, MutableMapping):
+        external_field = {}
+    else:
+        external_field = dict(external_field)
+
+    if getattr(args, "external_field", False):
+        external_field["enabled"] = True
+    if getattr(args, "external_e_field_native", None) is not None:
+        external_field["electric_field_native"] = args.external_e_field_native
+        external_field["enabled"] = True
+    if getattr(args, "external_e_field_v_per_m", None) is not None:
+        external_field["electric_field_v_per_m"] = args.external_e_field_v_per_m
+        external_field["enabled"] = True
+    if getattr(args, "external_b_field_native", None) is not None:
+        external_field["magnetic_field_native"] = args.external_b_field_native
+        external_field["enabled"] = True
+    for axis in ("x", "y", "z", "t"):
+        for bound in ("min", "max"):
+            arg_name = f"external_field_{axis}_{bound}"
+            value = getattr(args, arg_name, None)
+            if value is not None:
+                external_field[f"{axis}_{bound}"] = value
+                external_field["enabled"] = True
+    if external_field:
+        result["external_field"] = external_field
 
     if getattr(args, "auto_duration", False):
         result["auto_duration_enabled"] = True
@@ -575,6 +661,75 @@ def _parse_image_weighting(value: Any) -> bool:
     return bool(value)
 
 
+def _optional_float_field(payload: Mapping[str, Any], name: str) -> Optional[float]:
+    value = payload.get(name)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(f"external_field.{name} must be numeric") from exc
+
+
+def _parse_field_vector(
+    payload: Mapping[str, Any],
+    name: str,
+) -> Optional[Tuple[float, float, float]]:
+    value = payload.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise SimulationConfigError(f"external_field.{name} must be a 3-vector")
+    try:
+        return (float(value[0]), float(value[1]), float(value[2]))
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"external_field.{name} must contain numeric values"
+        ) from exc
+
+
+def _build_external_field_config(payload: Any) -> Optional[ExternalFieldConfig]:
+    if payload is None:
+        return None
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("external_field must be a JSON object")
+    if not bool(payload.get("enabled", True)):
+        return None
+
+    electric_native = _parse_field_vector(payload, "electric_field_native") or (
+        0.0,
+        0.0,
+        0.0,
+    )
+    electric_si = _parse_field_vector(payload, "electric_field_v_per_m")
+    if electric_si is not None:
+        from core.external_fields import electric_field_v_per_m_to_native
+
+        electric_native = tuple(
+            electric_field_v_per_m_to_native(component) for component in electric_si
+        )
+
+    magnetic_native = _parse_field_vector(payload, "magnetic_field_native") or (
+        0.0,
+        0.0,
+        0.0,
+    )
+
+    return ExternalFieldConfig(
+        enabled=True,
+        electric_field_native=electric_native,
+        magnetic_field_native=magnetic_native,
+        x_min=_optional_float_field(payload, "x_min"),
+        x_max=_optional_float_field(payload, "x_max"),
+        y_min=_optional_float_field(payload, "y_min"),
+        y_max=_optional_float_field(payload, "y_max"),
+        z_min=_optional_float_field(payload, "z_min"),
+        z_max=_optional_float_field(payload, "z_max"),
+        t_min=_optional_float_field(payload, "t_min"),
+        t_max=_optional_float_field(payload, "t_max"),
+    )
+
+
 def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
     missing = [field for field in REQUIRED_PARTICLE_FIELDS if field not in payload]
     if missing:
@@ -613,6 +768,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         startup_mode=request.config.startup_mode,
         image_subcharge_count=request.config.image_subcharge_count,
         use_conducting_image_weighting=request.config.use_image_weighting,
+        external_field=request.external_field,
     )
 
 

@@ -6,12 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from core.external_fields import electric_field_v_per_m_to_native
 from core.types import SimulationType
 from lw_integrator.testbed_runner import (
     CORE_PARAM_DEFAULTS,
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     SimulationOptions,
+    build_external_field_config,
 )
 
 
@@ -35,6 +37,13 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         self_consistency_gamma_reconciliation_fixed_weight=0.7,
         energy_monitor_halt_on_jump=True,
         adaptive_timestep_min_factor=1e-5,
+        external_field_enabled=True,
+        external_electric_field_v_per_m=(0.0, 0.0, -1.5e9),
+        external_magnetic_field_native=(0.0, 3.0, 0.0),
+        external_field_z_min=-0.2,
+        external_field_z_max=0.2,
+        external_field_t_min=1.0e-6,
+        external_field_t_max=2.0e-6,
         log_file_path="custom.log",
     )
 
@@ -71,7 +80,36 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     )
     assert loaded.energy_monitor_halt_on_jump is True
     assert loaded.adaptive_timestep_min_factor == pytest.approx(1e-5)
+    assert loaded.external_field_enabled is True
+    assert loaded.external_electric_field_v_per_m == pytest.approx(
+        (0.0, 0.0, -1.5e9)
+    )
+    assert loaded.external_magnetic_field_native == pytest.approx((0.0, 3.0, 0.0))
+    assert loaded.external_field_z_min == pytest.approx(-0.2)
+    assert loaded.external_field_z_max == pytest.approx(0.2)
+    assert loaded.external_field_t_min == pytest.approx(1.0e-6)
+    assert loaded.external_field_t_max == pytest.approx(2.0e-6)
     assert loaded.log_file_path == "custom.log"
+
+
+def test_build_external_field_config_converts_si_electric_field():
+    options = SimulationOptions(
+        external_field_enabled=True,
+        external_electric_field_v_per_m=(0.0, 0.0, -1.5e9),
+        external_magnetic_field_native=(0.0, 3.0, 0.0),
+        external_field_z_min=-0.2,
+        external_field_z_max=0.2,
+    )
+
+    config = build_external_field_config(options)
+
+    assert config is not None
+    assert config.electric_field_native[2] == pytest.approx(
+        electric_field_v_per_m_to_native(-1.5e9)
+    )
+    assert config.magnetic_field_native == pytest.approx((0.0, 3.0, 0.0))
+    assert config.z_min == pytest.approx(-0.2)
+    assert config.z_max == pytest.approx(0.2)
 
 
 def test_simulation_options_from_dict_accepts_legacy_mode_alias_and_int_enum():
@@ -114,4 +152,3 @@ def test_simulation_options_from_dict_falls_back_on_invalid_numeric_values():
     assert options.adaptive_timestep_min_factor == pytest.approx(1e-4)
     assert options.energy_monitor_threshold == pytest.approx(2.0)
     assert options.trajectory_interval == 10
-
