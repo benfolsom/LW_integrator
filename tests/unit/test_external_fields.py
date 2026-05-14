@@ -240,10 +240,12 @@ def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
     initial_gamma = float(damped_traj[0]["gamma"][0])
     final_gamma = float(damped_traj[-1]["gamma"][0])
     applied_energy = float(np.sum(damped_soa.radiation_energy_applied[:, 0]))
+    computed_radiated_energy = float(np.sum(damped_soa.radiation_energy[:, 0]))
     rest_energy = ELECTRON_MASS_AMU * C_MMNS**2
     expected_gamma_drop = applied_energy / rest_energy
 
     assert applied_energy > 0.0
+    assert applied_energy <= computed_radiated_energy
     assert final_gamma < float(off_traj[-1]["gamma"][0])
     assert final_gamma > 199.99
     assert initial_gamma - final_gamma == pytest.approx(

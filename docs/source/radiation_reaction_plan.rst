@@ -50,6 +50,119 @@ explicit:
   rest mass only, document that choice, and leave dressed-mass handling behind
   an explicit option.
 
+Medina Native-Units Derivation Draft
+------------------------------------
+
+The maintained solver uses the historical native system:
+
+* length: ``mm``,
+* time: ``ns``,
+* velocity: ``mm / ns``,
+* mass: ``amu``,
+* mechanical momentum: ``amu mm / ns``,
+* mechanical force: ``amu mm / ns^2``, and
+* mechanical energy: ``amu mm^2 / ns^2``.
+
+Charge uses the solver-native value ``ELEMENTARY_CHARGE = 1.178734e-5``. A
+native electric field is a force-per-charge quantity, so ``q E`` has units of
+``amu mm / ns^2``. The current prescribed-field implementation converts SI
+``V/m`` values by matching the SI force on one elementary charge to one native
+force unit.
+
+The integrator step variable ``h`` is a proper-time increment ``d tau``. The
+coordinate-time increment for a particle is therefore
+
+.. math::
+
+   dt = \gamma h.
+
+The mechanical momentum is
+
+.. math::
+
+   p = \gamma m v = \gamma m c \beta,
+
+with units ``amu mm / ns``. The current prescribed external-field impulse is
+
+.. math::
+
+   \Delta p_{ext} = h q \gamma (E + \beta \times B)
+                  = dt\, F_{ext},
+
+where
+
+.. math::
+
+   F_{ext} = q (E + \beta \times B).
+
+For a general Medina implementation, the first required helper should expose
+the mechanical non-radiation force represented by a step:
+
+.. math::
+
+   F_{ext} \approx {\Delta p_{mech, nonrad} \over dt}.
+
+For prescribed fields this can be computed directly from ``q(E + beta x B)``.
+For retarded image/source forces it must be derived from the mechanical
+momentum increment after subtracting the vector-potential contribution, not
+from the canonical ``delta_P`` accumulator alone.
+
+The Medina force can be written in native variables as
+
+.. math::
+
+   F^{RAD} = \tau_0
+   \left[
+     {d\gamma \over dt}F_{ext}
+     - {\gamma^3 \over c^2}(F_{ext}\cdot a)v
+   \right],
+
+where
+
+.. math::
+
+   \tau_0 = {2 \over 3}{q^2 \over m c^3}.
+
+This is the same characteristic time already stored on particle states as
+``char_time`` when native charge and rest mass are used. Here
+``v = c beta`` and ``a = dv/dt = c d beta/dt`` are coordinate-time mechanical
+quantities. Both bracketed terms have units of force per time:
+
+* ``(d gamma / dt) F_ext`` gives ``amu mm / ns^3``;
+* ``(gamma^3 / c^2)(F_ext dot a)v`` also gives ``amu mm / ns^3``.
+
+Multiplying by ``tau_0`` gives a mechanical force in ``amu mm / ns^2``. The
+mechanical radiation-reaction impulse for one integrator step is therefore
+
+.. math::
+
+   \Delta p_{RAD} = F^{RAD} dt = F^{RAD} \gamma h.
+
+The candidate implementation should apply this impulse to mechanical momentum,
+then recompose canonical momentum from the same potentials used by the normal
+step:
+
+.. math::
+
+   p_{new} = p_{nonrad} + \Delta p_{RAD},
+
+.. math::
+
+   \gamma_{new} = \sqrt{1 + {|p_{new}|^2 \over (m c)^2}},
+
+.. math::
+
+   P_{i,new} = p_{i,new} + m A_{i,solver},
+
+.. math::
+
+   P_{t,new} = \gamma_{new} m c + q \Phi.
+
+The first Medina mode should use rest mass in ``tau_0`` and explicitly state
+that the paper's dressed-mass caveat is not yet modeled. It should also start
+with prescribed-field benchmarks before being applied to retarded image-charge
+collision cases.
+
 Ordered Tasks
 -------------
 
@@ -113,7 +226,8 @@ Ordered Tasks
    * the magnetic-bend integration test checks that applied damping energy
      matches the observed gamma reduction.
 
-5. Derive the Medina implementation in native units. **Status: not started.**
+5. Derive the Medina implementation in native units. **Status: first draft
+   complete; needs review before coding.**
 
    Produce a short derivation note before coding. It should define native units
    for charge, mass, force, acceleration, time, and energy; state whether the
@@ -202,10 +316,8 @@ Next Best Steps
 
 The immediate low-risk work is now validation rather than new physics:
 
-* add one more integration-level damping bound check:
-  ``sum(radiation_energy_applied) <= sum(radiation_energy)`` for a controlled
-  prescribed-field run,
-* add a native-units derivation note for the Medina candidate,
-* define the mechanical-force extraction API that Medina/LAD will consume, and
+* review the Medina native-units derivation above,
+* define the mechanical-force extraction API that Medina/LAD will consume,
+* add a prescribed-field-only Medina prototype once that API is explicit, and
 * only then add ``radiation_reaction_mode="medina_lad"`` behind an explicit
   opt-in.
