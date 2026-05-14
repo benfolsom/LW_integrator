@@ -25,6 +25,11 @@ def _make_args(**overrides) -> argparse.Namespace:
         "log_verbosity": None,
         "sc_verbosity": None,
         "adaptive_debug": None,
+        "space_charge": False,
+        "space_charge_softening_mm": 0.0,
+        "auto_duration": False,
+        "auto_duration_crossing_steps": None,
+        "auto_duration_post_factor": None,
         "steps": None,
         "time_step": None,
         "simulation_type": None,
@@ -319,6 +324,26 @@ class TestCliBuildRequest:
             "t_max": 1.0e-6,
         }
 
+    def test_merge_simulation_payload_keeps_file_passthrough_fields(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "space_charge_enabled": True,
+                "space_charge_retarded": False,
+                "space_charge_softening_mm": 0.05,
+                "auto_duration_enabled": True,
+                "auto_duration_crossing_steps": 180,
+                "auto_duration_post_factor": 2.25,
+            },
+            _make_args(),
+        )
+
+        assert payload["space_charge_enabled"] is True
+        assert payload["space_charge_retarded"] is False
+        assert payload["space_charge_softening_mm"] == pytest.approx(0.05)
+        assert payload["auto_duration_enabled"] is True
+        assert payload["auto_duration_crossing_steps"] == 180
+        assert payload["auto_duration_post_factor"] == pytest.approx(2.25)
+
     def test_build_request_parses_external_field_config(self, tmp_path: Path):
         config_path = tmp_path / "external_field.json"
         config_path.write_text(
@@ -364,6 +389,48 @@ class TestCliBuildRequest:
         for key, rider_value in request.rider.items():
             assert np.array_equal(request.driver[key], rider_value)
             assert request.driver[key] is not rider_value
+
+    def test_build_request_parses_space_charge_config(self, tmp_path: Path):
+        config_path = tmp_path / "space_charge.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "space_charge_enabled": True,
+                    "space_charge_retarded": False,
+                    "space_charge_softening_mm": 0.125,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+
+        assert request.space_charge is not None
+        assert request.space_charge.enabled is True
+        assert request.space_charge.retarded is False
+        assert request.space_charge.softening_mm == pytest.approx(0.125)
+
+    def test_build_request_rejects_auto_duration_for_non_b2b(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="auto_duration is only supported for BUNCH_TO_BUNCH simulations",
+        ):
+            cli.build_request(_make_args(auto_duration=True))
+
+    def test_build_request_accepts_auto_duration_for_b2b(self):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                auto_duration=True,
+                auto_duration_crossing_steps=150,
+                auto_duration_post_factor=2.5,
+            )
+        )
+
+        assert request.auto_duration_enabled is True
+        assert request.auto_duration_crossing_steps == 150
+        assert request.auto_duration_post_factor == pytest.approx(2.5)
 
     def test_build_request_requires_driver_for_bunch_to_bunch(self):
         args = _make_args(simulation_type="bunch-to-bunch")
@@ -892,7 +959,39 @@ class TestCliRuntimeHelpers:
             captured["use_conducting_image_weighting"]
             == request.config.use_image_weighting
         )
+        assert captured["space_charge"] is request.space_charge
         assert captured["external_field"] is request.external_field
+
+    def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                auto_duration=True,
+                auto_duration_crossing_steps=120,
+                auto_duration_post_factor=2.5,
+            )
+        )
+
+        request.driver["z"] = request.driver["z"] + 1000.0
+
+        expected_steps, expected_h_step = cli._resolve_auto_duration(request)
+        captured = {}
+
+        def fake_retarded_integrator(**kwargs):
+            captured.update(kwargs)
+            return ["rider"], ["driver"]
+
+        monkeypatch.setattr(cli, "retarded_integrator", fake_retarded_integrator)
+
+        rider, driver = cli.run_simulation(request)
+
+        assert rider == ["rider"]
+        assert driver == ["driver"]
+        assert captured["steps"] == expected_steps
+        assert captured["h_step"] == pytest.approx(expected_h_step)
+        assert captured["steps"] == 300
+        assert captured["h_step"] != pytest.approx(request.config.time_step)
 
     def test_summarise_trajectory_uses_means_and_max_abs(self):
         trajectory = [

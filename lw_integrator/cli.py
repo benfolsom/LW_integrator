@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 
 import numpy as np
 
-from core.constants import ELECTRON_MASS_AMU
+from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import retarded_integrator
 from core.types import (
     ChronoMatchingMode,
@@ -27,6 +28,7 @@ from core.types import (
     IntegratorConfig,
     ParticleState,
     SimulationType,
+    SpaceChargeConfig,
     StartupMode,
     Trajectory,
 )
@@ -102,6 +104,10 @@ class SimulationRequest:
     rider: ParticleState
     driver: Optional[ParticleState]
     external_field: Optional[ExternalFieldConfig] = None
+    space_charge: Optional[SpaceChargeConfig] = None
+    auto_duration_enabled: bool = False
+    auto_duration_crossing_steps: int = 200
+    auto_duration_post_factor: float = 2.0
 
 
 class SimulationConfigError(RuntimeError):
@@ -401,6 +407,7 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
     external_field = _build_external_field_config(
         simulation_payload.get("external_field")
     )
+    space_charge = _build_space_charge_config(simulation_payload)
     rider_state = _build_particle_state(rider_payload)
 
     driver_state: Optional[ParticleState] = None
@@ -417,11 +424,35 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
     elif driver_payload is not None:
         driver_state = _build_particle_state(driver_payload)
 
+    auto_duration_enabled = bool(simulation_payload.get("auto_duration_enabled", False))
+    auto_duration_crossing_steps = int(
+        simulation_payload.get("auto_duration_crossing_steps", 200)
+    )
+    auto_duration_post_factor = float(
+        simulation_payload.get("auto_duration_post_factor", 2.0)
+    )
+
+    if auto_duration_enabled:
+        if config.simulation_type is not SimulationType.BUNCH_TO_BUNCH:
+            raise SimulationConfigError(
+                "auto_duration is only supported for BUNCH_TO_BUNCH simulations"
+            )
+        if auto_duration_crossing_steps <= 0:
+            raise SimulationConfigError(
+                "auto_duration_crossing_steps must be a positive integer"
+            )
+        if auto_duration_post_factor <= 0.0:
+            raise SimulationConfigError("auto_duration_post_factor must be positive")
+
     return SimulationRequest(
         config=config,
         rider=rider_state,
         driver=driver_state,
         external_field=external_field,
+        space_charge=space_charge,
+        auto_duration_enabled=auto_duration_enabled,
+        auto_duration_crossing_steps=auto_duration_crossing_steps,
+        auto_duration_post_factor=auto_duration_post_factor,
     )
 
 
@@ -459,6 +490,18 @@ def _merge_simulation_payload(
             result[key] = file_payload[key]
     if "external_field" in file_payload:
         result["external_field"] = file_payload["external_field"]
+
+    passthrough_keys = (
+        "space_charge_enabled",
+        "space_charge_retarded",
+        "space_charge_softening_mm",
+        "auto_duration_enabled",
+        "auto_duration_crossing_steps",
+        "auto_duration_post_factor",
+    )
+    for key in passthrough_keys:
+        if key in file_payload:
+            result[key] = file_payload[key]
 
     override_keys = (
         "steps",
@@ -688,6 +731,27 @@ def _parse_field_vector(
         ) from exc
 
 
+def _build_space_charge_config(
+    payload: Mapping[str, Any],
+) -> Optional[SpaceChargeConfig]:
+    enabled = bool(payload.get("space_charge_enabled", False))
+    if not enabled:
+        return None
+
+    try:
+        softening_mm = float(payload.get("space_charge_softening_mm", 0.0))
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            "space_charge_softening_mm must be numeric"
+        ) from exc
+
+    return SpaceChargeConfig(
+        enabled=True,
+        retarded=bool(payload.get("space_charge_retarded", True)),
+        softening_mm=softening_mm,
+    )
+
+
 def _build_external_field_config(payload: Any) -> Optional[ExternalFieldConfig]:
     if payload is None:
         return None
@@ -752,10 +816,54 @@ def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_auto_duration(request: SimulationRequest) -> tuple[int, float]:
+    steps = int(request.config.steps)
+    h_step = float(request.config.time_step)
+
+    if not request.auto_duration_enabled:
+        return steps, h_step
+
+    rider_pz = float(np.asarray(request.rider["Pz"]).mean())
+    rider_m = float(np.asarray(request.rider["m"]).mean())
+    rider_gamma = float(np.asarray(request.rider["gamma"]).mean())
+    rider_beta_z = abs(rider_pz) / (rider_gamma * rider_m * C_MMNS)
+
+    driver_beta_z = 0.0
+    if request.driver is not None:
+        driver_pz = float(np.asarray(request.driver["Pz"]).mean())
+        driver_m = float(np.asarray(request.driver["m"]).mean())
+        driver_gamma = float(np.asarray(request.driver["gamma"]).mean())
+        driver_beta_z = abs(driver_pz) / (driver_gamma * driver_m * C_MMNS)
+
+    closing_speed = (rider_beta_z + driver_beta_z) * C_MMNS
+    rider_z0 = float(np.asarray(request.rider["z"]).mean())
+    driver_z0 = (
+        float(np.asarray(request.driver["z"]).mean())
+        if request.driver is not None
+        else 0.0
+    )
+    separation = abs(driver_z0 - rider_z0)
+
+    if closing_speed <= 0.0 or separation <= 0.0:
+        return steps, h_step
+
+    h_step = separation / (closing_speed * request.auto_duration_crossing_steps)
+    steps = max(
+        10,
+        int(
+            math.ceil(
+                request.auto_duration_crossing_steps * request.auto_duration_post_factor
+            )
+        ),
+    )
+    return steps, h_step
+
+
 def run_simulation(request: SimulationRequest) -> tuple:
+    steps, h_step = _resolve_auto_duration(request)
     return retarded_integrator(
-        steps=request.config.steps,
-        h_step=request.config.time_step,
+        steps=steps,
+        h_step=h_step,
         wall_z=request.config.wall_position,
         aperture_radius=request.config.aperture_radius,
         sim_type=request.config.simulation_type,
@@ -768,6 +876,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         startup_mode=request.config.startup_mode,
         image_subcharge_count=request.config.image_subcharge_count,
         use_conducting_image_weighting=request.config.use_image_weighting,
+        space_charge=request.space_charge,
         external_field=request.external_field,
     )
 
