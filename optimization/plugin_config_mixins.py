@@ -40,13 +40,25 @@ class OptimizationPluginConfigMixin:
                 self.gui_controller.self_consistency_enabled_var.set(
                     config.self_consistency_enabled
                 )
+            if hasattr(self.gui_controller, "self_consistency_convergence_mode_var"):
+                self.gui_controller.self_consistency_convergence_mode_var.set(
+                    config.self_consistency_convergence_mode
+                )
             if hasattr(self.gui_controller, "self_consistency_target_ms_tolerance_var"):
                 self.gui_controller.self_consistency_target_ms_tolerance_var.set(
-                    f"{config.self_consistency_tolerance:.1e}"
+                    f"{config.self_consistency_target_ms_tolerance:.1e}"
                 )
             if hasattr(self.gui_controller, "self_consistency_max_iterations_var"):
                 self.gui_controller.self_consistency_max_iterations_var.set(
                     str(config.self_consistency_max_iterations)
+                )
+            if hasattr(self.gui_controller, "self_consistency_mass_shell_tolerance_var"):
+                self.gui_controller.self_consistency_mass_shell_tolerance_var.set(
+                    f"{config.self_consistency_mass_shell_tolerance:.1e}"
+                )
+            if hasattr(self.gui_controller, "self_consistency_mass_shell_relaxation_var"):
+                self.gui_controller.self_consistency_mass_shell_relaxation_var.set(
+                    f"{config.self_consistency_mass_shell_relaxation:.2f}"
                 )
             if hasattr(self.gui_controller, "self_consistency_verbosity_var"):
                 self.gui_controller.self_consistency_verbosity_var.set(

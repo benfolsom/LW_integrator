@@ -8,10 +8,15 @@ from typing import Any, Dict
 _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_enabled": True,
     "self_consistency_tolerance": 1e-4,
+    "self_consistency_convergence_mode": "fixed_geometry",
+    "self_consistency_target_ms_tolerance": 1e-6,
     "self_consistency_max_iterations": 5,
+    "self_consistency_mass_shell_tolerance": 1e-2,
+    "self_consistency_mass_shell_relaxation": 0.7,
     "self_consistency_verbosity": 0,
     "self_consistency_chrono_interpolate": False,
     "self_consistency_chrono_tolerance": 1e-3,
+    "self_consistency_chrono_matching_mode": "FAST",
     "self_consistency_chrono_high_precision": False,
     "self_consistency_chrono_adaptive_tolerance": False,
     "energy_monitor_halt_on_jump": False,
@@ -140,12 +145,17 @@ def build_saved_config_payload(
         ),
         "self_consistency_enabled": config.self_consistency_enabled,
         "self_consistency_tolerance": config.self_consistency_tolerance,
+        "self_consistency_convergence_mode": config.self_consistency_convergence_mode,
+        "self_consistency_target_ms_tolerance": config.self_consistency_target_ms_tolerance,
         "self_consistency_max_iterations": config.self_consistency_max_iterations,
+        "self_consistency_mass_shell_tolerance": config.self_consistency_mass_shell_tolerance,
+        "self_consistency_mass_shell_relaxation": config.self_consistency_mass_shell_relaxation,
         "self_consistency_verbosity": config.self_consistency_verbosity,
         "self_consistency_chrono_interpolate": (
             config.self_consistency_chrono_interpolate
         ),
         "self_consistency_chrono_tolerance": config.self_consistency_chrono_tolerance,
+        "self_consistency_chrono_matching_mode": config.self_consistency_chrono_matching_mode,
         "self_consistency_chrono_high_precision": (
             config.self_consistency_chrono_high_precision
         ),

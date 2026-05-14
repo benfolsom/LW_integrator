@@ -235,10 +235,15 @@ class OptimizationConfig:
     # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = 1e-4
+    self_consistency_convergence_mode: str = "fixed_geometry"
+    self_consistency_target_ms_tolerance: float = 1e-6
     self_consistency_max_iterations: int = 5
+    self_consistency_mass_shell_tolerance: float = 1e-2
+    self_consistency_mass_shell_relaxation: float = 0.7
     self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
     self_consistency_chrono_interpolate: bool = False
     self_consistency_chrono_tolerance: float = 1e-3  # ns
+    self_consistency_chrono_matching_mode: str = "FAST"
     self_consistency_chrono_high_precision: bool = False
     self_consistency_chrono_adaptive_tolerance: bool = False
 
@@ -401,13 +406,28 @@ class OptimizationConfig:
             # Preserve stability options from main config
             self_consistency_enabled=options.self_consistency_enabled,
             self_consistency_tolerance=options.self_consistency_tolerance,
+            self_consistency_convergence_mode=getattr(
+                options, "self_consistency_convergence_mode", "fixed_geometry"
+            ),
+            self_consistency_target_ms_tolerance=getattr(
+                options, "self_consistency_target_ms_tolerance", 1e-6
+            ),
             self_consistency_max_iterations=options.self_consistency_max_iterations,
+            self_consistency_mass_shell_tolerance=getattr(
+                options, "self_consistency_mass_shell_tolerance", 1e-2
+            ),
+            self_consistency_mass_shell_relaxation=getattr(
+                options, "self_consistency_mass_shell_relaxation", 0.7
+            ),
             self_consistency_verbosity=options.self_consistency_verbosity,
             self_consistency_chrono_interpolate=getattr(
                 options, "self_consistency_chrono_interpolate", False
             ),
             self_consistency_chrono_tolerance=getattr(
                 options, "self_consistency_chrono_tolerance", 1e-3
+            ),
+            self_consistency_chrono_matching_mode=getattr(
+                options, "self_consistency_chrono_matching_mode", "FAST"
             ),
             self_consistency_chrono_high_precision=getattr(
                 options, "self_consistency_chrono_high_precision", False

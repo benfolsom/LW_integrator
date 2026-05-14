@@ -177,13 +177,28 @@ def build_single_integration_setup(
         output_dir=run_output_dir,
         self_consistency_enabled=config.self_consistency_enabled,
         self_consistency_tolerance=config.self_consistency_tolerance,
+        self_consistency_convergence_mode=getattr(
+            config, "self_consistency_convergence_mode", "fixed_geometry"
+        ),
+        self_consistency_target_ms_tolerance=getattr(
+            config, "self_consistency_target_ms_tolerance", 1e-6
+        ),
         self_consistency_max_iterations=config.self_consistency_max_iterations,
+        self_consistency_mass_shell_tolerance=getattr(
+            config, "self_consistency_mass_shell_tolerance", 1e-2
+        ),
+        self_consistency_mass_shell_relaxation=getattr(
+            config, "self_consistency_mass_shell_relaxation", 0.7
+        ),
         self_consistency_verbosity=config.self_consistency_verbosity,
         self_consistency_chrono_interpolate=getattr(
             config, "self_consistency_chrono_interpolate", False
         ),
         self_consistency_chrono_tolerance=getattr(
             config, "self_consistency_chrono_tolerance", 1e-3
+        ),
+        self_consistency_chrono_matching_mode=getattr(
+            config, "self_consistency_chrono_matching_mode", "FAST"
         ),
         self_consistency_chrono_high_precision=getattr(
             config, "self_consistency_chrono_high_precision", False

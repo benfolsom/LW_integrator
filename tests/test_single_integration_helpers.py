@@ -84,10 +84,15 @@ def _config(**overrides):
         "use_image_weighting": True,
         "self_consistency_enabled": False,
         "self_consistency_tolerance": 1e-3,
+        "self_consistency_convergence_mode": "variable_geometry",
+        "self_consistency_target_ms_tolerance": 3e-7,
         "self_consistency_max_iterations": 5,
+        "self_consistency_mass_shell_tolerance": 4e-3,
+        "self_consistency_mass_shell_relaxation": 0.42,
         "self_consistency_verbosity": 0,
         "self_consistency_chrono_interpolate": True,
         "self_consistency_chrono_tolerance": 2e-3,
+        "self_consistency_chrono_matching_mode": "AVERAGED",
         "self_consistency_chrono_high_precision": True,
         "self_consistency_chrono_adaptive_tolerance": True,
         "self_consistency_gamma_reconciliation_method": "FIXED_WEIGHTED",
@@ -161,10 +166,15 @@ def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
     assert setup.options.rider_params["starting_Pz"] > 0.0
     assert setup.options.core_params["cav_spacing"] == 321.0
     assert setup.options.core_params["z_cutoff"] == 25.0
+    assert setup.options.self_consistency_convergence_mode == "variable_geometry"
+    assert setup.options.self_consistency_target_ms_tolerance == pytest.approx(3e-7)
     assert setup.options.self_consistency_chrono_interpolate is True
     assert setup.options.self_consistency_chrono_tolerance == pytest.approx(2e-3)
+    assert setup.options.self_consistency_chrono_matching_mode == "AVERAGED"
     assert setup.options.self_consistency_chrono_high_precision is True
     assert setup.options.self_consistency_chrono_adaptive_tolerance is True
+    assert setup.options.self_consistency_mass_shell_tolerance == pytest.approx(4e-3)
+    assert setup.options.self_consistency_mass_shell_relaxation == pytest.approx(0.42)
     assert setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
     assert setup.options.self_consistency_gamma_reconciliation_fixed_weight == 0.25
     assert setup.options.space_charge_enabled is True

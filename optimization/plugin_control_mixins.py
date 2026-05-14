@@ -131,10 +131,30 @@ class OptimizationPluginControlMixin:
                 "self_consistency_tolerance",
                 1e-4,
             ),
+            "self_consistency_convergence_mode": setting(
+                "self_consistency_convergence_mode_var",
+                "self_consistency_convergence_mode",
+                "fixed_geometry",
+            ),
+            "self_consistency_target_ms_tolerance": setting(
+                "self_consistency_target_ms_tolerance_var",
+                "self_consistency_target_ms_tolerance",
+                1e-6,
+            ),
             "self_consistency_max_iterations": setting(
                 "self_consistency_max_iterations_var",
                 "self_consistency_max_iterations",
                 5,
+            ),
+            "self_consistency_mass_shell_tolerance": setting(
+                "self_consistency_mass_shell_tolerance_var",
+                "self_consistency_mass_shell_tolerance",
+                1e-2,
+            ),
+            "self_consistency_mass_shell_relaxation": setting(
+                "self_consistency_mass_shell_relaxation_var",
+                "self_consistency_mass_shell_relaxation",
+                0.7,
             ),
             "self_consistency_verbosity": setting(
                 "self_consistency_verbosity_var", "self_consistency_verbosity", 0
@@ -148,6 +168,11 @@ class OptimizationPluginControlMixin:
                 "self_consistency_chrono_tolerance_var",
                 "self_consistency_chrono_tolerance",
                 1e-3,
+            ),
+            "self_consistency_chrono_matching_mode": config_value(
+                existing_config,
+                "self_consistency_chrono_matching_mode",
+                "FAST",
             ),
             "self_consistency_chrono_high_precision": setting(
                 "self_consistency_chrono_high_precision_var",
@@ -684,7 +709,9 @@ class OptimizationPluginControlMixin:
         def on_confirm():
             try:
                 self.config.self_consistency_enabled = sc_enabled_var.get()
-                self.config.self_consistency_tolerance = float(sc_tol_var.get())
+                sc_tolerance = float(sc_tol_var.get())
+                self.config.self_consistency_tolerance = sc_tolerance
+                self.config.self_consistency_target_ms_tolerance = sc_tolerance
                 self.config.self_consistency_max_iterations = int(sc_iter_var.get())
                 self.config.self_consistency_verbosity = int(sc_verb_var.get())
 

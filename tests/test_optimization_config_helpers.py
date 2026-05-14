@@ -87,10 +87,15 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         core_params={"time_step": 1.5e-7, "wall_z": 250.0, "startup_mode": "FAST"},
         self_consistency_enabled=False,
         self_consistency_tolerance=3e-4,
+        self_consistency_convergence_mode="variable_geometry",
+        self_consistency_target_ms_tolerance=7e-7,
         self_consistency_max_iterations=8,
+        self_consistency_mass_shell_tolerance=9e-3,
+        self_consistency_mass_shell_relaxation=0.33,
         self_consistency_verbosity=1,
         self_consistency_chrono_interpolate=True,
         self_consistency_chrono_tolerance=5e-4,
+        self_consistency_chrono_matching_mode="AVERAGED",
         self_consistency_chrono_high_precision=True,
         self_consistency_chrono_adaptive_tolerance=True,
         energy_monitor_halt_on_jump=True,
@@ -135,10 +140,15 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.startup_mode == "FAST"
     assert config.self_consistency_enabled is False
     assert config.self_consistency_tolerance == pytest.approx(3e-4)
+    assert config.self_consistency_convergence_mode == "variable_geometry"
+    assert config.self_consistency_target_ms_tolerance == pytest.approx(7e-7)
     assert config.self_consistency_max_iterations == 8
+    assert config.self_consistency_mass_shell_tolerance == pytest.approx(9e-3)
+    assert config.self_consistency_mass_shell_relaxation == pytest.approx(0.33)
     assert config.self_consistency_verbosity == 1
     assert config.self_consistency_chrono_interpolate is True
     assert config.self_consistency_chrono_tolerance == pytest.approx(5e-4)
+    assert config.self_consistency_chrono_matching_mode == "AVERAGED"
     assert config.self_consistency_chrono_high_precision is True
     assert config.self_consistency_chrono_adaptive_tolerance is True
     assert config.energy_monitor_halt_on_jump is True
