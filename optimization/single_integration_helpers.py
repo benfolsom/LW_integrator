@@ -135,6 +135,18 @@ def build_single_integration_setup(
     }
 
     actual_seed = seed_override if seed_override is not None else config.seed + run_num
+    external_electric_native = _coerce_vector3(
+        getattr(config, "external_electric_field_native", (0.0, 0.0, 0.0)),
+        default=(0.0, 0.0, 0.0),
+    )
+    external_electric_v_per_m = _coerce_optional_vector3(
+        getattr(config, "external_electric_field_v_per_m", None)
+    )
+    external_magnetic_native = _coerce_vector3(
+        getattr(config, "external_magnetic_field_native", (0.0, 0.0, 0.0)),
+        default=(0.0, 0.0, 0.0),
+    )
+
     options = simulation_options_cls(
         steps=steps,
         seed=actual_seed,
@@ -223,6 +235,21 @@ def build_single_integration_setup(
         adaptive_timestep_probe_threshold=config.adaptive_timestep_probe_threshold,
         adaptive_timestep_max_probe_steps=config.adaptive_timestep_max_probe_steps,
         adaptive_timestep_debug=config.adaptive_timestep_debug,
+        space_charge_enabled=getattr(config, "space_charge_enabled", False),
+        space_charge_retarded=getattr(config, "space_charge_retarded", True),
+        space_charge_softening_mm=getattr(config, "space_charge_softening_mm", 0.0),
+        external_field_enabled=getattr(config, "external_field_enabled", False),
+        external_electric_field_native=external_electric_native,
+        external_electric_field_v_per_m=external_electric_v_per_m,
+        external_magnetic_field_native=external_magnetic_native,
+        external_field_x_min=getattr(config, "external_field_x_min", None),
+        external_field_x_max=getattr(config, "external_field_x_max", None),
+        external_field_y_min=getattr(config, "external_field_y_min", None),
+        external_field_y_max=getattr(config, "external_field_y_max", None),
+        external_field_z_min=getattr(config, "external_field_z_min", None),
+        external_field_z_max=getattr(config, "external_field_z_max", None),
+        external_field_t_min=getattr(config, "external_field_t_min", None),
+        external_field_t_max=getattr(config, "external_field_t_max", None),
     )
 
     return SingleIntegrationSetup(
@@ -241,6 +268,25 @@ def build_single_integration_setup(
 
 def _override_or_config(explicit_value: Any | None, config: Any, attr: str) -> Any:
     return explicit_value if explicit_value is not None else getattr(config, attr)
+
+
+def _coerce_vector3(
+    value: Any,
+    *,
+    default: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return default
+    try:
+        return (float(value[0]), float(value[1]), float(value[2]))
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_optional_vector3(value: Any) -> tuple[float, float, float] | None:
+    if value is None:
+        return None
+    return _coerce_vector3(value, default=(0.0, 0.0, 0.0))
 
 
 def calculate_rider_starting_pz(

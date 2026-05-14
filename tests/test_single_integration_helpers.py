@@ -101,6 +101,21 @@ def _config(**overrides):
         "adaptive_timestep_probe_threshold": 0.01,
         "adaptive_timestep_max_probe_steps": 3,
         "adaptive_timestep_debug": False,
+        "space_charge_enabled": True,
+        "space_charge_retarded": False,
+        "space_charge_softening_mm": 0.012,
+        "external_field_enabled": True,
+        "external_electric_field_native": (1.0, 0.0, 0.0),
+        "external_electric_field_v_per_m": (0.0, 2.0, 0.0),
+        "external_magnetic_field_native": (0.0, 0.0, 3.0),
+        "external_field_x_min": -1.0,
+        "external_field_x_max": 1.0,
+        "external_field_y_min": -2.0,
+        "external_field_y_max": 2.0,
+        "external_field_z_min": -3.0,
+        "external_field_z_max": 3.0,
+        "external_field_t_min": 1.0e-6,
+        "external_field_t_max": 2.0e-6,
         "smoothness_enabled": True,
         "smoothness_window_size": 20,
         "smoothness_oscillation_threshold": 0.2,
@@ -152,6 +167,21 @@ def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
     assert setup.options.self_consistency_chrono_adaptive_tolerance is True
     assert setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
     assert setup.options.self_consistency_gamma_reconciliation_fixed_weight == 0.25
+    assert setup.options.space_charge_enabled is True
+    assert setup.options.space_charge_retarded is False
+    assert setup.options.space_charge_softening_mm == pytest.approx(0.012)
+    assert setup.options.external_field_enabled is True
+    assert setup.options.external_electric_field_native == pytest.approx((1.0, 0.0, 0.0))
+    assert setup.options.external_electric_field_v_per_m == pytest.approx((0.0, 2.0, 0.0))
+    assert setup.options.external_magnetic_field_native == pytest.approx((0.0, 0.0, 3.0))
+    assert setup.options.external_field_x_min == pytest.approx(-1.0)
+    assert setup.options.external_field_x_max == pytest.approx(1.0)
+    assert setup.options.external_field_y_min == pytest.approx(-2.0)
+    assert setup.options.external_field_y_max == pytest.approx(2.0)
+    assert setup.options.external_field_z_min == pytest.approx(-3.0)
+    assert setup.options.external_field_z_max == pytest.approx(3.0)
+    assert setup.options.external_field_t_min == pytest.approx(1.0e-6)
+    assert setup.options.external_field_t_max == pytest.approx(2.0e-6)
     assert setup.options.output_dir == tmp_path
 
 

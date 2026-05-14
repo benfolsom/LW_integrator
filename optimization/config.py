@@ -267,6 +267,25 @@ class OptimizationConfig:
     adaptive_timestep_max_probe_steps: int = 3
     adaptive_timestep_debug: bool = False
 
+    # Intra-bunch space-charge options
+    space_charge_enabled: bool = False
+    space_charge_retarded: bool = True
+    space_charge_softening_mm: float = 0.0
+
+    # Prescribed external uniform field options
+    external_field_enabled: bool = False
+    external_electric_field_native: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    external_electric_field_v_per_m: Optional[Tuple[float, float, float]] = None
+    external_magnetic_field_native: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    external_field_x_min: Optional[float] = None
+    external_field_x_max: Optional[float] = None
+    external_field_y_min: Optional[float] = None
+    external_field_y_max: Optional[float] = None
+    external_field_z_min: Optional[float] = None
+    external_field_z_max: Optional[float] = None
+    external_field_t_min: Optional[float] = None
+    external_field_t_max: Optional[float] = None
+
     # Sweep robustness options
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
     skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
@@ -409,6 +428,38 @@ class OptimizationConfig:
             adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
             adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
             adaptive_timestep_debug=options.adaptive_timestep_debug,
+            space_charge_enabled=getattr(options, "space_charge_enabled", False),
+            space_charge_retarded=getattr(options, "space_charge_retarded", True),
+            space_charge_softening_mm=getattr(
+                options, "space_charge_softening_mm", 0.0
+            ),
+            external_field_enabled=getattr(options, "external_field_enabled", False),
+            external_electric_field_native=tuple(
+                float(v)
+                for v in getattr(
+                    options, "external_electric_field_native", (0.0, 0.0, 0.0)
+                )
+            ),
+            external_electric_field_v_per_m=(
+                tuple(float(v) for v in options.external_electric_field_v_per_m)
+                if getattr(options, "external_electric_field_v_per_m", None)
+                is not None
+                else None
+            ),
+            external_magnetic_field_native=tuple(
+                float(v)
+                for v in getattr(
+                    options, "external_magnetic_field_native", (0.0, 0.0, 0.0)
+                )
+            ),
+            external_field_x_min=getattr(options, "external_field_x_min", None),
+            external_field_x_max=getattr(options, "external_field_x_max", None),
+            external_field_y_min=getattr(options, "external_field_y_min", None),
+            external_field_y_max=getattr(options, "external_field_y_max", None),
+            external_field_z_min=getattr(options, "external_field_z_min", None),
+            external_field_z_max=getattr(options, "external_field_z_max", None),
+            external_field_t_min=getattr(options, "external_field_t_min", None),
+            external_field_t_max=getattr(options, "external_field_t_max", None),
             # Startup mode from core params
             startup_mode=core.get("startup_mode", "COLD_START"),
             # Default timeout and skip settings for sweeps

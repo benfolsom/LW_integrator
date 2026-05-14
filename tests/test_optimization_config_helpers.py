@@ -102,6 +102,21 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         adaptive_timestep_probe_threshold=0.05,
         adaptive_timestep_max_probe_steps=6,
         adaptive_timestep_debug=True,
+        space_charge_enabled=True,
+        space_charge_retarded=False,
+        space_charge_softening_mm=0.123,
+        external_field_enabled=True,
+        external_electric_field_native=(1.0, 2.0, 3.0),
+        external_electric_field_v_per_m=(4.0, 5.0, 6.0),
+        external_magnetic_field_native=(7.0, 8.0, 9.0),
+        external_field_x_min=-10.0,
+        external_field_x_max=10.0,
+        external_field_y_min=-20.0,
+        external_field_y_max=20.0,
+        external_field_z_min=-30.0,
+        external_field_z_max=30.0,
+        external_field_t_min=1.0e-6,
+        external_field_t_max=2.0e-6,
     )
 
     config = OptimizationConfig.from_simulation_options(options)
@@ -135,6 +150,21 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.adaptive_timestep_probe_threshold == pytest.approx(0.05)
     assert config.adaptive_timestep_max_probe_steps == 6
     assert config.adaptive_timestep_debug is True
+    assert config.space_charge_enabled is True
+    assert config.space_charge_retarded is False
+    assert config.space_charge_softening_mm == pytest.approx(0.123)
+    assert config.external_field_enabled is True
+    assert config.external_electric_field_native == pytest.approx((1.0, 2.0, 3.0))
+    assert config.external_electric_field_v_per_m == pytest.approx((4.0, 5.0, 6.0))
+    assert config.external_magnetic_field_native == pytest.approx((7.0, 8.0, 9.0))
+    assert config.external_field_x_min == pytest.approx(-10.0)
+    assert config.external_field_x_max == pytest.approx(10.0)
+    assert config.external_field_y_min == pytest.approx(-20.0)
+    assert config.external_field_y_max == pytest.approx(20.0)
+    assert config.external_field_z_min == pytest.approx(-30.0)
+    assert config.external_field_z_max == pytest.approx(30.0)
+    assert config.external_field_t_min == pytest.approx(1.0e-6)
+    assert config.external_field_t_max == pytest.approx(2.0e-6)
 
 
 def test_auto_timestep_and_auto_steps_helpers_are_consistent():
