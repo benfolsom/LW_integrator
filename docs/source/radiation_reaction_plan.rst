@@ -234,8 +234,8 @@ Ordered Tasks
    force is integrated over coordinate time or proper time; and include a
    dimension check for the final impulse.
 
-6. Implement the Medina candidate behind an explicit mode. **Status: blocked by
-   Task 5.**
+6. Implement the Medina candidate behind an explicit mode. **Status:
+   experimental first pass complete.**
 
    The first code path should be opt-in, probably
    ``radiation_reaction_mode="medina_lad"``. It should:
@@ -246,6 +246,26 @@ Ordered Tasks
    * apply the radiation-reaction impulse to mechanical momentum,
    * cap the impulse only as a numerical guard with diagnostics, and
    * recompose canonical momentum using the current potentials.
+
+   Current implementation:
+
+   * ``radiation_reaction_mode="medina_lad"`` is accepted as an explicit mode,
+   * the non-radiation mechanical force is estimated from the mass-shell
+     projected mechanical momentum increment over coordinate time,
+   * ``dgamma/dt`` is computed from the coordinate-time kinematic identity
+     ``gamma^3 beta dot dbeta/dt`` rather than raw step-to-step energy drift,
+   * the impulse is applied to mechanical momentum and canonical momentum is
+     recomposed with the existing vector/scalar potential terms, and
+   * the impulse has a small numerical cap with a verbosity-gated diagnostic.
+
+   Remaining work before treating this as physics evidence:
+
+   * compare against a Landau-Lifshitz reduced-order implementation,
+   * add prescribed electric-field benchmarks where ``dgamma/dt`` is nonzero,
+   * add timestep convergence tests for ``medina_lad`` itself, and
+   * evaluate whether the mechanical-force estimator is adequate for retarded
+     image/source forces or whether those contributions need a more explicit
+     force-decomposition API.
 
 7. Add prescribed external-field support for controlled benchmarks. **Status:
    complete for uniform fields.**
@@ -317,7 +337,8 @@ Next Best Steps
 The immediate low-risk work is now validation rather than new physics:
 
 * review the Medina native-units derivation above,
-* define the mechanical-force extraction API that Medina/LAD will consume,
-* add a prescribed-field-only Medina prototype once that API is explicit, and
-* only then add ``radiation_reaction_mode="medina_lad"`` behind an explicit
-  opt-in.
+* add prescribed electric-field benchmarks where ``dgamma/dt`` is nonzero,
+* compare Medina against Landau-Lifshitz on the same prescribed-field cases,
+  and
+* refine the mechanical-force extraction API before using ``medina_lad`` as
+  evidence in conducting-wall collision cases.

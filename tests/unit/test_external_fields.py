@@ -226,10 +226,16 @@ def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
         init_rider=_single_particle_state(gamma=200.0),
         radiation_reaction_mode="power_matched_damping",
     )
+    medina_traj, _, medina_soa, _ = retarded_integrator(
+        **common_kwargs,
+        init_rider=_single_particle_state(gamma=200.0),
+        radiation_reaction_mode="medina_lad",
+    )
 
     assert off_soa is not None
     assert diagnostic_soa is not None
     assert damped_soa is not None
+    assert medina_soa is not None
 
     np.testing.assert_allclose(diagnostic_soa.gamma, off_soa.gamma)
     np.testing.assert_allclose(diagnostic_soa.Px, off_soa.Px)
@@ -253,6 +259,15 @@ def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
         rel=1.0e-6,
         abs=1.0e-10,
     )
+
+    medina_final_gamma = float(medina_traj[-1]["gamma"][0])
+    medina_applied_energy = float(np.sum(medina_soa.radiation_energy_applied[:, 0]))
+    medina_computed_energy = float(np.sum(medina_soa.radiation_energy[:, 0]))
+
+    assert medina_applied_energy > 0.0
+    assert medina_applied_energy <= medina_computed_energy
+    assert medina_final_gamma < float(off_traj[-1]["gamma"][0])
+    assert medina_final_gamma == pytest.approx(final_gamma, rel=1.0e-7)
 
 
 def test_magnetic_bend_radiated_energy_converges_with_timestep_refinement() -> None:

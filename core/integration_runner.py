@@ -943,7 +943,9 @@ def retarded_integrator(
         Radiation reaction mode. ``off`` and ``diagnostic_only`` record
         Liénard radiated power without changing momentum.
         ``power_matched_damping`` removes the radiated energy from mechanical
-        momentum after the normal LW update.
+        momentum after the normal LW update. ``medina_lad`` applies the
+        experimental Medina/LAD candidate force to mechanical momentum before
+        recomposing canonical momentum.
 
     Returns
     -------

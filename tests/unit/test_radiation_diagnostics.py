@@ -46,6 +46,7 @@ def test_radiation_mode_defaults_to_off_and_rejects_legacy_bdot() -> None:
         equations._canonicalize_radiation_reaction_mode("power-damping")
         == "power_matched_damping"
     )
+    assert equations._canonicalize_radiation_reaction_mode("medina") == "medina_lad"
 
     with pytest.raises(ValueError):
         equations._canonicalize_radiation_reaction_mode("legacy_bdot")
@@ -264,6 +265,42 @@ def test_power_matched_damping_removes_energy_from_mechanical_momentum() -> None
     assert new_py == pytest.approx(0.0)
     assert new_pz == pytest.approx(0.0)
     assert new_px < momentum_mag
+
+
+def test_medina_impulse_damps_velocity_for_transverse_force() -> None:
+    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+        external_force=(2.0, 0.0, 0.0),
+        beta=(0.0, 0.0, 0.9),
+        beta_dot_t=(3.0, 0.0, 0.0),
+        gamma=4.0,
+        dgamma_dt=0.0,
+        mass=ELECTRON_MASS_AMU,
+        charge=ELEMENTARY_CHARGE,
+        coordinate_dt=1.0e-6,
+        max_impulse_fraction=0.0,
+    )
+
+    assert capped is False
+    assert impulse[0] == pytest.approx(0.0)
+    assert impulse[1] == pytest.approx(0.0)
+    assert impulse[2] < 0.0
+
+
+def test_medina_impulse_applies_numerical_cap() -> None:
+    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+        external_force=(2.0, 0.0, 0.0),
+        beta=(0.0, 0.0, 0.9),
+        beta_dot_t=(3.0e12, 0.0, 0.0),
+        gamma=4.0,
+        dgamma_dt=0.0,
+        mass=ELECTRON_MASS_AMU,
+        charge=ELEMENTARY_CHARGE,
+        coordinate_dt=1.0e-6,
+        max_impulse_fraction=0.25,
+    )
+
+    assert capped is True
+    assert np.linalg.norm(impulse) == pytest.approx(0.25 * 2.0e-6)
 
 
 def test_power_matched_damping_does_not_cross_rest_energy() -> None:

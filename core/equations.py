@@ -744,12 +744,16 @@ def _canonicalize_radiation_reaction_mode(mode: Optional[str]) -> str:
         "diagnostics": "diagnostic_only",
         "power_damping": "power_matched_damping",
         "damping": "power_matched_damping",
+        "medina": "medina_lad",
+        "medina_rr": "medina_lad",
+        "lad_medina": "medina_lad",
     }
     normalized = aliases.get(normalized, normalized)
     valid_modes = {
         "off",
         "diagnostic_only",
         "power_matched_damping",
+        "medina_lad",
     }
     if normalized not in valid_modes:
         raise ValueError(
@@ -783,6 +787,70 @@ def _compute_lienard_radiated_power(
         return 0.0
 
     return float((2.0 * charge**2 / (3.0 * C_MMNS)) * gamma**6 * transverse_term)
+
+
+def _compute_medina_radiation_reaction_impulse(
+    *,
+    external_force: tuple[float, float, float],
+    beta: tuple[float, float, float],
+    beta_dot_t: tuple[float, float, float],
+    gamma: float,
+    dgamma_dt: float,
+    mass: float,
+    charge: float,
+    coordinate_dt: float,
+    max_impulse_fraction: float = 0.25,
+) -> tuple[tuple[float, float, float], bool]:
+    """Return Medina/LAD radiation-reaction impulse in native momentum units.
+
+    The Medina form is treated as an experimental candidate self-force:
+
+    ``F_rad = tau0 * (dgamma_dt * F_ext - gamma^3/c^2 * (F_ext·a) * v)``
+
+    where ``tau0 = 2/3 * q^2 / (m c^3)``, ``v = c beta``, and
+    ``a = c d beta / dt``. The returned impulse is ``F_rad * coordinate_dt``.
+    A small cap is used only as a numerical guard for the experimental mode.
+    """
+    if coordinate_dt <= 0.0 or mass <= 0.0 or gamma <= 0.0 or charge == 0.0:
+        return (0.0, 0.0, 0.0), False
+
+    force_vec = np.asarray(external_force, dtype=float)
+    beta_vec = np.asarray(beta, dtype=float)
+    beta_dot_vec = np.asarray(beta_dot_t, dtype=float)
+    if not (
+        np.all(np.isfinite(force_vec))
+        and np.all(np.isfinite(beta_vec))
+        and np.all(np.isfinite(beta_dot_vec))
+        and np.isfinite(dgamma_dt)
+    ):
+        return (0.0, 0.0, 0.0), False
+
+    if float(np.linalg.norm(force_vec)) <= 0.0:
+        return (0.0, 0.0, 0.0), False
+
+    tau0 = (2.0 / 3.0) * charge**2 / (mass * C_MMNS**3)
+    velocity_vec = C_MMNS * beta_vec
+    acceleration_vec = C_MMNS * beta_dot_vec
+    force_dot_acceleration = float(np.dot(force_vec, acceleration_vec))
+    radiation_force = tau0 * (
+        float(dgamma_dt) * force_vec
+        - (gamma**3 / C_MMNS**2) * force_dot_acceleration * velocity_vec
+    )
+
+    if not np.all(np.isfinite(radiation_force)):
+        return (0.0, 0.0, 0.0), False
+
+    impulse = radiation_force * coordinate_dt
+    capped = False
+    if max_impulse_fraction > 0.0:
+        reference_impulse = max(float(np.linalg.norm(force_vec)) * coordinate_dt, 0.0)
+        max_impulse = max_impulse_fraction * reference_impulse
+        impulse_norm = float(np.linalg.norm(impulse))
+        if max_impulse > 0.0 and impulse_norm > max_impulse:
+            impulse *= max_impulse / impulse_norm
+            capped = True
+
+    return (float(impulse[0]), float(impulse[1]), float(impulse[2])), capped
 
 
 def _apply_power_matched_radiation_damping(
@@ -1975,6 +2043,144 @@ def retarded_equations_of_motion(
                         result["bdotz"][particle_idx] = (
                             beta_z_limited - current_state["bz"][particle_idx]
                         ) / time_factor
+            elif radiation_mode == "medina_lad":
+                mechanical_px = (
+                    result["Px"][particle_idx] - accumulated_field_x * particle_mass
+                )
+                mechanical_py = (
+                    result["Py"][particle_idx] - accumulated_field_y * particle_mass
+                )
+                mechanical_pz = (
+                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass
+                )
+                mechanical_vec = np.asarray(
+                    (mechanical_px, mechanical_py, mechanical_pz), dtype=float
+                )
+                mechanical_mag = float(np.linalg.norm(mechanical_vec))
+                target_mechanical_mag = float(
+                    particle_mass
+                    * C_MMNS
+                    * np.sqrt(max(result["gamma"][particle_idx] ** 2 - 1.0, 0.0))
+                )
+                if mechanical_mag > 0.0:
+                    mechanical_vec *= target_mechanical_mag / mechanical_mag
+                    mechanical_px = float(mechanical_vec[0])
+                    mechanical_py = float(mechanical_vec[1])
+                    mechanical_pz = float(mechanical_vec[2])
+                previous_mechanical_px = (
+                    current_state["gamma"][particle_idx]
+                    * particle_mass
+                    * C_MMNS
+                    * current_state["bx"][particle_idx]
+                )
+                previous_mechanical_py = (
+                    current_state["gamma"][particle_idx]
+                    * particle_mass
+                    * C_MMNS
+                    * current_state["by"][particle_idx]
+                )
+                previous_mechanical_pz = (
+                    current_state["gamma"][particle_idx]
+                    * particle_mass
+                    * C_MMNS
+                    * current_state["bz"][particle_idx]
+                )
+                if coordinate_dt > 0.0:
+                    external_force = (
+                        float((mechanical_px - previous_mechanical_px) / coordinate_dt),
+                        float((mechanical_py - previous_mechanical_py) / coordinate_dt),
+                        float((mechanical_pz - previous_mechanical_pz) / coordinate_dt),
+                    )
+                    dgamma_dt = float(
+                        result["gamma"][particle_idx] ** 3
+                        * (
+                            beta_tuple[0] * beta_dot_t[0]
+                            + beta_tuple[1] * beta_dot_t[1]
+                            + beta_tuple[2] * beta_dot_t[2]
+                        )
+                    )
+                    medina_impulse, medina_capped = (
+                        _compute_medina_radiation_reaction_impulse(
+                            external_force=external_force,
+                            beta=beta_tuple,
+                            beta_dot_t=beta_dot_t,
+                            gamma=float(result["gamma"][particle_idx]),
+                            dgamma_dt=dgamma_dt,
+                            mass=float(particle_mass),
+                            charge=float(particle_charge),
+                            coordinate_dt=float(coordinate_dt),
+                        )
+                    )
+                    if medina_capped and sc_verbosity >= 2:
+                        print(
+                            "      Medina radiation-reaction impulse capped "
+                            "by numerical guard"
+                        )
+                    impulse_vec = np.asarray(medina_impulse, dtype=float)
+                    if float(np.linalg.norm(impulse_vec)) > 0.0:
+                        gamma_before_medina = float(result["gamma"][particle_idx])
+                        mechanical_px = float(mechanical_px + impulse_vec[0])
+                        mechanical_py = float(mechanical_py + impulse_vec[1])
+                        mechanical_pz = float(mechanical_pz + impulse_vec[2])
+                        mechanical_p_sq = (
+                            mechanical_px**2 + mechanical_py**2 + mechanical_pz**2
+                        )
+                        medina_gamma = float(
+                            np.sqrt(1.0 + mechanical_p_sq / (particle_mass * C_MMNS) ** 2)
+                        )
+                        result["Px"][particle_idx] = (
+                            mechanical_px + accumulated_field_x * particle_mass
+                        )
+                        result["Py"][particle_idx] = (
+                            mechanical_py + accumulated_field_y * particle_mass
+                        )
+                        result["Pz"][particle_idx] = (
+                            mechanical_pz + accumulated_field_z * particle_mass
+                        )
+                        result["gamma"][particle_idx] = medina_gamma
+                        scalar_potential_contribution = np.float64(
+                            particle_charge * accumulated_scalar_potential
+                        )
+                        result["Pt"][particle_idx] = (
+                            medina_gamma * particle_mass * C_MMNS
+                            + scalar_potential_contribution
+                        )
+                        removed_energy = max(
+                            0.0,
+                            (gamma_before_medina - medina_gamma)
+                            * particle_mass
+                            * C_MMNS**2,
+                        )
+                        result["radiation_energy_applied"][particle_idx] = (
+                            removed_energy
+                        )
+
+                        beta_denom = medina_gamma * particle_mass * C_MMNS
+                        if beta_denom > 0.0:
+                            beta_x_limited = float(mechanical_px / beta_denom)
+                            beta_y_limited = float(mechanical_py / beta_denom)
+                            beta_z_limited = float(mechanical_pz / beta_denom)
+                            (
+                                beta_x_limited,
+                                beta_y_limited,
+                                beta_z_limited,
+                            ) = _limit_beta_magnitude(
+                                beta_x_limited,
+                                beta_y_limited,
+                                beta_z_limited,
+                            )
+                            result["bx"][particle_idx] = beta_x_limited
+                            result["by"][particle_idx] = beta_y_limited
+                            result["bz"][particle_idx] = beta_z_limited
+                            result["bdotx"][particle_idx] = (
+                                beta_x_limited - current_state["bx"][particle_idx]
+                            ) / time_factor
+                            result["bdoty"][particle_idx] = (
+                                beta_y_limited - current_state["by"][particle_idx]
+                            ) / time_factor
+                            result["bdotz"][particle_idx] = (
+                                beta_z_limited - current_state["bz"][particle_idx]
+                            ) / time_factor
 
             # ================================================================
             # STEP 9: Update running average of beta
