@@ -473,7 +473,9 @@ def _run_adaptive_step(
         _n_p_rider = len(temp_trajectory[0]["x"])
         _temp_traj_builder = TrajectoryBuilder(num_substeps + 1, _n_p_rider)
         _temp_traj_builder.set_step(0, temp_trajectory[0])
-        _temp_drv_soa = _traj_drv_builder.build_partial(i) if _traj_drv_builder is not None else None
+        _n_p_driver = len(temp_driver[0]["x"])
+        _temp_drv_builder = TrajectoryBuilder(num_substeps + 1, _n_p_driver)
+        _temp_drv_builder.set_step(0, temp_driver[0])
         _scs_accepts_soa = _call_accepts_kw(self_consistent_step, "traj_soa")
         _scs_accepts_radiation = _call_accepts_kw(
             self_consistent_step, "radiation_reaction_mode"
@@ -510,14 +512,30 @@ def _run_adaptive_step(
                         if _scs_accepts_radiation
                         else {}
                     ),
-                    **({"space_charge": space_charge} if space_charge is not None else {}),
+                    **(
+                        {"space_charge": space_charge}
+                        if space_charge is not None
+                        else {}
+                    ),
                     **(
                         {"external_field": external_field}
                         if external_field is not None and _scs_accepts_external_field
                         else {}
                     ),
-                    **({"traj_soa": _temp_traj_builder.build_partial(substep_idx + 1)} if _scs_accepts_soa else {}),
-                    **({"traj_ext_soa": _temp_drv_soa} if _scs_accepts_soa else {}),
+                    **(
+                        {"traj_soa": _temp_traj_builder.build_partial(substep_idx + 1)}
+                        if _scs_accepts_soa
+                        else {}
+                    ),
+                    **(
+                        {
+                            "traj_ext_soa": _temp_drv_builder.build_partial(
+                                substep_idx + 1
+                            )
+                        }
+                        if _scs_accepts_soa
+                        else {}
+                    ),
                 )
             except GammaBlowupError as e:
                 if adaptive_timestep is None or not adaptive_timestep.enabled:
@@ -542,13 +560,20 @@ def _run_adaptive_step(
                         }
 
                     mark_particle_dead(
-                        trial_state, e.particle_idx, i, "gamma_blowup_no_adaptive",
-                        gamma_value=e.gamma_value, iteration=e.iteration,
+                        trial_state,
+                        e.particle_idx,
+                        i,
+                        "gamma_blowup_no_adaptive",
+                        gamma_value=e.gamma_value,
+                        iteration=e.iteration,
                     )
 
                     temp_trajectory.append(trial_state)
                     _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
-                    temp_driver.append(temp_driver[-1] if temp_driver else trajectory_drv[i - 1])
+                    temp_driver.append(
+                        temp_driver[-1] if temp_driver else trajectory_drv[i - 1]
+                    )
+                    _temp_drv_builder.set_step(len(temp_driver) - 1, temp_driver[-1])
                     last_particle_death_step = i
                     gamma_blowup_detected = False
                     break
@@ -568,29 +593,46 @@ def _run_adaptive_step(
                             print(msg)
                         if len(temp_trajectory) > 0:
                             trial_state = {
-                                k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                k: (
+                                    v.copy() if isinstance(v, (dict, np.ndarray)) else v
+                                )
                                 for k, v in temp_trajectory[-1].items()
                             }
                         else:
                             trial_state = {
-                                k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                k: (
+                                    v.copy() if isinstance(v, (dict, np.ndarray)) else v
+                                )
                                 for k, v in trajectory[i - 1].items()
                             }
 
                         mark_particle_dead(
-                            trial_state, e.particle_idx, i, "gamma_blowup_max_retries",
-                            gamma_value=e.gamma_value, iteration=e.iteration,
+                            trial_state,
+                            e.particle_idx,
+                            i,
+                            "gamma_blowup_max_retries",
+                            gamma_value=e.gamma_value,
+                            iteration=e.iteration,
                         )
 
                         temp_trajectory.append(trial_state)
-                        _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
-                        temp_driver.append(temp_driver[-1] if temp_driver else trajectory_drv[i - 1])
+                        _temp_traj_builder.set_step(
+                            len(temp_trajectory) - 1, trial_state
+                        )
+                        temp_driver.append(
+                            temp_driver[-1] if temp_driver else trajectory_drv[i - 1]
+                        )
+                        _temp_drv_builder.set_step(
+                            len(temp_driver) - 1, temp_driver[-1]
+                        )
                         last_particle_death_step = i
                         gamma_blowup_detected = False
                         break
                     else:
                         min_h = h_step * adaptive_timestep.min_timestep_factor
-                        new_h_step = current_h_step / adaptive_timestep.timestep_reduction_factor
+                        new_h_step = (
+                            current_h_step / adaptive_timestep.timestep_reduction_factor
+                        )
 
                         if new_h_step < min_h:
                             msg = (
@@ -604,32 +646,57 @@ def _run_adaptive_step(
                                 print(msg)
                             if len(temp_trajectory) > 0:
                                 trial_state = {
-                                    k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                    k: (
+                                        v.copy()
+                                        if isinstance(v, (dict, np.ndarray))
+                                        else v
+                                    )
                                     for k, v in temp_trajectory[-1].items()
                                 }
                             else:
                                 trial_state = {
-                                    k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
+                                    k: (
+                                        v.copy()
+                                        if isinstance(v, (dict, np.ndarray))
+                                        else v
+                                    )
                                     for k, v in trajectory[i - 1].items()
                                 }
 
                             mark_particle_dead(
-                                trial_state, e.particle_idx, i, "gamma_blowup_min_timestep",
-                                gamma_value=e.gamma_value, iteration=e.iteration,
+                                trial_state,
+                                e.particle_idx,
+                                i,
+                                "gamma_blowup_min_timestep",
+                                gamma_value=e.gamma_value,
+                                iteration=e.iteration,
                             )
 
                             temp_trajectory.append(trial_state)
-                            _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
-                            temp_driver.append(temp_driver[-1] if temp_driver else trajectory_drv[i - 1])
+                            _temp_traj_builder.set_step(
+                                len(temp_trajectory) - 1, trial_state
+                            )
+                            temp_driver.append(
+                                temp_driver[-1]
+                                if temp_driver
+                                else trajectory_drv[i - 1]
+                            )
+                            _temp_drv_builder.set_step(
+                                len(temp_driver) - 1, temp_driver[-1]
+                            )
                             last_particle_death_step = i
                             gamma_blowup_detected = False
                             break
                         else:
                             if hasattr(e, "is_hard_blowup") and e.is_hard_blowup:
-                                reduction_factor = adaptive_timestep.timestep_reduction_factor ** 2
+                                reduction_factor = (
+                                    adaptive_timestep.timestep_reduction_factor**2
+                                )
                                 severity = "HARD"
                             else:
-                                reduction_factor = adaptive_timestep.timestep_reduction_factor
+                                reduction_factor = (
+                                    adaptive_timestep.timestep_reduction_factor
+                                )
                                 severity = "soft"
 
                             new_h_step = current_h_step / reduction_factor
@@ -690,7 +757,10 @@ def _run_adaptive_step(
                         energy_jump_detected = True
                         refinement_attempt += 1
 
-                        if refinement_attempt > adaptive_timestep.max_refinement_attempts:
+                        if (
+                            refinement_attempt
+                            > adaptive_timestep.max_refinement_attempts
+                        ):
                             if adaptive_timestep.debug and not max_refinement_reached:
                                 msg = (
                                     f"Step {i}: Max refinement attempts ({adaptive_timestep.max_refinement_attempts}) reached. "
@@ -704,7 +774,10 @@ def _run_adaptive_step(
                             energy_jump_detected = False
                         else:
                             min_h = h_step * adaptive_timestep.min_timestep_factor
-                            new_h_step = current_h_step / adaptive_timestep.timestep_reduction_factor
+                            new_h_step = (
+                                current_h_step
+                                / adaptive_timestep.timestep_reduction_factor
+                            )
 
                             if new_h_step < min_h:
                                 if adaptive_timestep.debug and not min_timestep_reached:
@@ -744,6 +817,7 @@ def _run_adaptive_step(
             temp_trajectory.append(trial_state)
             _temp_traj_builder.set_step(len(temp_trajectory) - 1, trial_state)
             temp_driver.append(trial_driver)
+            _temp_drv_builder.set_step(len(temp_driver) - 1, trial_driver)
 
         if not energy_jump_detected and not gamma_blowup_detected:
             step_accepted = True
@@ -853,7 +927,9 @@ def retarded_integrator(
     logger: Optional[Any] = None,
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
-) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
+) -> Tuple[
+    Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
+]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
     Parameters
@@ -1110,9 +1186,9 @@ def retarded_integrator(
 
                 # Store halt information
                 trajectory[-1]["_halted_early"] = True
-                trajectory[-1]["_halt_reason"] = (
-                    f"all_particles_dead at step {i}/{steps}. {failure_summary}"
-                )
+                trajectory[-1][
+                    "_halt_reason"
+                ] = f"all_particles_dead at step {i}/{steps}. {failure_summary}"
                 trajectory[-1]["_halt_step"] = i
                 trajectory[-1]["_requested_steps"] = steps
                 _traj_builder.set_halt_metadata(
@@ -1122,7 +1198,9 @@ def retarded_integrator(
                     requested_steps=steps,
                 )
                 _traj_soa = _traj_builder.build()
-                _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
+                _traj_drv_soa = (
+                    _traj_drv_builder.build() if _traj_drv_builder is not None else None
+                )
                 return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
 
             # Post-step gamma check for individual particles
@@ -1210,21 +1288,32 @@ def retarded_integrator(
                     chrono_mode,
                     startup_mode,
                     step_idx=i,
-                    **({
-                        "radiation_reaction_mode": radiation_reaction_mode
-                    } if _b2b_scs_accepts_radiation else {}),
-                    **({
-                        "space_charge": space_charge
-                    } if space_charge is not None else {}),
-                    **({
-                        "external_field": external_field
-                    } if external_field is not None and _b2b_scs_accepts_external_field else {}),
-                    **({
-                        "traj_soa": _traj_drv_builder.build_partial(i)
-                    } if _b2b_scs_accepts_soa and _traj_drv_builder is not None else {}),
-                    **({
-                        "traj_ext_soa": _traj_builder.build_partial(i)
-                    } if _b2b_scs_accepts_soa else {}),
+                    **(
+                        {"radiation_reaction_mode": radiation_reaction_mode}
+                        if _b2b_scs_accepts_radiation
+                        else {}
+                    ),
+                    **(
+                        {"space_charge": space_charge}
+                        if space_charge is not None
+                        else {}
+                    ),
+                    **(
+                        {"external_field": external_field}
+                        if external_field is not None
+                        and _b2b_scs_accepts_external_field
+                        else {}
+                    ),
+                    **(
+                        {"traj_soa": _traj_drv_builder.build_partial(i)}
+                        if _b2b_scs_accepts_soa and _traj_drv_builder is not None
+                        else {}
+                    ),
+                    **(
+                        {"traj_ext_soa": _traj_builder.build_partial(i)}
+                        if _b2b_scs_accepts_soa
+                        else {}
+                    ),
                 )
             _ensure_startup_metadata(trajectory_drv[i])
             if _traj_drv_builder is not None:
@@ -1251,9 +1340,9 @@ def retarded_integrator(
                 trajectory_drv_truncated = trajectory_drv[: i + 1]
                 # Store halt information in the last particle's metadata
                 trajectory_truncated[-1]["_halted_early"] = True
-                trajectory_truncated[-1]["_halt_reason"] = (
-                    f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})"
-                )
+                trajectory_truncated[-1][
+                    "_halt_reason"
+                ] = f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})"
                 trajectory_truncated[-1]["_halt_step"] = i
                 trajectory_truncated[-1]["_requested_steps"] = steps
                 _traj_builder.set_halt_metadata(
@@ -1263,8 +1352,15 @@ def retarded_integrator(
                     requested_steps=steps,
                 )
                 _traj_soa = _traj_builder.build()
-                _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
-                return trajectory_truncated, trajectory_drv_truncated, _traj_soa, _traj_drv_soa
+                _traj_drv_soa = (
+                    _traj_drv_builder.build() if _traj_drv_builder is not None else None
+                )
+                return (
+                    trajectory_truncated,
+                    trajectory_drv_truncated,
+                    _traj_soa,
+                    _traj_drv_soa,
+                )
 
         # Energy monitoring (for warning/halting, separate from adaptive timestep)
         if (
@@ -1302,7 +1398,6 @@ def retarded_integrator(
     return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
 
 
-
 def run_integrator(
     config: IntegratorConfig,
     init_rider: ParticleState,
@@ -1314,7 +1409,9 @@ def run_integrator(
     external_field: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
-) -> Tuple[Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"]:
+) -> Tuple[
+    Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
+]:
     """Convenience wrapper using :class:`IntegratorConfig`.
 
     All parameters are supplied via ``config`` which mirrors the keyword

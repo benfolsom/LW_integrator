@@ -83,11 +83,12 @@ class GammaReconciliationMethod(Enum):
     ``DISABLED`` - No reconciliation; use γ_energy directly.
         May cause dual-gamma inconsistency and energy blowups.
 
-    ``ADAPTIVE_WEIGHTED`` - Weighted average with velocity-dependent α (default).
+    ``ADAPTIVE_WEIGHTED`` - Weighted average with velocity-dependent α.
         α = 0.8 (trust energy) for β < 0.9
         α = 0.2 (trust velocity) for β > 0.99
         α = 0.5 (balanced) for 0.9 ≤ β ≤ 0.99
-        Provides smooth transition across velocity regimes.
+        Provides smooth transition across velocity regimes, but remains an
+        opt-in stabilisation option rather than the default.
 
     ``USE_VELOCITY`` - Always use γ_velocity (γ = 1/√(1-β²)).
         Geometrically consistent but can break energy bookkeeping.
@@ -99,6 +100,10 @@ class GammaReconciliationMethod(Enum):
     ``FIXED_WEIGHTED`` - Fixed 50/50 weighted average.
         γ = 0.5·γ_energy + 0.5·γ_velocity
         Simple but doesn't adapt to physics regime.
+
+    The default is ``DISABLED``. Weighted reconciliation methods are kept for
+    diagnostics and legacy studies; production runs should prefer direct
+    energy bookkeeping unless a sweep explicitly validates the stabilisation.
     """
 
     DISABLED = auto()
@@ -215,10 +220,22 @@ class SpaceChargeConfig:
     """
 
     enabled: bool = True
-    retarded: bool = True        # full retarded fields; False → always instantaneous Coulomb
-    softening_mm: float = 0.0    # Plummer softening ε (mm); 0 = no softening
-    bunch_sigma_mm: float = 0.01 # transverse RMS of the bunch (mm); used for auto threshold
-    min_retarded_steps: int | None = None  # None = auto from bunch_sigma_mm / (c * h_step)
+    retarded: bool = True  # full retarded fields; False → always instantaneous Coulomb
+    softening_mm: float = 0.0  # Plummer softening ε (mm); 0 = no softening
+    bunch_sigma_mm: float = (
+        0.01  # transverse RMS of the bunch (mm); used for auto threshold
+    )
+    min_retarded_steps: int | None = (
+        None  # None = auto from bunch_sigma_mm / (c * h_step)
+    )
+
+    def __post_init__(self) -> None:
+        if self.softening_mm < 0.0:
+            raise ValueError("space-charge softening_mm must be non-negative")
+        if self.bunch_sigma_mm <= 0.0:
+            raise ValueError("space-charge bunch_sigma_mm must be positive")
+        if self.min_retarded_steps is not None and self.min_retarded_steps < 0:
+            raise ValueError("space-charge min_retarded_steps must be non-negative")
 
     def resolve_min_retarded_steps(self, h_step: float) -> int:
         """Return the step threshold below which instantaneous Coulomb is used.
@@ -233,6 +250,7 @@ class SpaceChargeConfig:
         if self.min_retarded_steps is not None:
             return self.min_retarded_steps
         import math
+
         light_crossing_ns = self.bunch_sigma_mm / C_MMNS
         return max(1, math.ceil(light_crossing_ns / h_step))
 
@@ -326,11 +344,11 @@ class TrajectoryArrays:
     char_time: np.ndarray
 
     # Per-step scalars — [n_steps]
-    halted_early: np.ndarray   # dtype bool
-    halt_step: np.ndarray      # dtype int64, -1 if not halted
+    halted_early: np.ndarray  # dtype bool
+    halt_step: np.ndarray  # dtype int64, -1 if not halted
 
     # Non-array side-channels
-    halt_reason: list           # length n_steps, str or None
+    halt_reason: list  # length n_steps, str or None
     particle_failure_info: dict  # keyed by (step, particle_idx)
 
     @property
@@ -394,14 +412,30 @@ class TrajectoryBuilder:
 
     # Fields present in legacy state dicts that map to 2-D kinematic arrays
     _KINEMATIC_FIELDS: tuple = (
-        "x", "y", "z", "t",
-        "Px", "Py", "Pz", "Pt",
+        "x",
+        "y",
+        "z",
+        "t",
+        "Px",
+        "Py",
+        "Pz",
+        "Pt",
         "gamma",
-        "bx", "by", "bz",
-        "bdotx", "bdoty", "bdotz",
-        "radiation_power", "radiation_energy", "radiation_energy_applied",
-        "origin_x", "origin_y", "origin_z",
-        "beta_avg_x", "beta_avg_y", "beta_avg_z",
+        "bx",
+        "by",
+        "bz",
+        "bdotx",
+        "bdoty",
+        "bdotz",
+        "radiation_power",
+        "radiation_energy",
+        "radiation_energy_applied",
+        "origin_x",
+        "origin_y",
+        "origin_z",
+        "beta_avg_x",
+        "beta_avg_y",
+        "beta_avg_z",
         "beta_samples",
     )
     _PARTICLE_CONST_FIELDS: tuple = ("q", "m", "char_time")
@@ -452,9 +486,7 @@ class TrajectoryBuilder:
         self._halt_step_arr[step] = halt_step
         self._halt_reason[step] = reason
 
-    def set_particle_failure(
-        self, step: int, particle_idx: int, info: dict
-    ) -> None:
+    def set_particle_failure(self, step: int, particle_idx: int, info: dict) -> None:
         """Store per-particle failure info keyed by ``(step, particle_idx)``."""
         self._particle_failure_info[(step, particle_idx)] = info
 

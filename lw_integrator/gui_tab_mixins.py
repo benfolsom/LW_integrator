@@ -307,7 +307,9 @@ class IntegratorGUITabMixin:
                     foreground="gray",
                     font=("TkDefaultFont", 8, "italic"),
                 )
-                self.time_step_auto_hint.grid(row=row, column=1, sticky="w", pady=(0, 2))
+                self.time_step_auto_hint.grid(
+                    row=row, column=1, sticky="w", pady=(0, 2)
+                )
                 self.time_step_auto_hint.grid_remove()
                 row += 1
 
@@ -711,9 +713,7 @@ class IntegratorGUITabMixin:
             entry.grid(row=4, column=column, sticky="ew", pady=2, padx=(0, 6))
             self.external_electric_si_entries.append(entry)
 
-        self.external_electric_native_label = ttk.Label(
-            field_frame, text="E (native):"
-        )
+        self.external_electric_native_label = ttk.Label(field_frame, text="E (native):")
         self.external_electric_native_label.grid(
             row=5, column=0, sticky="w", pady=2, padx=(20, 0)
         )
@@ -799,7 +799,10 @@ class IntegratorGUITabMixin:
                 widget.configure(state=native_state)
             except Exception:
                 pass
-        for widget in [self.external_electric_si_label, *self.external_electric_si_entries]:
+        for widget in [
+            self.external_electric_si_label,
+            *self.external_electric_si_entries,
+        ]:
             try:
                 widget.configure(state=si_state)
             except Exception:
@@ -1666,7 +1669,9 @@ class IntegratorGUITabMixin:
 
         ret_frame = ttk.Frame(sc_frame)
         ret_frame.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.space_charge_retarded_label = ttk.Label(ret_frame, text="Use retarded fields:")
+        self.space_charge_retarded_label = ttk.Label(
+            ret_frame, text="Use retarded fields:"
+        )
         self.space_charge_retarded_label.pack(side="left")
         ret_help = ttk.Label(ret_frame, text="ⓘ", foreground="blue", cursor="hand2")
         ret_help.pack(side="left", padx=(3, 0))
@@ -1708,11 +1713,62 @@ class IntegratorGUITabMixin:
         )
         self.space_charge_softening_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
+        sigma_frame = ttk.Frame(sc_frame)
+        sigma_frame.grid(row=3, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.space_charge_sigma_label = ttk.Label(
+            sigma_frame, text="Bunch sigma for retarded startup (mm):"
+        )
+        self.space_charge_sigma_label.pack(side="left")
+        sigma_help = ttk.Label(sigma_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        sigma_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            sigma_help,
+            "Characteristic bunch width used to delay retarded rider-rider\n"
+            "space-charge fields until the trajectory contains at least one\n"
+            "light-crossing time of intra-bunch history.\n\n"
+            "Default: 0.01 mm.",
+        )
+        self.space_charge_sigma_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.space_charge_bunch_sigma_mm_var,
+            width=16,
+        )
+        self.space_charge_sigma_entry.grid(row=3, column=1, sticky="ew", pady=2)
+
+        min_ret_frame = ttk.Frame(sc_frame)
+        min_ret_frame.grid(row=4, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.space_charge_min_retarded_steps_label = ttk.Label(
+            min_ret_frame, text="Min retarded SC steps:"
+        )
+        self.space_charge_min_retarded_steps_label.pack(side="left")
+        min_ret_help = ttk.Label(
+            min_ret_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        min_ret_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            min_ret_help,
+            "Optional explicit step threshold before retarded intra-bunch\n"
+            "space charge is used. Leave blank to compute it from bunch sigma\n"
+            "and timestep. Set 0 only for controlled diagnostics.",
+        )
+        self.space_charge_min_retarded_steps_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.space_charge_min_retarded_steps_var,
+            width=16,
+        )
+        self.space_charge_min_retarded_steps_entry.grid(
+            row=4, column=1, sticky="ew", pady=2
+        )
+
         self._space_charge_sub_widgets = [
             self.space_charge_retarded_label,
             self.space_charge_retarded_check,
             self.space_charge_softening_label,
             self.space_charge_softening_entry,
+            self.space_charge_sigma_label,
+            self.space_charge_sigma_entry,
+            self.space_charge_min_retarded_steps_label,
+            self.space_charge_min_retarded_steps_entry,
         ]
 
     def _toggle_space_charge_controls(self) -> None:

@@ -5,6 +5,7 @@ import pytest
 
 import core.distances as distances
 from core.constants import NUMERICAL_EPSILON
+from core.types import ChronoMatchingMode, TrajectoryBuilder
 
 
 def _make_state(
@@ -38,6 +39,13 @@ def _make_state(
     }
 
 
+def _make_soa(trajectory: list[dict[str, np.ndarray]]):
+    builder = TrajectoryBuilder(len(trajectory), len(trajectory[0]["x"]))
+    for step, state in enumerate(trajectory):
+        builder.set_step(step, state)
+    return builder.build()
+
+
 def test_dot_beta_nhat_projects_velocity_onto_line_of_sight() -> None:
     state = _make_state(bx=[0.2], by=[-0.3], bz=[0.5])
     nhat = {
@@ -63,6 +71,15 @@ def test_locate_retarded_index_handles_negative_and_bracketed_targets() -> None:
     assert distances._locate_retarded_index(trajectory_ext, 3, 0, -1.0) == 3
     assert distances._locate_retarded_index(trajectory_ext, 3, 0, 1.5) == 2
     assert distances._locate_retarded_index(trajectory_ext, 3, 0, 10.0) == 0
+
+
+def test_locate_retarded_index_soa_matches_strict_chrono_bracket() -> None:
+    t_col = np.array([0.0, 1.0, 2.0, 3.0])
+
+    assert distances._locate_retarded_index_soa(t_col, 3, -1.0) == 3
+    assert distances._locate_retarded_index_soa(t_col, 3, 1.5) == 2
+    assert distances._locate_retarded_index_soa(t_col, 3, 2.0) == 3
+    assert distances._locate_retarded_index_soa(t_col, 3, 10.0) == 3
 
 
 def test_compute_retarded_distance_uses_per_particle_retarded_indices() -> None:
@@ -182,6 +199,45 @@ def test_chrono_match_indices_adaptive_tolerance_can_suppress_interpolation(
     assert result.indices_next.tolist() == [2]
     assert result.weights.tolist() == pytest.approx([1.0])
     assert result.needs_interpolation.tolist() == [False]
+
+
+def test_chrono_match_indices_soa_averaged_matches_legacy_path() -> None:
+    trajectory = [
+        _make_state(t=[float(step), float(step)], x=[500.0, 700.0]) for step in range(6)
+    ]
+    trajectory_ext = [
+        _make_state(
+            t=[float(step), float(step)],
+            x=[0.0 + 10.0 * step, 100.0 + 5.0 * step],
+            bx=[0.0, 0.2],
+        )
+        for step in range(6)
+    ]
+
+    legacy = distances.chrono_match_indices(
+        trajectory,
+        trajectory_ext,
+        index_traj=5,
+        index_part=0,
+        mode=ChronoMatchingMode.AVERAGED,
+        interpolate=True,
+        tolerance=0.1,
+    )
+    soa = distances.chrono_match_indices_soa(
+        _make_soa(trajectory),
+        _make_soa(trajectory_ext),
+        index_traj=5,
+        index_part=0,
+        mode=ChronoMatchingMode.AVERAGED,
+        interpolate=True,
+        tolerance=0.1,
+    )
+
+    np.testing.assert_array_equal(soa.indices, legacy.indices)
+    np.testing.assert_array_equal(soa.indices_next, legacy.indices_next)
+    np.testing.assert_allclose(soa.weights, legacy.weights)
+    np.testing.assert_allclose(soa.residuals, legacy.residuals)
+    np.testing.assert_array_equal(soa.needs_interpolation, legacy.needs_interpolation)
 
 
 def test_chrono_match_indices_uses_char_time_fallback_when_denominator_is_singular(

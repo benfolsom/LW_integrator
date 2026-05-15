@@ -104,7 +104,10 @@ def test_retarded_integrator_logs_numba_kernel_usage_when_available(
 
     assert len(trajectory) == 2
     assert len(driver) == 2
-    assert any("Using Numba-optimized kernels in canonical integrator path" in message for message in messages)
+    assert any(
+        "Using Numba-optimized kernels in canonical integrator path" in message
+        for message in messages
+    )
 
 
 def test_retarded_integrator_logs_proximity_transition_zone(
@@ -168,6 +171,62 @@ def test_retarded_integrator_logs_proximity_transition_zone(
     assert h_calls == pytest.approx([0.4, 0.4])
     assert any("transition zone" in message for message in messages)
     assert any("Reduction factor: 2.5000x" in message for message in messages)
+
+
+def test_adaptive_step_passes_local_driver_soa_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_driver_x: list[tuple[float, float]] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        traj_soa: object = None,
+        traj_ext_soa: object = None,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        if step_idx == 2 and len(trajectory_ext) == 1 and traj_ext_soa is not None:
+            observed_driver_x.append(
+                (
+                    float(trajectory_ext[0]["x"][0]),
+                    float(traj_ext_soa.x[0, 0]),
+                )
+            )
+
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.array([float(state["t"][0]) + h_step], dtype=float)
+        state["x"] = np.array([float(state["x"][0]) + 10.0], dtype=float)
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    retarded_integrator(
+        steps=3,
+        h_step=1e-3,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_particle_state(z=-1.0),
+        init_driver=_make_particle_state(z=1.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        image_subcharge_count=8,
+        use_conducting_image_weighting=False,
+        use_numba=False,
+    )
+
+    assert observed_driver_x == [(10.0, 10.0)]
 
 
 def test_retarded_integrator_logs_when_numba_is_unavailable(
@@ -445,7 +504,10 @@ def test_retarded_integrator_accepts_energy_jump_at_minimum_timestep(
     assert len(trajectory) == 3
     assert len(driver) == 3
     assert trajectory[-1]["gamma"][0] == pytest.approx(2.0)
-    assert any("Minimum timestep reached. Accepting remaining substeps" in message for message in messages)
+    assert any(
+        "Minimum timestep reached. Accepting remaining substeps" in message
+        for message in messages
+    )
 
 
 def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
@@ -499,7 +561,10 @@ def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
     assert len(trajectory) == 2
     assert len(driver) == 2
     assert trajectory[-1]["_dead_particles"][0]
-    assert trajectory[-1]["_particle_failure_info"][0]["reason"] == "gamma_blowup_no_adaptive"
+    assert (
+        trajectory[-1]["_particle_failure_info"][0]["reason"]
+        == "gamma_blowup_no_adaptive"
+    )
     assert any("Gamma blowup" in message for message in messages)
 
 
@@ -561,8 +626,13 @@ def test_retarded_integrator_gamma_blowup_at_min_timestep_marks_particle_dead(
     assert len(trajectory) == 2
     assert len(driver) == 2
     assert trajectory[-1]["_dead_particles"][0]
-    assert trajectory[-1]["_particle_failure_info"][0]["reason"] == "gamma_blowup_min_timestep"
-    assert any("Minimum timestep reached after gamma blowup" in message for message in messages)
+    assert (
+        trajectory[-1]["_particle_failure_info"][0]["reason"]
+        == "gamma_blowup_min_timestep"
+    )
+    assert any(
+        "Minimum timestep reached after gamma blowup" in message for message in messages
+    )
 
 
 def test_retarded_integrator_gamma_blowup_retries_with_reduced_timestep(
@@ -697,8 +767,14 @@ def test_retarded_integrator_gamma_blowup_hits_max_retries(
     assert len(trajectory) == 2
     assert len(driver) == 2
     assert trajectory[-1]["_dead_particles"][0]
-    assert trajectory[-1]["_particle_failure_info"][0]["reason"] == "gamma_blowup_max_retries"
-    assert any("Max refinement attempts reached after gamma blowup" in message for message in messages)
+    assert (
+        trajectory[-1]["_particle_failure_info"][0]["reason"]
+        == "gamma_blowup_max_retries"
+    )
+    assert any(
+        "Max refinement attempts reached after gamma blowup" in message
+        for message in messages
+    )
 
 
 def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
@@ -865,7 +941,9 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
         step_idx: int | None = None,
         cancel_callback: object = None,
     ) -> dict[str, object]:
-        source_state = trajectory[index_traj] if trajectory[index_traj] else trajectory[-1]
+        source_state = (
+            trajectory[index_traj] if trajectory[index_traj] else trajectory[-1]
+        )
         state = _clone_state(source_state)
         state["z"] = np.array([float(source_state["z"][0]) + 2.0], dtype=float)
         state["t"] = np.array([float(source_state["t"][0]) + h_step], dtype=float)
@@ -1239,7 +1317,9 @@ def test_run_integrator_forwards_config_fields(
         captured.update(kwargs)
         return (["rider"], ["driver"])
 
-    monkeypatch.setattr(integration_runner, "retarded_integrator", fake_retarded_integrator)
+    monkeypatch.setattr(
+        integration_runner, "retarded_integrator", fake_retarded_integrator
+    )
 
     config = IntegratorConfig(
         steps=5,

@@ -31,6 +31,8 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "space_charge_enabled": False,
     "space_charge_retarded": True,
     "space_charge_softening_mm": 0.0,
+    "space_charge_bunch_sigma_mm": 0.01,
+    "space_charge_min_retarded_steps": None,
     "external_field_enabled": False,
     "external_electric_field_native": (0.0, 0.0, 0.0),
     "external_electric_field_v_per_m": None,
@@ -140,9 +142,7 @@ def build_saved_config_payload(
         "optimization_n_starts": config.optimization_n_starts,
         "optimization_save_top_n": config.optimization_save_top_n,
         "optimization_convergence_tol": config.optimization_convergence_tol,
-        "optimization_convergence_patience": (
-            config.optimization_convergence_patience
-        ),
+        "optimization_convergence_patience": (config.optimization_convergence_patience),
         "self_consistency_enabled": config.self_consistency_enabled,
         "self_consistency_tolerance": config.self_consistency_tolerance,
         "self_consistency_convergence_mode": config.self_consistency_convergence_mode,
@@ -197,6 +197,8 @@ def build_saved_config_payload(
         "space_charge_enabled": config.space_charge_enabled,
         "space_charge_retarded": config.space_charge_retarded,
         "space_charge_softening_mm": config.space_charge_softening_mm,
+        "space_charge_bunch_sigma_mm": config.space_charge_bunch_sigma_mm,
+        "space_charge_min_retarded_steps": config.space_charge_min_retarded_steps,
         "external_field_enabled": config.external_field_enabled,
         "external_electric_field_native": list(config.external_electric_field_native),
         "external_electric_field_v_per_m": (
@@ -218,18 +220,14 @@ def build_saved_config_payload(
         "failed_run_retry_attempts": config.failed_run_retry_attempts,
         "smoothness_enabled": config.smoothness_enabled,
         "smoothness_window_size": config.smoothness_window_size,
-        "smoothness_oscillation_threshold": (
-            config.smoothness_oscillation_threshold
-        ),
+        "smoothness_oscillation_threshold": (config.smoothness_oscillation_threshold),
         "smoothness_trend_threshold": config.smoothness_trend_threshold,
         "smoothness_reject_on_violation": config.smoothness_reject_on_violation,
         "smoothness_max_violations": config.smoothness_max_violations,
         "macroparticle_enabled": config.macroparticle_enabled,
         "macroparticle_charge_multiplier": config.macroparticle_charge_multiplier,
         "macroparticle_sigma_multiplier": config.macroparticle_sigma_multiplier,
-        "macroparticle_use_momentum_errors": (
-            config.macroparticle_use_momentum_errors
-        ),
+        "macroparticle_use_momentum_errors": (config.macroparticle_use_momentum_errors),
         "image_subcharge_count": config.image_subcharge_count,
         "use_image_weighting": config.use_image_weighting,
         "timestep_strategy": config.timestep_strategy,

@@ -82,16 +82,10 @@ def build_single_integration_setup(
 ) -> SingleIntegrationSetup:
     """Resolve integration parameters and build the testbed options object."""
     rider_m_particle = _override_or_config(rider_m_particle, config, "m_particle")
-    rider_charge_sign = _override_or_config(
-        rider_charge_sign, config, "charge_sign"
-    )
+    rider_charge_sign = _override_or_config(rider_charge_sign, config, "charge_sign")
     rider_pcount = int(_override_or_config(rider_pcount, config, "pcount"))
-    rider_transv_mom = _override_or_config(
-        rider_transv_mom, config, "transv_mom"
-    )
-    rider_transv_dist = _override_or_config(
-        rider_transv_dist, config, "transv_dist"
-    )
+    rider_transv_mom = _override_or_config(rider_transv_mom, config, "transv_mom")
+    rider_transv_dist = _override_or_config(rider_transv_dist, config, "transv_dist")
     rider_stripped_ions = _override_or_config(
         rider_stripped_ions, config, "stripped_ions"
     )
@@ -253,6 +247,12 @@ def build_single_integration_setup(
         space_charge_enabled=getattr(config, "space_charge_enabled", False),
         space_charge_retarded=getattr(config, "space_charge_retarded", True),
         space_charge_softening_mm=getattr(config, "space_charge_softening_mm", 0.0),
+        space_charge_bunch_sigma_mm=getattr(
+            config, "space_charge_bunch_sigma_mm", 0.01
+        ),
+        space_charge_min_retarded_steps=getattr(
+            config, "space_charge_min_retarded_steps", None
+        ),
         external_field_enabled=getattr(config, "external_field_enabled", False),
         external_electric_field_native=external_electric_native,
         external_electric_field_v_per_m=external_electric_v_per_m,

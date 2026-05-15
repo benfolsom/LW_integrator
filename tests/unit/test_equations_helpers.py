@@ -15,6 +15,7 @@ from core.types import (
     ChronoMatchingMode,
     GammaReconciliationMethod,
     SimulationType,
+    SpaceChargeConfig,
     StartupMode,
 )
 
@@ -234,6 +235,59 @@ def test_compute_full_retarded_distance_handles_interpolation_payload(
     assert nhat["R"].tolist() == pytest.approx([2.0])
 
 
+def test_retarded_space_charge_uses_chrono_matching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(x=[0.0, 10.0], charge=[1.0, 1.0]),
+        _make_state(x=[1.0, 11.0], t=[1.0, 1.0], charge=[1.0, 1.0]),
+    ]
+    driver = [
+        _make_state(x=[100.0], charge=[0.0]),
+        _make_state(x=[101.0], t=[1.0], charge=[0.0]),
+    ]
+    sc_calls: list[dict[str, object]] = []
+
+    def fake_chrono(*args: object, **kwargs: object) -> np.ndarray:
+        source_history = args[1]
+        if len(source_history[0]["x"]) == 1:
+            sc_calls.append(kwargs)
+        return np.array([0])
+
+    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(equations, "chrono_match_indices", fake_chrono)
+    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
+
+    equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(
+            enabled=False,
+            chrono_interpolate=True,
+            chrono_high_precision=True,
+            chrono_adaptive_tolerance=True,
+        ),
+        space_charge=SpaceChargeConfig(
+            enabled=True,
+            retarded=True,
+            min_retarded_steps=0,
+        ),
+    )
+
+    assert sc_calls
+    assert all(call["mode"] is ChronoMatchingMode.FAST for call in sc_calls)
+    assert all(call["interpolate"] is True for call in sc_calls)
+    assert all(call["high_precision"] is True for call in sc_calls)
+
+
 def test_gating_threshold_and_force_application_follow_travel_distance() -> None:
     nhat = {
         "R": np.array([10.0]),
@@ -259,20 +313,26 @@ def test_gating_threshold_and_force_application_follow_travel_distance() -> None
     threshold = equations._compute_gating_threshold(nhat, 0.5, 0.0, 0.0)
 
     assert threshold == pytest.approx(10.0 / 3.0)
-    assert equations._should_apply_external_forces(
-        StartupMode.COLD_START,
-        nhat,
-        current_state,
-        0,
-    ) is False
+    assert (
+        equations._should_apply_external_forces(
+            StartupMode.COLD_START,
+            nhat,
+            current_state,
+            0,
+        )
+        is False
+    )
 
     current_state["x"][0] = 4.0
-    assert equations._should_apply_external_forces(
-        StartupMode.COLD_START,
-        nhat,
-        current_state,
-        0,
-    ) is True
+    assert (
+        equations._should_apply_external_forces(
+            StartupMode.COLD_START,
+            nhat,
+            current_state,
+            0,
+        )
+        is True
+    )
 
 
 def test_gating_threshold_handles_receding_case_with_large_threshold() -> None:
@@ -574,6 +634,68 @@ def test_retarded_equations_of_motion_applies_final_mass_shell_projection() -> N
     assert result["gamma"][0] == pytest.approx(1.0)
 
 
+def test_final_mass_shell_projection_uses_mechanical_momentum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _make_state(gamma=[1.0], charge=[1.0], mass=[1.0])
+    source = _make_state(x=[1.0], charge=[1.0], mass=[1.0])
+    vector_potential_x = 0.5 * C_MMNS
+    scalar_potential = 0.25 * C_MMNS
+
+    monkeypatch.setattr(
+        equations,
+        "_compute_approximate_retarded_distance",
+        lambda *args, **kwargs: (
+            {
+                "R": np.array([1.0]),
+                "nx": np.array([1.0]),
+                "ny": np.array([0.0]),
+                "nz": np.array([0.0]),
+            },
+            np.array([0]),
+        ),
+    )
+    monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
+
+    def fake_contributions(**kwargs: object) -> tuple[float, ...]:
+        del kwargs
+        return (
+            vector_potential_x,
+            0.0,
+            0.0,
+            scalar_potential,
+            vector_potential_x,
+            0.0,
+            0.0,
+            scalar_potential,
+        )
+
+    monkeypatch.setattr(
+        equations,
+        "compute_vectorized_contributions",
+        fake_contributions,
+    )
+
+    result = equations.retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=[state],
+        trajectory_ext=[source],
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        self_consistency=SelfConsistencyConfig(
+            enabled=True,
+            max_iterations=1,
+            mass_shell_tolerance=1e-12,
+        ),
+    )
+
+    assert result["Px"][0] == pytest.approx(vector_potential_x)
+    assert result["Pt"][0] == pytest.approx(C_MMNS + scalar_potential)
+    assert result["gamma"][0] == pytest.approx(1.0)
+
+
 def test_retarded_equations_of_motion_can_cancel_during_sc_iteration() -> None:
     state = _make_state()
     calls = {"count": 0}
@@ -637,6 +759,64 @@ def test_retarded_equations_of_motion_reconciles_gamma_modes(
 
     assert result["gamma"][0] == pytest.approx(expected_gamma)
     assert result["Pt"][0] == pytest.approx(expected_gamma * C_MMNS)
+
+
+def test_gamma_reconciliation_preserves_potential_bookkeeping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _make_state(gamma=[2.0], charge=[1.0], mass=[1.0])
+    source = _make_state(x=[1.0], charge=[1.0], mass=[1.0])
+
+    monkeypatch.setattr(
+        equations,
+        "_compute_approximate_retarded_distance",
+        lambda *args, **kwargs: (
+            {
+                "R": np.array([1.0]),
+                "nx": np.array([1.0]),
+                "ny": np.array([0.0]),
+                "nz": np.array([0.0]),
+            },
+            np.array([0]),
+        ),
+    )
+    monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
+
+    def fake_contributions(**kwargs: object) -> tuple[float, ...]:
+        del kwargs
+        # Canonical Px=17 with vector-potential field Ax=7 means mechanical Px=10.
+        # Delta Pt equals qPhi, so gamma_energy remains the state's initial gamma=2.
+        return (17.0, 0.0, 0.0, 5.0, 7.0, 0.0, 0.0, 5.0)
+
+    monkeypatch.setattr(
+        equations,
+        "compute_vectorized_contributions",
+        fake_contributions,
+    )
+    monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
+    config = SelfConsistencyConfig(
+        enabled=True,
+        max_iterations=1,
+        gamma_reconciliation_method=GammaReconciliationMethod.FIXED_WEIGHTED,
+        gamma_reconciliation_fixed_weight=0.25,
+    )
+
+    result = equations.retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=[state],
+        trajectory_ext=[source],
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        self_consistency=config,
+    )
+
+    expected_gamma = 1.25
+    expected_mechanical_px = C_MMNS * np.sqrt(expected_gamma**2 - 1.0)
+    assert result["gamma"][0] == pytest.approx(expected_gamma)
+    assert result["Pt"][0] == pytest.approx(expected_gamma * C_MMNS + 5.0)
+    assert result["Px"][0] == pytest.approx(expected_mechanical_px + 7.0)
 
 
 def test_retarded_equations_of_motion_variable_geometry_uses_updated_observer_state(

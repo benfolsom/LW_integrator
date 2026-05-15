@@ -302,9 +302,22 @@ class IntegratorGUIConfigMixin:
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
         self._update_max_substeps_display()
-        self.space_charge_enabled_var.set(getattr(options, "space_charge_enabled", False))
-        self.space_charge_retarded_var.set(getattr(options, "space_charge_retarded", True))
-        self.space_charge_softening_mm_var.set(getattr(options, "space_charge_softening_mm", 0.0))
+        self.space_charge_enabled_var.set(
+            getattr(options, "space_charge_enabled", False)
+        )
+        self.space_charge_retarded_var.set(
+            getattr(options, "space_charge_retarded", True)
+        )
+        self.space_charge_softening_mm_var.set(
+            getattr(options, "space_charge_softening_mm", 0.0)
+        )
+        self.space_charge_bunch_sigma_mm_var.set(
+            getattr(options, "space_charge_bunch_sigma_mm", 0.01)
+        )
+        min_ret_steps = getattr(options, "space_charge_min_retarded_steps", None)
+        self.space_charge_min_retarded_steps_var.set(
+            "" if min_ret_steps is None else str(min_ret_steps)
+        )
         self.external_field_enabled_var.set(
             getattr(options, "external_field_enabled", False)
         )
@@ -331,9 +344,15 @@ class IntegratorGUIConfigMixin:
                 self.external_field_window_vars[key].set(
                     _format_gui_optional_float(getattr(options, option_name, None))
                 )
-        self.auto_duration_enabled_var.set(getattr(options, "auto_duration_enabled", False))
-        self.auto_duration_crossing_steps_var.set(getattr(options, "auto_duration_crossing_steps", 200))
-        self.auto_duration_post_factor_var.set(getattr(options, "auto_duration_post_factor", 2.0))
+        self.auto_duration_enabled_var.set(
+            getattr(options, "auto_duration_enabled", False)
+        )
+        self.auto_duration_crossing_steps_var.set(
+            getattr(options, "auto_duration_crossing_steps", 200)
+        )
+        self.auto_duration_post_factor_var.set(
+            getattr(options, "auto_duration_post_factor", 2.0)
+        )
         self._toggle_space_charge_controls()
         self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
@@ -445,7 +464,9 @@ class IntegratorGUIConfigMixin:
             if external_input_mode == "SI V/m":
                 external_electric_si = tuple(
                     _parse_gui_float(var.get(), f"External E V/m {axis}")
-                    for var, axis in zip(self.external_electric_si_vars, ("x", "y", "z"))
+                    for var, axis in zip(
+                        self.external_electric_si_vars, ("x", "y", "z")
+                    )
                 )
             external_magnetic_native = tuple(
                 _parse_gui_float(var.get(), f"External B native {axis}")
@@ -606,6 +627,14 @@ class IntegratorGUIConfigMixin:
             space_charge_enabled=bool(self.space_charge_enabled_var.get()),
             space_charge_retarded=bool(self.space_charge_retarded_var.get()),
             space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
+            space_charge_bunch_sigma_mm=float(
+                self.space_charge_bunch_sigma_mm_var.get()
+            ),
+            space_charge_min_retarded_steps=(
+                int(self.space_charge_min_retarded_steps_var.get())
+                if self.space_charge_min_retarded_steps_var.get().strip()
+                else None
+            ),
             external_field_enabled=external_field_enabled,
             external_electric_field_native=external_electric_native,
             external_electric_field_v_per_m=external_electric_si,
@@ -619,7 +648,9 @@ class IntegratorGUIConfigMixin:
             external_field_t_min=external_bounds["t_min"],
             external_field_t_max=external_bounds["t_max"],
             auto_duration_enabled=bool(self.auto_duration_enabled_var.get()),
-            auto_duration_crossing_steps=int(self.auto_duration_crossing_steps_var.get()),
+            auto_duration_crossing_steps=int(
+                self.auto_duration_crossing_steps_var.get()
+            ),
             auto_duration_post_factor=float(self.auto_duration_post_factor_var.get()),
             save_log_file=bool(self.save_log_file_var.get()),
         )

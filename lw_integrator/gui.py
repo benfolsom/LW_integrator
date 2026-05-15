@@ -508,6 +508,8 @@ class IntegratorGUI(
         self.space_charge_enabled_var = tk.BooleanVar(value=False)
         self.space_charge_retarded_var = tk.BooleanVar(value=True)
         self.space_charge_softening_mm_var = tk.DoubleVar(value=0.0)
+        self.space_charge_bunch_sigma_mm_var = tk.DoubleVar(value=0.01)
+        self.space_charge_min_retarded_steps_var = tk.StringVar(value="")
 
         self.external_field_enabled_var = tk.BooleanVar(value=False)
         self.external_field_input_mode_var = tk.StringVar(value="SI V/m")
@@ -657,6 +659,7 @@ class IntegratorGUI(
     # ------------------------------------------------------------------
     # Simulation execution
     # ------------------------------------------------------------------
+
 
 def main() -> None:
     # Set locale to system default for proper keyboard input (Swedish, etc.)

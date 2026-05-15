@@ -276,6 +276,8 @@ class OptimizationConfig:
     space_charge_enabled: bool = False
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
+    space_charge_bunch_sigma_mm: float = 0.01
+    space_charge_min_retarded_steps: Optional[int] = None
 
     # Prescribed external uniform field options
     external_field_enabled: bool = False
@@ -453,6 +455,12 @@ class OptimizationConfig:
             space_charge_softening_mm=getattr(
                 options, "space_charge_softening_mm", 0.0
             ),
+            space_charge_bunch_sigma_mm=getattr(
+                options, "space_charge_bunch_sigma_mm", 0.01
+            ),
+            space_charge_min_retarded_steps=getattr(
+                options, "space_charge_min_retarded_steps", None
+            ),
             external_field_enabled=getattr(options, "external_field_enabled", False),
             external_electric_field_native=tuple(
                 float(v)
@@ -462,8 +470,7 @@ class OptimizationConfig:
             ),
             external_electric_field_v_per_m=(
                 tuple(float(v) for v in options.external_electric_field_v_per_m)
-                if getattr(options, "external_electric_field_v_per_m", None)
-                is not None
+                if getattr(options, "external_electric_field_v_per_m", None) is not None
                 else None
             ),
             external_magnetic_field_native=tuple(

@@ -37,6 +37,11 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         self_consistency_gamma_reconciliation_fixed_weight=0.7,
         energy_monitor_halt_on_jump=True,
         adaptive_timestep_min_factor=1e-5,
+        space_charge_enabled=True,
+        space_charge_retarded=True,
+        space_charge_softening_mm=0.004,
+        space_charge_bunch_sigma_mm=0.025,
+        space_charge_min_retarded_steps=5,
         external_field_enabled=True,
         external_electric_field_v_per_m=(0.0, 0.0, -1.5e9),
         external_magnetic_field_native=(0.0, 3.0, 0.0),
@@ -60,30 +65,38 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.config_name == "custom.json"
     assert loaded.self_consistency_convergence_mode == "variable_geometry"
     assert loaded.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
-    assert loaded.self_consistency_gamma_reconciliation_low_beta_threshold == pytest.approx(
-        0.85
+    assert (
+        loaded.self_consistency_gamma_reconciliation_low_beta_threshold
+        == pytest.approx(0.85)
     )
-    assert loaded.self_consistency_gamma_reconciliation_high_beta_threshold == pytest.approx(
-        0.995
+    assert (
+        loaded.self_consistency_gamma_reconciliation_high_beta_threshold
+        == pytest.approx(0.995)
     )
-    assert loaded.self_consistency_gamma_reconciliation_low_beta_weight == pytest.approx(
-        0.9
+    assert (
+        loaded.self_consistency_gamma_reconciliation_low_beta_weight
+        == pytest.approx(0.9)
     )
-    assert loaded.self_consistency_gamma_reconciliation_high_beta_weight == pytest.approx(
-        0.1
+    assert (
+        loaded.self_consistency_gamma_reconciliation_high_beta_weight
+        == pytest.approx(0.1)
     )
-    assert loaded.self_consistency_gamma_reconciliation_mid_beta_weight == pytest.approx(
-        0.6
+    assert (
+        loaded.self_consistency_gamma_reconciliation_mid_beta_weight
+        == pytest.approx(0.6)
     )
     assert loaded.self_consistency_gamma_reconciliation_fixed_weight == pytest.approx(
         0.7
     )
     assert loaded.energy_monitor_halt_on_jump is True
     assert loaded.adaptive_timestep_min_factor == pytest.approx(1e-5)
+    assert loaded.space_charge_enabled is True
+    assert loaded.space_charge_retarded is True
+    assert loaded.space_charge_softening_mm == pytest.approx(0.004)
+    assert loaded.space_charge_bunch_sigma_mm == pytest.approx(0.025)
+    assert loaded.space_charge_min_retarded_steps == 5
     assert loaded.external_field_enabled is True
-    assert loaded.external_electric_field_v_per_m == pytest.approx(
-        (0.0, 0.0, -1.5e9)
-    )
+    assert loaded.external_electric_field_v_per_m == pytest.approx((0.0, 0.0, -1.5e9))
     assert loaded.external_magnetic_field_native == pytest.approx((0.0, 3.0, 0.0))
     assert loaded.external_field_z_min == pytest.approx(-0.2)
     assert loaded.external_field_z_max == pytest.approx(0.2)

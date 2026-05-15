@@ -292,7 +292,9 @@ class SimulationOptions:
         False  # Auto-set tolerance = 0.1 × timestep
     )
     # Gamma reconciliation options
-    self_consistency_gamma_reconciliation_method: str = "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
+    self_consistency_gamma_reconciliation_method: str = (
+        "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
+    )
     self_consistency_gamma_reconciliation_low_beta_threshold: float = (
         0.9  # Below this β: trust energy (for ADAPTIVE_WEIGHTED)
     )
@@ -340,6 +342,8 @@ class SimulationOptions:
     space_charge_enabled: bool = False
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
+    space_charge_bunch_sigma_mm: float = 0.01
+    space_charge_min_retarded_steps: Optional[int] = None
 
     # Prescribed external uniform field options
     external_field_enabled: bool = False
@@ -440,6 +444,8 @@ class SimulationOptions:
             "space_charge_enabled": self.space_charge_enabled,
             "space_charge_retarded": self.space_charge_retarded,
             "space_charge_softening_mm": self.space_charge_softening_mm,
+            "space_charge_bunch_sigma_mm": self.space_charge_bunch_sigma_mm,
+            "space_charge_min_retarded_steps": self.space_charge_min_retarded_steps,
             "external_field_enabled": self.external_field_enabled,
             "external_electric_field_native": list(self.external_electric_field_native),
             "external_electric_field_v_per_m": (
@@ -647,17 +653,17 @@ class SimulationOptions:
             space_charge_enabled=_bool("space_charge_enabled", False),
             space_charge_retarded=_bool("space_charge_retarded", True),
             space_charge_softening_mm=_float("space_charge_softening_mm", 0.0),
-            external_field_enabled=_bool("external_field_enabled", False),
-            external_electric_field_native=_tuple3(
-                "external_electric_field_native"
-            )
-            or (0.0, 0.0, 0.0),
-            external_electric_field_v_per_m=_tuple3(
-                "external_electric_field_v_per_m"
+            space_charge_bunch_sigma_mm=_float("space_charge_bunch_sigma_mm", 0.01),
+            space_charge_min_retarded_steps=(
+                _int("space_charge_min_retarded_steps", 0)
+                if payload.get("space_charge_min_retarded_steps") is not None
+                else None
             ),
-            external_magnetic_field_native=_tuple3(
-                "external_magnetic_field_native"
-            )
+            external_field_enabled=_bool("external_field_enabled", False),
+            external_electric_field_native=_tuple3("external_electric_field_native")
+            or (0.0, 0.0, 0.0),
+            external_electric_field_v_per_m=_tuple3("external_electric_field_v_per_m"),
+            external_magnetic_field_native=_tuple3("external_magnetic_field_native")
             or (0.0, 0.0, 0.0),
             external_field_x_min=_optional_float("external_field_x_min"),
             external_field_x_max=_optional_float("external_field_x_max"),
@@ -692,9 +698,11 @@ class SimulationOptions:
                 "self_consistency_gamma_reconciliation_fixed_weight", 0.5
             ),
             save_log_file=_bool("save_log_file", False),
-            log_file_path=str(payload.get("log_file_path"))
-            if payload.get("log_file_path") is not None
-            else None,
+            log_file_path=(
+                str(payload.get("log_file_path"))
+                if payload.get("log_file_path") is not None
+                else None
+            ),
         )
         return options
 
@@ -1152,6 +1160,8 @@ def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
         enabled=True,
         retarded=options.space_charge_retarded,
         softening_mm=options.space_charge_softening_mm,
+        bunch_sigma_mm=options.space_charge_bunch_sigma_mm,
+        min_retarded_steps=options.space_charge_min_retarded_steps,
     )
 
 
@@ -1200,8 +1210,8 @@ def build_chrono_mode_enum(chrono_mode_str: str) -> object:
     elif chrono_mode_upper == "AVERAGED":
         return ChronoMatchingMode.AVERAGED
     else:
-        # Default to AVERAGED if invalid
-        return ChronoMatchingMode.AVERAGED
+        # Keep old configs running, but default invalid values to the maintained mode.
+        return ChronoMatchingMode.FAST
 
 
 def build_startup_mode_enum(startup_mode_str: str) -> object:
@@ -1454,19 +1464,21 @@ def run_testbed(
             external_field=external_field_config,
             image_subcharge_count=int(options.image_subcharge_count),
             use_conducting_image_weighting=bool(options.use_image_weighting),
-            macroparticle_charge_multiplier=float(
-                options.macroparticle_charge_multiplier
-            )
-            if options.macroparticle_enabled
-            else 1.0,
-            macroparticle_sigma_multiplier=float(options.macroparticle_sigma_multiplier)
-            if options.macroparticle_enabled
-            else 1.0,
-            macroparticle_use_momentum_errors=bool(
-                options.macroparticle_use_momentum_errors
-            )
-            if options.macroparticle_enabled
-            else True,
+            macroparticle_charge_multiplier=(
+                float(options.macroparticle_charge_multiplier)
+                if options.macroparticle_enabled
+                else 1.0
+            ),
+            macroparticle_sigma_multiplier=(
+                float(options.macroparticle_sigma_multiplier)
+                if options.macroparticle_enabled
+                else 1.0
+            ),
+            macroparticle_use_momentum_errors=(
+                bool(options.macroparticle_use_momentum_errors)
+                if options.macroparticle_enabled
+                else True
+            ),
             bunch_transv_dist=float(options.rider_params.get("transv_dist", 0.0)),
             bunch_transv_mom=float(options.rider_params.get("transv_mom", 0.0)),
             progress_callback=progress_callback,
@@ -1925,54 +1937,80 @@ def run_testbed(
 
                 fig_energy._lw_plot_data = {
                     "plot_type": "energy",
-                    "times_ns": rider_times[valid_mask]
-                    if np.any(valid_mask)
-                    else np.array([]),
-                    "z_mm": rider_z_rel[valid_mask]
-                    if np.any(valid_mask)
-                    else np.array([]),
-                    "z_mm_driver": driver_z_rel[driver_valid]
-                    if driver_delta_e is not None and np.any(driver_valid)
-                    else None,
-                    "core_r_energy_changes": rider_delta_e[valid_mask]
-                    if np.any(valid_mask)
-                    else np.array([]),
-                    "core_d_energy_changes": driver_delta_e[driver_valid]
-                    if driver_delta_e is not None and np.any(driver_valid)
-                    else None,
+                    "times_ns": (
+                        rider_times[valid_mask] if np.any(valid_mask) else np.array([])
+                    ),
+                    "z_mm": (
+                        rider_z_rel[valid_mask] if np.any(valid_mask) else np.array([])
+                    ),
+                    "z_mm_driver": (
+                        driver_z_rel[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None
+                    ),
+                    "core_r_energy_changes": (
+                        rider_delta_e[valid_mask]
+                        if np.any(valid_mask)
+                        else np.array([])
+                    ),
+                    "core_d_energy_changes": (
+                        driver_delta_e[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None
+                    ),
                     "driver_allowed": driver_allowed,
                     # Energy components for Y-axis switching
                     "energy_components": {
-                        "delta_total_r": rider_delta_e_total[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_z_r": rider_delta_e_z[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_x_r": rider_delta_e_x[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_y_r": rider_delta_e_y[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "total_r": rider_e_total[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_total_d": driver_delta_e_total[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "delta_z_d": driver_delta_e_z[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "delta_x_d": driver_delta_e_x[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "delta_y_d": driver_delta_e_y[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "total_d": driver_e_total[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
+                        "delta_total_r": (
+                            rider_delta_e_total[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_z_r": (
+                            rider_delta_e_z[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_x_r": (
+                            rider_delta_e_x[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_y_r": (
+                            rider_delta_e_y[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "total_r": (
+                            rider_e_total[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_total_d": (
+                            driver_delta_e_total[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "delta_z_d": (
+                            driver_delta_e_z[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "delta_x_d": (
+                            driver_delta_e_x[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "delta_y_d": (
+                            driver_delta_e_y[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "total_d": (
+                            driver_e_total[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
                     },
                 }
 
@@ -2029,9 +2067,11 @@ def run_testbed(
                 "plot_type": "transverse",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_hist": core_r_hist,
                 "core_d_hist": core_d_hist if driver_allowed else None,
                 "driver_allowed": driver_allowed,
@@ -2116,9 +2156,11 @@ def run_testbed(
                 "plot_type": "beta",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_beta": core_r_beta,
                 "core_d_beta": core_d_beta if driver_allowed else None,
                 "driver_allowed": driver_allowed,
@@ -2253,9 +2295,11 @@ def run_testbed(
                 "plot_type": "momentum",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_momentum": core_r_momentum,
                 "core_r_pt": core_r_pt,
                 "core_d_momentum": core_d_momentum if driver_allowed else None,
@@ -2563,9 +2607,11 @@ def run_testbed(
                 "plot_type": "gamma",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_gamma": core_r_gamma,
                 "core_d_gamma": core_d_gamma,
                 "driver_allowed": driver_allowed,
@@ -2813,12 +2859,12 @@ def run_testbed(
         rider_beta_y_m=rider_beta_y,
         halted_early=halted_early if "halted_early" in locals() else False,
         halt_reason=halt_reason if "halt_reason" in locals() else None,
-        num_particles_dead=num_particles_dead
-        if "num_particles_dead" in locals()
-        else 0,
-        particle_failure_info=particle_failure_info
-        if "particle_failure_info" in locals()
-        else None,
+        num_particles_dead=(
+            num_particles_dead if "num_particles_dead" in locals() else 0
+        ),
+        particle_failure_info=(
+            particle_failure_info if "particle_failure_info" in locals() else None
+        ),
     )
 
 

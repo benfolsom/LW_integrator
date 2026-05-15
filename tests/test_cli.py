@@ -27,6 +27,8 @@ def _make_args(**overrides) -> argparse.Namespace:
         "adaptive_debug": None,
         "space_charge": False,
         "space_charge_softening_mm": 0.0,
+        "space_charge_bunch_sigma_mm": None,
+        "space_charge_min_retarded_steps": None,
         "auto_duration": False,
         "auto_duration_crossing_steps": None,
         "auto_duration_post_factor": None,
@@ -73,7 +75,8 @@ class TestCliConfigParsing:
         help_text = capsys.readouterr().out
         assert "--results-file RESULTS_FILE" in help_text
         assert "saved sweep or optimization results JSON" in help_text
-        assert "'fast' uses the single-sample matching path." in help_text
+        assert "'fast' is the" in help_text
+        assert "maintained default" in help_text
 
     def test_parse_args_accepts_results_file(self):
         args = cli.parse_args(["--results-file", "results/sweep_results.json"])
@@ -398,6 +401,8 @@ class TestCliBuildRequest:
                     "space_charge_enabled": True,
                     "space_charge_retarded": False,
                     "space_charge_softening_mm": 0.125,
+                    "space_charge_bunch_sigma_mm": 0.02,
+                    "space_charge_min_retarded_steps": 7,
                 }
             ),
             encoding="utf-8",
@@ -409,6 +414,8 @@ class TestCliBuildRequest:
         assert request.space_charge.enabled is True
         assert request.space_charge.retarded is False
         assert request.space_charge.softening_mm == pytest.approx(0.125)
+        assert request.space_charge.bunch_sigma_mm == pytest.approx(0.02)
+        assert request.space_charge.min_retarded_steps == 7
 
     def test_build_request_rejects_auto_duration_for_non_b2b(self):
         with pytest.raises(

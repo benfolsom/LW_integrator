@@ -286,11 +286,32 @@ def test_medina_impulse_damps_velocity_for_transverse_force() -> None:
     assert impulse[2] < 0.0
 
 
+def test_medina_impulse_cancels_ultrarelativistic_longitudinal_force() -> None:
+    gamma = 1.0e12
+    beta_z = np.sqrt(1.0 - 1.0 / gamma**2)
+    force_z = 2.5e5
+
+    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+        external_force=(0.0, 0.0, force_z),
+        beta=(0.0, 0.0, beta_z),
+        beta_dot_t=(0.0, 0.0, force_z / (gamma**3 * ELECTRON_MASS_AMU * C_MMNS)),
+        gamma=gamma,
+        dgamma_dt=beta_z * force_z / (ELECTRON_MASS_AMU * C_MMNS),
+        mass=ELECTRON_MASS_AMU,
+        charge=ELEMENTARY_CHARGE,
+        coordinate_dt=1.0e-3,
+        max_impulse_fraction=0.25,
+    )
+
+    assert capped is False
+    assert impulse == pytest.approx((0.0, 0.0, 0.0), abs=1.0e-30)
+
+
 def test_medina_impulse_applies_numerical_cap() -> None:
     impulse, capped = equations._compute_medina_radiation_reaction_impulse(
-        external_force=(2.0, 0.0, 0.0),
+        external_force=(2.0e12, 0.0, 0.0),
         beta=(0.0, 0.0, 0.9),
-        beta_dot_t=(3.0e12, 0.0, 0.0),
+        beta_dot_t=(0.0, 0.0, 0.0),
         gamma=4.0,
         dgamma_dt=0.0,
         mass=ELECTRON_MASS_AMU,
@@ -300,7 +321,7 @@ def test_medina_impulse_applies_numerical_cap() -> None:
     )
 
     assert capped is True
-    assert np.linalg.norm(impulse) == pytest.approx(0.25 * 2.0e-6)
+    assert np.linalg.norm(impulse) == pytest.approx(0.25 * 2.0e6)
 
 
 def test_power_matched_damping_does_not_cross_rest_energy() -> None:

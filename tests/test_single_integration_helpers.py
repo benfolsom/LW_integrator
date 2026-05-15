@@ -109,6 +109,8 @@ def _config(**overrides):
         "space_charge_enabled": True,
         "space_charge_retarded": False,
         "space_charge_softening_mm": 0.012,
+        "space_charge_bunch_sigma_mm": 0.034,
+        "space_charge_min_retarded_steps": 6,
         "external_field_enabled": True,
         "external_electric_field_native": (1.0, 0.0, 0.0),
         "external_electric_field_v_per_m": (0.0, 2.0, 0.0),
@@ -133,9 +135,7 @@ def _config(**overrides):
 
 
 def test_calculate_rider_starting_pz_uses_b2b_kinetic_energy():
-    wall_pz = calculate_rider_starting_pz(
-        5.0, 1.0, SimulationType.CONDUCTING_WALL
-    )
+    wall_pz = calculate_rider_starting_pz(5.0, 1.0, SimulationType.CONDUCTING_WALL)
     b2b_pz = calculate_rider_starting_pz(5.0, 1.0, "BUNCH_TO_BUNCH")
 
     assert b2b_pz > wall_pz
@@ -175,15 +175,25 @@ def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
     assert setup.options.self_consistency_chrono_adaptive_tolerance is True
     assert setup.options.self_consistency_mass_shell_tolerance == pytest.approx(4e-3)
     assert setup.options.self_consistency_mass_shell_relaxation == pytest.approx(0.42)
-    assert setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
+    assert (
+        setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
+    )
     assert setup.options.self_consistency_gamma_reconciliation_fixed_weight == 0.25
     assert setup.options.space_charge_enabled is True
     assert setup.options.space_charge_retarded is False
     assert setup.options.space_charge_softening_mm == pytest.approx(0.012)
+    assert setup.options.space_charge_bunch_sigma_mm == pytest.approx(0.034)
+    assert setup.options.space_charge_min_retarded_steps == 6
     assert setup.options.external_field_enabled is True
-    assert setup.options.external_electric_field_native == pytest.approx((1.0, 0.0, 0.0))
-    assert setup.options.external_electric_field_v_per_m == pytest.approx((0.0, 2.0, 0.0))
-    assert setup.options.external_magnetic_field_native == pytest.approx((0.0, 0.0, 3.0))
+    assert setup.options.external_electric_field_native == pytest.approx(
+        (1.0, 0.0, 0.0)
+    )
+    assert setup.options.external_electric_field_v_per_m == pytest.approx(
+        (0.0, 2.0, 0.0)
+    )
+    assert setup.options.external_magnetic_field_native == pytest.approx(
+        (0.0, 0.0, 3.0)
+    )
     assert setup.options.external_field_x_min == pytest.approx(-1.0)
     assert setup.options.external_field_x_max == pytest.approx(1.0)
     assert setup.options.external_field_y_min == pytest.approx(-2.0)
@@ -214,9 +224,7 @@ def test_build_integration_metrics_uses_direct_gamma_values():
     assert outcome.metrics["final_gamma_mean"] == 12.0
     assert outcome.metrics["max_percent_energy_gain"] == pytest.approx(20.0)
     assert outcome.metrics["delta_e_mev"] == pytest.approx(2.0 * 931.494)
-    assert outcome.metrics["max_energy_gain_gev"] == pytest.approx(
-        2.0 * 931.494 / 1e3
-    )
+    assert outcome.metrics["max_energy_gain_gev"] == pytest.approx(2.0 * 931.494 / 1e3)
     assert outcome.metrics["max_relative_gain"] == pytest.approx(0.2)
     assert outcome.metrics["rider_emittance_x_mm_mrad"] == 0.5
     assert outcome.metrics["num_particles_dead"] == 2
@@ -245,7 +253,9 @@ def test_build_integration_metrics_reports_missing_gamma():
 
     assert "max_percent_energy_gain" not in outcome.metrics
     assert any("No trajectory data available" in line for line in outcome.log_lines)
-    assert any("could not be calculated for Run 6" in line for line in outcome.log_lines)
+    assert any(
+        "could not be calculated for Run 6" in line for line in outcome.log_lines
+    )
 
 
 def test_build_halted_integration_output_can_save_sampled_trajectory():

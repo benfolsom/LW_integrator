@@ -52,7 +52,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "bunch_mean": 1000.0,
     "cavity_spacing": 0.0,
     "z_cutoff": 0.0,
-    "chrono_mode": "averaged",
+    "chrono_mode": "fast",
     "startup_mode": "cold-start",
     "image_subcharge_count": 12,
     "use_image_weighting": True,
@@ -313,8 +313,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--chrono-mode",
         choices=("averaged", "fast"),
         help=(
-            "Retardation sampling strategy: 'averaged' blends R/c and 2R/c, "
-            "'fast' uses the single-sample matching path."
+            "Retardation sampling strategy. 'fast' is the maintained default; "
+            "'averaged' is retained for diagnostics with approximate back-history."
         ),
     )
     parser.add_argument(
@@ -352,6 +352,24 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help=(
             "For bunch-to-bunch simulations, clone the rider bunch to use as the "
             "driver when no driver configuration is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--space-charge-bunch-sigma-mm",
+        type=float,
+        default=None,
+        help=(
+            "Bunch width used to auto-delay retarded intra-bunch space charge "
+            "(default: 0.01 mm)."
+        ),
+    )
+    parser.add_argument(
+        "--space-charge-min-retarded-steps",
+        type=int,
+        default=None,
+        help=(
+            "Explicit step threshold before retarded intra-bunch space charge "
+            "is used; omit to derive it from bunch sigma and timestep."
         ),
     )
     parser.add_argument(
@@ -495,6 +513,8 @@ def _merge_simulation_payload(
         "space_charge_enabled",
         "space_charge_retarded",
         "space_charge_softening_mm",
+        "space_charge_bunch_sigma_mm",
+        "space_charge_min_retarded_steps",
         "auto_duration_enabled",
         "auto_duration_crossing_steps",
         "auto_duration_post_factor",
@@ -526,6 +546,10 @@ def _merge_simulation_payload(
         result["space_charge_enabled"] = True
     if getattr(args, "space_charge_softening_mm", 0.0) != 0.0:
         result["space_charge_softening_mm"] = args.space_charge_softening_mm
+    if getattr(args, "space_charge_bunch_sigma_mm", None) is not None:
+        result["space_charge_bunch_sigma_mm"] = args.space_charge_bunch_sigma_mm
+    if getattr(args, "space_charge_min_retarded_steps", None) is not None:
+        result["space_charge_min_retarded_steps"] = args.space_charge_min_retarded_steps
 
     external_field = result.get("external_field")
     if not isinstance(external_field, MutableMapping):
@@ -597,7 +621,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         )
 
     chrono_mode = _parse_chrono_mode(
-        payload.get("chrono_mode", ChronoMatchingMode.AVERAGED)
+        payload.get("chrono_mode", DEFAULT_SIMULATION["chrono_mode"])
     )
     startup_mode = _parse_startup_mode(
         payload.get("startup_mode", StartupMode.COLD_START)
@@ -740,15 +764,27 @@ def _build_space_charge_config(
 
     try:
         softening_mm = float(payload.get("space_charge_softening_mm", 0.0))
+        bunch_sigma_mm = float(payload.get("space_charge_bunch_sigma_mm", 0.01))
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
-            "space_charge_softening_mm must be numeric"
+            "space_charge_softening_mm and space_charge_bunch_sigma_mm must be numeric"
+        ) from exc
+    min_retarded_steps_raw = payload.get("space_charge_min_retarded_steps")
+    try:
+        min_retarded_steps = (
+            int(min_retarded_steps_raw) if min_retarded_steps_raw is not None else None
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            "space_charge_min_retarded_steps must be an integer or null"
         ) from exc
 
     return SpaceChargeConfig(
         enabled=True,
         retarded=bool(payload.get("space_charge_retarded", True)),
         softening_mm=softening_mm,
+        bunch_sigma_mm=bunch_sigma_mm,
+        min_retarded_steps=min_retarded_steps,
     )
 
 

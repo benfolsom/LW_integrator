@@ -110,6 +110,8 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         space_charge_enabled=True,
         space_charge_retarded=False,
         space_charge_softening_mm=0.123,
+        space_charge_bunch_sigma_mm=0.045,
+        space_charge_min_retarded_steps=9,
         external_field_enabled=True,
         external_electric_field_native=(1.0, 2.0, 3.0),
         external_electric_field_v_per_m=(4.0, 5.0, 6.0),
@@ -163,6 +165,8 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.space_charge_enabled is True
     assert config.space_charge_retarded is False
     assert config.space_charge_softening_mm == pytest.approx(0.123)
+    assert config.space_charge_bunch_sigma_mm == pytest.approx(0.045)
+    assert config.space_charge_min_retarded_steps == 9
     assert config.external_field_enabled is True
     assert config.external_electric_field_native == pytest.approx((1.0, 2.0, 3.0))
     assert config.external_electric_field_v_per_m == pytest.approx((4.0, 5.0, 6.0))
@@ -201,7 +205,9 @@ def test_auto_timestep_and_auto_steps_helpers_are_consistent():
 
 
 def test_calculate_steps_from_duration_uses_minimum_step_count():
-    steps, timestep = calculate_steps_from_duration(total_duration_ns=8.0, particle_energy_gev=2.0)
+    steps, timestep = calculate_steps_from_duration(
+        total_duration_ns=8.0, particle_energy_gev=2.0
+    )
 
     assert steps == 20
     assert timestep == pytest.approx(0.4)

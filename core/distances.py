@@ -145,11 +145,13 @@ def _locate_retarded_index_soa(
     t_col: np.ndarray,
     index_traj: int,
     target_time: float,
+    *,
+    side: str = "right",
 ) -> int:
     """SOA fast path: binary search on pre-sliced time column."""
     if target_time <= 0.0:
         return index_traj
-    idx = int(np.searchsorted(t_col, target_time, side="left"))
+    idx = int(np.searchsorted(t_col, target_time, side=side))
     return min(idx, index_traj)
 
 
@@ -167,6 +169,66 @@ def _locate_retarded_index(
         if trajectory_ext[candidate_index]["t"][sample_index] >= target_time:
             return candidate_index
     return 0
+
+
+def _compute_delta_t_soa(
+    *,
+    mode: ChronoMatchingMode,
+    distance: float,
+    b_nhat: float,
+    sample_index: int,
+    index_traj: int,
+    index_part: int,
+    traj: TrajectoryArrays,
+    traj_ext: TrajectoryArrays,
+) -> float:
+    """SOA equivalent of :func:`_compute_delta_t`."""
+    if mode is ChronoMatchingMode.FAST:
+        numerator = 1.0 + b_nhat
+        denominator = 1.0 - b_nhat**2
+
+        k_threshold = 1e-12
+        if abs(denominator) < k_threshold:
+            denominator = np.copysign(k_threshold, denominator)
+
+        return distance * numerator / (C_MMNS * denominator)
+
+    time_offsets = np.array([distance / C_MMNS, 2.0 * distance / C_MMNS], dtype=float)
+    sampled_b = 0.0
+    t_col = traj_ext.t[: index_traj + 1, sample_index]
+
+    for offset in time_offsets:
+        target_time = traj_ext.t[index_traj, sample_index] - offset
+        matched_index = _locate_retarded_index_soa(
+            t_col, index_traj, target_time, side="left"
+        )
+
+        dx = traj.x[index_traj, index_part] - traj_ext.x[matched_index, sample_index]
+        dy = traj.y[index_traj, index_part] - traj_ext.y[matched_index, sample_index]
+        dz = traj.z[index_traj, index_part] - traj_ext.z[matched_index, sample_index]
+        sample_distance = (dx * dx + dy * dy + dz * dz) ** 0.5
+        if sample_distance < NUMERICAL_EPSILON:
+            nx = ny = nz = 0.0
+        else:
+            nx = dx / sample_distance
+            ny = dy / sample_distance
+            nz = dz / sample_distance
+
+        sampled_b += (
+            traj_ext.bx[matched_index, sample_index] * nx
+            + traj_ext.by[matched_index, sample_index] * ny
+            + traj_ext.bz[matched_index, sample_index] * nz
+        )
+
+    averaged_b = sampled_b / time_offsets.size
+    numerator = 1.0 + averaged_b
+    denominator = 1.0 - averaged_b**2
+
+    k_threshold = 1e-12
+    if abs(denominator) < k_threshold:
+        denominator = np.copysign(k_threshold, denominator)
+
+    return float(distance * numerator / (C_MMNS * denominator))
 
 
 def compute_instantaneous_distance(
@@ -348,8 +410,16 @@ def chrono_match_indices_soa(
             char_t = traj_ext.char_time[sample_index]
             delta_t = 10.0 * char_t if char_t > 0 else 1e-3
         elif mode is ChronoMatchingMode.AVERAGED:
-            # TODO: SOA AVERAGED mode — fall back to current step
-            delta_t = 0.0
+            delta_t = _compute_delta_t_soa(
+                mode=mode,
+                distance=nhat["R"][sample_index],
+                b_nhat=b_nhat,
+                sample_index=sample_index,
+                index_traj=index_traj,
+                index_part=index_part,
+                traj=traj,
+                traj_ext=traj_ext,
+            )
         else:
             delta_t = _compute_delta_t(
                 mode=mode,
