@@ -76,8 +76,6 @@ from typing import Any, Optional
 
 import numpy as np
 
-import inspect
-
 from .constants import C_MMNS
 from .distances import (
     ChronoMatchResult,
@@ -539,16 +537,6 @@ def _compute_gating_threshold(
     Special handling for β·n̂ ≥ 1 (receding at or above light speed):
     Return very large threshold (effectively infinite) to suppress forces.
     """
-    beta_avg_dot_nhat = (
-        beta_avg_x * nhat["nx"] + beta_avg_y * nhat["ny"] + beta_avg_z * nhat["nz"]
-    )
-
-    # Compute denominator: (1 - β·n̂)
-    # β·n̂ < 0: approaching → denominator > 1 → small threshold (meet quickly)
-    # β·n̂ > 0: receding → denominator < 1 → large threshold (takes longer)
-    # β·n̂ → 1: receding at c → denominator → 0 → threshold → ∞ (never meet)
-    denominators = 1.0 - beta_avg_dot_nhat
-
     # Handle edge case: particles receding at or faster than light speed
     # For β·n̂ ≥ 1, light never catches the observer, so threshold = ∞
     # Use a very large but finite value to avoid numerical issues
@@ -561,9 +549,35 @@ def _compute_gating_threshold(
     # Calculate particle speed magnitude
     beta_magnitude = np.sqrt(beta_avg_x**2 + beta_avg_y**2 + beta_avg_z**2)
 
+    # Most sweep runs use only a few external particles. Avoid constructing
+    # several tiny NumPy temporaries in this per-particle, per-iteration gate.
+    R_values = nhat["R"]
+    if R_values.size <= 8:
+        max_threshold = 0.0
+        for R, nx, ny, nz in zip(R_values, nhat["nx"], nhat["ny"], nhat["nz"]):
+            beta_avg_dot_nhat = beta_avg_x * nx + beta_avg_y * ny + beta_avg_z * nz
+            denominator = 1.0 - beta_avg_dot_nhat
+            if denominator > MIN_DENOMINATOR:
+                threshold = beta_magnitude * R / denominator
+                if threshold > max_threshold:
+                    max_threshold = float(threshold)
+            elif LARGE_THRESHOLD > max_threshold:
+                max_threshold = LARGE_THRESHOLD
+        return max(max_threshold, 0.0)
+
+    beta_avg_dot_nhat = (
+        beta_avg_x * nhat["nx"] + beta_avg_y * nhat["ny"] + beta_avg_z * nhat["nz"]
+    )
+
+    # Compute denominator: (1 - β·n̂)
+    # β·n̂ < 0: approaching → denominator > 1 → small threshold (meet quickly)
+    # β·n̂ > 0: receding → denominator < 1 → large threshold (takes longer)
+    # β·n̂ → 1: receding at c → denominator → 0 → threshold → ∞ (never meet)
+    denominators = 1.0 - beta_avg_dot_nhat
+
     thresholds = np.where(
         denominators > MIN_DENOMINATOR,
-        beta_magnitude * nhat["R"] / denominators,
+        beta_magnitude * R_values / denominators,
         LARGE_THRESHOLD,
     )
 
@@ -1414,12 +1428,6 @@ def retarded_equations_of_motion(
                         # Create temporary trajectory for retarded distance calculation
                         temp_trajectory = trajectory.copy()
                         temp_trajectory[index_traj] = observer_state
-                        _cfd_accepts_soa = (
-                            "traj_soa"
-                            in inspect.signature(
-                                _compute_full_retarded_distance
-                            ).parameters
-                        )
                         nhat, indices_bounded, chrono_result = (
                             _compute_full_retarded_distance(
                                 temp_trajectory,
@@ -1431,23 +1439,17 @@ def retarded_equations_of_motion(
                                 timestep_h=h,
                                 **(
                                     {"traj_soa": traj_soa}
-                                    if _cfd_accepts_soa and traj_soa is not None
+                                    if traj_soa is not None
                                     else {}
                                 ),
                                 **(
                                     {"traj_ext_soa": traj_ext_soa}
-                                    if _cfd_accepts_soa and traj_ext_soa is not None
+                                    if traj_ext_soa is not None
                                     else {}
                                 ),
                             )
                         )
                     else:
-                        _cfd_accepts_soa = (
-                            "traj_soa"
-                            in inspect.signature(
-                                _compute_full_retarded_distance
-                            ).parameters
-                        )
                         nhat, indices_bounded, chrono_result = (
                             _compute_full_retarded_distance(
                                 trajectory,
@@ -1459,12 +1461,12 @@ def retarded_equations_of_motion(
                                 timestep_h=h,
                                 **(
                                     {"traj_soa": traj_soa}
-                                    if _cfd_accepts_soa and traj_soa is not None
+                                    if traj_soa is not None
                                     else {}
                                 ),
                                 **(
                                     {"traj_ext_soa": traj_ext_soa}
-                                    if _cfd_accepts_soa and traj_ext_soa is not None
+                                    if traj_ext_soa is not None
                                     else {}
                                 ),
                             )

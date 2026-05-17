@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
@@ -55,6 +56,7 @@ def _build_partial_soa(
         return None
 
 
+@lru_cache(maxsize=None)
 def _call_accepts_kw(callable_obj: Callable, name: str) -> bool:
     """Return whether *callable_obj* accepts a keyword argument."""
     parameters = inspect.signature(callable_obj).parameters

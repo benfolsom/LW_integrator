@@ -348,6 +348,23 @@ def test_gating_threshold_handles_receding_case_with_large_threshold() -> None:
     assert threshold == pytest.approx(1e12)
 
 
+def test_gating_threshold_small_array_matches_vector_path() -> None:
+    nhat_small = {
+        "R": np.array([2.0, 4.0, 8.0, 16.0]),
+        "nx": np.array([0.2, -0.3, 0.4, -0.5]),
+        "ny": np.array([0.1, 0.2, -0.1, -0.2]),
+        "nz": np.array([0.9, 0.8, -0.7, -0.6]),
+    }
+    nhat_large = {
+        key: np.concatenate([value, value, value]) for key, value in nhat_small.items()
+    }
+
+    small_threshold = equations._compute_gating_threshold(nhat_small, 0.25, -0.05, 0.35)
+    large_threshold = equations._compute_gating_threshold(nhat_large, 0.25, -0.05, 0.35)
+
+    assert small_threshold == pytest.approx(large_threshold)
+
+
 def test_get_current_particle_gamma_and_beta_switches_to_iterated_state() -> None:
     current_state = _make_state(bx=[0.1], by=[0.2], bz=[0.3], gamma=[4.0])
     result_state = _make_state(bx=[0.4], by=[0.5], bz=[0.6], gamma=[7.0])

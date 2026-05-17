@@ -32,12 +32,15 @@ from __future__ import annotations
 import concurrent.futures
 import itertools
 import json
+import signal
 import shutil
 import time
 import traceback as _traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from threading import current_thread, main_thread
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
@@ -122,6 +125,38 @@ class _CliStabilityOutcome:
     log_lines: list[str]
     metrics_updates: dict[str, Any]
     rejection_record: dict[str, Any] | None
+
+
+class _PerRunTimeoutError(TimeoutError):
+    """Raised when a CLI sweep integration exceeds its configured timeout."""
+
+    def __init__(self, timeout_seconds: float):
+        super().__init__(f"Run exceeded timeout of {timeout_seconds:.1f}s")
+        self.timeout_seconds = timeout_seconds
+
+
+@contextmanager
+def _per_run_timeout(timeout_seconds: float):
+    """Apply a wall-clock timeout to one integration attempt on Unix main threads."""
+    if timeout_seconds <= 0 or current_thread() is not main_thread():
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+
+    def _raise_timeout(_signum, _frame):
+        raise _PerRunTimeoutError(timeout_seconds)
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0.0:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 
 
 def _resolve_cli_rider_overrides(
@@ -756,15 +791,33 @@ class SweepRunner:
 
         # ── Call run_testbed (THE SAME function the GUI calls) ──
         try:
-            result = run_testbed(
-                options,
-                log=log_callback,
-                progress_callback=progress_callback if emit_run_diagnostics else None,
-            )
+            with _per_run_timeout(float(self.config.per_run_timeout)):
+                result = run_testbed(
+                    options,
+                    log=log_callback,
+                    progress_callback=(
+                        progress_callback if emit_run_diagnostics else None
+                    ),
+                )
             if emit_run_diagnostics:
                 self._log_line(
                     f"[OPTIMIZATION]   [DEBUG] run_testbed completed for Run {run_num}"
                 )
+        except _PerRunTimeoutError as e:
+            return {
+                "success": False,
+                "error": f"TIMEOUT after {e.timeout_seconds:.1f}s",
+                "timed_out": True,
+                "timeout_seconds": e.timeout_seconds,
+                "parameters": {
+                    "aperture": aperture,
+                    "energy_gev": energy_gev,
+                    "start_z": start_z,
+                    "transv_offset": timestep_setup.transv_offset,
+                    "timestep": timestep_setup.timestep,
+                    "steps": timestep_setup.steps,
+                },
+            }
         except Exception as e:
             import traceback
 
@@ -1013,7 +1066,9 @@ class SweepRunner:
                         **params_dict,
                         "transverse_offset_fraction": transv_offset_frac,
                     }
-                    run_params = resolve_sweep_run_parameters(self.config, helper_params)
+                    run_params = resolve_sweep_run_parameters(
+                        self.config, helper_params
+                    )
                     if run_params is None:
                         raise ValueError("Sweep run parameters are missing energy")
                     rider_m_particle = run_params.rider_m_particle
@@ -1078,7 +1133,9 @@ class SweepRunner:
                         **params_dict,
                         "transverse_offset_fraction": transv_offset_frac,
                     }
-                    run_params = resolve_sweep_run_parameters(self.config, helper_params)
+                    run_params = resolve_sweep_run_parameters(
+                        self.config, helper_params
+                    )
                     if run_params is None:
                         raise ValueError("Sweep run parameters are missing energy")
 

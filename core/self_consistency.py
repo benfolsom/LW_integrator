@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Optional
 
 from .types import (
@@ -45,6 +46,11 @@ StepFunction = Callable[
     ],
     ParticleState,
 ]
+
+
+@lru_cache(maxsize=None)
+def _signature_parameters(step_function: StepFunction):
+    return inspect.signature(step_function).parameters
 
 
 def canonicalize_self_consistency_mode(mode: object) -> str:
@@ -302,6 +308,7 @@ class SelfConsistencyConfig:
             verbosity=0,
         )
 
+
 def self_consistent_step(
     step_function: StepFunction,
     h_step: float,
@@ -370,7 +377,7 @@ def self_consistent_step(
     """
 
     # Check whether step_function accepts SOA keyword arguments
-    _sig_params = inspect.signature(step_function).parameters
+    _sig_params = _signature_parameters(step_function)
     _accepts_soa = "traj_soa" in _sig_params or any(
         p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
     )
@@ -401,11 +408,17 @@ def self_consistent_step(
             else {}
         ),
         **({"traj_soa": traj_soa} if _accepts_soa and traj_soa is not None else {}),
-        **({"traj_ext_soa": traj_ext_soa} if _accepts_soa and traj_ext_soa is not None else {}),
+        **(
+            {"traj_ext_soa": traj_ext_soa}
+            if _accepts_soa and traj_ext_soa is not None
+            else {}
+        ),
         **(
             {"radiation_reaction_mode": radiation_reaction_mode}
             if "radiation_reaction_mode" in _sig_params
-            or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values())
+            or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
+            )
             else {}
         ),
     )
