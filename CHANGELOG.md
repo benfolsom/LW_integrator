@@ -9,9 +9,8 @@ All notable changes and updates to the LW Integrator project are documented in t
 - **Bug** — CLI sequential sweeps now enforce `per_run_timeout` around each `run_testbed()` call, so one pathological point is recorded as a timed-out failed run instead of pinning the full sweep indefinitely.
 - **Performance** — Cached repeated function-signature inspection in the integration runner and self-consistency wrapper, and removed per-call signature checks around the retarded-distance helper in the equations hot path.
 - **Performance** — Added a scalar fast path for COLD_START gating on low-particle runs. The fast path computes the same maximum threshold as the vectorized path while avoiding several tiny NumPy temporaries in small B2B sweeps.
-- **Config** — Added `configs/sweep_configs/005_08_b2b_sweep_E_spread_png_limits_40x40.json`, a reduced 40x40 version of the March B2B energy/spread sweep over the plotted 0.5-3000 GeV and 0.01-100 m domain.
 - **Tests** — Added regression coverage for CLI per-run timeout handling and for scalar/vector equivalence in the COLD_START gating threshold.
-- **Files modified** — `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `lw_integrator/sweep_runner.py`, `configs/sweep_configs/005_08_b2b_sweep_E_spread_png_limits_40x40.json`, `tests/test_cli_per_run_timeout.py`, `tests/unit/test_equations_helpers.py`
+- **Files modified** — `core/equations.py`, `core/integration_runner.py`, `core/self_consistency.py`, `lw_integrator/sweep_runner.py`, `tests/test_cli_per_run_timeout.py`, `tests/unit/test_equations_helpers.py`
 
 ### Prescribed External Fields (June 2026)
 

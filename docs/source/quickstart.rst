@@ -113,11 +113,6 @@ simulation, and confirm that the regression tooling works on your machine.
    a point that exceeds the timeout is saved as a failed timed-out run and the
    sweep continues to the next grid point.
 
-   For the March 2026 35 um B2B energy/spread reference domain, use
-   ``configs/sweep_configs/005_08_b2b_sweep_E_spread_png_limits_40x40.json``
-   when you want the same plotted 0.5-3000 GeV and 0.01-100 m limits with a
-   reduced 40x40 grid.
-
    Fine-tune diagnostic output during sweeps without editing the JSON config:
 
    .. code-block:: bash
