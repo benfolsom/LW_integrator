@@ -58,6 +58,12 @@ Heatmap Contour Improvements (March 2026)
 * **Overlap culling** — after clamping, a second pass hides labels that
   genuinely intersect previously-accepted labels (using a negative pixel
   padding of −4 px so that merely-touching labels are kept).
+* **Explicit signed color limits** — ``--color-min`` and ``--color-max`` clamp
+  the interpolated color scale after smoothing, making positive and negative
+  gain regions comparable across related B2B maps.
+* **Displayed-axis crop** — ``--axis-param1-max`` crops the rendered x-axis
+  while preserving neighboring data columns for interpolation, useful for
+  removing high-energy dead space from sparse log-spaced sweeps.
 
 These changes prevent contour labels from being clipped by ``tight_layout`` /
 ``savefig`` redraws and avoid label stacking in dense contour regions.

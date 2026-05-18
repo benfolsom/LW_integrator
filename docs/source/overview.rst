@@ -153,7 +153,10 @@ Key ideas to keep in mind
   maintained command for producing
   publication-quality heatmaps from sweep results. Contour lines use a low
   alpha (0.18), labels are clamped to stay inside the axes after the final
-  layout pass, and overlapping labels are culled automatically.
+  layout pass, and overlapping labels are culled automatically. Use
+  ``--color-min`` / ``--color-max`` for comparable signed color scales across
+  related plots, and ``--axis-param1-max`` when a displayed x-axis crop should
+  preserve neighboring data columns for interpolation.
 * **Live sweep plotting.**  ``lw-plot-latest-live`` follows the newest sweep
   log automatically, while ``lw-plot-from-logcache-live`` can watch a specific
   log file or render a one-shot static plot from it.

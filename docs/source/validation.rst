@@ -31,6 +31,21 @@ Sweep post-processing should use the packaged commands:
 These tools are covered by focused CLI tests and should remain the supported
 surface for plotting-related changes.
 
+For signed B2B energy-gain maps, the clearest reference style is:
+
+.. code-block:: bash
+
+   lw-generate-sweep-heatmap results/sweeps/<sweep_dir> \
+      --output gains.png --absolute-gains --log-param2 \
+      --param1-min 1 --param1-max 140 --axis-param1-max 120 \
+      --gain-min -50 --gain-max 50 --color-min -30 --color-max 40 \
+      --num-contours 8 --no-markers --grey-zero --grey-centre 0 \
+      --no-title
+
+For bunch-to-bunch examples, interpret the maps as screening cases: the driver
+bunch proceeds through a virtual exit aperture shortly after the interaction
+point, which blocks direct line of sight to the rider downstream.
+
 Reference Notebooks
 -------------------
 

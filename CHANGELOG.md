@@ -4,6 +4,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### B2B Heatmap Documentation and Plot Controls (May 2026)
+
+- **Plotting** — Added `--color-min` / `--color-max` to clamp the interpolated heatmap color scale after smoothing, enabling comparable signed gain maps across related sweeps.
+- **Plotting** — Added `--axis-param1-min` / `--axis-param1-max` to crop the displayed first-parameter axis while preserving neighboring data columns for interpolation.
+- **Plotting** — Added `--title` so publication plots can override the generated summary title; `--no-title` remains available for compact output.
+- **Docs** — Updated the README and Sphinx docs with the selected B2B signed-gain heatmap command, a reference image, and explicit guidance that B2B example maps illustrate virtual-exit-aperture screening after the interaction point.
+- **Tests** — Added CLI argument coverage for the new heatmap controls.
+- **Files modified** — `lw_integrator/sweep_heatmap.py`, `tests/test_plotting_tools.py`, `README.md`, `docs/assets/b2b_screening_example_heatmap.png`, `docs/source/index.rst`, `docs/source/overview.rst`, `docs/source/quickstart.rst`, `docs/source/recent_changes.rst`, `docs/source/validation.rst`
+
 ### CLI Sweep Timeout and Low-Particle Profiling Cleanup (May 2026)
 
 - **Bug** — CLI sequential sweeps now enforce `per_run_timeout` around each `run_testbed()` call, so one pathological point is recorded as a timed-out failed run instead of pinning the full sweep indefinitely.

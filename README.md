@@ -385,14 +385,20 @@ the maintained packaged command `lw-generate-sweep-heatmap`:
 
 ```bash
 lw-generate-sweep-heatmap results/sweeps/<sweep_dir> \
-    --no-title --output gains.png --absolute-gains --log-param2 \
-    --param1-max 1000 --num-contours 8 --no-markers --grey-zero \
-    --grey-centre 0 --gain-max 200 --param1-min 1 --log-colorbar
+    --output gains.png --absolute-gains --log-param2 \
+    --param1-min 1 --param1-max 140 --axis-param1-max 120 \
+    --gain-min -50 --gain-max 50 --color-min -30 --color-max 40 \
+    --num-contours 8 --no-markers --grey-zero --grey-centre 0 \
+    --no-title
 ```
 
-Contour lines use reduced alpha (0.18) and labels are automatically clamped
-to stay within the axes. Overlapping labels are culled after the final
-layout pass so they never stack on top of each other.
+Use `--param1-max` / `--param2-max` to choose the data included in the
+interpolation, and `--axis-param1-max` to crop the displayed x-axis after
+interpolation. The explicit color limits keep positive and negative gain
+regions visually comparable across related plots. Contour lines use reduced
+alpha (0.18) and labels are automatically clamped to stay within the axes.
+Overlapping labels are culled after the final layout pass so they never stack
+on top of each other.
 
 ### Live sweep plotting
 
@@ -447,6 +453,14 @@ Simple example configs live under `configs/`. Load them via the GUI
 **`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** — Same sweep geometry but with an asymmetric spot size: rider 35 µm, driver 0.1 µm. The larger rider spot reduces near-collision blowups.
 
 ![B2B 35 µm rider spot size](docs/assets/proton_proton_35micron.png)
+
+The bunch-to-bunch examples illustrate a screening regime: after the interaction
+point, the driver bunch is treated as proceeding through a virtual exit aperture
+that blocks direct line of sight to the rider a short distance downstream. The
+maps therefore visualize residual post-screening fields rather than an
+unbounded, permanently visible counter-propagating bunch interaction.
+
+![B2B screening example heatmap](docs/assets/b2b_screening_example_heatmap.png)
 
 ---
 
