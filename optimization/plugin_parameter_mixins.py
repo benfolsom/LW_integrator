@@ -322,9 +322,7 @@ class OptimizationPluginParameterMixin:
         self._param_widgets["distance_label"] = ttk.Label(
             frame, text="Distance Target:"
         )
-        self._param_widgets["distance_label"].grid(
-            row=12, column=0, sticky="w", pady=2
-        )
+        self._param_widgets["distance_label"].grid(row=12, column=0, sticky="w", pady=2)
         self._param_widgets["distance_frame"] = ttk.Frame(frame)
         distance_frame = self._param_widgets["distance_frame"]
         distance_frame.grid(row=12, column=1, columnspan=3, sticky="ew", pady=2)
@@ -750,6 +748,9 @@ class OptimizationPluginParameterMixin:
             foreground="gray",
         )
         self.link_energy_help_label.pack(side="left", padx=(10, 0))
+
+        for var in (self.energy_min_var, self.energy_max_var, self.energy_points_var):
+            var.trace_add("write", lambda *_: self._update_linked_energy_presentation())
 
         row += 1
 

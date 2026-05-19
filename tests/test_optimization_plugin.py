@@ -43,9 +43,12 @@ class _MockVar:
 class _WidgetRecorder:
     def __init__(self):
         self.calls = []
+        self.text = None
 
     def config(self, **kwargs):
         self.calls.append(kwargs)
+        if "text" in kwargs:
+            self.text = kwargs["text"]
 
     def configure(self, **kwargs):
         self.config(**kwargs)
@@ -782,6 +785,61 @@ class TestOptimizationPluginIntegration:
             harness.sweep_params["driver_energy_gev"]["fixed_var"].get()
         ) == pytest.approx(calculate_energy_from_pz(-4925.0, 207.2))
         assert harness.sweep_params["driver_stripped_ions"]["fixed_var"].get() == "54.0"
+
+    def test_linked_energy_presentation_shows_rider_sweep_range(self):
+        label_widget = _WidgetRecorder()
+        help_label = _WidgetRecorder()
+        harness = SimpleNamespace(
+            link_driver_rider_energy_var=_MockVar(True),
+            energy_min_var=_MockVar("0.5"),
+            energy_max_var=_MockVar("3000"),
+            energy_points_var=_MockVar("80"),
+            link_energy_help_label=help_label,
+            sweep_params={
+                "driver_energy_gev": {
+                    "label_text": "Kinetic Energy (GeV):",
+                    "label_widget": label_widget,
+                }
+            },
+        )
+
+        OptimizationPluginFormMixin._update_linked_energy_presentation(harness)
+
+        assert label_widget.text == "Kinetic Energy (GeV, linked):"
+        assert (
+            help_label.text == "(Driver follows rider sweep: 0.5 to 3000 GeV, 80 pts)"
+        )
+
+    def test_on_link_energy_toggled_grays_out_driver_energy_entry(self):
+        fixed_entry = _WidgetRecorder()
+        harness = SimpleNamespace(
+            link_driver_rider_energy_var=_MockVar(True),
+            driver_frame=SimpleNamespace(winfo_children=lambda: []),
+            sweep_params={
+                "driver_energy_gev": {
+                    "fixed_entry": fixed_entry,
+                    "sweep_var": _MockVar(True),
+                }
+            },
+            _toggle_sweep_controls=Mock(),
+            _update_linked_energy_presentation=Mock(),
+            _update_driver_pz_helper=Mock(),
+            _ensure_linked_disabled_entry_style=Mock(),
+            _LINKED_DISABLED_ENTRY_STYLE=(
+                OptimizationPluginFormMixin._LINKED_DISABLED_ENTRY_STYLE
+            ),
+        )
+        harness._set_driver_energy_entry_linked_state = lambda linked: OptimizationPluginFormMixin._set_driver_energy_entry_linked_state(
+            harness, linked
+        )
+
+        OptimizationPluginFormMixin._on_link_energy_toggled(harness)
+
+        assert harness.sweep_params["driver_energy_gev"]["sweep_var"].get() is False
+        assert {
+            "style": "LinkedDriverEnergyDisabled.TEntry",
+            "state": "disabled",
+        } in fixed_entry.calls
 
     def test_sync_main_gui_simulation_type_updates_controller(self):
         sim_type_var = _MockVar()
