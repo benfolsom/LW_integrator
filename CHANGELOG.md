@@ -4,6 +4,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Parallel Sweep Controls, Medina RR Defaults, And CLI RR Overrides (June 2026)
+
+- **GUI / Sweep execution** — Added a worker-count control to the Sweep/Optim tab and routed GUI blind sweeps through the headless `SweepRunner` parallel path when `workers > 1`, preserving GUI log/progress updates while reusing the maintained multiprocessing implementation.
+- **Sweep config surface** — Sweep configs now persist `workers` and `radiation_reaction_mode`; headless sweeps honor config `workers` when CLI `-j/--workers` is not supplied.
+- **Radiation reaction UI/config** — Added radiation-reaction mode selectors to the main GUI Stability tab and the Sweep/Optim Sweep Tools panel; single-run and sweep config save/load round-trips now preserve the selected mode.
+- **Defaults** — Switched user-facing defaults from `off` to `medina_lad` across `SimulationOptions`, `OptimizationConfig`, `IntegratorConfig`, GUI initial state, CLI single-run defaults, and persisted sweep-config defaults. Backward-compatibility with older configs is intentionally relaxed for this surface.
+- **CLI** — Added `lw-simulate --radiation-reaction-mode {off,diagnostic_only,power_matched_damping,medina_lad}` for single-run overrides.
+- **Feasibility workflow** — The targeted radial-toward-driver sweep now records `radiation_reaction_mode: "medina_lad"` directly in the sweep config instead of monkeypatching the integrator at runtime.
+- **Tests** — Added and updated regression coverage for GUI RR round-tripping, CLI RR parsing/build-request forwarding, IntegratorConfig RR forwarding, sweep-config conversion, worker-count validation, and sweep-runner worker defaulting.
+- **Files modified** — `core/integration_runner.py`, `core/types.py`, `lw_integrator/cli.py`, `lw_integrator/gui.py`, `lw_integrator/gui_config_mixins.py`, `lw_integrator/gui_tab_mixins.py`, `lw_integrator/sweep_runner.py`, `lw_integrator/testbed_runner.py`, `optimization/config.py`, `optimization/plugin_config_mixins.py`, `optimization/plugin_control_mixins.py`, `optimization/plugin_persistence_helpers.py`, `optimization/plugin_ui_mixins.py`, `optimization/run_control_helpers.py`, `optimization/run_mixins.py`, `optimization/single_integration_helpers.py`, `optimization/sweep_result_helpers.py`, `tests/test_cli.py`, `tests/test_gui.py`, `tests/test_optimization.py`, `tests/test_optimization_config_helpers.py`, `tests/test_optimization_helper_edges.py`, `tests/test_optimization_plugin.py`, `tests/test_simulation_options.py`, `tests/test_single_integration_helpers.py`, `tests/test_sweep_config_conversion.py`, `tests/test_sweep_runner_logging.py`, `tests/unit/test_integration_runner_control_flow.py`, `../LW_feasibility_studies/configs/sweep_configs/targeted_positive_gain_radial_toward_driver_map.json`, `../LW_feasibility_studies/scripts/run_targeted_positive_gain_radial_sweep.py`
+
 ### B2B Heatmap Documentation and Plot Controls (May 2026)
 
 - **Plotting** — Added `--color-min` / `--color-max` to clamp the interpolated heatmap color scale after smoothing, enabling comparable signed gain maps across related sweeps.

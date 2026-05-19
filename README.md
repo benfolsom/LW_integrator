@@ -1,7 +1,9 @@
 # LW Integrator
 
-## Recent Updates (v0.6.0 — March 2026)
+## Recent Updates (June 2026 + v0.6.0 highlights)
 
+- **Parallel blind sweeps** — the Sweep/Optimization GUI now exposes a worker-count control and reuses the maintained headless `SweepRunner` parallel path when `workers > 1`. Saved sweep configs can persist `workers`, and CLI sweeps still support `-j/--workers` overrides.
+- **Radiation reaction surface** — radiation-reaction mode is now configurable from the main GUI Stability tab, the Sweep/Optimization tab, saved single-run configs, saved sweep configs, and the single-run CLI via `--radiation-reaction-mode`. The user-facing default is now `medina_lad`.
 - **CLI/GUI parity** — the CLI sweep runner now calls the same core code paths
   as the GUI (`run_testbed()`, `SimulationOptions`), eliminating divergent
   behaviour between the two entry points.
@@ -262,6 +264,7 @@ The GUI provides three operational modes:
 
 - Configure and run individual simulations with real-time progress tracking
 - Full control over particle properties, boundary conditions, and physics parameters
+- Direct radiation-reaction mode selection from the Stability tab (`medina_lad` default for new runs)
 - Interactive trajectory visualization and energy/position analysis
 - Export results in multiple formats (CSV, JSON, NPZ)
 - Self-consistency iteration controls for high-gamma physics
@@ -273,6 +276,8 @@ The GUI provides three operational modes:
 - **Parameter sweeps** over aperture radius, particle energy, transverse offset, and starting positions
 - **Sweepable fixed parameters** - mass, charge, transverse momentum, timestep, wall position
 - **Auto-timestep calculation** to maintain consistent integration resolution across energy ranges
+- **Parallel execution** with configurable worker count for blind sweeps (start with a modest count such as `2-4`)
+- **Radiation-reaction mode selection** persisted in saved sweep configs and mirrored into runtime execution
 - **Trajectory saving** with configurable stride
 - Results saved to timestamped directories with JSON summary and plots
 
@@ -306,8 +311,8 @@ Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergen
 
 Installing the project (`pip install -e .` or via a wheel) exposes the
 `lw-simulate` executable. The CLI uses sensible defaults (35 MeV electron
-approaching a conducting aperture) but accepts both inline parameter overrides
-and JSON configuration files.
+approaching a conducting aperture, `medina_lad` radiation reaction) but accepts
+both inline parameter overrides and JSON configuration files.
 
 **Basic usage with defaults:**
 
@@ -321,6 +326,12 @@ lw-simulate --quiet
 lw-simulate --steps 250 --time-step 5e-4 --aperture-radius 0.5 --output run.json
 ```
 
+**Run a baseline without radiation-reaction recoil:**
+
+```bash
+lw-simulate --radiation-reaction-mode off --quiet
+```
+
 **Use a configuration file:**
 
 ```bash
@@ -330,7 +341,7 @@ lw-simulate --config my_scenario.json --output results.json
 **Run a parameter sweep from a sweep configuration:**
 
 ```bash
-lw-simulate --sweep-config configs/sweep_configs/example_b2b_linked_energy_vs_driver_distance.json
+lw-simulate --sweep-config configs/sweep_configs/example_b2b_linked_energy_vs_driver_distance.json -j 4
 ```
 
 The sweep runner writes results to `results/sweeps/YYYYMMDD_HHMMSS_configname/`
@@ -360,9 +371,11 @@ Additional CLI options include:
 
 - `--chrono-mode`: Retardation sampling strategy (`averaged` or `fast`)
 - `--startup-mode`: Early-step handling (`cold-start` or `approximate-back-history`)
+- `--radiation-reaction-mode`: Single-run radiation-reaction handling (`off`, `diagnostic_only`, `power_matched_damping`, or `medina_lad`)
 - `--image-weighting` / `--no-image-weighting`: Control image charge distribution
 - `--self-consistency`: Enable self-consistency iterations for ultra-relativistic particles
 - `--sweep-config`: Path to a JSON sweep configuration (runs a full parameter sweep)
+- `-j/--workers`: Parallel worker-process count for sweeps (start with a modest value)
 - `--log-verbosity`: Override sweep log verbosity (`none`, `truncated`, or `full`)
 - `--sc-verbosity`: Override self-consistency verbosity (0–3)
 - `--adaptive-debug` / `--no-adaptive-debug`: Toggle adaptive timestep debug output
