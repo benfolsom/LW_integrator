@@ -448,8 +448,20 @@ def build_integration_trajectory_output(
         distance_info = distance_info_from_trajectory(traj)
         if distance_info is not None:
             output_updates["_distance_info"] = distance_info
+            metrics["rider_z_initial_mm"] = distance_info["z_start"]
+            metrics["rider_z_final_mm"] = distance_info["z_end"]
+            metrics["rider_z_delta_mm"] = (
+                distance_info["z_end"] - distance_info["z_start"]
+            )
     except Exception as exc:
         debug_print_lines.append(f"[DEBUG] Failed to extract distance info: {exc}")
+
+    try:
+        radial_info = _radial_info_from_trajectory(traj)
+        if radial_info is not None:
+            metrics.update(radial_info)
+    except Exception as exc:
+        debug_print_lines.append(f"[DEBUG] Failed to extract radial info: {exc}")
 
     if config.smoothness_enabled:
         log_lines.append(
@@ -550,6 +562,24 @@ def distance_info_from_trajectory(
         "z_start": float(z_array[0]),
         "z_end": float(z_array[-1]),
         "num_steps": len(z_array),
+    }
+
+
+def _radial_info_from_trajectory(
+    trajectory: Mapping[str, Any],
+) -> dict[str, float] | None:
+    """Return radial-position metrics from a trajectory, if radial data exists."""
+    r_array = np.asarray(trajectory.get("r", []))
+    if len(r_array) == 0:
+        return None
+
+    r_start = float(r_array[0])
+    r_end = float(r_array[-1])
+    return {
+        "rider_radial_initial_mm": r_start,
+        "rider_radial_final_mm": r_end,
+        "rider_radial_delta_mm": r_end - r_start,
+        "rider_radial_toward_driver_mm": r_start - r_end,
     }
 
 

@@ -346,6 +346,7 @@ def test_build_integration_trajectory_output_reports_missing_trajectory():
 
 
 def test_build_integration_trajectory_output_can_save_without_stability():
+    metrics = {}
     outcome = build_integration_trajectory_output(
         _result(
             rider_trajectory={
@@ -360,7 +361,7 @@ def test_build_integration_trajectory_output_can_save_without_stability():
         _config(smoothness_enabled=False),
         run_num=8,
         rider_m_particle=1.0,
-        metrics={},
+        metrics=metrics,
         save_trajectory=True,
         trajectory_stride=1,
     )
@@ -371,6 +372,13 @@ def test_build_integration_trajectory_output_can_save_without_stability():
         "num_steps": 2,
     }
     assert outcome.output_updates["trajectory"]["gamma"] == [10.0, 12.0]
+    assert metrics["rider_z_initial_mm"] == pytest.approx(3.0)
+    assert metrics["rider_z_final_mm"] == pytest.approx(7.0)
+    assert metrics["rider_z_delta_mm"] == pytest.approx(4.0)
+    assert metrics["rider_radial_initial_mm"] == pytest.approx(0.0)
+    assert metrics["rider_radial_final_mm"] == pytest.approx(0.2)
+    assert metrics["rider_radial_delta_mm"] == pytest.approx(0.2)
+    assert metrics["rider_radial_toward_driver_mm"] == pytest.approx(-0.2)
     assert outcome.log_lines == [
         "  [DEBUG] Processing trajectory data for Run 8...",
         "  [INFO] Stability analysis DISABLED for Run 8 (smoothness_enabled=False)",
