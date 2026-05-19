@@ -42,6 +42,7 @@ def _make_args(**overrides) -> argparse.Namespace:
         "z_cutoff": None,
         "chrono_mode": None,
         "startup_mode": None,
+        "radiation_reaction_mode": None,
         "image_subcharge_count": None,
         "use_image_weighting": None,
         "driver_from_rider": False,
@@ -145,6 +146,11 @@ class TestCliConfigParsing:
         assert args.external_b_field_native == [0.0, 3.0, 0.0]
         assert args.external_field_z_min == pytest.approx(-0.2)
         assert args.external_field_t_max == pytest.approx(1.0e-6)
+
+    def test_parse_args_accepts_radiation_reaction_mode(self):
+        args = cli.parse_args(["--radiation-reaction-mode", "off"])
+
+        assert args.radiation_reaction_mode == "off"
 
     def test_parse_args_allows_disabling_boolean_flags(self):
         args = cli.parse_args(["--no-adaptive-debug", "--no-image-weighting"])
@@ -346,6 +352,27 @@ class TestCliBuildRequest:
         assert payload["auto_duration_enabled"] is True
         assert payload["auto_duration_crossing_steps"] == 180
         assert payload["auto_duration_post_factor"] == pytest.approx(2.25)
+
+    def test_build_request_defaults_to_medina_lad_rr(self):
+        request = cli.build_request(_make_args())
+
+        assert request.config.radiation_reaction_mode == "medina_lad"
+
+    def test_build_request_rr_flag_overrides_config_file(self, tmp_path: Path):
+        config_path = tmp_path / "rr_mode.json"
+        config_path.write_text(
+            json.dumps({"radiation_reaction_mode": "off"}),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(
+            _make_args(
+                config=config_path,
+                radiation_reaction_mode="power_matched_damping",
+            )
+        )
+
+        assert request.config.radiation_reaction_mode == "power_matched_damping"
 
     def test_build_request_parses_external_field_config(self, tmp_path: Path):
         config_path = tmp_path / "external_field.json"
@@ -965,6 +992,10 @@ class TestCliRuntimeHelpers:
         assert (
             captured["use_conducting_image_weighting"]
             == request.config.use_image_weighting
+        )
+        assert (
+            captured["radiation_reaction_mode"]
+            == request.config.radiation_reaction_mode
         )
         assert captured["space_charge"] is request.space_charge
         assert captured["external_field"] is request.external_field

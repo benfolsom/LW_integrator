@@ -10,6 +10,7 @@ import pytest
 
 from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
+from lw_integrator.testbed_runner import SimulationOptions
 from lw_integrator.gui_config_list_mixins import IntegratorGUIConfigListMixin
 from lw_integrator.gui_controller_mixins import IntegratorGUIControllerMixin
 from lw_integrator.gui_layout_mixins import IntegratorGUILayoutMixin
@@ -103,7 +104,9 @@ def test_gui_inherits_summary_helpers_from_summary_mixin():
         gui.IntegratorGUI._refresh_initial_summary
         is IntegratorGUISummaryMixin._refresh_initial_summary
     )
-    assert gui.IntegratorGUI._format_summary is IntegratorGUISummaryMixin._format_summary
+    assert (
+        gui.IntegratorGUI._format_summary is IntegratorGUISummaryMixin._format_summary
+    )
 
 
 def test_gui_inherits_state_helpers_from_state_mixin():
@@ -147,12 +150,10 @@ def test_gui_inherits_config_list_helpers_from_config_list_mixin():
 def test_gui_inherits_controller_helpers_from_controller_mixin():
     assert gui.IntegratorGUI._set_status is IntegratorGUIControllerMixin._set_status
     assert (
-        gui.IntegratorGUI._apply_species
-        is IntegratorGUIControllerMixin._apply_species
+        gui.IntegratorGUI._apply_species is IntegratorGUIControllerMixin._apply_species
     )
     assert (
-        gui.IntegratorGUI._trigger_sweep
-        is IntegratorGUIControllerMixin._trigger_sweep
+        gui.IntegratorGUI._trigger_sweep is IntegratorGUIControllerMixin._trigger_sweep
     )
 
 
@@ -194,6 +195,9 @@ def test_gui_inherits_tab_builders_from_tab_mixin():
     assert gui.IntegratorGUI._build_adaptive_timestep_section is (
         IntegratorGUITabMixin._build_adaptive_timestep_section
     )
+    assert gui.IntegratorGUI._build_radiation_reaction_section is (
+        IntegratorGUITabMixin._build_radiation_reaction_section
+    )
     assert gui.IntegratorGUI._add_output_toggle is (
         IntegratorGUITabMixin._add_output_toggle
     )
@@ -206,11 +210,12 @@ def test_gui_inherits_log_helpers_from_log_mixin():
         gui.IntegratorGUI._refresh_summary_display
         is IntegratorGUILogMixin._refresh_summary_display
     )
-    assert gui.IntegratorGUI._update_log_format is IntegratorGUILogMixin._update_log_format
+    assert (
+        gui.IntegratorGUI._update_log_format is IntegratorGUILogMixin._update_log_format
+    )
     assert gui.IntegratorGUI._clear_log is IntegratorGUILogMixin._clear_log
     assert (
-        gui.IntegratorGUI._load_verbose_logs
-        is IntegratorGUILogMixin._load_verbose_logs
+        gui.IntegratorGUI._load_verbose_logs is IntegratorGUILogMixin._load_verbose_logs
     )
 
 
@@ -233,9 +238,7 @@ def test_gui_inherits_shell_helpers_from_shell_mixin():
     )
 
 
-def test_load_config_no_longer_requires_removed_legacy_state(
-    tmp_path, monkeypatch
-):
+def test_load_config_no_longer_requires_removed_legacy_state(tmp_path, monkeypatch):
     filename = "example.json"
     (tmp_path / filename).write_text("{}", encoding="utf-8")
     loaded_options = object()
@@ -259,7 +262,9 @@ def test_load_config_no_longer_requires_removed_legacy_state(
         config_file_var=SimpleNamespace(
             set=lambda value: calls.append(("config_file", value))
         ),
-        run_mode_var=SimpleNamespace(set=lambda value: calls.append(("run_mode", value))),
+        run_mode_var=SimpleNamespace(
+            set=lambda value: calls.append(("run_mode", value))
+        ),
         _on_run_mode_changed=lambda: calls.append("run_mode_changed"),
         _refresh_config_list=lambda selected=None: calls.append(
             ("refresh_config_list", selected)
@@ -276,9 +281,7 @@ def test_load_config_no_longer_requires_removed_legacy_state(
         _toggle_macroparticle_controls=lambda: calls.append(
             "toggle_macroparticle_controls"
         ),
-        _update_macroparticle_state=lambda: calls.append(
-            "update_macroparticle_state"
-        ),
+        _update_macroparticle_state=lambda: calls.append("update_macroparticle_state"),
         sim_type_var=SimpleNamespace(get=lambda: "CONDUCTING_WALL"),
         sim_type_combo=combo,
         _set_status=lambda message: calls.append(("status", message)),
@@ -310,7 +313,9 @@ def test_load_config_routes_sweep_and_optimization_configs_to_sweep_tab(
     def _single_run_loader(path):
         raise AssertionError(f"single-run loader should not receive {path}")
 
-    monkeypatch.setattr("lw_integrator.gui_config_mixins.load_config", _single_run_loader)
+    monkeypatch.setattr(
+        "lw_integrator.gui_config_mixins.load_config", _single_run_loader
+    )
 
     harness = SimpleNamespace(
         _selected_config_filename=lambda: filename,
@@ -333,9 +338,7 @@ def test_load_config_routes_sweep_and_optimization_configs_to_sweep_tab(
         _set_status=lambda message: calls.append(("status", message)),
     )
     harness._load_sweep_or_optimization_config = (
-        lambda path: gui.IntegratorGUI._load_sweep_or_optimization_config(
-            harness, path
-        )
+        lambda path: gui.IntegratorGUI._load_sweep_or_optimization_config(harness, path)
     )
 
     gui.IntegratorGUI._load_config(harness)
@@ -540,13 +543,17 @@ def test_update_driver_visibility_disables_driver_fields_for_non_driver_modes():
             configure=lambda **kwargs: driver_combo_calls.append(kwargs)
         ),
         _driver_entries=[
-            SimpleNamespace(configure=lambda **kwargs: driver_entry_calls.append(kwargs))
+            SimpleNamespace(
+                configure=lambda **kwargs: driver_entry_calls.append(kwargs)
+            )
         ],
         _species_label_by_key={"custom": "Custom"},
         _species_by_label={"Custom": object()},
         driver_species_var=driver_species_var,
         _rider_offset_entries=[
-            SimpleNamespace(configure=lambda **kwargs: rider_offset_calls.append(kwargs))
+            SimpleNamespace(
+                configure=lambda **kwargs: rider_offset_calls.append(kwargs)
+            )
         ],
         _driver_offset_entries=[
             SimpleNamespace(
@@ -557,7 +564,9 @@ def test_update_driver_visibility_disables_driver_fields_for_non_driver_modes():
             SimpleNamespace(configure=lambda **kwargs: rider_label_calls.append(kwargs))
         ],
         _driver_offset_labels=[
-            SimpleNamespace(configure=lambda **kwargs: driver_label_calls.append(kwargs))
+            SimpleNamespace(
+                configure=lambda **kwargs: driver_label_calls.append(kwargs)
+            )
         ],
     )
 
@@ -745,6 +754,30 @@ def test_build_options_tolerates_invalid_external_field_inputs_when_disabled():
         assert options.external_magnetic_field_native == pytest.approx((0.0, 0.0, 0.0))
         assert options.external_field_x_min is None
         assert options.external_field_t_max is None
+    finally:
+        root.destroy()
+
+
+def test_radiation_reaction_mode_round_trips_through_gui_options():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        app._apply_options_to_ui(
+            SimulationOptions(radiation_reaction_mode="medina_lad"),
+            preserve_directories=True,
+        )
+
+        assert app.radiation_reaction_mode_var.get() == "medina_lad"
+
+        app.radiation_reaction_mode_var.set("power_matched_damping")
+        rebuilt = app._build_options_from_ui()
+
+        assert rebuilt.radiation_reaction_mode == "power_matched_damping"
     finally:
         root.destroy()
 

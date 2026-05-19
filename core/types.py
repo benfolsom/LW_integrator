@@ -156,6 +156,9 @@ class IntegratorConfig:
     use_image_weighting:
         Enables radial weighting when distributing conducting-wall subcharges.
         Defaults to ``True`` for improved agreement with the aperture geometry.
+    radiation_reaction_mode:
+        Radiation-reaction handling mode forwarded to the canonical integrator.
+        Defaults to ``"medina_lad"`` for user-facing runs.
     macroparticle_charge_multiplier:
         Multiplier for particle and image charges in macroparticle simulations.
         Defaults to ``1.0`` (no scaling). Use > 1.0 for macroparticle mode.
@@ -190,6 +193,7 @@ class IntegratorConfig:
     z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
+    radiation_reaction_mode: str = "medina_lad"
     macroparticle_charge_multiplier: float = 1.0
     macroparticle_sigma_multiplier: float = 1.0
     macroparticle_use_momentum_errors: bool = True

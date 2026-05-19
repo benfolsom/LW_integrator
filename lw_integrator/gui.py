@@ -505,6 +505,10 @@ class IntegratorGUI(
         # max_substeps is now calculated from min_timestep_factor (read-only display)
         self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 
+        self.radiation_reaction_mode_var = tk.StringVar(
+            value=getattr(self.options, "radiation_reaction_mode", "medina_lad")
+        )
+
         self.space_charge_enabled_var = tk.BooleanVar(value=False)
         self.space_charge_retarded_var = tk.BooleanVar(value=True)
         self.space_charge_softening_mm_var = tk.DoubleVar(value=0.0)

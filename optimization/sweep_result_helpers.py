@@ -118,6 +118,10 @@ def build_sweep_results_payload(
             "aperture_points": config.aperture_points,
             "energy_range": list(config.energy_range),
             "energy_points": config.energy_points,
+            "radiation_reaction_mode": getattr(
+                config, "radiation_reaction_mode", "medina_lad"
+            ),
+            "workers": getattr(config, "workers", 1),
             "param_grids": {key: values for key, values in param_grids.items()},
         },
         "total_runs": total_runs,
@@ -137,7 +141,13 @@ def build_interrupted_sweep_results_payload(
 ) -> dict[str, Any]:
     """Build the persisted partial-sweep payload for interrupted CLI sweeps."""
     return {
-        "config": {"simulation_type": simulation_type_name(config.simulation_type)},
+        "config": {
+            "simulation_type": simulation_type_name(config.simulation_type),
+            "radiation_reaction_mode": getattr(
+                config, "radiation_reaction_mode", "medina_lad"
+            ),
+            "workers": getattr(config, "workers", 1),
+        },
         "total_runs": total_runs,
         "successful": total_runs,
         "failed": 0,
@@ -156,9 +166,7 @@ def build_exception_sweep_run_log_lines(
 ) -> list[str]:
     """Build log lines for an exception raised while executing one sweep run."""
     log_lines = [f"  [EXCEPTION] Run {run_num}/{total_runs}: {error}"]
-    log_lines.extend(
-        f"    {line}" for line in error_detail.split("\n") if line
-    )
+    log_lines.extend(f"    {line}" for line in error_detail.split("\n") if line)
     return log_lines
 
 
@@ -267,7 +275,9 @@ def build_full_debug_sweep_result_log_lines(
         f"    Energy: ΔE={metrics.delta_e:.6f}MeV",
     ]
     if actual_distance < 0.1:
-        log_lines.append("  [WARNING] Particle barely moved! Check timestep calculation.")
+        log_lines.append(
+            "  [WARNING] Particle barely moved! Check timestep calculation."
+        )
     return log_lines
 
 

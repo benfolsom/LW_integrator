@@ -59,6 +59,12 @@ COLOR_DRIVER = "#D55E00"
 SCATTER_STYLE = {"s": 140, "alpha": 0.78, "linewidth": 0, "edgecolors": "none"}
 AVAILABLE_DPI_CHOICES: Tuple[int, ...] = (150, 300, 450, 600)
 DEFAULT_PLOT_DPI = 300
+RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
+    "off",
+    "diagnostic_only",
+    "power_matched_damping",
+    "medina_lad",
+)
 
 PARAM_LABELS: Dict[str, str] = {
     "starting_distance": "Start z (mm)",
@@ -359,6 +365,8 @@ class SimulationOptions:
     external_field_t_min: Optional[float] = None
     external_field_t_max: Optional[float] = None
 
+    radiation_reaction_mode: str = "medina_lad"
+
     # Auto-duration crossing mode (BUNCH_TO_BUNCH only)
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
@@ -462,6 +470,7 @@ class SimulationOptions:
             "external_field_z_max": self.external_field_z_max,
             "external_field_t_min": self.external_field_t_min,
             "external_field_t_max": self.external_field_t_max,
+            "radiation_reaction_mode": self.radiation_reaction_mode,
             "auto_duration_enabled": self.auto_duration_enabled,
             "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
             "auto_duration_post_factor": self.auto_duration_post_factor,
@@ -673,6 +682,7 @@ class SimulationOptions:
             external_field_z_max=_optional_float("external_field_z_max"),
             external_field_t_min=_optional_float("external_field_t_min"),
             external_field_t_max=_optional_float("external_field_t_max"),
+            radiation_reaction_mode=_str("radiation_reaction_mode", "medina_lad"),
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
@@ -837,6 +847,9 @@ class RunResult:
     rider_gamma_initial: Optional[float] = None
     rider_gamma_final: Optional[float] = None
     rider_trajectory: Optional[Dict[str, Any]] = None
+    driver_gamma_initial: Optional[float] = None
+    driver_gamma_final: Optional[float] = None
+    driver_trajectory: Optional[Dict[str, Any]] = None
     # Beam optics parameters (initial)
     rider_emittance_x_mm_mrad: Optional[float] = None
     rider_emittance_y_mm_mrad: Optional[float] = None
@@ -844,6 +857,12 @@ class RunResult:
     rider_norm_emittance_y_mm_mrad: Optional[float] = None
     rider_beta_x_m: Optional[float] = None
     rider_beta_y_m: Optional[float] = None
+    driver_emittance_x_mm_mrad: Optional[float] = None
+    driver_emittance_y_mm_mrad: Optional[float] = None
+    driver_norm_emittance_x_mm_mrad: Optional[float] = None
+    driver_norm_emittance_y_mm_mrad: Optional[float] = None
+    driver_beta_x_m: Optional[float] = None
+    driver_beta_y_m: Optional[float] = None
     # Early termination tracking
     halted_early: bool = False  # True if integration was halted before completion
     halt_reason: Optional[str] = (
@@ -1351,6 +1370,7 @@ def run_testbed(
     _log(
         f"  Adaptive timestep: {options.adaptive_timestep_enabled} (threshold={options.adaptive_timestep_threshold * 100:.0f}%, reduction={options.adaptive_timestep_reduction_factor}x)"
     )
+    _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
     _log("")
 
     # Capture stdout/stderr to get verbose SC and adaptive timestep logs
@@ -1485,6 +1505,7 @@ def run_testbed(
             cancel_callback=cancel_callback,
             logger=log,
             use_numba=getattr(options, "use_numba", True),
+            radiation_reaction_mode=options.radiation_reaction_mode,
         )
 
         # Build a normalized payload shared by the GUI and CLI surfaces.
@@ -1538,12 +1559,21 @@ def run_testbed(
     rider_gamma_initial = None
     rider_gamma_final = None
     rider_trajectory_data = None
+    driver_gamma_initial = None
+    driver_gamma_final = None
+    driver_trajectory_data = None
     rider_emittance_x = None
     rider_emittance_y = None
     rider_norm_emittance_x = None
     rider_norm_emittance_y = None
     rider_beta_x = None
     rider_beta_y = None
+    driver_emittance_x = None
+    driver_emittance_y = None
+    driver_norm_emittance_x = None
+    driver_norm_emittance_y = None
+    driver_beta_x = None
+    driver_beta_y = None
 
     # Compute gamma and beam optics from initial parameters even if trajectories aren't saved
     # This ensures metrics are available for optimization sweeps
@@ -1583,6 +1613,29 @@ def run_testbed(
                 _log(f"  βx={rider_beta_x:.3e} m, βy={rider_beta_y:.3e} m")
             except Exception as exc:
                 _log(f"[WARNING] Failed to compute beam optics: {exc}")
+
+    driver_initial = initial_states.get("driver") if driver_allowed else None
+    if driver_initial:
+        Pz_init = float(np.asarray(driver_initial.get("Pz", 0)).flat[0])
+        Px_init = float(np.asarray(driver_initial.get("Px", 0)).flat[0])
+        Py_init = float(np.asarray(driver_initial.get("Py", 0)).flat[0])
+        P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
+        mass = float(np.asarray(driver_initial.get("m", 1)).flat[0])
+        p_init = P_init / (mass * C_MMNS)
+        driver_gamma_initial = float(np.sqrt(1 + p_init**2))
+
+        driver_pcount = options.driver_params.get("pcount", 1)
+        if driver_pcount > 1:
+            try:
+                beam_optics = compute_beam_optics(driver_initial, driver_gamma_initial)
+                driver_emittance_x = beam_optics.get("emittance_x_mm_mrad")
+                driver_emittance_y = beam_optics.get("emittance_y_mm_mrad")
+                driver_norm_emittance_x = beam_optics.get("norm_emittance_x_mm_mrad")
+                driver_norm_emittance_y = beam_optics.get("norm_emittance_y_mm_mrad")
+                driver_beta_x = beam_optics.get("beta_x_m")
+                driver_beta_y = beam_optics.get("beta_y_m")
+            except Exception as exc:
+                _log(f"[WARNING] Failed to compute driver beam optics: {exc}")
 
     if core_traj:
         rider_states = core_traj.get("rider", [])
@@ -1734,6 +1787,8 @@ def run_testbed(
 
                 rider_trajectory_data = {
                     "z": z_arr,
+                    "x": x_arr,
+                    "y": y_arr,
                     "r": r_arr,
                     "pz": Pz_arr / (m_arr * C_MMNS),  # Normalized longitudinal momentum
                     "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
@@ -1830,6 +1885,96 @@ def run_testbed(
                     - driver_initial_gamma * driver_initial_by
                 ) * driver_rest_gev
                 driver_e_total = driver_gamma_series * driver_rest_gev
+
+                if driver_states and len(driver_states) > 0:
+                    initial_state = driver_states[0]
+                    Pz_init = float(np.asarray(initial_state.get("Pz", 0)).flat[0])
+                    Px_init = float(np.asarray(initial_state.get("Px", 0)).flat[0])
+                    Py_init = float(np.asarray(initial_state.get("Py", 0)).flat[0])
+                    P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
+                    mass_init = float(np.asarray(initial_state.get("m", 1)).flat[0])
+                    p_init = P_init / (mass_init * C_MMNS)
+                    driver_gamma_initial = float(np.sqrt(1 + p_init**2))
+
+                    final_state = driver_states[-1]
+                    Pz_final_alive = get_alive_particle_values(final_state, "Pz")
+                    Px_final_alive = get_alive_particle_values(final_state, "Px")
+                    Py_final_alive = get_alive_particle_values(final_state, "Py")
+
+                    if Pz_final_alive is not None and len(Pz_final_alive) > 0:
+                        Pz_final = float(np.mean(Pz_final_alive))
+                        Px_final = float(np.mean(Px_final_alive))
+                        Py_final = float(np.mean(Py_final_alive))
+                        P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
+                        mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
+                        p_final = P_final / (mass_final * C_MMNS)
+                        driver_gamma_final = float(np.sqrt(1 + p_final**2))
+                    else:
+                        driver_gamma_final = driver_gamma_initial
+
+                    z_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "z") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    x_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "x") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    y_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "y") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    r_arr = np.sqrt(x_arr**2 + y_arr**2)
+                    Pz_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "Pz") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    Px_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "Px") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    Py_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "Py") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    m_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "m") or 1.0
+                            for s in driver_states
+                        ]
+                    )
+                    Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
+                    P_total_arr = np.sqrt(Pz_arr**2 + Px_arr**2 + Py_arr**2)
+                    p_normalized_arr = P_total_arr / (m_arr * C_MMNS)
+                    gamma_arr = np.sqrt(1 + p_normalized_arr**2)
+
+                    driver_trajectory_data = {
+                        "z": z_arr,
+                        "x": x_arr,
+                        "y": y_arr,
+                        "r": r_arr,
+                        "pz": Pz_arr / (m_arr * C_MMNS),
+                        "pr": Pr_arr / (m_arr * C_MMNS),
+                        "gamma": gamma_arr,
+                        "t": np.array(
+                            [
+                                compute_alive_particle_average(s, "t") or 0.0
+                                for s in driver_states
+                            ]
+                        ),
+                    }
             except Exception as exc:  # pragma: no cover - defensive guard
                 _log(f"Failed to compute driver energy series: {exc}")
                 _log(
@@ -2851,12 +2996,21 @@ def run_testbed(
         rider_gamma_initial=rider_gamma_initial,
         rider_gamma_final=rider_gamma_final,
         rider_trajectory=rider_trajectory_data,
+        driver_gamma_initial=driver_gamma_initial,
+        driver_gamma_final=driver_gamma_final,
+        driver_trajectory=driver_trajectory_data,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,
         rider_norm_emittance_x_mm_mrad=rider_norm_emittance_x,
         rider_norm_emittance_y_mm_mrad=rider_norm_emittance_y,
         rider_beta_x_m=rider_beta_x,
         rider_beta_y_m=rider_beta_y,
+        driver_emittance_x_mm_mrad=driver_emittance_x,
+        driver_emittance_y_mm_mrad=driver_emittance_y,
+        driver_norm_emittance_x_mm_mrad=driver_norm_emittance_x,
+        driver_norm_emittance_y_mm_mrad=driver_norm_emittance_y,
+        driver_beta_x_m=driver_beta_x,
+        driver_beta_y_m=driver_beta_y,
         halted_early=halted_early if "halted_early" in locals() else False,
         halt_reason=halt_reason if "halt_reason" in locals() else None,
         num_particles_dead=(
@@ -2890,6 +3044,7 @@ __all__ = [
     "CORE_REQUIRED_PARAMS",
     "PARAM_LABELS",
     "PARTICLE_PARAM_FIELDS",
+    "RADIATION_REACTION_MODE_CHOICES",
     "SimulationOptions",
     "InitialSummary",
     "RunResult",

@@ -52,11 +52,15 @@ class OptimizationPluginConfigMixin:
                 self.gui_controller.self_consistency_max_iterations_var.set(
                     str(config.self_consistency_max_iterations)
                 )
-            if hasattr(self.gui_controller, "self_consistency_mass_shell_tolerance_var"):
+            if hasattr(
+                self.gui_controller, "self_consistency_mass_shell_tolerance_var"
+            ):
                 self.gui_controller.self_consistency_mass_shell_tolerance_var.set(
                     f"{config.self_consistency_mass_shell_tolerance:.1e}"
                 )
-            if hasattr(self.gui_controller, "self_consistency_mass_shell_relaxation_var"):
+            if hasattr(
+                self.gui_controller, "self_consistency_mass_shell_relaxation_var"
+            ):
                 self.gui_controller.self_consistency_mass_shell_relaxation_var.set(
                     f"{config.self_consistency_mass_shell_relaxation:.2f}"
                 )
@@ -117,6 +121,10 @@ class OptimizationPluginConfigMixin:
             if hasattr(self.gui_controller, "adaptive_timestep_debug_var"):
                 self.gui_controller.adaptive_timestep_debug_var.set(
                     config.adaptive_timestep_debug
+                )
+            if hasattr(self.gui_controller, "radiation_reaction_mode_var"):
+                self.gui_controller.radiation_reaction_mode_var.set(
+                    config.radiation_reaction_mode
                 )
 
             if hasattr(
@@ -251,6 +259,8 @@ class OptimizationPluginConfigMixin:
                     ),
                     reject_on_violation=opt_config.smoothness_reject_on_violation,
                 )
+            if hasattr(self, "radiation_reaction_mode_var"):
+                self.radiation_reaction_mode_var.set(opt_config.radiation_reaction_mode)
 
             self._log_result("[OK] Loaded parameters from main GUI configuration")
             self._log_result(f"  Simulation type: {opt_config.simulation_type.name}")
@@ -279,6 +289,9 @@ class OptimizationPluginConfigMixin:
             )
             self._log_result(
                 f"  Adaptive timestep: {opt_config.adaptive_timestep_enabled} (threshold={opt_config.adaptive_timestep_threshold * 100:.0f}%)"
+            )
+            self._log_result(
+                f"  Radiation reaction: {opt_config.radiation_reaction_mode}"
             )
             self._log_result("")
 
@@ -484,6 +497,11 @@ class OptimizationPluginConfigMixin:
 
             self.config = loaded_config
 
+            self.workers_var.set(str(loaded_config.workers))
+            if hasattr(self, "radiation_reaction_mode_var"):
+                self.radiation_reaction_mode_var.set(
+                    loaded_config.radiation_reaction_mode
+                )
             self.per_run_timeout_var.set(str(loaded_config.per_run_timeout))
             self.skip_failed_runs_var.set(loaded_config.skip_failed_runs)
             self.failed_run_retry_attempts_var.set(
@@ -621,6 +639,9 @@ class OptimizationPluginConfigMixin:
                 f"  Max probe steps: {self.config.adaptive_timestep_max_probe_steps}"
             )
             self._log_result(f"  Debug: {self.config.adaptive_timestep_debug}")
+            self._log_result("")
+            self._log_result("[Radiation Reaction]")
+            self._log_result(f"  Mode: {self.config.radiation_reaction_mode}")
             self._log_result("")
             self._log_result("[Trajectory Smoothness Analysis]")
             self._log_result(f"  Enabled: {self.config.smoothness_enabled}")

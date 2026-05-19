@@ -1332,6 +1332,7 @@ def test_run_integrator_forwards_config_fields(
         z_cutoff=3.0,
         z_cutoff_mode="relative",
         use_image_weighting=False,
+        radiation_reaction_mode="medina_lad",
         image_subcharge_count=16,
         macroparticle_charge_multiplier=3.0,
         macroparticle_sigma_multiplier=1.5,
@@ -1356,6 +1357,7 @@ def test_run_integrator_forwards_config_fields(
     assert captured["z_cutoff_mode"] == "relative"
     assert captured["image_subcharge_count"] == 16
     assert captured["use_conducting_image_weighting"] is False
+    assert captured["radiation_reaction_mode"] == "medina_lad"
     assert captured["macroparticle_charge_multiplier"] == pytest.approx(3.0)
     assert captured["macroparticle_sigma_multiplier"] == pytest.approx(1.5)
     assert captured["macroparticle_use_momentum_errors"] is False

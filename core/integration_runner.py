@@ -1461,6 +1461,7 @@ def run_integrator(
         startup_mode=config.startup_mode,
         image_subcharge_count=config.image_subcharge_count,
         use_conducting_image_weighting=config.use_image_weighting,
+        radiation_reaction_mode=config.radiation_reaction_mode,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,
         macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,

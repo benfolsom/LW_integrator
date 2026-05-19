@@ -56,7 +56,15 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "startup_mode": "cold-start",
     "image_subcharge_count": 12,
     "use_image_weighting": True,
+    "radiation_reaction_mode": "medina_lad",
 }
+
+RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
+    "off",
+    "diagnostic_only",
+    "power_matched_damping",
+    "medina_lad",
+)
 
 DEFAULT_RIDER: Dict[str, Any] = {
     "kinetic_energy_mev": 35.0,
@@ -328,6 +336,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--radiation-reaction-mode",
+        dest="radiation_reaction_mode",
+        choices=RADIATION_REACTION_MODE_CHOICES,
+        help=(
+            "Radiation-reaction mode for single runs. Default: medina_lad. "
+            "Choose off or diagnostic_only for baselines."
+        ),
+    )
+    parser.add_argument(
         "--image-subcharge-count",
         type=int,
         dest="image_subcharge_count",
@@ -534,6 +551,7 @@ def _merge_simulation_payload(
         "z_cutoff",
         "chrono_mode",
         "startup_mode",
+        "radiation_reaction_mode",
         "image_subcharge_count",
         "use_image_weighting",
     )
@@ -650,6 +668,12 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         z_cutoff=float(payload.get("z_cutoff", DEFAULT_SIMULATION["z_cutoff"])),
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
+        radiation_reaction_mode=str(
+            payload.get(
+                "radiation_reaction_mode",
+                DEFAULT_SIMULATION["radiation_reaction_mode"],
+            )
+        ),
     )
 
 
@@ -912,6 +936,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         startup_mode=request.config.startup_mode,
         image_subcharge_count=request.config.image_subcharge_count,
         use_conducting_image_weighting=request.config.use_image_weighting,
+        radiation_reaction_mode=request.config.radiation_reaction_mode,
         space_charge=request.space_charge,
         external_field=request.external_field,
     )

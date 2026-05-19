@@ -70,3 +70,16 @@ def test_convert_json_config_normalizes_legacy_sweep_mode():
     converted = _convert_json_config_to_dataclass({"mode": "sweep"})
 
     assert converted["mode"] == "blind_sweep"
+
+
+def test_convert_json_config_preserves_runtime_rr_and_worker_settings():
+    converted = _convert_json_config_to_dataclass(
+        {
+            "radiation_reaction_mode": "power_matched_damping",
+            "workers": 4,
+        }
+    )
+    config = _build_optimization_config(converted)
+
+    assert config.radiation_reaction_mode == "power_matched_damping"
+    assert config.workers == 4

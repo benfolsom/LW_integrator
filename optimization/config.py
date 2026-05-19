@@ -293,7 +293,11 @@ class OptimizationConfig:
     external_field_t_min: Optional[float] = None
     external_field_t_max: Optional[float] = None
 
-    # Sweep robustness options
+    # Radiation-reaction handling
+    radiation_reaction_mode: str = "medina_lad"
+
+    # Sweep execution / robustness options
+    workers: int = 1
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
     skip_failed_runs: bool = True  # Continue sweep even if individual runs fail
     failed_run_retry_attempts: int = (
@@ -487,9 +491,15 @@ class OptimizationConfig:
             external_field_z_max=getattr(options, "external_field_z_max", None),
             external_field_t_min=getattr(options, "external_field_t_min", None),
             external_field_t_max=getattr(options, "external_field_t_max", None),
+            radiation_reaction_mode=getattr(
+                options,
+                "radiation_reaction_mode",
+                "medina_lad",
+            ),
             # Startup mode from core params
             startup_mode=core.get("startup_mode", "COLD_START"),
             # Default timeout and skip settings for sweeps
+            workers=1,
             per_run_timeout=300.0,
             skip_failed_runs=True,
             # Default stability checking for sweeps

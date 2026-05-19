@@ -265,6 +265,11 @@ def build_single_integration_setup(
         external_field_z_max=getattr(config, "external_field_z_max", None),
         external_field_t_min=getattr(config, "external_field_t_min", None),
         external_field_t_max=getattr(config, "external_field_t_max", None),
+        radiation_reaction_mode=getattr(
+            config,
+            "radiation_reaction_mode",
+            "medina_lad",
+        ),
     )
 
     return SingleIntegrationSetup(
@@ -340,6 +345,13 @@ def build_integration_metrics(
         metrics["rider_gamma_final"] = result.rider_gamma_final
         metrics["final_gamma_mean"] = result.rider_gamma_final
 
+    driver_gamma_initial = getattr(result, "driver_gamma_initial", None)
+    if driver_gamma_initial is not None:
+        metrics["driver_gamma_initial"] = driver_gamma_initial
+    driver_gamma_final = getattr(result, "driver_gamma_final", None)
+    if driver_gamma_final is not None:
+        metrics["driver_gamma_final"] = driver_gamma_final
+
     gamma_initial = result.rider_gamma_initial
     gamma_final = result.rider_gamma_final
     if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
@@ -404,6 +416,23 @@ def build_halted_integration_output(
         except Exception as exc:
             log_lines.append(f"    [WARNING] Failed to save halted trajectory: {exc}")
 
+    driver_trajectory = getattr(result, "driver_trajectory", None)
+    if driver_trajectory is not None and save_trajectory:
+        try:
+            output["driver_trajectory"] = sample_trajectory_arrays(
+                driver_trajectory,
+                trajectory_stride,
+            )
+            log_lines.append(
+                "    Halted driver trajectory saved "
+                f"({len(driver_trajectory['z'])} points, "
+                f"stride={trajectory_stride})"
+            )
+        except Exception as exc:
+            log_lines.append(
+                f"    [WARNING] Failed to save halted driver trajectory: {exc}"
+            )
+
     log_lines.append(
         f"  [DEBUG] _run_single_integration returning for halted Run {run_num}"
     )
@@ -448,20 +477,45 @@ def build_integration_trajectory_output(
         distance_info = distance_info_from_trajectory(traj)
         if distance_info is not None:
             output_updates["_distance_info"] = distance_info
-            metrics["rider_z_initial_mm"] = distance_info["z_start"]
-            metrics["rider_z_final_mm"] = distance_info["z_end"]
-            metrics["rider_z_delta_mm"] = (
-                distance_info["z_end"] - distance_info["z_start"]
-            )
     except Exception as exc:
         debug_print_lines.append(f"[DEBUG] Failed to extract distance info: {exc}")
 
     try:
-        radial_info = _radial_info_from_trajectory(traj)
-        if radial_info is not None:
-            metrics.update(radial_info)
+        rider_position_metrics = _position_metrics_from_trajectory(
+            traj,
+            prefix="rider",
+            include_radial_toward_driver=True,
+        )
+        if rider_position_metrics is not None:
+            metrics.update(rider_position_metrics)
     except Exception as exc:
-        debug_print_lines.append(f"[DEBUG] Failed to extract radial info: {exc}")
+        debug_print_lines.append(
+            f"[DEBUG] Failed to extract rider position metrics: {exc}"
+        )
+
+    driver_traj = getattr(result, "driver_trajectory", None)
+    if driver_traj is not None:
+        try:
+            driver_distance_info = distance_info_from_trajectory(driver_traj)
+            if driver_distance_info is not None:
+                output_updates["_driver_distance_info"] = driver_distance_info
+        except Exception as exc:
+            debug_print_lines.append(
+                f"[DEBUG] Failed to extract driver distance info: {exc}"
+            )
+
+        try:
+            driver_position_metrics = _position_metrics_from_trajectory(
+                driver_traj,
+                prefix="driver",
+                include_radial_toward_driver=False,
+            )
+            if driver_position_metrics is not None:
+                metrics.update(driver_position_metrics)
+        except Exception as exc:
+            debug_print_lines.append(
+                f"[DEBUG] Failed to extract driver position metrics: {exc}"
+            )
 
     if config.smoothness_enabled:
         log_lines.append(
@@ -526,6 +580,17 @@ def build_integration_trajectory_output(
         except Exception as exc:
             log_lines.append(f"    [WARNING] Failed to save trajectory arrays: {exc}")
 
+        if driver_traj is not None:
+            try:
+                output_updates["driver_trajectory"] = sample_trajectory_arrays(
+                    driver_traj,
+                    trajectory_stride,
+                )
+            except Exception as exc:
+                log_lines.append(
+                    f"    [WARNING] Failed to save driver trajectory arrays: {exc}"
+                )
+
     if result.halted_early:
         output_updates["halted_early"] = True
         output_updates["halt_reason"] = result.halt_reason
@@ -541,14 +606,27 @@ def sample_trajectory_arrays(
     trajectory: Mapping[str, Any], stride: int
 ) -> dict[str, list]:
     """Return a stride-sampled trajectory payload suitable for JSON output."""
-    return {
-        "z": np.asarray(trajectory["z"])[::stride].tolist(),
-        "r": np.asarray(trajectory["r"])[::stride].tolist(),
-        "pz": np.asarray(trajectory["pz"])[::stride].tolist(),
-        "pr": np.asarray(trajectory["pr"])[::stride].tolist(),
-        "t": np.asarray(trajectory["t"])[::stride].tolist(),
-        "gamma": np.asarray(trajectory["gamma"])[::stride].tolist(),
-    }
+    z_array = np.asarray(trajectory["z"])
+    if len(z_array) == 0:
+        return {
+            key: []
+            for key in ("z", "x", "y", "r", "pz", "pr", "t", "gamma")
+            if key in trajectory
+        }
+
+    stride = max(int(stride), 1)
+    sample_indices = list(range(0, len(z_array), stride))
+    last_index = len(z_array) - 1
+    if sample_indices[-1] != last_index:
+        sample_indices.append(last_index)
+    sample_indices = sorted(set(sample_indices))
+
+    sampled: dict[str, list] = {}
+    for key in ("z", "x", "y", "r", "pz", "pr", "t", "gamma"):
+        if key not in trajectory:
+            continue
+        sampled[key] = np.asarray(trajectory[key])[sample_indices].tolist()
+    return sampled
 
 
 def distance_info_from_trajectory(
@@ -565,22 +643,36 @@ def distance_info_from_trajectory(
     }
 
 
-def _radial_info_from_trajectory(
+def _position_metrics_from_trajectory(
     trajectory: Mapping[str, Any],
+    *,
+    prefix: str,
+    include_radial_toward_driver: bool,
 ) -> dict[str, float] | None:
-    """Return radial-position metrics from a trajectory, if radial data exists."""
-    r_array = np.asarray(trajectory.get("r", []))
-    if len(r_array) == 0:
-        return None
+    """Return position metrics from a trajectory, if data exists."""
+    metrics: dict[str, float] = {}
 
-    r_start = float(r_array[0])
-    r_end = float(r_array[-1])
-    return {
-        "rider_radial_initial_mm": r_start,
-        "rider_radial_final_mm": r_end,
-        "rider_radial_delta_mm": r_end - r_start,
-        "rider_radial_toward_driver_mm": r_start - r_end,
-    }
+    for component in ("x", "y", "z"):
+        component_array = np.asarray(trajectory.get(component, []))
+        if len(component_array) == 0:
+            continue
+        start = float(component_array[0])
+        end = float(component_array[-1])
+        metrics[f"{prefix}_{component}_initial_mm"] = start
+        metrics[f"{prefix}_{component}_final_mm"] = end
+        metrics[f"{prefix}_{component}_delta_mm"] = end - start
+
+    r_array = np.asarray(trajectory.get("r", []))
+    if len(r_array) > 0:
+        r_start = float(r_array[0])
+        r_end = float(r_array[-1])
+        metrics[f"{prefix}_radial_initial_mm"] = r_start
+        metrics[f"{prefix}_radial_final_mm"] = r_end
+        metrics[f"{prefix}_radial_delta_mm"] = r_end - r_start
+        if include_radial_toward_driver:
+            metrics[f"{prefix}_radial_toward_driver_mm"] = r_start - r_end
+
+    return metrics or None
 
 
 def build_final_z_check_log_lines(
@@ -735,22 +827,39 @@ def _log_missing_energy_gain(log_lines: list[str], run_num: int) -> None:
 
 
 def _add_beam_optics_metrics(result: Any, metrics: dict[str, Any]) -> None:
-    if result.rider_emittance_x_mm_mrad is not None:
+    if getattr(result, "rider_emittance_x_mm_mrad", None) is not None:
         metrics["rider_emittance_x_mm_mrad"] = result.rider_emittance_x_mm_mrad
-    if result.rider_emittance_y_mm_mrad is not None:
+    if getattr(result, "rider_emittance_y_mm_mrad", None) is not None:
         metrics["rider_emittance_y_mm_mrad"] = result.rider_emittance_y_mm_mrad
-    if result.rider_norm_emittance_x_mm_mrad is not None:
+    if getattr(result, "rider_norm_emittance_x_mm_mrad", None) is not None:
         metrics["rider_norm_emittance_x_mm_mrad"] = (
             result.rider_norm_emittance_x_mm_mrad
         )
-    if result.rider_norm_emittance_y_mm_mrad is not None:
+    if getattr(result, "rider_norm_emittance_y_mm_mrad", None) is not None:
         metrics["rider_norm_emittance_y_mm_mrad"] = (
             result.rider_norm_emittance_y_mm_mrad
         )
-    if result.rider_beta_x_m is not None:
+    if getattr(result, "rider_beta_x_m", None) is not None:
         metrics["rider_beta_x_m"] = result.rider_beta_x_m
-    if result.rider_beta_y_m is not None:
+    if getattr(result, "rider_beta_y_m", None) is not None:
         metrics["rider_beta_y_m"] = result.rider_beta_y_m
+
+    if getattr(result, "driver_emittance_x_mm_mrad", None) is not None:
+        metrics["driver_emittance_x_mm_mrad"] = result.driver_emittance_x_mm_mrad
+    if getattr(result, "driver_emittance_y_mm_mrad", None) is not None:
+        metrics["driver_emittance_y_mm_mrad"] = result.driver_emittance_y_mm_mrad
+    if getattr(result, "driver_norm_emittance_x_mm_mrad", None) is not None:
+        metrics["driver_norm_emittance_x_mm_mrad"] = (
+            result.driver_norm_emittance_x_mm_mrad
+        )
+    if getattr(result, "driver_norm_emittance_y_mm_mrad", None) is not None:
+        metrics["driver_norm_emittance_y_mm_mrad"] = (
+            result.driver_norm_emittance_y_mm_mrad
+        )
+    if getattr(result, "driver_beta_x_m", None) is not None:
+        metrics["driver_beta_x_m"] = result.driver_beta_x_m
+    if getattr(result, "driver_beta_y_m", None) is not None:
+        metrics["driver_beta_y_m"] = result.driver_beta_y_m
 
 
 __all__ = [

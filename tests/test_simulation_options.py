@@ -49,6 +49,7 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         external_field_z_max=0.2,
         external_field_t_min=1.0e-6,
         external_field_t_max=2.0e-6,
+        radiation_reaction_mode="power_matched_damping",
         log_file_path="custom.log",
     )
 
@@ -102,6 +103,8 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.external_field_z_max == pytest.approx(0.2)
     assert loaded.external_field_t_min == pytest.approx(1.0e-6)
     assert loaded.external_field_t_max == pytest.approx(2.0e-6)
+    assert payload["radiation_reaction_mode"] == "power_matched_damping"
+    assert loaded.radiation_reaction_mode == "power_matched_damping"
     assert loaded.log_file_path == "custom.log"
 
 
@@ -146,6 +149,7 @@ def test_simulation_options_from_dict_uses_defaults_for_missing_nested_payloads(
         key: (float(value) if isinstance(value, (int, float)) else value)
         for key, value in CORE_PARAM_DEFAULTS.items()
     }
+    assert options.radiation_reaction_mode == "medina_lad"
     assert options.output_dir == Path("test_outputs/testbed_runs")
 
 

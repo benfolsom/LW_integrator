@@ -302,6 +302,9 @@ class IntegratorGUIConfigMixin:
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
         self._update_max_substeps_display()
+        self.radiation_reaction_mode_var.set(
+            getattr(options, "radiation_reaction_mode", "medina_lad")
+        )
         self.space_charge_enabled_var.set(
             getattr(options, "space_charge_enabled", False)
         )
@@ -647,6 +650,15 @@ class IntegratorGUIConfigMixin:
             external_field_z_max=external_bounds["z_max"],
             external_field_t_min=external_bounds["t_min"],
             external_field_t_max=external_bounds["t_max"],
+            radiation_reaction_mode=(
+                str(self.radiation_reaction_mode_var.get())
+                if hasattr(self, "radiation_reaction_mode_var")
+                else getattr(
+                    getattr(self, "options", None),
+                    "radiation_reaction_mode",
+                    "medina_lad",
+                )
+            ),
             auto_duration_enabled=bool(self.auto_duration_enabled_var.get()),
             auto_duration_crossing_steps=int(
                 self.auto_duration_crossing_steps_var.get()

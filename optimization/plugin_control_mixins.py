@@ -65,6 +65,7 @@ class OptimizationPluginControlMixin:
             wall_z=self.wall_z_var.get(),
             steps=self.steps_var.get(),
             auto_steps_distance=self.auto_steps_distance_var.get(),
+            workers=self.workers_var.get(),
             sweep_parameters=sweep_parameters,
         )
 
@@ -103,6 +104,15 @@ class OptimizationPluginControlMixin:
         kwargs = self._gather_image_and_self_consistency_kwargs(existing_config)
         kwargs.update(self._gather_adaptive_timestep_kwargs(existing_config))
         kwargs.update(self._gather_gamma_reconciliation_kwargs(existing_config))
+        kwargs["radiation_reaction_mode"] = (
+            str(self.radiation_reaction_mode_var.get())
+            if hasattr(self, "radiation_reaction_mode_var")
+            else _existing_config_value(
+                existing_config,
+                "radiation_reaction_mode",
+                "medina_lad",
+            )
+        )
         return kwargs
 
     def _gather_image_and_self_consistency_kwargs(
@@ -475,6 +485,7 @@ class OptimizationPluginControlMixin:
             "smoothness_max_violations": config_value(
                 existing_config, "smoothness_max_violations", 3
             ),
+            "workers": int(self.workers_var.get()),
             "per_run_timeout": float(self.per_run_timeout_var.get()),
             "skip_failed_runs": self.skip_failed_runs_var.get(),
             "failed_run_retry_attempts": int(self.failed_run_retry_attempts_var.get()),
@@ -817,6 +828,7 @@ class OptimizationPluginControlMixin:
                 "[INFO] Using stability options from main GUI Stability tab"
             )
 
+            self.config.workers = int(self.workers_var.get())
             self.config.per_run_timeout = float(self.per_run_timeout_var.get())
             self.config.skip_failed_runs = self.skip_failed_runs_var.get()
             self.config.failed_run_retry_attempts = int(
@@ -835,6 +847,8 @@ class OptimizationPluginControlMixin:
         except Exception as e:
             _show_error_dialog(self, "Configuration Error", str(e))
             return
+
+        self._log_result(f"[INFO] Sweep worker processes: {self.config.workers}")
 
         self._was_cancelled = False
         self.running = True

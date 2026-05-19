@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -107,6 +108,39 @@ def test_run_sweep_from_config_respects_quiet_verbosity_override(
         verbosity_overrides={"log_verbosity": "full"},
     )
     assert capsys.readouterr().out == ""
+
+
+def test_run_sweep_from_config_uses_config_worker_count_when_unset(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "sweep.json"
+    config_path.write_text(json.dumps({"workers": 3}), encoding="utf-8")
+    captured = {}
+
+    class FakeRunner:
+        def __init__(self, config, output_dir, verbose=True, workers=None, **_kwargs):
+            captured["config_workers"] = config.workers
+            captured["workers"] = workers
+            captured["output_dir"] = output_dir
+            captured["verbose"] = verbose
+
+        def run(self):
+            return True
+
+    monkeypatch.setattr("lw_integrator.sweep_runner.SweepRunner", FakeRunner)
+
+    assert run_sweep_from_config(
+        config_path=config_path,
+        output_dir=tmp_path / "out",
+        verbose=True,
+        verbosity_overrides=None,
+        workers=None,
+    )
+
+    assert captured["config_workers"] == 3
+    assert captured["workers"] == 3
+    assert captured["output_dir"] == tmp_path / "out"
+    assert captured["verbose"] is True
 
 
 def test_resolve_cli_driver_setup_returns_none_for_wall_mode():

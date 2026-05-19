@@ -124,6 +124,7 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         external_field_z_max=30.0,
         external_field_t_min=1.0e-6,
         external_field_t_max=2.0e-6,
+        radiation_reaction_mode="medina_lad",
     )
 
     config = OptimizationConfig.from_simulation_options(options)
@@ -179,6 +180,7 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.external_field_z_max == pytest.approx(30.0)
     assert config.external_field_t_min == pytest.approx(1.0e-6)
     assert config.external_field_t_max == pytest.approx(2.0e-6)
+    assert config.radiation_reaction_mode == "medina_lad"
 
 
 def test_auto_timestep_and_auto_steps_helpers_are_consistent():

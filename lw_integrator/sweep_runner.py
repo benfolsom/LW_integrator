@@ -63,6 +63,7 @@ from optimization.logging_policy import (
 from optimization.mode_helpers import normalize_sweep_or_optimization_mode
 from optimization.single_integration_helpers import (
     build_integration_metrics,
+    build_integration_trajectory_output,
     build_single_integration_setup,
     calculate_rider_starting_pz,
 )
@@ -610,11 +611,15 @@ class SweepRunner:
         output_dir: Path,
         verbose: bool = True,
         workers: Optional[int] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ):
         self.config = config
         self.output_dir = Path(output_dir)
         self.verbose = verbose
         self.workers = workers
+        self.log_callback = log_callback
+        self.progress_callback = progress_callback
         self.results: List[Dict[str, Any]] = []
         self.log_file = None
 
@@ -633,6 +638,13 @@ class SweepRunner:
         if self.log_file is not None:
             self.log_file.write(f"{line}\n")
             self.log_file.flush()
+        if self.log_callback is not None:
+            self.log_callback(line)
+
+    def _emit_progress(self, completed: int, total: int) -> None:
+        """Emit sweep-progress updates when a callback is registered."""
+        if self.progress_callback is not None:
+            self.progress_callback(completed, total)
 
     # ------------------------------------------------------------------
     # Grid generation (unchanged from original)
@@ -879,37 +891,27 @@ class SweepRunner:
             for line in metrics_outcome.log_lines:
                 self._log_line(f"[OPTIMIZATION] {line}")
 
-        # ── Stability analysis (same as GUI) ──
-        stability_outcome = _evaluate_cli_stability(
-            self.config,
+        trajectory_outcome = build_integration_trajectory_output(
             result,
-            metrics,
-            rider_m_particle=rider.m_particle,
+            self.config,
             run_num=run_num,
-            aperture=aperture,
-            energy_gev=energy_gev,
-            start_z=start_z,
-            transv_offset=timestep_setup.transv_offset,
+            rider_m_particle=rider.m_particle,
+            metrics=metrics,
+            save_trajectory=(
+                self.config.save_all_trajectories
+                or self.config.save_failed_trajectories
+            ),
+            trajectory_stride=self.config.trajectory_stride,
         )
-        metrics.update(stability_outcome.metrics_updates)
         if emit_run_diagnostics:
-            for line in stability_outcome.log_lines:
-                self._log_line(line)
-        elif emit_run_summary and stability_outcome.rejection_record is not None:
-            self._log_line(
-                f"[OPTIMIZATION]   [REJECT] Run {run_num} rejected due to "
-                "numerical instability"
-            )
-        if stability_outcome.rejection_record is not None:
-            return stability_outcome.rejection_record
-
-        if emit_run_diagnostics:
+            for line in trajectory_outcome.log_lines:
+                self._log_line(f"[OPTIMIZATION] {line}")
             self._log_line(
                 "[OPTIMIZATION]   [DEBUG] "
                 f"_run_single_integration returning for Run {run_num}"
             )
 
-        return {
+        output = {
             "success": True,
             "parameters": {
                 "aperture": aperture,
@@ -921,6 +923,15 @@ class SweepRunner:
             },
             "metrics": metrics,
         }
+        output.update(trajectory_outcome.output_updates)
+
+        if output.get("stability_rejected"):
+            output["success"] = False
+            output["error"] = (
+                "Smoothness violation: "
+                f"{metrics.get('smoothness_violations', 0)} violations"
+            )
+        return output
 
     # ------------------------------------------------------------------
     # Sweep orchestration
@@ -1026,6 +1037,7 @@ class SweepRunner:
 
                 # ── Dispatch all combos in parallel ──
                 raw_results: Dict[int, dict] = {}
+                completed_count = 0
                 with concurrent.futures.ProcessPoolExecutor(
                     max_workers=self.workers
                 ) as executor:
@@ -1047,6 +1059,8 @@ class SweepRunner:
                                     "parameters": payloads[rn - 1]["params_dict"],
                                     "_params_dict": payloads[rn - 1]["params_dict"],
                                 }
+                            completed_count += 1
+                            self._emit_progress(completed_count, total_runs)
                     except KeyboardInterrupt:
                         executor.shutdown(wait=False, cancel_futures=True)
                         raise
@@ -1223,6 +1237,8 @@ class SweepRunner:
                                     self._log(line)
                             self._log(log_output.compact_line)
 
+                    self._emit_progress(run_num, total_runs)
+
             # ── Save results ──
             elapsed_time = (time.time() - start_time) if start_time is not None else 0.0
 
@@ -1236,36 +1252,38 @@ class SweepRunner:
             self._log(f"Elapsed time: {elapsed_time:.1f}s ({elapsed_time / 60:.1f}min)")
             self._log("=" * 80)
 
-            # Save results to JSON
-            results_path = self.output_dir / "sweep_results.json"
-            with open(results_path, "w") as f:
-                json.dump(
-                    build_sweep_results_payload(
-                        config=self.config,
-                        param_grids=param_grids,
-                        total_runs=total_runs,
-                        successful=total_runs - failed_count,
-                        failed=failed_count,
-                        elapsed_time_seconds=elapsed_time,
-                        results=self.results,
-                    ),
-                    f,
-                    indent=2,
+            if self.config.save_results:
+                results_path = self.output_dir / "sweep_results.json"
+                with open(results_path, "w") as f:
+                    json.dump(
+                        build_sweep_results_payload(
+                            config=self.config,
+                            param_grids=param_grids,
+                            total_runs=total_runs,
+                            successful=total_runs - failed_count,
+                            failed=failed_count,
+                            elapsed_time_seconds=elapsed_time,
+                            results=self.results,
+                        ),
+                        f,
+                        indent=2,
+                    )
+
+                self._log("")
+                self._log(f"Results saved to: {results_path}")
+
+                from optimization.result_io import relocate_incomplete_sweep
+
+                relocated = relocate_incomplete_sweep(
+                    self.output_dir,
+                    min_runs=100,
+                    log_fn=self._log,
                 )
-
-            self._log("")
-            self._log(f"Results saved to: {results_path}")
-
-            # Move to archive/incomplete if below minimum run threshold
-            from optimization.result_io import relocate_incomplete_sweep
-
-            relocated = relocate_incomplete_sweep(
-                self.output_dir,
-                min_runs=100,
-                log_fn=self._log,
-            )
-            if relocated:
-                self.output_dir = relocated
+                if relocated:
+                    self.output_dir = relocated
+            else:
+                self._log("")
+                self._log("Result saving disabled (save_results=False)")
 
             return True
 
@@ -1558,6 +1576,15 @@ def run_sweep_from_config(
         config_name = config_path.stem
         output_dir = Path(config.output_dir) / f"{timestamp}_{config_name}"
 
+    effective_workers = workers
+    if effective_workers is None:
+        effective_workers = getattr(config, "workers", 1)
+
     # Create and run sweep
-    runner = SweepRunner(config, output_dir, verbose=verbose, workers=workers)
+    runner = SweepRunner(
+        config,
+        output_dir,
+        verbose=verbose,
+        workers=effective_workers,
+    )
     return runner.run()

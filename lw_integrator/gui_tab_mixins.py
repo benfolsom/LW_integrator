@@ -10,6 +10,7 @@ from .testbed_runner import (
     CORE_PARAM_LABELS,
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
+    RADIATION_REACTION_MODE_CHOICES,
     SPECIES_OPTIONS,
 )
 
@@ -833,6 +834,7 @@ class IntegratorGUITabMixin:
 
         self._build_self_consistency_section(stability_frame)
         self._build_adaptive_timestep_section(stability_frame)
+        self._build_radiation_reaction_section(stability_frame)
         self._build_space_charge_section(stability_frame)
         self._build_auto_duration_section(stability_frame)
 
@@ -1647,6 +1649,51 @@ class IntegratorGUITabMixin:
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
+    def _build_radiation_reaction_section(self, stability_frame: ttk.Frame) -> None:
+        """Build radiation-reaction mode controls."""
+        from .gui import Tooltip
+
+        rr_frame = ttk.LabelFrame(stability_frame, text="Radiation Reaction", padding=8)
+        rr_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        rr_frame.columnconfigure(1, weight=1)
+
+        mode_frame = ttk.Frame(rr_frame)
+        mode_frame.grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Label(mode_frame, text="Mode:").pack(side="left")
+        rr_help = ttk.Label(mode_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        rr_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            rr_help,
+            "Radiation-reaction handling for the single-run integrator.\n\n"
+            "Modes:\n"
+            "  • off - No momentum change from self-radiation.\n"
+            "  • diagnostic_only - Record radiated power without changing momentum.\n"
+            "  • power_matched_damping - Remove radiated energy from mechanical momentum after the LW update.\n"
+            "  • medina_lad - Experimental Medina/LAD candidate reaction force.\n\n"
+            "Recommended default for new study runs: medina_lad.\n"
+            "Use off or diagnostic_only for baselines/comparisons.",
+        )
+        self.radiation_reaction_mode_combo = ttk.Combobox(
+            rr_frame,
+            textvariable=self.radiation_reaction_mode_var,
+            values=RADIATION_REACTION_MODE_CHOICES,
+            state="readonly",
+            width=24,
+        )
+        self.radiation_reaction_mode_combo.grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(
+            rr_frame,
+            text=(
+                "Use medina_lad for normal study runs; "
+                "use off/diagnostic_only for baselines and power_matched_damping for targeted comparisons."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+            wraplength=700,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
     def _build_space_charge_section(self, stability_frame: ttk.Frame) -> None:
         """Build intra-bunch space-charge controls."""
         from .gui import Tooltip
@@ -1654,7 +1701,7 @@ class IntegratorGUITabMixin:
         sc_frame = ttk.LabelFrame(
             stability_frame, text="Intra-Bunch Space Charge", padding=8
         )
-        sc_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        sc_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         sc_frame.columnconfigure(1, weight=1)
 
         self.space_charge_enable_check = ttk.Checkbutton(
@@ -1789,7 +1836,7 @@ class IntegratorGUITabMixin:
             text="Auto-Duration Crossing (BUNCH_TO_BUNCH)",
             padding=8,
         )
-        ad_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ad_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         ad_frame.columnconfigure(1, weight=1)
 
         enable_frame = ttk.Frame(ad_frame)
