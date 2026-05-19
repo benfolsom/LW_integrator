@@ -27,6 +27,7 @@ from core.types import (
     ExternalFieldConfig,
     IntegratorConfig,
     ParticleState,
+    PseudoGridConfig,
     SimulationType,
     SpaceChargeConfig,
     StartupMode,
@@ -74,6 +75,20 @@ DEFAULT_RIDER: Dict[str, Any] = {
     "particle_count": 1,
     "transverse_radius": 0.0,
     "transverse_momentum": 0.0,
+}
+
+DEFAULT_PSEUDO_GRID: Dict[str, Any] = {
+    "enabled": False,
+    "active_rider_count": 4,
+    "active_driver_count": 4,
+    "passive_neighbor_count": 4,
+    "coverage_strategy": "farthest_point_staleness",
+    "coverage_space": "position",
+    "pair_reuse_window": 16,
+    "source_weighting_mode": "inverse_distance",
+    "loss_tracking_enabled": True,
+    "causal_history_pruning_enabled": False,
+    "causal_history_safety_margin_steps": 2,
 }
 
 SIMULATION_TYPE_ALIASES: Mapping[str, SimulationType] = {
@@ -364,6 +379,96 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.set_defaults(use_image_weighting=None)
     parser.add_argument(
+        "--pseudo-grid",
+        dest="pseudo_grid_enabled",
+        action="store_true",
+        help=(
+            "Enable the experimental pseudo-grid configuration surface for "
+            "BUNCH_TO_BUNCH runs. The reduced solver path is still under development."
+        ),
+    )
+    parser.add_argument(
+        "--no-pseudo-grid",
+        dest="pseudo_grid_enabled",
+        action="store_false",
+        help="Disable pseudo-grid mode explicitly.",
+    )
+    parser.set_defaults(pseudo_grid_enabled=None)
+    parser.add_argument(
+        "--pseudo-grid-active-rider-count",
+        type=int,
+        dest="pseudo_grid_active_rider_count",
+        help="Number of active rider particles to solve directly each step.",
+    )
+    parser.add_argument(
+        "--pseudo-grid-active-driver-count",
+        type=int,
+        dest="pseudo_grid_active_driver_count",
+        help="Number of active driver particles to solve directly each step.",
+    )
+    parser.add_argument(
+        "--pseudo-grid-passive-neighbor-count",
+        type=int,
+        dest="pseudo_grid_passive_neighbor_count",
+        help="Nearest active neighbors used when advancing passive particles.",
+    )
+    parser.add_argument(
+        "--pseudo-grid-coverage-strategy",
+        choices=("farthest_point_staleness", "farthest_point"),
+        dest="pseudo_grid_coverage_strategy",
+        help="Coverage strategy used when selecting the active subset.",
+    )
+    parser.add_argument(
+        "--pseudo-grid-coverage-space",
+        choices=("position", "phase_space"),
+        dest="pseudo_grid_coverage_space",
+        help="Metric space used for pseudo-grid coverage and neighbor searches.",
+    )
+    parser.add_argument(
+        "--pseudo-grid-pair-reuse-window",
+        type=int,
+        dest="pseudo_grid_pair_reuse_window",
+        help="Recent-match window used to discourage repeated active pairings.",
+    )
+    parser.add_argument(
+        "--pseudo-grid-source-weighting-mode",
+        choices=("inverse_distance", "nearest"),
+        dest="pseudo_grid_source_weighting_mode",
+        help="Source weighting mode for represented passive charge.",
+    )
+    parser.add_argument(
+        "--pseudo-grid-loss-tracking",
+        dest="pseudo_grid_loss_tracking_enabled",
+        action="store_true",
+        help="Enable explicit pseudo-grid particle-loss tracking.",
+    )
+    parser.add_argument(
+        "--no-pseudo-grid-loss-tracking",
+        dest="pseudo_grid_loss_tracking_enabled",
+        action="store_false",
+        help="Disable pseudo-grid particle-loss tracking.",
+    )
+    parser.set_defaults(pseudo_grid_loss_tracking_enabled=None)
+    parser.add_argument(
+        "--pseudo-grid-causal-pruning",
+        dest="pseudo_grid_causal_history_pruning_enabled",
+        action="store_true",
+        help="Enable causal-history pruning for the pseudo-grid history window.",
+    )
+    parser.add_argument(
+        "--no-pseudo-grid-causal-pruning",
+        dest="pseudo_grid_causal_history_pruning_enabled",
+        action="store_false",
+        help="Disable pseudo-grid causal-history pruning explicitly.",
+    )
+    parser.set_defaults(pseudo_grid_causal_history_pruning_enabled=None)
+    parser.add_argument(
+        "--pseudo-grid-causal-safety-margin-steps",
+        type=int,
+        dest="pseudo_grid_causal_history_safety_margin_steps",
+        help="Safety margin, in steps, retained beyond the causal pruning bound.",
+    )
+    parser.add_argument(
         "--driver-from-rider",
         action="store_true",
         help=(
@@ -520,9 +625,13 @@ def _merge_simulation_payload(
     file_payload: Mapping[str, Any], args: argparse.Namespace
 ) -> Dict[str, Any]:
     result = dict(DEFAULT_SIMULATION)
+    result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
+    file_pseudo_grid = file_payload.get("pseudo_grid")
+    if isinstance(file_pseudo_grid, Mapping):
+        result["pseudo_grid"].update(file_pseudo_grid)
     if "external_field" in file_payload:
         result["external_field"] = file_payload["external_field"]
 
@@ -603,6 +712,26 @@ def _merge_simulation_payload(
     if getattr(args, "auto_duration_post_factor", None) is not None:
         result["auto_duration_post_factor"] = args.auto_duration_post_factor
 
+    pseudo_grid = result["pseudo_grid"]
+    pseudo_grid_override_keys = (
+        "enabled",
+        "active_rider_count",
+        "active_driver_count",
+        "passive_neighbor_count",
+        "coverage_strategy",
+        "coverage_space",
+        "pair_reuse_window",
+        "source_weighting_mode",
+        "loss_tracking_enabled",
+        "causal_history_pruning_enabled",
+        "causal_history_safety_margin_steps",
+    )
+    for key in pseudo_grid_override_keys:
+        arg_name = f"pseudo_grid_{key}"
+        value = getattr(args, arg_name, None)
+        if value is not None:
+            pseudo_grid[key] = value
+
     return result
 
 
@@ -653,6 +782,8 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         payload.get("use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"])
     )
 
+    pseudo_grid = _build_pseudo_grid_config(payload.get("pseudo_grid"))
+
     return IntegratorConfig(
         steps=int(payload["steps"]),
         time_step=float(payload["time_step"]),
@@ -674,6 +805,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
                 DEFAULT_SIMULATION["radiation_reaction_mode"],
             )
         ),
+        pseudo_grid=pseudo_grid,
     )
 
 
@@ -750,6 +882,72 @@ def _parse_image_weighting(value: Any) -> bool:
             "use_image_weighting must be a boolean or truthy/falsey string"
         )
     return bool(value)
+
+
+def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
+    if payload is None:
+        return PseudoGridConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("pseudo_grid must be a JSON object")
+
+    def _as_int(name: str, default: int) -> int:
+        value = payload.get(name, default)
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"pseudo_grid.{name} must be an integer"
+            ) from exc
+
+    try:
+        return PseudoGridConfig(
+            enabled=bool(payload.get("enabled", DEFAULT_PSEUDO_GRID["enabled"])),
+            active_rider_count=_as_int(
+                "active_rider_count", DEFAULT_PSEUDO_GRID["active_rider_count"]
+            ),
+            active_driver_count=_as_int(
+                "active_driver_count", DEFAULT_PSEUDO_GRID["active_driver_count"]
+            ),
+            passive_neighbor_count=_as_int(
+                "passive_neighbor_count",
+                DEFAULT_PSEUDO_GRID["passive_neighbor_count"],
+            ),
+            coverage_strategy=str(
+                payload.get(
+                    "coverage_strategy", DEFAULT_PSEUDO_GRID["coverage_strategy"]
+                )
+            ),
+            coverage_space=str(
+                payload.get("coverage_space", DEFAULT_PSEUDO_GRID["coverage_space"])
+            ),
+            pair_reuse_window=_as_int(
+                "pair_reuse_window", DEFAULT_PSEUDO_GRID["pair_reuse_window"]
+            ),
+            source_weighting_mode=str(
+                payload.get(
+                    "source_weighting_mode",
+                    DEFAULT_PSEUDO_GRID["source_weighting_mode"],
+                )
+            ),
+            loss_tracking_enabled=bool(
+                payload.get(
+                    "loss_tracking_enabled",
+                    DEFAULT_PSEUDO_GRID["loss_tracking_enabled"],
+                )
+            ),
+            causal_history_pruning_enabled=bool(
+                payload.get(
+                    "causal_history_pruning_enabled",
+                    DEFAULT_PSEUDO_GRID["causal_history_pruning_enabled"],
+                )
+            ),
+            causal_history_safety_margin_steps=_as_int(
+                "causal_history_safety_margin_steps",
+                DEFAULT_PSEUDO_GRID["causal_history_safety_margin_steps"],
+            ),
+        )
+    except ValueError as exc:
+        raise SimulationConfigError(str(exc)) from exc
 
 
 def _optional_float_field(payload: Mapping[str, Any], name: str) -> Optional[float]:
@@ -939,6 +1137,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         radiation_reaction_mode=request.config.radiation_reaction_mode,
         space_charge=request.space_charge,
         external_field=request.external_field,
+        pseudo_grid=request.config.pseudo_grid,
     )
 
 

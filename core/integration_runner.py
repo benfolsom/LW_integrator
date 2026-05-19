@@ -28,6 +28,7 @@ from .types import (
     ChronoMatchingMode,
     IntegratorConfig,
     ParticleState,
+    PseudoGridConfig,
     SimulationType,
     StartupMode,
     Trajectory,
@@ -929,6 +930,7 @@ def retarded_integrator(
     logger: Optional[Any] = None,
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
+    pseudo_grid: Optional[PseudoGridConfig] = None,
 ) -> Tuple[
     Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
 ]:
@@ -1024,6 +1026,10 @@ def retarded_integrator(
         momentum after the normal LW update. ``medina_lad`` applies the
         experimental Medina/LAD candidate force to mechanical momentum before
         recomposing canonical momentum.
+    pseudo_grid:
+        Experimental pseudo-grid configuration surface. The public plumbing is
+        available ahead of the reduced-physics implementation so callers can
+        save, load, and inspect pseudo-grid settings consistently.
 
     Returns
     -------
@@ -1041,6 +1047,14 @@ def retarded_integrator(
     """
 
     from . import vectorized_interactions as _vectorized_interactions
+
+    pseudo_grid = pseudo_grid or PseudoGridConfig()
+    if pseudo_grid.enabled:
+        raise NotImplementedError(
+            "Pseudo-grid mode is not yet implemented in the integrator; "
+            "configuration plumbing is present but the reduced solver path "
+            "is still under development."
+        )
 
     numba_kernels_enabled = bool(use_numba and _vectorized_interactions.NUMBA_AVAILABLE)
 
@@ -1473,6 +1487,7 @@ def run_integrator(
         external_field=external_field,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
+        pseudo_grid=config.pseudo_grid,
     )
 
 

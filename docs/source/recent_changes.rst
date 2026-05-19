@@ -1,11 +1,32 @@
 Recent Changes
 ==============
 
-*Last updated: March 2026*
+*Last updated: June 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+June 2026 Updates
+-----------------
+
+Experimental Pseudo-grid Configuration Surface (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An experimental pseudo-grid configuration surface is now threaded through the
+single-run stack for ``BUNCH_TO_BUNCH`` studies:
+
+* ``core.types.PseudoGridConfig`` is now part of ``IntegratorConfig``.
+* ``SimulationOptions`` save/load now round-trips pseudo-grid settings through
+  a dedicated ``pseudo_grid`` payload in saved single-run configs.
+* ``lw-simulate`` accepts pseudo-grid CLI flags for active counts, passive
+  neighbor count, pair reuse window, source weighting, loss tracking, and
+  causal-history pruning.
+* The main GUI ``Particles`` tab now exposes the same pseudo-grid controls.
+
+The reduced active/passive solver path is still under development. For now,
+enabling pseudo-grid mode fails fast with a clear ``NotImplementedError`` so
+callers do not accidentally assume that the mode is already active.
 
 March 2026 Updates (v0.6.0)
 ----------------------------

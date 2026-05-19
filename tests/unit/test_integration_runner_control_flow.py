@@ -15,7 +15,7 @@ from core.integration_runner import (
     retarded_integrator,
     run_integrator,
 )
-from core.types import SimulationType
+from core.types import PseudoGridConfig, SimulationType
 
 
 def _make_particle_state(
@@ -1339,6 +1339,13 @@ def test_run_integrator_forwards_config_fields(
         macroparticle_use_momentum_errors=False,
         bunch_transv_dist=0.2,
         bunch_transv_mom=0.3,
+        pseudo_grid=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=3,
+            active_driver_count=4,
+            passive_neighbor_count=2,
+            pair_reuse_window=5,
+        ),
     )
 
     result = run_integrator(
@@ -1363,3 +1370,4 @@ def test_run_integrator_forwards_config_fields(
     assert captured["macroparticle_use_momentum_errors"] is False
     assert captured["bunch_transv_dist"] == pytest.approx(0.2)
     assert captured["bunch_transv_mom"] == pytest.approx(0.3)
+    assert captured["pseudo_grid"] == config.pseudo_grid

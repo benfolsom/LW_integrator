@@ -371,6 +371,57 @@ class IntegratorGUI(
         self.macroparticle_sigma_multiplier_var = tk.StringVar(value="1.0")
         self.macroparticle_use_momentum_errors_var = tk.BooleanVar(value=True)
 
+        # Experimental pseudo-grid options
+        self.pseudo_grid_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "pseudo_grid_enabled", False)
+        )
+        self.pseudo_grid_active_rider_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_active_rider_count", 4)
+        )
+        self.pseudo_grid_active_driver_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_active_driver_count", 4)
+        )
+        self.pseudo_grid_passive_neighbor_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_passive_neighbor_count", 4)
+        )
+        self.pseudo_grid_coverage_strategy_var = tk.StringVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_coverage_strategy",
+                "farthest_point_staleness",
+            )
+        )
+        self.pseudo_grid_coverage_space_var = tk.StringVar(
+            value=getattr(self.options, "pseudo_grid_coverage_space", "position")
+        )
+        self.pseudo_grid_pair_reuse_window_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_pair_reuse_window", 16)
+        )
+        self.pseudo_grid_source_weighting_mode_var = tk.StringVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_source_weighting_mode",
+                "inverse_distance",
+            )
+        )
+        self.pseudo_grid_loss_tracking_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "pseudo_grid_loss_tracking_enabled", True)
+        )
+        self.pseudo_grid_causal_history_pruning_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_causal_history_pruning_enabled",
+                False,
+            )
+        )
+        self.pseudo_grid_causal_history_safety_margin_steps_var = tk.IntVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_causal_history_safety_margin_steps",
+                2,
+            )
+        )
+
         # Self-consistency options
         self.self_consistency_enabled_var = tk.BooleanVar(
             value=self.options.self_consistency_enabled

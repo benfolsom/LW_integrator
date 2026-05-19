@@ -372,6 +372,19 @@ class SimulationOptions:
     auto_duration_crossing_steps: int = 200
     auto_duration_post_factor: float = 2.0
 
+    # Experimental pseudo-grid options (BUNCH_TO_BUNCH only)
+    pseudo_grid_enabled: bool = False
+    pseudo_grid_active_rider_count: int = 4
+    pseudo_grid_active_driver_count: int = 4
+    pseudo_grid_passive_neighbor_count: int = 4
+    pseudo_grid_coverage_strategy: str = "farthest_point_staleness"
+    pseudo_grid_coverage_space: str = "position"
+    pseudo_grid_pair_reuse_window: int = 16
+    pseudo_grid_source_weighting_mode: str = "inverse_distance"
+    pseudo_grid_loss_tracking_enabled: bool = True
+    pseudo_grid_causal_history_pruning_enabled: bool = False
+    pseudo_grid_causal_history_safety_margin_steps: int = 2
+
     # Logging options
     save_log_file: bool = False
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
@@ -474,6 +487,19 @@ class SimulationOptions:
             "auto_duration_enabled": self.auto_duration_enabled,
             "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
             "auto_duration_post_factor": self.auto_duration_post_factor,
+            "pseudo_grid": {
+                "enabled": self.pseudo_grid_enabled,
+                "active_rider_count": self.pseudo_grid_active_rider_count,
+                "active_driver_count": self.pseudo_grid_active_driver_count,
+                "passive_neighbor_count": self.pseudo_grid_passive_neighbor_count,
+                "coverage_strategy": self.pseudo_grid_coverage_strategy,
+                "coverage_space": self.pseudo_grid_coverage_space,
+                "pair_reuse_window": self.pseudo_grid_pair_reuse_window,
+                "source_weighting_mode": self.pseudo_grid_source_weighting_mode,
+                "loss_tracking_enabled": self.pseudo_grid_loss_tracking_enabled,
+                "causal_history_pruning_enabled": self.pseudo_grid_causal_history_pruning_enabled,
+                "causal_history_safety_margin_steps": self.pseudo_grid_causal_history_safety_margin_steps,
+            },
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -521,6 +547,31 @@ class SimulationOptions:
                 return (float(value[0]), float(value[1]), float(value[2]))
             except (TypeError, ValueError):
                 return None
+
+        pseudo_grid_payload_raw = payload.get("pseudo_grid")
+        pseudo_grid_payload = (
+            pseudo_grid_payload_raw if isinstance(pseudo_grid_payload_raw, dict) else {}
+        )
+
+        def _pseudo_value(name: str, default: object) -> object:
+            flat_name = f"pseudo_grid_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return pseudo_grid_payload.get(name, default)
+
+        def _pseudo_bool(name: str, default: bool) -> bool:
+            return bool(_pseudo_value(name, default))
+
+        def _pseudo_int(name: str, default: int) -> int:
+            value = _pseudo_value(name, default)
+            try:
+                return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
+            except (TypeError, ValueError):
+                return default
+
+        def _pseudo_str(name: str, default: str) -> str:
+            value = _pseudo_value(name, default)
+            return str(value) if value is not None else default
 
         sim_value = payload.get("simulation_type", "BUNCH_TO_BUNCH")
         if isinstance(sim_value, SimulationType):
@@ -686,6 +737,27 @@ class SimulationOptions:
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
+            pseudo_grid_enabled=_pseudo_bool("enabled", False),
+            pseudo_grid_active_rider_count=_pseudo_int("active_rider_count", 4),
+            pseudo_grid_active_driver_count=_pseudo_int("active_driver_count", 4),
+            pseudo_grid_passive_neighbor_count=_pseudo_int("passive_neighbor_count", 4),
+            pseudo_grid_coverage_strategy=_pseudo_str(
+                "coverage_strategy", "farthest_point_staleness"
+            ),
+            pseudo_grid_coverage_space=_pseudo_str("coverage_space", "position"),
+            pseudo_grid_pair_reuse_window=_pseudo_int("pair_reuse_window", 16),
+            pseudo_grid_source_weighting_mode=_pseudo_str(
+                "source_weighting_mode", "inverse_distance"
+            ),
+            pseudo_grid_loss_tracking_enabled=_pseudo_bool(
+                "loss_tracking_enabled", True
+            ),
+            pseudo_grid_causal_history_pruning_enabled=_pseudo_bool(
+                "causal_history_pruning_enabled", False
+            ),
+            pseudo_grid_causal_history_safety_margin_steps=_pseudo_int(
+                "causal_history_safety_margin_steps", 2
+            ),
             self_consistency_gamma_reconciliation_method=_str(
                 "self_consistency_gamma_reconciliation_method", "DISABLED"
             ),
@@ -1165,6 +1237,29 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
     )
 
 
+def build_pseudo_grid_config(options: SimulationOptions) -> object:
+    """Build PseudoGridConfig from SimulationOptions."""
+    from core.types import PseudoGridConfig
+
+    return PseudoGridConfig(
+        enabled=bool(options.pseudo_grid_enabled),
+        active_rider_count=int(options.pseudo_grid_active_rider_count),
+        active_driver_count=int(options.pseudo_grid_active_driver_count),
+        passive_neighbor_count=int(options.pseudo_grid_passive_neighbor_count),
+        coverage_strategy=str(options.pseudo_grid_coverage_strategy),
+        coverage_space=str(options.pseudo_grid_coverage_space),
+        pair_reuse_window=int(options.pseudo_grid_pair_reuse_window),
+        source_weighting_mode=str(options.pseudo_grid_source_weighting_mode),
+        loss_tracking_enabled=bool(options.pseudo_grid_loss_tracking_enabled),
+        causal_history_pruning_enabled=bool(
+            options.pseudo_grid_causal_history_pruning_enabled
+        ),
+        causal_history_safety_margin_steps=int(
+            options.pseudo_grid_causal_history_safety_margin_steps
+        ),
+    )
+
+
 def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
     """Build SpaceChargeConfig from SimulationOptions.
 
@@ -1388,6 +1483,7 @@ def run_testbed(
     self_consistency_config = build_self_consistency_config(options)
     energy_monitor_config = build_energy_monitor_config(options)
     adaptive_timestep_config = build_adaptive_timestep_config(options)
+    pseudo_grid_config = build_pseudo_grid_config(options)
     space_charge_config = build_space_charge_config(options)
     external_field_config = build_external_field_config(options)
     chrono_mode_enum = build_chrono_mode_enum(
@@ -1506,6 +1602,7 @@ def run_testbed(
             logger=log,
             use_numba=getattr(options, "use_numba", True),
             radiation_reaction_mode=options.radiation_reaction_mode,
+            pseudo_grid=pseudo_grid_config,
         )
 
         # Build a normalized payload shared by the GUI and CLI surfaces.
@@ -3052,6 +3149,7 @@ __all__ = [
     "SPECIES_PRESETS",
     "apply_species_preset",
     "build_external_field_config",
+    "build_pseudo_grid_config",
     "compute_initial_summary",
     "ensure_directory",
     "generate_filename_base",

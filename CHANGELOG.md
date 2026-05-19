@@ -4,6 +4,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Experimental Pseudo-grid Config Plumbing (June 2026)
+
+- **Core config surface** — Added `PseudoGridConfig` and threaded it through `IntegratorConfig`, `run_integrator()`, and `retarded_integrator()` so the experimental mode can be configured consistently while the reduced solver path is still under construction.
+- **Single-run config surface** — Added pseudo-grid fields to `SimulationOptions` and saved single-run configs, including active rider/driver counts, passive neighbor count, coverage strategy/space, pair reuse window, source weighting mode, loss tracking, and causal-history pruning controls.
+- **CLI / GUI exposure** — Added experimental pseudo-grid controls to `lw-simulate` and the main GUI Particles tab for `BUNCH_TO_BUNCH` studies. The settings round-trip through GUI load/save and CLI JSON payloads.
+- **Current behavior** — Enabling pseudo-grid mode now fails fast with a clear `NotImplementedError` rather than silently ignoring the requested mode. This keeps the public surface honest while active/passive physics, recency-window scheduling, and causal-history pruning are implemented.
+- **Tests** — Added regression coverage for CLI parsing/build-request forwarding, `SimulationOptions` round-tripping, GUI round-tripping, and `run_integrator()` forwarding of the pseudo-grid config.
+- **Files modified** — `core/types.py`, `core/integration_runner.py`, `lw_integrator/cli.py`, `lw_integrator/gui.py`, `lw_integrator/gui_config_mixins.py`, `lw_integrator/gui_state_mixins.py`, `lw_integrator/gui_tab_mixins.py`, `lw_integrator/testbed_runner.py`, `tests/test_cli.py`, `tests/test_gui.py`, `tests/test_simulation_options.py`, `tests/unit/test_integration_runner_control_flow.py`, `README.md`, `docs/source/recent_changes.rst`
+
 ### Parallel Sweep Controls, Medina RR Defaults, And CLI RR Overrides (June 2026)
 
 - **GUI / Sweep execution** — Added a worker-count control to the Sweep/Optim tab and routed GUI blind sweeps through the headless `SweepRunner` parallel path when `workers > 1`, preserving GUI log/progress updates while reusing the maintained multiprocessing implementation.

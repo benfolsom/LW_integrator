@@ -8,7 +8,7 @@ and example notebooks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from typing import Dict, List, Sequence
 
@@ -114,6 +114,46 @@ class GammaReconciliationMethod(Enum):
 
 
 @dataclass
+class PseudoGridConfig:
+    """Configuration surface for the experimental pseudo-grid solver mode.
+
+    The first implementation targets ``BUNCH_TO_BUNCH`` studies where only a
+    small active subset performs full retarded LW solves while the remaining
+    particles are advanced by neighborhood-weighted updates.
+
+    The configuration is threaded through the public API before the reduced
+    solver path is fully implemented so the CLI, GUI, saved configs, and tests
+    can evolve in lockstep.
+    """
+
+    enabled: bool = False
+    active_rider_count: int = 4
+    active_driver_count: int = 4
+    passive_neighbor_count: int = 4
+    coverage_strategy: str = "farthest_point_staleness"
+    coverage_space: str = "position"
+    pair_reuse_window: int = 16
+    source_weighting_mode: str = "inverse_distance"
+    loss_tracking_enabled: bool = True
+    causal_history_pruning_enabled: bool = False
+    causal_history_safety_margin_steps: int = 2
+
+    def __post_init__(self) -> None:
+        if self.active_rider_count <= 0:
+            raise ValueError("pseudo-grid active_rider_count must be positive")
+        if self.active_driver_count <= 0:
+            raise ValueError("pseudo-grid active_driver_count must be positive")
+        if self.passive_neighbor_count <= 0:
+            raise ValueError("pseudo-grid passive_neighbor_count must be positive")
+        if self.pair_reuse_window < 0:
+            raise ValueError("pseudo-grid pair_reuse_window must be non-negative")
+        if self.causal_history_safety_margin_steps < 0:
+            raise ValueError(
+                "pseudo-grid causal_history_safety_margin_steps must be non-negative"
+            )
+
+
+@dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
@@ -178,6 +218,10 @@ class IntegratorConfig:
     bunch_transv_mom:
         Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
         Used to compute cumulative displacement errors. Defaults to ``0.0``.
+    pseudo_grid:
+        Experimental pseudo-grid solver settings. The initial plumbing keeps the
+        surface available across the API while the reduced-physics update path is
+        implemented incrementally. Defaults to a disabled configuration.
     """
 
     steps: int
@@ -199,6 +243,7 @@ class IntegratorConfig:
     macroparticle_use_momentum_errors: bool = True
     bunch_transv_dist: float = 0.0
     bunch_transv_mom: float = 0.0
+    pseudo_grid: PseudoGridConfig = field(default_factory=PseudoGridConfig)
 
 
 @dataclass
@@ -449,13 +494,13 @@ class TrajectoryBuilder:
         self._n_particles = n_particles
 
         self._arrays: dict = {
-            field: np.zeros((n_steps, n_particles), dtype=np.float64)
-            for field in self._KINEMATIC_FIELDS
+            field_name: np.zeros((n_steps, n_particles), dtype=np.float64)
+            for field_name in self._KINEMATIC_FIELDS
         }
         self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
 
-        for field in self._PARTICLE_CONST_FIELDS:
-            self._arrays[field] = np.zeros(n_particles, dtype=np.float64)
+        for field_name in self._PARTICLE_CONST_FIELDS:
+            self._arrays[field_name] = np.zeros(n_particles, dtype=np.float64)
 
         self._halted_early = np.zeros(n_steps, dtype=bool)
         self._halt_step_arr = np.full(n_steps, -1, dtype=np.int64)
@@ -464,9 +509,9 @@ class TrajectoryBuilder:
 
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
-        for field in self._KINEMATIC_FIELDS:
-            if field in state:
-                self._arrays[field][step] = state[field]
+        for field_name in self._KINEMATIC_FIELDS:
+            if field_name in state:
+                self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
 
         dead = state.get("_dead_particles")
@@ -474,9 +519,9 @@ class TrajectoryBuilder:
             self._arrays["dead"][step] = dead
 
         if step == 0:
-            for field in self._PARTICLE_CONST_FIELDS:
-                if field in state:
-                    self._arrays[field][:] = state[field]
+            for field_name in self._PARTICLE_CONST_FIELDS:
+                if field_name in state:
+                    self._arrays[field_name][:] = state[field_name]
 
     def set_halt_metadata(
         self,
