@@ -23,6 +23,10 @@ single-run stack for ``BUNCH_TO_BUNCH`` studies:
   neighbor count, pair reuse window, source weighting, loss tracking, and
   causal-history pruning.
 * The main GUI ``Particles`` tab now exposes the same pseudo-grid controls.
+* ``core/pseudo_grid.py`` now provides deterministic active-subset selection,
+  passive-anchor maps, bounded pair-reuse tracking, effective source-charge
+  aggregation, and a conservative causal-history cutoff helper for the next
+  solver-integration stage.
 
 The reduced active/passive solver path is still under development. For now,
 enabling pseudo-grid mode fails fast with a clear ``NotImplementedError`` so

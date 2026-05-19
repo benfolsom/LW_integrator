@@ -2,7 +2,7 @@
 
 ## Recent Updates (June 2026 + v0.6.0 highlights)
 
-- **Experimental pseudo-grid plumbing** — added a disabled-by-default pseudo-grid configuration surface across `IntegratorConfig`, `SimulationOptions`, the single-run CLI, the main GUI, and saved single-run configs for `BUNCH_TO_BUNCH` studies. The reduced active/passive solver path is still under development; enabling the mode currently raises a clear `NotImplementedError` instead of silently falling back.
+- **Experimental pseudo-grid plumbing** — added a disabled-by-default pseudo-grid configuration surface across `IntegratorConfig`, `SimulationOptions`, the single-run CLI, the main GUI, and saved single-run configs for `BUNCH_TO_BUNCH` studies. The reduced active/passive solver path is still under development; enabling the mode currently raises a clear `NotImplementedError` instead of silently falling back. The first helper module now includes deterministic active-subset selection, passive-anchor maps, bounded pair-reuse tracking, and a conservative causal-history cutoff helper.
 - **Parallel blind sweeps** — the Sweep/Optimization GUI now exposes a worker-count control and reuses the maintained headless `SweepRunner` parallel path when `workers > 1`. Saved sweep configs can persist `workers`, and CLI sweeps still support `-j/--workers` overrides.
 - **Radiation reaction surface** — radiation-reaction mode is now configurable from the main GUI Stability tab, the Sweep/Optimization tab, saved single-run configs, saved sweep configs, and the single-run CLI via `--radiation-reaction-mode`. The user-facing default is now `medina_lad`.
 - **CLI/GUI parity** — the CLI sweep runner now calls the same core code paths
