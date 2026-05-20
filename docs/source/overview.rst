@@ -114,9 +114,10 @@ Key ideas to keep in mind
   ``PseudoGridConfig`` exposes an opt-in reduced active/passive solve path for
   ``SimulationType.BUNCH_TO_BUNCH`` runs.  The reduced path supports adaptive
   timestep retries and reduced same-bunch space charge when each bunch keeps at
-  least two active particles.  It still stores full histories, computes
-  causal-history pruning bounds only as advisory metadata, and falls back to
-  the canonical full solve for unsupported configurations.
+  least two active particles.  Supported reduced B2B runs can compact live
+  causal histories while preserving full-state SoA/legacy outputs and retained-
+  history diagnostics.  Unsupported configurations fall back to the canonical
+  full solve.
 * **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
   (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
   same ``run_testbed()`` function with the same ``SimulationOptions`` dataclass.

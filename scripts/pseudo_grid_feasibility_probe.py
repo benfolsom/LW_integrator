@@ -19,7 +19,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.constants import C_MMNS
-from core.integration_runner import retarded_integrator
+from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.types import PseudoGridConfig, SimulationType, SpaceChargeConfig
 
 
@@ -30,7 +30,11 @@ class ProbeResult:
     particle_count: int
     active_count: int | None
     space_charge_enabled: bool
+    space_charge_retarded: bool
+    adaptive_timestep_enabled: bool
     steps: int
+    h_step_ns: float
+    charge_scale: float
     elapsed_s: float
     finite: bool
     max_abs_x_mm: float
@@ -127,7 +131,14 @@ def _run_probe_case(
     driver_beta_z: float = 0.0,
     passive_neighbor_count: int | None = None,
     space_charge_enabled: bool = False,
+    space_charge_retarded: bool = False,
     space_charge_softening_mm: float = 0.3,
+    space_charge_min_retarded_steps: int | None = None,
+    adaptive_timestep_enabled: bool = False,
+    adaptive_energy_jump_threshold: float = 0.1,
+    adaptive_timestep_reduction_factor: int = 3,
+    adaptive_min_timestep_factor: float = 1.0e-3,
+    adaptive_proximity_refinement_enabled: bool = False,
 ) -> tuple[ProbeResult, Any, Any]:
     rider = _make_bunch(
         n_particles=n_particles,
@@ -160,6 +171,25 @@ def _run_probe_case(
             causal_history_safety_margin_steps=0,
         )
 
+    space_charge = None
+    if space_charge_enabled:
+        space_charge = SpaceChargeConfig(
+            enabled=True,
+            retarded=space_charge_retarded,
+            softening_mm=space_charge_softening_mm,
+            min_retarded_steps=space_charge_min_retarded_steps,
+        )
+
+    adaptive_timestep = None
+    if adaptive_timestep_enabled:
+        adaptive_timestep = AdaptiveTimestepConfig(
+            enabled=True,
+            energy_jump_threshold=adaptive_energy_jump_threshold,
+            timestep_reduction_factor=adaptive_timestep_reduction_factor,
+            min_timestep_factor=adaptive_min_timestep_factor,
+            proximity_refinement_enabled=adaptive_proximity_refinement_enabled,
+        )
+
     start = time.perf_counter()
     rider_trajectory, driver_trajectory, rider_soa, driver_soa = retarded_integrator(
         steps=steps,
@@ -173,15 +203,8 @@ def _run_probe_case(
         cav_spacing=0.0,
         z_cutoff=0.0,
         pseudo_grid=pseudo_grid,
-        space_charge=(
-            SpaceChargeConfig(
-                enabled=True,
-                retarded=False,
-                softening_mm=space_charge_softening_mm,
-            )
-            if space_charge_enabled
-            else None
-        ),
+        space_charge=space_charge,
+        adaptive_timestep=adaptive_timestep,
         use_numba=False,
         radiation_reaction_mode="power_matched_damping",
     )
@@ -205,7 +228,11 @@ def _run_probe_case(
         particle_count=n_particles,
         active_count=active_count,
         space_charge_enabled=space_charge_enabled,
+        space_charge_retarded=bool(space_charge_enabled and space_charge_retarded),
+        adaptive_timestep_enabled=adaptive_timestep_enabled,
         steps=steps,
+        h_step_ns=h_step,
+        charge_scale=charge_scale,
         elapsed_s=elapsed_s,
         finite=bool(
             np.all(np.isfinite(rider_soa.x))
@@ -228,17 +255,21 @@ def _run_probe_case(
         final_rider_mean_z_mm=final_rider_mean_z,
         final_driver_mean_z_mm=final_driver_mean_z,
         interaction_point_crossed=interaction_point_crossed,
-        retained_rider_start_index=(
-            None if schedule is None else schedule.rider_retained_history_start_index
+        retained_rider_start_index=getattr(
+            schedule,
+            "rider_retained_history_start_index",
+            None,
         ),
-        retained_driver_start_index=(
-            None if schedule is None else schedule.driver_retained_history_start_index
+        retained_driver_start_index=getattr(
+            schedule,
+            "driver_retained_history_start_index",
+            None,
         ),
-        dropped_rider_samples=(
-            0 if schedule is None else schedule.rider_dropped_history_samples
+        dropped_rider_samples=int(
+            getattr(schedule, "rider_dropped_history_samples", 0)
         ),
-        dropped_driver_samples=(
-            0 if schedule is None else schedule.driver_dropped_history_samples
+        dropped_driver_samples=int(
+            getattr(schedule, "driver_dropped_history_samples", 0)
         ),
     )
     return result, rider_soa, driver_soa
@@ -281,6 +312,17 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     small_n = args.small_n
     scale_n = args.scale_n
     active_count = min(args.active_count, scale_n)
+    probe_case_options = {
+        "space_charge_enabled": args.include_space_charge,
+        "space_charge_retarded": args.space_charge_retarded,
+        "space_charge_softening_mm": args.space_charge_softening_mm,
+        "space_charge_min_retarded_steps": args.space_charge_min_retarded_steps,
+        "adaptive_timestep_enabled": args.adaptive_timestep,
+        "adaptive_energy_jump_threshold": args.adaptive_energy_jump_threshold,
+        "adaptive_timestep_reduction_factor": args.adaptive_timestep_reduction_factor,
+        "adaptive_min_timestep_factor": args.adaptive_min_timestep_factor,
+        "adaptive_proximity_refinement_enabled": args.adaptive_proximity_refinement,
+    }
 
     zero_full, zero_full_rider, _zero_full_driver = _run_probe_case(
         label="zero_charge_full",
@@ -290,6 +332,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         charge_scale=0.0,
         active_count=None,
         causal_history_pruning=False,
+        **probe_case_options,
     )
     zero_pseudo, zero_pseudo_rider, _zero_pseudo_driver = _run_probe_case(
         label="zero_charge_pseudo_reduced",
@@ -299,6 +342,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         charge_scale=0.0,
         active_count=min(args.active_count, small_n),
         causal_history_pruning=True,
+        **probe_case_options,
     )
     weak_full, weak_full_rider, _weak_full_driver = _run_probe_case(
         label="weak_charge_full_small_n",
@@ -308,6 +352,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         charge_scale=args.charge_scale,
         active_count=None,
         causal_history_pruning=False,
+        **probe_case_options,
     )
     weak_pseudo, weak_pseudo_rider, _weak_pseudo_driver = _run_probe_case(
         label="weak_charge_pseudo_small_n",
@@ -317,6 +362,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         charge_scale=args.charge_scale,
         active_count=min(args.active_count, small_n),
         causal_history_pruning=True,
+        **probe_case_options,
     )
     scale_pseudo, _scale_pseudo_rider, _scale_pseudo_driver = _run_probe_case(
         label="weak_charge_pseudo_scale_n",
@@ -326,6 +372,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         charge_scale=args.charge_scale,
         active_count=active_count,
         causal_history_pruning=True,
+        **probe_case_options,
     )
 
     results = [zero_full, zero_pseudo, weak_full, weak_pseudo, scale_pseudo]
@@ -355,6 +402,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
             charge_scale=args.charge_scale,
             active_count=None,
             causal_history_pruning=False,
+            **probe_case_options,
         )
         results.append(scale_full)
         comparisons.append(
@@ -382,6 +430,15 @@ def main() -> int:
     parser.add_argument("--h-step", type=float, default=1.0e-4)
     parser.add_argument("--charge-scale", type=float, default=2.0e-2)
     parser.add_argument("--include-full-scale", action="store_true")
+    parser.add_argument("--include-space-charge", action="store_true")
+    parser.add_argument("--space-charge-retarded", action="store_true")
+    parser.add_argument("--space-charge-softening-mm", type=float, default=0.3)
+    parser.add_argument("--space-charge-min-retarded-steps", type=int)
+    parser.add_argument("--adaptive-timestep", action="store_true")
+    parser.add_argument("--adaptive-energy-jump-threshold", type=float, default=0.1)
+    parser.add_argument("--adaptive-timestep-reduction-factor", type=int, default=3)
+    parser.add_argument("--adaptive-min-timestep-factor", type=float, default=1.0e-3)
+    parser.add_argument("--adaptive-proximity-refinement", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 

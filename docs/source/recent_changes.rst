@@ -41,24 +41,36 @@ An experimental pseudo-grid reduced solver is now available for
   conservatively falls back to the canonical full-history solve.
 * ``scripts/pseudo_grid_feasibility_probe.py`` provides a lightweight sanity and
   scale probe covering zero-charge drift, weak-charge full-vs-reduced
-  comparisons, and optional ``N > 100`` timing checks.
+  comparisons, optional instantaneous or retarded same-bunch space-charge
+  checks, optional adaptive-timestep checks, and optional ``N > 100`` timing
+  checks.
 * ``scripts/pseudo_grid_feasibility_matrix.py`` runs small ``N/K/neighbor``
   matrices and includes crossing scenarios where both bunches have enough time
   to reach and pass the nominal interaction point at ``z=0``. Space-charge
-  scenarios are opt-in with ``--include-space-charge``.
+  scenarios are opt-in with ``--include-space-charge`` and can include
+  instantaneous and retarded modes. Additional opt-in matrix slices cover
+  adaptive crossing runs, stronger charge/current regimes, and longer stability
+  windows.
 * ``tests/physics/test_pseudo_grid_feasibility.py`` adds physics-facing crossing
   baselines: zero-charge pseudo-grid motion is checked against inertial motion,
-  weak-charge crossing runs are compared against the full solver, and an
-  instantaneous same-bunch space-charge crossing case is covered.
+  weak-charge crossing runs are compared against the full solver, instantaneous
+  and retarded same-bunch space-charge crossing cases are covered, and adaptive
+  retarded-space-charge plus stronger-charge longer-window cases are checked for
+  finite behavior.
+* ``tests/unit/test_pseudo_grid_feasibility_scripts.py`` pins the probe and
+  matrix scheduling surfaces so script-level options for retarded space charge,
+  adaptive crossing runs, stronger regimes, and long windows stay covered in the
+  maintained ``LW_integrator`` test suite.
 
 The mode remains experimental. Causal-history deletion is currently limited to
 supported reduced pseudo-grid B2B solves; canonical fallback paths still retain
-full histories. The next validation focus is to build on these analytic
-physical baselines, keep interaction-point crossing and same-bunch space-charge
-cases in the standard screening matrix, then map accuracy, runtime, and
-stability across ``N``, active-count, and neighbour-count grids. Areas still
-needing explicit coverage include retarded same-bunch space charge, adaptive
-crossing runs, stronger charge/current regimes, and longer stability windows.
+full histories. The next validation focus is to scale the newly covered
+retarded-space-charge, adaptive-crossing, stronger-charge, and longer-window
+slices across broader ``N``, active-count, and neighbour-count grids while
+keeping proper unit/regression coverage in ``LW_integrator``. Sibling
+feasibility-study repositories should remain user-like screening workspaces for
+run matrices, result artifacts, and operator-facing probes rather than the
+primary home for maintained pseudo-grid regression tests.
 
 March 2026 Updates (v0.6.0)
 ----------------------------

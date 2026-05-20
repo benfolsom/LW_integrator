@@ -1,9 +1,9 @@
-"""Run a small pseudo-grid feasibility matrix.
+"""Run a pseudo-grid feasibility matrix.
 
-The matrix is designed for quick local screening, not formal validation. It
-includes stationary weak-charge cases, crossing cases where both bunches have
-time to reach and pass the nominal interaction point at z=0, and optional
-instantaneous same-bunch space-charge cases.
+The matrix is designed for local screening, not formal validation. It can cover
+stationary cases, crossing cases, instantaneous or retarded same-bunch
+space-charge cases, adaptive-timestep crossings, stronger charge regimes, and
+longer stability windows.
 """
 
 from __future__ import annotations
@@ -30,6 +30,29 @@ def _parse_int_list(value: str) -> list[int]:
     return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def _parse_float_list(value: str) -> list[float]:
+    return [float(item.strip()) for item in value.split(",") if item.strip()]
+
+
+def _parse_space_charge_modes(value: str) -> list[bool]:
+    modes: list[bool] = []
+    for item in value.split(","):
+        mode = item.strip().lower()
+        if not mode:
+            continue
+        if mode in {"instant", "instantaneous", "coulomb"}:
+            modes.append(False)
+        elif mode in {"retarded", "lw"}:
+            modes.append(True)
+        else:
+            raise ValueError("space-charge modes must be instantaneous and/or retarded")
+    return modes
+
+
+def _tag_float(value: float) -> str:
+    return f"{value:.0e}".replace("+", "").replace("-", "m").replace(".", "p")
+
+
 def _run_case_pair(
     *,
     scenario: str,
@@ -44,7 +67,14 @@ def _run_case_pair(
     driver_beta_z: float,
     full_reference: bool,
     space_charge_enabled: bool = False,
+    space_charge_retarded: bool = False,
     space_charge_softening_mm: float = 0.3,
+    space_charge_min_retarded_steps: int | None = None,
+    adaptive_timestep_enabled: bool = False,
+    adaptive_energy_jump_threshold: float = 0.1,
+    adaptive_timestep_reduction_factor: int = 3,
+    adaptive_min_timestep_factor: float = 1.0e-3,
+    adaptive_proximity_refinement_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     pseudo_label = (
         f"{scenario}_pseudo_N{n_particles}_K{active_count}_M{passive_neighbor_count}"
@@ -63,7 +93,14 @@ def _run_case_pair(
         rider_beta_z=rider_beta_z,
         driver_beta_z=driver_beta_z,
         space_charge_enabled=space_charge_enabled,
+        space_charge_retarded=space_charge_retarded,
         space_charge_softening_mm=space_charge_softening_mm,
+        space_charge_min_retarded_steps=space_charge_min_retarded_steps,
+        adaptive_timestep_enabled=adaptive_timestep_enabled,
+        adaptive_energy_jump_threshold=adaptive_energy_jump_threshold,
+        adaptive_timestep_reduction_factor=adaptive_timestep_reduction_factor,
+        adaptive_min_timestep_factor=adaptive_min_timestep_factor,
+        adaptive_proximity_refinement_enabled=adaptive_proximity_refinement_enabled,
     )
     result_rows = [asdict(pseudo_result)]
     comparison_rows: list[dict[str, Any]] = []
@@ -83,7 +120,14 @@ def _run_case_pair(
             rider_beta_z=rider_beta_z,
             driver_beta_z=driver_beta_z,
             space_charge_enabled=space_charge_enabled,
+            space_charge_retarded=space_charge_retarded,
             space_charge_softening_mm=space_charge_softening_mm,
+            space_charge_min_retarded_steps=space_charge_min_retarded_steps,
+            adaptive_timestep_enabled=adaptive_timestep_enabled,
+            adaptive_energy_jump_threshold=adaptive_energy_jump_threshold,
+            adaptive_timestep_reduction_factor=adaptive_timestep_reduction_factor,
+            adaptive_min_timestep_factor=adaptive_min_timestep_factor,
+            adaptive_proximity_refinement_enabled=adaptive_proximity_refinement_enabled,
         )
         result_rows.append(asdict(full_result))
         comparison_rows.append(
@@ -101,23 +145,8 @@ def _run_case_pair(
     return result_rows, comparison_rows
 
 
-def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
-    particle_counts = _parse_int_list(args.particle_counts)
-    active_counts = _parse_int_list(args.active_counts)
-    neighbor_counts = _parse_int_list(args.neighbor_counts)
-    result_rows: list[dict[str, Any]] = []
-    comparison_rows: list[dict[str, Any]] = []
-
-    scenarios = [
-        {
-            "name": "stationary_weak",
-            "steps": args.stationary_steps,
-            "charge_scale": args.charge_scale,
-            "z_separation_mm": 1.0,
-            "rider_beta_z": 0.0,
-            "driver_beta_z": 0.0,
-            "space_charge_enabled": False,
-        },
+def _base_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
+    scenarios: list[dict[str, Any]] = [
         {
             "name": "crossing_zero_charge",
             "steps": args.crossing_steps,
@@ -126,40 +155,215 @@ def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             "rider_beta_z": args.crossing_beta,
             "driver_beta_z": -args.crossing_beta,
             "space_charge_enabled": False,
-        },
-        {
-            "name": "crossing_weak",
-            "steps": args.crossing_steps,
-            "charge_scale": args.charge_scale,
-            "z_separation_mm": args.crossing_z_separation_mm,
-            "rider_beta_z": args.crossing_beta,
-            "driver_beta_z": -args.crossing_beta,
-            "space_charge_enabled": False,
-        },
+            "space_charge_retarded": False,
+            "adaptive_timestep_enabled": False,
+        }
     ]
-    if args.include_space_charge:
+
+    for charge_scale in _parse_float_list(args.charge_scales):
+        tag = _tag_float(charge_scale)
         scenarios.extend(
             [
                 {
-                    "name": "stationary_space_charge_weak",
+                    "name": f"stationary_charge_{tag}",
                     "steps": args.stationary_steps,
-                    "charge_scale": args.space_charge_scale,
+                    "charge_scale": charge_scale,
                     "z_separation_mm": 1.0,
                     "rider_beta_z": 0.0,
                     "driver_beta_z": 0.0,
-                    "space_charge_enabled": True,
+                    "space_charge_enabled": False,
+                    "space_charge_retarded": False,
+                    "adaptive_timestep_enabled": False,
                 },
                 {
-                    "name": "crossing_space_charge_weak",
+                    "name": f"crossing_charge_{tag}",
                     "steps": args.crossing_steps,
-                    "charge_scale": args.space_charge_scale,
+                    "charge_scale": charge_scale,
                     "z_separation_mm": args.crossing_z_separation_mm,
                     "rider_beta_z": args.crossing_beta,
                     "driver_beta_z": -args.crossing_beta,
-                    "space_charge_enabled": True,
+                    "space_charge_enabled": False,
+                    "space_charge_retarded": False,
+                    "adaptive_timestep_enabled": False,
                 },
             ]
         )
+
+    return scenarios
+
+
+def _space_charge_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if not args.include_space_charge:
+        return []
+
+    scenarios: list[dict[str, Any]] = []
+    for retarded in _parse_space_charge_modes(args.space_charge_modes):
+        mode = "retarded" if retarded else "instantaneous"
+        for charge_scale in _parse_float_list(args.space_charge_scales):
+            tag = _tag_float(charge_scale)
+            scenarios.extend(
+                [
+                    {
+                        "name": f"stationary_space_charge_{mode}_{tag}",
+                        "steps": args.stationary_steps,
+                        "charge_scale": charge_scale,
+                        "z_separation_mm": 1.0,
+                        "rider_beta_z": 0.0,
+                        "driver_beta_z": 0.0,
+                        "space_charge_enabled": True,
+                        "space_charge_retarded": retarded,
+                        "adaptive_timestep_enabled": False,
+                    },
+                    {
+                        "name": f"crossing_space_charge_{mode}_{tag}",
+                        "steps": args.crossing_steps,
+                        "charge_scale": charge_scale,
+                        "z_separation_mm": args.crossing_z_separation_mm,
+                        "rider_beta_z": args.crossing_beta,
+                        "driver_beta_z": -args.crossing_beta,
+                        "space_charge_enabled": True,
+                        "space_charge_retarded": retarded,
+                        "adaptive_timestep_enabled": False,
+                    },
+                ]
+            )
+    return scenarios
+
+
+def _adaptive_crossing_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if not args.include_adaptive_crossing:
+        return []
+
+    scenarios: list[dict[str, Any]] = []
+    for charge_scale in _parse_float_list(args.charge_scales):
+        tag = _tag_float(charge_scale)
+        scenarios.append(
+            {
+                "name": f"crossing_adaptive_charge_{tag}",
+                "steps": args.adaptive_crossing_steps,
+                "charge_scale": charge_scale,
+                "z_separation_mm": args.crossing_z_separation_mm,
+                "rider_beta_z": args.crossing_beta,
+                "driver_beta_z": -args.crossing_beta,
+                "space_charge_enabled": False,
+                "space_charge_retarded": False,
+                "adaptive_timestep_enabled": True,
+            }
+        )
+
+    if args.include_space_charge:
+        for retarded in _parse_space_charge_modes(args.space_charge_modes):
+            mode = "retarded" if retarded else "instantaneous"
+            for charge_scale in _parse_float_list(args.space_charge_scales):
+                tag = _tag_float(charge_scale)
+                scenarios.append(
+                    {
+                        "name": f"crossing_adaptive_space_charge_{mode}_{tag}",
+                        "steps": args.adaptive_crossing_steps,
+                        "charge_scale": charge_scale,
+                        "z_separation_mm": args.crossing_z_separation_mm,
+                        "rider_beta_z": args.crossing_beta,
+                        "driver_beta_z": -args.crossing_beta,
+                        "space_charge_enabled": True,
+                        "space_charge_retarded": retarded,
+                        "adaptive_timestep_enabled": True,
+                    }
+                )
+    return scenarios
+
+
+def _strong_regime_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if not args.include_strong_regimes:
+        return []
+
+    scenarios: list[dict[str, Any]] = []
+    for charge_scale in _parse_float_list(args.strong_charge_scales):
+        tag = _tag_float(charge_scale)
+        scenarios.append(
+            {
+                "name": f"crossing_strong_charge_{tag}",
+                "steps": args.crossing_steps,
+                "charge_scale": charge_scale,
+                "z_separation_mm": args.crossing_z_separation_mm,
+                "rider_beta_z": args.crossing_beta,
+                "driver_beta_z": -args.crossing_beta,
+                "space_charge_enabled": False,
+                "space_charge_retarded": False,
+                "adaptive_timestep_enabled": False,
+            }
+        )
+        if args.include_space_charge:
+            for retarded in _parse_space_charge_modes(args.space_charge_modes):
+                mode = "retarded" if retarded else "instantaneous"
+                scenarios.append(
+                    {
+                        "name": f"crossing_strong_space_charge_{mode}_{tag}",
+                        "steps": args.crossing_steps,
+                        "charge_scale": charge_scale,
+                        "z_separation_mm": args.crossing_z_separation_mm,
+                        "rider_beta_z": args.crossing_beta,
+                        "driver_beta_z": -args.crossing_beta,
+                        "space_charge_enabled": True,
+                        "space_charge_retarded": retarded,
+                        "adaptive_timestep_enabled": False,
+                    }
+                )
+    return scenarios
+
+
+def _long_stability_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if not args.include_long_stability:
+        return []
+
+    scenarios: list[dict[str, Any]] = []
+    for charge_scale in _parse_float_list(args.long_stability_charge_scales):
+        tag = _tag_float(charge_scale)
+        scenarios.append(
+            {
+                "name": f"long_crossing_charge_{tag}",
+                "steps": args.long_stability_steps,
+                "charge_scale": charge_scale,
+                "z_separation_mm": args.crossing_z_separation_mm,
+                "rider_beta_z": args.crossing_beta,
+                "driver_beta_z": -args.crossing_beta,
+                "space_charge_enabled": False,
+                "space_charge_retarded": False,
+                "adaptive_timestep_enabled": False,
+            }
+        )
+        if args.include_space_charge:
+            for retarded in _parse_space_charge_modes(args.space_charge_modes):
+                mode = "retarded" if retarded else "instantaneous"
+                scenarios.append(
+                    {
+                        "name": f"long_crossing_space_charge_{mode}_{tag}",
+                        "steps": args.long_stability_steps,
+                        "charge_scale": charge_scale,
+                        "z_separation_mm": args.crossing_z_separation_mm,
+                        "rider_beta_z": args.crossing_beta,
+                        "driver_beta_z": -args.crossing_beta,
+                        "space_charge_enabled": True,
+                        "space_charge_retarded": retarded,
+                        "adaptive_timestep_enabled": False,
+                    }
+                )
+    return scenarios
+
+
+def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
+    particle_counts = _parse_int_list(args.particle_counts)
+    active_counts = _parse_int_list(args.active_counts)
+    neighbor_counts = _parse_int_list(args.neighbor_counts)
+    result_rows: list[dict[str, Any]] = []
+    comparison_rows: list[dict[str, Any]] = []
+
+    scenarios = [
+        *_base_scenarios(args),
+        *_space_charge_scenarios(args),
+        *_adaptive_crossing_scenarios(args),
+        *_strong_regime_scenarios(args),
+        *_long_stability_scenarios(args),
+    ]
 
     for scenario in scenarios:
         for n_particles in particle_counts:
@@ -183,7 +387,20 @@ def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
                         driver_beta_z=scenario["driver_beta_z"],
                         full_reference=full_reference,
                         space_charge_enabled=scenario["space_charge_enabled"],
+                        space_charge_retarded=scenario["space_charge_retarded"],
                         space_charge_softening_mm=args.space_charge_softening_mm,
+                        space_charge_min_retarded_steps=args.space_charge_min_retarded_steps,
+                        adaptive_timestep_enabled=scenario["adaptive_timestep_enabled"],
+                        adaptive_energy_jump_threshold=(
+                            args.adaptive_energy_jump_threshold
+                        ),
+                        adaptive_timestep_reduction_factor=(
+                            args.adaptive_timestep_reduction_factor
+                        ),
+                        adaptive_min_timestep_factor=args.adaptive_min_timestep_factor,
+                        adaptive_proximity_refinement_enabled=(
+                            args.adaptive_proximity_refinement
+                        ),
                     )
                     result_rows.extend(results)
                     comparison_rows.extend(comparisons)
@@ -218,10 +435,18 @@ def _summarize(output: dict[str, list[dict[str, Any]]]) -> None:
     comparisons = output["comparisons"]
     finite_count = sum(1 for row in results if row["finite"])
     crossed_count = sum(1 for row in results if row["interaction_point_crossed"])
+    retarded_sc_count = sum(
+        1
+        for row in results
+        if row["space_charge_enabled"] and row["space_charge_retarded"]
+    )
+    adaptive_count = sum(1 for row in results if row["adaptive_timestep_enabled"])
     print("Pseudo-grid feasibility matrix")
     print("==============================")
     print(
-        f"runs={len(results)} finite={finite_count}/{len(results)} crossed={crossed_count}"
+        f"runs={len(results)} finite={finite_count}/{len(results)} "
+        f"crossed={crossed_count} retarded_sc={retarded_sc_count} "
+        f"adaptive={adaptive_count}"
     )
     if comparisons:
         max_dx = max(row["max_abs_x_delta_mm"] for row in comparisons)
@@ -255,10 +480,23 @@ def main() -> int:
     parser.add_argument("--stationary-steps", type=int, default=4)
     parser.add_argument("--crossing-steps", type=int, default=24)
     parser.add_argument("--h-step", type=float, default=1.0e-4)
-    parser.add_argument("--charge-scale", type=float, default=2.0e-2)
+    parser.add_argument("--charge-scales", default="2.0e-2")
     parser.add_argument("--include-space-charge", action="store_true")
-    parser.add_argument("--space-charge-scale", type=float, default=5.0e-3)
+    parser.add_argument("--space-charge-scales", default="5.0e-3")
+    parser.add_argument("--space-charge-modes", default="instantaneous")
     parser.add_argument("--space-charge-softening-mm", type=float, default=0.3)
+    parser.add_argument("--space-charge-min-retarded-steps", type=int)
+    parser.add_argument("--include-adaptive-crossing", action="store_true")
+    parser.add_argument("--adaptive-crossing-steps", type=int, default=24)
+    parser.add_argument("--adaptive-energy-jump-threshold", type=float, default=0.1)
+    parser.add_argument("--adaptive-timestep-reduction-factor", type=int, default=3)
+    parser.add_argument("--adaptive-min-timestep-factor", type=float, default=1.0e-3)
+    parser.add_argument("--adaptive-proximity-refinement", action="store_true")
+    parser.add_argument("--include-strong-regimes", action="store_true")
+    parser.add_argument("--strong-charge-scales", default="5.0e-2,1.0e-1")
+    parser.add_argument("--include-long-stability", action="store_true")
+    parser.add_argument("--long-stability-steps", type=int, default=96)
+    parser.add_argument("--long-stability-charge-scales", default="2.0e-2")
     parser.add_argument("--crossing-beta", type=float, default=0.12)
     parser.add_argument("--crossing-z-separation-mm", type=float, default=0.06)
     parser.add_argument("--output-dir", type=Path)
