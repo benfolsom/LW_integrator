@@ -9,6 +9,7 @@ import pytest
 
 from scripts import pseudo_grid_feasibility_matrix as matrix
 from scripts import pseudo_grid_feasibility_probe as probe
+from scripts import pseudo_grid_microbenchmarks as microbench
 
 
 def _matrix_args(**overrides: Any) -> Namespace:
@@ -171,3 +172,35 @@ def test_probe_builds_retarded_space_charge_and_adaptive_timestep_configs(
     assert adaptive_timestep.proximity_refinement_enabled is True
     assert pseudo_grid.enabled is True
     assert pseudo_grid.causal_history_pruning_enabled is True
+
+
+def test_microbenchmark_script_reports_pseudo_grid_phase_timings() -> None:
+    args = Namespace(
+        particle_counts="8",
+        active_counts="4",
+        neighbor_counts="2",
+        history_steps=3,
+        h_step=1.0e-4,
+        charge_scale=1.0e-3,
+        repeats=1,
+        include_space_charge=True,
+        include_active_solve=False,
+        active_solve_repeats=1,
+    )
+
+    output = microbench.run_microbenchmarks(args)
+
+    rows = output["results"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["particle_count"] == 8
+    assert row["active_count"] == 4
+    assert row["neighbor_count"] == 2
+    assert row["space_charge_enabled"] is True
+    assert row["passive_count"] == 4
+    assert row["schedule_us"] > 0.0
+    assert row["observer_slice_us"] > 0.0
+    assert row["source_slice_us"] > 0.0
+    assert row["space_charge_matrix_us"] > 0.0
+    assert row["reconstruct_us"] > 0.0
+    assert row["overhead_without_active_solve_us"] >= row["reconstruct_us"]

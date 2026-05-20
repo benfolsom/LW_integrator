@@ -51,16 +51,21 @@ An experimental pseudo-grid reduced solver is now available for
   instantaneous and retarded modes. Additional opt-in matrix slices cover
   adaptive crossing runs, stronger charge/current regimes, and longer stability
   windows.
+* ``scripts/pseudo_grid_microbenchmarks.py`` times pseudo-grid schedule
+  construction, observer/source history slicing, observer-specific same-bunch
+  space-charge matrix construction, active-only solve cost, and passive
+  reconstruction so reduced-mode speedups can be interpreted by phase.
 * ``tests/physics/test_pseudo_grid_feasibility.py`` adds physics-facing crossing
   baselines: zero-charge pseudo-grid motion is checked against inertial motion,
   weak-charge crossing runs are compared against the full solver, instantaneous
   and retarded same-bunch space-charge crossing cases are covered, and adaptive
   retarded-space-charge plus stronger-charge longer-window cases are checked for
   finite behavior.
-* ``tests/unit/test_pseudo_grid_feasibility_scripts.py`` pins the probe and
-  matrix scheduling surfaces so script-level options for retarded space charge,
-  adaptive crossing runs, stronger regimes, and long windows stay covered in the
-  maintained ``LW_integrator`` test suite.
+* ``tests/unit/test_pseudo_grid_feasibility_scripts.py`` pins the probe,
+  matrix, and microbenchmark surfaces so script-level options for retarded space
+  charge, adaptive crossing runs, stronger regimes, long windows, and
+  reduced-mode phase timing stay covered in the maintained ``LW_integrator``
+  test suite.
 
 The mode remains experimental. Causal-history deletion is currently limited to
 supported reduced pseudo-grid B2B solves; canonical fallback paths still retain
@@ -88,9 +93,13 @@ Next validation/engineering steps:
 
 * Inspect the medium matrix CSV/JSON for the largest-delta retarded SC and
   longer-window cases before expanding the grid further.
-* Add timing instrumentation or microbenchmarks for pseudo-grid overheads
-  (active solve, passive reconstruction, neighbor-map construction, and history
-  slicing) because small active sets can still be overhead dominated.
+* Use ``scripts/pseudo_grid_microbenchmarks.py`` to establish a timing baseline
+  for representative ``N/K/M`` settings, then optimize the largest overheads.
+  Initial smoke output at
+  ``../LW_feasibility_studies/local/pseudo_grid_microbenchmarks_smoke_20260520``
+  shows non-solve overheads in the few-ms range for ``N=32,64`` and retarded-SC
+  active solves scaling from roughly tens of ms at ``K=6`` to roughly
+  0.12-0.13 s at ``K=12``.
 * Scale the matrix cautiously to larger pseudo-only ``N`` and longer windows,
   keeping full-solver references to small ``N`` where runtime remains practical.
 * If larger retarded-SC cases diverge, add maintained ``LW_integrator``
