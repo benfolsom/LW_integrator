@@ -121,8 +121,8 @@ class LienardWiechertIntegrator:
 
         Parameters mirror the historical signature but are forwarded to
         :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
-            preserved for backwards compatibility and contributes to the total step
-            count.
+        preserved for backwards compatibility and contributes to the total step
+        count.
         """
 
         sim_type_enum = (

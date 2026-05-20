@@ -67,9 +67,12 @@ autodoc_default_options = {
     "special-members": "__init__",
     "undoc-members": True,
     "exclude-members": (
-        "__weakref__"
-        ",steps,time_step,wall_position,aperture_radius,"
-        "simulation_type,bunch_mean,cavity_spacing,z_cutoff"
+        "__weakref__,steps,time_step,wall_position,aperture_radius,"
+        "simulation_type,bunch_mean,cavity_spacing,z_cutoff,"
+        "chrono_mode,startup_mode,z_cutoff_mode,image_subcharge_count,"
+        "use_image_weighting,radiation_reaction_mode,"
+        "macroparticle_charge_multiplier,macroparticle_sigma_multiplier,"
+        "macroparticle_use_momentum_errors,bunch_transv_dist,bunch_transv_mom"
     ),
 }
 

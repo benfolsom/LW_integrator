@@ -34,7 +34,7 @@ class ChronoMatchResult:
         weight=0.0 means use indices_next only. Linear interpolation:
         value = weight * value[indices] + (1-weight) * value[indices_next]
     residuals : np.ndarray
-        Time residuals |t_matched - t_target| for each source particle (in ns).
+        Time residuals ``|t_matched - t_target|`` for each source particle (in ns).
     max_residual : float
         Maximum residual across all source particles (in ns).
     needs_interpolation : np.ndarray
@@ -515,7 +515,7 @@ def chrono_match_indices(
         If True, return ChronoMatchResult with interpolation weights when the
         time residual exceeds tolerance. If False, return simple index array.
     tolerance:
-        tolerance in nanoseconds. If |t_matched - t_target| > tolerance,
+        tolerance in nanoseconds. If ``|t_matched - t_target|`` > tolerance,
         interpolation is flagged as needed.
     verbosity:
         If >= 2, print warnings when residuals exceed tolerance.

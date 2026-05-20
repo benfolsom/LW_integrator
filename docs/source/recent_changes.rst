@@ -1,3 +1,5 @@
+.. _recent_changes:
+
 Recent Changes
 ==============
 
