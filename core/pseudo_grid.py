@@ -350,15 +350,25 @@ def accumulate_effective_source_charges(
     if neighbor_map.is_empty:
         return effective
 
-    active_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(active)}
+    neighbor_particle_indices = np.asarray(
+        neighbor_map.neighbor_particle_indices,
+        dtype=int,
+    )
+    max_index = int(max(np.max(active), np.max(neighbor_particle_indices)))
+    active_index_lookup = np.full(max_index + 1, -1, dtype=int)
+    active_index_lookup[active] = np.arange(active.size, dtype=int)
+    neighbor_local_indices = active_index_lookup[neighbor_particle_indices]
+    if np.any(neighbor_local_indices < 0):
+        raise ValueError(
+            "passive_map neighbor indices must be members of active_indices"
+        )
+
     passive_charges = charges[np.asarray(neighbor_map.passive_indices, dtype=int)]
-    for row_idx, passive_charge in enumerate(passive_charges):
-        neighbors = neighbor_map.neighbor_particle_indices[row_idx]
-        weights = neighbor_map.weights[row_idx]
-        for neighbor_particle_idx, weight in zip(neighbors, weights):
-            effective[active_lookup[int(neighbor_particle_idx)]] += float(
-                passive_charge
-            ) * float(weight)
+    contributions = passive_charges[:, np.newaxis] * np.asarray(
+        neighbor_map.weights,
+        dtype=float,
+    )
+    np.add.at(effective, neighbor_local_indices.ravel(), contributions.ravel())
     return effective
 
 
@@ -930,13 +940,31 @@ def _build_pair_reuse_penalty_matrix(
     rider_active = np.asarray(rider_active_indices, dtype=int)
     driver_active = np.asarray(driver_active_indices, dtype=int)
     penalties = np.zeros((rider_active.size, driver_active.size), dtype=float)
-    for rider_idx, rider_particle_idx in enumerate(rider_active):
-        for driver_idx, driver_particle_idx in enumerate(driver_active):
-            penalties[rider_idx, driver_idx] = tracker.penalty(
-                int(rider_particle_idx),
-                int(driver_particle_idx),
-                step_index=step_index,
-            )
+    if tracker.window_steps == 0 or not tracker._last_seen:
+        return penalties
+
+    rider_lookup = {
+        int(particle_idx): idx for idx, particle_idx in enumerate(rider_active)
+    }
+    driver_lookup = {
+        int(particle_idx): idx for idx, particle_idx in enumerate(driver_active)
+    }
+    for (
+        rider_particle_idx,
+        driver_particle_idx,
+    ), last_step in tracker._last_seen.items():
+        age = int(step_index) - int(last_step)
+        if age < 0 or age >= tracker.window_steps:
+            continue
+        rider_idx = rider_lookup.get(int(rider_particle_idx))
+        if rider_idx is None:
+            continue
+        driver_idx = driver_lookup.get(int(driver_particle_idx))
+        if driver_idx is None:
+            continue
+        penalties[rider_idx, driver_idx] = float(tracker.window_steps - age) / float(
+            tracker.window_steps
+        )
     return penalties
 
 
