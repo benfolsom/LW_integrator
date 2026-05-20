@@ -91,6 +91,11 @@ Current validation status:
   44 full-vs-pseudo comparisons, and had max deltas of ``4.50e-5 mm`` in x,
   ``5.61e-5 mm`` in z, and ``1.41e-5`` in gamma. Retained-history compaction
   dropped at most one rider/driver sample in this matrix.
+* The same medium matrix re-run after retarded SC source-history caching at
+  ``../LW_feasibility_studies/local/pseudo_grid_medium_validation_cached_sc_20260520``
+  remained finite in 176/176 runs with the same max comparison deltas and
+  retained-history drop counts. The slowest run dropped from roughly 31 s in the
+  pre-cache matrix to roughly 7.3 s in the cached matrix.
 
 Next validation/engineering steps:
 
@@ -107,9 +112,8 @@ Next validation/engineering steps:
   ``../LW_feasibility_studies/local/pseudo_grid_microbenchmarks_cached_sc_20260520``
   puts active retarded-SC solve cost at roughly 6-22 ms for the same measured
   ``N=32,64`` and ``K=6,12`` cases.
-* Re-run the medium validation matrix with cached retarded SC source histories
-  before expanding to larger pseudo-only ``N`` and longer windows.
-* Scale the matrix cautiously to larger pseudo-only ``N`` and longer windows,
+* Inspect the cached medium validation matrix speed and delta outliers, then
+  scale cautiously to larger pseudo-only ``N`` and longer windows,
   keeping full-solver references to small ``N`` where runtime remains practical.
 * If larger retarded-SC cases diverge, add maintained ``LW_integrator``
   regression tests for the smallest reproducer before iterating on the reduced
