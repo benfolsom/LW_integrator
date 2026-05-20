@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from contextlib import redirect_stdout
+from typing import cast
 
 import numpy as np
 import pytest
@@ -277,6 +278,63 @@ def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
     )
 
     assert seen_nonzero_charges == pytest.approx([2.0, 2.0])
+
+
+def test_retarded_space_charge_reuses_per_source_particle_histories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(x=[0.0, 10.0, 20.0], charge=[1.0, 1.0, 1.0]),
+        _make_state(
+            x=[1.0, 11.0, 21.0],
+            t=[1.0, 1.0, 1.0],
+            charge=[1.0, 1.0, 1.0],
+        ),
+    ]
+    driver = [
+        _make_state(x=[100.0, 110.0, 120.0], charge=[0.0, 0.0, 0.0]),
+        _make_state(
+            x=[101.0, 111.0, 121.0],
+            t=[1.0, 1.0, 1.0],
+            charge=[0.0, 0.0, 0.0],
+        ),
+    ]
+    source_history_ids_by_x: dict[float, set[int]] = {}
+
+    def fake_chrono(*args: object, **kwargs: object) -> np.ndarray:
+        source_history = cast(list[dict[str, np.ndarray]], args[1])
+        if len(source_history[0]["x"]) == 1:
+            source_x = float(np.asarray(source_history[-1]["x"], dtype=float)[0])
+            source_history_ids_by_x.setdefault(source_x, set()).add(id(source_history))
+        return np.array([0])
+
+    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(equations, "chrono_match_indices", fake_chrono)
+    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
+
+    equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=False),
+        space_charge=SpaceChargeConfig(
+            enabled=True,
+            retarded=True,
+            min_retarded_steps=0,
+        ),
+    )
+
+    assert source_history_ids_by_x
+    assert all(
+        len(history_ids) == 1 for history_ids in source_history_ids_by_x.values()
+    )
 
 
 def test_retarded_space_charge_uses_chrono_matching(

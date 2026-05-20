@@ -55,6 +55,9 @@ An experimental pseudo-grid reduced solver is now available for
   construction, observer/source history slicing, observer-specific same-bunch
   space-charge matrix construction, active-only solve cost, and passive
   reconstruction so reduced-mode speedups can be interpreted by phase.
+* Retarded same-bunch space-charge source histories are cached per source
+  particle inside each equations-of-motion call instead of being rebuilt for
+  every observer/source pair.
 * ``tests/physics/test_pseudo_grid_feasibility.py`` adds physics-facing crossing
   baselines: zero-charge pseudo-grid motion is checked against inertial motion,
   weak-charge crossing runs are compared against the full solver, instantaneous
@@ -93,13 +96,19 @@ Next validation/engineering steps:
 
 * Inspect the medium matrix CSV/JSON for the largest-delta retarded SC and
   longer-window cases before expanding the grid further.
-* Use ``scripts/pseudo_grid_microbenchmarks.py`` to establish a timing baseline
-  for representative ``N/K/M`` settings, then optimize the largest overheads.
-  Initial smoke output at
+* Use ``scripts/pseudo_grid_microbenchmarks.py`` to keep timing baselines for
+  representative ``N/K/M`` settings, then optimize the largest remaining
+  overheads. Initial smoke output at
   ``../LW_feasibility_studies/local/pseudo_grid_microbenchmarks_smoke_20260520``
-  shows non-solve overheads in the few-ms range for ``N=32,64`` and retarded-SC
+  showed non-solve overheads in the few-ms range for ``N=32,64`` and retarded-SC
   active solves scaling from roughly tens of ms at ``K=6`` to roughly
-  0.12-0.13 s at ``K=12``.
+  0.12-0.13 s at ``K=12``. After caching same-bunch source histories, smoke
+  output at
+  ``../LW_feasibility_studies/local/pseudo_grid_microbenchmarks_cached_sc_20260520``
+  puts active retarded-SC solve cost at roughly 6-22 ms for the same measured
+  ``N=32,64`` and ``K=6,12`` cases.
+* Re-run the medium validation matrix with cached retarded SC source histories
+  before expanding to larger pseudo-only ``N`` and longer windows.
 * Scale the matrix cautiously to larger pseudo-only ``N`` and longer windows,
   keeping full-solver references to small ``N`` where runtime remains practical.
 * If larger retarded-SC cases diverge, add maintained ``LW_integrator``

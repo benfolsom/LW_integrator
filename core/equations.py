@@ -1253,6 +1253,44 @@ def retarded_equations_of_motion(
         )
         chrono_verbosity = getattr(self_consistency, "verbosity", 0)
 
+    sc_retarded_source_history_cache: dict[int, Trajectory] = {}
+    sc_instantaneous_source_history_cache: dict[int, Trajectory] = {}
+
+    def _slice_space_charge_step(step: dict, idx: int) -> dict:
+        out: dict = {}
+        for k, v in step.items():
+            try:
+                arr = np.asarray(v)
+                if arr.ndim >= 1 and arr.shape[0] == num_particles:
+                    out[k] = arr[[idx]]
+                else:
+                    out[k] = v
+            except (TypeError, ValueError):
+                out[k] = v
+        return out
+
+    def _space_charge_source_history(
+        source_idx: int,
+        *,
+        use_retarded_sc: bool,
+    ) -> Trajectory:
+        if use_retarded_sc:
+            cached = sc_retarded_source_history_cache.get(source_idx)
+            if cached is None:
+                cached = [
+                    _slice_space_charge_step(step, source_idx)
+                    for step in trajectory[: index_traj + 1]
+                ]
+                sc_retarded_source_history_cache[source_idx] = cached
+            return cached
+
+        cached = sc_instantaneous_source_history_cache.get(source_idx)
+        if cached is None:
+            sc_step = _slice_space_charge_step(trajectory[index_traj], source_idx)
+            cached = [sc_step] * (index_traj + 1)
+            sc_instantaneous_source_history_cache[source_idx] = cached
+        return cached
+
     # Import IntegrationCancelled at top of function for use in cancel checks
     from .integration_runner import IntegrationCancelled
 
@@ -1667,19 +1705,6 @@ def retarded_equations_of_motion(
                     _sc_threshold = space_charge.resolve_min_retarded_steps(h)
                     use_retarded_sc = len(trajectory) > _sc_threshold
 
-                    def _slice_step(step: dict, idx: int) -> dict:
-                        out: dict = {}
-                        for k, v in step.items():
-                            try:
-                                arr = np.asarray(v)
-                                if arr.ndim >= 1 and arr.shape[0] == n_particles:
-                                    out[k] = arr[[idx]]
-                                else:
-                                    out[k] = v
-                            except (TypeError, ValueError):
-                                out[k] = v
-                        return out
-
                     for j in range(n_particles):
                         if j == particle_idx:
                             continue
@@ -1691,10 +1716,10 @@ def retarded_equations_of_motion(
                                 continue
 
                         if use_retarded_sc:
-                            sc_traj_ext = [
-                                _slice_step(step, j)
-                                for step in trajectory[: index_traj + 1]
-                            ]
+                            sc_traj_ext = _space_charge_source_history(
+                                j,
+                                use_retarded_sc=True,
+                            )
                             sc_retarded_result = chrono_match_indices(
                                 trajectory,
                                 sc_traj_ext,
@@ -1715,8 +1740,10 @@ def retarded_equations_of_motion(
                                 sc_indices = sc_retarded_result
                                 sc_chrono_result = None
                         else:
-                            sc_step = _slice_step(trajectory[index_traj], j)
-                            sc_traj_ext = [sc_step] * (index_traj + 1)
+                            sc_traj_ext = _space_charge_source_history(
+                                j,
+                                use_retarded_sc=False,
+                            )
                             sc_indices = np.array([len(sc_traj_ext) - 1])
                             sc_chrono_result = None
                         sc_indices = np.minimum(
