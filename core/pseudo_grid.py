@@ -257,18 +257,12 @@ def select_active_indices(
     selected_local.append(first_local)
     available_mask[first_local] = False
 
+    min_distances = np.linalg.norm(coords - coords[first_local][np.newaxis, :], axis=1)
+    min_distances[first_local] = 0.0
+
     while len(selected_local) < active_count:
         candidate_local = np.flatnonzero(available_mask)
-        selected_coords = coords[np.asarray(selected_local, dtype=int)]
-        candidate_coords = coords[candidate_local]
-        min_distances = np.min(
-            np.linalg.norm(
-                candidate_coords[:, np.newaxis, :] - selected_coords[np.newaxis, :, :],
-                axis=2,
-            ),
-            axis=1,
-        )
-        distance_scores = _normalize_vector(min_distances)
+        distance_scores = _normalize_vector(min_distances[candidate_local])
         candidate_scores = (
             distance_scores
             + 0.20 * stale_scores[candidate_local]
@@ -277,9 +271,15 @@ def select_active_indices(
         chosen_local_idx = _argmax_with_tiebreak(
             candidate_scores, alive[candidate_local]
         )
-        chosen_local = candidate_local[chosen_local_idx]
-        selected_local.append(int(chosen_local))
+        chosen_local = int(candidate_local[chosen_local_idx])
+        selected_local.append(chosen_local)
         available_mask[chosen_local] = False
+        distances_to_chosen = np.linalg.norm(
+            coords - coords[chosen_local][np.newaxis, :],
+            axis=1,
+        )
+        min_distances = np.minimum(min_distances, distances_to_chosen)
+        min_distances[chosen_local] = 0.0
 
     return alive[np.asarray(selected_local, dtype=int)]
 
@@ -387,7 +387,6 @@ def build_self_excluded_space_charge_source_charges(
         return charge_matrix
 
     charges = np.asarray(state["q"], dtype=float)
-    active_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(active)}
     active_charges = charges[active].astype(float)
     for observer_local_idx in range(active_count):
         charge_matrix[observer_local_idx] = active_charges
@@ -409,58 +408,74 @@ def build_self_excluded_space_charge_source_charges(
     if neighbor_weights.shape != neighbor_particle_indices.shape:
         raise ValueError("passive_map.weights must match neighbor index shape")
 
-    reference_indices = np.unique(np.concatenate((active, passive_indices)))
-    active_coords = _normalized_position_coordinates(
-        state,
-        reference_indices=reference_indices,
-        target_indices=active,
+    max_index = int(max(np.max(active), np.max(neighbor_particle_indices)))
+    active_index_lookup = np.full(max_index + 1, -1, dtype=int)
+    active_index_lookup[active] = np.arange(active_count, dtype=int)
+    neighbor_local_indices = active_index_lookup[neighbor_particle_indices]
+    if np.any(neighbor_local_indices < 0):
+        raise ValueError(
+            "passive_map neighbor indices must be members of active_indices"
+        )
+
+    base_weight_matrix = np.zeros((passive_indices.size, active_count), dtype=float)
+    passive_row_indices = np.repeat(
+        np.arange(passive_indices.size, dtype=int),
+        neighbor_local_indices.shape[1],
     )
-    passive_coords = _normalized_position_coordinates(
-        state,
-        reference_indices=reference_indices,
-        target_indices=passive_indices,
+    np.add.at(
+        base_weight_matrix,
+        (passive_row_indices, neighbor_local_indices.ravel()),
+        neighbor_weights.ravel(),
     )
 
-    for passive_row_idx, passive_particle_idx in enumerate(passive_indices):
-        passive_charge = float(charges[passive_particle_idx])
-        if passive_charge == 0.0:
-            continue
+    base_weight_totals = np.sum(base_weight_matrix, axis=1)
+    valid_passive_mask = base_weight_totals > 0.0
+    base_weight_matrix[valid_passive_mask] /= base_weight_totals[
+        valid_passive_mask,
+        np.newaxis,
+    ]
 
-        base_weights = np.zeros(active_count, dtype=float)
-        for neighbor_particle_idx, weight in zip(
-            neighbor_particle_indices[passive_row_idx],
-            neighbor_weights[passive_row_idx],
+    passive_charges = charges[passive_indices].astype(float)
+    valid_passive_mask &= passive_charges != 0.0
+
+    denominators = 1.0 - base_weight_matrix
+    non_fallback_mask = valid_passive_mask[:, np.newaxis] & (denominators > 1.0e-12)
+    contribution_scale = np.zeros_like(base_weight_matrix)
+    contribution_scale[non_fallback_mask] = (
+        passive_charges[:, np.newaxis] / denominators
+    )[non_fallback_mask]
+
+    passive_contribution = contribution_scale.T @ base_weight_matrix
+    np.fill_diagonal(passive_contribution, 0.0)
+    charge_matrix += passive_contribution
+
+    fallback_mask = valid_passive_mask[:, np.newaxis] & (denominators <= 1.0e-12)
+    if active_count > 1 and np.any(fallback_mask):
+        reference_indices = np.unique(np.concatenate((active, passive_indices)))
+        active_coords = _normalized_position_coordinates(
+            state,
+            reference_indices=reference_indices,
+            target_indices=active,
+        )
+        passive_coords = _normalized_position_coordinates(
+            state,
+            reference_indices=reference_indices,
+            target_indices=passive_indices,
+        )
+        fallback_passive_rows, fallback_observer_indices = np.nonzero(fallback_mask)
+        for passive_row_idx, observer_local_idx in zip(
+            fallback_passive_rows,
+            fallback_observer_indices,
         ):
-            local_idx = active_lookup.get(int(neighbor_particle_idx))
-            if local_idx is None:
-                raise ValueError(
-                    "passive_map neighbor indices must be members of active_indices"
-                )
-            base_weights[local_idx] += float(weight)
-
-        base_weight_total = float(np.sum(base_weights))
-        if base_weight_total <= 0.0:
-            continue
-        base_weights /= base_weight_total
-
-        for observer_local_idx in range(active_count):
-            observer_weights = base_weights.copy()
-            if observer_weights[observer_local_idx] > 0.0:
-                observer_weights[observer_local_idx] = 0.0
-                redistributed_total = float(np.sum(observer_weights))
-                if redistributed_total > 0.0:
-                    observer_weights /= redistributed_total
-                elif active_count > 1:
-                    observer_weights = _fallback_self_excluded_neighbor_weights(
-                        passive_coords[passive_row_idx],
-                        active_coords,
-                        excluded_local_idx=observer_local_idx,
-                        weighting_mode=weighting_mode,
-                    )
-                else:
-                    observer_weights = np.zeros(active_count, dtype=float)
-
-            charge_matrix[observer_local_idx] += passive_charge * observer_weights
+            observer_weights = _fallback_self_excluded_neighbor_weights(
+                passive_coords[passive_row_idx],
+                active_coords,
+                excluded_local_idx=int(observer_local_idx),
+                weighting_mode=weighting_mode,
+            )
+            charge_matrix[observer_local_idx] += (
+                passive_charges[passive_row_idx] * observer_weights
+            )
 
     return charge_matrix
 

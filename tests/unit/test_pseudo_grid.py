@@ -48,6 +48,97 @@ def _make_state(
     }
 
 
+def _reference_self_excluded_charge_matrix(
+    state: dict[str, np.ndarray],
+    active_indices: np.ndarray,
+    passive_map: PassiveNeighborMap,
+    *,
+    weighting_mode: str = "inverse_distance",
+) -> np.ndarray:
+    active = np.asarray(active_indices, dtype=int)
+    charges = np.asarray(state["q"], dtype=float)
+    active_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(active)}
+    charge_matrix = np.tile(charges[active].astype(float), (active.size, 1))
+    np.fill_diagonal(charge_matrix, 0.0)
+    if passive_map.is_empty:
+        return charge_matrix
+
+    passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
+    reference_indices = np.unique(np.concatenate((active, passive_indices)))
+    reference_coords = np.column_stack(
+        (
+            np.asarray(state["x"], dtype=float)[reference_indices],
+            np.asarray(state["y"], dtype=float)[reference_indices],
+            np.asarray(state["z"], dtype=float)[reference_indices],
+        )
+    )
+    centers = np.mean(reference_coords, axis=0)
+    spans = np.ptp(reference_coords, axis=0)
+    spans = np.where(spans > 0.0, spans, 1.0)
+
+    def normalized(indices: np.ndarray) -> np.ndarray:
+        coords = np.column_stack(
+            (
+                np.asarray(state["x"], dtype=float)[indices],
+                np.asarray(state["y"], dtype=float)[indices],
+                np.asarray(state["z"], dtype=float)[indices],
+            )
+        )
+        return (coords - centers) / spans
+
+    active_coords = normalized(active)
+    passive_coords = normalized(passive_indices)
+
+    def fallback_weights(passive_row_idx: int, excluded_local_idx: int) -> np.ndarray:
+        weights = np.zeros(active.size, dtype=float)
+        candidate_indices = np.array(
+            [idx for idx in range(active.size) if idx != excluded_local_idx],
+            dtype=int,
+        )
+        if candidate_indices.size == 0:
+            return weights
+        distances = np.linalg.norm(
+            active_coords[candidate_indices]
+            - passive_coords[passive_row_idx][np.newaxis, :],
+            axis=1,
+        )
+        if weighting_mode == "nearest":
+            weights[candidate_indices[0]] = 1.0
+        else:
+            inv = 1.0 / np.maximum(distances, 1.0e-12)
+            weights[candidate_indices] = inv / np.sum(inv)
+        return weights
+
+    for passive_row_idx, passive_particle_idx in enumerate(passive_indices):
+        passive_charge = float(charges[passive_particle_idx])
+        if passive_charge == 0.0:
+            continue
+        base_weights = np.zeros(active.size, dtype=float)
+        for neighbor_particle_idx, weight in zip(
+            passive_map.neighbor_particle_indices[passive_row_idx],
+            passive_map.weights[passive_row_idx],
+        ):
+            base_weights[active_lookup[int(neighbor_particle_idx)]] += float(weight)
+        base_weight_total = float(np.sum(base_weights))
+        if base_weight_total <= 0.0:
+            continue
+        base_weights /= base_weight_total
+        for observer_local_idx in range(active.size):
+            observer_weights = base_weights.copy()
+            if observer_weights[observer_local_idx] > 0.0:
+                observer_weights[observer_local_idx] = 0.0
+                redistributed_total = float(np.sum(observer_weights))
+                if redistributed_total > 0.0:
+                    observer_weights /= redistributed_total
+                else:
+                    observer_weights = fallback_weights(
+                        passive_row_idx,
+                        observer_local_idx,
+                    )
+            charge_matrix[observer_local_idx] += passive_charge * observer_weights
+    return charge_matrix
+
+
 def _make_solver_state(
     *,
     x: list[float],
@@ -253,6 +344,40 @@ def test_build_self_excluded_space_charge_source_charges_falls_back_to_other_act
     )
 
     np.testing.assert_allclose(charge_matrix, np.array([[0.0, 2.0], [2.0, 0.0]]))
+
+
+def test_build_self_excluded_space_charge_source_charges_matches_scalar_reference():
+    state = _make_state(
+        x=[0.0, 1.5, 4.0, 7.0, 8.0, 14.0, 19.0],
+        y=[0.0, 0.2, -0.1, 0.4, -0.3, 0.1, 0.0],
+        z=[0.0, 0.5, 0.2, -0.4, 0.1, 0.3, -0.2],
+        q=[1.0, -0.5, 2.0, 1.5, -1.0, 3.0, 0.75],
+    )
+    alive = np.arange(7, dtype=int)
+    active = np.array([0, 2, 5], dtype=int)
+
+    for weighting_mode, neighbor_count in (("inverse_distance", 2), ("nearest", 1)):
+        neighbor_map = build_passive_neighbor_map(
+            state,
+            alive,
+            active,
+            neighbor_count=neighbor_count,
+            weighting_mode=weighting_mode,
+        )
+        charge_matrix = build_self_excluded_space_charge_source_charges(
+            state,
+            active,
+            neighbor_map,
+            weighting_mode=weighting_mode,
+        )
+        expected = _reference_self_excluded_charge_matrix(
+            state,
+            active,
+            neighbor_map,
+            weighting_mode=weighting_mode,
+        )
+
+        np.testing.assert_allclose(charge_matrix, expected)
 
 
 def test_build_self_excluded_space_charge_source_charges_handles_asymmetric_three_active_distribution():
