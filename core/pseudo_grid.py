@@ -1040,7 +1040,8 @@ def _normalize_vector(values: np.ndarray) -> np.ndarray:
 
 def _argmax_with_tiebreak(scores: np.ndarray, particle_indices: np.ndarray) -> int:
     best_score = float(np.max(scores))
-    candidates = np.flatnonzero(np.isclose(scores, best_score))
+    tolerance = max(1.0e-12, abs(best_score) * 1.0e-12)
+    candidates = np.flatnonzero(scores >= best_score - tolerance)
     if candidates.size == 1:
         return int(candidates[0])
     candidate_particles = np.asarray(particle_indices, dtype=int)[candidates]
