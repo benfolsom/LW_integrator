@@ -280,7 +280,7 @@ def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
     assert seen_nonzero_charges == pytest.approx([2.0, 2.0])
 
 
-def test_retarded_space_charge_reuses_per_source_particle_histories(
+def test_retarded_space_charge_batches_same_bunch_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trajectory = [
@@ -299,14 +299,15 @@ def test_retarded_space_charge_reuses_per_source_particle_histories(
             charge=[0.0, 0.0, 0.0],
         ),
     ]
-    source_history_ids_by_x: dict[float, set[int]] = {}
+    same_bunch_source_counts: list[int] = []
 
     def fake_chrono(*args: object, **kwargs: object) -> np.ndarray:
+        observer_history = args[0]
         source_history = cast(list[dict[str, np.ndarray]], args[1])
-        if len(source_history[0]["x"]) == 1:
-            source_x = float(np.asarray(source_history[-1]["x"], dtype=float)[0])
-            source_history_ids_by_x.setdefault(source_x, set()).add(id(source_history))
-        return np.array([0])
+        source_count = len(source_history[-1]["x"])
+        if source_history is observer_history:
+            same_bunch_source_counts.append(source_count)
+        return np.zeros(source_count, dtype=int)
 
     def fake_contrib(**kwargs: object) -> tuple[float, ...]:
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -331,10 +332,7 @@ def test_retarded_space_charge_reuses_per_source_particle_histories(
         ),
     )
 
-    assert source_history_ids_by_x
-    assert all(
-        len(history_ids) == 1 for history_ids in source_history_ids_by_x.values()
-    )
+    assert same_bunch_source_counts == [3, 3, 3]
 
 
 def test_retarded_space_charge_uses_chrono_matching(
@@ -351,10 +349,12 @@ def test_retarded_space_charge_uses_chrono_matching(
     sc_calls: list[dict[str, object]] = []
 
     def fake_chrono(*args: object, **kwargs: object) -> np.ndarray:
-        source_history = args[1]
-        if len(source_history[0]["x"]) == 1:
+        observer_history = args[0]
+        source_history = cast(list[dict[str, np.ndarray]], args[1])
+        source_count = len(source_history[-1]["x"])
+        if source_history is observer_history:
             sc_calls.append(kwargs)
-        return np.array([0])
+        return np.zeros(source_count, dtype=int)
 
     def fake_contrib(**kwargs: object) -> tuple[float, ...]:
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)

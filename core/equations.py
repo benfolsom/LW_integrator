@@ -1253,44 +1253,6 @@ def retarded_equations_of_motion(
         )
         chrono_verbosity = getattr(self_consistency, "verbosity", 0)
 
-    sc_retarded_source_history_cache: dict[int, Trajectory] = {}
-    sc_instantaneous_source_history_cache: dict[int, Trajectory] = {}
-
-    def _slice_space_charge_step(step: dict, idx: int) -> dict:
-        out: dict = {}
-        for k, v in step.items():
-            try:
-                arr = np.asarray(v)
-                if arr.ndim >= 1 and arr.shape[0] == num_particles:
-                    out[k] = arr[[idx]]
-                else:
-                    out[k] = v
-            except (TypeError, ValueError):
-                out[k] = v
-        return out
-
-    def _space_charge_source_history(
-        source_idx: int,
-        *,
-        use_retarded_sc: bool,
-    ) -> Trajectory:
-        if use_retarded_sc:
-            cached = sc_retarded_source_history_cache.get(source_idx)
-            if cached is None:
-                cached = [
-                    _slice_space_charge_step(step, source_idx)
-                    for step in trajectory[: index_traj + 1]
-                ]
-                sc_retarded_source_history_cache[source_idx] = cached
-            return cached
-
-        cached = sc_instantaneous_source_history_cache.get(source_idx)
-        if cached is None:
-            sc_step = _slice_space_charge_step(trajectory[index_traj], source_idx)
-            cached = [sc_step] * (index_traj + 1)
-            sc_instantaneous_source_history_cache[source_idx] = cached
-        return cached
-
     # Import IntegrationCancelled at top of function for use in cancel checks
     from .integration_runner import IntegrationCancelled
 
@@ -1705,111 +1667,109 @@ def retarded_equations_of_motion(
                     _sc_threshold = space_charge.resolve_min_retarded_steps(h)
                     use_retarded_sc = len(trajectory) > _sc_threshold
 
-                    for j in range(n_particles):
-                        if j == particle_idx:
-                            continue
-
-                        source_charge_override = None
-                        if observer_sc_charge_row is not None:
-                            source_charge_override = float(observer_sc_charge_row[j])
-                            if abs(source_charge_override) <= 1.0e-30:
-                                continue
-
-                        if use_retarded_sc:
-                            sc_traj_ext = _space_charge_source_history(
-                                j,
-                                use_retarded_sc=True,
-                            )
-                            sc_retarded_result = chrono_match_indices(
-                                trajectory,
-                                sc_traj_ext,
-                                index_traj,
-                                particle_idx,
-                                mode=ChronoMatchingMode.FAST,
-                                interpolate=chrono_interpolate,
-                                tolerance=chrono_tolerance,
-                                verbosity=chrono_verbosity,
-                                high_precision=chrono_high_precision,
-                                adaptive_tolerance=chrono_adaptive_tolerance,
-                                timestep_h=h,
-                            )
-                            if isinstance(sc_retarded_result, ChronoMatchResult):
-                                sc_indices = sc_retarded_result.indices
-                                sc_chrono_result = sc_retarded_result
-                            else:
-                                sc_indices = sc_retarded_result
-                                sc_chrono_result = None
-                        else:
-                            sc_traj_ext = _space_charge_source_history(
-                                j,
-                                use_retarded_sc=False,
-                            )
-                            sc_indices = np.array([len(sc_traj_ext) - 1])
-                            sc_chrono_result = None
-                        sc_indices = np.minimum(
-                            np.maximum(sc_indices, 0), len(sc_traj_ext) - 1
-                        )
-                        sc_nhat = compute_retarded_distance(
+                    sc_chrono_result = None
+                    if use_retarded_sc:
+                        sc_retarded_result = chrono_match_indices(
                             trajectory,
-                            sc_traj_ext,
+                            trajectory,
                             index_traj,
                             particle_idx,
+                            mode=ChronoMatchingMode.FAST,
+                            interpolate=chrono_interpolate,
+                            tolerance=chrono_tolerance,
+                            verbosity=chrono_verbosity,
+                            high_precision=chrono_high_precision,
+                            adaptive_tolerance=chrono_adaptive_tolerance,
+                            timestep_h=h,
+                        )
+                        if isinstance(sc_retarded_result, ChronoMatchResult):
+                            sc_indices = sc_retarded_result.indices
+                            sc_chrono_result = sc_retarded_result
+                        else:
+                            sc_indices = sc_retarded_result
+                    else:
+                        current_sc_index = min(index_traj, len(trajectory) - 1)
+                        sc_indices = np.full(n_particles, current_sc_index, dtype=int)
+
+                    sc_indices = np.minimum(
+                        np.maximum(sc_indices, 0), len(trajectory) - 1
+                    )
+                    sc_nhat = compute_retarded_distance(
+                        trajectory,
+                        trajectory,
+                        index_traj,
+                        particle_idx,
+                        sc_indices,
+                    )
+                    sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                    if sc_softening > 0.0:
+                        sc_R = np.sqrt(sc_R**2 + sc_softening**2)
+                        sc_nhat = dict(sc_nhat)
+                        sc_nhat["R"] = sc_R
+                    if sc_chrono_result is not None:
+                        sc_samples = gather_external_samples(
+                            trajectory,
+                            sc_indices,
+                            indices_next=sc_chrono_result.indices_next,
+                            weights=sc_chrono_result.weights,
+                            indices_prev=sc_chrono_result.indices_prev,
+                            indices_next2=sc_chrono_result.indices_next2,
+                            use_cubic=sc_chrono_result.use_cubic,
+                            interpolate_positions=chrono_high_precision,
+                        )
+                    else:
+                        sc_samples = gather_external_samples(
+                            trajectory,
                             sc_indices,
                         )
-                        sc_R = np.asarray(sc_nhat["R"], dtype=float)
-                        if sc_softening > 0.0:
-                            sc_R = np.sqrt(sc_R**2 + sc_softening**2)
-                            sc_nhat = dict(sc_nhat)
-                            sc_nhat["R"] = sc_R
-                        if sc_chrono_result is not None:
-                            sc_samples = gather_external_samples(
-                                sc_traj_ext,
-                                sc_indices,
-                                indices_next=sc_chrono_result.indices_next,
-                                weights=sc_chrono_result.weights,
-                                indices_prev=sc_chrono_result.indices_prev,
-                                indices_next2=sc_chrono_result.indices_next2,
-                                use_cubic=sc_chrono_result.use_cubic,
-                                interpolate_positions=chrono_high_precision,
+
+                    sc_source_charges = sc_samples.charge.copy()
+                    if observer_sc_charge_row is not None:
+                        sc_source_charges = np.asarray(
+                            observer_sc_charge_row,
+                            dtype=float,
+                        ).copy()
+                        if sc_source_charges.shape != (n_particles,):
+                            raise ValueError(
+                                "pseudo-grid space-charge row must have shape "
+                                f"({n_particles},)"
                             )
-                        else:
-                            sc_samples = gather_external_samples(
-                                sc_traj_ext,
-                                sc_indices,
-                            )
-                        if source_charge_override is not None:
-                            sc_samples.charge[...] = source_charge_override
-                        (
-                            sc_dp_x,
-                            sc_dp_y,
-                            sc_dp_z,
-                            sc_dp_t,
-                            sc_df_x,
-                            sc_df_y,
-                            sc_df_z,
-                            sc_dscalar,
-                        ) = compute_vectorized_contributions(
-                            h=h,
-                            charge_i=float(particle_charge),
-                            mass_i=float(particle_mass),
-                            gamma_i=particle_gamma,
-                            beta_vec=particle_beta,
-                            nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
-                            nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
-                            nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
-                            R_separation=sc_R,
-                            samples=sc_samples,
-                            apply_external=True,
-                            verbosity=0,
-                        )
-                        accumulated_momentum_x += sc_dp_x
-                        accumulated_momentum_y += sc_dp_y
-                        accumulated_momentum_z += sc_dp_z
-                        accumulated_momentum_t += sc_dp_t
-                        accumulated_field_x += sc_df_x
-                        accumulated_field_y += sc_df_y
-                        accumulated_field_z += sc_df_z
-                        accumulated_scalar_potential += sc_dscalar
+                    sc_source_charges[particle_idx] = 0.0
+                    sc_samples.charge[...] = sc_source_charges
+                    sc_samples.valid_mask = sc_samples.valid_mask.copy()
+                    sc_samples.valid_mask[particle_idx] = False
+
+                    (
+                        sc_dp_x,
+                        sc_dp_y,
+                        sc_dp_z,
+                        sc_dp_t,
+                        sc_df_x,
+                        sc_df_y,
+                        sc_df_z,
+                        sc_dscalar,
+                    ) = compute_vectorized_contributions(
+                        h=h,
+                        charge_i=float(particle_charge),
+                        mass_i=float(particle_mass),
+                        gamma_i=particle_gamma,
+                        beta_vec=particle_beta,
+                        nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
+                        nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
+                        nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
+                        R_separation=sc_R,
+                        samples=sc_samples,
+                        apply_external=True,
+                        verbosity=0,
+                    )
+                    accumulated_momentum_x += sc_dp_x
+                    accumulated_momentum_y += sc_dp_y
+                    accumulated_momentum_z += sc_dp_z
+                    accumulated_momentum_t += sc_dp_t
+                    accumulated_field_x += sc_df_x
+                    accumulated_field_y += sc_df_y
+                    accumulated_field_z += sc_df_z
+                    accumulated_scalar_potential += sc_dscalar
 
             # ================================================================
             # STEP 4c: Prescribed external uniform fields
