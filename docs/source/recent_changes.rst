@@ -64,13 +64,38 @@ An experimental pseudo-grid reduced solver is now available for
 
 The mode remains experimental. Causal-history deletion is currently limited to
 supported reduced pseudo-grid B2B solves; canonical fallback paths still retain
-full histories. The next validation focus is to scale the newly covered
-retarded-space-charge, adaptive-crossing, stronger-charge, and longer-window
-slices across broader ``N``, active-count, and neighbour-count grids while
-keeping proper unit/regression coverage in ``LW_integrator``. Sibling
-feasibility-study repositories should remain user-like screening workspaces for
-run matrices, result artifacts, and operator-facing probes rather than the
-primary home for maintained pseudo-grid regression tests.
+full histories. The maintained action plan for this work is this section of
+``docs/source/recent_changes.rst``: keep proper unit/regression coverage in
+``LW_integrator`` and use sibling feasibility-study repositories as user-like
+screening workspaces for run matrices, result artifacts, and operator-facing
+probes rather than the primary home for maintained pseudo-grid regression tests.
+
+Current validation status:
+
+* Small next-step smoke matrix covering retarded SC, adaptive crossing, stronger
+  charge, and longer windows stayed finite in 22/22 runs with max comparison
+  deltas below ``3e-5 mm`` in position and ``2e-5`` in gamma.
+* Medium screening matrix at
+  ``../LW_feasibility_studies/local/pseudo_grid_medium_validation_20260520``
+  covered ``N=12,32,64``, active counts ``K=6,12``, neighbour counts ``M=2,4``,
+  retarded same-bunch space charge, adaptive crossings, stronger-charge cases,
+  and 72-step longer-window cases. It stayed finite in 176/176 runs, produced
+  44 full-vs-pseudo comparisons, and had max deltas of ``4.50e-5 mm`` in x,
+  ``5.61e-5 mm`` in z, and ``1.41e-5`` in gamma. Retained-history compaction
+  dropped at most one rider/driver sample in this matrix.
+
+Next validation/engineering steps:
+
+* Inspect the medium matrix CSV/JSON for the largest-delta retarded SC and
+  longer-window cases before expanding the grid further.
+* Add timing instrumentation or microbenchmarks for pseudo-grid overheads
+  (active solve, passive reconstruction, neighbor-map construction, and history
+  slicing) because small active sets can still be overhead dominated.
+* Scale the matrix cautiously to larger pseudo-only ``N`` and longer windows,
+  keeping full-solver references to small ``N`` where runtime remains practical.
+* If larger retarded-SC cases diverge, add maintained ``LW_integrator``
+  regression tests for the smallest reproducer before iterating on the reduced
+  same-bunch source-charge model.
 
 March 2026 Updates (v0.6.0)
 ----------------------------
