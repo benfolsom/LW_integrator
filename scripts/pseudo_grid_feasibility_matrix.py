@@ -1,8 +1,9 @@
 """Run a small pseudo-grid feasibility matrix.
 
 The matrix is designed for quick local screening, not formal validation. It
-includes stationary weak-charge cases and crossing cases where both bunches have
-time to reach and pass the nominal interaction point at z=0.
+includes stationary weak-charge cases, crossing cases where both bunches have
+time to reach and pass the nominal interaction point at z=0, and optional
+instantaneous same-bunch space-charge cases.
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ def _run_case_pair(
     rider_beta_z: float,
     driver_beta_z: float,
     full_reference: bool,
+    space_charge_enabled: bool = False,
+    space_charge_softening_mm: float = 0.3,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     pseudo_label = (
         f"{scenario}_pseudo_N{n_particles}_K{active_count}_M{passive_neighbor_count}"
@@ -59,6 +62,8 @@ def _run_case_pair(
         z_separation_mm=z_separation_mm,
         rider_beta_z=rider_beta_z,
         driver_beta_z=driver_beta_z,
+        space_charge_enabled=space_charge_enabled,
+        space_charge_softening_mm=space_charge_softening_mm,
     )
     result_rows = [asdict(pseudo_result)]
     comparison_rows: list[dict[str, Any]] = []
@@ -77,6 +82,8 @@ def _run_case_pair(
             z_separation_mm=z_separation_mm,
             rider_beta_z=rider_beta_z,
             driver_beta_z=driver_beta_z,
+            space_charge_enabled=space_charge_enabled,
+            space_charge_softening_mm=space_charge_softening_mm,
         )
         result_rows.append(asdict(full_result))
         comparison_rows.append(
@@ -109,6 +116,7 @@ def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             "z_separation_mm": 1.0,
             "rider_beta_z": 0.0,
             "driver_beta_z": 0.0,
+            "space_charge_enabled": False,
         },
         {
             "name": "crossing_zero_charge",
@@ -117,6 +125,7 @@ def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             "z_separation_mm": args.crossing_z_separation_mm,
             "rider_beta_z": args.crossing_beta,
             "driver_beta_z": -args.crossing_beta,
+            "space_charge_enabled": False,
         },
         {
             "name": "crossing_weak",
@@ -125,8 +134,32 @@ def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             "z_separation_mm": args.crossing_z_separation_mm,
             "rider_beta_z": args.crossing_beta,
             "driver_beta_z": -args.crossing_beta,
+            "space_charge_enabled": False,
         },
     ]
+    if args.include_space_charge:
+        scenarios.extend(
+            [
+                {
+                    "name": "stationary_space_charge_weak",
+                    "steps": args.stationary_steps,
+                    "charge_scale": args.space_charge_scale,
+                    "z_separation_mm": 1.0,
+                    "rider_beta_z": 0.0,
+                    "driver_beta_z": 0.0,
+                    "space_charge_enabled": True,
+                },
+                {
+                    "name": "crossing_space_charge_weak",
+                    "steps": args.crossing_steps,
+                    "charge_scale": args.space_charge_scale,
+                    "z_separation_mm": args.crossing_z_separation_mm,
+                    "rider_beta_z": args.crossing_beta,
+                    "driver_beta_z": -args.crossing_beta,
+                    "space_charge_enabled": True,
+                },
+            ]
+        )
 
     for scenario in scenarios:
         for n_particles in particle_counts:
@@ -149,6 +182,8 @@ def run_matrix(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
                         rider_beta_z=scenario["rider_beta_z"],
                         driver_beta_z=scenario["driver_beta_z"],
                         full_reference=full_reference,
+                        space_charge_enabled=scenario["space_charge_enabled"],
+                        space_charge_softening_mm=args.space_charge_softening_mm,
                     )
                     result_rows.extend(results)
                     comparison_rows.extend(comparisons)
@@ -221,6 +256,9 @@ def main() -> int:
     parser.add_argument("--crossing-steps", type=int, default=24)
     parser.add_argument("--h-step", type=float, default=1.0e-4)
     parser.add_argument("--charge-scale", type=float, default=2.0e-2)
+    parser.add_argument("--include-space-charge", action="store_true")
+    parser.add_argument("--space-charge-scale", type=float, default=5.0e-3)
+    parser.add_argument("--space-charge-softening-mm", type=float, default=0.3)
     parser.add_argument("--crossing-beta", type=float, default=0.12)
     parser.add_argument("--crossing-z-separation-mm", type=float, default=0.06)
     parser.add_argument("--output-dir", type=Path)

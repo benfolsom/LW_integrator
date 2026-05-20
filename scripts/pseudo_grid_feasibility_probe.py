@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.constants import C_MMNS
 from core.integration_runner import retarded_integrator
-from core.types import PseudoGridConfig, SimulationType
+from core.types import PseudoGridConfig, SimulationType, SpaceChargeConfig
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class ProbeResult:
     scenario: str
     particle_count: int
     active_count: int | None
+    space_charge_enabled: bool
     steps: int
     elapsed_s: float
     finite: bool
@@ -125,6 +126,8 @@ def _run_probe_case(
     rider_beta_z: float = 0.0,
     driver_beta_z: float = 0.0,
     passive_neighbor_count: int | None = None,
+    space_charge_enabled: bool = False,
+    space_charge_softening_mm: float = 0.3,
 ) -> tuple[ProbeResult, Any, Any]:
     rider = _make_bunch(
         n_particles=n_particles,
@@ -170,6 +173,15 @@ def _run_probe_case(
         cav_spacing=0.0,
         z_cutoff=0.0,
         pseudo_grid=pseudo_grid,
+        space_charge=(
+            SpaceChargeConfig(
+                enabled=True,
+                retarded=False,
+                softening_mm=space_charge_softening_mm,
+            )
+            if space_charge_enabled
+            else None
+        ),
         use_numba=False,
         radiation_reaction_mode="power_matched_damping",
     )
@@ -192,6 +204,7 @@ def _run_probe_case(
         scenario=scenario,
         particle_count=n_particles,
         active_count=active_count,
+        space_charge_enabled=space_charge_enabled,
         steps=steps,
         elapsed_s=elapsed_s,
         finite=bool(

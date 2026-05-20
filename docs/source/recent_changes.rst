@@ -44,17 +44,21 @@ An experimental pseudo-grid reduced solver is now available for
   comparisons, and optional ``N > 100`` timing checks.
 * ``scripts/pseudo_grid_feasibility_matrix.py`` runs small ``N/K/neighbor``
   matrices and includes crossing scenarios where both bunches have enough time
-  to reach and pass the nominal interaction point at ``z=0``.
+  to reach and pass the nominal interaction point at ``z=0``. Space-charge
+  scenarios are opt-in with ``--include-space-charge``.
 * ``tests/physics/test_pseudo_grid_feasibility.py`` adds physics-facing crossing
   baselines: zero-charge pseudo-grid motion is checked against inertial motion,
-  and weak-charge crossing runs are compared against the full solver.
+  weak-charge crossing runs are compared against the full solver, and an
+  instantaneous same-bunch space-charge crossing case is covered.
 
 The mode remains experimental. Causal-history deletion is currently limited to
 supported reduced pseudo-grid B2B solves; canonical fallback paths still retain
 full histories. The next validation focus is to build on these analytic
-physical baselines, keep interaction-point crossing cases in the standard
-screening matrix, then map accuracy, runtime, and stability across ``N``,
-active-count, and neighbour-count grids.
+physical baselines, keep interaction-point crossing and same-bunch space-charge
+cases in the standard screening matrix, then map accuracy, runtime, and
+stability across ``N``, active-count, and neighbour-count grids. Areas still
+needing explicit coverage include retarded same-bunch space charge, adaptive
+crossing runs, stronger charge/current regimes, and longer stability windows.
 
 March 2026 Updates (v0.6.0)
 ----------------------------

@@ -7,7 +7,7 @@ import pytest
 
 from core.constants import C_MMNS
 from core.integration_runner import retarded_integrator
-from core.types import PseudoGridConfig, SimulationType
+from core.types import PseudoGridConfig, SimulationType, SpaceChargeConfig
 
 
 def _make_crossing_bunch(
@@ -60,6 +60,7 @@ def _run_crossing_case(
     steps: int = 24,
     h_step: float = 1.0e-4,
     beta_z: float = 0.12,
+    space_charge: SpaceChargeConfig | None = None,
 ):
     rider = _make_crossing_bunch(
         n_particles=n_particles,
@@ -87,6 +88,7 @@ def _run_crossing_case(
         cav_spacing=0.0,
         z_cutoff=0.0,
         pseudo_grid=pseudo_grid,
+        space_charge=space_charge,
         use_numba=False,
         radiation_reaction_mode="power_matched_damping",
     )
@@ -152,6 +154,68 @@ def test_pseudo_grid_weak_charge_crossing_tracks_full_solver() -> None:
                 causal_history_pruning_enabled=True,
                 causal_history_safety_margin_steps=0,
             ),
+        )
+    )
+
+    assert full_rider_soa is not None
+    assert full_driver_soa is not None
+    assert pseudo_rider_soa is not None
+    assert pseudo_driver_soa is not None
+    assert len(pseudo_rider) == len(full_rider)
+    assert len(pseudo_driver) == len(full_driver)
+    assert (
+        float(np.mean(pseudo_rider_soa.z[0]))
+        < 0.0
+        < float(np.mean(pseudo_rider_soa.z[-1]))
+    )
+    assert (
+        float(np.mean(pseudo_driver_soa.z[-1]))
+        < 0.0
+        < float(np.mean(pseudo_driver_soa.z[0]))
+    )
+
+    np.testing.assert_allclose(pseudo_rider_soa.x, full_rider_soa.x, atol=1.0e-4)
+    np.testing.assert_allclose(pseudo_rider_soa.z, full_rider_soa.z, atol=1.0e-4)
+    np.testing.assert_allclose(
+        pseudo_rider_soa.gamma,
+        full_rider_soa.gamma,
+        atol=2.0e-5,
+    )
+    np.testing.assert_allclose(pseudo_driver_soa.x, full_driver_soa.x, atol=1.0e-4)
+    np.testing.assert_allclose(pseudo_driver_soa.z, full_driver_soa.z, atol=1.0e-4)
+    np.testing.assert_allclose(
+        pseudo_driver_soa.gamma,
+        full_driver_soa.gamma,
+        atol=2.0e-5,
+    )
+    assert np.all(np.isfinite(pseudo_rider_soa.gamma))
+    assert np.all(np.isfinite(pseudo_driver_soa.gamma))
+
+
+@pytest.mark.physics
+def test_pseudo_grid_space_charge_crossing_tracks_full_solver() -> None:
+    space_charge = SpaceChargeConfig(
+        enabled=True,
+        retarded=False,
+        softening_mm=0.3,
+    )
+    full_rider, full_driver, full_rider_soa, full_driver_soa = _run_crossing_case(
+        charge_scale=5.0e-3,
+        pseudo_grid=None,
+        space_charge=space_charge,
+    )
+    pseudo_rider, pseudo_driver, pseudo_rider_soa, pseudo_driver_soa = (
+        _run_crossing_case(
+            charge_scale=5.0e-3,
+            pseudo_grid=PseudoGridConfig(
+                enabled=True,
+                active_rider_count=16,
+                active_driver_count=16,
+                passive_neighbor_count=4,
+                causal_history_pruning_enabled=True,
+                causal_history_safety_margin_steps=0,
+            ),
+            space_charge=space_charge,
         )
     )
 
