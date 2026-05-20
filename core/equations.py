@@ -1159,6 +1159,7 @@ def retarded_equations_of_motion(
     traj_ext_soa: Optional[TrajectoryArrays] = None,
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
+    pseudo_grid_space_charge_source_charges: Optional[np.ndarray] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1209,6 +1210,17 @@ def retarded_equations_of_motion(
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
 
     num_particles = len(current_state["x"])
+    pseudo_grid_sc_charge_matrix = None
+    if pseudo_grid_space_charge_source_charges is not None:
+        pseudo_grid_sc_charge_matrix = np.asarray(
+            pseudo_grid_space_charge_source_charges,
+            dtype=float,
+        )
+        if pseudo_grid_sc_charge_matrix.shape != (num_particles, num_particles):
+            raise ValueError(
+                "pseudo_grid_space_charge_source_charges must have shape "
+                f"({num_particles}, {num_particles})"
+            )
 
     # Track particles marked dead in this step
     particles_marked_dead_this_step = 0
@@ -1625,6 +1637,11 @@ def retarded_equations_of_motion(
                 n_particles = current_state["x"].shape[0]
                 if n_particles > 1:
                     sc_softening = float(space_charge.softening_mm)
+                    observer_sc_charge_row = None
+                    if pseudo_grid_sc_charge_matrix is not None:
+                        observer_sc_charge_row = pseudo_grid_sc_charge_matrix[
+                            particle_idx
+                        ]
                     # Use retarded SC only once sufficient history has accumulated
                     # (at least one light-crossing time of the bunch width).
                     # resolve_min_retarded_steps returns the step threshold; below
@@ -1649,6 +1666,13 @@ def retarded_equations_of_motion(
                     for j in range(n_particles):
                         if j == particle_idx:
                             continue
+
+                        source_charge_override = None
+                        if observer_sc_charge_row is not None:
+                            source_charge_override = float(observer_sc_charge_row[j])
+                            if abs(source_charge_override) <= 1.0e-30:
+                                continue
+
                         if use_retarded_sc:
                             sc_traj_ext = [
                                 _slice_step(step, j)
@@ -1709,6 +1733,8 @@ def retarded_equations_of_motion(
                                 sc_traj_ext,
                                 sc_indices,
                             )
+                        if source_charge_override is not None:
+                            sc_samples.charge[...] = source_charge_override
                         (
                             sc_dp_x,
                             sc_dp_y,

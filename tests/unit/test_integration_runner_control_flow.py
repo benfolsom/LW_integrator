@@ -7,6 +7,7 @@ import pytest
 
 import core.integration_runner as integration_runner
 from core.equations import GammaBlowupError
+from core.pseudo_grid import PseudoGridStepSchedule
 from core.integration_runner import (
     AdaptiveTimestepConfig,
     EnergyJumpDetected,
@@ -15,7 +16,7 @@ from core.integration_runner import (
     retarded_integrator,
     run_integrator,
 )
-from core.types import PseudoGridConfig, SimulationType
+from core.types import PseudoGridConfig, SimulationType, SpaceChargeConfig
 
 
 def _make_particle_state(
@@ -45,6 +46,39 @@ def _make_particle_state(
         "q": np.array([charge], dtype=float),
         "m": np.array([mass], dtype=float),
         "char_time": np.array([1e-3], dtype=float),
+    }
+
+
+def _make_bunch_state(
+    *,
+    x: list[float],
+    z: float = 0.0,
+    charge: float = 1.0,
+    mass: float = 1.0,
+) -> dict[str, np.ndarray]:
+    n_particles = len(x)
+    gamma = np.ones(n_particles, dtype=float)
+    pt = gamma * mass * integration_runner.C_MMNS
+    zeros = np.zeros(n_particles, dtype=float)
+    return {
+        "x": np.asarray(x, dtype=float),
+        "y": zeros.copy(),
+        "z": np.full(n_particles, z, dtype=float),
+        "t": zeros.copy(),
+        "Px": zeros.copy(),
+        "Py": zeros.copy(),
+        "Pz": zeros.copy(),
+        "Pt": pt,
+        "gamma": gamma,
+        "bx": zeros.copy(),
+        "by": zeros.copy(),
+        "bz": zeros.copy(),
+        "bdotx": zeros.copy(),
+        "bdoty": zeros.copy(),
+        "bdotz": zeros.copy(),
+        "q": np.full(n_particles, charge, dtype=float),
+        "m": np.full(n_particles, mass, dtype=float),
+        "char_time": np.full(n_particles, 1e-3, dtype=float),
     }
 
 
@@ -258,6 +292,390 @@ def test_retarded_integrator_logs_when_numba_is_unavailable(
         "Numba not available, using pure Python kernels" in message
         for message in logger.warnings
     )
+
+
+def test_retarded_integrator_rejects_pseudo_grid_outside_bunch_to_bunch() -> None:
+    with pytest.raises(NotImplementedError, match="BUNCH_TO_BUNCH"):
+        retarded_integrator(
+            steps=1,
+            h_step=1e-3,
+            wall_z=0.0,
+            aperture_radius=0.5,
+            sim_type=SimulationType.CONDUCTING_WALL,
+            init_rider=_make_particle_state(z=-1.0),
+            init_driver=None,
+            mean=0.0,
+            cav_spacing=0.0,
+            z_cutoff=0.0,
+            pseudo_grid=PseudoGridConfig(enabled=True),
+            use_numba=False,
+        )
+
+
+def test_retarded_integrator_records_pseudo_grid_schedule_metadata_without_changing_b2b_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.asarray(state["t"], dtype=float) + h_step
+        state["z"] = np.asarray(state["z"], dtype=float) + 0.25
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    base_rider, base_driver, *_base_soa = retarded_integrator(
+        steps=2,
+        h_step=0.5,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_bunch_state(x=[0.0, 10.0, 20.0], z=-1.0, charge=1.0),
+        init_driver=_make_bunch_state(x=[1.0, 11.0, 21.0], z=1.0, charge=2.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        use_numba=False,
+    )
+    pseudo_rider, pseudo_driver, pseudo_rider_soa, *_pseudo_soa = retarded_integrator(
+        steps=2,
+        h_step=0.5,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_bunch_state(x=[0.0, 10.0, 20.0], z=-1.0, charge=1.0),
+        init_driver=_make_bunch_state(x=[1.0, 11.0, 21.0], z=1.0, charge=2.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        pseudo_grid=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=2,
+            active_driver_count=2,
+            passive_neighbor_count=2,
+            causal_history_pruning_enabled=True,
+        ),
+        use_numba=False,
+    )
+
+    np.testing.assert_allclose(pseudo_rider[-1]["t"], base_rider[-1]["t"])
+    np.testing.assert_allclose(pseudo_rider[-1]["z"], base_rider[-1]["z"])
+    np.testing.assert_allclose(pseudo_driver[-1]["t"], base_driver[-1]["t"])
+    np.testing.assert_allclose(pseudo_driver[-1]["z"], base_driver[-1]["z"])
+    assert "_pseudo_grid_schedule" not in base_rider[-1]
+
+    schedule = pseudo_rider[-1]["_pseudo_grid_schedule"]
+    assert isinstance(schedule, PseudoGridStepSchedule)
+    np.testing.assert_array_equal(schedule.rider_active_indices, np.array([0, 2]))
+    np.testing.assert_array_equal(schedule.driver_active_indices, np.array([0, 2]))
+    np.testing.assert_array_equal(
+        schedule.rider_passive_map.passive_indices, np.array([1])
+    )
+    np.testing.assert_allclose(
+        schedule.rider_effective_source_charges, np.array([1.5, 1.5])
+    )
+    np.testing.assert_allclose(
+        schedule.driver_effective_source_charges, np.array([3.0, 3.0])
+    )
+    assert schedule.driver_history_start_index == 0
+    assert schedule.rider_history_start_index == 0
+    assert pseudo_rider_soa is not None
+    assert pseudo_rider_soa.pseudo_grid_schedule[1] is schedule
+    assert pseudo_rider_soa.state_at(1)["_pseudo_grid_schedule"] is schedule
+
+
+def test_retarded_integrator_uses_active_only_histories_and_effective_source_charges_in_pseudo_grid_b2b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_calls: list[dict[str, np.ndarray | int]] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        observed_calls.append(
+            {
+                "observer_count": len(np.asarray(trajectory[index_traj]["x"])),
+                "source_count": len(np.asarray(trajectory_ext[index_traj]["x"])),
+                "observer_q": np.asarray(
+                    trajectory[index_traj]["q"], dtype=float
+                ).copy(),
+                "source_q": np.asarray(
+                    trajectory_ext[index_traj]["q"], dtype=float
+                ).copy(),
+            }
+        )
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.asarray(state["t"], dtype=float) + h_step
+        state["z"] = np.asarray(state["z"], dtype=float) + 0.25
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    pseudo_rider, pseudo_driver, *_pseudo_soa = retarded_integrator(
+        steps=2,
+        h_step=0.5,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_bunch_state(x=[0.0, 10.0, 20.0], z=-1.0, charge=1.0),
+        init_driver=_make_bunch_state(x=[1.0, 11.0, 21.0], z=1.0, charge=2.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        pseudo_grid=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=2,
+            active_driver_count=2,
+            passive_neighbor_count=2,
+        ),
+        use_numba=False,
+    )
+
+    assert len(observed_calls) == 2
+    assert observed_calls[0]["observer_count"] == 2
+    assert observed_calls[0]["source_count"] == 2
+    np.testing.assert_allclose(observed_calls[0]["observer_q"], np.array([1.0, 1.0]))
+    np.testing.assert_allclose(observed_calls[0]["source_q"], np.array([3.0, 3.0]))
+    np.testing.assert_allclose(observed_calls[1]["observer_q"], np.array([2.0, 2.0]))
+    np.testing.assert_allclose(observed_calls[1]["source_q"], np.array([1.5, 1.5]))
+    np.testing.assert_allclose(pseudo_rider[-1]["z"], np.array([-0.75, -0.75, -0.75]))
+    np.testing.assert_allclose(pseudo_driver[-1]["z"], np.array([1.25, 1.25, 1.25]))
+
+
+def test_retarded_integrator_uses_reduced_histories_for_pseudo_grid_when_adaptive_timestep_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_counts: list[tuple[int, int, float]] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        observed_counts.append(
+            (
+                len(np.asarray(trajectory[index_traj]["x"])),
+                len(np.asarray(trajectory_ext[index_traj]["x"])),
+                h_step,
+            )
+        )
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.asarray(state["t"], dtype=float) + h_step
+        state["z"] = np.asarray(state["z"], dtype=float) + 0.25
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        steps=2,
+        h_step=0.5,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_bunch_state(x=[0.0, 10.0, 20.0], z=-1.0, charge=1.0),
+        init_driver=_make_bunch_state(x=[1.0, 11.0, 21.0], z=1.0, charge=2.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        adaptive_timestep=AdaptiveTimestepConfig(
+            enabled=True,
+            proximity_refinement_enabled=False,
+            energy_jump_threshold=10.0,
+        ),
+        pseudo_grid=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=2,
+            active_driver_count=2,
+            passive_neighbor_count=2,
+        ),
+        use_numba=False,
+    )
+
+    assert observed_counts == [(2, 2, 0.5), (2, 2, 0.5)]
+    assert isinstance(pseudo_rider[-1]["_pseudo_grid_schedule"], PseudoGridStepSchedule)
+
+
+def test_retarded_integrator_uses_reduced_histories_and_self_excluded_space_charge_in_pseudo_grid_b2b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_calls: list[dict[str, object]] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        observed_calls.append(
+            {
+                "observer_count": len(np.asarray(trajectory[index_traj]["x"])),
+                "source_count": len(np.asarray(trajectory_ext[index_traj]["x"])),
+                "observer_q": np.asarray(
+                    trajectory[index_traj]["q"],
+                    dtype=float,
+                ).copy(),
+                "source_q": np.asarray(
+                    trajectory_ext[index_traj]["q"],
+                    dtype=float,
+                ).copy(),
+                "space_charge_matrix": np.asarray(
+                    kwargs["pseudo_grid_space_charge_source_charges"],
+                    dtype=float,
+                ).copy(),
+                "space_charge_enabled": bool(
+                    getattr(kwargs.get("space_charge"), "enabled", False)
+                ),
+            }
+        )
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.asarray(state["t"], dtype=float) + h_step
+        state["z"] = np.asarray(state["z"], dtype=float) + 0.25
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    pseudo_rider, pseudo_driver, *_pseudo_outputs = retarded_integrator(
+        steps=2,
+        h_step=0.5,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_bunch_state(x=[0.0, 10.0, 20.0], z=-1.0, charge=1.0),
+        init_driver=_make_bunch_state(x=[1.0, 11.0, 21.0], z=1.0, charge=2.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        space_charge=SpaceChargeConfig(enabled=True),
+        pseudo_grid=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=2,
+            active_driver_count=2,
+            passive_neighbor_count=2,
+        ),
+        use_numba=False,
+    )
+
+    assert len(observed_calls) == 2
+    assert observed_calls[0]["space_charge_enabled"] is True
+    assert observed_calls[1]["space_charge_enabled"] is True
+    assert observed_calls[0]["observer_count"] == 2
+    assert observed_calls[0]["source_count"] == 2
+    np.testing.assert_allclose(observed_calls[0]["observer_q"], np.array([1.0, 1.0]))
+    np.testing.assert_allclose(observed_calls[0]["source_q"], np.array([3.0, 3.0]))
+    np.testing.assert_allclose(
+        observed_calls[0]["space_charge_matrix"],
+        np.array([[0.0, 2.0], [2.0, 0.0]]),
+    )
+    np.testing.assert_allclose(observed_calls[1]["observer_q"], np.array([2.0, 2.0]))
+    np.testing.assert_allclose(observed_calls[1]["source_q"], np.array([1.5, 1.5]))
+    np.testing.assert_allclose(
+        observed_calls[1]["space_charge_matrix"],
+        np.array([[0.0, 4.0], [4.0, 0.0]]),
+    )
+    np.testing.assert_allclose(pseudo_rider[-1]["z"], np.array([-0.75, -0.75, -0.75]))
+    np.testing.assert_allclose(pseudo_driver[-1]["z"], np.array([1.25, 1.25, 1.25]))
+
+
+def test_retarded_integrator_falls_back_to_full_histories_for_pseudo_grid_when_space_charge_active_counts_are_insufficient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_counts: list[tuple[int, int]] = []
+
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        observed_counts.append(
+            (
+                len(np.asarray(trajectory[index_traj]["x"])),
+                len(np.asarray(trajectory_ext[index_traj]["x"])),
+            )
+        )
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.asarray(state["t"], dtype=float) + h_step
+        state["z"] = np.asarray(state["z"], dtype=float) + 0.25
+        return state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        steps=2,
+        h_step=0.5,
+        wall_z=0.0,
+        aperture_radius=0.5,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_bunch_state(x=[0.0, 10.0, 20.0], z=-1.0, charge=1.0),
+        init_driver=_make_bunch_state(x=[1.0, 11.0, 21.0], z=1.0, charge=2.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        space_charge=SpaceChargeConfig(enabled=True),
+        pseudo_grid=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=1,
+            active_driver_count=1,
+            passive_neighbor_count=1,
+        ),
+        use_numba=False,
+    )
+
+    assert observed_counts == [(3, 3), (3, 3)]
+    assert isinstance(pseudo_rider[-1]["_pseudo_grid_schedule"], PseudoGridStepSchedule)
 
 
 def test_retarded_integrator_energy_monitor_raises_on_large_jump(

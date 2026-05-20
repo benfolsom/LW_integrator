@@ -399,6 +399,7 @@ class TrajectoryArrays:
     # Non-array side-channels
     halt_reason: list  # length n_steps, str or None
     particle_failure_info: dict  # keyed by (step, particle_idx)
+    pseudo_grid_schedule: list  # length n_steps, object or None
 
     @property
     def n_steps(self) -> int:
@@ -445,6 +446,9 @@ class TrajectoryArrays:
             s["_halted_early"] = bool(self.halted_early[step])
             s["_halt_step"] = int(self.halt_step[step])
             s["_halt_reason"] = self.halt_reason[step]
+        pseudo_grid_schedule = self.pseudo_grid_schedule[step]
+        if pseudo_grid_schedule is not None:
+            s["_pseudo_grid_schedule"] = pseudo_grid_schedule
         return s
 
     def to_legacy(self) -> "Trajectory":
@@ -506,6 +510,7 @@ class TrajectoryBuilder:
         self._halt_step_arr = np.full(n_steps, -1, dtype=np.int64)
         self._halt_reason: list = [None] * n_steps
         self._particle_failure_info: dict = {}
+        self._pseudo_grid_schedule: list = [None] * n_steps
 
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
@@ -517,6 +522,8 @@ class TrajectoryBuilder:
         dead = state.get("_dead_particles")
         if dead is not None:
             self._arrays["dead"][step] = dead
+
+        self._pseudo_grid_schedule[step] = state.get("_pseudo_grid_schedule")
 
         if step == 0:
             for field_name in self._PARTICLE_CONST_FIELDS:
@@ -582,6 +589,7 @@ class TrajectoryBuilder:
             halt_step=self._halt_step_arr[:s],
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
+            pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
         )
 
     def build(self) -> TrajectoryArrays:
@@ -620,6 +628,7 @@ class TrajectoryBuilder:
             halt_step=self._halt_step_arr,
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
+            pseudo_grid_schedule=self._pseudo_grid_schedule,
         )
 
 

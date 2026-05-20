@@ -23,6 +23,17 @@ from .particle_status import (
     mark_particle_dead,
     propagate_dead_particle_status,
 )
+from .pseudo_grid import (
+    PseudoGridPlannerState,
+    PseudoGridStepSchedule,
+    build_pseudo_grid_step_schedule,
+    build_self_excluded_space_charge_source_charges,
+    commit_pseudo_grid_step_schedule,
+    initialize_pseudo_grid_planner_state,
+    reconstruct_full_state_from_active_result,
+    record_pseudo_grid_history_times,
+    slice_trajectory_particle_history,
+)
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import (
     ChronoMatchingMode,
@@ -233,6 +244,161 @@ def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     _ensure("radiation_energy_applied")
 
 
+def _set_pseudo_grid_schedule_metadata(
+    state: Optional[ParticleState], schedule: object | None
+) -> None:
+    if state is None:
+        return
+    if schedule is None:
+        state.pop("_pseudo_grid_schedule", None)
+    else:
+        state["_pseudo_grid_schedule"] = schedule
+
+
+def _adaptive_timestep_enabled(
+    adaptive_timestep: Optional[AdaptiveTimestepConfig],
+) -> bool:
+    return bool(adaptive_timestep is not None and adaptive_timestep.enabled)
+
+
+def _space_charge_enabled(space_charge: Optional[Any]) -> bool:
+    return bool(space_charge is not None and getattr(space_charge, "enabled", False))
+
+
+def _copy_particle_state(state: ParticleState) -> ParticleState:
+    return {
+        key: (value.copy() if isinstance(value, (dict, np.ndarray)) else value)
+        for key, value in state.items()
+    }
+
+
+def _run_pseudo_grid_reduced_step(
+    *,
+    h_step: float,
+    observer_history: Trajectory,
+    source_history: Trajectory,
+    observer_active_indices: np.ndarray,
+    source_active_indices: np.ndarray,
+    source_effective_charges: np.ndarray,
+    passive_map: Any,
+    aperture_radius: float,
+    sim_type: SimulationType,
+    self_consistency: Optional[SelfConsistencyConfig],
+    chrono_mode: ChronoMatchingMode,
+    startup_mode: StartupMode,
+    step_idx: int,
+    cancel_callback: Optional[Callable],
+    logger: Optional[Any],
+    radiation_reaction_mode: str,
+    external_field: Optional[Any],
+    space_charge: Optional[Any],
+    pseudo_grid_weighting_mode: str,
+    loss_tracking_enabled: bool,
+    raise_gamma_blowup: bool = False,
+) -> ParticleState:
+    """Advance one pseudo-grid half-step via active-only observer/source solves."""
+    if not observer_history:
+        raise ValueError("observer_history must contain at least one state")
+
+    if np.asarray(observer_active_indices, dtype=int).size == 0:
+        return _copy_particle_state(observer_history[-1])
+
+    observer_active_history = slice_trajectory_particle_history(
+        observer_history,
+        observer_active_indices,
+    )
+    source_active_history = slice_trajectory_particle_history(
+        source_history,
+        source_active_indices,
+        q_override=source_effective_charges,
+    )
+    local_index = len(observer_active_history) - 1
+    pseudo_grid_space_charge_source_charges = None
+    if _space_charge_enabled(space_charge):
+        pseudo_grid_space_charge_source_charges = (
+            build_self_excluded_space_charge_source_charges(
+                observer_history[-1],
+                observer_active_indices,
+                passive_map,
+                weighting_mode=pseudo_grid_weighting_mode,
+            )
+        )
+
+    try:
+        active_result_state = self_consistent_step(
+            retarded_equations_of_motion,
+            h_step,
+            observer_active_history,
+            source_active_history,
+            local_index,
+            aperture_radius,
+            sim_type,
+            self_consistency,
+            chrono_mode,
+            startup_mode,
+            step_idx=step_idx,
+            cancel_callback=cancel_callback,
+            space_charge=space_charge,
+            radiation_reaction_mode=radiation_reaction_mode,
+            pseudo_grid_space_charge_source_charges=(
+                pseudo_grid_space_charge_source_charges
+            ),
+            **(
+                {"external_field": external_field} if external_field is not None else {}
+            ),
+        )
+    except GammaBlowupError as exc:
+        local_particle_idx = int(exc.particle_idx)
+        if (
+            0
+            <= local_particle_idx
+            < np.asarray(observer_active_indices, dtype=int).size
+        ):
+            global_particle_idx = int(observer_active_indices[local_particle_idx])
+        else:
+            global_particle_idx = local_particle_idx
+
+        if raise_gamma_blowup:
+            raise GammaBlowupError(
+                step_idx=exc.step_idx,
+                particle_idx=global_particle_idx,
+                gamma_value=exc.gamma_value,
+                iteration=exc.iteration,
+                is_hard_blowup=exc.is_hard_blowup,
+            ) from exc
+
+        message = (
+            f"    [CRITICAL] Step {step_idx}, Particle {global_particle_idx}: "
+            f"Gamma blowup (γ={exc.gamma_value:.2e}) during pseudo-grid active solve. "
+            f"Marking particle as dead."
+        )
+        if logger:
+            if callable(logger):
+                logger(message)
+            else:
+                logger.warning(message)
+        else:
+            print(message)
+
+        active_result_state = _copy_particle_state(observer_active_history[-1])
+        mark_particle_dead(
+            active_result_state,
+            local_particle_idx,
+            step_idx,
+            "gamma_blowup_no_adaptive",
+            gamma_value=exc.gamma_value,
+            iteration=exc.iteration,
+        )
+
+    return reconstruct_full_state_from_active_result(
+        observer_history[-1],
+        observer_active_indices,
+        active_result_state,
+        passive_map,
+        loss_tracking_enabled=loss_tracking_enabled,
+    )
+
+
 @dataclass
 class _AdaptiveStepState:
     """Mutable cross-step state for adaptive timestep logic."""
@@ -275,6 +441,10 @@ def _run_adaptive_step(
     logger: Optional[Any],
     adaptive_state: "_AdaptiveStepState",
     radiation_reaction_mode: str,
+    pseudo_grid_schedule: PseudoGridStepSchedule | None = None,
+    pseudo_grid_force_reduction_enabled: bool = False,
+    pseudo_grid_weighting_mode: str = "inverse_distance",
+    pseudo_grid_loss_tracking_enabled: bool = True,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -411,6 +581,42 @@ def _run_adaptive_step(
                 else:
                     print(msg)
 
+    if (
+        pseudo_grid_force_reduction_enabled
+        and pseudo_grid_schedule is not None
+        and not _adaptive_timestep_enabled(adaptive_timestep)
+    ):
+        result_state = _run_pseudo_grid_reduced_step(
+            h_step=current_h_step,
+            observer_history=trajectory[:i],
+            source_history=trajectory_drv[:i],
+            observer_active_indices=pseudo_grid_schedule.rider_active_indices,
+            source_active_indices=pseudo_grid_schedule.driver_active_indices,
+            source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+            passive_map=pseudo_grid_schedule.rider_passive_map,
+            aperture_radius=aperture_radius,
+            sim_type=sim_type,
+            self_consistency=self_consistency,
+            chrono_mode=chrono_mode,
+            startup_mode=startup_mode,
+            step_idx=i,
+            cancel_callback=cancel_callback,
+            logger=logger,
+            radiation_reaction_mode=radiation_reaction_mode,
+            external_field=external_field,
+            space_charge=space_charge,
+            pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
+            loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
+        )
+        adaptive_state.reduced_timestep_mode = reduced_timestep_mode
+        adaptive_state.reduced_h_step = reduced_h_step
+        adaptive_state.cooldown_counter = cooldown_counter
+        adaptive_state.stable_steps_counter = stable_steps_counter
+        adaptive_state.last_particle_death_step = last_particle_death_step
+        adaptive_state.previous_energy = previous_energy
+        adaptive_state.current_h_step = current_h_step
+        return result_state
+
     temp_trajectory_base = {
         k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
         for k, v in trajectory[i - 1].items()
@@ -497,49 +703,85 @@ def _run_adaptive_step(
                 raise IntegrationCancelled("Integration cancelled by caller.")
 
             try:
-                trial_state = self_consistent_step(
-                    retarded_equations_of_motion,
-                    current_h_step,
-                    temp_trajectory,
-                    temp_driver,
-                    substep_idx,
-                    aperture_radius,
-                    sim_type,
-                    self_consistency,
-                    chrono_mode,
-                    startup_mode,
-                    step_idx=i,
-                    cancel_callback=cancel_callback,
-                    **(
-                        {"radiation_reaction_mode": radiation_reaction_mode}
-                        if _scs_accepts_radiation
-                        else {}
-                    ),
-                    **(
-                        {"space_charge": space_charge}
-                        if space_charge is not None
-                        else {}
-                    ),
-                    **(
-                        {"external_field": external_field}
-                        if external_field is not None and _scs_accepts_external_field
-                        else {}
-                    ),
-                    **(
-                        {"traj_soa": _temp_traj_builder.build_partial(substep_idx + 1)}
-                        if _scs_accepts_soa
-                        else {}
-                    ),
-                    **(
-                        {
-                            "traj_ext_soa": _temp_drv_builder.build_partial(
-                                substep_idx + 1
-                            )
-                        }
-                        if _scs_accepts_soa
-                        else {}
-                    ),
-                )
+                if (
+                    pseudo_grid_force_reduction_enabled
+                    and pseudo_grid_schedule is not None
+                    and sim_type == SimulationType.BUNCH_TO_BUNCH
+                ):
+                    trial_state = _run_pseudo_grid_reduced_step(
+                        h_step=current_h_step,
+                        observer_history=temp_trajectory,
+                        source_history=temp_driver,
+                        observer_active_indices=pseudo_grid_schedule.rider_active_indices,
+                        source_active_indices=pseudo_grid_schedule.driver_active_indices,
+                        source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+                        passive_map=pseudo_grid_schedule.rider_passive_map,
+                        aperture_radius=aperture_radius,
+                        sim_type=sim_type,
+                        self_consistency=self_consistency,
+                        chrono_mode=chrono_mode,
+                        startup_mode=startup_mode,
+                        step_idx=i,
+                        cancel_callback=cancel_callback,
+                        logger=logger,
+                        radiation_reaction_mode=radiation_reaction_mode,
+                        external_field=external_field,
+                        space_charge=space_charge,
+                        pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
+                        loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
+                        raise_gamma_blowup=_adaptive_timestep_enabled(
+                            adaptive_timestep
+                        ),
+                    )
+                else:
+                    trial_state = self_consistent_step(
+                        retarded_equations_of_motion,
+                        current_h_step,
+                        temp_trajectory,
+                        temp_driver,
+                        substep_idx,
+                        aperture_radius,
+                        sim_type,
+                        self_consistency,
+                        chrono_mode,
+                        startup_mode,
+                        step_idx=i,
+                        cancel_callback=cancel_callback,
+                        **(
+                            {"radiation_reaction_mode": radiation_reaction_mode}
+                            if _scs_accepts_radiation
+                            else {}
+                        ),
+                        **(
+                            {"space_charge": space_charge}
+                            if space_charge is not None
+                            else {}
+                        ),
+                        **(
+                            {"external_field": external_field}
+                            if external_field is not None
+                            and _scs_accepts_external_field
+                            else {}
+                        ),
+                        **(
+                            {
+                                "traj_soa": _temp_traj_builder.build_partial(
+                                    substep_idx + 1
+                                )
+                            }
+                            if _scs_accepts_soa
+                            else {}
+                        ),
+                        **(
+                            {
+                                "traj_ext_soa": _temp_drv_builder.build_partial(
+                                    substep_idx + 1
+                                )
+                            }
+                            if _scs_accepts_soa
+                            else {}
+                        ),
+                    )
             except GammaBlowupError as e:
                 if adaptive_timestep is None or not adaptive_timestep.enabled:
                     msg = (
@@ -1027,9 +1269,15 @@ def retarded_integrator(
         experimental Medina/LAD candidate force to mechanical momentum before
         recomposing canonical momentum.
     pseudo_grid:
-        Experimental pseudo-grid configuration surface. The public plumbing is
-        available ahead of the reduced-physics implementation so callers can
-        save, load, and inspect pseudo-grid settings consistently.
+        Experimental pseudo-grid configuration surface. When enabled for
+        ``BUNCH_TO_BUNCH`` runs, the integrator builds per-step active/passive
+        schedules and, in supported configurations, advances active observers
+        against active-source reduced histories with effective source charges
+        before passive particles receive weighted delta updates. Adaptive
+        timestep refinement participates in the reduced active-set path.
+        Intra-bunch space charge also uses the reduced path when each bunch has
+        at least two active particles; otherwise the canonical full-history
+        fallback remains in place.
 
     Returns
     -------
@@ -1049,12 +1297,20 @@ def retarded_integrator(
     from . import vectorized_interactions as _vectorized_interactions
 
     pseudo_grid = pseudo_grid or PseudoGridConfig()
-    if pseudo_grid.enabled:
+    if pseudo_grid.enabled and sim_type != SimulationType.BUNCH_TO_BUNCH:
         raise NotImplementedError(
-            "Pseudo-grid mode is not yet implemented in the integrator; "
-            "configuration plumbing is present but the reduced solver path "
-            "is still under development."
+            "Pseudo-grid schedule mode is currently implemented only for "
+            "SimulationType.BUNCH_TO_BUNCH."
         )
+
+    pseudo_grid_space_charge_reduction_supported = not _space_charge_enabled(
+        space_charge
+    ) or (pseudo_grid.active_rider_count >= 2 and pseudo_grid.active_driver_count >= 2)
+    pseudo_grid_force_reduction_enabled = (
+        pseudo_grid.enabled
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+        and pseudo_grid_space_charge_reduction_supported
+    )
 
     numba_kernels_enabled = bool(use_numba and _vectorized_interactions.NUMBA_AVAILABLE)
 
@@ -1078,6 +1334,39 @@ def retarded_integrator(
             else:
                 logger.info(message)
 
+    if pseudo_grid.enabled:
+        if pseudo_grid_force_reduction_enabled:
+            message = (
+                "Pseudo-grid reduced active-set force evaluation enabled for "
+                "BUNCH_TO_BUNCH; full history storage remains active"
+            )
+        else:
+            reasons = []
+            if (
+                _space_charge_enabled(space_charge)
+                and not pseudo_grid_space_charge_reduction_supported
+            ):
+                reasons.append(
+                    "intra-bunch space charge requires at least two active particles per bunch"
+                )
+            reason_text = (
+                ", and ".join(reasons)
+                if reasons
+                else "current configuration requires fallback"
+            )
+            message = (
+                "Pseudo-grid schedule construction enabled, but reduced "
+                "active-set force evaluation is falling back to the canonical "
+                f"full-history solve because {reason_text}"
+            )
+        if logger:
+            if callable(logger):
+                logger(message)
+            else:
+                logger.info(message)
+        else:
+            print(message)
+
     # Canonical integration implementation
 
     trajectory: Trajectory = [{} for _ in range(steps)]
@@ -1086,6 +1375,7 @@ def retarded_integrator(
     _n_particles_drv: int | None = None
     _traj_builder = TrajectoryBuilder(steps, _n_particles_rider)
     _traj_drv_builder: TrajectoryBuilder | None = None
+    _pseudo_grid_planner_state: PseudoGridPlannerState | None = None
 
     # Initialize energy monitoring
     previous_energy: Optional[float] = None
@@ -1114,6 +1404,7 @@ def retarded_integrator(
         if i == 0:
             trajectory[i] = init_rider
             _ensure_startup_metadata(trajectory[i])
+            _set_pseudo_grid_schedule_metadata(trajectory[i], None)
             _traj_builder.set_step(i, trajectory[i])
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
@@ -1141,10 +1432,36 @@ def retarded_integrator(
                     )
                 trajectory_drv[i] = init_driver
             _ensure_startup_metadata(trajectory_drv[i])
+            _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             _n_particles_drv = len(trajectory_drv[i]["x"])
             _traj_drv_builder = TrajectoryBuilder(steps, _n_particles_drv)
             _traj_drv_builder.set_step(i, trajectory_drv[i])
+            if pseudo_grid.enabled:
+                _pseudo_grid_planner_state = initialize_pseudo_grid_planner_state(
+                    rider_particle_count=_n_particles_rider,
+                    driver_particle_count=_n_particles_drv,
+                    pair_reuse_window=pseudo_grid.pair_reuse_window,
+                )
+                record_pseudo_grid_history_times(
+                    _pseudo_grid_planner_state,
+                    trajectory[i],
+                    trajectory_drv[i],
+                )
         else:
+            _current_pseudo_grid_schedule = None
+            if pseudo_grid.enabled:
+                if _pseudo_grid_planner_state is None:
+                    raise RuntimeError(
+                        "Pseudo-grid planner state was not initialized at step 0."
+                    )
+                _current_pseudo_grid_schedule = build_pseudo_grid_step_schedule(
+                    trajectory[i - 1],
+                    trajectory_drv[i - 1],
+                    step_index=i,
+                    config=pseudo_grid,
+                    planner_state=_pseudo_grid_planner_state,
+                )
+
             trajectory[i] = _run_adaptive_step(
                 i=i,
                 steps=steps,
@@ -1173,8 +1490,15 @@ def retarded_integrator(
                 logger=logger,
                 adaptive_state=_adaptive_state,
                 radiation_reaction_mode=radiation_reaction_mode,
+                pseudo_grid_schedule=_current_pseudo_grid_schedule,
+                pseudo_grid_force_reduction_enabled=pseudo_grid_force_reduction_enabled,
+                pseudo_grid_weighting_mode=pseudo_grid.source_weighting_mode,
+                pseudo_grid_loss_tracking_enabled=pseudo_grid.loss_tracking_enabled,
             )
             _ensure_startup_metadata(trajectory[i])
+            _set_pseudo_grid_schedule_metadata(
+                trajectory[i], _current_pseudo_grid_schedule
+            )
             _traj_builder.set_step(i, trajectory[i])
 
             # Check if all particles are dead
@@ -1283,57 +1607,99 @@ def retarded_integrator(
                     raise ValueError(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
-                _b2b_scs_accepts_soa = _call_accepts_kw(
-                    self_consistent_step, "traj_soa"
-                )
-                _b2b_scs_accepts_radiation = _call_accepts_kw(
-                    self_consistent_step, "radiation_reaction_mode"
-                )
-                _b2b_scs_accepts_external_field = _call_accepts_kw(
-                    self_consistent_step, "external_field"
-                )
-                trajectory_drv[i] = self_consistent_step(
-                    retarded_equations_of_motion,
-                    h_step,
-                    trajectory_drv,
-                    trajectory,
-                    i - 1,
-                    aperture_radius,
-                    sim_type,
-                    self_consistency,
-                    chrono_mode,
-                    startup_mode,
-                    step_idx=i,
-                    **(
-                        {"radiation_reaction_mode": radiation_reaction_mode}
-                        if _b2b_scs_accepts_radiation
-                        else {}
-                    ),
-                    **(
-                        {"space_charge": space_charge}
-                        if space_charge is not None
-                        else {}
-                    ),
-                    **(
-                        {"external_field": external_field}
-                        if external_field is not None
-                        and _b2b_scs_accepts_external_field
-                        else {}
-                    ),
-                    **(
-                        {"traj_soa": _traj_drv_builder.build_partial(i)}
-                        if _b2b_scs_accepts_soa and _traj_drv_builder is not None
-                        else {}
-                    ),
-                    **(
-                        {"traj_ext_soa": _traj_builder.build_partial(i)}
-                        if _b2b_scs_accepts_soa
-                        else {}
-                    ),
-                )
+                if (
+                    pseudo_grid_force_reduction_enabled
+                    and _current_pseudo_grid_schedule is not None
+                ):
+                    trajectory_drv[i] = _run_pseudo_grid_reduced_step(
+                        h_step=h_step,
+                        observer_history=trajectory_drv[:i],
+                        source_history=trajectory[:i],
+                        observer_active_indices=_current_pseudo_grid_schedule.driver_active_indices,
+                        source_active_indices=_current_pseudo_grid_schedule.rider_active_indices,
+                        source_effective_charges=_current_pseudo_grid_schedule.rider_effective_source_charges,
+                        passive_map=_current_pseudo_grid_schedule.driver_passive_map,
+                        aperture_radius=aperture_radius,
+                        sim_type=sim_type,
+                        self_consistency=self_consistency,
+                        chrono_mode=chrono_mode,
+                        startup_mode=startup_mode,
+                        step_idx=i,
+                        cancel_callback=cancel_callback,
+                        logger=logger,
+                        radiation_reaction_mode=radiation_reaction_mode,
+                        external_field=external_field,
+                        space_charge=space_charge,
+                        pseudo_grid_weighting_mode=pseudo_grid.source_weighting_mode,
+                        loss_tracking_enabled=pseudo_grid.loss_tracking_enabled,
+                    )
+                else:
+                    _b2b_scs_accepts_soa = _call_accepts_kw(
+                        self_consistent_step, "traj_soa"
+                    )
+                    _b2b_scs_accepts_radiation = _call_accepts_kw(
+                        self_consistent_step, "radiation_reaction_mode"
+                    )
+                    _b2b_scs_accepts_external_field = _call_accepts_kw(
+                        self_consistent_step, "external_field"
+                    )
+                    trajectory_drv[i] = self_consistent_step(
+                        retarded_equations_of_motion,
+                        h_step,
+                        trajectory_drv,
+                        trajectory,
+                        i - 1,
+                        aperture_radius,
+                        sim_type,
+                        self_consistency,
+                        chrono_mode,
+                        startup_mode,
+                        step_idx=i,
+                        **(
+                            {"radiation_reaction_mode": radiation_reaction_mode}
+                            if _b2b_scs_accepts_radiation
+                            else {}
+                        ),
+                        **(
+                            {"space_charge": space_charge}
+                            if space_charge is not None
+                            else {}
+                        ),
+                        **(
+                            {"external_field": external_field}
+                            if external_field is not None
+                            and _b2b_scs_accepts_external_field
+                            else {}
+                        ),
+                        **(
+                            {"traj_soa": _traj_drv_builder.build_partial(i)}
+                            if _b2b_scs_accepts_soa and _traj_drv_builder is not None
+                            else {}
+                        ),
+                        **(
+                            {"traj_ext_soa": _traj_builder.build_partial(i)}
+                            if _b2b_scs_accepts_soa
+                            else {}
+                        ),
+                    )
             _ensure_startup_metadata(trajectory_drv[i])
+            _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             if _traj_drv_builder is not None:
                 _traj_drv_builder.set_step(i, trajectory_drv[i])
+            if (
+                pseudo_grid.enabled
+                and _pseudo_grid_planner_state is not None
+                and _current_pseudo_grid_schedule is not None
+            ):
+                commit_pseudo_grid_step_schedule(
+                    _pseudo_grid_planner_state,
+                    _current_pseudo_grid_schedule,
+                )
+                record_pseudo_grid_history_times(
+                    _pseudo_grid_planner_state,
+                    trajectory[i],
+                    trajectory_drv[i],
+                )
 
         # Check for early termination in BUNCH_TO_BUNCH relative mode
         if (

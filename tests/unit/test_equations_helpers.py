@@ -235,6 +235,50 @@ def test_compute_full_retarded_distance_handles_interpolation_payload(
     assert nhat["R"].tolist() == pytest.approx([2.0])
 
 
+def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(x=[0.0, 10.0], charge=[1.0, 1.0]),
+        _make_state(x=[1.0, 11.0], t=[1.0, 1.0], charge=[1.0, 1.0]),
+    ]
+    driver = [
+        _make_state(x=[100.0], charge=[0.0]),
+        _make_state(x=[101.0], t=[1.0], charge=[0.0]),
+    ]
+    seen_nonzero_charges: list[float] = []
+
+    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
+        charges = np.asarray(kwargs["samples"].charge, dtype=float)
+        nonzero = charges[np.abs(charges) > 1.0e-30]
+        seen_nonzero_charges.extend(nonzero.tolist())
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
+
+    equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=False),
+        space_charge=SpaceChargeConfig(
+            enabled=True,
+            retarded=False,
+        ),
+        pseudo_grid_space_charge_source_charges=np.array(
+            [[0.0, 2.0], [2.0, 0.0]],
+            dtype=float,
+        ),
+    )
+
+    assert seen_nonzero_charges == pytest.approx([2.0, 2.0])
+
+
 def test_retarded_space_charge_uses_chrono_matching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

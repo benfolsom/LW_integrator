@@ -70,8 +70,20 @@ class TestShapeProperties:
 
     def test_kinematic_array_shapes(self):
         traj, _ = _build_trajectory()
-        for field in ("x", "y", "z", "t", "Px", "Py", "Pz", "Pt",
-                      "gamma", "bx", "by", "bz"):
+        for field in (
+            "x",
+            "y",
+            "z",
+            "t",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+        ):
             arr = getattr(traj, field)
             assert arr.shape == (N_STEPS, N_PARTICLES), field
 
@@ -158,8 +170,9 @@ class TestHaltMetadata:
         builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
         for step in range(N_STEPS):
             builder.set_step(step, _make_state(step, N_PARTICLES))
-        builder.set_halt_metadata(step=3, reason="diverged", halt_step=3,
-                                  requested_steps=N_STEPS)
+        builder.set_halt_metadata(
+            step=3, reason="diverged", halt_step=3, requested_steps=N_STEPS
+        )
         traj = builder.build()
 
         assert traj.halted_early[3]
@@ -173,8 +186,9 @@ class TestHaltMetadata:
         builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
         for step in range(N_STEPS):
             builder.set_step(step, _make_state(step, N_PARTICLES))
-        builder.set_halt_metadata(step=1, reason="exploded", halt_step=1,
-                                  requested_steps=N_STEPS)
+        builder.set_halt_metadata(
+            step=1, reason="exploded", halt_step=1, requested_steps=N_STEPS
+        )
         traj = builder.build()
 
         s_halted = traj.state_at(1)
@@ -256,3 +270,36 @@ class TestParticleFailureInfo:
         traj = builder.build()
         assert (2, 1) in traj.particle_failure_info
         assert traj.particle_failure_info[(2, 1)]["reason"] == "nan"
+
+
+class TestPseudoGridScheduleMetadata:
+    def test_schedule_round_trip(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        schedule = {"step_index": 1, "active_indices": np.array([0, 2], dtype=int)}
+
+        for step in range(N_STEPS):
+            state = _make_state(step, N_PARTICLES)
+            if step == 1:
+                state["_pseudo_grid_schedule"] = schedule
+            builder.set_step(step, state)
+
+        traj = builder.build()
+
+        assert traj.pseudo_grid_schedule[1] is schedule
+        assert traj.state_at(1)["_pseudo_grid_schedule"] is schedule
+        assert "_pseudo_grid_schedule" not in traj.state_at(0)
+
+    def test_build_partial_preserves_schedule_slice(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        schedule = {"step_index": 1}
+
+        for step in range(N_STEPS):
+            state = _make_state(step, N_PARTICLES)
+            if step == 1:
+                state["_pseudo_grid_schedule"] = schedule
+            builder.set_step(step, state)
+
+        partial = builder.build_partial(2)
+
+        assert len(partial.pseudo_grid_schedule) == 2
+        assert partial.pseudo_grid_schedule[1] is schedule

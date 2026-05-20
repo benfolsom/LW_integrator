@@ -1,3 +1,5 @@
+.. _recent_changes:
+
 Recent Changes
 ==============
 
@@ -10,27 +12,33 @@ corrections.
 June 2026 Updates
 -----------------
 
-Experimental Pseudo-grid Configuration Surface (June 2026)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Experimental Pseudo-grid Reduced Solver (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-An experimental pseudo-grid configuration surface is now threaded through the
-single-run stack for ``BUNCH_TO_BUNCH`` studies:
+An experimental pseudo-grid reduced solver is now available for
+``BUNCH_TO_BUNCH`` studies.
 
-* ``core.types.PseudoGridConfig`` is now part of ``IntegratorConfig``.
-* ``SimulationOptions`` save/load now round-trips pseudo-grid settings through
-  a dedicated ``pseudo_grid`` payload in saved single-run configs.
-* ``lw-simulate`` accepts pseudo-grid CLI flags for active counts, passive
-  neighbor count, pair reuse window, source weighting, loss tracking, and
-  causal-history pruning.
-* The main GUI ``Particles`` tab now exposes the same pseudo-grid controls.
+* ``core.types.PseudoGridConfig`` is now part of ``IntegratorConfig`` and the
+  same pseudo-grid settings round-trip through ``SimulationOptions``, the
+  single-run CLI, the main GUI ``Particles`` tab, and saved single-run configs.
 * ``core/pseudo_grid.py`` now provides deterministic active-subset selection,
-  passive-anchor maps, bounded pair-reuse tracking, effective source-charge
-  aggregation, and a conservative causal-history cutoff helper for the next
-  solver-integration stage.
+  passive-anchor maps, effective source-charge aggregation, bounded pair-reuse
+  tracking, passive reconstruction helpers, conservative causal-history cutoff
+  helpers, and observer-specific self-excluded source-charge matrices for
+  reduced same-bunch space charge.
+* The integrator now builds per-step pseudo-grid schedules, stores them on the
+  legacy and SoA trajectory paths, advances active observers against reduced
+  active-source histories with effective source charges, and reconstructs
+  passive particles from weighted active deltas.
+* Adaptive-timestep retries now participate in the reduced pseudo-grid path.
+* Reduced intra-bunch space charge is also supported when each bunch keeps at
+  least two active particles, using observer-specific self-excluded source-
+  charge matrices. If the active counts are too small, the integrator
+  conservatively falls back to the canonical full-history solve.
 
-The reduced active/passive solver path is still under development. For now,
-enabling pseudo-grid mode fails fast with a clear ``NotImplementedError`` so
-callers do not accidentally assume that the mode is already active.
+The mode remains experimental. Full histories are still retained, and
+causal-history pruning currently computes advisory start indices without yet
+removing stored history samples.
 
 March 2026 Updates (v0.6.0)
 ----------------------------
