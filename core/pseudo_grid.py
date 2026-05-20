@@ -599,7 +599,6 @@ def reconstruct_full_state_from_active_result(
             "active_result_state particle count must match active_indices length"
         )
 
-    active_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(active)}
     active_dead_mask = np.asarray(
         active_result_state.get("_dead_particles", np.zeros(active.size, dtype=bool)),
         dtype=bool,
@@ -658,65 +657,79 @@ def reconstruct_full_state_from_active_result(
         dtype=bool,
     )
 
-    for row_idx, passive_idx in enumerate(passive_indices):
-        if full_dead_mask[passive_idx]:
-            continue
-
-        neighbor_particle_indices = passive_map.neighbor_particle_indices[row_idx]
-        local_neighbor_indices = np.asarray(
-            [
-                active_lookup[int(particle_idx)]
-                for particle_idx in neighbor_particle_indices
-            ],
-            dtype=int,
+    max_index = int(
+        max(
+            np.max(active),
+            np.max(np.asarray(passive_map.neighbor_particle_indices, dtype=int)),
         )
-        weights = np.asarray(passive_map.weights[row_idx], dtype=float).copy()
+    )
+    active_index_lookup = np.full(max_index + 1, -1, dtype=int)
+    active_index_lookup[active] = np.arange(active.size, dtype=int)
+    local_neighbor_indices = active_index_lookup[
+        np.asarray(passive_map.neighbor_particle_indices, dtype=int)
+    ]
+    if np.any(local_neighbor_indices < 0):
+        raise ValueError(
+            "passive_map neighbor indices must be members of active_indices"
+        )
 
-        if loss_tracking_enabled and active_dead_mask.size > 0:
-            alive_anchor_mask = ~active_dead_mask[local_neighbor_indices]
-            if np.any(alive_anchor_mask):
-                local_neighbor_indices = local_neighbor_indices[alive_anchor_mask]
-                weights = weights[alive_anchor_mask]
-                weights /= float(np.sum(weights))
-            else:
-                continue
+    valid_passive_mask = ~full_dead_mask[passive_indices]
+    weights = np.asarray(passive_map.weights, dtype=float).copy()
+    if loss_tracking_enabled and active_dead_mask.size > 0:
+        alive_anchor_mask = ~active_dead_mask[local_neighbor_indices]
+        weights = np.where(alive_anchor_mask, weights, 0.0)
+        weight_sums = np.sum(weights, axis=1)
+        valid_passive_mask &= weight_sums > 0.0
+        weights[valid_passive_mask] /= weight_sums[valid_passive_mask, np.newaxis]
 
-        for field_name, delta_values in active_field_deltas.items():
-            full_state[field_name][passive_idx] = previous_full_state[field_name][
-                passive_idx
-            ] + float(np.dot(weights, delta_values[local_neighbor_indices]))
+    if not np.any(valid_passive_mask):
+        return full_state
 
-        if (
-            "beta_avg_x" in previous_full_state
-            and "beta_avg_y" in previous_full_state
-            and "beta_avg_z" in previous_full_state
-            and "beta_samples" in previous_full_state
-            and "bx" in full_state
-            and "by" in full_state
-            and "bz" in full_state
+    valid_passive_indices = passive_indices[valid_passive_mask]
+    valid_neighbor_indices = local_neighbor_indices[valid_passive_mask]
+    valid_weights = weights[valid_passive_mask]
+
+    for field_name, delta_values in active_field_deltas.items():
+        weighted_deltas = np.sum(
+            valid_weights * delta_values[valid_neighbor_indices],
+            axis=1,
+        )
+        full_state[field_name][valid_passive_indices] = (
+            np.asarray(previous_full_state[field_name], dtype=float)[
+                valid_passive_indices
+            ]
+            + weighted_deltas
+        )
+
+    if (
+        "beta_avg_x" in previous_full_state
+        and "beta_avg_y" in previous_full_state
+        and "beta_avg_z" in previous_full_state
+        and "beta_samples" in previous_full_state
+        and "bx" in full_state
+        and "by" in full_state
+        and "bz" in full_state
+    ):
+        previous_sample_counts = np.asarray(
+            previous_full_state["beta_samples"],
+            dtype=float,
+        )[valid_passive_indices]
+        updated_sample_counts = previous_sample_counts + 1.0
+        full_state["beta_samples"][valid_passive_indices] = updated_sample_counts
+        for avg_field, beta_field in (
+            ("beta_avg_x", "bx"),
+            ("beta_avg_y", "by"),
+            ("beta_avg_z", "bz"),
         ):
-            previous_avg = (
-                float(previous_full_state["beta_avg_x"][passive_idx]),
-                float(previous_full_state["beta_avg_y"][passive_idx]),
-                float(previous_full_state["beta_avg_z"][passive_idx]),
-            )
-            previous_sample_count = float(
-                previous_full_state["beta_samples"][passive_idx]
-            )
-            new_beta = (
-                float(full_state["bx"][passive_idx]),
-                float(full_state["by"][passive_idx]),
-                float(full_state["bz"][passive_idx]),
-            )
-            updated_beta_avg, updated_sample_count = _update_beta_running_average(
-                previous_avg,
-                previous_sample_count,
-                new_beta,
-            )
-            full_state["beta_samples"][passive_idx] = updated_sample_count
-            full_state["beta_avg_x"][passive_idx] = updated_beta_avg[0]
-            full_state["beta_avg_y"][passive_idx] = updated_beta_avg[1]
-            full_state["beta_avg_z"][passive_idx] = updated_beta_avg[2]
+            previous_avg = np.asarray(previous_full_state[avg_field], dtype=float)[
+                valid_passive_indices
+            ]
+            new_beta = np.asarray(full_state[beta_field], dtype=float)[
+                valid_passive_indices
+            ]
+            full_state[avg_field][valid_passive_indices] = (
+                previous_avg * previous_sample_counts + new_beta
+            ) / updated_sample_counts
 
     return full_state
 
