@@ -39,10 +39,15 @@ An experimental pseudo-grid reduced solver is now available for
   least two active particles, using observer-specific self-excluded source-
   charge matrices. If the active counts are too small, the integrator
   conservatively falls back to the canonical full-history solve.
+* ``scripts/pseudo_grid_feasibility_probe.py`` provides a lightweight sanity and
+  scale probe covering zero-charge drift, weak-charge full-vs-reduced
+  comparisons, and optional ``N > 100`` timing checks.
 
 The mode remains experimental. Causal-history deletion is currently limited to
 supported reduced pseudo-grid B2B solves; canonical fallback paths still retain
-full histories.
+full histories. The next validation focus is to expand from these deterministic
+sanity probes into simple analytic physical baselines, then map accuracy,
+runtime, and stability across ``N``, active-count, and neighbour-count grids.
 
 March 2026 Updates (v0.6.0)
 ----------------------------
