@@ -323,12 +323,19 @@ def build_passive_neighbor_map(
         neighbor_positions = neighbor_positions[:, np.newaxis]
 
     neighbor_particle_indices = active[neighbor_positions]
-    for row_idx in range(neighbor_particle_indices.shape[0]):
-        row_order = np.lexsort((neighbor_particle_indices[row_idx], distances[row_idx]))
-        neighbor_particle_indices[row_idx] = neighbor_particle_indices[
-            row_idx, row_order
-        ]
-        distances[row_idx] = distances[row_idx, row_order]
+    if k > 1:
+        tied_rows = np.flatnonzero(
+            np.any(np.diff(distances, axis=1) <= 1.0e-12, axis=1)
+        )
+        for row_idx in tied_rows:
+            row_order = np.lexsort(
+                (neighbor_particle_indices[row_idx], distances[row_idx])
+            )
+            neighbor_particle_indices[row_idx] = neighbor_particle_indices[
+                row_idx,
+                row_order,
+            ]
+            distances[row_idx] = distances[row_idx, row_order]
 
     weights = _compute_neighbor_weights(distances, weighting_mode)
     return PassiveNeighborMap(
