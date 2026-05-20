@@ -7,7 +7,7 @@ programmatic entry points for running the modern Liénard–Wiechert integrator.
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Callable, Optional, Tuple
 
@@ -272,6 +272,67 @@ def _copy_particle_state(state: ParticleState) -> ParticleState:
     }
 
 
+def _resolve_history_start_index(
+    history: Trajectory,
+    start_index: int | None,
+    *,
+    history_base_index: int = 0,
+) -> int:
+    if start_index is None:
+        return 0
+    if not history:
+        return 0
+    local_start_index = int(start_index) - int(history_base_index)
+    if local_start_index <= 0:
+        return 0
+    return min(local_start_index, len(history) - 1)
+
+
+def _history_retention_enabled(
+    pseudo_grid: PseudoGridConfig,
+    *,
+    force_reduction_enabled: bool,
+) -> bool:
+    return bool(
+        pseudo_grid.enabled
+        and force_reduction_enabled
+        and pseudo_grid.causal_history_pruning_enabled
+    )
+
+
+def _drop_retained_history_prefix(
+    history: Trajectory,
+    current_base_index: int,
+    requested_start_index: int | None,
+) -> tuple[int, int]:
+    if requested_start_index is None or requested_start_index <= current_base_index:
+        return current_base_index, 0
+    if not history:
+        return current_base_index, 0
+
+    new_base_index = min(
+        int(requested_start_index), current_base_index + len(history) - 1
+    )
+    drop_count = new_base_index - current_base_index
+    if drop_count > 0:
+        del history[:drop_count]
+    return new_base_index, drop_count
+
+
+def _clear_legacy_history_prefix(
+    trajectory: Trajectory,
+    *,
+    start_index: int,
+    end_index: int,
+) -> int:
+    if end_index <= start_index:
+        return start_index
+    bounded_end_index = min(end_index, len(trajectory))
+    for history_index in range(start_index, bounded_end_index):
+        trajectory[history_index] = {}
+    return bounded_end_index
+
+
 def _run_pseudo_grid_reduced_step(
     *,
     h_step: float,
@@ -280,6 +341,7 @@ def _run_pseudo_grid_reduced_step(
     observer_active_indices: np.ndarray,
     source_active_indices: np.ndarray,
     source_effective_charges: np.ndarray,
+    source_history_start_index: int | None,
     passive_map: Any,
     aperture_radius: float,
     sim_type: SimulationType,
@@ -294,6 +356,7 @@ def _run_pseudo_grid_reduced_step(
     space_charge: Optional[Any],
     pseudo_grid_weighting_mode: str,
     loss_tracking_enabled: bool,
+    source_history_base_index: int = 0,
     raise_gamma_blowup: bool = False,
 ) -> ParticleState:
     """Advance one pseudo-grid half-step via active-only observer/source solves."""
@@ -310,6 +373,11 @@ def _run_pseudo_grid_reduced_step(
     source_active_history = slice_trajectory_particle_history(
         source_history,
         source_active_indices,
+        start_index=_resolve_history_start_index(
+            source_history,
+            source_history_start_index,
+            history_base_index=source_history_base_index,
+        ),
         q_override=source_effective_charges,
     )
     local_index = len(observer_active_history) - 1
@@ -445,6 +513,9 @@ def _run_adaptive_step(
     pseudo_grid_force_reduction_enabled: bool = False,
     pseudo_grid_weighting_mode: str = "inverse_distance",
     pseudo_grid_loss_tracking_enabled: bool = True,
+    pseudo_grid_observer_history: Trajectory | None = None,
+    pseudo_grid_source_history: Trajectory | None = None,
+    pseudo_grid_source_history_base_index: int = 0,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -588,11 +659,12 @@ def _run_adaptive_step(
     ):
         result_state = _run_pseudo_grid_reduced_step(
             h_step=current_h_step,
-            observer_history=trajectory[:i],
-            source_history=trajectory_drv[:i],
+            observer_history=pseudo_grid_observer_history or trajectory[:i],
+            source_history=pseudo_grid_source_history or trajectory_drv[:i],
             observer_active_indices=pseudo_grid_schedule.rider_active_indices,
             source_active_indices=pseudo_grid_schedule.driver_active_indices,
             source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+            source_history_start_index=pseudo_grid_schedule.driver_history_start_index,
             passive_map=pseudo_grid_schedule.rider_passive_map,
             aperture_radius=aperture_radius,
             sim_type=sim_type,
@@ -607,6 +679,7 @@ def _run_adaptive_step(
             space_charge=space_charge,
             pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
             loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
+            source_history_base_index=pseudo_grid_source_history_base_index,
         )
         adaptive_state.reduced_timestep_mode = reduced_timestep_mode
         adaptive_state.reduced_h_step = reduced_h_step
@@ -715,6 +788,9 @@ def _run_adaptive_step(
                         observer_active_indices=pseudo_grid_schedule.rider_active_indices,
                         source_active_indices=pseudo_grid_schedule.driver_active_indices,
                         source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+                        source_history_start_index=(
+                            pseudo_grid_schedule.driver_history_start_index
+                        ),
                         passive_map=pseudo_grid_schedule.rider_passive_map,
                         aperture_radius=aperture_radius,
                         sim_type=sim_type,
@@ -729,6 +805,7 @@ def _run_adaptive_step(
                         space_charge=space_charge,
                         pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
                         loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
+                        source_history_base_index=i - 1,
                         raise_gamma_blowup=_adaptive_timestep_enabled(
                             adaptive_timestep
                         ),
@@ -1336,9 +1413,14 @@ def retarded_integrator(
 
     if pseudo_grid.enabled:
         if pseudo_grid_force_reduction_enabled:
+            retention_text = (
+                "causal-history retention will compact live histories"
+                if pseudo_grid.causal_history_pruning_enabled
+                else "full history storage remains active"
+            )
             message = (
                 "Pseudo-grid reduced active-set force evaluation enabled for "
-                "BUNCH_TO_BUNCH; full history storage remains active"
+                f"BUNCH_TO_BUNCH; {retention_text}"
             )
         else:
             reasons = []
@@ -1376,6 +1458,17 @@ def retarded_integrator(
     _traj_builder = TrajectoryBuilder(steps, _n_particles_rider)
     _traj_drv_builder: TrajectoryBuilder | None = None
     _pseudo_grid_planner_state: PseudoGridPlannerState | None = None
+    _pseudo_grid_retention_active = _history_retention_enabled(
+        pseudo_grid,
+        force_reduction_enabled=pseudo_grid_force_reduction_enabled,
+    )
+    _rider_retained_history: Trajectory = []
+    _driver_retained_history: Trajectory = []
+    _rider_retained_history_start_index = 0
+    _driver_retained_history_start_index = 0
+    _rider_legacy_history_cleared_until = 0
+    _driver_legacy_history_cleared_until = 0
+    _legacy_history_compacted = False
 
     # Initialize energy monitoring
     previous_energy: Optional[float] = None
@@ -1447,6 +1540,9 @@ def retarded_integrator(
                     trajectory[i],
                     trajectory_drv[i],
                 )
+                if _pseudo_grid_retention_active:
+                    _rider_retained_history = [trajectory[i]]
+                    _driver_retained_history = [trajectory_drv[i]]
         else:
             _current_pseudo_grid_schedule = None
             if pseudo_grid.enabled:
@@ -1494,6 +1590,17 @@ def retarded_integrator(
                 pseudo_grid_force_reduction_enabled=pseudo_grid_force_reduction_enabled,
                 pseudo_grid_weighting_mode=pseudo_grid.source_weighting_mode,
                 pseudo_grid_loss_tracking_enabled=pseudo_grid.loss_tracking_enabled,
+                pseudo_grid_observer_history=(
+                    _rider_retained_history if _pseudo_grid_retention_active else None
+                ),
+                pseudo_grid_source_history=(
+                    _driver_retained_history if _pseudo_grid_retention_active else None
+                ),
+                pseudo_grid_source_history_base_index=(
+                    _driver_retained_history_start_index
+                    if _pseudo_grid_retention_active
+                    else 0
+                ),
             )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(
@@ -1541,6 +1648,13 @@ def retarded_integrator(
                 _traj_drv_soa = (
                     _traj_drv_builder.build() if _traj_drv_builder is not None else None
                 )
+                if _legacy_history_compacted:
+                    trajectory = _traj_soa.to_legacy()[: i + 1]
+                    trajectory_drv = (
+                        _traj_drv_soa.to_legacy()[: i + 1]
+                        if _traj_drv_soa is not None
+                        else []
+                    )
                 return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
 
             # Post-step gamma check for individual particles
@@ -1613,11 +1727,22 @@ def retarded_integrator(
                 ):
                     trajectory_drv[i] = _run_pseudo_grid_reduced_step(
                         h_step=h_step,
-                        observer_history=trajectory_drv[:i],
-                        source_history=trajectory[:i],
+                        observer_history=(
+                            _driver_retained_history
+                            if _pseudo_grid_retention_active
+                            else trajectory_drv[:i]
+                        ),
+                        source_history=(
+                            _rider_retained_history
+                            if _pseudo_grid_retention_active
+                            else trajectory[:i]
+                        ),
                         observer_active_indices=_current_pseudo_grid_schedule.driver_active_indices,
                         source_active_indices=_current_pseudo_grid_schedule.rider_active_indices,
                         source_effective_charges=_current_pseudo_grid_schedule.rider_effective_source_charges,
+                        source_history_start_index=(
+                            _current_pseudo_grid_schedule.rider_history_start_index
+                        ),
                         passive_map=_current_pseudo_grid_schedule.driver_passive_map,
                         aperture_radius=aperture_radius,
                         sim_type=sim_type,
@@ -1632,6 +1757,11 @@ def retarded_integrator(
                         space_charge=space_charge,
                         pseudo_grid_weighting_mode=pseudo_grid.source_weighting_mode,
                         loss_tracking_enabled=pseudo_grid.loss_tracking_enabled,
+                        source_history_base_index=(
+                            _rider_retained_history_start_index
+                            if _pseudo_grid_retention_active
+                            else 0
+                        ),
                     )
                 else:
                     _b2b_scs_accepts_soa = _call_accepts_kw(
@@ -1700,6 +1830,55 @@ def retarded_integrator(
                     trajectory[i],
                     trajectory_drv[i],
                 )
+                if _pseudo_grid_retention_active:
+                    _rider_retained_history.append(trajectory[i])
+                    _driver_retained_history.append(trajectory_drv[i])
+                    (
+                        _driver_retained_history_start_index,
+                        driver_dropped_samples,
+                    ) = _drop_retained_history_prefix(
+                        _driver_retained_history,
+                        _driver_retained_history_start_index,
+                        _current_pseudo_grid_schedule.driver_history_start_index,
+                    )
+                    (
+                        _rider_retained_history_start_index,
+                        rider_dropped_samples,
+                    ) = _drop_retained_history_prefix(
+                        _rider_retained_history,
+                        _rider_retained_history_start_index,
+                        _current_pseudo_grid_schedule.rider_history_start_index,
+                    )
+                    _current_pseudo_grid_schedule = replace(
+                        _current_pseudo_grid_schedule,
+                        driver_retained_history_start_index=_driver_retained_history_start_index,
+                        rider_retained_history_start_index=_rider_retained_history_start_index,
+                        driver_dropped_history_samples=driver_dropped_samples,
+                        rider_dropped_history_samples=rider_dropped_samples,
+                    )
+                    _set_pseudo_grid_schedule_metadata(
+                        trajectory[i],
+                        _current_pseudo_grid_schedule,
+                    )
+                    _traj_builder.set_step(i, trajectory[i])
+                    previous_rider_cleared_until = _rider_legacy_history_cleared_until
+                    previous_driver_cleared_until = _driver_legacy_history_cleared_until
+                    _rider_legacy_history_cleared_until = _clear_legacy_history_prefix(
+                        trajectory,
+                        start_index=_rider_legacy_history_cleared_until,
+                        end_index=_rider_retained_history_start_index,
+                    )
+                    _driver_legacy_history_cleared_until = _clear_legacy_history_prefix(
+                        trajectory_drv,
+                        start_index=_driver_legacy_history_cleared_until,
+                        end_index=_driver_retained_history_start_index,
+                    )
+                    _legacy_history_compacted = _legacy_history_compacted or (
+                        _rider_legacy_history_cleared_until
+                        > previous_rider_cleared_until
+                        or _driver_legacy_history_cleared_until
+                        > previous_driver_cleared_until
+                    )
 
         # Check for early termination in BUNCH_TO_BUNCH relative mode
         if (
@@ -1737,6 +1916,13 @@ def retarded_integrator(
                 _traj_drv_soa = (
                     _traj_drv_builder.build() if _traj_drv_builder is not None else None
                 )
+                if _legacy_history_compacted:
+                    trajectory_truncated = _traj_soa.to_legacy()[: i + 1]
+                    trajectory_drv_truncated = (
+                        _traj_drv_soa.to_legacy()[: i + 1]
+                        if _traj_drv_soa is not None
+                        else []
+                    )
                 return (
                     trajectory_truncated,
                     trajectory_drv_truncated,
@@ -1777,6 +1963,9 @@ def retarded_integrator(
 
     _traj_soa = _traj_builder.build()
     _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
+    if _legacy_history_compacted:
+        trajectory = _traj_soa.to_legacy()
+        trajectory_drv = _traj_drv_soa.to_legacy() if _traj_drv_soa is not None else []
     return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
 
 

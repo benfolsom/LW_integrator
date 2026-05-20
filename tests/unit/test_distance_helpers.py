@@ -201,6 +201,56 @@ def test_chrono_match_indices_adaptive_tolerance_can_suppress_interpolation(
     assert result.needs_interpolation.tolist() == [False]
 
 
+def test_chrono_match_indices_handles_pruned_source_history_shorter_than_observer_history() -> (
+    None
+):
+    trajectory = [_make_state(t=[0.0], x=[500.0]) for _ in range(3)]
+    trajectory[1]["t"] = np.array([0.5], dtype=float)
+    trajectory[2]["t"] = np.array([1.0], dtype=float)
+    trajectory_ext = [_make_state(t=[1.0], x=[0.0], bx=[0.0])]
+
+    result = distances.chrono_match_indices(
+        trajectory,
+        trajectory_ext,
+        index_traj=2,
+        index_part=0,
+        mode=ChronoMatchingMode.FAST,
+    )
+
+    assert result.tolist() == [0]
+
+
+def test_chrono_match_indices_soa_fast_matches_legacy_path() -> None:
+    trajectory = [
+        _make_state(t=[float(step), float(step)], x=[500.0, 700.0]) for step in range(6)
+    ]
+    trajectory_ext = [
+        _make_state(
+            t=[float(step), float(step)],
+            x=[0.0 + 10.0 * step, 100.0 + 5.0 * step],
+            bx=[0.0, 0.2],
+        )
+        for step in range(6)
+    ]
+
+    legacy = distances.chrono_match_indices(
+        trajectory,
+        trajectory_ext,
+        index_traj=5,
+        index_part=0,
+        mode=ChronoMatchingMode.FAST,
+    )
+    soa = distances.chrono_match_indices_soa(
+        _make_soa(trajectory),
+        _make_soa(trajectory_ext),
+        index_traj=5,
+        index_part=0,
+        mode=ChronoMatchingMode.FAST,
+    )
+
+    np.testing.assert_array_equal(soa, legacy)
+
+
 def test_chrono_match_indices_soa_averaged_matches_legacy_path() -> None:
     trajectory = [
         _make_state(t=[float(step), float(step)], x=[500.0, 700.0]) for step in range(6)

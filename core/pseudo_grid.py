@@ -153,6 +153,10 @@ class PseudoGridStepSchedule:
     max_cross_bunch_separation_mm: float
     driver_history_start_index: int | None
     rider_history_start_index: int | None
+    driver_retained_history_start_index: int | None = None
+    rider_retained_history_start_index: int | None = None
+    driver_dropped_history_samples: int = 0
+    rider_dropped_history_samples: int = 0
 
 
 def initialize_pseudo_grid_planner_state(

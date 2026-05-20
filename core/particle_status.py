@@ -107,8 +107,9 @@ def propagate_dead_particle_status(
         # Copy dead particle mask
         current_state["_dead_particles"] = previous_state["_dead_particles"].copy()
         # Copy failure info (dict needs deep copy of nested dicts)
+        previous_failure_info = previous_state.get("_particle_failure_info", {})
         current_state["_particle_failure_info"] = {
-            k: v.copy() for k, v in previous_state["_particle_failure_info"].items()
+            k: v.copy() for k, v in previous_failure_info.items()
         }
 
         # Ensure dead particles have zero charge

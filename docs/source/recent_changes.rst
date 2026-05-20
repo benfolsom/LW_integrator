@@ -29,16 +29,20 @@ An experimental pseudo-grid reduced solver is now available for
 * The integrator now builds per-step pseudo-grid schedules, stores them on the
   legacy and SoA trajectory paths, advances active observers against reduced
   active-source histories with effective source charges, and reconstructs
-  passive particles from weighted active deltas.
+  passive particles from weighted active deltas while preserving full-state
+  outputs.
+* When causal-history pruning is enabled for supported reduced B2B solves, live
+  rider/driver histories are compacted after each completed step and schedule
+  snapshots record retained-start indices plus dropped-sample counts.
 * Adaptive-timestep retries now participate in the reduced pseudo-grid path.
 * Reduced intra-bunch space charge is also supported when each bunch keeps at
   least two active particles, using observer-specific self-excluded source-
   charge matrices. If the active counts are too small, the integrator
   conservatively falls back to the canonical full-history solve.
 
-The mode remains experimental. Full histories are still retained, and
-causal-history pruning currently computes advisory start indices without yet
-removing stored history samples.
+The mode remains experimental. Causal-history deletion is currently limited to
+supported reduced pseudo-grid B2B solves; canonical fallback paths still retain
+full histories.
 
 March 2026 Updates (v0.6.0)
 ----------------------------

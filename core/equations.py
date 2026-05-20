@@ -1385,12 +1385,25 @@ def retarded_equations_of_motion(
                 beta_avg_z = current_state["beta_avg_z"][particle_idx]
                 beta_avg_mag = np.sqrt(beta_avg_x**2 + beta_avg_y**2 + beta_avg_z**2)
 
-                # Estimate max R from external trajectory bounds
-                # This handles arbitrary separations (mm to hundreds of meters)
-                if trajectory_ext[index_traj]["x"].size > 0:
-                    ext_x = trajectory_ext[index_traj]["x"]
-                    ext_y = trajectory_ext[index_traj]["y"]
-                    ext_z = trajectory_ext[index_traj]["z"]
+                # Estimate max R from external trajectory bounds.
+                # In pseudo-grid reduced solves the source history may be
+                # causally pruned, so its local current index need not match
+                # the observer-history index.
+                external_current_step_idx = (
+                    min(index_traj, len(trajectory_ext) - 1) if trajectory_ext else None
+                )
+                external_current_state = (
+                    trajectory_ext[external_current_step_idx]
+                    if external_current_step_idx is not None
+                    else None
+                )
+                if (
+                    external_current_state is not None
+                    and external_current_state["x"].size > 0
+                ):
+                    ext_x = external_current_state["x"]
+                    ext_y = external_current_state["y"]
+                    ext_z = external_current_state["z"]
                     dx = current_position[0] - ext_x
                     dy = current_position[1] - ext_y
                     dz = current_position[2] - ext_z
@@ -1428,11 +1441,15 @@ def retarded_equations_of_motion(
 
             if not skip_external_forces:
                 if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
+                    external_current_step_idx = min(
+                        index_traj,
+                        len(trajectory_ext) - 1,
+                    )
                     nhat, indices_bounded = _compute_approximate_retarded_distance(
                         observer_state,
-                        trajectory_ext[index_traj],
+                        trajectory_ext[external_current_step_idx],
                         observer_particle_idx,
-                        index_traj,
+                        external_current_step_idx,
                     )
                 else:
                     # For variable geometry modes, need to create trajectory with observer_state

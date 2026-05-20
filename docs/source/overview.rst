@@ -21,6 +21,9 @@ High-level anatomy
     utilities, and the ``IntegratorConfig`` data class).  Kernel-level Numba
     acceleration lives in ``vectorized_interactions.py`` and is used by the
     canonical integrator path without changing the underlying physics.
+    ``pseudo_grid.py`` contains the experimental active/passive reduced-solver
+    helpers for ``BUNCH_TO_BUNCH`` studies, including causal-history retention
+    metadata for supported reduced runs.
     ``self_consistency.py`` holds the fixed-point
     iteration used for radiation-reaction corrections and ensuring gamma
     consistency between energy and velocity calculations (enabled by default

@@ -483,6 +483,44 @@ def test_build_pseudo_grid_step_schedule_collects_active_passive_metadata():
     assert schedule.max_cross_bunch_separation_mm > 0.0
 
 
+def test_build_pseudo_grid_step_schedule_advances_causal_history_start_indices():
+    rider_state = _make_state(
+        x=[0.0, 10.0, 20.0],
+        q=[1.0, 1.0, 1.0],
+        t=[1.0, 1.0, 1.0],
+    )
+    driver_state = _make_state(
+        x=[1.0, 11.0, 21.0],
+        q=[2.0, 2.0, 2.0],
+        t=[1.0, 1.0, 1.0],
+    )
+    planner_state = initialize_pseudo_grid_planner_state(
+        rider_particle_count=3,
+        driver_particle_count=3,
+        pair_reuse_window=4,
+    )
+    planner_state.rider_history_times_ns = [0.0, 0.5, 1.0]
+    planner_state.driver_history_times_ns = [0.0, 0.5, 1.0]
+
+    schedule = build_pseudo_grid_step_schedule(
+        rider_state,
+        driver_state,
+        step_index=3,
+        config=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=2,
+            active_driver_count=2,
+            passive_neighbor_count=2,
+            causal_history_pruning_enabled=True,
+            causal_history_safety_margin_steps=0,
+        ),
+        planner_state=planner_state,
+    )
+
+    assert schedule.driver_history_start_index == 2
+    assert schedule.rider_history_start_index == 2
+
+
 def test_commit_pseudo_grid_step_schedule_updates_planner_state_and_pair_tracker():
     rider_state = _make_state(x=[0.0, 10.0, 20.0], t=[0.0, 0.0, 0.0])
     driver_state = _make_state(x=[1.0, 11.0, 21.0], t=[0.0, 0.0, 0.0])
