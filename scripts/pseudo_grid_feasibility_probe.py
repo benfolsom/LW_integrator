@@ -26,6 +26,7 @@ from core.types import PseudoGridConfig, SimulationType
 @dataclass(frozen=True)
 class ProbeResult:
     label: str
+    scenario: str
     particle_count: int
     active_count: int | None
     steps: int
@@ -35,7 +36,11 @@ class ProbeResult:
     max_abs_z_mm: float
     max_gamma: float
     min_gamma: float
-    final_mean_z_mm: float
+    initial_rider_mean_z_mm: float
+    initial_driver_mean_z_mm: float
+    final_rider_mean_z_mm: float
+    final_driver_mean_z_mm: float
+    interaction_point_crossed: bool
     retained_rider_start_index: int | None
     retained_driver_start_index: int | None
     dropped_rider_samples: int
@@ -62,6 +67,7 @@ def _make_bunch(
     x_offset_mm: float,
     charge_scale: float,
     seed: int,
+    beta_z: float = 0.0,
 ) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(seed)
     x = np.linspace(-0.75, 0.75, n_particles) + x_offset_mm
@@ -69,7 +75,10 @@ def _make_bunch(
         x += rng.normal(0.0, 0.02, n_particles)
     y = rng.normal(0.0, 0.01, n_particles)
     z = np.full(n_particles, z_mm, dtype=float)
-    gamma = np.ones(n_particles, dtype=float)
+    if abs(beta_z) >= 1.0:
+        raise ValueError("beta_z must satisfy |beta_z| < 1")
+    gamma_value = 1.0 / np.sqrt(1.0 - beta_z**2)
+    gamma = np.full(n_particles, gamma_value, dtype=float)
     mass = np.ones(n_particles, dtype=float)
     zeros = np.zeros(n_particles, dtype=float)
     q_pattern = rng.normal(0.0, 1.0, n_particles)
@@ -83,12 +92,12 @@ def _make_bunch(
         "t": zeros.copy(),
         "Px": zeros.copy(),
         "Py": zeros.copy(),
-        "Pz": zeros.copy(),
+        "Pz": gamma * mass * C_MMNS * beta_z,
         "Pt": gamma * mass * C_MMNS,
         "gamma": gamma,
         "bx": zeros.copy(),
         "by": zeros.copy(),
-        "bz": zeros.copy(),
+        "bz": np.full(n_particles, beta_z, dtype=float),
         "bdotx": zeros.copy(),
         "bdoty": zeros.copy(),
         "bdotz": zeros.copy(),
@@ -111,20 +120,27 @@ def _run_probe_case(
     charge_scale: float,
     active_count: int | None,
     causal_history_pruning: bool,
+    scenario: str = "stationary",
+    z_separation_mm: float = 1.0,
+    rider_beta_z: float = 0.0,
+    driver_beta_z: float = 0.0,
+    passive_neighbor_count: int | None = None,
 ) -> tuple[ProbeResult, Any, Any]:
     rider = _make_bunch(
         n_particles=n_particles,
-        z_mm=-0.5,
+        z_mm=-0.5 * z_separation_mm,
         x_offset_mm=0.0,
         charge_scale=charge_scale,
         seed=100 + n_particles,
+        beta_z=rider_beta_z,
     )
     driver = _make_bunch(
         n_particles=n_particles,
-        z_mm=0.5,
+        z_mm=0.5 * z_separation_mm,
         x_offset_mm=0.08,
         charge_scale=-charge_scale,
         seed=200 + n_particles,
+        beta_z=driver_beta_z,
     )
     pseudo_grid = None
     if active_count is not None:
@@ -132,7 +148,11 @@ def _run_probe_case(
             enabled=True,
             active_rider_count=active_count,
             active_driver_count=active_count,
-            passive_neighbor_count=min(4, active_count),
+            passive_neighbor_count=(
+                min(4, active_count)
+                if passive_neighbor_count is None
+                else min(passive_neighbor_count, active_count)
+            ),
             causal_history_pruning_enabled=causal_history_pruning,
             causal_history_safety_margin_steps=0,
         )
@@ -159,8 +179,17 @@ def _run_probe_case(
         raise RuntimeError("retarded_integrator did not return trajectory arrays")
 
     schedule = rider_trajectory[-1].get("_pseudo_grid_schedule")
+    initial_rider_mean_z = float(np.mean(rider_soa.z[0]))
+    initial_driver_mean_z = float(np.mean(driver_soa.z[0]))
+    final_rider_mean_z = float(np.mean(rider_soa.z[-1]))
+    final_driver_mean_z = float(np.mean(driver_soa.z[-1]))
+    interaction_point_crossed = bool(
+        initial_rider_mean_z <= 0.0 <= final_rider_mean_z
+        and final_driver_mean_z <= 0.0 <= initial_driver_mean_z
+    )
     result = ProbeResult(
         label=label,
+        scenario=scenario,
         particle_count=n_particles,
         active_count=active_count,
         steps=steps,
@@ -181,7 +210,11 @@ def _run_probe_case(
         ),
         max_gamma=float(max(np.max(rider_soa.gamma), np.max(driver_soa.gamma))),
         min_gamma=float(min(np.min(rider_soa.gamma), np.min(driver_soa.gamma))),
-        final_mean_z_mm=float(np.mean(rider_soa.z[-1])),
+        initial_rider_mean_z_mm=initial_rider_mean_z,
+        initial_driver_mean_z_mm=initial_driver_mean_z,
+        final_rider_mean_z_mm=final_rider_mean_z,
+        final_driver_mean_z_mm=final_driver_mean_z,
+        interaction_point_crossed=interaction_point_crossed,
         retained_rider_start_index=(
             None if schedule is None else schedule.rider_retained_history_start_index
         ),
@@ -349,6 +382,7 @@ def main() -> int:
             print(
                 f"{result['label']}: N={result['particle_count']} active={result['active_count']} "
                 f"elapsed={result['elapsed_s']:.4f}s finite={result['finite']} "
+                f"scenario={result['scenario']} crossed={result['interaction_point_crossed']} "
                 f"gamma=[{result['min_gamma']:.6g}, {result['max_gamma']:.6g}] "
                 f"retained=({result['retained_rider_start_index']}, "
                 f"{result['retained_driver_start_index']})"
