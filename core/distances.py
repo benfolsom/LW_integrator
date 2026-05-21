@@ -17,6 +17,7 @@ from .constants import C_MMNS, NUMERICAL_EPSILON
 from .types import ChronoMatchingMode, ParticleState, Trajectory, TrajectoryArrays
 
 DistanceResult = Dict[str, np.ndarray]
+_MAX_VECTORIZED_CHRONO_MATCH_CELLS = 1_000_000
 
 
 @dataclass
@@ -310,31 +311,23 @@ def compute_retarded_distance_soa(
 
     Avoids per-step dict lookups by accessing 2-D array slices directly.
     """
-    x_obs = traj.x[index_traj, index_part]
-    y_obs = traj.y[index_traj, index_part]
-    z_obs = traj.z[index_traj, index_part]
+    indices = np.asarray(indices_ret, dtype=int)
+    particle_indices = np.arange(indices.size)
 
-    n = len(indices_ret)
-    R = np.empty(n)
-    nx = np.empty(n)
-    ny = np.empty(n)
-    nz = np.empty(n)
+    dx = traj.x[index_traj, index_part] - traj_ext.x[indices, particle_indices]
+    dy = traj.y[index_traj, index_part] - traj_ext.y[indices, particle_indices]
+    dz = traj.z[index_traj, index_part] - traj_ext.z[indices, particle_indices]
+    distance = np.sqrt(dx**2 + dy**2 + dz**2)
 
-    for j, idx in enumerate(indices_ret):
-        dx = x_obs - traj_ext.x[idx, j]
-        dy = y_obs - traj_ext.y[idx, j]
-        dz = z_obs - traj_ext.z[idx, j]
-        d = (dx * dx + dy * dy + dz * dz) ** 0.5
-        if d < NUMERICAL_EPSILON:
-            R[j] = NUMERICAL_EPSILON
-            nx[j] = ny[j] = nz[j] = 0.0
-        else:
-            R[j] = d
-            nx[j] = dx / d
-            ny[j] = dy / d
-            nz[j] = dz / d
+    too_close = distance < NUMERICAL_EPSILON
+    safe_dist = np.where(too_close, NUMERICAL_EPSILON, distance)
 
-    return {"R": R, "nx": nx, "ny": ny, "nz": nz}
+    return {
+        "R": safe_dist,
+        "nx": np.where(too_close, 0.0, dx / safe_dist),
+        "ny": np.where(too_close, 0.0, dy / safe_dist),
+        "nz": np.where(too_close, 0.0, dz / safe_dist),
+    }
 
 
 def compute_retarded_distance(
@@ -419,6 +412,7 @@ def chrono_match_indices_soa(
 
     n_particles = traj_ext.n_particles
     index_traj_new = np.empty(n_particles, dtype=int)
+    index_traj_new.fill(current_source_index)
 
     if interpolate:
         index_traj_next = np.empty(n_particles, dtype=int)
@@ -432,6 +426,45 @@ def chrono_match_indices_soa(
     # Pre-extract time columns — key SOA win: avoids per-step dict walk
     # shape [current_source_index+1, n_particles]
     t_cols = traj_ext.t[: current_source_index + 1, :]
+
+    if (
+        mode is ChronoMatchingMode.FAST
+        and not interpolate
+        and n_particles > 0
+        and t_cols.size <= _MAX_VECTORIZED_CHRONO_MATCH_CELLS
+    ):
+        b_nhat_all = (
+            traj_ext.bx[current_source_index, :] * nhat["nx"]
+            + traj_ext.by[current_source_index, :] * nhat["ny"]
+            + traj_ext.bz[current_source_index, :] * nhat["nz"]
+        )
+        denominator = 1.0 - b_nhat_all
+        singular = np.abs(denominator) < 1e-15
+
+        factored_denominator = 1.0 - b_nhat_all**2
+        factored_denominator = np.where(
+            np.abs(factored_denominator) < 1e-12,
+            np.copysign(1e-12, factored_denominator),
+            factored_denominator,
+        )
+        delta_t = nhat["R"] * (1.0 + b_nhat_all) / (C_MMNS * factored_denominator)
+        if np.any(singular):
+            char_time = traj_ext.char_time[:n_particles]
+            delta_t[singular] = np.where(
+                char_time[singular] > 0.0,
+                10.0 * char_time[singular],
+                1e-3,
+            )
+
+        t_ext_new = traj_ext.t[current_source_index, :] - delta_t
+        positive_target = t_ext_new > 0.0
+        if np.any(positive_target):
+            matches = t_cols > t_ext_new[np.newaxis, :]
+            has_match = positive_target & np.any(matches, axis=0)
+            if np.any(has_match):
+                matched_indices = np.argmax(matches, axis=0)
+                index_traj_new[has_match] = matched_indices[has_match]
+        return index_traj_new
 
     for sample_index in range(n_particles):
         bx = traj_ext.bx[current_source_index, sample_index]

@@ -97,7 +97,9 @@ def test_compute_small_k_forces_series_matches_direct_inputs() -> None:
     assert result[3].tolist() == pytest.approx([520.0])
 
 
-def test_gather_external_samples_linearly_interpolates_and_skips_invalid_slots() -> None:
+def test_gather_external_samples_linearly_interpolates_and_skips_invalid_slots() -> (
+    None
+):
     trajectory_ext = [
         _make_external_state(0.0, charge=2.0, gamma=1.0),
         _make_external_state(2.0, charge=2.0, gamma=3.0),
@@ -163,7 +165,14 @@ def test_gather_external_samples_soa_skips_negative_and_out_of_range_indices() -
         "m": np.array([1.0, 1.0], dtype=float),
         "char_time": np.array([1e-3, 1e-3], dtype=float),
     }
-    state1 = {k: (v + 1.0 if isinstance(v, np.ndarray) and k in {"x", "gamma", "bx", "bdotx"} else v.copy() if isinstance(v, np.ndarray) else v) for k, v in state0.items()}
+    state1 = {
+        k: (
+            v + 1.0
+            if isinstance(v, np.ndarray) and k in {"x", "gamma", "bx", "bdotx"}
+            else v.copy() if isinstance(v, np.ndarray) else v
+        )
+        for k, v in state0.items()
+    }
     builder.set_step(0, state0)
     builder.set_step(1, state1)
     traj_ext = builder.build()
@@ -203,7 +212,9 @@ def test_gather_external_samples_skips_negative_and_out_of_range_indices() -> No
     assert samples.bx.tolist() == pytest.approx([0.0, 0.0, 1.0])
 
 
-def test_gather_external_samples_linearly_interpolates_array_gamma_with_positions() -> None:
+def test_gather_external_samples_linearly_interpolates_array_gamma_with_positions() -> (
+    None
+):
     trajectory_ext = [
         _make_external_state(
             0.0,
@@ -312,7 +323,9 @@ def test_compute_vectorized_contributions_returns_zero_for_empty_and_filtered_ba
         apply_external=True,
     ) == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
-    filtered_samples = _make_samples(charge=[1.0], gamma=[1.0], bx=[0.0], valid_mask=[True])
+    filtered_samples = _make_samples(
+        charge=[1.0], gamma=[1.0], bx=[0.0], valid_mask=[True]
+    )
     assert vectorized_interactions.compute_vectorized_contributions(
         h=1.0,
         charge_i=1.0,
@@ -326,6 +339,43 @@ def test_compute_vectorized_contributions_returns_zero_for_empty_and_filtered_ba
         samples=filtered_samples,
         apply_external=True,
     ) == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def test_compute_vectorized_contributions_avoids_parallel_kernel_for_small_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", True)
+
+    def _unexpected_parallel_call(*args: object) -> tuple[float, ...]:
+        raise AssertionError("small batches should not use the parallel numba kernel")
+
+    monkeypatch.setattr(
+        vectorized_interactions,
+        "_compute_forces_numba_kernel",
+        _unexpected_parallel_call,
+    )
+    samples = _make_samples(
+        charge=[2.0],
+        gamma=[1.0],
+        bx=[0.0],
+        valid_mask=[True],
+    )
+
+    result = vectorized_interactions.compute_vectorized_contributions(
+        h=0.5,
+        charge_i=1.0,
+        mass_i=2.0,
+        gamma_i=1.0,
+        beta_vec=(0.0, 0.0, 0.0),
+        nhat_nx=np.array([1.0]),
+        nhat_ny=np.array([0.0]),
+        nhat_nz=np.array([0.0]),
+        R_separation=np.array([4.0]),
+        samples=samples,
+        apply_external=True,
+    )
+
+    assert result == pytest.approx((0.0625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5))
 
 
 def test_compute_vectorized_contributions_matches_simple_normal_regime(

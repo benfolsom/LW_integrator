@@ -795,14 +795,17 @@ def _compute_lienard_radiated_power(
     fields are dβ/d(ct), so callers should multiply stored ``bdot`` by
     :data:`C_MMNS` before calling this helper.
     """
-    beta_vec = np.asarray(beta, dtype=float)
-    beta_dot_vec = np.asarray(beta_dot_t, dtype=float)
-    accel_sq = float(np.dot(beta_dot_vec, beta_dot_vec))
+    b_x, b_y, b_z = beta
+    bd_x, bd_y, bd_z = beta_dot_t
+    accel_sq = bd_x * bd_x + bd_y * bd_y + bd_z * bd_z
     if accel_sq <= 0.0 or charge == 0.0 or gamma <= 0.0:
         return 0.0
 
-    cross = np.cross(beta_vec, beta_dot_vec)
-    transverse_term = accel_sq - float(np.dot(cross, cross))
+    cross_x = b_y * bd_z - b_z * bd_y
+    cross_y = b_z * bd_x - b_x * bd_z
+    cross_z = b_x * bd_y - b_y * bd_x
+    cross_sq = cross_x * cross_x + cross_y * cross_y + cross_z * cross_z
+    transverse_term = accel_sq - cross_sq
     if transverse_term <= 0.0:
         return 0.0
 
