@@ -232,9 +232,16 @@ def select_active_indices(
     if active_count >= alive.size:
         return alive.copy()
 
-    coords = _normalized_position_coordinates(
-        state, reference_indices=alive, target_indices=alive
-    )
+    x = np.asarray(state["x"], dtype=float)[alive]
+    y = np.asarray(state["y"], dtype=float)[alive]
+    z = np.asarray(state["z"], dtype=float)[alive]
+    centers = np.array((float(np.mean(x)), float(np.mean(y)), float(np.mean(z))))
+    spans = np.array((float(np.ptp(x)), float(np.ptp(y)), float(np.ptp(z))))
+    spans = np.where(spans > 0.0, spans, 1.0)
+    coords = np.empty((alive.size, 3), dtype=float)
+    coords[:, 0] = (x - centers[0]) / spans[0]
+    coords[:, 1] = (y - centers[1]) / spans[1]
+    coords[:, 2] = (z - centers[2]) / spans[2]
     stale_scores = np.full(alive.size, float(step_index + 1), dtype=float)
     if last_active_step is not None:
         stale_scores = np.maximum(
@@ -257,7 +264,10 @@ def select_active_indices(
     selected_local.append(first_local)
     available_mask[first_local] = False
 
-    min_distances = np.linalg.norm(coords - coords[first_local][np.newaxis, :], axis=1)
+    dx = coords[:, 0] - coords[first_local, 0]
+    dy = coords[:, 1] - coords[first_local, 1]
+    dz = coords[:, 2] - coords[first_local, 2]
+    min_distances = np.sqrt(dx * dx + dy * dy + dz * dz)
     min_distances[first_local] = 0.0
 
     while len(selected_local) < active_count:
@@ -274,10 +284,10 @@ def select_active_indices(
         chosen_local = int(candidate_local[chosen_local_idx])
         selected_local.append(chosen_local)
         available_mask[chosen_local] = False
-        distances_to_chosen = np.linalg.norm(
-            coords - coords[chosen_local][np.newaxis, :],
-            axis=1,
-        )
+        dx = coords[:, 0] - coords[chosen_local, 0]
+        dy = coords[:, 1] - coords[chosen_local, 1]
+        dz = coords[:, 2] - coords[chosen_local, 2]
+        distances_to_chosen = np.sqrt(dx * dx + dy * dy + dz * dz)
         min_distances = np.minimum(min_distances, distances_to_chosen)
         min_distances[chosen_local] = 0.0
 
