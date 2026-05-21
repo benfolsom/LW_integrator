@@ -259,7 +259,7 @@ def gather_external_samples_soa(
     bdoty = traj_ext.bdoty[safe_indices, particle_indices].copy()
     bdotz = traj_ext.bdotz[safe_indices, particle_indices].copy()
     gamma = traj_ext.gamma[safe_indices, particle_indices].copy()
-    charge = traj_ext.q if valid_all else traj_ext.q.copy()
+    charge = traj_ext.q.copy()
     x = y = z = None
 
     if not valid_all:

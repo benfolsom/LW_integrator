@@ -143,6 +143,40 @@ def test_gather_external_samples_supports_cubic_interpolation() -> None:
     assert samples.bdotx.tolist() == pytest.approx([15.0])
 
 
+def test_gather_external_samples_soa_returns_independent_charge_array() -> None:
+    builder = TrajectoryBuilder(1, 2)
+    state = {
+        "x": np.zeros(2, dtype=float),
+        "y": np.zeros(2, dtype=float),
+        "z": np.zeros(2, dtype=float),
+        "t": np.zeros(2, dtype=float),
+        "Px": np.zeros(2, dtype=float),
+        "Py": np.zeros(2, dtype=float),
+        "Pz": np.zeros(2, dtype=float),
+        "Pt": np.ones(2, dtype=float),
+        "gamma": np.ones(2, dtype=float),
+        "bx": np.zeros(2, dtype=float),
+        "by": np.zeros(2, dtype=float),
+        "bz": np.zeros(2, dtype=float),
+        "bdotx": np.zeros(2, dtype=float),
+        "bdoty": np.zeros(2, dtype=float),
+        "bdotz": np.zeros(2, dtype=float),
+        "q": np.array([1.0, 2.0], dtype=float),
+        "m": np.ones(2, dtype=float),
+        "char_time": np.full(2, 1e-3, dtype=float),
+    }
+    builder.set_step(0, state)
+    traj_ext = builder.build()
+
+    samples = vectorized_interactions.gather_external_samples_soa(
+        traj_ext,
+        indices=np.array([0, 0]),
+    )
+    samples.charge[0] = 0.0
+
+    assert traj_ext.q.tolist() == pytest.approx([1.0, 2.0])
+
+
 def test_gather_external_samples_soa_skips_negative_and_out_of_range_indices() -> None:
     builder = TrajectoryBuilder(2, 2)
     state0 = {

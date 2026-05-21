@@ -52,6 +52,95 @@ def _clone_state(state: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     return {key: value.copy() for key, value in state.items()}
 
 
+def _apply_irregular_layout(
+    state: dict[str, np.ndarray],
+    *,
+    layout: str,
+    radius_mm: float,
+    z_span_mm: float = 0.0,
+    angle_offset: float = 0.0,
+) -> None:
+    n_particles = len(state["x"])
+    angles = np.linspace(0.0, 2.0 * np.pi, n_particles, endpoint=False) + angle_offset
+    if layout == "ring":
+        radii = np.full(n_particles, radius_mm, dtype=float)
+    elif layout == "uniform":
+        side = int(np.ceil(np.sqrt(n_particles)))
+        grid = np.linspace(-radius_mm, radius_mm, side)
+        xx, yy = np.meshgrid(grid, grid)
+        state["x"] = xx.ravel()[:n_particles]
+        state["y"] = yy.ravel()[:n_particles]
+        return
+    elif layout == "hollow_cylinder":
+        inner_radius = 0.55 * radius_mm
+        radii = np.where(
+            np.arange(n_particles) % 2 == 0,
+            inner_radius,
+            radius_mm,
+        )
+        state["z"] = state["z"] + np.linspace(-0.5, 0.5, n_particles) * z_span_mm
+    else:
+        raise ValueError(f"Unsupported test layout {layout!r}")
+
+    state["x"] = radii * np.cos(angles)
+    state["y"] = radii * np.sin(angles)
+
+
+def _run_irregular_layout_case(
+    *,
+    layout: str,
+    pseudo_grid: PseudoGridConfig | None,
+):
+    rider = _make_crossing_bunch(
+        n_particles=24,
+        z_mm=-0.03,
+        beta_z=0.12,
+        charge_scale=5.0e-3,
+        seed=310,
+    )
+    driver = _make_crossing_bunch(
+        n_particles=24,
+        z_mm=0.03,
+        beta_z=-0.12,
+        charge_scale=-5.0e-3,
+        seed=410,
+    )
+    _apply_irregular_layout(
+        rider,
+        layout=layout,
+        radius_mm=0.04,
+        z_span_mm=0.004,
+    )
+    _apply_irregular_layout(
+        driver,
+        layout=layout,
+        radius_mm=0.05,
+        z_span_mm=0.004,
+        angle_offset=np.pi / 24.0,
+    )
+    return retarded_integrator(
+        steps=24,
+        h_step=1.0e-4,
+        wall_z=0.0,
+        aperture_radius=10.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_clone_state(rider),
+        init_driver=_clone_state(driver),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        pseudo_grid=pseudo_grid,
+        space_charge=SpaceChargeConfig(
+            enabled=True,
+            retarded=True,
+            softening_mm=0.3,
+            min_retarded_steps=0,
+        ),
+        use_numba=False,
+        radiation_reaction_mode="power_matched_damping",
+    )
+
+
 def _run_crossing_case(
     *,
     charge_scale: float,
@@ -306,6 +395,36 @@ def test_pseudo_grid_retarded_space_charge_crossing_tracks_full_solver() -> None
         full_driver_soa,
         pseudo_rider_soa,
         pseudo_driver_soa,
+    )
+
+
+@pytest.mark.physics
+@pytest.mark.parametrize("layout", ["ring", "uniform", "hollow_cylinder"])
+def test_pseudo_grid_irregular_layout_crossing_tracks_full_solver(layout: str) -> None:
+    _full_rider, _full_driver, full_rider_soa, full_driver_soa = (
+        _run_irregular_layout_case(layout=layout, pseudo_grid=None)
+    )
+    _pseudo_rider, _pseudo_driver, pseudo_rider_soa, pseudo_driver_soa = (
+        _run_irregular_layout_case(
+            layout=layout,
+            pseudo_grid=PseudoGridConfig(
+                enabled=True,
+                active_rider_count=18,
+                active_driver_count=18,
+                passive_neighbor_count=4,
+                causal_history_pruning_enabled=True,
+                causal_history_safety_margin_steps=0,
+            ),
+        )
+    )
+
+    _assert_tracks_full_solver(
+        full_rider_soa,
+        full_driver_soa,
+        pseudo_rider_soa,
+        pseudo_driver_soa,
+        position_atol=2.0e-4,
+        gamma_atol=5.0e-5,
     )
 
 
