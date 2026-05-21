@@ -260,6 +260,9 @@ def gather_external_samples_soa(
     bdotz = traj_ext.bdotz[safe_indices, particle_indices].copy()
     gamma = traj_ext.gamma[safe_indices, particle_indices].copy()
     charge = traj_ext.q.copy()
+    dead_at_sample = traj_ext.dead[safe_indices, particle_indices]
+    charge[dead_at_sample] = 0.0
+    valid_mask = valid_mask & ~dead_at_sample
     x = y = z = None
 
     if not valid_all:

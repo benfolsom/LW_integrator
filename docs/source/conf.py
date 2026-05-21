@@ -72,7 +72,8 @@ autodoc_default_options = {
         "chrono_mode,startup_mode,z_cutoff_mode,image_subcharge_count,"
         "use_image_weighting,radiation_reaction_mode,"
         "macroparticle_charge_multiplier,macroparticle_sigma_multiplier,"
-        "macroparticle_use_momentum_errors,bunch_transv_dist,bunch_transv_mom"
+        "macroparticle_use_momentum_errors,bunch_transv_dist,bunch_transv_mom,"
+        "pseudo_grid,particle_loss"
     ),
 }
 

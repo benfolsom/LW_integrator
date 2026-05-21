@@ -87,6 +87,54 @@ High-level anatomy
     use the configuration in ``docs/source/conf.py`` and the helper script
     ``docs/build_docs.sh``.
 
+Pseudo-grid reduced solve sketch
+---------------------------------
+
+In ``BUNCH_TO_BUNCH`` pseudo-grid mode, each bunch is still stored and exported
+as a full particle state, but only a selected active subset performs the full
+retarded Liénard--Wiechert solve on a given step.  Passive particles are tied to
+nearby active anchors in the 2D/3D bunch geometry; their charge is folded into
+active source charges, and their state update is reconstructed from weighted
+active-particle deltas.
+
+.. only:: html
+
+   .. raw:: html
+      :file: _static/pseudo_grid_full_vs_reduced.svg.inc
+
+.. code-block:: text
+
+   One bunch, viewed as a 2D transverse slice for a single step
+
+          passive p0 ○
+                      \
+                       \ w0,1
+                        \
+          active A1  ●----●  active A2
+                    / \  / \
+             w1,1  /   \/   \  w2,2
+                  /    /\    \
+      passive p1 ○    /  \    ○ passive p2
+                      /    \
+             active A3 ●    ○ passive p3
+
+   Cross-bunch reduced force solve
+
+      rider active observers      retarded LW fields      driver active sources
+             ● A_r0  <----------------------------------  ● A_d0 + q_eff(d0)
+             ● A_r1  <----------------------------------  ● A_d1 + q_eff(d1)
+
+   Legend: ● = active particle solved exactly this step; ○ = passive particle.
+           w = passive-to-active interpolation/aggregation weight.
+           q_eff = active charge plus weighted passive source charge.
+
+After the active solve, each passive particle receives the weighted combination
+of its active anchors' changes in position, momentum, velocity, gamma, and
+radiation bookkeeping.  If a selected active particle is marked dead by the
+existing status machinery, pseudo-grid loss tracking removes it from later
+schedules and renormalizes passive-anchor weights onto surviving anchors when
+possible.
+
 Key ideas to keep in mind
 -------------------------
 

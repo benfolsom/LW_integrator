@@ -23,6 +23,7 @@ from .particle_status import (
     mark_particle_dead,
     propagate_dead_particle_status,
 )
+from .particle_loss import build_particle_loss_context, mark_particle_losses
 from .pseudo_grid import (
     PseudoGridPlannerState,
     PseudoGridStepSchedule,
@@ -38,6 +39,7 @@ from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import (
     ChronoMatchingMode,
     IntegratorConfig,
+    ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
     SimulationType,
@@ -263,6 +265,45 @@ def _adaptive_timestep_enabled(
 
 def _space_charge_enabled(space_charge: Optional[Any]) -> bool:
     return bool(space_charge is not None and getattr(space_charge, "enabled", False))
+
+
+def _mark_post_step_gamma_blowups(
+    state: ParticleState,
+    *,
+    step: int,
+    logger: Optional[Any] = None,
+) -> int:
+    gamma_array = state.get("gamma")
+    if gamma_array is None:
+        return 0
+
+    marked = 0
+    for particle_idx, gamma_val in enumerate(np.asarray(gamma_array, dtype=float)):
+        dead_mask = state.get("_dead_particles")
+        if dead_mask is not None and dead_mask[particle_idx]:
+            continue
+
+        if gamma_val > 1e8 or np.isnan(gamma_val) or np.isinf(gamma_val):
+            message = (
+                f"[WARNING] Step {step}: Particle {particle_idx} gamma blowup "
+                f"detected (γ={gamma_val:.2e}). Marking particle as dead."
+            )
+            if logger:
+                if callable(logger):
+                    logger(message)
+                else:
+                    logger.warning(message)
+            else:
+                print(message)
+            mark_particle_dead(
+                state,
+                particle_idx,
+                step,
+                "gamma_blowup_post_step",
+                gamma_value=float(gamma_val),
+            )
+            marked += 1
+    return marked
 
 
 def _copy_particle_state(state: ParticleState) -> ParticleState:
@@ -1260,6 +1301,7 @@ def retarded_integrator(
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
     pseudo_grid: Optional[PseudoGridConfig] = None,
+    particle_loss: Optional[ParticleLossConfig] = None,
 ) -> Tuple[
     Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
 ]:
@@ -1365,6 +1407,10 @@ def retarded_integrator(
         Intra-bunch space charge also uses the reduced path when each bunch has
         at least two active particles; otherwise the canonical full-history
         fallback remains in place.
+    particle_loss:
+        Optional fixed-size particle-loss predicates. Lost particles are marked
+        dead, retain their trajectory slot, and stop contributing source charge
+        after the loss step.
 
     Returns
     -------
@@ -1384,6 +1430,7 @@ def retarded_integrator(
     from . import vectorized_interactions as _vectorized_interactions
 
     pseudo_grid = pseudo_grid or PseudoGridConfig()
+    particle_loss = particle_loss or ParticleLossConfig()
     if pseudo_grid.enabled and sim_type != SimulationType.BUNCH_TO_BUNCH:
         raise NotImplementedError(
             "Pseudo-grid schedule mode is currently implemented only for "
@@ -1479,6 +1526,12 @@ def retarded_integrator(
     _rider_legacy_history_cleared_until = 0
     _driver_legacy_history_cleared_until = 0
     _legacy_history_compacted = False
+    _rider_loss_context = build_particle_loss_context(particle_loss, init_rider)
+    _driver_loss_context = (
+        build_particle_loss_context(particle_loss, init_driver)
+        if init_driver is not None
+        else None
+    )
 
     # Initialize energy monitoring
     previous_energy: Optional[float] = None
@@ -1616,7 +1669,32 @@ def retarded_integrator(
             _set_pseudo_grid_schedule_metadata(
                 trajectory[i], _current_pseudo_grid_schedule
             )
+            if particle_loss.enabled:
+                mark_particle_losses(
+                    trajectory[i],
+                    trajectory[i - 1],
+                    step=i,
+                    config=particle_loss,
+                    context=_rider_loss_context,
+                    sim_type=sim_type,
+                    wall_z=wall_z,
+                    aperture_radius=aperture_radius,
+                    logger=logger,
+                )
+            _mark_post_step_gamma_blowups(trajectory[i], step=i, logger=logger)
             _traj_builder.set_step(i, trajectory[i])
+
+            # Log alive/dead particle counts after post-step checks
+            dead_mask = trajectory[i].get("_dead_particles")
+            if dead_mask is not None and np.any(dead_mask):
+                num_alive = np.sum(~dead_mask)
+                num_dead = np.sum(dead_mask)
+                num_total = len(dead_mask)
+                if num_dead > 0:
+                    print(
+                        f"  [STATUS] Step {i}: {num_alive}/{num_total} particles alive, "
+                        f"{num_dead}/{num_total} dead"
+                    )
 
             # Check if all particles are dead
             if all_particles_dead(trajectory[i]):
@@ -1666,43 +1744,6 @@ def retarded_integrator(
                         else []
                     )
                 return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
-
-            # Post-step gamma check for individual particles
-            # Mark any particle with extreme gamma as dead
-            gamma_array = trajectory[i].get("gamma")
-            if gamma_array is not None:
-                for particle_idx in range(len(gamma_array)):
-                    gamma_val = gamma_array[particle_idx]
-                    # Skip if already dead
-                    dead_mask = trajectory[i].get("_dead_particles")
-                    if dead_mask is not None and dead_mask[particle_idx]:
-                        continue
-
-                    # Check for gamma blowup
-                    if gamma_val > 1e8 or np.isnan(gamma_val) or np.isinf(gamma_val):
-                        print(
-                            f"[WARNING] Step {i}: Particle {particle_idx} gamma blowup "
-                            f"detected (γ={gamma_val:.2e}). Marking particle as dead."
-                        )
-                        mark_particle_dead(
-                            trajectory[i],
-                            particle_idx,
-                            i,
-                            "gamma_blowup_post_step",
-                            gamma_value=gamma_val,
-                        )
-
-            # Log alive/dead particle counts after post-step checks
-            dead_mask = trajectory[i].get("_dead_particles")
-            if dead_mask is not None and np.any(dead_mask):
-                num_alive = np.sum(~dead_mask)
-                num_dead = np.sum(dead_mask)
-                num_total = len(dead_mask)
-                if num_dead > 0:
-                    print(
-                        f"  [STATUS] Step {i}: {num_alive}/{num_total} particles alive, "
-                        f"{num_dead}/{num_total} dead"
-                    )
 
             if sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -1824,6 +1865,22 @@ def retarded_integrator(
                     )
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
+            if (
+                particle_loss.enabled
+                and sim_type == SimulationType.BUNCH_TO_BUNCH
+                and _driver_loss_context is not None
+            ):
+                mark_particle_losses(
+                    trajectory_drv[i],
+                    trajectory_drv[i - 1],
+                    step=i,
+                    config=particle_loss,
+                    context=_driver_loss_context,
+                    sim_type=sim_type,
+                    wall_z=wall_z,
+                    aperture_radius=aperture_radius,
+                    logger=logger,
+                )
             if _traj_drv_builder is not None:
                 _traj_drv_builder.set_step(i, trajectory_drv[i])
             if (
@@ -2053,6 +2110,7 @@ def run_integrator(
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
         pseudo_grid=config.pseudo_grid,
+        particle_loss=config.particle_loss,
     )
 
 

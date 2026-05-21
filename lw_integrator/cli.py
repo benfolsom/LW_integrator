@@ -26,6 +26,7 @@ from core.types import (
     ChronoMatchingMode,
     ExternalFieldConfig,
     IntegratorConfig,
+    ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
     SimulationType,
@@ -77,6 +78,15 @@ DEFAULT_RIDER: Dict[str, Any] = {
     "transverse_momentum": 0.0,
     "transverse_spread": 0.0,
     "transverse_geometry": "square",
+}
+
+DEFAULT_PARTICLE_LOSS: Dict[str, Any] = {
+    "enabled": True,
+    "loss_radius_mm": 500.0,
+    "conducting_wall_aperture_loss_enabled": True,
+    "initial_radial_quantile": None,
+    "initial_radial_multiplier": 1.0,
+    "initial_radial_margin_mm": 0.0,
 }
 
 DEFAULT_PSEUDO_GRID: Dict[str, Any] = {
@@ -381,6 +391,50 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.set_defaults(use_image_weighting=None)
     parser.add_argument(
+        "--particle-loss",
+        dest="particle_loss_enabled",
+        action="store_true",
+        help="Enable fixed-size physical particle-loss tracking.",
+    )
+    parser.add_argument(
+        "--no-particle-loss",
+        dest="particle_loss_enabled",
+        action="store_false",
+        help="Disable fixed-size physical particle-loss tracking.",
+    )
+    parser.set_defaults(particle_loss_enabled=None)
+    parser.add_argument(
+        "--loss-radius-mm",
+        type=float,
+        dest="particle_loss_radius_mm",
+        help="Absolute cylindrical transverse loss radius in millimetres.",
+    )
+    parser.add_argument(
+        "--no-conducting-wall-aperture-loss",
+        dest="conducting_wall_aperture_loss_enabled",
+        action="store_false",
+        help="Disable conducting-wall aperture-plane loss checks.",
+    )
+    parser.set_defaults(conducting_wall_aperture_loss_enabled=None)
+    parser.add_argument(
+        "--particle-loss-initial-radial-quantile",
+        type=float,
+        dest="particle_loss_initial_radial_quantile",
+        help="Optional initial radial quantile used to derive a robust envelope.",
+    )
+    parser.add_argument(
+        "--particle-loss-initial-radial-multiplier",
+        type=float,
+        dest="particle_loss_initial_radial_multiplier",
+        help="Multiplier for the initial radial quantile envelope.",
+    )
+    parser.add_argument(
+        "--particle-loss-initial-radial-margin-mm",
+        type=float,
+        dest="particle_loss_initial_radial_margin_mm",
+        help="Additive margin for the initial radial quantile envelope.",
+    )
+    parser.add_argument(
         "--pseudo-grid",
         dest="pseudo_grid_enabled",
         action="store_true",
@@ -627,10 +681,19 @@ def _merge_simulation_payload(
     file_payload: Mapping[str, Any], args: argparse.Namespace
 ) -> Dict[str, Any]:
     result = dict(DEFAULT_SIMULATION)
+    result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
+    file_particle_loss = file_payload.get("particle_loss")
+    if isinstance(file_particle_loss, Mapping):
+        result["particle_loss"].update(file_particle_loss)
+        if "enabled" not in file_particle_loss and any(
+            file_particle_loss.get(key) is not None
+            for key in ("loss_radius_mm", "initial_radial_quantile")
+        ):
+            result["particle_loss"]["enabled"] = True
     file_pseudo_grid = file_payload.get("pseudo_grid")
     if isinstance(file_pseudo_grid, Mapping):
         result["pseudo_grid"].update(file_pseudo_grid)
@@ -714,6 +777,45 @@ def _merge_simulation_payload(
     if getattr(args, "auto_duration_post_factor", None) is not None:
         result["auto_duration_post_factor"] = args.auto_duration_post_factor
 
+    particle_loss = result["particle_loss"]
+    particle_loss_overrides = {
+        "enabled": getattr(args, "particle_loss_enabled", None),
+        "loss_radius_mm": getattr(args, "particle_loss_radius_mm", None),
+        "conducting_wall_aperture_loss_enabled": getattr(
+            args,
+            "conducting_wall_aperture_loss_enabled",
+            None,
+        ),
+        "initial_radial_quantile": getattr(
+            args,
+            "particle_loss_initial_radial_quantile",
+            None,
+        ),
+        "initial_radial_multiplier": getattr(
+            args,
+            "particle_loss_initial_radial_multiplier",
+            None,
+        ),
+        "initial_radial_margin_mm": getattr(
+            args,
+            "particle_loss_initial_radial_margin_mm",
+            None,
+        ),
+    }
+    threshold_override_present = False
+    for key, value in particle_loss_overrides.items():
+        if value is not None:
+            particle_loss[key] = value
+            threshold_override_present = threshold_override_present or key in {
+                "loss_radius_mm",
+                "initial_radial_quantile",
+            }
+    if (
+        threshold_override_present
+        and getattr(args, "particle_loss_enabled", None) is None
+    ):
+        particle_loss["enabled"] = True
+
     pseudo_grid = result["pseudo_grid"]
     pseudo_grid_override_keys = (
         "enabled",
@@ -784,6 +886,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         payload.get("use_image_weighting", DEFAULT_SIMULATION["use_image_weighting"])
     )
 
+    particle_loss = _build_particle_loss_config(payload.get("particle_loss"))
     pseudo_grid = _build_pseudo_grid_config(payload.get("pseudo_grid"))
 
     return IntegratorConfig(
@@ -808,6 +911,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             )
         ),
         pseudo_grid=pseudo_grid,
+        particle_loss=particle_loss,
     )
 
 
@@ -884,6 +988,55 @@ def _parse_image_weighting(value: Any) -> bool:
             "use_image_weighting must be a boolean or truthy/falsey string"
         )
     return bool(value)
+
+
+def _build_particle_loss_config(payload: Any) -> ParticleLossConfig:
+    if payload is None:
+        return ParticleLossConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("particle_loss must be a JSON object")
+
+    enabled_value = payload.get("enabled")
+    enabled = (
+        bool(enabled_value)
+        if enabled_value is not None
+        else bool(DEFAULT_PARTICLE_LOSS["enabled"])
+    )
+    loss_radius_mm = (
+        _optional_float_field(payload, "loss_radius_mm")
+        if "loss_radius_mm" in payload
+        else float(DEFAULT_PARTICLE_LOSS["loss_radius_mm"])
+    )
+
+    try:
+        return ParticleLossConfig(
+            enabled=enabled,
+            loss_radius_mm=loss_radius_mm,
+            conducting_wall_aperture_loss_enabled=bool(
+                payload.get(
+                    "conducting_wall_aperture_loss_enabled",
+                    DEFAULT_PARTICLE_LOSS["conducting_wall_aperture_loss_enabled"],
+                )
+            ),
+            initial_radial_quantile=_optional_float_field(
+                payload,
+                "initial_radial_quantile",
+            ),
+            initial_radial_multiplier=float(
+                payload.get(
+                    "initial_radial_multiplier",
+                    DEFAULT_PARTICLE_LOSS["initial_radial_multiplier"],
+                )
+            ),
+            initial_radial_margin_mm=float(
+                payload.get(
+                    "initial_radial_margin_mm",
+                    DEFAULT_PARTICLE_LOSS["initial_radial_margin_mm"],
+                )
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(str(exc)) from exc
 
 
 def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
@@ -1140,6 +1293,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         space_charge=request.space_charge,
         external_field=request.external_field,
         pseudo_grid=request.config.pseudo_grid,
+        particle_loss=request.config.particle_loss,
     )
 
 

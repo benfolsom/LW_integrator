@@ -21,6 +21,7 @@ def mark_particle_dead(
     reason: str,
     gamma_value: Optional[float] = None,
     iteration: Optional[int] = None,
+    details: Optional[Dict[str, object]] = None,
 ) -> None:
     """Mark a specific particle as dead due to numerical failure.
 
@@ -43,12 +44,15 @@ def mark_particle_dead(
         The gamma value at failure (if applicable)
     iteration : int, optional
         Self-consistency iteration at failure (if applicable)
+    details : dict, optional
+        Additional serializable metadata describing the failure or loss.
     """
     try:
         # Initialize dead particle tracking if not present
         if "_dead_particles" not in state:
             num_particles = len(state.get("gamma", []))
             state["_dead_particles"] = np.zeros(num_particles, dtype=bool)
+        if "_particle_failure_info" not in state:
             state["_particle_failure_info"] = {}
 
         # Mark this particle as dead
@@ -63,6 +67,8 @@ def mark_particle_dead(
             failure_info["gamma_value"] = float(gamma_value)
         if iteration is not None:
             failure_info["iteration"] = iteration
+        if details:
+            failure_info.update(details)
         if "t" in state:
             failure_info["time_ns"] = float(state["t"][particle_idx])
 

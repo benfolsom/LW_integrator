@@ -114,6 +114,30 @@ class GammaReconciliationMethod(Enum):
 
 
 @dataclass
+class ParticleLossConfig:
+    """Configuration for fixed-size physical particle-loss tracking."""
+
+    enabled: bool = True
+    loss_radius_mm: float | None = 500.0
+    conducting_wall_aperture_loss_enabled: bool = True
+    initial_radial_quantile: float | None = None
+    initial_radial_multiplier: float = 1.0
+    initial_radial_margin_mm: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.loss_radius_mm is not None and self.loss_radius_mm <= 0.0:
+            raise ValueError("particle_loss loss_radius_mm must be positive")
+        if self.initial_radial_quantile is not None and not (
+            0.0 < self.initial_radial_quantile <= 1.0
+        ):
+            raise ValueError("particle_loss initial_radial_quantile must be in (0, 1]")
+        if self.initial_radial_multiplier <= 0.0:
+            raise ValueError("particle_loss initial_radial_multiplier must be positive")
+        if self.initial_radial_margin_mm < 0.0:
+            raise ValueError("particle_loss initial_radial_margin_mm must be >= 0")
+
+
+@dataclass
 class PseudoGridConfig:
     """Configuration surface for the experimental pseudo-grid solver mode.
 
@@ -222,6 +246,10 @@ class IntegratorConfig:
         Experimental pseudo-grid solver settings. The initial plumbing keeps the
         surface available across the API while the reduced-physics update path is
         implemented incrementally. Defaults to a disabled configuration.
+    particle_loss:
+        Optional fixed-size particle-loss predicates. Lost particles are marked
+        dead, keep their trajectory slots, and stop contributing charge after
+        the loss step.
     """
 
     steps: int
@@ -244,6 +272,7 @@ class IntegratorConfig:
     bunch_transv_dist: float = 0.0
     bunch_transv_mom: float = 0.0
     pseudo_grid: PseudoGridConfig = field(default_factory=PseudoGridConfig)
+    particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
 
 
 @dataclass
