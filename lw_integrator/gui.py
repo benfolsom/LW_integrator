@@ -289,17 +289,20 @@ class IntegratorGUI(
         self.driver_param_vars: Dict[str, tk.Variable] = {}
         for name, default in DEFAULT_RIDER_PARAMS.items():
             var: tk.Variable
-            if isinstance(default, int):
+            if isinstance(default, str):
+                var = tk.StringVar(value=default)
+            elif isinstance(default, int):
                 var = tk.IntVar(value=int(default))
             else:
                 var = tk.DoubleVar(value=float(default))
             self.rider_param_vars[name] = var
         for name, default in DEFAULT_DRIVER_PARAMS.items():
-            var = (
-                tk.IntVar(value=int(default))
-                if isinstance(default, int)
-                else tk.DoubleVar(value=float(default))
-            )
+            if isinstance(default, str):
+                var = tk.StringVar(value=default)
+            elif isinstance(default, int):
+                var = tk.IntVar(value=int(default))
+            else:
+                var = tk.DoubleVar(value=float(default))
             self.driver_param_vars[name] = var
 
         self.core_param_vars: Dict[str, tk.Variable] = {}

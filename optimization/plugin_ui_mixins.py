@@ -146,6 +146,18 @@ class OptimizationPluginUIMixin:
             ("Maximize Energy Gain (GeV)", "max_energy_gain"),
             ("Maximize Energy Gain (%)", "max_percent_energy_gain"),
             ("Maximize Energy Efficiency", "max_energy_efficiency"),
+            (
+                "Maximize Inward Radial Focusing (final, 0 < dE ≤ 20%)",
+                "max_inward_rider_radial_focusing_constrained_energy",
+            ),
+            (
+                "Maximize Peak Inward Radial Focusing (centroid, 0 < dE ≤ 20%)",
+                "max_peak_inward_rider_radial_focusing_constrained_energy",
+            ),
+            (
+                "Maximize Peak Ring RMS Collapse (0 < dE ≤ 20%)",
+                "max_peak_rider_radial_rms_collapse_constrained_energy",
+            ),
             ("Minimize Transverse Deflection", "min_transverse_deflection"),
         ]
 

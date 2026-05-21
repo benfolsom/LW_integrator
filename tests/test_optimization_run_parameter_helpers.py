@@ -88,6 +88,15 @@ def test_resolve_objective_metric_keeps_historical_defaults():
         "max_energy_gain_gev",
         False,
     )
+    assert resolve_objective_metric(
+        "max_inward_rider_radial_focusing_constrained_energy"
+    ) == ("rider_radial_toward_driver_mm", True)
+    assert resolve_objective_metric(
+        "max_peak_inward_rider_radial_focusing_constrained_energy"
+    ) == ("rider_radial_peak_inward_mm", True)
+    assert resolve_objective_metric(
+        "max_peak_rider_radial_rms_collapse_constrained_energy"
+    ) == ("rider_radial_rms_peak_inward_mm", True)
 
 
 def test_calculate_transverse_offset_handles_enum_and_string_modes():
@@ -95,15 +104,22 @@ def test_calculate_transverse_offset_handles_enum_and_string_modes():
     assert is_bunch_to_bunch("BUNCH_TO_BUNCH")
     assert not is_bunch_to_bunch(SimulationType.CONDUCTING_WALL)
 
-    assert calculate_transverse_offset(
-        SimulationType.BUNCH_TO_BUNCH, offset_value=0.25, aperture=0.001
-    ) == 0.25
-    assert calculate_transverse_offset(
-        "BUNCH_TO_BUNCH", offset_value=0.25, aperture=0.001
-    ) == 0.25
-    assert calculate_transverse_offset(
-        SimulationType.CONDUCTING_WALL, offset_value=0.25, aperture=0.001
-    ) == 0.00025
+    assert (
+        calculate_transverse_offset(
+            SimulationType.BUNCH_TO_BUNCH, offset_value=0.25, aperture=0.001
+        )
+        == 0.25
+    )
+    assert (
+        calculate_transverse_offset("BUNCH_TO_BUNCH", offset_value=0.25, aperture=0.001)
+        == 0.25
+    )
+    assert (
+        calculate_transverse_offset(
+            SimulationType.CONDUCTING_WALL, offset_value=0.25, aperture=0.001
+        )
+        == 0.00025
+    )
 
 
 def test_resolve_optimization_run_parameters_maps_wall_mode_values():
@@ -179,10 +195,9 @@ def test_resolve_optimization_run_parameters_builds_bunch_driver_params_for_enum
         "pcount": 9,
         "transv_mom": 0.03,
         "transv_dist": -0.04,
+        "transverse_geometry": "square",
         "starting_distance": 800.0,
-        "starting_Pz": calculate_starting_pz_from_energy(
-            0.6, 207.2, negative=False
-        ),
+        "starting_Pz": calculate_starting_pz_from_energy(0.6, 207.2, negative=False),
         "stripped_ions": 54.0,
         "transv_offset_x": 0.01,
         "transv_offset_y": -0.02,
@@ -297,3 +312,113 @@ def test_build_optimization_evaluation_outcome_minimization_penalty_direction():
 
     assert outcome.fitness == 2.25
     assert outcome.record["objective_value"] == 2.25
+
+
+def test_energy_constrained_radial_focus_objective_accepts_valid_window():
+    outcome = build_optimization_evaluation_outcome(
+        {
+            "metrics": {
+                "rider_radial_toward_driver_mm": 0.003,
+                "delta_e_mev": 10.0,
+                "rider_delta_e_fraction_initial_kinetic": 0.05,
+            }
+        },
+        eval_num=8,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="rider_radial_toward_driver_mm",
+        maximize=True,
+        objective_name="max_inward_rider_radial_focusing_constrained_energy",
+    )
+
+    assert outcome.fitness == -0.003
+    assert outcome.record["objective_value"] == 0.003
+    assert outcome.record["failed"] is False
+
+
+def test_energy_constrained_radial_focus_objective_rejects_large_gain():
+    outcome = build_optimization_evaluation_outcome(
+        {
+            "metrics": {
+                "rider_radial_toward_driver_mm": 0.003,
+                "delta_e_mev": 50.0,
+                "rider_delta_e_fraction_initial_kinetic": 0.25,
+            }
+        },
+        eval_num=9,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="rider_radial_toward_driver_mm",
+        maximize=True,
+        objective_name="max_inward_rider_radial_focusing_constrained_energy",
+    )
+
+    assert outcome.fitness == np.inf
+    assert outcome.record["constraint_failed"] is True
+    assert "20%" in outcome.record["constraint_reason"]
+
+
+def test_peak_energy_constrained_radial_focus_objective_accepts_valid_window():
+    outcome = build_optimization_evaluation_outcome(
+        {
+            "metrics": {
+                "rider_radial_peak_inward_mm": 0.007,
+                "delta_e_mev": 10.0,
+                "rider_delta_e_fraction_initial_kinetic": 0.05,
+            }
+        },
+        eval_num=10,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="rider_radial_peak_inward_mm",
+        maximize=True,
+        objective_name="max_peak_inward_rider_radial_focusing_constrained_energy",
+    )
+
+    assert outcome.fitness == -0.007
+    assert outcome.record["objective_value"] == 0.007
+    assert outcome.record["failed"] is False
+
+
+def test_peak_energy_constrained_radial_focus_objective_rejects_nonpositive_peak():
+    outcome = build_optimization_evaluation_outcome(
+        {
+            "metrics": {
+                "rider_radial_peak_inward_mm": 0.0,
+                "delta_e_mev": 10.0,
+                "rider_delta_e_fraction_initial_kinetic": 0.05,
+            }
+        },
+        eval_num=11,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="rider_radial_peak_inward_mm",
+        maximize=True,
+        objective_name="max_peak_inward_rider_radial_focusing_constrained_energy",
+    )
+
+    assert outcome.fitness == np.inf
+    assert outcome.record["constraint_failed"] is True
+    assert "peak inward radial focusing" in outcome.record["constraint_reason"]
+
+
+def test_rms_peak_energy_constrained_radial_focus_objective_accepts_valid_window():
+    outcome = build_optimization_evaluation_outcome(
+        {
+            "metrics": {
+                "rider_radial_rms_peak_inward_mm": 0.011,
+                "delta_e_mev": 10.0,
+                "rider_delta_e_fraction_initial_kinetic": 0.05,
+            }
+        },
+        eval_num=12,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="rider_radial_rms_peak_inward_mm",
+        maximize=True,
+        objective_name="max_peak_rider_radial_rms_collapse_constrained_energy",
+    )
+
+    assert outcome.fitness == -0.011
+    assert outcome.record["objective_value"] == 0.011
+    assert outcome.record["failed"] is False

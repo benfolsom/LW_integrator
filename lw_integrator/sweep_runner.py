@@ -101,6 +101,7 @@ class _ResolvedRiderOverrides:
     pcount: int
     transv_mom: float
     transv_dist: float
+    transverse_geometry: str
     stripped_ions: float
     macroparticle_charge_multiplier: float
     macroparticle_sigma_multiplier: float
@@ -170,6 +171,7 @@ def _resolve_cli_rider_overrides(
         pcount=int(sweep_overrides.get("rider_pcount", config.pcount)),
         transv_mom=sweep_overrides.get("rider_transv_mom", config.transv_mom),
         transv_dist=sweep_overrides.get("rider_transv_dist", config.transv_dist),
+        transverse_geometry=getattr(config, "transverse_geometry", "square"),
         stripped_ions=sweep_overrides.get("rider_stripped_ions", config.stripped_ions),
         macroparticle_charge_multiplier=sweep_overrides.get(
             "macroparticle_charge_multiplier",
@@ -211,8 +213,9 @@ def _resolve_cli_driver_setup(
         "starting_distance": d_start_dist,
         "transv_mom": d_transv_mom,
         "transv_dist": d_transv_dist,
-        "transv_offset_x": 0.0,
-        "transv_offset_y": 0.0,
+        "transverse_geometry": getattr(config, "driver_transverse_geometry", "square"),
+        "transv_offset_x": getattr(config, "driver_transv_offset_x", 0.0),
+        "transv_offset_y": getattr(config, "driver_transv_offset_y", 0.0),
         "m_particle": d_m,
         "charge_sign": d_charge,
         "pcount": d_pcount,
@@ -543,12 +546,14 @@ def _build_cli_sweep_start_log_lines(
                 f"    stripped_ions: {config.stripped_ions:.2e}",
                 f"    transv_mom: {config.transv_mom:.4e}",
                 f"    transv_dist: {config.transv_dist:.4e}",
+                f"    transverse_geometry: {getattr(config, 'transverse_geometry', 'square')}",
                 "  Fixed driver parameters:",
                 f"    m_particle: {config.driver_m_particle:.4e} amu",
                 f"    charge_sign: {config.driver_charge_sign}",
                 f"    pcount: {config.driver_pcount}",
                 f"    stripped_ions: {config.driver_stripped_ions:.2e}",
                 f"    energy_gev: {config.driver_energy_gev:.4f}",
+                f"    transverse_geometry: {getattr(config, 'driver_transverse_geometry', 'square')}",
                 ("    starting_distance: " f"{config.driver_starting_distance:.2f}"),
             ]
         )
@@ -1404,6 +1409,8 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         converted["driver_transv_offset_x"] = float(converted.pop("driver_offset_x"))
     if "driver_offset_y" in converted:
         converted["driver_transv_offset_y"] = float(converted.pop("driver_offset_y"))
+    if "rider_transverse_geometry" in converted:
+        converted["transverse_geometry"] = converted.pop("rider_transverse_geometry")
 
     # Map auto_steps_distance to auto_steps_distance_past_wall
     if (
@@ -1435,6 +1442,7 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         "driver_pcount": "driver_pcount",
         "driver_transv_mom": "driver_transv_mom",
         "driver_transv_dist": "driver_transv_dist",
+        "driver_transverse_geometry": "driver_transverse_geometry",
         "driver_starting_distance": "driver_starting_distance",
         "driver_energy_gev": "driver_energy_gev",
         "driver_stripped_ions": "driver_stripped_ions",
@@ -1569,6 +1577,21 @@ def run_sweep_from_config(
                 setattr(config, key, value)
                 if verbose:
                     print(f"[INFO] Overriding {key} from CLI: {value}", flush=True)
+
+    if config.mode == "optimization":
+        from lw_integrator.headless_optimization_runner import (
+            run_headless_optimization_config,
+        )
+
+        optimization_output_dir = (
+            output_dir if output_dir is not None else Path(config.output_dir)
+        )
+        return run_headless_optimization_config(
+            config,
+            output_dir=optimization_output_dir,
+            config_path=config_path,
+            verbose=verbose,
+        )
 
     # Determine output directory
     if output_dir is None:

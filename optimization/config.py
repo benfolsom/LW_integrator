@@ -160,7 +160,8 @@ class OptimizationConfig:
 
     # Fixed particle parameters (not swept)
     transv_mom: float = 1.2e-05  # amu·mm/ns
-    transv_dist: float = 2e-06  # mm - transverse spread (half-width of distribution)
+    transv_dist: float = 2e-06  # mm - transverse spread/radius
+    transverse_geometry: str = "square"  # point, square, gaussian, or ring
     transv_offset_x: float = 0.0  # mm - rider x-offset of bunch center from axis
     transv_offset_y: float = 0.0  # mm - rider y-offset of bunch center from axis
     driver_transv_offset_x: float = (
@@ -178,6 +179,7 @@ class OptimizationConfig:
     driver_pcount: int = 5  # Driver particle count (for BUNCH_TO_BUNCH)
     driver_transv_mom: float = 0.0  # amu·mm/ns (driver transverse momentum)
     driver_transv_dist: float = -0.07998  # mm (driver transverse distance)
+    driver_transverse_geometry: str = "square"  # point, square, gaussian, or ring
     driver_starting_distance: float = 1000.0  # mm (driver starting distance)
     driver_stripped_ions: float = 54.0  # Driver stripped ions (for BUNCH_TO_BUNCH)
     driver_starting_Pz: float = -4925.0  # Fixed driver Pz (amu·mm/ns)
@@ -408,6 +410,12 @@ class OptimizationConfig:
             stripped_ions=rider.get("stripped_ions", 1.0),
             transv_mom=rider.get("transv_mom", 1.2e-05),
             transv_dist=rider.get("transv_dist", 2e-06),
+            transverse_geometry=rider.get("transverse_geometry", "square"),
+            driver_transverse_geometry=(
+                options.driver_params.get("transverse_geometry", "square")
+                if options.driver_params is not None
+                else "square"
+            ),
             output_dir=str(options.output_dir.parent / "optimization_results"),
             # Preserve stability options from main config
             self_consistency_enabled=options.self_consistency_enabled,

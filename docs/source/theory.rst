@@ -67,6 +67,8 @@ light-cone constraint :math:`[x - r(\tau_{0})]^{2} = 0`.  The denominator reduce
 to :math:`\gamma c R \kappa`, linking the potential back to the geometry used in
 :eq:`eq-headon-limit`.
 
+.. _equations_of_motion:
+
 Conjugate momentum and equations of motion
 ------------------------------------------
 

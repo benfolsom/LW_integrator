@@ -414,6 +414,9 @@ class OptimizationPluginControlMixin:
             "transv_dist": float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
+            "transverse_geometry": getattr(
+                self, "rider_transverse_geometry_var", tk.StringVar(value="square")
+            ).get(),
             "transv_offset_x": rider_offset[0],
             "transv_offset_y": rider_offset[1],
             "driver_transv_offset_x": driver_offset[0],
@@ -451,6 +454,9 @@ class OptimizationPluginControlMixin:
             "driver_transv_dist": float(
                 self.sweep_params["driver_transv_dist"]["fixed_var"].get()
             ),
+            "driver_transverse_geometry": getattr(
+                self, "driver_transverse_geometry_var", tk.StringVar(value="square")
+            ).get(),
             "driver_starting_distance": float(
                 self.sweep_params["driver_starting_distance"]["fixed_var"].get()
             ),

@@ -21,6 +21,7 @@ PARTICLE_PARAM_FIELDS: Tuple[str, ...] = (
     "stripped_ions",
     "m_particle",
     "transv_dist",
+    "transverse_geometry",
     "transv_offset_x",
     "transv_offset_y",
     "pcount",
@@ -29,13 +30,14 @@ PARTICLE_PARAM_FIELDS: Tuple[str, ...] = (
 
 # Default parameters for the rider (trailing) bunch
 # These represent a typical electron bunch configuration
-DEFAULT_RIDER_PARAMS: Dict[str, float | int] = {
+DEFAULT_RIDER_PARAMS: Dict[str, float | int | str] = {
     "starting_distance": 1.0e-6,  # Initial separation in mm
     "transv_mom": 0.0,  # Transverse momentum in amu·mm/ns
     "starting_Pz": 1.01e6,  # Longitudinal momentum in amu·mm/ns
     "stripped_ions": 1.0,  # Charge state (1 for electrons)
     "m_particle": 1.007319468,  # Particle mass in amu (~proton-mass default)
     "transv_dist": 2.0e-4,  # Transverse distribution size in mm
+    "transverse_geometry": "square",  # point, square, gaussian, or ring
     "transv_offset_x": 0.0,  # Transverse offset x in mm
     "transv_offset_y": 0.0,  # Transverse offset y in mm
     "pcount": 5,  # Number of particles in bunch
@@ -44,13 +46,14 @@ DEFAULT_RIDER_PARAMS: Dict[str, float | int] = {
 
 # Default parameters for the driver (leading) bunch
 # These represent a typical ion bunch configuration
-DEFAULT_DRIVER_PARAMS: Dict[str, float | int] = {
+DEFAULT_DRIVER_PARAMS: Dict[str, float | int | str] = {
     "starting_distance": 1000.0,  # Initial separation in mm
     "transv_mom": 0.0,  # Transverse momentum in amu·mm/ns
     "starting_Pz": -1.01e6 / 207.2 * 1.007319468,  # Scaled for ion mass
     "stripped_ions": 54.0,  # Charge state (e.g., Xe54+)
     "m_particle": 207.2,  # Particle mass in amu (typical ion)
     "transv_dist": 2.0e-4 - 8.0e-2,  # Transverse distribution size in mm
+    "transverse_geometry": "square",  # point, square, gaussian, or ring
     "transv_offset_x": 0.0,  # Transverse offset x in mm
     "transv_offset_y": 0.0,  # Transverse offset y in mm
     "pcount": 5,  # Number of particles in bunch

@@ -134,7 +134,7 @@ class SelfConsistencyConfig:
         Default is False (use nearest discrete sample).
     chrono_tolerance : float
         Time residual tolerance for chrono-matching, in nanoseconds.
-        If |t_matched - t_target| > chrono_tolerance, interpolation is applied
+        If ``|t_matched - t_target|`` > chrono_tolerance, interpolation is applied
         (if chrono_interpolate=True) or a warning is issued (if verbosity >= 2).
         Default is 1e-3 ns (1 picosecond).
     chrono_matching_mode : str

@@ -253,7 +253,7 @@ Dual Independent Mode
 
 In ``dual_independent`` mode (default), **both** criteria must be satisfied:
 
-.. code-block:: python
+.. code-block:: text
 
    # Compute errors
    E_ms = |Pt² - P² - (mc)²| / (mc)²
@@ -419,7 +419,7 @@ Post-Loop Mass-Shell Projection
 After the iteration loop completes (either converged or max iterations reached),
 a final safety check is performed:
 
-.. code-block:: python
+.. code-block:: text
 
    # Final mass-shell check
    E_ms_final = |Pt² - P² - (mc)²| / (mc)²

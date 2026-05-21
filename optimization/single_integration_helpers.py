@@ -105,6 +105,7 @@ def build_single_integration_setup(
         "starting_distance": start_z,
         "transv_mom": rider_transv_mom,
         "transv_dist": rider_transv_dist,
+        "transverse_geometry": getattr(config, "transverse_geometry", "square"),
         "transv_offset_x": transv_offset,
         "transv_offset_y": 0.0,
         "m_particle": rider_m_particle,
@@ -610,7 +611,18 @@ def sample_trajectory_arrays(
     if len(z_array) == 0:
         return {
             key: []
-            for key in ("z", "x", "y", "r", "pz", "pr", "t", "gamma")
+            for key in (
+                "z",
+                "x",
+                "y",
+                "r",
+                "r_mean_particle",
+                "r_rms_particle",
+                "pz",
+                "pr",
+                "t",
+                "gamma",
+            )
             if key in trajectory
         }
 
@@ -622,7 +634,18 @@ def sample_trajectory_arrays(
     sample_indices = sorted(set(sample_indices))
 
     sampled: dict[str, list] = {}
-    for key in ("z", "x", "y", "r", "pz", "pr", "t", "gamma"):
+    for key in (
+        "z",
+        "x",
+        "y",
+        "r",
+        "r_mean_particle",
+        "r_rms_particle",
+        "pz",
+        "pr",
+        "t",
+        "gamma",
+    ):
         if key not in trajectory:
             continue
         sampled[key] = np.asarray(trajectory[key])[sample_indices].tolist()
@@ -666,11 +689,31 @@ def _position_metrics_from_trajectory(
     if len(r_array) > 0:
         r_start = float(r_array[0])
         r_end = float(r_array[-1])
+        r_min = float(np.min(r_array))
+        r_max = float(np.max(r_array))
         metrics[f"{prefix}_radial_initial_mm"] = r_start
         metrics[f"{prefix}_radial_final_mm"] = r_end
+        metrics[f"{prefix}_radial_min_mm"] = r_min
+        metrics[f"{prefix}_radial_max_mm"] = r_max
         metrics[f"{prefix}_radial_delta_mm"] = r_end - r_start
         if include_radial_toward_driver:
             metrics[f"{prefix}_radial_toward_driver_mm"] = r_start - r_end
+            metrics[f"{prefix}_radial_peak_inward_mm"] = r_start - r_min
+
+    r_rms_array = np.asarray(trajectory.get("r_rms_particle", []))
+    if len(r_rms_array) > 0:
+        r_rms_start = float(r_rms_array[0])
+        r_rms_end = float(r_rms_array[-1])
+        r_rms_min = float(np.min(r_rms_array))
+        r_rms_max = float(np.max(r_rms_array))
+        metrics[f"{prefix}_radial_rms_initial_mm"] = r_rms_start
+        metrics[f"{prefix}_radial_rms_final_mm"] = r_rms_end
+        metrics[f"{prefix}_radial_rms_min_mm"] = r_rms_min
+        metrics[f"{prefix}_radial_rms_max_mm"] = r_rms_max
+        metrics[f"{prefix}_radial_rms_delta_mm"] = r_rms_end - r_rms_start
+        if include_radial_toward_driver:
+            metrics[f"{prefix}_radial_rms_toward_driver_mm"] = r_rms_start - r_rms_end
+            metrics[f"{prefix}_radial_rms_peak_inward_mm"] = r_rms_start - r_rms_min
 
     return metrics or None
 
@@ -745,12 +788,31 @@ def _add_energy_gain_metrics(
     delta_gamma = gamma_final - gamma_initial
     energy_gain_percent = delta_gamma / gamma_initial * 100.0
     energy_gain_ppm = delta_gamma / gamma_initial * 1e6
-    delta_e_mev = delta_gamma * rider_m_particle * AMU_TO_MEV
+    rest_energy_mev = rider_m_particle * AMU_TO_MEV
+    delta_e_mev = delta_gamma * rest_energy_mev
+    initial_total_energy_mev = gamma_initial * rest_energy_mev
+    initial_kinetic_energy_mev = max((gamma_initial - 1.0) * rest_energy_mev, 0.0)
+    delta_e_fraction_initial_total = delta_e_mev / initial_total_energy_mev
+    delta_e_fraction_initial_kinetic = (
+        delta_e_mev / initial_kinetic_energy_mev
+        if initial_kinetic_energy_mev > 0.0
+        else np.nan
+    )
 
     metrics["max_percent_energy_gain"] = energy_gain_percent
     metrics["percent_delta_e"] = energy_gain_percent
     metrics["delta_gamma"] = delta_gamma
     metrics["delta_e_mev"] = delta_e_mev
+    metrics["rider_initial_total_energy_mev"] = initial_total_energy_mev
+    metrics["rider_initial_kinetic_energy_mev"] = initial_kinetic_energy_mev
+    metrics["rider_delta_e_fraction_initial_total"] = delta_e_fraction_initial_total
+    metrics["rider_delta_e_fraction_initial_kinetic"] = delta_e_fraction_initial_kinetic
+    metrics["rider_delta_e_percent_initial_total"] = (
+        100.0 * delta_e_fraction_initial_total
+    )
+    metrics["rider_delta_e_percent_initial_kinetic"] = (
+        100.0 * delta_e_fraction_initial_kinetic
+    )
     metrics["energy_gain_ppm"] = energy_gain_ppm
     metrics["max_energy_gain_gev"] = delta_e_mev / 1e3
     metrics["max_relative_gain"] = delta_gamma / gamma_initial

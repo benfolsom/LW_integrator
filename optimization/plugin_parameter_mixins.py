@@ -427,10 +427,23 @@ class OptimizationPluginParameterMixin:
             frame,
             row,
             "rider_transv_dist",
-            "Transverse Spread (mm, half-width):",
+            "Transverse Spread/Radius (mm):",
             "2e-06",
             width=15,
         )
+        row += 1
+
+        ttk.Label(frame, text="Transverse Geometry:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        self.rider_transverse_geometry_var = tk.StringVar(value="square")
+        ttk.Combobox(
+            frame,
+            textvariable=self.rider_transverse_geometry_var,
+            values=("square", "point", "gaussian", "ring"),
+            state="readonly",
+            width=15,
+        ).grid(row=row, column=1, sticky="w", pady=2, padx=5)
         row += 1
 
         # Stripped Ions (sweepable)
@@ -697,10 +710,23 @@ class OptimizationPluginParameterMixin:
             self.driver_frame,
             row,
             "driver_transv_dist",
-            "Transverse Spread (mm):",
+            "Transverse Spread/Radius (mm):",
             "-0.07998",
             width=15,
         )
+        row += 1
+
+        ttk.Label(self.driver_frame, text="Transverse Geometry:").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        self.driver_transverse_geometry_var = tk.StringVar(value="square")
+        ttk.Combobox(
+            self.driver_frame,
+            textvariable=self.driver_transverse_geometry_var,
+            values=("square", "point", "gaussian", "ring"),
+            state="readonly",
+            width=15,
+        ).grid(row=row, column=1, sticky="w", pady=2, padx=5)
         row += 1
 
         # Starting Distance (driver-specific)

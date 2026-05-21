@@ -396,6 +396,7 @@ def test_build_integration_trajectory_output_can_save_without_stability():
                 "x": [1.0, 2.0],
                 "y": [0.5, 0.25],
                 "r": [0.0, 0.2],
+                "r_rms_particle": [0.4, 0.1],
                 "pz": [1.0, 3.0],
                 "pr": [0.1, 0.3],
                 "t": [0.0, 1.0],
@@ -406,6 +407,7 @@ def test_build_integration_trajectory_output_can_save_without_stability():
                 "x": [0.4, 0.1],
                 "y": [0.2, 0.3],
                 "r": [0.4472135955, 0.3162277660],
+                "r_rms_particle": [0.5, 0.25],
                 "pz": [-3.0, -1.0],
                 "pr": [0.2, 0.1],
                 "t": [0.0, 1.0],
@@ -443,8 +445,18 @@ def test_build_integration_trajectory_output_can_save_without_stability():
     assert metrics["rider_z_delta_mm"] == pytest.approx(4.0)
     assert metrics["rider_radial_initial_mm"] == pytest.approx(0.0)
     assert metrics["rider_radial_final_mm"] == pytest.approx(0.2)
+    assert metrics["rider_radial_min_mm"] == pytest.approx(0.0)
+    assert metrics["rider_radial_max_mm"] == pytest.approx(0.2)
     assert metrics["rider_radial_delta_mm"] == pytest.approx(0.2)
     assert metrics["rider_radial_toward_driver_mm"] == pytest.approx(-0.2)
+    assert metrics["rider_radial_peak_inward_mm"] == pytest.approx(0.0)
+    assert metrics["rider_radial_rms_initial_mm"] == pytest.approx(0.4)
+    assert metrics["rider_radial_rms_final_mm"] == pytest.approx(0.1)
+    assert metrics["rider_radial_rms_min_mm"] == pytest.approx(0.1)
+    assert metrics["rider_radial_rms_max_mm"] == pytest.approx(0.4)
+    assert metrics["rider_radial_rms_delta_mm"] == pytest.approx(-0.3)
+    assert metrics["rider_radial_rms_toward_driver_mm"] == pytest.approx(0.3)
+    assert metrics["rider_radial_rms_peak_inward_mm"] == pytest.approx(0.3)
     assert metrics["driver_x_initial_mm"] == pytest.approx(0.4)
     assert metrics["driver_x_final_mm"] == pytest.approx(0.1)
     assert metrics["driver_x_delta_mm"] == pytest.approx(-0.3)
@@ -456,7 +468,14 @@ def test_build_integration_trajectory_output_can_save_without_stability():
     assert metrics["driver_z_delta_mm"] == pytest.approx(-6.0)
     assert metrics["driver_radial_initial_mm"] == pytest.approx(0.4472135955)
     assert metrics["driver_radial_final_mm"] == pytest.approx(0.3162277660)
+    assert metrics["driver_radial_min_mm"] == pytest.approx(0.3162277660)
+    assert metrics["driver_radial_max_mm"] == pytest.approx(0.4472135955)
     assert metrics["driver_radial_delta_mm"] == pytest.approx(-0.1309858295)
+    assert metrics["driver_radial_rms_initial_mm"] == pytest.approx(0.5)
+    assert metrics["driver_radial_rms_final_mm"] == pytest.approx(0.25)
+    assert metrics["driver_radial_rms_min_mm"] == pytest.approx(0.25)
+    assert metrics["driver_radial_rms_max_mm"] == pytest.approx(0.5)
+    assert metrics["driver_radial_rms_delta_mm"] == pytest.approx(-0.25)
     assert "driver_radial_toward_driver_mm" not in metrics
     assert outcome.log_lines == [
         "  [DEBUG] Processing trajectory data for Run 8...",

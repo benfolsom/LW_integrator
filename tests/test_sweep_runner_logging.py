@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -108,6 +109,43 @@ def test_run_sweep_from_config_respects_quiet_verbosity_override(
         verbosity_overrides={"log_verbosity": "full"},
     )
     assert capsys.readouterr().out == ""
+
+
+def test_run_sweep_from_config_uses_headless_runner_for_optimization_mode(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "optimization.json"
+    config_path.write_text(
+        json.dumps({"mode": "optimization", "output_dir": "results/demo_opt"}),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_run_headless_optimization_config(
+        config, *, output_dir, config_path, verbose
+    ):
+        captured["mode"] = config.mode
+        captured["output_dir"] = output_dir
+        captured["config_path"] = config_path
+        captured["verbose"] = verbose
+        return True
+
+    monkeypatch.setattr(
+        "lw_integrator.headless_optimization_runner.run_headless_optimization_config",
+        fake_run_headless_optimization_config,
+    )
+
+    assert run_sweep_from_config(
+        config_path=config_path,
+        output_dir=None,
+        verbose=False,
+        verbosity_overrides=None,
+    )
+
+    assert captured["mode"] == "optimization"
+    assert captured["output_dir"] == Path("results/demo_opt")
+    assert captured["config_path"] == config_path
+    assert captured["verbose"] is False
 
 
 def test_run_sweep_from_config_uses_config_worker_count_when_unset(
