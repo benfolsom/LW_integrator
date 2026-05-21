@@ -74,6 +74,8 @@ DEFAULT_RIDER: Dict[str, Any] = {
     "particle_count": 1,
     "transverse_radius": 0.0,
     "transverse_momentum": 0.0,
+    "transverse_spread": 0.0,
+    "transverse_geometry": "square",
 }
 
 SIMULATION_TYPE_ALIASES: Mapping[str, SimulationType] = {

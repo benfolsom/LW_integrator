@@ -231,6 +231,14 @@ class OptimizationPluginConfigMixin:
             self._set_fixed_sweep_value(
                 "rider_transv_dist", f"{opt_config.transv_dist:.2e}"
             )
+            if hasattr(self, "rider_transverse_geometry_var"):
+                self.rider_transverse_geometry_var.set(
+                    getattr(opt_config, "transverse_geometry", "square")
+                )
+            if hasattr(self, "driver_transverse_geometry_var"):
+                self.driver_transverse_geometry_var.set(
+                    getattr(opt_config, "driver_transverse_geometry", "square")
+                )
             self._apply_macroparticle_ui_state(
                 enabled=getattr(opt_config, "macroparticle_enabled", False),
                 charge_multiplier=f"{getattr(opt_config, 'macroparticle_charge_multiplier', 1.0):.2e}",
@@ -363,6 +371,10 @@ class OptimizationPluginConfigMixin:
         self._set_fixed_sweep_value(
             "driver_transv_dist", f"{driver_params.get('transv_dist', -0.07998):.6e}"
         )
+        if hasattr(self, "driver_transverse_geometry_var"):
+            self.driver_transverse_geometry_var.set(
+                driver_params.get("transverse_geometry", "square")
+            )
         self._set_fixed_sweep_value(
             "driver_starting_distance",
             f"{driver_params.get('starting_distance', 1000.0):.2e}",
@@ -514,6 +526,17 @@ class OptimizationPluginConfigMixin:
             self.sweep_params["rider_stripped_ions"]["fixed_var"].set(
                 str(data.get("rider_stripped_ions", 1.0))
             )
+            if hasattr(self, "rider_transverse_geometry_var"):
+                self.rider_transverse_geometry_var.set(
+                    data.get(
+                        "rider_transverse_geometry",
+                        data.get("transverse_geometry", "square"),
+                    )
+                )
+            if hasattr(self, "driver_transverse_geometry_var"):
+                self.driver_transverse_geometry_var.set(
+                    data.get("driver_transverse_geometry", "square")
+                )
             rider_x = data.get("rider_offset_x", 0.0)
             rider_y = data.get("rider_offset_y", 0.0)
             self.offset_fractions_var.set(f"{rider_x}, {rider_y}")

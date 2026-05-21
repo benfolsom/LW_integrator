@@ -61,6 +61,20 @@ class OptimizationEvaluationOutcome:
     log_lines: List[str]
 
 
+ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES = {
+    "max_inward_rider_radial_focusing_constrained_energy",
+    "max_radial_focusing_constrained_energy",
+}
+PEAK_ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES = {
+    "max_peak_inward_rider_radial_focusing_constrained_energy",
+    "max_peak_radial_focusing_constrained_energy",
+}
+RMS_PEAK_ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES = {
+    "max_peak_rider_radial_rms_collapse_constrained_energy",
+    "max_peak_ring_rms_collapse_constrained_energy",
+}
+
+
 OPTIMIZATION_PARAMETER_DEFINITIONS: tuple[OptimizationParameterDefinition, ...] = (
     OptimizationParameterDefinition(
         "aperture_radius", "aperture_range", "aperture_points"
@@ -186,6 +200,25 @@ def resolve_objective_metric(objective: str) -> tuple[str, bool]:
     """Return ``(metric_name, maximize)`` for an optimization objective name."""
     if objective == "max_percent_energy_gain":
         return "max_percent_energy_gain", True
+    if (
+        objective in RMS_PEAK_ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES
+        or objective
+        in {
+            "max_peak_rider_radial_rms_collapse",
+            "max_peak_ring_rms_collapse",
+        }
+    ):
+        return "rider_radial_rms_peak_inward_mm", True
+    if objective in PEAK_ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES or objective in {
+        "max_peak_inward_rider_radial_focusing",
+        "max_peak_radial_focusing",
+    }:
+        return "rider_radial_peak_inward_mm", True
+    if objective in ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES or objective in {
+        "max_inward_rider_radial_focusing",
+        "max_radial_focusing",
+    }:
+        return "rider_radial_toward_driver_mm", True
     if "min" in objective.lower():
         return "max_energy_gain_gev", False
     return "max_energy_gain_gev", True
@@ -296,6 +329,9 @@ def resolve_optimization_run_parameters(
             "pcount": int(driver_pcount),
             "transv_mom": driver_transv_mom,
             "transv_dist": driver_transv_dist,
+            "transverse_geometry": getattr(
+                config, "driver_transverse_geometry", "square"
+            ),
             "starting_distance": driver_starting_distance,
             "starting_Pz": driver_starting_pz,
             "stripped_ions": driver_stripped_ions,
@@ -390,6 +426,34 @@ def build_optimization_evaluation_outcome(
 
     metrics = result["metrics"]
     value = metrics.get(metric_name, np.nan)
+    constraint_reason = _energy_constrained_radial_focus_failure(
+        metrics,
+        focus_value=value,
+        objective_name=objective_name,
+    )
+    if constraint_reason is not None:
+        record = {
+            "evaluation": eval_num,
+            "parameters": parameters,
+            "failed": False,
+            "constraint_failed": True,
+            "constraint_reason": constraint_reason,
+            "objective_value": float("inf"),
+            "raw_objective_value": value,
+            "fitness": float("inf"),
+            "metrics": result.get("metrics", {}),
+        }
+        return OptimizationEvaluationOutcome(
+            fitness=np.inf,
+            record=record,
+            log_lines=[
+                (
+                    f"[INFO] Evaluation {eval_num} rejected by "
+                    f"{objective_name}: {constraint_reason}"
+                )
+            ],
+        )
+
     if np.isnan(value) or np.isinf(value):
         kind = "NaN" if np.isnan(value) else "inf"
         log_lines = [
@@ -447,3 +511,56 @@ def build_optimization_evaluation_outcome(
         record=record,
         log_lines=log_lines,
     )
+
+
+def _energy_constrained_radial_focus_failure(
+    metrics: dict[str, Any],
+    *,
+    focus_value: Any,
+    objective_name: str,
+) -> str | None:
+    if objective_name in RMS_PEAK_ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES:
+        focus_label = "peak inward radial rms collapse"
+    elif objective_name in PEAK_ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES:
+        focus_label = "peak inward radial focusing"
+    elif objective_name in ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES:
+        focus_label = "inward radial focusing"
+    else:
+        return None
+
+    focus = _finite_float_or_none(focus_value)
+    if focus is None:
+        return f"missing or invalid {focus_label} metric"
+    if focus <= 0.0:
+        return f"rider {focus_label} is not positive"
+
+    delta_e_mev = metrics.get("delta_e_mev", metrics.get("rider_delta_e_mev"))
+    delta_e = _finite_float_or_none(delta_e_mev)
+    if delta_e is None:
+        return "missing or invalid rider energy-change metric"
+    if delta_e <= 0.0:
+        return "rider dE is not positive"
+
+    energy_fraction = _finite_float_or_none(
+        metrics.get("rider_delta_e_fraction_initial_kinetic")
+    )
+    if energy_fraction is None:
+        energy_fraction = _finite_float_or_none(
+            metrics.get("rider_delta_e_fraction_initial_total")
+        )
+    if energy_fraction is None:
+        energy_fraction = _finite_float_or_none(metrics.get("max_relative_gain"))
+    if energy_fraction is None:
+        return "missing or invalid rider dE fraction metric"
+    if energy_fraction > 0.20:
+        return "rider dE exceeds 20% of initial rider energy"
+
+    return None
+
+
+def _finite_float_or_none(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) else None

@@ -72,7 +72,8 @@ PARAM_LABELS: Dict[str, str] = {
     "starting_Pz": "Initial Pz (amu*mm/ns)",
     "stripped_ions": "Stripped ions",
     "m_particle": "Mass (amu)",
-    "transv_dist": "Transverse spread (mm, half-width)",
+    "transv_dist": "Transverse spread/radius (mm)",
+    "transverse_geometry": "Transverse geometry",
     "transv_offset_x": "Transverse offset x (mm)",
     "transv_offset_y": "Transverse offset y (mm)",
     "pcount": "Particle count (bunch size)",
@@ -242,10 +243,10 @@ class SimulationOptions:
     output_dir: Path = Path("test_outputs/testbed_runs")
     config_dir: Path = Path("configs/testbed_runs")
     config_name: str = "testbed_config.json"
-    rider_params: Dict[str, float | int] = field(
+    rider_params: Dict[str, float | int | str] = field(
         default_factory=lambda: dict(DEFAULT_RIDER_PARAMS)
     )
-    driver_params: Optional[Dict[str, float | int]] = field(
+    driver_params: Optional[Dict[str, float | int | str]] = field(
         default_factory=lambda: dict(DEFAULT_DRIVER_PARAMS)
     )
     core_params: Dict[str, float | str] = field(
@@ -537,10 +538,11 @@ class SimulationOptions:
         if isinstance(rider_payload, dict):
             rider_params.update(rider_payload)
 
-        driver_params: Optional[Dict[str, float | int]]
+        driver_params: Optional[Dict[str, float | int | str]]
         driver_payload = payload.get("driver_params")
         if isinstance(driver_payload, dict):
-            driver_params = dict(driver_payload)
+            driver_params = dict(DEFAULT_DRIVER_PARAMS)
+            driver_params.update(driver_payload)
         else:
             driver_params = dict(DEFAULT_DRIVER_PARAMS)
 
@@ -830,6 +832,23 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
         "beta_x_m": float(beta_x_m),
         "beta_y_m": float(beta_y_m),
     }
+
+
+def _compute_alive_particle_radial_stats(state: Dict[str, Any]) -> tuple[float, float]:
+    x_alive = get_alive_particle_values(state, "x")
+    y_alive = get_alive_particle_values(state, "y")
+    if x_alive is None or y_alive is None or len(x_alive) == 0 or len(y_alive) == 0:
+        return 0.0, 0.0
+
+    radii = np.sqrt(
+        np.asarray(x_alive, dtype=float) ** 2 + np.asarray(y_alive, dtype=float) ** 2
+    )
+    if len(radii) == 0:
+        return 0.0, 0.0
+
+    mean_radius = float(np.mean(radii))
+    rms_radius = float(np.sqrt(np.mean(radii**2)))
+    return mean_radius, rms_radius
 
 
 @dataclass
@@ -1751,6 +1770,15 @@ def run_testbed(
                     ]
                 )
                 r_arr = np.sqrt(x_arr**2 + y_arr**2)
+                rider_radial_stats = [
+                    _compute_alive_particle_radial_stats(s) for s in rider_states
+                ]
+                r_mean_particle_arr = np.array(
+                    [stats[0] for stats in rider_radial_stats]
+                )
+                r_rms_particle_arr = np.array(
+                    [stats[1] for stats in rider_radial_stats]
+                )
 
                 # Extract momentum components (capital P) and normalize by m*c
                 Pz_arr = np.array(
@@ -1790,6 +1818,8 @@ def run_testbed(
                     "x": x_arr,
                     "y": y_arr,
                     "r": r_arr,
+                    "r_mean_particle": r_mean_particle_arr,
+                    "r_rms_particle": r_rms_particle_arr,
                     "pz": Pz_arr / (m_arr * C_MMNS),  # Normalized longitudinal momentum
                     "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
                     "gamma": gamma_arr,  # Lorentz factor for stability analysis
@@ -1931,6 +1961,15 @@ def run_testbed(
                         ]
                     )
                     r_arr = np.sqrt(x_arr**2 + y_arr**2)
+                    driver_radial_stats = [
+                        _compute_alive_particle_radial_stats(s) for s in driver_states
+                    ]
+                    r_mean_particle_arr = np.array(
+                        [stats[0] for stats in driver_radial_stats]
+                    )
+                    r_rms_particle_arr = np.array(
+                        [stats[1] for stats in driver_radial_stats]
+                    )
                     Pz_arr = np.array(
                         [
                             compute_alive_particle_average(s, "Pz") or 0.0
@@ -1965,6 +2004,8 @@ def run_testbed(
                         "x": x_arr,
                         "y": y_arr,
                         "r": r_arr,
+                        "r_mean_particle": r_mean_particle_arr,
+                        "r_rms_particle": r_rms_particle_arr,
                         "pz": Pz_arr / (m_arr * C_MMNS),
                         "pr": Pr_arr / (m_arr * C_MMNS),
                         "gamma": gamma_arr,

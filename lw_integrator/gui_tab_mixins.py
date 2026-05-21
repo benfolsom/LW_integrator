@@ -74,9 +74,18 @@ class IntegratorGUITabMixin:
             rider_label = ttk.Label(particle_frame, text=PARAM_LABELS[name] + ":")
             rider_label.grid(row=row, column=0, sticky="w", pady=2)
 
-            rider_entry = ttk.Entry(
-                particle_frame, textvariable=self.rider_param_vars[name], width=12
-            )
+            if name == "transverse_geometry":
+                rider_entry = ttk.Combobox(
+                    particle_frame,
+                    textvariable=self.rider_param_vars[name],
+                    values=("square", "point", "gaussian", "ring"),
+                    state="readonly",
+                    width=12,
+                )
+            else:
+                rider_entry = ttk.Entry(
+                    particle_frame, textvariable=self.rider_param_vars[name], width=12
+                )
             rider_entry.grid(row=row, column=1, sticky="ew", pady=2)
 
             driver_label = ttk.Label(
@@ -84,9 +93,18 @@ class IntegratorGUITabMixin:
             )
             driver_label.grid(row=row, column=2, sticky="w", pady=2, padx=(12, 0))
 
-            driver_entry = ttk.Entry(
-                particle_frame, textvariable=self.driver_param_vars[name], width=12
-            )
+            if name == "transverse_geometry":
+                driver_entry = ttk.Combobox(
+                    particle_frame,
+                    textvariable=self.driver_param_vars[name],
+                    values=("square", "point", "gaussian", "ring"),
+                    state="readonly",
+                    width=12,
+                )
+            else:
+                driver_entry = ttk.Entry(
+                    particle_frame, textvariable=self.driver_param_vars[name], width=12
+                )
             driver_entry.grid(row=row, column=3, sticky="ew", pady=2)
             self._driver_entries.append(driver_entry)
 

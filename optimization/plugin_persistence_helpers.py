@@ -75,6 +75,8 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "target_distance_mm": 100.0,
     "timestep": 3e-7,
     "energy_scale_exponent": 1.0,
+    "transverse_geometry": "square",
+    "driver_transverse_geometry": "square",
 }
 
 
@@ -90,6 +92,10 @@ def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:
     """Apply persisted config values and defaults onto an OptimizationConfig."""
     for attr_name, default in _PERSISTED_CONFIG_DEFAULTS.items():
         setattr(config, attr_name, data.get(attr_name, default))
+    config.transverse_geometry = data.get(
+        "rider_transverse_geometry", data.get("transverse_geometry", "square")
+    )
+    config.driver_transverse_geometry = data.get("driver_transverse_geometry", "square")
 
     # Energy monitor behavior was removed; keep internal defaults explicit.
     config.energy_monitor_enabled = False
@@ -244,6 +250,11 @@ def build_saved_config_payload(
         "auto_steps_distance": auto_steps_distance,
         "rider_stripped_ions": rider_stripped_ions,
         "driver_stripped_ions": driver_stripped_ions,
+        "transverse_geometry": getattr(config, "transverse_geometry", "square"),
+        "rider_transverse_geometry": getattr(config, "transverse_geometry", "square"),
+        "driver_transverse_geometry": getattr(
+            config, "driver_transverse_geometry", "square"
+        ),
         "rider_offset_x": config.transv_offset_x,
         "rider_offset_y": config.transv_offset_y,
         "driver_offset_x": config.driver_transv_offset_x,

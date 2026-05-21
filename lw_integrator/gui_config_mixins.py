@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from tkinter import messagebox
 
-from core.particle_config import DEFAULT_DRIVER_PARAMS
+from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
 from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
@@ -374,7 +374,8 @@ class IntegratorGUIConfigMixin:
         self.driver_species_var.set(default_species_label)
 
         for name in PARTICLE_PARAM_FIELDS:
-            self.rider_param_vars[name].set(options.rider_params[name])
+            rider_value = options.rider_params.get(name, DEFAULT_RIDER_PARAMS[name])
+            self.rider_param_vars[name].set(rider_value)
             driver_value = (
                 options.driver_params[name]
                 if options.driver_params is not None and name in options.driver_params

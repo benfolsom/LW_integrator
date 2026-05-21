@@ -40,6 +40,86 @@ class BunchRequest:
     transverse_offset_x: float = 0.0
     transverse_offset_y: float = 0.0
     transverse_spread: float = 0.0
+    transverse_geometry: str = "square"
+
+
+_TRANSVERSE_GEOMETRY_ALIASES = {
+    "square": "square",
+    "uniform_square": "square",
+    "uniform": "square",
+    "random_square": "square",
+    "point": "point",
+    "center": "point",
+    "centered": "point",
+    "gaussian": "gaussian",
+    "normal": "gaussian",
+    "ring": "ring",
+    "circle": "ring",
+    "circular": "ring",
+}
+
+
+def _normalize_transverse_geometry(geometry: str | None) -> str:
+    key = "square" if geometry is None else str(geometry).strip().lower()
+    key = key.replace("-", "_").replace(" ", "_")
+    try:
+        return _TRANSVERSE_GEOMETRY_ALIASES[key]
+    except KeyError as exc:
+        allowed = ", ".join(sorted(_TRANSVERSE_GEOMETRY_ALIASES))
+        raise ValueError(
+            f"Unsupported transverse_geometry {geometry!r}. Allowed values: {allowed}"
+        ) from exc
+
+
+def _transverse_positions(
+    *,
+    count: int,
+    transverse_offset_x: float,
+    transverse_offset_y: float,
+    transverse_spread: float,
+    transverse_geometry: str | None,
+    legacy_transverse_radius: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    geometry = _normalize_transverse_geometry(transverse_geometry)
+    radius = abs(float(transverse_spread))
+
+    if geometry == "ring":
+        angles = np.linspace(0.0, 2.0 * math.pi, count, endpoint=False)
+        return (
+            transverse_offset_x + radius * np.cos(angles),
+            transverse_offset_y + radius * np.sin(angles),
+        )
+
+    if geometry == "gaussian" and radius > 0.0:
+        return (
+            np.random.normal(transverse_offset_x, radius, count),
+            np.random.normal(transverse_offset_y, radius, count),
+        )
+
+    if geometry == "square" and radius > 0.0:
+        return (
+            np.random.uniform(
+                transverse_offset_x - radius,
+                transverse_offset_x + radius,
+                count,
+            ),
+            np.random.uniform(
+                transverse_offset_y - radius,
+                transverse_offset_y + radius,
+                count,
+            ),
+        )
+
+    if geometry == "square" and legacy_transverse_radius != 0.0:
+        return (
+            np.full(count, legacy_transverse_radius, dtype=float),
+            np.full(count, -legacy_transverse_radius, dtype=float),
+        )
+
+    return (
+        np.full(count, transverse_offset_x, dtype=float),
+        np.full(count, transverse_offset_y, dtype=float),
+    )
 
 
 def _compute_gamma(kinetic_energy_mev: float, mass_amu: float) -> float:
@@ -59,6 +139,7 @@ def create_bunch_from_energy(
     transverse_offset_x: float = 0.0,
     transverse_offset_y: float = 0.0,
     transverse_spread: float = 0.0,
+    transverse_geometry: str = "square",
 ) -> Tuple[ParticleState, float]:
     """Generate a particle state dictionary from kinetic energy inputs.
 
@@ -83,8 +164,12 @@ def create_bunch_from_energy(
     transverse_offset_y : float, optional
         Center y-position of bunch in mm (default: 0.0, on-axis)
     transverse_spread : float, optional
-        Half-width of uniform transverse distribution in mm (default: 0.0)
-        Particles distributed in [offset ± spread] for both x and y
+        Size parameter for the selected transverse geometry in mm (default: 0.0).
+        For square geometry this is the uniform half-width, for gaussian geometry
+        this is sigma, and for ring geometry this is radius.
+    transverse_geometry : str, optional
+        Transverse layout: "square"/"uniform_square", "point", "gaussian", or
+        "ring"/"circle" (default: "square").
 
     Returns
     -------
@@ -111,28 +196,14 @@ def create_bunch_from_energy(
     count = particle_count
     zeros = np.zeros(count, dtype=float)
 
-    # Handle transverse positions with offset and spread
-    if transverse_spread > 0.0:
-        # Distribute particles uniformly in a square around the offset
-        x = np.random.uniform(
-            transverse_offset_x - transverse_spread,
-            transverse_offset_x + transverse_spread,
-            count,
-        )
-        y = np.random.uniform(
-            transverse_offset_y - transverse_spread,
-            transverse_offset_y + transverse_spread,
-            count,
-        )
-    else:
-        # All particles at the offset position (or legacy transverse_radius if specified)
-        if transverse_radius != 0.0:
-            # Backward compatibility: use old transverse_radius parameter
-            x = np.full(count, transverse_radius, dtype=float)
-            y = np.full(count, -transverse_radius, dtype=float)
-        else:
-            x = np.full(count, transverse_offset_x, dtype=float)
-            y = np.full(count, transverse_offset_y, dtype=float)
+    x, y = _transverse_positions(
+        count=count,
+        transverse_offset_x=transverse_offset_x,
+        transverse_offset_y=transverse_offset_y,
+        transverse_spread=transverse_spread,
+        transverse_geometry=transverse_geometry,
+        legacy_transverse_radius=transverse_radius,
+    )
 
     # Handle transverse momentum with spread
     if transverse_momentum > 0.0:
@@ -199,6 +270,7 @@ def create_bunch_from_params(
     pcount: int = 1,
     charge_sign: float = 1.0,
     seed: int | None = None,
+    transverse_geometry: str = "square",
 ) -> Tuple[ParticleState, float]:
     """Generate particle state from historical parameter names.
 
@@ -230,6 +302,10 @@ def create_bunch_from_params(
         Charge sign (+1 or -1, default: 1.0)
     seed : int, optional
         Random seed for reproducibility (default: None)
+    transverse_geometry : str, optional
+        Transverse layout: "square"/"uniform_square", "point", "gaussian", or
+        "ring"/"circle" (default: "square"). For ring layout, transv_dist is
+        interpreted as ring radius.
 
     Returns
     -------
@@ -264,17 +340,13 @@ def create_bunch_from_params(
     by = Py / (gamma * m_particle * C_MMNS)
     bz = Pz / (gamma * m_particle * C_MMNS)
 
-    # Generate transverse positions with offset and spread
-    if transv_dist > 0.0:
-        x = np.random.uniform(
-            transv_offset_x - transv_dist, transv_offset_x + transv_dist, pcount
-        )
-        y = np.random.uniform(
-            transv_offset_y - transv_dist, transv_offset_y + transv_dist, pcount
-        )
-    else:
-        x = np.full(pcount, transv_offset_x, dtype=float)
-        y = np.full(pcount, transv_offset_y, dtype=float)
+    x, y = _transverse_positions(
+        count=pcount,
+        transverse_offset_x=transv_offset_x,
+        transverse_offset_y=transv_offset_y,
+        transverse_spread=transv_dist,
+        transverse_geometry=transverse_geometry,
+    )
 
     # Longitudinal position with small spread
     z = np.random.uniform(starting_distance - 1e-6, starting_distance + 1e-6, pcount)
