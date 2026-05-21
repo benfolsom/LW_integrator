@@ -298,6 +298,27 @@ class OptimizationConfig:
     # Radiation-reaction handling
     radiation_reaction_mode: str = "medina_lad"
 
+    # Fixed-size particle-loss options
+    particle_loss_enabled: bool = True
+    particle_loss_radius_mm: Optional[float] = 500.0
+    particle_loss_conducting_wall_aperture_loss_enabled: bool = True
+    particle_loss_initial_radial_quantile: Optional[float] = None
+    particle_loss_initial_radial_multiplier: float = 1.0
+    particle_loss_initial_radial_margin_mm: float = 0.0
+
+    # Experimental pseudo-grid options
+    pseudo_grid_enabled: bool = False
+    pseudo_grid_active_rider_count: int = 4
+    pseudo_grid_active_driver_count: int = 4
+    pseudo_grid_passive_neighbor_count: int = 4
+    pseudo_grid_coverage_strategy: str = "farthest_point_staleness"
+    pseudo_grid_coverage_space: str = "position"
+    pseudo_grid_pair_reuse_window: int = 16
+    pseudo_grid_source_weighting_mode: str = "inverse_distance"
+    pseudo_grid_loss_tracking_enabled: bool = True
+    pseudo_grid_causal_history_pruning_enabled: bool = False
+    pseudo_grid_causal_history_safety_margin_steps: int = 2
+
     # Sweep execution / robustness options
     workers: int = 1
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
@@ -503,6 +524,83 @@ class OptimizationConfig:
                 options,
                 "radiation_reaction_mode",
                 "medina_lad",
+            ),
+            particle_loss_enabled=getattr(options, "particle_loss_enabled", True),
+            particle_loss_radius_mm=getattr(
+                options,
+                "particle_loss_radius_mm",
+                500.0,
+            ),
+            particle_loss_conducting_wall_aperture_loss_enabled=getattr(
+                options,
+                "particle_loss_conducting_wall_aperture_loss_enabled",
+                True,
+            ),
+            particle_loss_initial_radial_quantile=getattr(
+                options,
+                "particle_loss_initial_radial_quantile",
+                None,
+            ),
+            particle_loss_initial_radial_multiplier=getattr(
+                options,
+                "particle_loss_initial_radial_multiplier",
+                1.0,
+            ),
+            particle_loss_initial_radial_margin_mm=getattr(
+                options,
+                "particle_loss_initial_radial_margin_mm",
+                0.0,
+            ),
+            pseudo_grid_enabled=getattr(options, "pseudo_grid_enabled", False),
+            pseudo_grid_active_rider_count=getattr(
+                options,
+                "pseudo_grid_active_rider_count",
+                4,
+            ),
+            pseudo_grid_active_driver_count=getattr(
+                options,
+                "pseudo_grid_active_driver_count",
+                4,
+            ),
+            pseudo_grid_passive_neighbor_count=getattr(
+                options,
+                "pseudo_grid_passive_neighbor_count",
+                4,
+            ),
+            pseudo_grid_coverage_strategy=getattr(
+                options,
+                "pseudo_grid_coverage_strategy",
+                "farthest_point_staleness",
+            ),
+            pseudo_grid_coverage_space=getattr(
+                options,
+                "pseudo_grid_coverage_space",
+                "position",
+            ),
+            pseudo_grid_pair_reuse_window=getattr(
+                options,
+                "pseudo_grid_pair_reuse_window",
+                16,
+            ),
+            pseudo_grid_source_weighting_mode=getattr(
+                options,
+                "pseudo_grid_source_weighting_mode",
+                "inverse_distance",
+            ),
+            pseudo_grid_loss_tracking_enabled=getattr(
+                options,
+                "pseudo_grid_loss_tracking_enabled",
+                True,
+            ),
+            pseudo_grid_causal_history_pruning_enabled=getattr(
+                options,
+                "pseudo_grid_causal_history_pruning_enabled",
+                False,
+            ),
+            pseudo_grid_causal_history_safety_margin_steps=getattr(
+                options,
+                "pseudo_grid_causal_history_safety_margin_steps",
+                2,
             ),
             # Startup mode from core params
             startup_mode=core.get("startup_mode", "COLD_START"),

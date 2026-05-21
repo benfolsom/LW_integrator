@@ -1423,6 +1423,39 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
     elif "auto_steps_distance" in converted:
         converted.pop("auto_steps_distance")
 
+    particle_loss_payload = converted.pop("particle_loss", None)
+    if isinstance(particle_loss_payload, dict):
+        _particle_loss_field_map = {
+            "enabled": "particle_loss_enabled",
+            "loss_radius_mm": "particle_loss_radius_mm",
+            "conducting_wall_aperture_loss_enabled": "particle_loss_conducting_wall_aperture_loss_enabled",
+            "initial_radial_quantile": "particle_loss_initial_radial_quantile",
+            "initial_radial_multiplier": "particle_loss_initial_radial_multiplier",
+            "initial_radial_margin_mm": "particle_loss_initial_radial_margin_mm",
+        }
+        for source_key, target_key in _particle_loss_field_map.items():
+            if source_key in particle_loss_payload:
+                converted[target_key] = particle_loss_payload[source_key]
+
+    pseudo_grid_payload = converted.pop("pseudo_grid", None)
+    if isinstance(pseudo_grid_payload, dict):
+        _pseudo_grid_field_map = {
+            "enabled": "pseudo_grid_enabled",
+            "active_rider_count": "pseudo_grid_active_rider_count",
+            "active_driver_count": "pseudo_grid_active_driver_count",
+            "passive_neighbor_count": "pseudo_grid_passive_neighbor_count",
+            "coverage_strategy": "pseudo_grid_coverage_strategy",
+            "coverage_space": "pseudo_grid_coverage_space",
+            "pair_reuse_window": "pseudo_grid_pair_reuse_window",
+            "source_weighting_mode": "pseudo_grid_source_weighting_mode",
+            "loss_tracking_enabled": "pseudo_grid_loss_tracking_enabled",
+            "causal_history_pruning_enabled": "pseudo_grid_causal_history_pruning_enabled",
+            "causal_history_safety_margin_steps": "pseudo_grid_causal_history_safety_margin_steps",
+        }
+        for source_key, target_key in _pseudo_grid_field_map.items():
+            if source_key in pseudo_grid_payload:
+                converted[target_key] = pseudo_grid_payload[source_key]
+
     # Convert sweep_parameters to appropriate ranges and fixed values
     sweep_params = converted.get("sweep_parameters", {})
 

@@ -61,7 +61,27 @@ from typing import Dict, Sequence, Tuple
 import numpy as np
 
 from .constants import C_MMNS
-from .types import TrajectoryArrays
+from .types import IndexedTrajectoryArrays, TrajectoryArrays
+
+TrajectoryArraysLike = TrajectoryArrays | IndexedTrajectoryArrays
+
+
+def _soa_values_at_steps(
+    traj: TrajectoryArraysLike,
+    field_name: str,
+    steps: np.ndarray,
+    particle_indices: np.ndarray,
+) -> np.ndarray:
+    if isinstance(traj, IndexedTrajectoryArrays):
+        return traj.values_at_steps(field_name, steps, particle_indices)
+    return np.asarray(getattr(traj, field_name))[steps, particle_indices]
+
+
+def _soa_constant(traj: TrajectoryArraysLike, field_name: str) -> np.ndarray:
+    if isinstance(traj, IndexedTrajectoryArrays):
+        return traj.constant(field_name)
+    return np.asarray(getattr(traj, field_name))
+
 
 # Try to import numba for JIT compilation
 try:
@@ -234,7 +254,7 @@ class ExternalSampleBatch:
 
 
 def gather_external_samples_soa(
-    traj_ext: TrajectoryArrays,
+    traj_ext: TrajectoryArraysLike,
     indices: np.ndarray,
     *,
     indices_next: np.ndarray | None = None,
@@ -252,15 +272,25 @@ def gather_external_samples_soa(
 
     particle_indices = np.arange(n_ext)
     safe_indices = indices if valid_all else np.where(valid_mask, indices, 0)
-    bx = traj_ext.bx[safe_indices, particle_indices].copy()
-    by = traj_ext.by[safe_indices, particle_indices].copy()
-    bz = traj_ext.bz[safe_indices, particle_indices].copy()
-    bdotx = traj_ext.bdotx[safe_indices, particle_indices].copy()
-    bdoty = traj_ext.bdoty[safe_indices, particle_indices].copy()
-    bdotz = traj_ext.bdotz[safe_indices, particle_indices].copy()
-    gamma = traj_ext.gamma[safe_indices, particle_indices].copy()
-    charge = traj_ext.q.copy()
-    dead_at_sample = traj_ext.dead[safe_indices, particle_indices]
+    bx = _soa_values_at_steps(traj_ext, "bx", safe_indices, particle_indices).copy()
+    by = _soa_values_at_steps(traj_ext, "by", safe_indices, particle_indices).copy()
+    bz = _soa_values_at_steps(traj_ext, "bz", safe_indices, particle_indices).copy()
+    bdotx = _soa_values_at_steps(
+        traj_ext, "bdotx", safe_indices, particle_indices
+    ).copy()
+    bdoty = _soa_values_at_steps(
+        traj_ext, "bdoty", safe_indices, particle_indices
+    ).copy()
+    bdotz = _soa_values_at_steps(
+        traj_ext, "bdotz", safe_indices, particle_indices
+    ).copy()
+    gamma = _soa_values_at_steps(
+        traj_ext, "gamma", safe_indices, particle_indices
+    ).copy()
+    charge = _soa_constant(traj_ext, "q").copy()
+    dead_at_sample = _soa_values_at_steps(
+        traj_ext, "dead", safe_indices, particle_indices
+    )
     charge[dead_at_sample] = 0.0
     valid_mask = valid_mask & ~dead_at_sample
     x = y = z = None
@@ -289,9 +319,15 @@ def gather_external_samples_soa(
             & (indices_next < traj_ext.n_steps)
         )
         if np.any(interp_mask):
-            x = traj_ext.x[safe_indices, particle_indices].copy()
-            y = traj_ext.y[safe_indices, particle_indices].copy()
-            z = traj_ext.z[safe_indices, particle_indices].copy()
+            x = _soa_values_at_steps(
+                traj_ext, "x", safe_indices, particle_indices
+            ).copy()
+            y = _soa_values_at_steps(
+                traj_ext, "y", safe_indices, particle_indices
+            ).copy()
+            z = _soa_values_at_steps(
+                traj_ext, "z", safe_indices, particle_indices
+            ).copy()
             if not valid_all:
                 invalid_mask = ~valid_mask
                 x[invalid_mask] = 0.0
@@ -302,16 +338,36 @@ def gather_external_samples_soa(
             pi = particle_indices[interp_mask]
             w = weights[interp_mask]
             w1 = 1.0 - w
-            bx[interp_mask] = w * bx[interp_mask] + w1 * traj_ext.bx[ni, pi]
-            by[interp_mask] = w * by[interp_mask] + w1 * traj_ext.by[ni, pi]
-            bz[interp_mask] = w * bz[interp_mask] + w1 * traj_ext.bz[ni, pi]
-            bdotx[interp_mask] = w * bdotx[interp_mask] + w1 * traj_ext.bdotx[ni, pi]
-            bdoty[interp_mask] = w * bdoty[interp_mask] + w1 * traj_ext.bdoty[ni, pi]
-            bdotz[interp_mask] = w * bdotz[interp_mask] + w1 * traj_ext.bdotz[ni, pi]
-            gamma[interp_mask] = w * gamma[interp_mask] + w1 * traj_ext.gamma[ni, pi]
-            x[interp_mask] = w * x[interp_mask] + w1 * traj_ext.x[ni, pi]
-            y[interp_mask] = w * y[interp_mask] + w1 * traj_ext.y[ni, pi]
-            z[interp_mask] = w * z[interp_mask] + w1 * traj_ext.z[ni, pi]
+            bx[interp_mask] = w * bx[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "bx", ni, pi
+            )
+            by[interp_mask] = w * by[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "by", ni, pi
+            )
+            bz[interp_mask] = w * bz[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "bz", ni, pi
+            )
+            bdotx[interp_mask] = w * bdotx[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "bdotx", ni, pi
+            )
+            bdoty[interp_mask] = w * bdoty[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "bdoty", ni, pi
+            )
+            bdotz[interp_mask] = w * bdotz[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "bdotz", ni, pi
+            )
+            gamma[interp_mask] = w * gamma[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "gamma", ni, pi
+            )
+            x[interp_mask] = w * x[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "x", ni, pi
+            )
+            y[interp_mask] = w * y[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "y", ni, pi
+            )
+            z[interp_mask] = w * z[interp_mask] + w1 * _soa_values_at_steps(
+                traj_ext, "z", ni, pi
+            )
 
     return ExternalSampleBatch(
         bx=bx,

@@ -97,6 +97,12 @@ def test_resolve_objective_metric_keeps_historical_defaults():
     assert resolve_objective_metric(
         "max_peak_rider_radial_rms_collapse_constrained_energy"
     ) == ("rider_radial_rms_peak_inward_mm", True)
+    assert resolve_objective_metric(
+        "max_rider_radial_p95_reduction_constrained_energy"
+    ) == ("rider_radial_p95_mm_reduction", True)
+    assert resolve_objective_metric(
+        "max_rider_halo_2rms_reduction_constrained_energy"
+    ) == ("rider_halo_gt_2_initial_rms_fraction_reduction", True)
 
 
 def test_calculate_transverse_offset_handles_enum_and_string_modes():

@@ -73,6 +73,15 @@ RMS_PEAK_ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES = {
     "max_peak_rider_radial_rms_collapse_constrained_energy",
     "max_peak_ring_rms_collapse_constrained_energy",
 }
+PERCENTILE_ENERGY_CONSTRAINED_HALO_OBJECTIVES = {
+    "max_rider_radial_p95_reduction_constrained_energy",
+    "max_rider_radial_p99_reduction_constrained_energy",
+}
+HALO_FRACTION_ENERGY_CONSTRAINED_OBJECTIVES = {
+    "max_rider_halo_2rms_reduction_constrained_energy",
+    "max_rider_halo_3rms_reduction_constrained_energy",
+    "max_rider_halo_5rms_reduction_constrained_energy",
+}
 
 
 OPTIMIZATION_PARAMETER_DEFINITIONS: tuple[OptimizationParameterDefinition, ...] = (
@@ -219,6 +228,16 @@ def resolve_objective_metric(objective: str) -> tuple[str, bool]:
         "max_radial_focusing",
     }:
         return "rider_radial_toward_driver_mm", True
+    if objective == "max_rider_radial_p95_reduction_constrained_energy":
+        return "rider_radial_p95_mm_reduction", True
+    if objective == "max_rider_radial_p99_reduction_constrained_energy":
+        return "rider_radial_p99_mm_reduction", True
+    if objective == "max_rider_halo_2rms_reduction_constrained_energy":
+        return "rider_halo_gt_2_initial_rms_fraction_reduction", True
+    if objective == "max_rider_halo_3rms_reduction_constrained_energy":
+        return "rider_halo_gt_3_initial_rms_fraction_reduction", True
+    if objective == "max_rider_halo_5rms_reduction_constrained_energy":
+        return "rider_halo_gt_5_initial_rms_fraction_reduction", True
     if "min" in objective.lower():
         return "max_energy_gain_gev", False
     return "max_energy_gain_gev", True
@@ -525,6 +544,10 @@ def _energy_constrained_radial_focus_failure(
         focus_label = "peak inward radial focusing"
     elif objective_name in ENERGY_CONSTRAINED_RADIAL_FOCUS_OBJECTIVES:
         focus_label = "inward radial focusing"
+    elif objective_name in PERCENTILE_ENERGY_CONSTRAINED_HALO_OBJECTIVES:
+        focus_label = "persistent radial percentile reduction"
+    elif objective_name in HALO_FRACTION_ENERGY_CONSTRAINED_OBJECTIVES:
+        focus_label = "halo-fraction reduction"
     else:
         return None
 

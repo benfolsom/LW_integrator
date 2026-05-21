@@ -21,7 +21,7 @@ from scipy.spatial import KDTree
 
 from .constants import C_MMNS
 from .particle_status import get_alive_particle_indices
-from .types import ParticleState, PseudoGridConfig, Trajectory
+from .types import IndexedTrajectoryArrays, ParticleState, PseudoGridConfig, Trajectory
 
 
 @dataclass(slots=True)
@@ -107,6 +107,43 @@ class PseudoGridPlannerState:
     pair_reuse_tracker: PairReuseTracker
     rider_history_times_ns: list[float] = field(default_factory=list)
     driver_history_times_ns: list[float] = field(default_factory=list)
+
+
+class ActiveTrajectoryView:
+    """Lazy legacy-state adapter for an indexed SOA trajectory."""
+
+    def __init__(self, indexed_soa: IndexedTrajectoryArrays) -> None:
+        self.indexed_soa = indexed_soa
+        self._state_cache: dict[int, ParticleState] = {}
+
+    def __len__(self) -> int:
+        return self.indexed_soa.n_steps
+
+    def __bool__(self) -> bool:
+        return len(self) > 0
+
+    def __getitem__(self, index: int | slice) -> ParticleState | list[ParticleState]:
+        if isinstance(index, slice):
+            states: list[ParticleState] = []
+            for local_index in range(*index.indices(len(self))):
+                states.append(self._state_at(local_index))
+            return states
+        return self._state_at(index)
+
+    def copy(self) -> list[ParticleState]:
+        return [self._state_at(i) for i in range(len(self))]
+
+    def _state_at(self, index: int) -> ParticleState:
+        local_index = int(index)
+        if local_index < 0:
+            local_index += len(self)
+        if local_index < 0 or local_index >= len(self):
+            raise IndexError("trajectory index out of range")
+        cached = self._state_cache.get(local_index)
+        if cached is None:
+            cached = self.indexed_soa.state_at(local_index)
+            self._state_cache[local_index] = cached
+        return cached
 
 
 PSEUDO_GRID_PASSIVE_DELTA_FIELDS: tuple[str, ...] = (

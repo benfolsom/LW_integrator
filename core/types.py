@@ -485,6 +485,132 @@ class TrajectoryArrays:
         return [self.state_at(i) for i in range(self.n_steps)]
 
 
+@dataclass
+class IndexedTrajectoryArrays:
+    """Particle-indexed view over a :class:`TrajectoryArrays` history."""
+
+    base: TrajectoryArrays
+    particle_indices: np.ndarray
+    start_step: int = 0
+    q_override: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        indices = np.asarray(self.particle_indices, dtype=int)
+        if indices.ndim != 1:
+            raise ValueError("particle_indices must be a 1-D array")
+        if np.any(indices < 0) or np.any(indices >= self.base.n_particles):
+            raise ValueError("particle_indices are out of bounds for base trajectory")
+        if self.start_step < 0 or self.start_step > self.base.n_steps:
+            raise ValueError("start_step is out of bounds for base trajectory")
+        if self.q_override is not None:
+            q_override = np.asarray(self.q_override, dtype=float)
+            if q_override.shape != (indices.size,):
+                raise ValueError("q_override must match the indexed particle count")
+            self.q_override = q_override
+        self.particle_indices = indices
+
+    @property
+    def n_steps(self) -> int:
+        return self.base.n_steps - int(self.start_step)
+
+    @property
+    def n_particles(self) -> int:
+        return int(self.particle_indices.size)
+
+    def global_step(self, step: int) -> int:
+        local_step = int(step)
+        if local_step < 0:
+            local_step += self.n_steps
+        if local_step < 0 or local_step >= self.n_steps:
+            raise IndexError("trajectory step index out of range")
+        return int(self.start_step) + local_step
+
+    def row(self, field_name: str, step: int) -> np.ndarray:
+        return np.asarray(getattr(self.base, field_name))[self.global_step(step), :][
+            self.particle_indices
+        ]
+
+    def scalar(self, field_name: str, step: int, particle_idx: int) -> float:
+        return float(
+            np.asarray(getattr(self.base, field_name))[
+                self.global_step(step),
+                int(self.particle_indices[int(particle_idx)]),
+            ]
+        )
+
+    def values_at_steps(
+        self,
+        field_name: str,
+        steps: np.ndarray,
+        particle_indices: np.ndarray,
+    ) -> np.ndarray:
+        local_steps = np.asarray(steps, dtype=int)
+        local_particles = np.asarray(particle_indices, dtype=int)
+        return np.asarray(getattr(self.base, field_name))[
+            int(self.start_step) + local_steps,
+            self.particle_indices[local_particles],
+        ]
+
+    def time_columns(self, up_to_step: int) -> np.ndarray:
+        end_step = self.global_step(up_to_step) + 1
+        return np.asarray(self.base.t)[int(self.start_step) : end_step, :][
+            :, self.particle_indices
+        ]
+
+    def constant(self, field_name: str) -> np.ndarray:
+        if field_name == "q" and self.q_override is not None:
+            return np.asarray(self.q_override, dtype=float)
+        return np.asarray(getattr(self.base, field_name))[self.particle_indices]
+
+    def state_at(self, step: int) -> ParticleState:
+        global_step = self.global_step(step)
+        state: ParticleState = {
+            "x": self.row("x", step),
+            "y": self.row("y", step),
+            "z": self.row("z", step),
+            "t": self.row("t", step),
+            "Px": self.row("Px", step),
+            "Py": self.row("Py", step),
+            "Pz": self.row("Pz", step),
+            "Pt": self.row("Pt", step),
+            "gamma": self.row("gamma", step),
+            "bx": self.row("bx", step),
+            "by": self.row("by", step),
+            "bz": self.row("bz", step),
+            "bdotx": self.row("bdotx", step),
+            "bdoty": self.row("bdoty", step),
+            "bdotz": self.row("bdotz", step),
+            "radiation_power": self.row("radiation_power", step),
+            "radiation_energy": self.row("radiation_energy", step),
+            "radiation_energy_applied": self.row("radiation_energy_applied", step),
+            "q": self.constant("q"),
+            "m": self.constant("m"),
+            "char_time": self.constant("char_time"),
+            "origin_x": self.row("origin_x", step),
+            "origin_y": self.row("origin_y", step),
+            "origin_z": self.row("origin_z", step),
+            "beta_avg_x": self.row("beta_avg_x", step),
+            "beta_avg_y": self.row("beta_avg_y", step),
+            "beta_avg_z": self.row("beta_avg_z", step),
+            "beta_samples": self.row("beta_samples", step),
+            "_dead_particles": np.asarray(self.base.dead)[
+                global_step,
+                self.particle_indices,
+            ],
+        }
+        pseudo_grid_schedule = self.base.pseudo_grid_schedule[global_step]
+        if pseudo_grid_schedule is not None:
+            state["_pseudo_grid_schedule"] = pseudo_grid_schedule
+        if self.base.halted_early[global_step]:
+            state["_halted_early"] = bool(self.base.halted_early[global_step])
+            state["_halt_step"] = int(self.base.halt_step[global_step])
+            state["_halt_reason"] = self.base.halt_reason[global_step]
+        return state
+
+    def to_legacy(self) -> "Trajectory":
+        return [self.state_at(i) for i in range(self.n_steps)]
+
+
 class TrajectoryBuilder:
     """Incremental accumulator for building a :class:`TrajectoryArrays`.
 
@@ -673,5 +799,6 @@ __all__ = [
     "ExternalFieldConfig",
     "C_MMNS",
     "TrajectoryArrays",
+    "IndexedTrajectoryArrays",
     "TrajectoryBuilder",
 ]

@@ -989,21 +989,123 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     }
 
 
-def _compute_alive_particle_radial_stats(state: Dict[str, Any]) -> tuple[float, float]:
+def _empty_distribution_summary() -> Dict[str, float]:
+    return {
+        "alive_count": 0.0,
+        "total_count": 0.0,
+        "alive_fraction": 0.0,
+    }
+
+
+def _summary_series(summaries: list[Dict[str, float]], key: str) -> np.ndarray:
+    return np.array([summary.get(key, 0.0) for summary in summaries], dtype=float)
+
+
+def _compute_alive_particle_radial_summary(
+    state: Dict[str, Any],
+    *,
+    initial_rms_radius_mm: float | None = None,
+) -> Dict[str, float]:
     x_alive = get_alive_particle_values(state, "x")
     y_alive = get_alive_particle_values(state, "y")
+    total_count = float(len(np.asarray(state.get("x", []))))
     if x_alive is None or y_alive is None or len(x_alive) == 0 or len(y_alive) == 0:
-        return 0.0, 0.0
+        summary = _empty_distribution_summary()
+        summary["total_count"] = total_count
+        return summary
 
     radii = np.sqrt(
         np.asarray(x_alive, dtype=float) ** 2 + np.asarray(y_alive, dtype=float) ** 2
     )
     if len(radii) == 0:
-        return 0.0, 0.0
+        summary = _empty_distribution_summary()
+        summary["total_count"] = total_count
+        return summary
 
-    mean_radius = float(np.mean(radii))
-    rms_radius = float(np.sqrt(np.mean(radii**2)))
-    return mean_radius, rms_radius
+    summary = {
+        "alive_count": float(len(radii)),
+        "total_count": total_count,
+        "alive_fraction": float(len(radii) / total_count) if total_count > 0 else 0.0,
+        "r_mean_particle": float(np.mean(radii)),
+        "r_rms_particle": float(np.sqrt(np.mean(radii**2))),
+    }
+    for percentile in (50, 68, 90, 95, 99):
+        summary[f"r_p{percentile}_particle"] = float(np.percentile(radii, percentile))
+
+    if initial_rms_radius_mm is not None and initial_rms_radius_mm > 0.0:
+        for multiplier in (2, 3, 5):
+            threshold = multiplier * initial_rms_radius_mm
+            summary[f"halo_gt_{multiplier}_initial_rms_fraction"] = float(
+                np.mean(radii > threshold)
+            )
+
+    return summary
+
+
+def _compute_alive_particle_radial_stats(state: Dict[str, Any]) -> tuple[float, float]:
+    summary = _compute_alive_particle_radial_summary(state)
+    return summary.get("r_mean_particle", 0.0), summary.get("r_rms_particle", 0.0)
+
+
+def _compute_alive_particle_longitudinal_summary(
+    state: Dict[str, Any],
+) -> Dict[str, float]:
+    z_alive = get_alive_particle_values(state, "z")
+    total_count = float(len(np.asarray(state.get("z", []))))
+    if z_alive is None or len(z_alive) == 0:
+        summary = _empty_distribution_summary()
+        summary["total_count"] = total_count
+        return summary
+
+    z_values = np.asarray(z_alive, dtype=float)
+    summary = {
+        "alive_count": float(len(z_values)),
+        "total_count": total_count,
+        "alive_fraction": (
+            float(len(z_values) / total_count) if total_count > 0 else 0.0
+        ),
+        "z_std_particle": float(np.std(z_values)),
+    }
+    percentiles = {
+        "p01": 1,
+        "p05": 5,
+        "p50": 50,
+        "p95": 95,
+        "p99": 99,
+    }
+    percentile_values = {
+        label: float(np.percentile(z_values, percentile))
+        for label, percentile in percentiles.items()
+    }
+    for label, value in percentile_values.items():
+        summary[f"z_{label}_particle"] = value
+    summary["z_width_p90_particle"] = (
+        percentile_values["p95"] - percentile_values["p05"]
+    )
+    summary["z_width_p98_particle"] = (
+        percentile_values["p99"] - percentile_values["p01"]
+    )
+    return summary
+
+
+def _compute_alive_particle_momentum_summary(state: Dict[str, Any]) -> Dict[str, float]:
+    gamma_alive = get_alive_particle_values(state, "gamma")
+    pz_alive = get_alive_particle_values(state, "Pz")
+    m_alive = get_alive_particle_values(state, "m")
+    if gamma_alive is None or len(gamma_alive) == 0:
+        return {"gamma_std_particle": 0.0, "pz_std_particle": 0.0}
+
+    summary = {
+        "gamma_std_particle": float(np.std(np.asarray(gamma_alive, dtype=float)))
+    }
+    if pz_alive is not None and m_alive is not None and len(pz_alive) > 0:
+        normalized_pz = np.asarray(pz_alive, dtype=float) / (
+            np.asarray(m_alive, dtype=float) * C_MMNS
+        )
+        summary["pz_std_particle"] = float(np.std(normalized_pz))
+    else:
+        summary["pz_std_particle"] = 0.0
+    return summary
 
 
 @dataclass
@@ -1970,14 +2072,31 @@ def run_testbed(
                     ]
                 )
                 r_arr = np.sqrt(x_arr**2 + y_arr**2)
-                rider_radial_stats = [
-                    _compute_alive_particle_radial_stats(s) for s in rider_states
-                ]
-                r_mean_particle_arr = np.array(
-                    [stats[0] for stats in rider_radial_stats]
+                rider_initial_radial_summary = _compute_alive_particle_radial_summary(
+                    rider_states[0]
                 )
-                r_rms_particle_arr = np.array(
-                    [stats[1] for stats in rider_radial_stats]
+                rider_initial_rms = rider_initial_radial_summary.get(
+                    "r_rms_particle", 0.0
+                )
+                rider_radial_summaries = [
+                    _compute_alive_particle_radial_summary(
+                        s,
+                        initial_rms_radius_mm=rider_initial_rms,
+                    )
+                    for s in rider_states
+                ]
+                rider_longitudinal_summaries = [
+                    _compute_alive_particle_longitudinal_summary(s)
+                    for s in rider_states
+                ]
+                rider_momentum_summaries = [
+                    _compute_alive_particle_momentum_summary(s) for s in rider_states
+                ]
+                r_mean_particle_arr = _summary_series(
+                    rider_radial_summaries, "r_mean_particle"
+                )
+                r_rms_particle_arr = _summary_series(
+                    rider_radial_summaries, "r_rms_particle"
                 )
 
                 # Extract momentum components (capital P) and normalize by m*c
@@ -2020,9 +2139,69 @@ def run_testbed(
                     "r": r_arr,
                     "r_mean_particle": r_mean_particle_arr,
                     "r_rms_particle": r_rms_particle_arr,
-                    "pz": Pz_arr / (m_arr * C_MMNS),  # Normalized longitudinal momentum
-                    "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
-                    "gamma": gamma_arr,  # Lorentz factor for stability analysis
+                    "r_p50_particle": _summary_series(
+                        rider_radial_summaries, "r_p50_particle"
+                    ),
+                    "r_p68_particle": _summary_series(
+                        rider_radial_summaries, "r_p68_particle"
+                    ),
+                    "r_p90_particle": _summary_series(
+                        rider_radial_summaries, "r_p90_particle"
+                    ),
+                    "r_p95_particle": _summary_series(
+                        rider_radial_summaries, "r_p95_particle"
+                    ),
+                    "r_p99_particle": _summary_series(
+                        rider_radial_summaries, "r_p99_particle"
+                    ),
+                    "halo_gt_2_initial_rms_fraction": _summary_series(
+                        rider_radial_summaries,
+                        "halo_gt_2_initial_rms_fraction",
+                    ),
+                    "halo_gt_3_initial_rms_fraction": _summary_series(
+                        rider_radial_summaries,
+                        "halo_gt_3_initial_rms_fraction",
+                    ),
+                    "halo_gt_5_initial_rms_fraction": _summary_series(
+                        rider_radial_summaries,
+                        "halo_gt_5_initial_rms_fraction",
+                    ),
+                    "alive_fraction": _summary_series(
+                        rider_radial_summaries, "alive_fraction"
+                    ),
+                    "z_p01_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p01_particle"
+                    ),
+                    "z_p05_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p05_particle"
+                    ),
+                    "z_p50_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p50_particle"
+                    ),
+                    "z_p95_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p95_particle"
+                    ),
+                    "z_p99_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p99_particle"
+                    ),
+                    "z_width_p90_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_width_p90_particle"
+                    ),
+                    "z_width_p98_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_width_p98_particle"
+                    ),
+                    "z_std_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_std_particle"
+                    ),
+                    "gamma_std_particle": _summary_series(
+                        rider_momentum_summaries, "gamma_std_particle"
+                    ),
+                    "pz_std_particle": _summary_series(
+                        rider_momentum_summaries, "pz_std_particle"
+                    ),
+                    "pz": Pz_arr / (m_arr * C_MMNS),
+                    "pr": Pr_arr / (m_arr * C_MMNS),
+                    "gamma": gamma_arr,
                     "t": np.array(
                         [
                             compute_alive_particle_average(s, "t") or 0.0
@@ -2161,14 +2340,32 @@ def run_testbed(
                         ]
                     )
                     r_arr = np.sqrt(x_arr**2 + y_arr**2)
-                    driver_radial_stats = [
-                        _compute_alive_particle_radial_stats(s) for s in driver_states
-                    ]
-                    r_mean_particle_arr = np.array(
-                        [stats[0] for stats in driver_radial_stats]
+                    driver_initial_radial_summary = (
+                        _compute_alive_particle_radial_summary(driver_states[0])
                     )
-                    r_rms_particle_arr = np.array(
-                        [stats[1] for stats in driver_radial_stats]
+                    driver_initial_rms = driver_initial_radial_summary.get(
+                        "r_rms_particle", 0.0
+                    )
+                    driver_radial_summaries = [
+                        _compute_alive_particle_radial_summary(
+                            s,
+                            initial_rms_radius_mm=driver_initial_rms,
+                        )
+                        for s in driver_states
+                    ]
+                    driver_longitudinal_summaries = [
+                        _compute_alive_particle_longitudinal_summary(s)
+                        for s in driver_states
+                    ]
+                    driver_momentum_summaries = [
+                        _compute_alive_particle_momentum_summary(s)
+                        for s in driver_states
+                    ]
+                    r_mean_particle_arr = _summary_series(
+                        driver_radial_summaries, "r_mean_particle"
+                    )
+                    r_rms_particle_arr = _summary_series(
+                        driver_radial_summaries, "r_rms_particle"
                     )
                     Pz_arr = np.array(
                         [
@@ -2206,6 +2403,66 @@ def run_testbed(
                         "r": r_arr,
                         "r_mean_particle": r_mean_particle_arr,
                         "r_rms_particle": r_rms_particle_arr,
+                        "r_p50_particle": _summary_series(
+                            driver_radial_summaries, "r_p50_particle"
+                        ),
+                        "r_p68_particle": _summary_series(
+                            driver_radial_summaries, "r_p68_particle"
+                        ),
+                        "r_p90_particle": _summary_series(
+                            driver_radial_summaries, "r_p90_particle"
+                        ),
+                        "r_p95_particle": _summary_series(
+                            driver_radial_summaries, "r_p95_particle"
+                        ),
+                        "r_p99_particle": _summary_series(
+                            driver_radial_summaries, "r_p99_particle"
+                        ),
+                        "halo_gt_2_initial_rms_fraction": _summary_series(
+                            driver_radial_summaries,
+                            "halo_gt_2_initial_rms_fraction",
+                        ),
+                        "halo_gt_3_initial_rms_fraction": _summary_series(
+                            driver_radial_summaries,
+                            "halo_gt_3_initial_rms_fraction",
+                        ),
+                        "halo_gt_5_initial_rms_fraction": _summary_series(
+                            driver_radial_summaries,
+                            "halo_gt_5_initial_rms_fraction",
+                        ),
+                        "alive_fraction": _summary_series(
+                            driver_radial_summaries, "alive_fraction"
+                        ),
+                        "z_p01_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p01_particle"
+                        ),
+                        "z_p05_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p05_particle"
+                        ),
+                        "z_p50_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p50_particle"
+                        ),
+                        "z_p95_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p95_particle"
+                        ),
+                        "z_p99_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p99_particle"
+                        ),
+                        "z_width_p90_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_width_p90_particle"
+                        ),
+                        "z_width_p98_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_width_p98_particle"
+                        ),
+                        "z_std_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_std_particle"
+                        ),
+                        "gamma_std_particle": _summary_series(
+                            driver_momentum_summaries, "gamma_std_particle"
+                        ),
+                        "pz_std_particle": _summary_series(
+                            driver_momentum_summaries, "pz_std_particle"
+                        ),
                         "pz": Pz_arr / (m_arr * C_MMNS),
                         "pr": Pr_arr / (m_arr * C_MMNS),
                         "gamma": gamma_arr,

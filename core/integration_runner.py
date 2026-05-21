@@ -9,7 +9,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, replace
 from functools import lru_cache
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, cast
 
 import numpy as np
 
@@ -25,6 +25,7 @@ from .particle_status import (
 )
 from .particle_loss import build_particle_loss_context, mark_particle_losses
 from .pseudo_grid import (
+    ActiveTrajectoryView,
     PseudoGridPlannerState,
     PseudoGridStepSchedule,
     build_pseudo_grid_step_schedule,
@@ -38,6 +39,7 @@ from .pseudo_grid import (
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import (
     ChronoMatchingMode,
+    IndexedTrajectoryArrays,
     IntegratorConfig,
     ParticleLossConfig,
     ParticleState,
@@ -67,6 +69,26 @@ def _build_partial_soa(
             builder.set_step(idx, trajectory[idx])
         return builder.build()
     except Exception:
+        return None
+
+
+def _indexed_active_history(
+    trajectory_soa: TrajectoryArrays | None,
+    particle_indices: np.ndarray,
+    *,
+    start_step: int = 0,
+    q_override: np.ndarray | None = None,
+) -> IndexedTrajectoryArrays | None:
+    if trajectory_soa is None:
+        return None
+    try:
+        return IndexedTrajectoryArrays(
+            trajectory_soa,
+            np.asarray(particle_indices, dtype=int),
+            start_step=int(start_step),
+            q_override=q_override,
+        )
+    except ValueError:
         return None
 
 
@@ -398,6 +420,9 @@ def _run_pseudo_grid_reduced_step(
     pseudo_grid_weighting_mode: str,
     loss_tracking_enabled: bool,
     source_history_base_index: int = 0,
+    observer_history_base_index: int = 0,
+    observer_soa: TrajectoryArrays | None = None,
+    source_soa: TrajectoryArrays | None = None,
     raise_gamma_blowup: bool = False,
 ) -> ParticleState:
     """Advance one pseudo-grid half-step via active-only observer/source solves."""
@@ -407,29 +432,52 @@ def _run_pseudo_grid_reduced_step(
     if np.asarray(observer_active_indices, dtype=int).size == 0:
         return _copy_particle_state(observer_history[-1])
 
-    observer_active_history = slice_trajectory_particle_history(
-        observer_history,
-        observer_active_indices,
-    )
-    source_active_history = slice_trajectory_particle_history(
+    observer_active = np.asarray(observer_active_indices, dtype=int)
+    source_active = np.asarray(source_active_indices, dtype=int)
+    source_local_start = _resolve_history_start_index(
         source_history,
-        source_active_indices,
-        start_index=_resolve_history_start_index(
-            source_history,
-            source_history_start_index,
-            history_base_index=source_history_base_index,
-        ),
+        source_history_start_index,
+        history_base_index=source_history_base_index,
+    )
+    observer_global_start = int(observer_history_base_index)
+    source_global_start = int(source_history_base_index) + source_local_start
+
+    observer_active_soa = _indexed_active_history(
+        observer_soa,
+        observer_active,
+        start_step=observer_global_start,
+    )
+    source_active_soa = _indexed_active_history(
+        source_soa,
+        source_active,
+        start_step=source_global_start,
         q_override=source_effective_charges,
     )
+
+    if observer_active_soa is not None and source_active_soa is not None:
+        observer_active_history = ActiveTrajectoryView(observer_active_soa)
+        source_active_history = ActiveTrajectoryView(source_active_soa)
+    else:
+        observer_active_history = slice_trajectory_particle_history(
+            observer_history,
+            observer_active,
+        )
+        source_active_history = slice_trajectory_particle_history(
+            source_history,
+            source_active,
+            start_index=source_local_start,
+            q_override=source_effective_charges,
+        )
+        observer_active_soa = _build_partial_soa(
+            observer_active_history,
+            len(observer_active_history),
+        )
+        source_active_soa = _build_partial_soa(
+            source_active_history,
+            len(source_active_history),
+        )
+
     local_index = len(observer_active_history) - 1
-    observer_active_soa = _build_partial_soa(
-        observer_active_history,
-        local_index + 1,
-    )
-    source_active_soa = _build_partial_soa(
-        source_active_history,
-        len(source_active_history),
-    )
     pseudo_grid_space_charge_source_charges = None
     if _space_charge_enabled(space_charge):
         pseudo_grid_space_charge_source_charges = (
@@ -445,8 +493,8 @@ def _run_pseudo_grid_reduced_step(
         active_result_state = self_consistent_step(
             retarded_equations_of_motion,
             h_step,
-            observer_active_history,
-            source_active_history,
+            cast(Trajectory, observer_active_history),
+            cast(Trajectory, source_active_history),
             local_index,
             aperture_radius,
             sim_type,
@@ -499,7 +547,9 @@ def _run_pseudo_grid_reduced_step(
         else:
             print(message)
 
-        active_result_state = _copy_particle_state(observer_active_history[-1])
+        active_result_state = _copy_particle_state(
+            cast(ParticleState, observer_active_history[-1])
+        )
         mark_particle_dead(
             active_result_state,
             local_particle_idx,
@@ -566,7 +616,10 @@ def _run_adaptive_step(
     pseudo_grid_loss_tracking_enabled: bool = True,
     pseudo_grid_observer_history: Trajectory | None = None,
     pseudo_grid_source_history: Trajectory | None = None,
+    pseudo_grid_observer_history_base_index: int = 0,
     pseudo_grid_source_history_base_index: int = 0,
+    pseudo_grid_observer_soa: TrajectoryArrays | None = None,
+    pseudo_grid_source_soa: TrajectoryArrays | None = None,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -731,6 +784,9 @@ def _run_adaptive_step(
             pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
             loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
             source_history_base_index=pseudo_grid_source_history_base_index,
+            observer_history_base_index=pseudo_grid_observer_history_base_index,
+            observer_soa=pseudo_grid_observer_soa,
+            source_soa=pseudo_grid_source_soa,
         )
         adaptive_state.reduced_timestep_mode = reduced_timestep_mode
         adaptive_state.reduced_h_step = reduced_h_step
@@ -857,6 +913,9 @@ def _run_adaptive_step(
                         pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
                         loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
                         source_history_base_index=i - 1,
+                        observer_history_base_index=i - 1,
+                        observer_soa=None,
+                        source_soa=None,
                         raise_gamma_blowup=_adaptive_timestep_enabled(
                             adaptive_timestep
                         ),
@@ -1659,10 +1718,21 @@ def retarded_integrator(
                 pseudo_grid_source_history=(
                     _driver_retained_history if _pseudo_grid_retention_active else None
                 ),
+                pseudo_grid_observer_history_base_index=(
+                    _rider_retained_history_start_index
+                    if _pseudo_grid_retention_active
+                    else 0
+                ),
                 pseudo_grid_source_history_base_index=(
                     _driver_retained_history_start_index
                     if _pseudo_grid_retention_active
                     else 0
+                ),
+                pseudo_grid_observer_soa=_traj_builder.build_partial(i),
+                pseudo_grid_source_soa=(
+                    _traj_drv_builder.build_partial(i)
+                    if _traj_drv_builder is not None
+                    else None
                 ),
             )
             _ensure_startup_metadata(trajectory[i])
@@ -1813,6 +1883,17 @@ def retarded_integrator(
                             if _pseudo_grid_retention_active
                             else 0
                         ),
+                        observer_history_base_index=(
+                            _driver_retained_history_start_index
+                            if _pseudo_grid_retention_active
+                            else 0
+                        ),
+                        observer_soa=(
+                            _traj_drv_builder.build_partial(i)
+                            if _traj_drv_builder is not None
+                            else None
+                        ),
+                        source_soa=_traj_builder.build_partial(i),
                     )
                 else:
                     _b2b_scs_accepts_soa = _call_accepts_kw(

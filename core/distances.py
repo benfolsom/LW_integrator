@@ -14,10 +14,60 @@ from typing import Dict, Iterable, Optional
 import numpy as np
 
 from .constants import C_MMNS, NUMERICAL_EPSILON
-from .types import ChronoMatchingMode, ParticleState, Trajectory, TrajectoryArrays
+from .types import (
+    ChronoMatchingMode,
+    IndexedTrajectoryArrays,
+    ParticleState,
+    Trajectory,
+    TrajectoryArrays,
+)
 
 DistanceResult = Dict[str, np.ndarray]
+TrajectoryArraysLike = TrajectoryArrays | IndexedTrajectoryArrays
 _MAX_VECTORIZED_CHRONO_MATCH_CELLS = 1_000_000
+
+
+def _soa_row(traj: TrajectoryArraysLike, field_name: str, step: int) -> np.ndarray:
+    if isinstance(traj, IndexedTrajectoryArrays):
+        return traj.row(field_name, step)
+    return np.asarray(getattr(traj, field_name))[step]
+
+
+def _soa_scalar(
+    traj: TrajectoryArraysLike,
+    field_name: str,
+    step: int,
+    particle_idx: int,
+) -> float:
+    if isinstance(traj, IndexedTrajectoryArrays):
+        return traj.scalar(field_name, step, particle_idx)
+    return float(np.asarray(getattr(traj, field_name))[step, particle_idx])
+
+
+def _soa_values_at_steps(
+    traj: TrajectoryArraysLike,
+    field_name: str,
+    steps: np.ndarray,
+    particle_indices: np.ndarray,
+) -> np.ndarray:
+    if isinstance(traj, IndexedTrajectoryArrays):
+        return traj.values_at_steps(field_name, steps, particle_indices)
+    return np.asarray(getattr(traj, field_name))[steps, particle_indices]
+
+
+def _soa_time_columns(
+    traj: TrajectoryArraysLike,
+    up_to_step: int,
+) -> np.ndarray:
+    if isinstance(traj, IndexedTrajectoryArrays):
+        return traj.time_columns(up_to_step)
+    return np.asarray(traj.t)[: up_to_step + 1, :]
+
+
+def _soa_constant(traj: TrajectoryArraysLike, field_name: str) -> np.ndarray:
+    if isinstance(traj, IndexedTrajectoryArrays):
+        return traj.constant(field_name)
+    return np.asarray(getattr(traj, field_name))
 
 
 @dataclass
@@ -210,8 +260,8 @@ def _compute_delta_t_soa(
     sample_index: int,
     index_traj: int,
     index_part: int,
-    traj: TrajectoryArrays,
-    traj_ext: TrajectoryArrays,
+    traj: TrajectoryArraysLike,
+    traj_ext: TrajectoryArraysLike,
 ) -> float:
     """SOA equivalent of :func:`_compute_delta_t`."""
     if mode is ChronoMatchingMode.FAST:
@@ -227,10 +277,12 @@ def _compute_delta_t_soa(
     current_source_index = min(index_traj, traj_ext.n_steps - 1)
     time_offsets = np.array([distance / C_MMNS, 2.0 * distance / C_MMNS], dtype=float)
     sampled_b = 0.0
-    t_col = traj_ext.t[: current_source_index + 1, sample_index]
+    t_col = _soa_time_columns(traj_ext, current_source_index)[:, sample_index]
 
     for offset in time_offsets:
-        target_time = traj_ext.t[current_source_index, sample_index] - offset
+        target_time = (
+            _soa_scalar(traj_ext, "t", current_source_index, sample_index) - offset
+        )
         matched_index = _locate_retarded_index_soa(
             t_col,
             current_source_index,
@@ -238,9 +290,15 @@ def _compute_delta_t_soa(
             side="left",
         )
 
-        dx = traj.x[index_traj, index_part] - traj_ext.x[matched_index, sample_index]
-        dy = traj.y[index_traj, index_part] - traj_ext.y[matched_index, sample_index]
-        dz = traj.z[index_traj, index_part] - traj_ext.z[matched_index, sample_index]
+        dx = _soa_scalar(traj, "x", index_traj, index_part) - _soa_scalar(
+            traj_ext, "x", matched_index, sample_index
+        )
+        dy = _soa_scalar(traj, "y", index_traj, index_part) - _soa_scalar(
+            traj_ext, "y", matched_index, sample_index
+        )
+        dz = _soa_scalar(traj, "z", index_traj, index_part) - _soa_scalar(
+            traj_ext, "z", matched_index, sample_index
+        )
         sample_distance = (dx * dx + dy * dy + dz * dz) ** 0.5
         if sample_distance < NUMERICAL_EPSILON:
             nx = ny = nz = 0.0
@@ -250,9 +308,9 @@ def _compute_delta_t_soa(
             nz = dz / sample_distance
 
         sampled_b += (
-            traj_ext.bx[matched_index, sample_index] * nx
-            + traj_ext.by[matched_index, sample_index] * ny
-            + traj_ext.bz[matched_index, sample_index] * nz
+            _soa_scalar(traj_ext, "bx", matched_index, sample_index) * nx
+            + _soa_scalar(traj_ext, "by", matched_index, sample_index) * ny
+            + _soa_scalar(traj_ext, "bz", matched_index, sample_index) * nz
         )
 
     averaged_b = sampled_b / time_offsets.size
@@ -301,8 +359,8 @@ def compute_instantaneous_distance(
 
 
 def compute_retarded_distance_soa(
-    traj: TrajectoryArrays,
-    traj_ext: TrajectoryArrays,
+    traj: TrajectoryArraysLike,
+    traj_ext: TrajectoryArraysLike,
     index_traj: int,
     index_part: int,
     indices_ret: np.ndarray,
@@ -314,9 +372,15 @@ def compute_retarded_distance_soa(
     indices = np.asarray(indices_ret, dtype=int)
     particle_indices = np.arange(indices.size)
 
-    dx = traj.x[index_traj, index_part] - traj_ext.x[indices, particle_indices]
-    dy = traj.y[index_traj, index_part] - traj_ext.y[indices, particle_indices]
-    dz = traj.z[index_traj, index_part] - traj_ext.z[indices, particle_indices]
+    dx = _soa_scalar(traj, "x", index_traj, index_part) - _soa_values_at_steps(
+        traj_ext, "x", indices, particle_indices
+    )
+    dy = _soa_scalar(traj, "y", index_traj, index_part) - _soa_values_at_steps(
+        traj_ext, "y", indices, particle_indices
+    )
+    dz = _soa_scalar(traj, "z", index_traj, index_part) - _soa_values_at_steps(
+        traj_ext, "z", indices, particle_indices
+    )
     distance = np.sqrt(dx**2 + dy**2 + dz**2)
 
     too_close = distance < NUMERICAL_EPSILON
@@ -374,8 +438,8 @@ def compute_retarded_distance(
 
 
 def chrono_match_indices_soa(
-    traj: TrajectoryArrays,
-    traj_ext: TrajectoryArrays,
+    traj: TrajectoryArraysLike,
+    traj_ext: TrajectoryArraysLike,
     index_traj: int,
     index_part: int,
     *,
@@ -397,9 +461,15 @@ def chrono_match_indices_soa(
 
     current_source_index = min(index_traj, traj_ext.n_steps - 1)
 
-    dx = traj.x[index_traj, index_part] - traj_ext.x[current_source_index, :]
-    dy = traj.y[index_traj, index_part] - traj_ext.y[current_source_index, :]
-    dz = traj.z[index_traj, index_part] - traj_ext.z[current_source_index, :]
+    dx = _soa_scalar(traj, "x", index_traj, index_part) - _soa_row(
+        traj_ext, "x", current_source_index
+    )
+    dy = _soa_scalar(traj, "y", index_traj, index_part) - _soa_row(
+        traj_ext, "y", current_source_index
+    )
+    dz = _soa_scalar(traj, "z", index_traj, index_part) - _soa_row(
+        traj_ext, "z", current_source_index
+    )
     distance = np.sqrt(dx**2 + dy**2 + dz**2)
     too_close = distance < NUMERICAL_EPSILON
     safe_dist = np.where(too_close, NUMERICAL_EPSILON, distance)
@@ -425,7 +495,7 @@ def chrono_match_indices_soa(
 
     # Pre-extract time columns — key SOA win: avoids per-step dict walk
     # shape [current_source_index+1, n_particles]
-    t_cols = traj_ext.t[: current_source_index + 1, :]
+    t_cols = _soa_time_columns(traj_ext, current_source_index)
 
     if (
         mode is ChronoMatchingMode.FAST
@@ -434,9 +504,9 @@ def chrono_match_indices_soa(
         and t_cols.size <= _MAX_VECTORIZED_CHRONO_MATCH_CELLS
     ):
         b_nhat_all = (
-            traj_ext.bx[current_source_index, :] * nhat["nx"]
-            + traj_ext.by[current_source_index, :] * nhat["ny"]
-            + traj_ext.bz[current_source_index, :] * nhat["nz"]
+            _soa_row(traj_ext, "bx", current_source_index) * nhat["nx"]
+            + _soa_row(traj_ext, "by", current_source_index) * nhat["ny"]
+            + _soa_row(traj_ext, "bz", current_source_index) * nhat["nz"]
         )
         denominator = 1.0 - b_nhat_all
         singular = np.abs(denominator) < 1e-15
@@ -449,14 +519,14 @@ def chrono_match_indices_soa(
         )
         delta_t = nhat["R"] * (1.0 + b_nhat_all) / (C_MMNS * factored_denominator)
         if np.any(singular):
-            char_time = traj_ext.char_time[:n_particles]
+            char_time = _soa_constant(traj_ext, "char_time")[:n_particles]
             delta_t[singular] = np.where(
                 char_time[singular] > 0.0,
                 10.0 * char_time[singular],
                 1e-3,
             )
 
-        t_ext_new = traj_ext.t[current_source_index, :] - delta_t
+        t_ext_new = _soa_row(traj_ext, "t", current_source_index) - delta_t
         positive_target = t_ext_new > 0.0
         if np.any(positive_target):
             matches = t_cols > t_ext_new[np.newaxis, :]
@@ -467,9 +537,9 @@ def chrono_match_indices_soa(
         return index_traj_new
 
     for sample_index in range(n_particles):
-        bx = traj_ext.bx[current_source_index, sample_index]
-        by = traj_ext.by[current_source_index, sample_index]
-        bz = traj_ext.bz[current_source_index, sample_index]
+        bx = _soa_scalar(traj_ext, "bx", current_source_index, sample_index)
+        by = _soa_scalar(traj_ext, "by", current_source_index, sample_index)
+        bz = _soa_scalar(traj_ext, "bz", current_source_index, sample_index)
         b_nhat = (
             bx * nhat["nx"][sample_index]
             + by * nhat["ny"][sample_index]
@@ -478,7 +548,7 @@ def chrono_match_indices_soa(
 
         denominator = 1.0 - b_nhat
         if abs(denominator) < 1e-15:
-            char_t = traj_ext.char_time[sample_index]
+            char_t = _soa_constant(traj_ext, "char_time")[sample_index]
             delta_t = 10.0 * char_t if char_t > 0 else 1e-3
         elif mode is ChronoMatchingMode.AVERAGED:
             delta_t = _compute_delta_t_soa(
@@ -503,7 +573,9 @@ def chrono_match_indices_soa(
                 trajectory_ext=None,
             )
 
-        t_ext_new = traj_ext.t[current_source_index, sample_index] - delta_t
+        t_ext_new = (
+            _soa_scalar(traj_ext, "t", current_source_index, sample_index) - delta_t
+        )
 
         index_traj_new[sample_index] = current_source_index
         if interpolate:
@@ -522,7 +594,7 @@ def chrono_match_indices_soa(
         index_traj_new[sample_index] = matched_idx
 
         if interpolate:
-            t_matched = traj_ext.t[matched_idx, sample_index]
+            t_matched = _soa_scalar(traj_ext, "t", matched_idx, sample_index)
             residual = abs(t_matched - t_ext_new)
             residuals[sample_index] = residual
 
@@ -530,8 +602,8 @@ def chrono_match_indices_soa(
                 needs_interp[sample_index] = True
                 idx_before = matched_idx - 1
                 idx_after = matched_idx
-                t_before = traj_ext.t[idx_before, sample_index]
-                t_after = traj_ext.t[idx_after, sample_index]
+                t_before = _soa_scalar(traj_ext, "t", idx_before, sample_index)
+                t_after = _soa_scalar(traj_ext, "t", idx_after, sample_index)
                 dt_span = t_after - t_before
                 if dt_span > NUMERICAL_EPSILON:
                     w = np.clip((t_ext_new - t_before) / dt_span, 0.0, 1.0)

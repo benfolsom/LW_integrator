@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 import numpy as np
 
@@ -81,24 +81,38 @@ def build_single_integration_setup(
     simulation_options_cls: type = SimulationOptions,
 ) -> SingleIntegrationSetup:
     """Resolve integration parameters and build the testbed options object."""
-    rider_m_particle = _override_or_config(rider_m_particle, config, "m_particle")
-    rider_charge_sign = _override_or_config(rider_charge_sign, config, "charge_sign")
+    rider_m_particle = cast(
+        float, _override_or_config(rider_m_particle, config, "m_particle")
+    )
+    rider_charge_sign = cast(
+        float, _override_or_config(rider_charge_sign, config, "charge_sign")
+    )
     rider_pcount = int(_override_or_config(rider_pcount, config, "pcount"))
-    rider_transv_mom = _override_or_config(rider_transv_mom, config, "transv_mom")
-    rider_transv_dist = _override_or_config(rider_transv_dist, config, "transv_dist")
-    rider_stripped_ions = _override_or_config(
-        rider_stripped_ions, config, "stripped_ions"
+    rider_transv_mom = cast(
+        float, _override_or_config(rider_transv_mom, config, "transv_mom")
     )
-    wall_z = _override_or_config(wall_z, config, "wall_z")
-    macroparticle_charge_multiplier = (
-        macroparticle_charge_multiplier
-        if macroparticle_charge_multiplier is not None
-        else config.macroparticle_charge_multiplier
+    rider_transv_dist = cast(
+        float, _override_or_config(rider_transv_dist, config, "transv_dist")
     )
-    macroparticle_sigma_multiplier = (
-        macroparticle_sigma_multiplier
-        if macroparticle_sigma_multiplier is not None
-        else config.macroparticle_sigma_multiplier
+    rider_stripped_ions = cast(
+        float, _override_or_config(rider_stripped_ions, config, "stripped_ions")
+    )
+    wall_z = cast(float, _override_or_config(wall_z, config, "wall_z"))
+    macroparticle_charge_multiplier = cast(
+        float,
+        (
+            macroparticle_charge_multiplier
+            if macroparticle_charge_multiplier is not None
+            else config.macroparticle_charge_multiplier
+        ),
+    )
+    macroparticle_sigma_multiplier = cast(
+        float,
+        (
+            macroparticle_sigma_multiplier
+            if macroparticle_sigma_multiplier is not None
+            else config.macroparticle_sigma_multiplier
+        ),
     )
 
     rider_params = {
@@ -270,6 +284,79 @@ def build_single_integration_setup(
             config,
             "radiation_reaction_mode",
             "medina_lad",
+        ),
+        particle_loss_enabled=getattr(config, "particle_loss_enabled", True),
+        particle_loss_radius_mm=getattr(config, "particle_loss_radius_mm", 500.0),
+        particle_loss_conducting_wall_aperture_loss_enabled=getattr(
+            config,
+            "particle_loss_conducting_wall_aperture_loss_enabled",
+            True,
+        ),
+        particle_loss_initial_radial_quantile=getattr(
+            config,
+            "particle_loss_initial_radial_quantile",
+            None,
+        ),
+        particle_loss_initial_radial_multiplier=getattr(
+            config,
+            "particle_loss_initial_radial_multiplier",
+            1.0,
+        ),
+        particle_loss_initial_radial_margin_mm=getattr(
+            config,
+            "particle_loss_initial_radial_margin_mm",
+            0.0,
+        ),
+        pseudo_grid_enabled=getattr(config, "pseudo_grid_enabled", False),
+        pseudo_grid_active_rider_count=getattr(
+            config,
+            "pseudo_grid_active_rider_count",
+            4,
+        ),
+        pseudo_grid_active_driver_count=getattr(
+            config,
+            "pseudo_grid_active_driver_count",
+            4,
+        ),
+        pseudo_grid_passive_neighbor_count=getattr(
+            config,
+            "pseudo_grid_passive_neighbor_count",
+            4,
+        ),
+        pseudo_grid_coverage_strategy=getattr(
+            config,
+            "pseudo_grid_coverage_strategy",
+            "farthest_point_staleness",
+        ),
+        pseudo_grid_coverage_space=getattr(
+            config,
+            "pseudo_grid_coverage_space",
+            "position",
+        ),
+        pseudo_grid_pair_reuse_window=getattr(
+            config,
+            "pseudo_grid_pair_reuse_window",
+            16,
+        ),
+        pseudo_grid_source_weighting_mode=getattr(
+            config,
+            "pseudo_grid_source_weighting_mode",
+            "inverse_distance",
+        ),
+        pseudo_grid_loss_tracking_enabled=getattr(
+            config,
+            "pseudo_grid_loss_tracking_enabled",
+            True,
+        ),
+        pseudo_grid_causal_history_pruning_enabled=getattr(
+            config,
+            "pseudo_grid_causal_history_pruning_enabled",
+            False,
+        ),
+        pseudo_grid_causal_history_safety_margin_steps=getattr(
+            config,
+            "pseudo_grid_causal_history_safety_margin_steps",
+            2,
         ),
     )
 
@@ -608,47 +695,27 @@ def sample_trajectory_arrays(
 ) -> dict[str, list]:
     """Return a stride-sampled trajectory payload suitable for JSON output."""
     z_array = np.asarray(trajectory["z"])
-    if len(z_array) == 0:
+    series_length = len(z_array)
+    if series_length == 0:
         return {
             key: []
-            for key in (
-                "z",
-                "x",
-                "y",
-                "r",
-                "r_mean_particle",
-                "r_rms_particle",
-                "pz",
-                "pr",
-                "t",
-                "gamma",
-            )
-            if key in trajectory
+            for key, value in trajectory.items()
+            if np.asarray(value).ndim == 1 and len(np.asarray(value)) == 0
         }
 
     stride = max(int(stride), 1)
-    sample_indices = list(range(0, len(z_array), stride))
-    last_index = len(z_array) - 1
+    sample_indices = list(range(0, series_length, stride))
+    last_index = series_length - 1
     if sample_indices[-1] != last_index:
         sample_indices.append(last_index)
     sample_indices = sorted(set(sample_indices))
 
     sampled: dict[str, list] = {}
-    for key in (
-        "z",
-        "x",
-        "y",
-        "r",
-        "r_mean_particle",
-        "r_rms_particle",
-        "pz",
-        "pr",
-        "t",
-        "gamma",
-    ):
-        if key not in trajectory:
+    for key, value in trajectory.items():
+        array = np.asarray(value)
+        if array.ndim != 1 or len(array) != series_length:
             continue
-        sampled[key] = np.asarray(trajectory[key])[sample_indices].tolist()
+        sampled[key] = array[sample_indices].tolist()
     return sampled
 
 
@@ -664,6 +731,36 @@ def distance_info_from_trajectory(
         "z_end": float(z_array[-1]),
         "num_steps": len(z_array),
     }
+
+
+def _add_series_metrics(
+    metrics: dict[str, float],
+    trajectory: Mapping[str, Any],
+    *,
+    source_key: str,
+    metric_base: str,
+    prefix: str,
+    lower_is_better: bool = False,
+) -> None:
+    values = np.asarray(trajectory.get(source_key, []), dtype=float)
+    if len(values) == 0:
+        return
+    finite_values = values[np.isfinite(values)]
+    if len(finite_values) == 0:
+        return
+
+    start = float(values[0])
+    end = float(values[-1])
+    min_val = float(np.min(finite_values))
+    max_val = float(np.max(finite_values))
+    metrics[f"{prefix}_{metric_base}_initial"] = start
+    metrics[f"{prefix}_{metric_base}_final"] = end
+    metrics[f"{prefix}_{metric_base}_min"] = min_val
+    metrics[f"{prefix}_{metric_base}_max"] = max_val
+    metrics[f"{prefix}_{metric_base}_delta"] = end - start
+    if lower_is_better:
+        metrics[f"{prefix}_{metric_base}_reduction"] = start - end
+        metrics[f"{prefix}_{metric_base}_peak_reduction"] = start - min_val
 
 
 def _position_metrics_from_trajectory(
@@ -714,6 +811,70 @@ def _position_metrics_from_trajectory(
         if include_radial_toward_driver:
             metrics[f"{prefix}_radial_rms_toward_driver_mm"] = r_rms_start - r_rms_end
             metrics[f"{prefix}_radial_rms_peak_inward_mm"] = r_rms_start - r_rms_min
+
+    for percentile in (50, 68, 90, 95, 99):
+        _add_series_metrics(
+            metrics,
+            trajectory,
+            source_key=f"r_p{percentile}_particle",
+            metric_base=f"radial_p{percentile}_mm",
+            prefix=prefix,
+            lower_is_better=True,
+        )
+
+    for multiplier in (2, 3, 5):
+        _add_series_metrics(
+            metrics,
+            trajectory,
+            source_key=f"halo_gt_{multiplier}_initial_rms_fraction",
+            metric_base=f"halo_gt_{multiplier}_initial_rms_fraction",
+            prefix=prefix,
+            lower_is_better=True,
+        )
+
+    _add_series_metrics(
+        metrics,
+        trajectory,
+        source_key="alive_fraction",
+        metric_base="alive_fraction",
+        prefix=prefix,
+    )
+    for width_name in ("z_width_p90_particle", "z_width_p98_particle"):
+        metric_base = width_name.replace("z_width", "longitudinal_width").replace(
+            "_particle", "_mm"
+        )
+        _add_series_metrics(
+            metrics,
+            trajectory,
+            source_key=width_name,
+            metric_base=metric_base,
+            prefix=prefix,
+            lower_is_better=True,
+        )
+    _add_series_metrics(
+        metrics,
+        trajectory,
+        source_key="z_std_particle",
+        metric_base="longitudinal_std_mm",
+        prefix=prefix,
+        lower_is_better=True,
+    )
+    _add_series_metrics(
+        metrics,
+        trajectory,
+        source_key="gamma_std_particle",
+        metric_base="gamma_std",
+        prefix=prefix,
+        lower_is_better=True,
+    )
+    _add_series_metrics(
+        metrics,
+        trajectory,
+        source_key="pz_std_particle",
+        metric_base="normalized_pz_std",
+        prefix=prefix,
+        lower_is_better=True,
+    )
 
     return metrics or None
 
