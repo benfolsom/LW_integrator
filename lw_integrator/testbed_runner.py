@@ -2668,8 +2668,13 @@ def run_testbed(
                 else:
                     plt.close(fig_energy)
 
-        core_r_hist = np.array(
-            [[s["t"][0], s["x"][0], s["y"][0], s["z"][0]] for s in rider_states]
+        core_r_hist = np.column_stack(
+            (
+                _extract_scalar_series(rider_states, "t"),
+                _extract_scalar_series(rider_states, "x"),
+                _extract_scalar_series(rider_states, "y"),
+                _extract_scalar_series(rider_states, "z"),
+            )
         )
         core_r_gamma = _extract_scalar_series(rider_states, "gamma")
         core_r_momentum = _extract_vector_series(rider_states, ("Px", "Py", "Pz"))
@@ -2682,8 +2687,13 @@ def run_testbed(
         plot_z_mm = core_r_hist[:, 3]
 
         if driver_allowed and driver_states is not None:
-            core_d_hist = np.array(
-                [[s["t"][0], s["x"][0], s["y"][0], s["z"][0]] for s in driver_states]
+            core_d_hist = np.column_stack(
+                (
+                    _extract_scalar_series(driver_states, "t"),
+                    _extract_scalar_series(driver_states, "x"),
+                    _extract_scalar_series(driver_states, "y"),
+                    _extract_scalar_series(driver_states, "z"),
+                )
             )
             core_d_gamma = _extract_scalar_series(driver_states, "gamma")
             core_d_momentum = _extract_vector_series(driver_states, ("Px", "Py", "Pz"))
