@@ -17,6 +17,7 @@ from .constants import C_MMNS, NUMERICAL_EPSILON
 from .types import ChronoMatchingMode, ParticleState, Trajectory, TrajectoryArrays
 
 DistanceResult = Dict[str, np.ndarray]
+_MAX_VECTORIZED_CHRONO_MATCH_CELLS = 1_000_000
 
 
 @dataclass
@@ -56,6 +57,15 @@ class ChronoMatchResult:
     use_cubic: bool = False
     indices_prev: Optional[np.ndarray] = None
     indices_next2: Optional[np.ndarray] = None
+
+
+def _resolve_external_step_index(
+    trajectory_ext: Trajectory,
+    observer_index: int,
+) -> int:
+    if not trajectory_ext:
+        raise ValueError("trajectory_ext must contain at least one state")
+    return min(max(int(observer_index), 0), len(trajectory_ext) - 1)
 
 
 def _compute_delta_t(
@@ -102,13 +112,17 @@ def _compute_delta_t(
 
         return distance * numerator / (C_MMNS * denominator)
 
+    current_source_index = _resolve_external_step_index(trajectory_ext, index_traj)
     time_offsets = np.array([distance / C_MMNS, 2.0 * distance / C_MMNS], dtype=float)
     sampled_b = 0.0
 
     for offset in time_offsets:
-        target_time = trajectory_ext[index_traj]["t"][sample_index] - offset
+        target_time = trajectory_ext[current_source_index]["t"][sample_index] - offset
         matched_index = _locate_retarded_index(
-            trajectory_ext, index_traj, sample_index, target_time
+            trajectory_ext,
+            current_source_index,
+            sample_index,
+            target_time,
         )
         nhat_offset = compute_instantaneous_distance(
             trajectory[index_traj], trajectory_ext[matched_index], index_part
@@ -148,11 +162,27 @@ def _locate_retarded_index_soa(
     *,
     side: str = "right",
 ) -> int:
-    """SOA fast path: binary search on pre-sliced time column."""
+    """SOA fast path on a pre-sliced time column.
+
+    For the short history windows used in the reduced pseudo-grid path, a tight
+    in-Python scan is faster than dispatching ``np.searchsorted`` per particle.
+    """
+    bounded_index_traj = min(index_traj, len(t_col) - 1)
     if target_time <= 0.0:
-        return index_traj
-    idx = int(np.searchsorted(t_col, target_time, side=side))
-    return min(idx, index_traj)
+        return bounded_index_traj
+
+    matched_idx = bounded_index_traj
+    if side == "left":
+        for candidate_idx in range(bounded_index_traj + 1):
+            if t_col[candidate_idx] >= target_time:
+                matched_idx = candidate_idx
+                break
+    else:
+        for candidate_idx in range(bounded_index_traj + 1):
+            if t_col[candidate_idx] > target_time:
+                matched_idx = candidate_idx
+                break
+    return matched_idx
 
 
 def _locate_retarded_index(
@@ -161,11 +191,12 @@ def _locate_retarded_index(
     sample_index: int,
     target_time: float,
 ) -> int:
+    bounded_index_traj = min(index_traj, len(trajectory_ext) - 1)
     if target_time <= 0.0:
-        return index_traj
+        return bounded_index_traj
 
-    for k in range(index_traj, -1, -1):
-        candidate_index = index_traj - k
+    for k in range(bounded_index_traj, -1, -1):
+        candidate_index = bounded_index_traj - k
         if trajectory_ext[candidate_index]["t"][sample_index] >= target_time:
             return candidate_index
     return 0
@@ -193,14 +224,18 @@ def _compute_delta_t_soa(
 
         return distance * numerator / (C_MMNS * denominator)
 
+    current_source_index = min(index_traj, traj_ext.n_steps - 1)
     time_offsets = np.array([distance / C_MMNS, 2.0 * distance / C_MMNS], dtype=float)
     sampled_b = 0.0
-    t_col = traj_ext.t[: index_traj + 1, sample_index]
+    t_col = traj_ext.t[: current_source_index + 1, sample_index]
 
     for offset in time_offsets:
-        target_time = traj_ext.t[index_traj, sample_index] - offset
+        target_time = traj_ext.t[current_source_index, sample_index] - offset
         matched_index = _locate_retarded_index_soa(
-            t_col, index_traj, target_time, side="left"
+            t_col,
+            current_source_index,
+            target_time,
+            side="left",
         )
 
         dx = traj.x[index_traj, index_part] - traj_ext.x[matched_index, sample_index]
@@ -276,31 +311,23 @@ def compute_retarded_distance_soa(
 
     Avoids per-step dict lookups by accessing 2-D array slices directly.
     """
-    x_obs = traj.x[index_traj, index_part]
-    y_obs = traj.y[index_traj, index_part]
-    z_obs = traj.z[index_traj, index_part]
+    indices = np.asarray(indices_ret, dtype=int)
+    particle_indices = np.arange(indices.size)
 
-    n = len(indices_ret)
-    R = np.empty(n)
-    nx = np.empty(n)
-    ny = np.empty(n)
-    nz = np.empty(n)
+    dx = traj.x[index_traj, index_part] - traj_ext.x[indices, particle_indices]
+    dy = traj.y[index_traj, index_part] - traj_ext.y[indices, particle_indices]
+    dz = traj.z[index_traj, index_part] - traj_ext.z[indices, particle_indices]
+    distance = np.sqrt(dx**2 + dy**2 + dz**2)
 
-    for j, idx in enumerate(indices_ret):
-        dx = x_obs - traj_ext.x[idx, j]
-        dy = y_obs - traj_ext.y[idx, j]
-        dz = z_obs - traj_ext.z[idx, j]
-        d = (dx * dx + dy * dy + dz * dz) ** 0.5
-        if d < NUMERICAL_EPSILON:
-            R[j] = NUMERICAL_EPSILON
-            nx[j] = ny[j] = nz[j] = 0.0
-        else:
-            R[j] = d
-            nx[j] = dx / d
-            ny[j] = dy / d
-            nz[j] = dz / d
+    too_close = distance < NUMERICAL_EPSILON
+    safe_dist = np.where(too_close, NUMERICAL_EPSILON, distance)
 
-    return {"R": R, "nx": nx, "ny": ny, "nz": nz}
+    return {
+        "R": safe_dist,
+        "nx": np.where(too_close, 0.0, dx / safe_dist),
+        "ny": np.where(too_close, 0.0, dy / safe_dist),
+        "nz": np.where(too_close, 0.0, dz / safe_dist),
+    }
 
 
 def compute_retarded_distance(
@@ -316,7 +343,9 @@ def compute_retarded_distance(
     simply evaluates the geometric terms for each matched particle.
     """
 
-    prototype = trajectory_ext[index_traj]["x"]
+    prototype = trajectory_ext[
+        _resolve_external_step_index(trajectory_ext, index_traj)
+    ]["x"]
     result: DistanceResult = {
         "R": np.zeros_like(prototype),
         "nx": np.zeros_like(prototype),
@@ -366,9 +395,11 @@ def chrono_match_indices_soa(
     if adaptive_tolerance and timestep_h is not None and timestep_h > 0:
         effective_tolerance = 0.1 * timestep_h
 
-    dx = traj.x[index_traj, index_part] - traj_ext.x[index_traj, :]
-    dy = traj.y[index_traj, index_part] - traj_ext.y[index_traj, :]
-    dz = traj.z[index_traj, index_part] - traj_ext.z[index_traj, :]
+    current_source_index = min(index_traj, traj_ext.n_steps - 1)
+
+    dx = traj.x[index_traj, index_part] - traj_ext.x[current_source_index, :]
+    dy = traj.y[index_traj, index_part] - traj_ext.y[current_source_index, :]
+    dz = traj.z[index_traj, index_part] - traj_ext.z[current_source_index, :]
     distance = np.sqrt(dx**2 + dy**2 + dz**2)
     too_close = distance < NUMERICAL_EPSILON
     safe_dist = np.where(too_close, NUMERICAL_EPSILON, distance)
@@ -381,6 +412,7 @@ def chrono_match_indices_soa(
 
     n_particles = traj_ext.n_particles
     index_traj_new = np.empty(n_particles, dtype=int)
+    index_traj_new.fill(current_source_index)
 
     if interpolate:
         index_traj_next = np.empty(n_particles, dtype=int)
@@ -392,13 +424,52 @@ def chrono_match_indices_soa(
             index_traj_next2 = np.empty(n_particles, dtype=int)  # noqa: F841
 
     # Pre-extract time columns — key SOA win: avoids per-step dict walk
-    # shape [index_traj+1, n_particles]
-    t_cols = traj_ext.t[: index_traj + 1, :]
+    # shape [current_source_index+1, n_particles]
+    t_cols = traj_ext.t[: current_source_index + 1, :]
+
+    if (
+        mode is ChronoMatchingMode.FAST
+        and not interpolate
+        and n_particles > 0
+        and t_cols.size <= _MAX_VECTORIZED_CHRONO_MATCH_CELLS
+    ):
+        b_nhat_all = (
+            traj_ext.bx[current_source_index, :] * nhat["nx"]
+            + traj_ext.by[current_source_index, :] * nhat["ny"]
+            + traj_ext.bz[current_source_index, :] * nhat["nz"]
+        )
+        denominator = 1.0 - b_nhat_all
+        singular = np.abs(denominator) < 1e-15
+
+        factored_denominator = 1.0 - b_nhat_all**2
+        factored_denominator = np.where(
+            np.abs(factored_denominator) < 1e-12,
+            np.copysign(1e-12, factored_denominator),
+            factored_denominator,
+        )
+        delta_t = nhat["R"] * (1.0 + b_nhat_all) / (C_MMNS * factored_denominator)
+        if np.any(singular):
+            char_time = traj_ext.char_time[:n_particles]
+            delta_t[singular] = np.where(
+                char_time[singular] > 0.0,
+                10.0 * char_time[singular],
+                1e-3,
+            )
+
+        t_ext_new = traj_ext.t[current_source_index, :] - delta_t
+        positive_target = t_ext_new > 0.0
+        if np.any(positive_target):
+            matches = t_cols > t_ext_new[np.newaxis, :]
+            has_match = positive_target & np.any(matches, axis=0)
+            if np.any(has_match):
+                matched_indices = np.argmax(matches, axis=0)
+                index_traj_new[has_match] = matched_indices[has_match]
+        return index_traj_new
 
     for sample_index in range(n_particles):
-        bx = traj_ext.bx[index_traj, sample_index]
-        by = traj_ext.by[index_traj, sample_index]
-        bz = traj_ext.bz[index_traj, sample_index]
+        bx = traj_ext.bx[current_source_index, sample_index]
+        by = traj_ext.by[current_source_index, sample_index]
+        bz = traj_ext.bz[current_source_index, sample_index]
         b_nhat = (
             bx * nhat["nx"][sample_index]
             + by * nhat["ny"][sample_index]
@@ -432,18 +503,22 @@ def chrono_match_indices_soa(
                 trajectory_ext=None,
             )
 
-        t_ext_new = traj_ext.t[index_traj, sample_index] - delta_t
+        t_ext_new = traj_ext.t[current_source_index, sample_index] - delta_t
 
-        index_traj_new[sample_index] = index_traj
+        index_traj_new[sample_index] = current_source_index
         if interpolate:
-            index_traj_next[sample_index] = index_traj
+            index_traj_next[sample_index] = current_source_index
 
         if t_ext_new < 0:
             continue
 
         # SOA binary search on the pre-extracted column
         t_col = t_cols[:, sample_index]
-        matched_idx = _locate_retarded_index_soa(t_col, index_traj, t_ext_new)
+        matched_idx = _locate_retarded_index_soa(
+            t_col,
+            current_source_index,
+            t_ext_new,
+        )
         index_traj_new[sample_index] = matched_idx
 
         if interpolate:
@@ -543,10 +618,13 @@ def chrono_match_indices(
                 f"  [Chrono-match] Adaptive tolerance: {effective_tolerance:.3e} ns (0.1 × {timestep_h:.3e} ns)"
             )
 
+    current_source_index = _resolve_external_step_index(trajectory_ext, index_traj)
+    current_source_state = trajectory_ext[current_source_index]
+
     nhat = compute_instantaneous_distance(
-        trajectory[index_traj], trajectory_ext[index_traj], index_part
+        trajectory[index_traj], current_source_state, index_part
     )
-    n_particles = len(trajectory_ext[index_traj]["x"])
+    n_particles = len(current_source_state["x"])
     index_traj_new = np.empty(n_particles, dtype=int)
 
     # For interpolation mode, track additional data
@@ -563,9 +641,9 @@ def chrono_match_indices(
 
     for sample_index in range(n_particles):
         b_nhat = (
-            trajectory_ext[index_traj]["bx"][sample_index] * nhat["nx"][sample_index]
-            + trajectory_ext[index_traj]["by"][sample_index] * nhat["ny"][sample_index]
-            + trajectory_ext[index_traj]["bz"][sample_index] * nhat["nz"][sample_index]
+            current_source_state["bx"][sample_index] * nhat["nx"][sample_index]
+            + current_source_state["by"][sample_index] * nhat["ny"][sample_index]
+            + current_source_state["bz"][sample_index] * nhat["nz"][sample_index]
         )
 
         denominator = 1.0 - b_nhat
@@ -573,15 +651,13 @@ def chrono_match_indices(
 
         if abs(denominator) < epsilon:
             if (
-                "char_time" in trajectory_ext[index_traj]
-                and len(trajectory_ext[index_traj]["char_time"]) > sample_index
+                "char_time" in current_source_state
+                and len(current_source_state["char_time"]) > sample_index
             ):
-                max_retardation = (
-                    10.0 * trajectory_ext[index_traj]["char_time"][sample_index]
-                )
+                max_retardation = 10.0 * current_source_state["char_time"][sample_index]
             else:
-                if len(trajectory_ext[index_traj]["t"]) > 1:
-                    max_retardation = 10.0 * trajectory_ext[index_traj]["t"][1]
+                if len(current_source_state["t"]) > 1:
+                    max_retardation = 10.0 * current_source_state["t"][1]
                 else:
                     max_retardation = 1e-3
             delta_t = max_retardation
@@ -597,20 +673,20 @@ def chrono_match_indices(
                 trajectory_ext=trajectory_ext,
             )
 
-        t_ext_new = trajectory_ext[index_traj]["t"][sample_index] - delta_t
+        t_ext_new = current_source_state["t"][sample_index] - delta_t
 
-        index_traj_new[sample_index] = index_traj
+        index_traj_new[sample_index] = current_source_index
         if interpolate:
-            index_traj_next[sample_index] = index_traj
+            index_traj_next[sample_index] = current_source_index
 
         if t_ext_new < 0:
             continue
 
         # Find the trajectory index that brackets or is nearest to t_ext_new
-        matched_idx = index_traj
-        for k in range(index_traj, -1, -1):
-            if trajectory_ext[index_traj - k]["t"][sample_index] > t_ext_new:
-                matched_idx = index_traj - k
+        matched_idx = current_source_index
+        for k in range(current_source_index, -1, -1):
+            if trajectory_ext[current_source_index - k]["t"][sample_index] > t_ext_new:
+                matched_idx = current_source_index - k
                 break
 
         index_traj_new[sample_index] = matched_idx
@@ -625,13 +701,17 @@ def chrono_match_indices(
             if residual > effective_tolerance and matched_idx > 0:
                 needs_interp[sample_index] = True
 
-                if high_precision and matched_idx >= 2 and matched_idx < index_traj - 1:
+                if (
+                    high_precision
+                    and matched_idx >= 2
+                    and matched_idx < current_source_index - 1
+                ):
                     # Cubic interpolation using 4 points
                     # Use indices: matched_idx-2, matched_idx-1, matched_idx, matched_idx+1
                     idx_m2 = matched_idx - 2
                     idx_m1 = matched_idx - 1
                     idx_0 = matched_idx
-                    idx_p1 = min(matched_idx + 1, index_traj)
+                    idx_p1 = min(matched_idx + 1, current_source_index)
 
                     t_m1 = trajectory_ext[idx_m1]["t"][sample_index]
                     t_0 = trajectory_ext[idx_0]["t"][sample_index]

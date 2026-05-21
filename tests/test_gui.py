@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.types import SimulationType
 from lw_integrator import gui
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
 from lw_integrator.testbed_runner import SimulationOptions
@@ -125,6 +126,10 @@ def test_gui_inherits_state_helpers_from_state_mixin():
     assert (
         gui.IntegratorGUI._update_macroparticle_state
         is IntegratorGUIStateMixin._update_macroparticle_state
+    )
+    assert (
+        gui.IntegratorGUI._update_pseudo_grid_state
+        is IntegratorGUIStateMixin._update_pseudo_grid_state
     )
 
 
@@ -778,6 +783,54 @@ def test_radiation_reaction_mode_round_trips_through_gui_options():
         rebuilt = app._build_options_from_ui()
 
         assert rebuilt.radiation_reaction_mode == "power_matched_damping"
+    finally:
+        root.destroy()
+
+
+def test_pseudo_grid_settings_round_trip_through_gui_options():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        app._apply_options_to_ui(
+            SimulationOptions(
+                simulation_type=SimulationType.BUNCH_TO_BUNCH,
+                pseudo_grid_enabled=True,
+                pseudo_grid_active_rider_count=6,
+                pseudo_grid_active_driver_count=7,
+                pseudo_grid_passive_neighbor_count=3,
+                pseudo_grid_coverage_strategy="farthest_point",
+                pseudo_grid_coverage_space="phase_space",
+                pseudo_grid_pair_reuse_window=19,
+                pseudo_grid_source_weighting_mode="nearest",
+                pseudo_grid_loss_tracking_enabled=False,
+                pseudo_grid_causal_history_pruning_enabled=True,
+                pseudo_grid_causal_history_safety_margin_steps=5,
+            ),
+            preserve_directories=True,
+        )
+
+        assert app.pseudo_grid_enabled_var.get() is True
+        assert app.pseudo_grid_active_rider_count_var.get() == 6
+        assert app.pseudo_grid_causal_history_pruning_enabled_var.get() is True
+
+        rebuilt = app._build_options_from_ui()
+
+        assert rebuilt.pseudo_grid_enabled is True
+        assert rebuilt.pseudo_grid_active_rider_count == 6
+        assert rebuilt.pseudo_grid_active_driver_count == 7
+        assert rebuilt.pseudo_grid_passive_neighbor_count == 3
+        assert rebuilt.pseudo_grid_coverage_strategy == "farthest_point"
+        assert rebuilt.pseudo_grid_coverage_space == "phase_space"
+        assert rebuilt.pseudo_grid_pair_reuse_window == 19
+        assert rebuilt.pseudo_grid_source_weighting_mode == "nearest"
+        assert rebuilt.pseudo_grid_loss_tracking_enabled is False
+        assert rebuilt.pseudo_grid_causal_history_pruning_enabled is True
+        assert rebuilt.pseudo_grid_causal_history_safety_margin_steps == 5
     finally:
         root.destroy()
 

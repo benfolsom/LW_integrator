@@ -8,7 +8,7 @@ and example notebooks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from typing import Dict, List, Sequence
 
@@ -114,6 +114,70 @@ class GammaReconciliationMethod(Enum):
 
 
 @dataclass
+class ParticleLossConfig:
+    """Configuration for fixed-size physical particle-loss tracking."""
+
+    enabled: bool = True
+    loss_radius_mm: float | None = 500.0
+    conducting_wall_aperture_loss_enabled: bool = True
+    initial_radial_quantile: float | None = None
+    initial_radial_multiplier: float = 1.0
+    initial_radial_margin_mm: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.loss_radius_mm is not None and self.loss_radius_mm <= 0.0:
+            raise ValueError("particle_loss loss_radius_mm must be positive")
+        if self.initial_radial_quantile is not None and not (
+            0.0 < self.initial_radial_quantile <= 1.0
+        ):
+            raise ValueError("particle_loss initial_radial_quantile must be in (0, 1]")
+        if self.initial_radial_multiplier <= 0.0:
+            raise ValueError("particle_loss initial_radial_multiplier must be positive")
+        if self.initial_radial_margin_mm < 0.0:
+            raise ValueError("particle_loss initial_radial_margin_mm must be >= 0")
+
+
+@dataclass
+class PseudoGridConfig:
+    """Configuration surface for the experimental pseudo-grid solver mode.
+
+    The first implementation targets ``BUNCH_TO_BUNCH`` studies where only a
+    small active subset performs full retarded LW solves while the remaining
+    particles are advanced by neighborhood-weighted updates.
+
+    The configuration is threaded through the public API before the reduced
+    solver path is fully implemented so the CLI, GUI, saved configs, and tests
+    can evolve in lockstep.
+    """
+
+    enabled: bool = False
+    active_rider_count: int = 4
+    active_driver_count: int = 4
+    passive_neighbor_count: int = 4
+    coverage_strategy: str = "farthest_point_staleness"
+    coverage_space: str = "position"
+    pair_reuse_window: int = 16
+    source_weighting_mode: str = "inverse_distance"
+    loss_tracking_enabled: bool = True
+    causal_history_pruning_enabled: bool = False
+    causal_history_safety_margin_steps: int = 2
+
+    def __post_init__(self) -> None:
+        if self.active_rider_count <= 0:
+            raise ValueError("pseudo-grid active_rider_count must be positive")
+        if self.active_driver_count <= 0:
+            raise ValueError("pseudo-grid active_driver_count must be positive")
+        if self.passive_neighbor_count <= 0:
+            raise ValueError("pseudo-grid passive_neighbor_count must be positive")
+        if self.pair_reuse_window < 0:
+            raise ValueError("pseudo-grid pair_reuse_window must be non-negative")
+        if self.causal_history_safety_margin_steps < 0:
+            raise ValueError(
+                "pseudo-grid causal_history_safety_margin_steps must be non-negative"
+            )
+
+
+@dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
@@ -178,6 +242,14 @@ class IntegratorConfig:
     bunch_transv_mom:
         Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
         Used to compute cumulative displacement errors. Defaults to ``0.0``.
+    pseudo_grid:
+        Experimental pseudo-grid solver settings. The initial plumbing keeps the
+        surface available across the API while the reduced-physics update path is
+        implemented incrementally. Defaults to a disabled configuration.
+    particle_loss:
+        Optional fixed-size particle-loss predicates. Lost particles are marked
+        dead, keep their trajectory slots, and stop contributing charge after
+        the loss step.
     """
 
     steps: int
@@ -199,6 +271,8 @@ class IntegratorConfig:
     macroparticle_use_momentum_errors: bool = True
     bunch_transv_dist: float = 0.0
     bunch_transv_mom: float = 0.0
+    pseudo_grid: PseudoGridConfig = field(default_factory=PseudoGridConfig)
+    particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
 
 
 @dataclass
@@ -354,6 +428,7 @@ class TrajectoryArrays:
     # Non-array side-channels
     halt_reason: list  # length n_steps, str or None
     particle_failure_info: dict  # keyed by (step, particle_idx)
+    pseudo_grid_schedule: list  # length n_steps, object or None
 
     @property
     def n_steps(self) -> int:
@@ -400,6 +475,9 @@ class TrajectoryArrays:
             s["_halted_early"] = bool(self.halted_early[step])
             s["_halt_step"] = int(self.halt_step[step])
             s["_halt_reason"] = self.halt_reason[step]
+        pseudo_grid_schedule = self.pseudo_grid_schedule[step]
+        if pseudo_grid_schedule is not None:
+            s["_pseudo_grid_schedule"] = pseudo_grid_schedule
         return s
 
     def to_legacy(self) -> "Trajectory":
@@ -449,34 +527,37 @@ class TrajectoryBuilder:
         self._n_particles = n_particles
 
         self._arrays: dict = {
-            field: np.zeros((n_steps, n_particles), dtype=np.float64)
-            for field in self._KINEMATIC_FIELDS
+            field_name: np.zeros((n_steps, n_particles), dtype=np.float64)
+            for field_name in self._KINEMATIC_FIELDS
         }
         self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
 
-        for field in self._PARTICLE_CONST_FIELDS:
-            self._arrays[field] = np.zeros(n_particles, dtype=np.float64)
+        for field_name in self._PARTICLE_CONST_FIELDS:
+            self._arrays[field_name] = np.zeros(n_particles, dtype=np.float64)
 
         self._halted_early = np.zeros(n_steps, dtype=bool)
         self._halt_step_arr = np.full(n_steps, -1, dtype=np.int64)
         self._halt_reason: list = [None] * n_steps
         self._particle_failure_info: dict = {}
+        self._pseudo_grid_schedule: list = [None] * n_steps
 
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
-        for field in self._KINEMATIC_FIELDS:
-            if field in state:
-                self._arrays[field][step] = state[field]
+        for field_name in self._KINEMATIC_FIELDS:
+            if field_name in state:
+                self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
 
         dead = state.get("_dead_particles")
         if dead is not None:
             self._arrays["dead"][step] = dead
 
+        self._pseudo_grid_schedule[step] = state.get("_pseudo_grid_schedule")
+
         if step == 0:
-            for field in self._PARTICLE_CONST_FIELDS:
-                if field in state:
-                    self._arrays[field][:] = state[field]
+            for field_name in self._PARTICLE_CONST_FIELDS:
+                if field_name in state:
+                    self._arrays[field_name][:] = state[field_name]
 
     def set_halt_metadata(
         self,
@@ -537,6 +618,7 @@ class TrajectoryBuilder:
             halt_step=self._halt_step_arr[:s],
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
+            pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
         )
 
     def build(self) -> TrajectoryArrays:
@@ -575,6 +657,7 @@ class TrajectoryBuilder:
             halt_step=self._halt_step_arr,
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
+            pseudo_grid_schedule=self._pseudo_grid_schedule,
         )
 
 

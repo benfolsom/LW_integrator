@@ -255,6 +255,226 @@ class IntegratorGUITabMixin:
             self.macroparticle_momentum_errors_check,
         ]
 
+        next_row += 1
+        ttk.Separator(particle_frame, orient="horizontal").grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(12, 12)
+        )
+        next_row += 1
+
+        ttk.Label(
+            particle_frame,
+            text="Pseudo-grid Mode (Bunch-to-Bunch only):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        next_row += 1
+
+        self.pseudo_grid_enable_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable experimental pseudo-grid scheduler",
+            variable=self.pseudo_grid_enabled_var,
+            command=self._toggle_pseudo_grid_controls,
+        )
+        self.pseudo_grid_enable_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_active_rider_label = ttk.Label(
+            particle_frame, text="Active rider count:"
+        )
+        self.pseudo_grid_active_rider_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_active_rider_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_active_rider_count_var,
+            width=12,
+        )
+        self.pseudo_grid_active_rider_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_active_driver_label = ttk.Label(
+            particle_frame, text="Active driver count:"
+        )
+        self.pseudo_grid_active_driver_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_active_driver_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_active_driver_count_var,
+            width=12,
+        )
+        self.pseudo_grid_active_driver_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_passive_neighbor_label = ttk.Label(
+            particle_frame, text="Passive neighbor count:"
+        )
+        self.pseudo_grid_passive_neighbor_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_passive_neighbor_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_passive_neighbor_count_var,
+            width=12,
+        )
+        self.pseudo_grid_passive_neighbor_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_pair_reuse_label = ttk.Label(
+            particle_frame, text="Pair reuse window:"
+        )
+        self.pseudo_grid_pair_reuse_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_pair_reuse_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_pair_reuse_window_var,
+            width=12,
+        )
+        self.pseudo_grid_pair_reuse_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_coverage_strategy_label = ttk.Label(
+            particle_frame, text="Coverage strategy:"
+        )
+        self.pseudo_grid_coverage_strategy_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_coverage_strategy_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.pseudo_grid_coverage_strategy_var,
+            values=("farthest_point_staleness", "farthest_point"),
+            state="readonly",
+            width=24,
+        )
+        self.pseudo_grid_coverage_strategy_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_coverage_space_label = ttk.Label(
+            particle_frame, text="Coverage space:"
+        )
+        self.pseudo_grid_coverage_space_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_coverage_space_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.pseudo_grid_coverage_space_var,
+            values=("position", "phase_space"),
+            state="readonly",
+            width=24,
+        )
+        self.pseudo_grid_coverage_space_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_source_weighting_label = ttk.Label(
+            particle_frame, text="Source weighting mode:"
+        )
+        self.pseudo_grid_source_weighting_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_source_weighting_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.pseudo_grid_source_weighting_mode_var,
+            values=("inverse_distance", "nearest"),
+            state="readonly",
+            width=24,
+        )
+        self.pseudo_grid_source_weighting_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_loss_tracking_check = ttk.Checkbutton(
+            particle_frame,
+            text="Track particle losses in pseudo-grid mode",
+            variable=self.pseudo_grid_loss_tracking_enabled_var,
+        )
+        self.pseudo_grid_loss_tracking_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        next_row += 1
+
+        self.pseudo_grid_causal_pruning_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable causal-history pruning",
+            variable=self.pseudo_grid_causal_history_pruning_enabled_var,
+            command=self._toggle_pseudo_grid_controls,
+        )
+        self.pseudo_grid_causal_pruning_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        next_row += 1
+
+        self.pseudo_grid_causal_safety_label = ttk.Label(
+            particle_frame, text="Causal safety margin (steps):"
+        )
+        self.pseudo_grid_causal_safety_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.pseudo_grid_causal_safety_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_causal_history_safety_margin_steps_var,
+            width=12,
+        )
+        self.pseudo_grid_causal_safety_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        help_text_pseudo_grid = ttk.Label(
+            particle_frame,
+            text=(
+                "Pseudo-grid mode is currently an experimental configuration surface for BUNCH_TO_BUNCH runs.\n"
+                "Plumbing is present in the GUI, CLI, and saved configs while the reduced active/passive solver path is built incrementally.\n"
+                "Use the pair-reuse window to discourage repeated active matches, and causal-history pruning to prepare for bounded history retention."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_text_pseudo_grid.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        self._pseudo_grid_widgets = [
+            self.pseudo_grid_active_rider_label,
+            self.pseudo_grid_active_rider_entry,
+            self.pseudo_grid_active_driver_label,
+            self.pseudo_grid_active_driver_entry,
+            self.pseudo_grid_passive_neighbor_label,
+            self.pseudo_grid_passive_neighbor_entry,
+            self.pseudo_grid_pair_reuse_label,
+            self.pseudo_grid_pair_reuse_entry,
+            self.pseudo_grid_coverage_strategy_label,
+            self.pseudo_grid_coverage_strategy_combo,
+            self.pseudo_grid_coverage_space_label,
+            self.pseudo_grid_coverage_space_combo,
+            self.pseudo_grid_source_weighting_label,
+            self.pseudo_grid_source_weighting_combo,
+            self.pseudo_grid_loss_tracking_check,
+            self.pseudo_grid_causal_pruning_check,
+            self.pseudo_grid_causal_safety_label,
+            self.pseudo_grid_causal_safety_entry,
+        ]
+        self._pseudo_grid_causal_widgets = [
+            self.pseudo_grid_causal_safety_label,
+            self.pseudo_grid_causal_safety_entry,
+        ]
+        self._toggle_pseudo_grid_controls()
+
     def _build_core_tab(self) -> None:
         """Build integration and force-cutoff controls."""
         from .gui import Tooltip

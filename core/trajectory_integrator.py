@@ -31,6 +31,7 @@ from .integration_runner import (
 from .types import (
     ChronoMatchingMode,
     IntegratorConfig,
+    ParticleLossConfig,
     ParticleState,
     SimulationType,
     StartupMode,
@@ -197,6 +198,7 @@ __all__ = [
     "DistanceResult",
     "EnergyMonitorConfig",
     "IntegratorConfig",
+    "ParticleLossConfig",
     "ParticleState",
     "SimulationType",
     "Trajectory",

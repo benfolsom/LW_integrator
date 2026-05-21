@@ -84,6 +84,8 @@ except ImportError:
 # K-factor thresholds for series approximation
 K_CUTOFF_HARD = 1e-20  # Below this: skip interaction entirely
 K_SERIES_THRESHOLD = 1e-3  # Below this: use series approximation
+NUMBA_FORCE_SERIAL_MAX_SOURCES = 128
+NUMBA_FORCE_PARALLEL_MIN_SOURCES = 256
 
 
 def _compute_small_k_forces_series(
@@ -244,11 +246,12 @@ def gather_external_samples_soa(
     Replaces per-particle dict/list access with direct 2-D array slicing.
     """
     n_ext = traj_ext.n_particles
-    valid_mask = np.ones(n_ext, dtype=bool)
-    valid_mask &= (indices >= 0) & (indices < traj_ext.n_steps)
+    indices = np.asarray(indices, dtype=int)
+    valid_mask = (indices >= 0) & (indices < traj_ext.n_steps)
+    valid_all = bool(np.all(valid_mask))
 
     particle_indices = np.arange(n_ext)
-    safe_indices = np.where(valid_mask, indices, 0)
+    safe_indices = indices if valid_all else np.where(valid_mask, indices, 0)
     bx = traj_ext.bx[safe_indices, particle_indices].copy()
     by = traj_ext.by[safe_indices, particle_indices].copy()
     bz = traj_ext.bz[safe_indices, particle_indices].copy()
@@ -256,23 +259,22 @@ def gather_external_samples_soa(
     bdoty = traj_ext.bdoty[safe_indices, particle_indices].copy()
     bdotz = traj_ext.bdotz[safe_indices, particle_indices].copy()
     gamma = traj_ext.gamma[safe_indices, particle_indices].copy()
-    x = traj_ext.x[safe_indices, particle_indices].copy()
-    y = traj_ext.y[safe_indices, particle_indices].copy()
-    z = traj_ext.z[safe_indices, particle_indices].copy()
     charge = traj_ext.q.copy()
+    dead_at_sample = traj_ext.dead[safe_indices, particle_indices]
+    charge[dead_at_sample] = 0.0
+    valid_mask = valid_mask & ~dead_at_sample
+    x = y = z = None
 
-    if not np.all(valid_mask):
-        bx[~valid_mask] = 0.0
-        by[~valid_mask] = 0.0
-        bz[~valid_mask] = 0.0
-        bdotx[~valid_mask] = 0.0
-        bdoty[~valid_mask] = 0.0
-        bdotz[~valid_mask] = 0.0
-        gamma[~valid_mask] = 0.0
-        x[~valid_mask] = 0.0
-        y[~valid_mask] = 0.0
-        z[~valid_mask] = 0.0
-        charge[~valid_mask] = 0.0
+    if not valid_all:
+        invalid_mask = ~valid_mask
+        bx[invalid_mask] = 0.0
+        by[invalid_mask] = 0.0
+        bz[invalid_mask] = 0.0
+        bdotx[invalid_mask] = 0.0
+        bdoty[invalid_mask] = 0.0
+        bdotz[invalid_mask] = 0.0
+        gamma[invalid_mask] = 0.0
+        charge[invalid_mask] = 0.0
 
     if (
         weights is not None
@@ -287,6 +289,15 @@ def gather_external_samples_soa(
             & (indices_next < traj_ext.n_steps)
         )
         if np.any(interp_mask):
+            x = traj_ext.x[safe_indices, particle_indices].copy()
+            y = traj_ext.y[safe_indices, particle_indices].copy()
+            z = traj_ext.z[safe_indices, particle_indices].copy()
+            if not valid_all:
+                invalid_mask = ~valid_mask
+                x[invalid_mask] = 0.0
+                y[invalid_mask] = 0.0
+                z[invalid_mask] = 0.0
+
             ni = indices_next[interp_mask]
             pi = particle_indices[interp_mask]
             w = weights[interp_mask]
@@ -675,8 +686,31 @@ def compute_vectorized_contributions(
     charge_ext = samples.charge[mask]
     gamma_ext = samples.gamma[mask]
 
-    # Use numba-accelerated kernel if available
-    if NUMBA_AVAILABLE:
+    if NUMBA_AVAILABLE and charge_ext.size <= NUMBA_FORCE_SERIAL_MAX_SOURCES:
+        return _compute_forces_numba_serial_kernel(
+            h,
+            charge_i,
+            mass_i,
+            gamma_i,
+            beta_vec[0],
+            beta_vec[1],
+            beta_vec[2],
+            nx,
+            ny,
+            nz,
+            R_sep,
+            bx_ext,
+            by_ext,
+            bz_ext,
+            bdotx_ext,
+            bdoty_ext,
+            bdotz_ext,
+            charge_ext,
+            gamma_ext,
+            c,
+        )
+
+    if NUMBA_AVAILABLE and charge_ext.size >= NUMBA_FORCE_PARALLEL_MIN_SOURCES:
         return _compute_forces_numba_kernel(
             h,
             charge_i,
@@ -1201,6 +1235,16 @@ def _compute_forces_numba_kernel(
         delta_field_z,
         scalar_potential,
     )
+
+
+if NUMBA_AVAILABLE:
+    _compute_forces_numba_serial_kernel = jit(
+        nopython=True,
+        fastmath=True,
+        cache=True,
+    )(_compute_forces_numba_kernel.py_func)
+else:
+    _compute_forces_numba_serial_kernel = _compute_forces_numba_kernel
 
 
 __all__ = [

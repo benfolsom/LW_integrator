@@ -17,6 +17,7 @@ class IntegratorGUIStateMixin:
         self._update_cavity_spacing_state()
         self._update_image_subcharge_state()
         self._update_macroparticle_state()
+        self._update_pseudo_grid_state()
         self._refresh_initial_summary()
 
         if hasattr(self, "optimization_tab") and self.optimization_tab:
@@ -214,6 +215,45 @@ class IntegratorGUIStateMixin:
                 elif isinstance(widget, ttk.Label):
                     widget.configure(foreground=label_color)
 
+    def _toggle_pseudo_grid_controls(self) -> None:
+        if not hasattr(self, "pseudo_grid_enabled_var"):
+            return
+
+        enabled = bool(self.pseudo_grid_enabled_var.get())
+        causal_enabled = enabled and bool(
+            self.pseudo_grid_causal_history_pruning_enabled_var.get()
+        )
+
+        for widget in getattr(self, "_pseudo_grid_widgets", []):
+            if isinstance(widget, ttk.Entry):
+                widget.configure(state="normal" if enabled else "disabled")
+            elif isinstance(widget, ttk.Combobox):
+                widget.configure(state="readonly" if enabled else "disabled")
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(state="normal" if enabled else "disabled")
+            elif isinstance(widget, ttk.Label):
+                widget.configure(foreground="black" if enabled else "gray")
+
+        for widget in getattr(self, "_pseudo_grid_causal_widgets", []):
+            if isinstance(widget, ttk.Entry):
+                widget.configure(state="normal" if causal_enabled else "disabled")
+            elif isinstance(widget, ttk.Label):
+                widget.configure(foreground="black" if causal_enabled else "gray")
+
+    def _update_pseudo_grid_state(self) -> None:
+        if not hasattr(self, "pseudo_grid_enable_check"):
+            return
+
+        is_bunch_to_bunch = self.sim_type_var.get() == "BUNCH_TO_BUNCH"
+        self.pseudo_grid_enable_check.configure(
+            state="normal" if is_bunch_to_bunch else "disabled"
+        )
+
+        if not is_bunch_to_bunch:
+            self.pseudo_grid_enabled_var.set(False)
+
+        self._toggle_pseudo_grid_controls()
+
     def _toggle_gamma_reconciliation_params(self) -> None:
         if not hasattr(self, "sc_gamma_reconciliation_adaptive_frame"):
             return
@@ -293,7 +333,10 @@ class IntegratorGUIStateMixin:
                 self.steps_auto_hint.grid_remove()
 
         # Grey / restore the Time step field in the Core tab
-        if hasattr(self, "core_param_widgets") and "time_step" in self.core_param_widgets:
+        if (
+            hasattr(self, "core_param_widgets")
+            and "time_step" in self.core_param_widgets
+        ):
             self.core_param_widgets["time_step"].configure(state=core_state)
         if hasattr(self, "time_step_auto_hint"):
             if enabled:

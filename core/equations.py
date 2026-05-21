@@ -795,14 +795,17 @@ def _compute_lienard_radiated_power(
     fields are dβ/d(ct), so callers should multiply stored ``bdot`` by
     :data:`C_MMNS` before calling this helper.
     """
-    beta_vec = np.asarray(beta, dtype=float)
-    beta_dot_vec = np.asarray(beta_dot_t, dtype=float)
-    accel_sq = float(np.dot(beta_dot_vec, beta_dot_vec))
+    b_x, b_y, b_z = beta
+    bd_x, bd_y, bd_z = beta_dot_t
+    accel_sq = bd_x * bd_x + bd_y * bd_y + bd_z * bd_z
     if accel_sq <= 0.0 or charge == 0.0 or gamma <= 0.0:
         return 0.0
 
-    cross = np.cross(beta_vec, beta_dot_vec)
-    transverse_term = accel_sq - float(np.dot(cross, cross))
+    cross_x = b_y * bd_z - b_z * bd_y
+    cross_y = b_z * bd_x - b_x * bd_z
+    cross_z = b_x * bd_y - b_y * bd_x
+    cross_sq = cross_x * cross_x + cross_y * cross_y + cross_z * cross_z
+    transverse_term = accel_sq - cross_sq
     if transverse_term <= 0.0:
         return 0.0
 
@@ -1159,6 +1162,7 @@ def retarded_equations_of_motion(
     traj_ext_soa: Optional[TrajectoryArrays] = None,
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
+    pseudo_grid_space_charge_source_charges: Optional[np.ndarray] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1209,6 +1213,17 @@ def retarded_equations_of_motion(
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
 
     num_particles = len(current_state["x"])
+    pseudo_grid_sc_charge_matrix = None
+    if pseudo_grid_space_charge_source_charges is not None:
+        pseudo_grid_sc_charge_matrix = np.asarray(
+            pseudo_grid_space_charge_source_charges,
+            dtype=float,
+        )
+        if pseudo_grid_sc_charge_matrix.shape != (num_particles, num_particles):
+            raise ValueError(
+                "pseudo_grid_space_charge_source_charges must have shape "
+                f"({num_particles}, {num_particles})"
+            )
 
     # Track particles marked dead in this step
     particles_marked_dead_this_step = 0
@@ -1373,12 +1388,25 @@ def retarded_equations_of_motion(
                 beta_avg_z = current_state["beta_avg_z"][particle_idx]
                 beta_avg_mag = np.sqrt(beta_avg_x**2 + beta_avg_y**2 + beta_avg_z**2)
 
-                # Estimate max R from external trajectory bounds
-                # This handles arbitrary separations (mm to hundreds of meters)
-                if trajectory_ext[index_traj]["x"].size > 0:
-                    ext_x = trajectory_ext[index_traj]["x"]
-                    ext_y = trajectory_ext[index_traj]["y"]
-                    ext_z = trajectory_ext[index_traj]["z"]
+                # Estimate max R from external trajectory bounds.
+                # In pseudo-grid reduced solves the source history may be
+                # causally pruned, so its local current index need not match
+                # the observer-history index.
+                external_current_step_idx = (
+                    min(index_traj, len(trajectory_ext) - 1) if trajectory_ext else None
+                )
+                external_current_state = (
+                    trajectory_ext[external_current_step_idx]
+                    if external_current_step_idx is not None
+                    else None
+                )
+                if (
+                    external_current_state is not None
+                    and external_current_state["x"].size > 0
+                ):
+                    ext_x = external_current_state["x"]
+                    ext_y = external_current_state["y"]
+                    ext_z = external_current_state["z"]
                     dx = current_position[0] - ext_x
                     dy = current_position[1] - ext_y
                     dz = current_position[2] - ext_z
@@ -1416,11 +1444,15 @@ def retarded_equations_of_motion(
 
             if not skip_external_forces:
                 if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
+                    external_current_step_idx = min(
+                        index_traj,
+                        len(trajectory_ext) - 1,
+                    )
                     nhat, indices_bounded = _compute_approximate_retarded_distance(
                         observer_state,
-                        trajectory_ext[index_traj],
+                        trajectory_ext[external_current_step_idx],
                         observer_particle_idx,
-                        index_traj,
+                        external_current_step_idx,
                     )
                 else:
                     # For variable geometry modes, need to create trajectory with observer_state
@@ -1625,6 +1657,11 @@ def retarded_equations_of_motion(
                 n_particles = current_state["x"].shape[0]
                 if n_particles > 1:
                     sc_softening = float(space_charge.softening_mm)
+                    observer_sc_charge_row = None
+                    if pseudo_grid_sc_charge_matrix is not None:
+                        observer_sc_charge_row = pseudo_grid_sc_charge_matrix[
+                            particle_idx
+                        ]
                     # Use retarded SC only once sufficient history has accumulated
                     # (at least one light-crossing time of the bunch width).
                     # resolve_min_retarded_steps returns the step threshold; below
@@ -1633,30 +1670,13 @@ def retarded_equations_of_motion(
                     _sc_threshold = space_charge.resolve_min_retarded_steps(h)
                     use_retarded_sc = len(trajectory) > _sc_threshold
 
-                    def _slice_step(step: dict, idx: int) -> dict:
-                        out: dict = {}
-                        for k, v in step.items():
-                            try:
-                                arr = np.asarray(v)
-                                if arr.ndim >= 1 and arr.shape[0] == n_particles:
-                                    out[k] = arr[[idx]]
-                                else:
-                                    out[k] = v
-                            except (TypeError, ValueError):
-                                out[k] = v
-                        return out
-
-                    for j in range(n_particles):
-                        if j == particle_idx:
-                            continue
-                        if use_retarded_sc:
-                            sc_traj_ext = [
-                                _slice_step(step, j)
-                                for step in trajectory[: index_traj + 1]
-                            ]
-                            sc_retarded_result = chrono_match_indices(
-                                trajectory,
-                                sc_traj_ext,
+                    sc_chrono_result = None
+                    use_sc_soa = traj_soa is not None
+                    if use_retarded_sc:
+                        if use_sc_soa:
+                            sc_retarded_result = chrono_match_indices_soa(
+                                traj_soa,
+                                traj_soa,
                                 index_traj,
                                 particle_idx,
                                 mode=ChronoMatchingMode.FAST,
@@ -1667,35 +1687,65 @@ def retarded_equations_of_motion(
                                 adaptive_tolerance=chrono_adaptive_tolerance,
                                 timestep_h=h,
                             )
-                            if isinstance(sc_retarded_result, ChronoMatchResult):
-                                sc_indices = sc_retarded_result.indices
-                                sc_chrono_result = sc_retarded_result
-                            else:
-                                sc_indices = sc_retarded_result
-                                sc_chrono_result = None
                         else:
-                            sc_step = _slice_step(trajectory[index_traj], j)
-                            sc_traj_ext = [sc_step] * (index_traj + 1)
-                            sc_indices = np.array([len(sc_traj_ext) - 1])
-                            sc_chrono_result = None
-                        sc_indices = np.minimum(
-                            np.maximum(sc_indices, 0), len(sc_traj_ext) - 1
-                        )
-                        sc_nhat = compute_retarded_distance(
-                            trajectory,
-                            sc_traj_ext,
+                            sc_retarded_result = chrono_match_indices(
+                                trajectory,
+                                trajectory,
+                                index_traj,
+                                particle_idx,
+                                mode=ChronoMatchingMode.FAST,
+                                interpolate=chrono_interpolate,
+                                tolerance=chrono_tolerance,
+                                verbosity=chrono_verbosity,
+                                high_precision=chrono_high_precision,
+                                adaptive_tolerance=chrono_adaptive_tolerance,
+                                timestep_h=h,
+                            )
+                        if isinstance(sc_retarded_result, ChronoMatchResult):
+                            sc_indices = sc_retarded_result.indices
+                            sc_chrono_result = sc_retarded_result
+                        else:
+                            sc_indices = sc_retarded_result
+                    else:
+                        current_sc_index = min(index_traj, len(trajectory) - 1)
+                        sc_indices = np.full(n_particles, current_sc_index, dtype=int)
+
+                    sc_indices = np.minimum(
+                        np.maximum(sc_indices, 0), len(trajectory) - 1
+                    )
+                    if use_sc_soa:
+                        sc_nhat = compute_retarded_distance_soa(
+                            traj_soa,
+                            traj_soa,
                             index_traj,
                             particle_idx,
                             sc_indices,
                         )
-                        sc_R = np.asarray(sc_nhat["R"], dtype=float)
-                        if sc_softening > 0.0:
-                            sc_R = np.sqrt(sc_R**2 + sc_softening**2)
-                            sc_nhat = dict(sc_nhat)
-                            sc_nhat["R"] = sc_R
-                        if sc_chrono_result is not None:
+                    else:
+                        sc_nhat = compute_retarded_distance(
+                            trajectory,
+                            trajectory,
+                            index_traj,
+                            particle_idx,
+                            sc_indices,
+                        )
+                    sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                    if sc_softening > 0.0:
+                        sc_R = np.sqrt(sc_R**2 + sc_softening**2)
+                        sc_nhat = dict(sc_nhat)
+                        sc_nhat["R"] = sc_R
+                    if sc_chrono_result is not None:
+                        if use_sc_soa:
+                            sc_samples = gather_external_samples_soa(
+                                traj_soa,
+                                sc_indices,
+                                indices_next=sc_chrono_result.indices_next,
+                                weights=sc_chrono_result.weights,
+                                needs_interpolation=sc_chrono_result.needs_interpolation,
+                            )
+                        else:
                             sc_samples = gather_external_samples(
-                                sc_traj_ext,
+                                trajectory,
                                 sc_indices,
                                 indices_next=sc_chrono_result.indices_next,
                                 weights=sc_chrono_result.weights,
@@ -1704,42 +1754,65 @@ def retarded_equations_of_motion(
                                 use_cubic=sc_chrono_result.use_cubic,
                                 interpolate_positions=chrono_high_precision,
                             )
-                        else:
-                            sc_samples = gather_external_samples(
-                                sc_traj_ext,
+                    else:
+                        if use_sc_soa:
+                            sc_samples = gather_external_samples_soa(
+                                traj_soa,
                                 sc_indices,
                             )
-                        (
-                            sc_dp_x,
-                            sc_dp_y,
-                            sc_dp_z,
-                            sc_dp_t,
-                            sc_df_x,
-                            sc_df_y,
-                            sc_df_z,
-                            sc_dscalar,
-                        ) = compute_vectorized_contributions(
-                            h=h,
-                            charge_i=float(particle_charge),
-                            mass_i=float(particle_mass),
-                            gamma_i=particle_gamma,
-                            beta_vec=particle_beta,
-                            nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
-                            nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
-                            nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
-                            R_separation=sc_R,
-                            samples=sc_samples,
-                            apply_external=True,
-                            verbosity=0,
-                        )
-                        accumulated_momentum_x += sc_dp_x
-                        accumulated_momentum_y += sc_dp_y
-                        accumulated_momentum_z += sc_dp_z
-                        accumulated_momentum_t += sc_dp_t
-                        accumulated_field_x += sc_df_x
-                        accumulated_field_y += sc_df_y
-                        accumulated_field_z += sc_df_z
-                        accumulated_scalar_potential += sc_dscalar
+                        else:
+                            sc_samples = gather_external_samples(
+                                trajectory,
+                                sc_indices,
+                            )
+
+                    sc_source_charges = sc_samples.charge.copy()
+                    if observer_sc_charge_row is not None:
+                        sc_source_charges = np.asarray(
+                            observer_sc_charge_row,
+                            dtype=float,
+                        ).copy()
+                        if sc_source_charges.shape != (n_particles,):
+                            raise ValueError(
+                                "pseudo-grid space-charge row must have shape "
+                                f"({n_particles},)"
+                            )
+                    sc_source_charges[particle_idx] = 0.0
+                    sc_samples.charge[...] = sc_source_charges
+                    sc_samples.valid_mask = sc_samples.valid_mask.copy()
+                    sc_samples.valid_mask[particle_idx] = False
+
+                    (
+                        sc_dp_x,
+                        sc_dp_y,
+                        sc_dp_z,
+                        sc_dp_t,
+                        sc_df_x,
+                        sc_df_y,
+                        sc_df_z,
+                        sc_dscalar,
+                    ) = compute_vectorized_contributions(
+                        h=h,
+                        charge_i=float(particle_charge),
+                        mass_i=float(particle_mass),
+                        gamma_i=particle_gamma,
+                        beta_vec=particle_beta,
+                        nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
+                        nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
+                        nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
+                        R_separation=sc_R,
+                        samples=sc_samples,
+                        apply_external=True,
+                        verbosity=0,
+                    )
+                    accumulated_momentum_x += sc_dp_x
+                    accumulated_momentum_y += sc_dp_y
+                    accumulated_momentum_z += sc_dp_z
+                    accumulated_momentum_t += sc_dp_t
+                    accumulated_field_x += sc_df_x
+                    accumulated_field_y += sc_df_y
+                    accumulated_field_z += sc_df_z
+                    accumulated_scalar_potential += sc_dscalar
 
             # ================================================================
             # STEP 4c: Prescribed external uniform fields

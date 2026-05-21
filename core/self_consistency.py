@@ -327,6 +327,7 @@ def self_consistent_step(
     traj_ext_soa: Optional[Any] = None,
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
+    pseudo_grid_space_charge_source_charges: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -378,9 +379,10 @@ def self_consistent_step(
 
     # Check whether step_function accepts SOA keyword arguments
     _sig_params = _signature_parameters(step_function)
-    _accepts_soa = "traj_soa" in _sig_params or any(
+    _accepts_var_kwargs = any(
         p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
     )
+    _accepts_soa = "traj_soa" in _sig_params or _accepts_var_kwargs
 
     result = step_function(
         h_step,
@@ -396,15 +398,22 @@ def self_consistent_step(
         cancel_callback,
         **({"space_charge": space_charge} if space_charge is not None else {}),
         **(
+            {
+                "pseudo_grid_space_charge_source_charges": (
+                    pseudo_grid_space_charge_source_charges
+                )
+            }
+            if pseudo_grid_space_charge_source_charges is not None
+            and (
+                "pseudo_grid_space_charge_source_charges" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
             {"external_field": external_field}
             if external_field is not None
-            and (
-                "external_field" in _sig_params
-                or any(
-                    p.kind == inspect.Parameter.VAR_KEYWORD
-                    for p in _sig_params.values()
-                )
-            )
+            and ("external_field" in _sig_params or _accepts_var_kwargs)
             else {}
         ),
         **({"traj_soa": traj_soa} if _accepts_soa and traj_soa is not None else {}),
@@ -415,10 +424,7 @@ def self_consistent_step(
         ),
         **(
             {"radiation_reaction_mode": radiation_reaction_mode}
-            if "radiation_reaction_mode" in _sig_params
-            or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
-            )
+            if "radiation_reaction_mode" in _sig_params or _accepts_var_kwargs
             else {}
         ),
     )

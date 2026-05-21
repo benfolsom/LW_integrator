@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 from contextlib import redirect_stdout
+from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
@@ -17,6 +19,7 @@ from core.types import (
     SimulationType,
     SpaceChargeConfig,
     StartupMode,
+    TrajectoryBuilder,
 )
 
 
@@ -235,6 +238,112 @@ def test_compute_full_retarded_distance_handles_interpolation_payload(
     assert nhat["R"].tolist() == pytest.approx([2.0])
 
 
+def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(x=[0.0, 10.0], charge=[1.0, 1.0]),
+        _make_state(x=[1.0, 11.0], t=[1.0, 1.0], charge=[1.0, 1.0]),
+    ]
+    driver = [
+        _make_state(x=[100.0], charge=[0.0]),
+        _make_state(x=[101.0], t=[1.0], charge=[0.0]),
+    ]
+    seen_nonzero_charges: list[float] = []
+
+    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
+        charges = np.asarray(kwargs["samples"].charge, dtype=float)
+        nonzero = charges[np.abs(charges) > 1.0e-30]
+        seen_nonzero_charges.extend(nonzero.tolist())
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
+
+    equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=False),
+        space_charge=SpaceChargeConfig(
+            enabled=True,
+            retarded=False,
+        ),
+        pseudo_grid_space_charge_source_charges=np.array(
+            [[0.0, 2.0], [2.0, 0.0]],
+            dtype=float,
+        ),
+    )
+
+    assert seen_nonzero_charges == pytest.approx([2.0, 2.0])
+
+
+def test_retarded_space_charge_batches_same_bunch_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(x=[0.0, 10.0, 20.0], charge=[1.0, 1.0, 1.0]),
+        _make_state(
+            x=[1.0, 11.0, 21.0],
+            t=[1.0, 1.0, 1.0],
+            charge=[1.0, 1.0, 1.0],
+        ),
+    ]
+    driver = [
+        _make_state(x=[100.0, 110.0, 120.0], charge=[0.0, 0.0, 0.0]),
+        _make_state(
+            x=[101.0, 111.0, 121.0],
+            t=[1.0, 1.0, 1.0],
+            charge=[0.0, 0.0, 0.0],
+        ),
+    ]
+    same_bunch_source_counts: list[int] = []
+
+    def fake_chrono(*args: object, **kwargs: object) -> np.ndarray:
+        observer_history = args[0]
+        source_history = cast(list[dict[str, np.ndarray]], args[1])
+        source_count = len(source_history[-1]["x"])
+        if source_history is observer_history:
+            same_bunch_source_counts.append(source_count)
+        return np.zeros(source_count, dtype=int)
+
+    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(equations, "chrono_match_indices", fake_chrono)
+    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
+
+    equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=False),
+        space_charge=SpaceChargeConfig(
+            enabled=True,
+            retarded=True,
+            min_retarded_steps=0,
+        ),
+    )
+
+    assert same_bunch_source_counts == [3, 3, 3]
+
+
+def _build_soa(trajectory: list[dict[str, np.ndarray]]):
+    builder = TrajectoryBuilder(len(trajectory), len(trajectory[0]["x"]))
+    for step_idx, state in enumerate(trajectory):
+        builder.set_step(step_idx, state)
+    return builder.build()
+
+
 def test_retarded_space_charge_uses_chrono_matching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -249,10 +358,12 @@ def test_retarded_space_charge_uses_chrono_matching(
     sc_calls: list[dict[str, object]] = []
 
     def fake_chrono(*args: object, **kwargs: object) -> np.ndarray:
-        source_history = args[1]
-        if len(source_history[0]["x"]) == 1:
+        observer_history = args[0]
+        source_history = cast(list[dict[str, np.ndarray]], args[1])
+        source_count = len(source_history[-1]["x"])
+        if source_history is observer_history:
             sc_calls.append(kwargs)
-        return np.array([0])
+        return np.zeros(source_count, dtype=int)
 
     def fake_contrib(**kwargs: object) -> tuple[float, ...]:
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -286,6 +397,84 @@ def test_retarded_space_charge_uses_chrono_matching(
     assert all(call["mode"] is ChronoMatchingMode.FAST for call in sc_calls)
     assert all(call["interpolate"] is True for call in sc_calls)
     assert all(call["high_precision"] is True for call in sc_calls)
+
+
+def test_retarded_space_charge_uses_soa_helpers_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(x=[0.0, 10.0], charge=[1.0, 1.0]),
+        _make_state(x=[1.0, 11.0], t=[1.0, 1.0], charge=[1.0, 1.0]),
+    ]
+    driver = [
+        _make_state(x=[100.0], charge=[0.0]),
+        _make_state(x=[101.0], t=[1.0], charge=[0.0]),
+    ]
+    traj_soa = _build_soa(trajectory)
+    soa_calls: dict[str, int] = {
+        "chrono": 0,
+        "distance": 0,
+        "gather": 0,
+    }
+
+    def fake_chrono_soa(*args: object, **kwargs: object) -> np.ndarray:
+        soa_calls["chrono"] += 1
+        assert args[0] is traj_soa
+        assert args[1] is traj_soa
+        return np.zeros(traj_soa.n_particles, dtype=int)
+
+    def fake_distance_soa(*args: object, **kwargs: object) -> dict[str, np.ndarray]:
+        soa_calls["distance"] += 1
+        n = traj_soa.n_particles
+        return {
+            "R": np.ones(n, dtype=float),
+            "nx": np.ones(n, dtype=float),
+            "ny": np.zeros(n, dtype=float),
+            "nz": np.zeros(n, dtype=float),
+        }
+
+    def fake_gather_soa(*args: object, **kwargs: object):
+        soa_calls["gather"] += 1
+        n = traj_soa.n_particles
+        return SimpleNamespace(
+            charge=np.ones(n, dtype=float),
+            gamma=np.ones(n, dtype=float),
+            bx=np.zeros(n, dtype=float),
+            by=np.zeros(n, dtype=float),
+            bz=np.zeros(n, dtype=float),
+            bdotx=np.zeros(n, dtype=float),
+            bdoty=np.zeros(n, dtype=float),
+            bdotz=np.zeros(n, dtype=float),
+            valid_mask=np.ones(n, dtype=bool),
+        )
+
+    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(equations, "chrono_match_indices_soa", fake_chrono_soa)
+    monkeypatch.setattr(equations, "compute_retarded_distance_soa", fake_distance_soa)
+    monkeypatch.setattr(equations, "gather_external_samples_soa", fake_gather_soa)
+    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
+
+    equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=False),
+        space_charge=SpaceChargeConfig(
+            enabled=True,
+            retarded=True,
+            min_retarded_steps=0,
+        ),
+        traj_soa=traj_soa,
+    )
+
+    assert soa_calls == {"chrono": 2, "distance": 2, "gather": 2}
 
 
 def test_gating_threshold_and_force_application_follow_travel_distance() -> None:

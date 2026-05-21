@@ -121,6 +121,10 @@ class IntegratorGUIConfigMixin:
         self._toggle_z_cutoff_controls()
         self._toggle_macroparticle_controls()
         self._update_macroparticle_state()
+        if hasattr(self, "_toggle_pseudo_grid_controls"):
+            self._toggle_pseudo_grid_controls()
+        if hasattr(self, "_update_pseudo_grid_state"):
+            self._update_pseudo_grid_state()
 
         current_value = self.sim_type_var.get()
         try:
@@ -217,6 +221,56 @@ class IntegratorGUIConfigMixin:
         self.macroparticle_use_momentum_errors_var.set(
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
+        if hasattr(self, "pseudo_grid_enabled_var"):
+            self.pseudo_grid_enabled_var.set(
+                getattr(options, "pseudo_grid_enabled", False)
+            )
+            self.pseudo_grid_active_rider_count_var.set(
+                getattr(options, "pseudo_grid_active_rider_count", 4)
+            )
+            self.pseudo_grid_active_driver_count_var.set(
+                getattr(options, "pseudo_grid_active_driver_count", 4)
+            )
+            self.pseudo_grid_passive_neighbor_count_var.set(
+                getattr(options, "pseudo_grid_passive_neighbor_count", 4)
+            )
+            self.pseudo_grid_coverage_strategy_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_coverage_strategy",
+                    "farthest_point_staleness",
+                )
+            )
+            self.pseudo_grid_coverage_space_var.set(
+                getattr(options, "pseudo_grid_coverage_space", "position")
+            )
+            self.pseudo_grid_pair_reuse_window_var.set(
+                getattr(options, "pseudo_grid_pair_reuse_window", 16)
+            )
+            self.pseudo_grid_source_weighting_mode_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_source_weighting_mode",
+                    "inverse_distance",
+                )
+            )
+            self.pseudo_grid_loss_tracking_enabled_var.set(
+                getattr(options, "pseudo_grid_loss_tracking_enabled", True)
+            )
+            self.pseudo_grid_causal_history_pruning_enabled_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_causal_history_pruning_enabled",
+                    False,
+                )
+            )
+            self.pseudo_grid_causal_history_safety_margin_steps_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_causal_history_safety_margin_steps",
+                    2,
+                )
+            )
         self.self_consistency_enabled_var.set(options.self_consistency_enabled)
         self.self_consistency_convergence_mode_var.set(
             options.self_consistency_convergence_mode
@@ -359,6 +413,10 @@ class IntegratorGUIConfigMixin:
         self._toggle_space_charge_controls()
         self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
+        if hasattr(self, "_toggle_pseudo_grid_controls"):
+            self._toggle_pseudo_grid_controls()
+        if hasattr(self, "_update_pseudo_grid_state"):
+            self._update_pseudo_grid_state()
         self.save_log_file_var.set(options.save_log_file)
 
         if not preserve_directories:
@@ -665,6 +723,35 @@ class IntegratorGUIConfigMixin:
                 self.auto_duration_crossing_steps_var.get()
             ),
             auto_duration_post_factor=float(self.auto_duration_post_factor_var.get()),
+            pseudo_grid_enabled=bool(self.pseudo_grid_enabled_var.get()),
+            pseudo_grid_active_rider_count=int(
+                self.pseudo_grid_active_rider_count_var.get()
+            ),
+            pseudo_grid_active_driver_count=int(
+                self.pseudo_grid_active_driver_count_var.get()
+            ),
+            pseudo_grid_passive_neighbor_count=int(
+                self.pseudo_grid_passive_neighbor_count_var.get()
+            ),
+            pseudo_grid_coverage_strategy=str(
+                self.pseudo_grid_coverage_strategy_var.get()
+            ),
+            pseudo_grid_coverage_space=str(self.pseudo_grid_coverage_space_var.get()),
+            pseudo_grid_pair_reuse_window=int(
+                self.pseudo_grid_pair_reuse_window_var.get()
+            ),
+            pseudo_grid_source_weighting_mode=str(
+                self.pseudo_grid_source_weighting_mode_var.get()
+            ),
+            pseudo_grid_loss_tracking_enabled=bool(
+                self.pseudo_grid_loss_tracking_enabled_var.get()
+            ),
+            pseudo_grid_causal_history_pruning_enabled=bool(
+                self.pseudo_grid_causal_history_pruning_enabled_var.get()
+            ),
+            pseudo_grid_causal_history_safety_margin_steps=int(
+                self.pseudo_grid_causal_history_safety_margin_steps_var.get()
+            ),
             save_log_file=bool(self.save_log_file_var.get()),
         )
 

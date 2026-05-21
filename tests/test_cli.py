@@ -45,6 +45,17 @@ def _make_args(**overrides) -> argparse.Namespace:
         "radiation_reaction_mode": None,
         "image_subcharge_count": None,
         "use_image_weighting": None,
+        "pseudo_grid_enabled": None,
+        "pseudo_grid_active_rider_count": None,
+        "pseudo_grid_active_driver_count": None,
+        "pseudo_grid_passive_neighbor_count": None,
+        "pseudo_grid_coverage_strategy": None,
+        "pseudo_grid_coverage_space": None,
+        "pseudo_grid_pair_reuse_window": None,
+        "pseudo_grid_source_weighting_mode": None,
+        "pseudo_grid_loss_tracking_enabled": None,
+        "pseudo_grid_causal_history_pruning_enabled": None,
+        "pseudo_grid_causal_history_safety_margin_steps": None,
         "driver_from_rider": False,
         "output": None,
         "quiet": False,
@@ -151,6 +162,43 @@ class TestCliConfigParsing:
         args = cli.parse_args(["--radiation-reaction-mode", "off"])
 
         assert args.radiation_reaction_mode == "off"
+
+    def test_parse_args_accepts_pseudo_grid_options(self):
+        args = cli.parse_args(
+            [
+                "--pseudo-grid",
+                "--pseudo-grid-active-rider-count",
+                "6",
+                "--pseudo-grid-active-driver-count",
+                "8",
+                "--pseudo-grid-passive-neighbor-count",
+                "3",
+                "--pseudo-grid-coverage-strategy",
+                "farthest_point",
+                "--pseudo-grid-coverage-space",
+                "phase_space",
+                "--pseudo-grid-pair-reuse-window",
+                "21",
+                "--pseudo-grid-source-weighting-mode",
+                "nearest",
+                "--pseudo-grid-loss-tracking",
+                "--pseudo-grid-causal-pruning",
+                "--pseudo-grid-causal-safety-margin-steps",
+                "5",
+            ]
+        )
+
+        assert args.pseudo_grid_enabled is True
+        assert args.pseudo_grid_active_rider_count == 6
+        assert args.pseudo_grid_active_driver_count == 8
+        assert args.pseudo_grid_passive_neighbor_count == 3
+        assert args.pseudo_grid_coverage_strategy == "farthest_point"
+        assert args.pseudo_grid_coverage_space == "phase_space"
+        assert args.pseudo_grid_pair_reuse_window == 21
+        assert args.pseudo_grid_source_weighting_mode == "nearest"
+        assert args.pseudo_grid_loss_tracking_enabled is True
+        assert args.pseudo_grid_causal_history_pruning_enabled is True
+        assert args.pseudo_grid_causal_history_safety_margin_steps == 5
 
     def test_parse_args_allows_disabling_boolean_flags(self):
         args = cli.parse_args(["--no-adaptive-debug", "--no-image-weighting"])
@@ -265,6 +313,15 @@ class TestCliConfigParsing:
                 "startup_mode": "approximate-back-history",
                 "image_subcharge_count": "16",
                 "use_image_weighting": "no",
+                "pseudo_grid": {
+                    "enabled": True,
+                    "active_rider_count": 6,
+                    "active_driver_count": 7,
+                    "passive_neighbor_count": 3,
+                    "pair_reuse_window": 20,
+                    "causal_history_pruning_enabled": True,
+                    "causal_history_safety_margin_steps": 5,
+                },
             }
         )
 
@@ -275,6 +332,13 @@ class TestCliConfigParsing:
         assert config.startup_mode == StartupMode.APPROXIMATE_BACK_HISTORY
         assert config.image_subcharge_count == 16
         assert config.use_image_weighting is False
+        assert config.pseudo_grid.enabled is True
+        assert config.pseudo_grid.active_rider_count == 6
+        assert config.pseudo_grid.active_driver_count == 7
+        assert config.pseudo_grid.passive_neighbor_count == 3
+        assert config.pseudo_grid.pair_reuse_window == 20
+        assert config.pseudo_grid.causal_history_pruning_enabled is True
+        assert config.pseudo_grid.causal_history_safety_margin_steps == 5
 
     def test_build_integrator_config_requires_simulation_type(self):
         with pytest.raises(
@@ -352,6 +416,33 @@ class TestCliBuildRequest:
         assert payload["auto_duration_enabled"] is True
         assert payload["auto_duration_crossing_steps"] == 180
         assert payload["auto_duration_post_factor"] == pytest.approx(2.25)
+
+    def test_merge_simulation_payload_applies_pseudo_grid_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "pseudo_grid": {
+                    "enabled": False,
+                    "active_rider_count": 4,
+                    "active_driver_count": 4,
+                    "pair_reuse_window": 8,
+                }
+            },
+            _make_args(
+                pseudo_grid_enabled=True,
+                pseudo_grid_active_rider_count=7,
+                pseudo_grid_active_driver_count=9,
+                pseudo_grid_passive_neighbor_count=2,
+                pseudo_grid_pair_reuse_window=30,
+                pseudo_grid_causal_history_pruning_enabled=True,
+            ),
+        )
+
+        assert payload["pseudo_grid"]["enabled"] is True
+        assert payload["pseudo_grid"]["active_rider_count"] == 7
+        assert payload["pseudo_grid"]["active_driver_count"] == 9
+        assert payload["pseudo_grid"]["passive_neighbor_count"] == 2
+        assert payload["pseudo_grid"]["pair_reuse_window"] == 30
+        assert payload["pseudo_grid"]["causal_history_pruning_enabled"] is True
 
     def test_build_request_defaults_to_medina_lad_rr(self):
         request = cli.build_request(_make_args())
@@ -999,6 +1090,7 @@ class TestCliRuntimeHelpers:
         )
         assert captured["space_charge"] is request.space_charge
         assert captured["external_field"] is request.external_field
+        assert captured["pseudo_grid"] is request.config.pseudo_grid
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

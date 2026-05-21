@@ -14,6 +14,7 @@ from lw_integrator.testbed_runner import (
     DEFAULT_RIDER_PARAMS,
     SimulationOptions,
     build_external_field_config,
+    build_pseudo_grid_config,
 )
 
 
@@ -50,6 +51,17 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         external_field_t_min=1.0e-6,
         external_field_t_max=2.0e-6,
         radiation_reaction_mode="power_matched_damping",
+        pseudo_grid_enabled=True,
+        pseudo_grid_active_rider_count=6,
+        pseudo_grid_active_driver_count=7,
+        pseudo_grid_passive_neighbor_count=3,
+        pseudo_grid_coverage_strategy="farthest_point",
+        pseudo_grid_coverage_space="phase_space",
+        pseudo_grid_pair_reuse_window=25,
+        pseudo_grid_source_weighting_mode="nearest",
+        pseudo_grid_loss_tracking_enabled=False,
+        pseudo_grid_causal_history_pruning_enabled=True,
+        pseudo_grid_causal_history_safety_margin_steps=5,
         log_file_path="custom.log",
     )
 
@@ -104,7 +116,31 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.external_field_t_min == pytest.approx(1.0e-6)
     assert loaded.external_field_t_max == pytest.approx(2.0e-6)
     assert payload["radiation_reaction_mode"] == "power_matched_damping"
+    assert payload["pseudo_grid"] == {
+        "enabled": True,
+        "active_rider_count": 6,
+        "active_driver_count": 7,
+        "passive_neighbor_count": 3,
+        "coverage_strategy": "farthest_point",
+        "coverage_space": "phase_space",
+        "pair_reuse_window": 25,
+        "source_weighting_mode": "nearest",
+        "loss_tracking_enabled": False,
+        "causal_history_pruning_enabled": True,
+        "causal_history_safety_margin_steps": 5,
+    }
     assert loaded.radiation_reaction_mode == "power_matched_damping"
+    assert loaded.pseudo_grid_enabled is True
+    assert loaded.pseudo_grid_active_rider_count == 6
+    assert loaded.pseudo_grid_active_driver_count == 7
+    assert loaded.pseudo_grid_passive_neighbor_count == 3
+    assert loaded.pseudo_grid_coverage_strategy == "farthest_point"
+    assert loaded.pseudo_grid_coverage_space == "phase_space"
+    assert loaded.pseudo_grid_pair_reuse_window == 25
+    assert loaded.pseudo_grid_source_weighting_mode == "nearest"
+    assert loaded.pseudo_grid_loss_tracking_enabled is False
+    assert loaded.pseudo_grid_causal_history_pruning_enabled is True
+    assert loaded.pseudo_grid_causal_history_safety_margin_steps == 5
     assert loaded.log_file_path == "custom.log"
 
 
@@ -150,6 +186,7 @@ def test_simulation_options_from_dict_uses_defaults_for_missing_nested_payloads(
         for key, value in CORE_PARAM_DEFAULTS.items()
     }
     assert options.radiation_reaction_mode == "medina_lad"
+    assert options.pseudo_grid_enabled is False
     assert options.output_dir == Path("test_outputs/testbed_runs")
 
 
@@ -169,3 +206,25 @@ def test_simulation_options_from_dict_falls_back_on_invalid_numeric_values():
     assert options.adaptive_timestep_min_factor == pytest.approx(1e-4)
     assert options.energy_monitor_threshold == pytest.approx(2.0)
     assert options.trajectory_interval == 10
+
+
+def test_build_pseudo_grid_config_reflects_simulation_options():
+    options = SimulationOptions(
+        pseudo_grid_enabled=True,
+        pseudo_grid_active_rider_count=9,
+        pseudo_grid_active_driver_count=11,
+        pseudo_grid_passive_neighbor_count=2,
+        pseudo_grid_pair_reuse_window=14,
+        pseudo_grid_causal_history_pruning_enabled=True,
+        pseudo_grid_causal_history_safety_margin_steps=4,
+    )
+
+    config = build_pseudo_grid_config(options)
+
+    assert config.enabled is True
+    assert config.active_rider_count == 9
+    assert config.active_driver_count == 11
+    assert config.passive_neighbor_count == 2
+    assert config.pair_reuse_window == 14
+    assert config.causal_history_pruning_enabled is True
+    assert config.causal_history_safety_margin_steps == 4
