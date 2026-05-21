@@ -20,7 +20,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.constants import C_MMNS  # noqa: E402
-from core.integration_runner import SelfConsistencyConfig  # noqa: E402
+from core.integration_runner import (  # noqa: E402
+    SelfConsistencyConfig,
+    _build_partial_soa,
+)
 from core.pseudo_grid import (  # noqa: E402
     build_pseudo_grid_step_schedule,
     build_self_excluded_space_charge_source_charges,
@@ -40,6 +43,7 @@ from core.types import (  # noqa: E402
     SpaceChargeConfig,
     StartupMode,
     Trajectory,
+    TrajectoryArrays,
 )
 
 
@@ -219,6 +223,8 @@ def _time_active_solve(
     h_step: float,
     observer_active_history: Trajectory,
     source_active_history: Trajectory,
+    observer_active_soa: TrajectoryArrays | None,
+    source_active_soa: TrajectoryArrays | None,
     space_charge: SpaceChargeConfig | None,
     pseudo_grid_space_charge_source_charges: np.ndarray | None,
 ) -> None:
@@ -237,6 +243,8 @@ def _time_active_solve(
         space_charge=space_charge,
         radiation_reaction_mode="power_matched_damping",
         pseudo_grid_space_charge_source_charges=pseudo_grid_space_charge_source_charges,
+        traj_soa=observer_active_soa,
+        traj_ext_soa=source_active_soa,
     )
 
 
@@ -297,6 +305,14 @@ def run_case(
     active_result = _active_result_state(
         rider_history[-1],
         schedule.rider_active_indices,
+    )
+    observer_active_soa = _build_partial_soa(
+        observer_active_history,
+        len(observer_active_history),
+    )
+    source_active_soa = _build_partial_soa(
+        source_active_history,
+        len(source_active_history),
     )
     space_charge = (
         SpaceChargeConfig(
@@ -362,6 +378,8 @@ def run_case(
                 h_step=h_step,
                 observer_active_history=observer_active_history,
                 source_active_history=source_active_history,
+                observer_active_soa=observer_active_soa,
+                source_active_soa=source_active_soa,
                 space_charge=space_charge,
                 pseudo_grid_space_charge_source_charges=sc_matrix,
             ),

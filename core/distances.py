@@ -161,12 +161,27 @@ def _locate_retarded_index_soa(
     *,
     side: str = "right",
 ) -> int:
-    """SOA fast path: binary search on pre-sliced time column."""
+    """SOA fast path on a pre-sliced time column.
+
+    For the short history windows used in the reduced pseudo-grid path, a tight
+    in-Python scan is faster than dispatching ``np.searchsorted`` per particle.
+    """
     bounded_index_traj = min(index_traj, len(t_col) - 1)
     if target_time <= 0.0:
         return bounded_index_traj
-    idx = int(np.searchsorted(t_col, target_time, side=side))
-    return min(idx, bounded_index_traj)
+
+    matched_idx = bounded_index_traj
+    if side == "left":
+        for candidate_idx in range(bounded_index_traj + 1):
+            if t_col[candidate_idx] >= target_time:
+                matched_idx = candidate_idx
+                break
+    else:
+        for candidate_idx in range(bounded_index_traj + 1):
+            if t_col[candidate_idx] > target_time:
+                matched_idx = candidate_idx
+                break
+    return matched_idx
 
 
 def _locate_retarded_index(
@@ -208,14 +223,18 @@ def _compute_delta_t_soa(
 
         return distance * numerator / (C_MMNS * denominator)
 
+    current_source_index = min(index_traj, traj_ext.n_steps - 1)
     time_offsets = np.array([distance / C_MMNS, 2.0 * distance / C_MMNS], dtype=float)
     sampled_b = 0.0
-    t_col = traj_ext.t[: index_traj + 1, sample_index]
+    t_col = traj_ext.t[: current_source_index + 1, sample_index]
 
     for offset in time_offsets:
-        target_time = traj_ext.t[index_traj, sample_index] - offset
+        target_time = traj_ext.t[current_source_index, sample_index] - offset
         matched_index = _locate_retarded_index_soa(
-            t_col, index_traj, target_time, side="left"
+            t_col,
+            current_source_index,
+            target_time,
+            side="left",
         )
 
         dx = traj.x[index_traj, index_part] - traj_ext.x[matched_index, sample_index]
@@ -383,9 +402,11 @@ def chrono_match_indices_soa(
     if adaptive_tolerance and timestep_h is not None and timestep_h > 0:
         effective_tolerance = 0.1 * timestep_h
 
-    dx = traj.x[index_traj, index_part] - traj_ext.x[index_traj, :]
-    dy = traj.y[index_traj, index_part] - traj_ext.y[index_traj, :]
-    dz = traj.z[index_traj, index_part] - traj_ext.z[index_traj, :]
+    current_source_index = min(index_traj, traj_ext.n_steps - 1)
+
+    dx = traj.x[index_traj, index_part] - traj_ext.x[current_source_index, :]
+    dy = traj.y[index_traj, index_part] - traj_ext.y[current_source_index, :]
+    dz = traj.z[index_traj, index_part] - traj_ext.z[current_source_index, :]
     distance = np.sqrt(dx**2 + dy**2 + dz**2)
     too_close = distance < NUMERICAL_EPSILON
     safe_dist = np.where(too_close, NUMERICAL_EPSILON, distance)
@@ -409,13 +430,13 @@ def chrono_match_indices_soa(
             index_traj_next2 = np.empty(n_particles, dtype=int)  # noqa: F841
 
     # Pre-extract time columns — key SOA win: avoids per-step dict walk
-    # shape [index_traj+1, n_particles]
-    t_cols = traj_ext.t[: index_traj + 1, :]
+    # shape [current_source_index+1, n_particles]
+    t_cols = traj_ext.t[: current_source_index + 1, :]
 
     for sample_index in range(n_particles):
-        bx = traj_ext.bx[index_traj, sample_index]
-        by = traj_ext.by[index_traj, sample_index]
-        bz = traj_ext.bz[index_traj, sample_index]
+        bx = traj_ext.bx[current_source_index, sample_index]
+        by = traj_ext.by[current_source_index, sample_index]
+        bz = traj_ext.bz[current_source_index, sample_index]
         b_nhat = (
             bx * nhat["nx"][sample_index]
             + by * nhat["ny"][sample_index]
@@ -449,18 +470,22 @@ def chrono_match_indices_soa(
                 trajectory_ext=None,
             )
 
-        t_ext_new = traj_ext.t[index_traj, sample_index] - delta_t
+        t_ext_new = traj_ext.t[current_source_index, sample_index] - delta_t
 
-        index_traj_new[sample_index] = index_traj
+        index_traj_new[sample_index] = current_source_index
         if interpolate:
-            index_traj_next[sample_index] = index_traj
+            index_traj_next[sample_index] = current_source_index
 
         if t_ext_new < 0:
             continue
 
         # SOA binary search on the pre-extracted column
         t_col = t_cols[:, sample_index]
-        matched_idx = _locate_retarded_index_soa(t_col, index_traj, t_ext_new)
+        matched_idx = _locate_retarded_index_soa(
+            t_col,
+            current_source_index,
+            t_ext_new,
+        )
         index_traj_new[sample_index] = matched_idx
 
         if interpolate:

@@ -381,6 +381,14 @@ def _run_pseudo_grid_reduced_step(
         q_override=source_effective_charges,
     )
     local_index = len(observer_active_history) - 1
+    observer_active_soa = _build_partial_soa(
+        observer_active_history,
+        local_index + 1,
+    )
+    source_active_soa = _build_partial_soa(
+        source_active_history,
+        len(source_active_history),
+    )
     pseudo_grid_space_charge_source_charges = None
     if _space_charge_enabled(space_charge):
         pseudo_grid_space_charge_source_charges = (
@@ -411,6 +419,8 @@ def _run_pseudo_grid_reduced_step(
             pseudo_grid_space_charge_source_charges=(
                 pseudo_grid_space_charge_source_charges
             ),
+            traj_soa=observer_active_soa,
+            traj_ext_soa=source_active_soa,
             **(
                 {"external_field": external_field} if external_field is not None else {}
             ),

@@ -1668,20 +1668,36 @@ def retarded_equations_of_motion(
                     use_retarded_sc = len(trajectory) > _sc_threshold
 
                     sc_chrono_result = None
+                    use_sc_soa = traj_soa is not None
                     if use_retarded_sc:
-                        sc_retarded_result = chrono_match_indices(
-                            trajectory,
-                            trajectory,
-                            index_traj,
-                            particle_idx,
-                            mode=ChronoMatchingMode.FAST,
-                            interpolate=chrono_interpolate,
-                            tolerance=chrono_tolerance,
-                            verbosity=chrono_verbosity,
-                            high_precision=chrono_high_precision,
-                            adaptive_tolerance=chrono_adaptive_tolerance,
-                            timestep_h=h,
-                        )
+                        if use_sc_soa:
+                            sc_retarded_result = chrono_match_indices_soa(
+                                traj_soa,
+                                traj_soa,
+                                index_traj,
+                                particle_idx,
+                                mode=ChronoMatchingMode.FAST,
+                                interpolate=chrono_interpolate,
+                                tolerance=chrono_tolerance,
+                                verbosity=chrono_verbosity,
+                                high_precision=chrono_high_precision,
+                                adaptive_tolerance=chrono_adaptive_tolerance,
+                                timestep_h=h,
+                            )
+                        else:
+                            sc_retarded_result = chrono_match_indices(
+                                trajectory,
+                                trajectory,
+                                index_traj,
+                                particle_idx,
+                                mode=ChronoMatchingMode.FAST,
+                                interpolate=chrono_interpolate,
+                                tolerance=chrono_tolerance,
+                                verbosity=chrono_verbosity,
+                                high_precision=chrono_high_precision,
+                                adaptive_tolerance=chrono_adaptive_tolerance,
+                                timestep_h=h,
+                            )
                         if isinstance(sc_retarded_result, ChronoMatchResult):
                             sc_indices = sc_retarded_result.indices
                             sc_chrono_result = sc_retarded_result
@@ -1694,34 +1710,58 @@ def retarded_equations_of_motion(
                     sc_indices = np.minimum(
                         np.maximum(sc_indices, 0), len(trajectory) - 1
                     )
-                    sc_nhat = compute_retarded_distance(
-                        trajectory,
-                        trajectory,
-                        index_traj,
-                        particle_idx,
-                        sc_indices,
-                    )
+                    if use_sc_soa:
+                        sc_nhat = compute_retarded_distance_soa(
+                            traj_soa,
+                            traj_soa,
+                            index_traj,
+                            particle_idx,
+                            sc_indices,
+                        )
+                    else:
+                        sc_nhat = compute_retarded_distance(
+                            trajectory,
+                            trajectory,
+                            index_traj,
+                            particle_idx,
+                            sc_indices,
+                        )
                     sc_R = np.asarray(sc_nhat["R"], dtype=float)
                     if sc_softening > 0.0:
                         sc_R = np.sqrt(sc_R**2 + sc_softening**2)
                         sc_nhat = dict(sc_nhat)
                         sc_nhat["R"] = sc_R
                     if sc_chrono_result is not None:
-                        sc_samples = gather_external_samples(
-                            trajectory,
-                            sc_indices,
-                            indices_next=sc_chrono_result.indices_next,
-                            weights=sc_chrono_result.weights,
-                            indices_prev=sc_chrono_result.indices_prev,
-                            indices_next2=sc_chrono_result.indices_next2,
-                            use_cubic=sc_chrono_result.use_cubic,
-                            interpolate_positions=chrono_high_precision,
-                        )
+                        if use_sc_soa:
+                            sc_samples = gather_external_samples_soa(
+                                traj_soa,
+                                sc_indices,
+                                indices_next=sc_chrono_result.indices_next,
+                                weights=sc_chrono_result.weights,
+                                needs_interpolation=sc_chrono_result.needs_interpolation,
+                            )
+                        else:
+                            sc_samples = gather_external_samples(
+                                trajectory,
+                                sc_indices,
+                                indices_next=sc_chrono_result.indices_next,
+                                weights=sc_chrono_result.weights,
+                                indices_prev=sc_chrono_result.indices_prev,
+                                indices_next2=sc_chrono_result.indices_next2,
+                                use_cubic=sc_chrono_result.use_cubic,
+                                interpolate_positions=chrono_high_precision,
+                            )
                     else:
-                        sc_samples = gather_external_samples(
-                            trajectory,
-                            sc_indices,
-                        )
+                        if use_sc_soa:
+                            sc_samples = gather_external_samples_soa(
+                                traj_soa,
+                                sc_indices,
+                            )
+                        else:
+                            sc_samples = gather_external_samples(
+                                trajectory,
+                                sc_indices,
+                            )
 
                     sc_source_charges = sc_samples.charge.copy()
                     if observer_sc_charge_row is not None:
