@@ -296,22 +296,32 @@ def build_passive_neighbor_map(
     if neighbor_count <= 0:
         raise ValueError("neighbor_count must be positive")
 
-    alive = np.unique(np.asarray(alive_indices, dtype=int))
-    active = np.unique(np.asarray(active_indices, dtype=int))
+    alive = np.asarray(alive_indices, dtype=int)
+    active = np.asarray(active_indices, dtype=int)
     if active.size == 0:
         raise ValueError("active_indices must contain at least one particle")
 
-    active_mask = np.isin(alive, active)
-    passive = alive[~active_mask]
+    max_index = int(max(np.max(alive), np.max(active)))
+    active_members = np.zeros(max_index + 1, dtype=bool)
+    active_members[active] = True
+    passive = alive[~active_members[alive]]
     if passive.size == 0:
         return _empty_neighbor_map()
 
-    active_coords = _normalized_position_coordinates(
-        state, reference_indices=alive, target_indices=active
-    )
-    passive_coords = _normalized_position_coordinates(
-        state, reference_indices=alive, target_indices=passive
-    )
+    x = np.asarray(state["x"], dtype=float)
+    y = np.asarray(state["y"], dtype=float)
+    z = np.asarray(state["z"], dtype=float)
+    alive_coords = np.column_stack((x[alive], y[alive], z[alive]))
+    centers = np.mean(alive_coords, axis=0)
+    spans = np.ptp(alive_coords, axis=0)
+    spans = np.where(spans > 0.0, spans, 1.0)
+
+    active_coords = (
+        np.column_stack((x[active], y[active], z[active])) - centers
+    ) / spans
+    passive_coords = (
+        np.column_stack((x[passive], y[passive], z[passive])) - centers
+    ) / spans
 
     tree = KDTree(active_coords)
     k = min(int(neighbor_count), active.size)
