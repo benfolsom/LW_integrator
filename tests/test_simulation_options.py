@@ -13,6 +13,7 @@ from lw_integrator.testbed_runner import (
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     SimulationOptions,
+    build_driver_train_config,
     build_external_field_config,
     build_pseudo_grid_config,
 )
@@ -62,6 +63,12 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         pseudo_grid_loss_tracking_enabled=False,
         pseudo_grid_causal_history_pruning_enabled=True,
         pseudo_grid_causal_history_safety_margin_steps=5,
+        driver_train_enabled=True,
+        driver_train_bunch_count=3,
+        driver_train_z_spacing_mm=2997.92458,
+        driver_train_z_offsets_mm=(0.0, 100.0, 250.0),
+        driver_train_prehistory_steps=12,
+        driver_train_preserve_prehistory_in_output=True,
         log_file_path="custom.log",
     )
 
@@ -141,6 +148,20 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.pseudo_grid_loss_tracking_enabled is False
     assert loaded.pseudo_grid_causal_history_pruning_enabled is True
     assert loaded.pseudo_grid_causal_history_safety_margin_steps == 5
+    assert payload["driver_train"] == {
+        "enabled": True,
+        "bunch_count": 3,
+        "z_spacing_mm": 2997.92458,
+        "z_offsets_mm": [0.0, 100.0, 250.0],
+        "prehistory_steps": 12,
+        "preserve_prehistory_in_output": True,
+    }
+    assert loaded.driver_train_enabled is True
+    assert loaded.driver_train_bunch_count == 3
+    assert loaded.driver_train_z_spacing_mm == pytest.approx(2997.92458)
+    assert loaded.driver_train_z_offsets_mm == pytest.approx((0.0, 100.0, 250.0))
+    assert loaded.driver_train_prehistory_steps == 12
+    assert loaded.driver_train_preserve_prehistory_in_output is True
     assert loaded.log_file_path == "custom.log"
 
 
@@ -187,6 +208,7 @@ def test_simulation_options_from_dict_uses_defaults_for_missing_nested_payloads(
     }
     assert options.radiation_reaction_mode == "medina_lad"
     assert options.pseudo_grid_enabled is False
+    assert options.driver_train_enabled is False
     assert options.output_dir == Path("test_outputs/testbed_runs")
 
 
@@ -228,3 +250,23 @@ def test_build_pseudo_grid_config_reflects_simulation_options():
     assert config.pair_reuse_window == 14
     assert config.causal_history_pruning_enabled is True
     assert config.causal_history_safety_margin_steps == 4
+
+
+def test_build_driver_train_config_reflects_simulation_options():
+    options = SimulationOptions(
+        driver_train_enabled=True,
+        driver_train_bunch_count=3,
+        driver_train_z_spacing_mm=100.0,
+        driver_train_z_offsets_mm=(0.0, 100.0, 250.0),
+        driver_train_prehistory_steps=8,
+        driver_train_preserve_prehistory_in_output=True,
+    )
+
+    config = build_driver_train_config(options)
+
+    assert config.enabled is True
+    assert config.bunch_count == 3
+    assert config.z_spacing_mm == pytest.approx(100.0)
+    assert config.z_offsets_mm == pytest.approx((0.0, 100.0, 250.0))
+    assert config.prehistory_steps == 8
+    assert config.preserve_prehistory_in_output is True

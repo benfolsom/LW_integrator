@@ -358,6 +358,22 @@ def build_single_integration_setup(
             "pseudo_grid_causal_history_safety_margin_steps",
             2,
         ),
+        driver_train_enabled=getattr(config, "driver_train_enabled", False),
+        driver_train_bunch_count=getattr(config, "driver_train_bunch_count", 1),
+        driver_train_z_spacing_mm=getattr(config, "driver_train_z_spacing_mm", 0.0),
+        driver_train_z_offsets_mm=tuple(
+            getattr(config, "driver_train_z_offsets_mm", ())
+        ),
+        driver_train_prehistory_steps=getattr(
+            config,
+            "driver_train_prehistory_steps",
+            0,
+        ),
+        driver_train_preserve_prehistory_in_output=getattr(
+            config,
+            "driver_train_preserve_prehistory_in_output",
+            False,
+        ),
     )
 
     return SingleIntegrationSetup(

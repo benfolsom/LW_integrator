@@ -125,6 +125,8 @@ class IntegratorGUIConfigMixin:
             self._toggle_pseudo_grid_controls()
         if hasattr(self, "_update_pseudo_grid_state"):
             self._update_pseudo_grid_state()
+        if hasattr(self, "_update_driver_train_state"):
+            self._update_driver_train_state()
 
         current_value = self.sim_type_var.get()
         try:
@@ -269,6 +271,32 @@ class IntegratorGUIConfigMixin:
                     options,
                     "pseudo_grid_causal_history_safety_margin_steps",
                     2,
+                )
+            )
+        if hasattr(self, "driver_train_enabled_var"):
+            self.driver_train_enabled_var.set(
+                getattr(options, "driver_train_enabled", False)
+            )
+            self.driver_train_bunch_count_var.set(
+                getattr(options, "driver_train_bunch_count", 1)
+            )
+            self.driver_train_z_spacing_mm_var.set(
+                getattr(options, "driver_train_z_spacing_mm", 0.0)
+            )
+            self.driver_train_z_offsets_mm_var.set(
+                " ".join(
+                    _format_gui_float(value)
+                    for value in getattr(options, "driver_train_z_offsets_mm", ())
+                )
+            )
+            self.driver_train_prehistory_steps_var.set(
+                getattr(options, "driver_train_prehistory_steps", 0)
+            )
+            self.driver_train_preserve_prehistory_var.set(
+                getattr(
+                    options,
+                    "driver_train_preserve_prehistory_in_output",
+                    False,
                 )
             )
         self.self_consistency_enabled_var.set(options.self_consistency_enabled)
@@ -417,6 +445,8 @@ class IntegratorGUIConfigMixin:
             self._toggle_pseudo_grid_controls()
         if hasattr(self, "_update_pseudo_grid_state"):
             self._update_pseudo_grid_state()
+        if hasattr(self, "_update_driver_train_state"):
+            self._update_driver_train_state()
         self.save_log_file_var.set(options.save_log_file)
 
         if not preserve_directories:
@@ -514,6 +544,26 @@ class IntegratorGUIConfigMixin:
 
         external_field_enabled = bool(self.external_field_enabled_var.get())
         external_input_mode = self.external_field_input_mode_var.get()
+
+        driver_train_offsets_text = self.driver_train_z_offsets_mm_var.get().strip()
+        driver_train_offsets = tuple(
+            _parse_gui_float(part, "Driver-train z offset")
+            for part in driver_train_offsets_text.replace(",", " ").split()
+        )
+        driver_train_bunch_count = int(self.driver_train_bunch_count_var.get())
+        driver_train_enabled = bool(self.driver_train_enabled_var.get())
+        pseudo_grid_enabled = bool(self.pseudo_grid_enabled_var.get())
+        if (
+            driver_train_offsets
+            and len(driver_train_offsets) != driver_train_bunch_count
+        ):
+            raise ValueError(
+                "Driver-train explicit z offsets must match the driver bunch count."
+            )
+        if driver_train_enabled and pseudo_grid_enabled:
+            raise ValueError(
+                "Driver-train mode is not yet compatible with pseudo-grid mode."
+            )
 
         if external_field_enabled:
             external_electric_native = tuple(
@@ -723,7 +773,7 @@ class IntegratorGUIConfigMixin:
                 self.auto_duration_crossing_steps_var.get()
             ),
             auto_duration_post_factor=float(self.auto_duration_post_factor_var.get()),
-            pseudo_grid_enabled=bool(self.pseudo_grid_enabled_var.get()),
+            pseudo_grid_enabled=pseudo_grid_enabled,
             pseudo_grid_active_rider_count=int(
                 self.pseudo_grid_active_rider_count_var.get()
             ),
@@ -751,6 +801,16 @@ class IntegratorGUIConfigMixin:
             ),
             pseudo_grid_causal_history_safety_margin_steps=int(
                 self.pseudo_grid_causal_history_safety_margin_steps_var.get()
+            ),
+            driver_train_enabled=driver_train_enabled,
+            driver_train_bunch_count=driver_train_bunch_count,
+            driver_train_z_spacing_mm=float(self.driver_train_z_spacing_mm_var.get()),
+            driver_train_z_offsets_mm=driver_train_offsets,
+            driver_train_prehistory_steps=int(
+                self.driver_train_prehistory_steps_var.get()
+            ),
+            driver_train_preserve_prehistory_in_output=bool(
+                self.driver_train_preserve_prehistory_var.get()
             ),
             save_log_file=bool(self.save_log_file_var.get()),
         )

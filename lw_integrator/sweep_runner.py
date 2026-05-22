@@ -1456,6 +1456,20 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
             if source_key in pseudo_grid_payload:
                 converted[target_key] = pseudo_grid_payload[source_key]
 
+    driver_train_payload = converted.pop("driver_train", None)
+    if isinstance(driver_train_payload, dict):
+        _driver_train_field_map = {
+            "enabled": "driver_train_enabled",
+            "bunch_count": "driver_train_bunch_count",
+            "z_spacing_mm": "driver_train_z_spacing_mm",
+            "z_offsets_mm": "driver_train_z_offsets_mm",
+            "prehistory_steps": "driver_train_prehistory_steps",
+            "preserve_prehistory_in_output": "driver_train_preserve_prehistory_in_output",
+        }
+        for source_key, target_key in _driver_train_field_map.items():
+            if source_key in driver_train_payload:
+                converted[target_key] = driver_train_payload[source_key]
+
     # Convert sweep_parameters to appropriate ranges and fixed values
     sweep_params = converted.get("sweep_parameters", {})
 

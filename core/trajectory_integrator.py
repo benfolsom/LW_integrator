@@ -30,6 +30,7 @@ from .integration_runner import (
 )
 from .types import (
     ChronoMatchingMode,
+    DriverTrainConfig,
     IntegratorConfig,
     ParticleLossConfig,
     ParticleState,
@@ -187,6 +188,7 @@ class LienardWiechertIntegrator:
             ),
             image_subcharge_count=image_subcharge_count,
             use_conducting_image_weighting=use_image_weighting,
+            driver_train=self.config.driver_train if self.config else None,
         )
 
         return trajectory, driver
@@ -198,6 +200,7 @@ __all__ = [
     "DistanceResult",
     "EnergyMonitorConfig",
     "IntegratorConfig",
+    "DriverTrainConfig",
     "ParticleLossConfig",
     "ParticleState",
     "SimulationType",

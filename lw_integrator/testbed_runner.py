@@ -394,6 +394,14 @@ class SimulationOptions:
     pseudo_grid_causal_history_pruning_enabled: bool = False
     pseudo_grid_causal_history_safety_margin_steps: int = 2
 
+    # Driver-train options (BUNCH_TO_BUNCH only)
+    driver_train_enabled: bool = False
+    driver_train_bunch_count: int = 1
+    driver_train_z_spacing_mm: float = 0.0
+    driver_train_z_offsets_mm: Tuple[float, ...] = field(default_factory=tuple)
+    driver_train_prehistory_steps: int = 0
+    driver_train_preserve_prehistory_in_output: bool = False
+
     # Logging options
     save_log_file: bool = False
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
@@ -517,6 +525,14 @@ class SimulationOptions:
                 "causal_history_pruning_enabled": self.pseudo_grid_causal_history_pruning_enabled,
                 "causal_history_safety_margin_steps": self.pseudo_grid_causal_history_safety_margin_steps,
             },
+            "driver_train": {
+                "enabled": self.driver_train_enabled,
+                "bunch_count": self.driver_train_bunch_count,
+                "z_spacing_mm": self.driver_train_z_spacing_mm,
+                "z_offsets_mm": list(self.driver_train_z_offsets_mm),
+                "prehistory_steps": self.driver_train_prehistory_steps,
+                "preserve_prehistory_in_output": self.driver_train_preserve_prehistory_in_output,
+            },
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -636,6 +652,47 @@ class SimulationOptions:
         def _pseudo_str(name: str, default: str) -> str:
             value = _pseudo_value(name, default)
             return str(value) if value is not None else default
+
+        driver_train_payload_raw = payload.get("driver_train")
+        driver_train_payload = (
+            driver_train_payload_raw
+            if isinstance(driver_train_payload_raw, dict)
+            else {}
+        )
+
+        def _driver_train_value(name: str, default: object) -> object:
+            flat_name = f"driver_train_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return driver_train_payload.get(name, default)
+
+        def _driver_train_bool(name: str, default: bool) -> bool:
+            return bool(_driver_train_value(name, default))
+
+        def _driver_train_int(name: str, default: int) -> int:
+            value = _driver_train_value(name, default)
+            try:
+                return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
+            except (TypeError, ValueError):
+                return default
+
+        def _driver_train_float(name: str, default: float) -> float:
+            value = _driver_train_value(name, default)
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        def _driver_train_offsets() -> Tuple[float, ...]:
+            value = _driver_train_value("z_offsets_mm", ())
+            if value in (None, ""):
+                return ()
+            if not isinstance(value, (list, tuple)):
+                return ()
+            try:
+                return tuple(float(item) for item in value)
+            except (TypeError, ValueError):
+                return ()
 
         sim_value = payload.get("simulation_type", "BUNCH_TO_BUNCH")
         if isinstance(sim_value, SimulationType):
@@ -842,6 +899,15 @@ class SimulationOptions:
             ),
             pseudo_grid_causal_history_safety_margin_steps=_pseudo_int(
                 "causal_history_safety_margin_steps", 2
+            ),
+            driver_train_enabled=_driver_train_bool("enabled", False),
+            driver_train_bunch_count=_driver_train_int("bunch_count", 1),
+            driver_train_z_spacing_mm=_driver_train_float("z_spacing_mm", 0.0),
+            driver_train_z_offsets_mm=_driver_train_offsets(),
+            driver_train_prehistory_steps=_driver_train_int("prehistory_steps", 0),
+            driver_train_preserve_prehistory_in_output=_driver_train_bool(
+                "preserve_prehistory_in_output",
+                False,
             ),
             self_consistency_gamma_reconciliation_method=_str(
                 "self_consistency_gamma_reconciliation_method", "DISABLED"
@@ -1482,6 +1548,22 @@ def build_pseudo_grid_config(options: SimulationOptions) -> object:
     )
 
 
+def build_driver_train_config(options: SimulationOptions) -> object:
+    """Build DriverTrainConfig from SimulationOptions."""
+    from core.types import DriverTrainConfig
+
+    return DriverTrainConfig(
+        enabled=bool(options.driver_train_enabled),
+        bunch_count=int(options.driver_train_bunch_count),
+        z_spacing_mm=float(options.driver_train_z_spacing_mm),
+        z_offsets_mm=tuple(float(value) for value in options.driver_train_z_offsets_mm),
+        prehistory_steps=int(options.driver_train_prehistory_steps),
+        preserve_prehistory_in_output=bool(
+            options.driver_train_preserve_prehistory_in_output
+        ),
+    )
+
+
 def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
     """Build SpaceChargeConfig from SimulationOptions.
 
@@ -1688,6 +1770,13 @@ def run_testbed(
         f"  Adaptive timestep: {options.adaptive_timestep_enabled} (threshold={options.adaptive_timestep_threshold * 100:.0f}%, reduction={options.adaptive_timestep_reduction_factor}x)"
     )
     _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
+    if options.driver_train_enabled and sim_type == SimulationType.BUNCH_TO_BUNCH:
+        _log(
+            "  Driver train: enabled "
+            f"(bunches={options.driver_train_bunch_count}, "
+            f"spacing={options.driver_train_z_spacing_mm} mm, "
+            f"prehistory_steps={options.driver_train_prehistory_steps})"
+        )
     _log("")
 
     # Capture stdout/stderr to get verbose SC and adaptive timestep logs
@@ -1707,6 +1796,7 @@ def run_testbed(
     adaptive_timestep_config = build_adaptive_timestep_config(options)
     particle_loss_config = build_particle_loss_config(options)
     pseudo_grid_config = build_pseudo_grid_config(options)
+    driver_train_config = build_driver_train_config(options)
     space_charge_config = build_space_charge_config(options)
     external_field_config = build_external_field_config(options)
     chrono_mode_enum = build_chrono_mode_enum(
@@ -1826,6 +1916,7 @@ def run_testbed(
             use_numba=getattr(options, "use_numba", True),
             radiation_reaction_mode=options.radiation_reaction_mode,
             pseudo_grid=pseudo_grid_config,
+            driver_train=driver_train_config,
             particle_loss=particle_loss_config,
         )
 
@@ -3561,6 +3652,7 @@ __all__ = [
     "apply_species_preset",
     "build_external_field_config",
     "build_pseudo_grid_config",
+    "build_driver_train_config",
     "compute_initial_summary",
     "ensure_directory",
     "generate_filename_base",

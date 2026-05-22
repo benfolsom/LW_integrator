@@ -178,6 +178,35 @@ class PseudoGridConfig:
 
 
 @dataclass
+class DriverTrainConfig:
+    """Configuration for flat BUNCH_TO_BUNCH driver-train sources."""
+
+    enabled: bool = False
+    bunch_count: int = 1
+    z_spacing_mm: float = 0.0
+    z_offsets_mm: tuple[float, ...] = field(default_factory=tuple)
+    prehistory_steps: int = 0
+    preserve_prehistory_in_output: bool = False
+
+    def __post_init__(self) -> None:
+        self.bunch_count = int(self.bunch_count)
+        self.z_spacing_mm = float(self.z_spacing_mm)
+        self.prehistory_steps = int(self.prehistory_steps)
+        self.z_offsets_mm = tuple(float(value) for value in self.z_offsets_mm)
+        if self.bunch_count < 1:
+            raise ValueError("driver_train bunch_count must be at least 1")
+        if self.prehistory_steps < 0:
+            raise ValueError("driver_train prehistory_steps must be non-negative")
+        if self.z_offsets_mm and len(self.z_offsets_mm) != self.bunch_count:
+            raise ValueError("driver_train z_offsets_mm length must match bunch_count")
+
+    def resolved_z_offsets_mm(self) -> tuple[float, ...]:
+        if self.z_offsets_mm:
+            return self.z_offsets_mm
+        return tuple(index * self.z_spacing_mm for index in range(self.bunch_count))
+
+
+@dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
@@ -272,6 +301,7 @@ class IntegratorConfig:
     bunch_transv_dist: float = 0.0
     bunch_transv_mom: float = 0.0
     pseudo_grid: PseudoGridConfig = field(default_factory=PseudoGridConfig)
+    driver_train: DriverTrainConfig = field(default_factory=DriverTrainConfig)
     particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
 
 
@@ -795,6 +825,7 @@ __all__ = [
     "ChronoMatchingMode",
     "StartupMode",
     "IntegratorConfig",
+    "DriverTrainConfig",
     "SpaceChargeConfig",
     "ExternalFieldConfig",
     "C_MMNS",

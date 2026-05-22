@@ -475,6 +475,131 @@ class IntegratorGUITabMixin:
         ]
         self._toggle_pseudo_grid_controls()
 
+        next_row += 1
+        ttk.Separator(particle_frame, orient="horizontal").grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(12, 12)
+        )
+        next_row += 1
+
+        ttk.Label(
+            particle_frame,
+            text="Driver Train / Persistent Prehistory (Bunch-to-Bunch only):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        next_row += 1
+
+        self.driver_train_enable_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable flat driver-train source",
+            variable=self.driver_train_enabled_var,
+            command=self._toggle_driver_train_controls,
+        )
+        self.driver_train_enable_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_bunch_count_label = ttk.Label(
+            particle_frame, text="Driver bunch count:"
+        )
+        self.driver_train_bunch_count_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_bunch_count_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_bunch_count_var,
+            width=12,
+        )
+        self.driver_train_bunch_count_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_z_spacing_label = ttk.Label(
+            particle_frame, text="z spacing (mm):"
+        )
+        self.driver_train_z_spacing_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_z_spacing_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_z_spacing_mm_var,
+            width=12,
+        )
+        self.driver_train_z_spacing_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_z_offsets_label = ttk.Label(
+            particle_frame, text="Explicit z offsets (mm):"
+        )
+        self.driver_train_z_offsets_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_z_offsets_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_z_offsets_mm_var,
+            width=24,
+        )
+        self.driver_train_z_offsets_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_prehistory_label = ttk.Label(
+            particle_frame, text="Prehistory rows:"
+        )
+        self.driver_train_prehistory_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_prehistory_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_prehistory_steps_var,
+            width=12,
+        )
+        self.driver_train_prehistory_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_preserve_check = ttk.Checkbutton(
+            particle_frame,
+            text="Preserve prehistory rows in output",
+            variable=self.driver_train_preserve_prehistory_var,
+        )
+        self.driver_train_preserve_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        next_row += 1
+
+        help_text_driver_train = ttk.Label(
+            particle_frame,
+            text=(
+                "Expands the configured driver bunch into longitudinal copies and can seed inertial back-history.\n"
+                "Leave explicit offsets blank to use count × spacing; pseudo-grid reduction is disabled for this mode."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_text_driver_train.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        self._driver_train_widgets = [
+            self.driver_train_bunch_count_label,
+            self.driver_train_bunch_count_entry,
+            self.driver_train_z_spacing_label,
+            self.driver_train_z_spacing_entry,
+            self.driver_train_z_offsets_label,
+            self.driver_train_z_offsets_entry,
+            self.driver_train_prehistory_label,
+            self.driver_train_prehistory_entry,
+            self.driver_train_preserve_check,
+        ]
+        self._toggle_driver_train_controls()
+
     def _build_core_tab(self) -> None:
         """Build integration and force-cutoff controls."""
         from .gui import Tooltip

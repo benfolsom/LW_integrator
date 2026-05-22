@@ -63,6 +63,12 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "pseudo_grid_loss_tracking_enabled": True,
     "pseudo_grid_causal_history_pruning_enabled": False,
     "pseudo_grid_causal_history_safety_margin_steps": 2,
+    "driver_train_enabled": False,
+    "driver_train_bunch_count": 1,
+    "driver_train_z_spacing_mm": 0.0,
+    "driver_train_z_offsets_mm": (),
+    "driver_train_prehistory_steps": 0,
+    "driver_train_preserve_prehistory_in_output": False,
     "self_consistency_gamma_reconciliation_method": "DISABLED",
     "self_consistency_gamma_reconciliation_low_beta_threshold": 0.9,
     "self_consistency_gamma_reconciliation_high_beta_threshold": 0.99,
@@ -107,8 +113,23 @@ def metrics_export_settings_from_data(data: Dict[str, Any]) -> tuple[str, str]:
 
 def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:
     """Apply persisted config values and defaults onto an OptimizationConfig."""
+    nested_driver_train = data.get("driver_train")
+    if isinstance(nested_driver_train, dict):
+        data = dict(data)
+        for source_key, target_key in {
+            "enabled": "driver_train_enabled",
+            "bunch_count": "driver_train_bunch_count",
+            "z_spacing_mm": "driver_train_z_spacing_mm",
+            "z_offsets_mm": "driver_train_z_offsets_mm",
+            "prehistory_steps": "driver_train_prehistory_steps",
+            "preserve_prehistory_in_output": "driver_train_preserve_prehistory_in_output",
+        }.items():
+            if source_key in nested_driver_train:
+                data[target_key] = nested_driver_train[source_key]
+
     for attr_name, default in _PERSISTED_CONFIG_DEFAULTS.items():
         setattr(config, attr_name, data.get(attr_name, default))
+    config.driver_train_z_offsets_mm = tuple(config.driver_train_z_offsets_mm or ())
     config.transverse_geometry = data.get(
         "rider_transverse_geometry", data.get("transverse_geometry", "square")
     )
@@ -266,6 +287,16 @@ def build_saved_config_payload(
             ),
             "causal_history_safety_margin_steps": (
                 config.pseudo_grid_causal_history_safety_margin_steps
+            ),
+        },
+        "driver_train": {
+            "enabled": config.driver_train_enabled,
+            "bunch_count": config.driver_train_bunch_count,
+            "z_spacing_mm": config.driver_train_z_spacing_mm,
+            "z_offsets_mm": list(config.driver_train_z_offsets_mm),
+            "prehistory_steps": config.driver_train_prehistory_steps,
+            "preserve_prehistory_in_output": (
+                config.driver_train_preserve_prehistory_in_output
             ),
         },
         "workers": config.workers,

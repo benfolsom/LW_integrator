@@ -319,6 +319,14 @@ class OptimizationConfig:
     pseudo_grid_causal_history_pruning_enabled: bool = False
     pseudo_grid_causal_history_safety_margin_steps: int = 2
 
+    # Driver-train options (BUNCH_TO_BUNCH only)
+    driver_train_enabled: bool = False
+    driver_train_bunch_count: int = 1
+    driver_train_z_spacing_mm: float = 0.0
+    driver_train_z_offsets_mm: Tuple[float, ...] = ()
+    driver_train_prehistory_steps: int = 0
+    driver_train_preserve_prehistory_in_output: bool = False
+
     # Sweep execution / robustness options
     workers: int = 1
     per_run_timeout: float = 300.0  # seconds (0 = no timeout, default 5 minutes)
@@ -601,6 +609,26 @@ class OptimizationConfig:
                 options,
                 "pseudo_grid_causal_history_safety_margin_steps",
                 2,
+            ),
+            driver_train_enabled=getattr(options, "driver_train_enabled", False),
+            driver_train_bunch_count=getattr(options, "driver_train_bunch_count", 1),
+            driver_train_z_spacing_mm=getattr(
+                options,
+                "driver_train_z_spacing_mm",
+                0.0,
+            ),
+            driver_train_z_offsets_mm=tuple(
+                getattr(options, "driver_train_z_offsets_mm", ())
+            ),
+            driver_train_prehistory_steps=getattr(
+                options,
+                "driver_train_prehistory_steps",
+                0,
+            ),
+            driver_train_preserve_prehistory_in_output=getattr(
+                options,
+                "driver_train_preserve_prehistory_in_output",
+                False,
             ),
             # Startup mode from core params
             startup_mode=core.get("startup_mode", "COLD_START"),

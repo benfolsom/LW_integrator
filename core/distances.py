@@ -218,8 +218,13 @@ def _locate_retarded_index_soa(
     in-Python scan is faster than dispatching ``np.searchsorted`` per particle.
     """
     bounded_index_traj = min(index_traj, len(t_col) - 1)
-    if target_time <= 0.0:
+    if len(t_col) == 0:
         return bounded_index_traj
+    earliest_time = float(t_col[0])
+    if target_time <= 0.0 and earliest_time >= 0.0:
+        return bounded_index_traj
+    if target_time <= earliest_time:
+        return 0
 
     matched_idx = bounded_index_traj
     if side == "left":
@@ -242,14 +247,16 @@ def _locate_retarded_index(
     target_time: float,
 ) -> int:
     bounded_index_traj = min(index_traj, len(trajectory_ext) - 1)
-    if target_time <= 0.0:
+    earliest_time = float(trajectory_ext[0]["t"][sample_index])
+    if target_time <= 0.0 and earliest_time >= 0.0:
         return bounded_index_traj
+    if target_time <= earliest_time:
+        return 0
 
-    for k in range(bounded_index_traj, -1, -1):
-        candidate_index = bounded_index_traj - k
+    for candidate_index in range(bounded_index_traj + 1):
         if trajectory_ext[candidate_index]["t"][sample_index] >= target_time:
             return candidate_index
-    return 0
+    return bounded_index_traj
 
 
 def _compute_delta_t_soa(
@@ -527,10 +534,14 @@ def chrono_match_indices_soa(
             )
 
         t_ext_new = _soa_row(traj_ext, "t", current_source_index) - delta_t
-        positive_target = t_ext_new > 0.0
-        if np.any(positive_target):
+        earliest_times = t_cols[0, :]
+        searchable_target = (t_ext_new > 0.0) | (earliest_times < 0.0)
+        before_earliest = searchable_target & (t_ext_new <= earliest_times)
+        if np.any(before_earliest):
+            index_traj_new[before_earliest] = 0
+        if np.any(searchable_target):
             matches = t_cols > t_ext_new[np.newaxis, :]
-            has_match = positive_target & np.any(matches, axis=0)
+            has_match = searchable_target & np.any(matches, axis=0)
             if np.any(has_match):
                 matched_indices = np.argmax(matches, axis=0)
                 index_traj_new[has_match] = matched_indices[has_match]
@@ -581,11 +592,10 @@ def chrono_match_indices_soa(
         if interpolate:
             index_traj_next[sample_index] = current_source_index
 
-        if t_ext_new < 0:
+        t_col = t_cols[:, sample_index]
+        if t_ext_new < 0 and float(t_col[0]) >= 0.0:
             continue
 
-        # SOA binary search on the pre-extracted column
-        t_col = t_cols[:, sample_index]
         matched_idx = _locate_retarded_index_soa(
             t_col,
             current_source_index,
@@ -751,15 +761,15 @@ def chrono_match_indices(
         if interpolate:
             index_traj_next[sample_index] = current_source_index
 
-        if t_ext_new < 0:
+        if t_ext_new < 0 and float(trajectory_ext[0]["t"][sample_index]) >= 0.0:
             continue
 
-        # Find the trajectory index that brackets or is nearest to t_ext_new
-        matched_idx = current_source_index
-        for k in range(current_source_index, -1, -1):
-            if trajectory_ext[current_source_index - k]["t"][sample_index] > t_ext_new:
-                matched_idx = current_source_index - k
-                break
+        matched_idx = _locate_retarded_index(
+            trajectory_ext,
+            current_source_index,
+            sample_index,
+            t_ext_new,
+        )
 
         index_traj_new[sample_index] = matched_idx
 

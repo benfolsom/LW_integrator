@@ -56,6 +56,12 @@ def _make_args(**overrides) -> argparse.Namespace:
         "pseudo_grid_loss_tracking_enabled": None,
         "pseudo_grid_causal_history_pruning_enabled": None,
         "pseudo_grid_causal_history_safety_margin_steps": None,
+        "driver_train_enabled": None,
+        "driver_train_bunch_count": None,
+        "driver_train_z_spacing_mm": None,
+        "driver_train_z_offsets_mm": None,
+        "driver_train_prehistory_steps": None,
+        "driver_train_preserve_prehistory_in_output": None,
         "driver_from_rider": False,
         "output": None,
         "quiet": False,
@@ -200,11 +206,39 @@ class TestCliConfigParsing:
         assert args.pseudo_grid_causal_history_pruning_enabled is True
         assert args.pseudo_grid_causal_history_safety_margin_steps == 5
 
+    def test_parse_args_accepts_driver_train_options(self):
+        args = cli.parse_args(
+            [
+                "--driver-train",
+                "--driver-train-bunch-count",
+                "3",
+                "--driver-train-z-spacing-mm",
+                "2997.9",
+                "--driver-train-z-offsets-mm",
+                "0",
+                "100",
+                "250",
+                "--driver-train-prehistory-steps",
+                "12",
+                "--driver-train-preserve-prehistory",
+            ]
+        )
+
+        assert args.driver_train_enabled is True
+        assert args.driver_train_bunch_count == 3
+        assert args.driver_train_z_spacing_mm == pytest.approx(2997.9)
+        assert args.driver_train_z_offsets_mm == [0.0, 100.0, 250.0]
+        assert args.driver_train_prehistory_steps == 12
+        assert args.driver_train_preserve_prehistory_in_output is True
+
     def test_parse_args_allows_disabling_boolean_flags(self):
-        args = cli.parse_args(["--no-adaptive-debug", "--no-image-weighting"])
+        args = cli.parse_args(
+            ["--no-adaptive-debug", "--no-image-weighting", "--no-driver-train"]
+        )
 
         assert args.adaptive_debug is False
         assert args.use_image_weighting is False
+        assert args.driver_train_enabled is False
 
     def test_parse_simulation_type_accepts_aliases(self):
         assert cli._parse_simulation_type("wall") == SimulationType.CONDUCTING_WALL
@@ -322,6 +356,14 @@ class TestCliConfigParsing:
                     "causal_history_pruning_enabled": True,
                     "causal_history_safety_margin_steps": 5,
                 },
+                "driver_train": {
+                    "enabled": True,
+                    "bunch_count": 3,
+                    "z_spacing_mm": 100.0,
+                    "z_offsets_mm": [0.0, 100.0, 250.0],
+                    "prehistory_steps": 8,
+                    "preserve_prehistory_in_output": True,
+                },
             }
         )
 
@@ -339,6 +381,12 @@ class TestCliConfigParsing:
         assert config.pseudo_grid.pair_reuse_window == 20
         assert config.pseudo_grid.causal_history_pruning_enabled is True
         assert config.pseudo_grid.causal_history_safety_margin_steps == 5
+        assert config.driver_train.enabled is True
+        assert config.driver_train.bunch_count == 3
+        assert config.driver_train.z_spacing_mm == pytest.approx(100.0)
+        assert config.driver_train.z_offsets_mm == pytest.approx((0.0, 100.0, 250.0))
+        assert config.driver_train.prehistory_steps == 8
+        assert config.driver_train.preserve_prehistory_in_output is True
 
     def test_build_integrator_config_requires_simulation_type(self):
         with pytest.raises(
@@ -443,6 +491,26 @@ class TestCliBuildRequest:
         assert payload["pseudo_grid"]["passive_neighbor_count"] == 2
         assert payload["pseudo_grid"]["pair_reuse_window"] == 30
         assert payload["pseudo_grid"]["causal_history_pruning_enabled"] is True
+
+    def test_merge_simulation_payload_applies_driver_train_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {"driver_train": {"enabled": False, "bunch_count": 1}},
+            _make_args(
+                driver_train_enabled=True,
+                driver_train_bunch_count=4,
+                driver_train_z_spacing_mm=2997.9,
+                driver_train_z_offsets_mm=[0.0, 10.0, 20.0, 30.0],
+                driver_train_prehistory_steps=16,
+                driver_train_preserve_prehistory_in_output=True,
+            ),
+        )
+
+        assert payload["driver_train"]["enabled"] is True
+        assert payload["driver_train"]["bunch_count"] == 4
+        assert payload["driver_train"]["z_spacing_mm"] == pytest.approx(2997.9)
+        assert payload["driver_train"]["z_offsets_mm"] == [0.0, 10.0, 20.0, 30.0]
+        assert payload["driver_train"]["prehistory_steps"] == 16
+        assert payload["driver_train"]["preserve_prehistory_in_output"] is True
 
     def test_build_request_defaults_to_medina_lad_rr(self):
         request = cli.build_request(_make_args())
@@ -1091,6 +1159,7 @@ class TestCliRuntimeHelpers:
         assert captured["space_charge"] is request.space_charge
         assert captured["external_field"] is request.external_field
         assert captured["pseudo_grid"] is request.config.pseudo_grid
+        assert captured["driver_train"] is request.config.driver_train
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

@@ -245,6 +245,7 @@ class IntegratorGUI(
         self._refresh_initial_summary()
         self._update_driver_visibility()
         self._update_image_subcharge_state()
+        self._update_driver_train_state()
 
         # Set initial sash position for main horizontal pane (70/30 split)
         self.root.update_idletasks()  # Ensure window is laid out
@@ -422,6 +423,33 @@ class IntegratorGUI(
                 self.options,
                 "pseudo_grid_causal_history_safety_margin_steps",
                 2,
+            )
+        )
+
+        # Driver train / persistent prehistory options
+        self.driver_train_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "driver_train_enabled", False)
+        )
+        self.driver_train_bunch_count_var = tk.IntVar(
+            value=getattr(self.options, "driver_train_bunch_count", 1)
+        )
+        self.driver_train_z_spacing_mm_var = tk.DoubleVar(
+            value=getattr(self.options, "driver_train_z_spacing_mm", 0.0)
+        )
+        self.driver_train_z_offsets_mm_var = tk.StringVar(
+            value=" ".join(
+                str(value)
+                for value in getattr(self.options, "driver_train_z_offsets_mm", ())
+            )
+        )
+        self.driver_train_prehistory_steps_var = tk.IntVar(
+            value=getattr(self.options, "driver_train_prehistory_steps", 0)
+        )
+        self.driver_train_preserve_prehistory_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "driver_train_preserve_prehistory_in_output",
+                False,
             )
         )
 
@@ -614,6 +642,9 @@ class IntegratorGUI(
         self.summary_var = tk.StringVar(value="")
         self.progress_var = tk.DoubleVar(value=0.0)
 
+        self.driver_train_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_driver_train_controls()
+        )
         self.sim_type_var.trace_add("write", lambda *_: self._on_sim_type_change())
 
         for var in [self.seed_var, self.rider_species_var, self.driver_species_var]:

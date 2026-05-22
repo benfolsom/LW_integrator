@@ -18,6 +18,7 @@ class IntegratorGUIStateMixin:
         self._update_image_subcharge_state()
         self._update_macroparticle_state()
         self._update_pseudo_grid_state()
+        self._update_driver_train_state()
         self._refresh_initial_summary()
 
         if hasattr(self, "optimization_tab") and self.optimization_tab:
@@ -253,6 +254,33 @@ class IntegratorGUIStateMixin:
             self.pseudo_grid_enabled_var.set(False)
 
         self._toggle_pseudo_grid_controls()
+
+    def _toggle_driver_train_controls(self) -> None:
+        if not hasattr(self, "driver_train_enabled_var"):
+            return
+
+        enabled = bool(self.driver_train_enabled_var.get())
+        for widget in getattr(self, "_driver_train_widgets", []):
+            if isinstance(widget, ttk.Entry):
+                widget.configure(state="normal" if enabled else "disabled")
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(state="normal" if enabled else "disabled")
+            elif isinstance(widget, ttk.Label):
+                widget.configure(foreground="black" if enabled else "gray")
+
+    def _update_driver_train_state(self) -> None:
+        if not hasattr(self, "driver_train_enable_check"):
+            return
+
+        is_bunch_to_bunch = self.sim_type_var.get() == "BUNCH_TO_BUNCH"
+        self.driver_train_enable_check.configure(
+            state="normal" if is_bunch_to_bunch else "disabled"
+        )
+
+        if not is_bunch_to_bunch:
+            self.driver_train_enabled_var.set(False)
+
+        self._toggle_driver_train_controls()
 
     def _toggle_gamma_reconciliation_params(self) -> None:
         if not hasattr(self, "sc_gamma_reconciliation_adaptive_frame"):

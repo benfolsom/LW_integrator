@@ -39,6 +39,7 @@ from .pseudo_grid import (
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import (
     ChronoMatchingMode,
+    DriverTrainConfig,
     IndexedTrajectoryArrays,
     IntegratorConfig,
     ParticleLossConfig,
@@ -335,6 +336,117 @@ def _copy_particle_state(state: ParticleState) -> ParticleState:
     }
 
 
+def _build_driver_train_initial_state(
+    init_driver: ParticleState,
+    driver_train: DriverTrainConfig,
+) -> ParticleState:
+    offsets = driver_train.resolved_z_offsets_mm()
+    if not driver_train.enabled and len(offsets) == 1 and offsets[0] == 0.0:
+        return _copy_particle_state(init_driver)
+
+    particle_count = len(np.asarray(init_driver["x"]))
+    train_state: ParticleState = {}
+    for key, value in init_driver.items():
+        if isinstance(value, np.ndarray) and value.shape[:1] == (particle_count,):
+            pieces = []
+            for z_offset in offsets:
+                piece = np.copy(value)
+                if key == "z":
+                    piece = piece + float(z_offset)
+                pieces.append(piece)
+            train_state[key] = np.concatenate(pieces, axis=0)
+        elif isinstance(value, np.ndarray):
+            train_state[key] = np.copy(value)
+        elif isinstance(value, dict):
+            train_state[key] = dict(value)
+        else:
+            train_state[key] = value
+    return train_state
+
+
+def _coast_state_by_proper_steps(
+    state: ParticleState,
+    h_step: float,
+    step_offset: int,
+) -> ParticleState:
+    result = _copy_particle_state(state)
+    gamma = np.asarray(state["gamma"], dtype=float)
+    dt_lab = gamma * float(h_step) * float(step_offset)
+    for axis, beta_key in (("x", "bx"), ("y", "by"), ("z", "bz")):
+        if axis in state and beta_key in state:
+            result[axis] = np.asarray(state[axis], dtype=float) + (
+                np.asarray(state[beta_key], dtype=float) * C_MMNS * dt_lab
+            )
+    if "t" in state:
+        result["t"] = np.asarray(state["t"], dtype=float) + dt_lab
+    return result
+
+
+def _build_coasting_history(
+    active_state: ParticleState,
+    h_step: float,
+    prehistory_steps: int,
+) -> Trajectory:
+    history = [
+        _coast_state_by_proper_steps(active_state, h_step, step_offset)
+        for step_offset in range(-int(prehistory_steps), 1)
+    ]
+    oldest = history[0]
+    for state in history:
+        for axis in ("x", "y", "z"):
+            state[f"origin_{axis}"] = np.copy(oldest[axis])
+        state["beta_avg_x"] = np.copy(state.get("bx", oldest["x"] * 0.0))
+        state["beta_avg_y"] = np.copy(state.get("by", oldest["y"] * 0.0))
+        state["beta_avg_z"] = np.copy(state.get("bz", oldest["z"] * 0.0))
+        state["beta_samples"] = np.ones_like(oldest["x"], dtype=float)
+    return history
+
+
+def _slice_trajectory_arrays(
+    arrays: TrajectoryArrays | None,
+    start: int,
+    stop: int,
+) -> TrajectoryArrays | None:
+    if arrays is None:
+        return None
+    return TrajectoryArrays(
+        x=arrays.x[start:stop],
+        y=arrays.y[start:stop],
+        z=arrays.z[start:stop],
+        t=arrays.t[start:stop],
+        Px=arrays.Px[start:stop],
+        Py=arrays.Py[start:stop],
+        Pz=arrays.Pz[start:stop],
+        Pt=arrays.Pt[start:stop],
+        gamma=arrays.gamma[start:stop],
+        bx=arrays.bx[start:stop],
+        by=arrays.by[start:stop],
+        bz=arrays.bz[start:stop],
+        bdotx=arrays.bdotx[start:stop],
+        bdoty=arrays.bdoty[start:stop],
+        bdotz=arrays.bdotz[start:stop],
+        radiation_power=arrays.radiation_power[start:stop],
+        radiation_energy=arrays.radiation_energy[start:stop],
+        radiation_energy_applied=arrays.radiation_energy_applied[start:stop],
+        origin_x=arrays.origin_x[start:stop],
+        origin_y=arrays.origin_y[start:stop],
+        origin_z=arrays.origin_z[start:stop],
+        beta_avg_x=arrays.beta_avg_x[start:stop],
+        beta_avg_y=arrays.beta_avg_y[start:stop],
+        beta_avg_z=arrays.beta_avg_z[start:stop],
+        beta_samples=arrays.beta_samples[start:stop],
+        dead=arrays.dead[start:stop],
+        q=arrays.q,
+        m=arrays.m,
+        char_time=arrays.char_time,
+        halted_early=arrays.halted_early[start:stop],
+        halt_step=arrays.halt_step[start:stop],
+        halt_reason=arrays.halt_reason[start:stop],
+        particle_failure_info=arrays.particle_failure_info,
+        pseudo_grid_schedule=arrays.pseudo_grid_schedule[start:stop],
+    )
+
+
 def _resolve_history_start_index(
     history: Trajectory,
     start_index: int | None,
@@ -620,6 +732,7 @@ def _run_adaptive_step(
     pseudo_grid_source_history_base_index: int = 0,
     pseudo_grid_observer_soa: TrajectoryArrays | None = None,
     pseudo_grid_source_soa: TrajectoryArrays | None = None,
+    use_full_history: bool = False,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -851,20 +964,33 @@ def _run_adaptive_step(
         if num_substeps < 1:
             num_substeps = 1
 
-        temp_trajectory = [
+        temp_trajectory = []
+        if use_full_history and i > 1:
+            temp_trajectory.extend(trajectory[: i - 1])
+        temp_trajectory.append(
             {
                 k: (v.copy() if isinstance(v, (dict, np.ndarray)) else v)
                 for k, v in temp_trajectory_base.items()
             }
-        ]
-        temp_driver = [trajectory_drv[i - 1]]
+        )
+        temp_driver = (
+            trajectory_drv[:i] if use_full_history else [trajectory_drv[i - 1]]
+        )
 
         _n_p_rider = len(temp_trajectory[0]["x"])
-        _temp_traj_builder = TrajectoryBuilder(num_substeps + 1, _n_p_rider)
-        _temp_traj_builder.set_step(0, temp_trajectory[0])
+        _temp_traj_builder = TrajectoryBuilder(
+            len(temp_trajectory) + num_substeps,
+            _n_p_rider,
+        )
+        for step_index, state in enumerate(temp_trajectory):
+            _temp_traj_builder.set_step(step_index, state)
         _n_p_driver = len(temp_driver[0]["x"])
-        _temp_drv_builder = TrajectoryBuilder(num_substeps + 1, _n_p_driver)
-        _temp_drv_builder.set_step(0, temp_driver[0])
+        _temp_drv_builder = TrajectoryBuilder(
+            len(temp_driver) + num_substeps,
+            _n_p_driver,
+        )
+        for step_index, state in enumerate(temp_driver):
+            _temp_drv_builder.set_step(step_index, state)
         _scs_accepts_soa = _call_accepts_kw(self_consistent_step, "traj_soa")
         _scs_accepts_radiation = _call_accepts_kw(
             self_consistent_step, "radiation_reaction_mode"
@@ -881,6 +1007,8 @@ def _run_adaptive_step(
         for substep_idx in range(num_substeps):
             if cancel_callback is not None and cancel_callback():
                 raise IntegrationCancelled("Integration cancelled by caller.")
+
+            current_observer_index = len(temp_trajectory) - 1
 
             try:
                 if (
@@ -926,7 +1054,7 @@ def _run_adaptive_step(
                         current_h_step,
                         temp_trajectory,
                         temp_driver,
-                        substep_idx,
+                        current_observer_index,
                         aperture_radius,
                         sim_type,
                         self_consistency,
@@ -953,7 +1081,7 @@ def _run_adaptive_step(
                         **(
                             {
                                 "traj_soa": _temp_traj_builder.build_partial(
-                                    substep_idx + 1
+                                    len(temp_trajectory)
                                 )
                             }
                             if _scs_accepts_soa
@@ -962,7 +1090,7 @@ def _run_adaptive_step(
                         **(
                             {
                                 "traj_ext_soa": _temp_drv_builder.build_partial(
-                                    substep_idx + 1
+                                    len(temp_driver)
                                 )
                             }
                             if _scs_accepts_soa
@@ -1360,6 +1488,7 @@ def retarded_integrator(
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
     pseudo_grid: Optional[PseudoGridConfig] = None,
+    driver_train: Optional[DriverTrainConfig] = None,
     particle_loss: Optional[ParticleLossConfig] = None,
 ) -> Tuple[
     Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
@@ -1466,6 +1595,10 @@ def retarded_integrator(
         Intra-bunch space charge also uses the reduced path when each bunch has
         at least two active particles; otherwise the canonical full-history
         fallback remains in place.
+    driver_train:
+        Optional flat driver-train configuration for ``BUNCH_TO_BUNCH`` runs.
+        It expands the driver bunch into fixed longitudinally offset copies and
+        can seed inertial prehistory before the active output window.
     particle_loss:
         Optional fixed-size particle-loss predicates. Lost particles are marked
         dead, retain their trajectory slot, and stop contributing source charge
@@ -1489,12 +1622,31 @@ def retarded_integrator(
     from . import vectorized_interactions as _vectorized_interactions
 
     pseudo_grid = pseudo_grid or PseudoGridConfig()
+    driver_train = driver_train or DriverTrainConfig()
     particle_loss = particle_loss or ParticleLossConfig()
+    driver_train_enabled = bool(driver_train.enabled)
     if pseudo_grid.enabled and sim_type != SimulationType.BUNCH_TO_BUNCH:
         raise NotImplementedError(
             "Pseudo-grid schedule mode is currently implemented only for "
             "SimulationType.BUNCH_TO_BUNCH."
         )
+    if driver_train_enabled:
+        if sim_type != SimulationType.BUNCH_TO_BUNCH:
+            raise NotImplementedError(
+                "Driver-train mode is implemented only for "
+                "SimulationType.BUNCH_TO_BUNCH."
+            )
+        if init_driver is None:
+            raise ValueError("Driver-train mode requires init_driver state")
+        if pseudo_grid.enabled:
+            raise NotImplementedError(
+                "Driver-train mode is not yet compatible with pseudo-grid reduction."
+            )
+        init_driver = _build_driver_train_initial_state(init_driver, driver_train)
+
+    active_start = int(driver_train.prehistory_steps) if driver_train_enabled else 0
+    requested_steps = int(steps)
+    total_steps = requested_steps + active_start
 
     pseudo_grid_space_charge_reduction_supported = not _space_charge_enabled(
         space_charge
@@ -1567,11 +1719,22 @@ def retarded_integrator(
 
     # Canonical integration implementation
 
-    trajectory: Trajectory = [{} for _ in range(steps)]
-    trajectory_drv: Trajectory = [{} for _ in range(steps)]
+    rider_seed_history = (
+        _build_coasting_history(init_rider, h_step, active_start)
+        if driver_train_enabled
+        else [init_rider]
+    )
+    driver_seed_history = (
+        _build_coasting_history(cast(ParticleState, init_driver), h_step, active_start)
+        if driver_train_enabled and init_driver is not None
+        else None
+    )
+
+    trajectory: Trajectory = [{} for _ in range(total_steps)]
+    trajectory_drv: Trajectory = [{} for _ in range(total_steps)]
     _n_particles_rider = len(init_rider["x"])
     _n_particles_drv: int | None = None
-    _traj_builder = TrajectoryBuilder(steps, _n_particles_rider)
+    _traj_builder = TrajectoryBuilder(total_steps, _n_particles_rider)
     _traj_drv_builder: TrajectoryBuilder | None = None
     _pseudo_grid_planner_state: PseudoGridPlannerState | None = None
     _pseudo_grid_retention_active = _history_retention_enabled(
@@ -1610,20 +1773,41 @@ def retarded_integrator(
                 print(msg)
 
     if progress_callback is not None:
-        progress_callback(0, steps)
+        progress_callback(0, requested_steps)
+
+    def _to_public_return(
+        rider_traj: Trajectory,
+        driver_traj: Trajectory,
+        rider_soa: TrajectoryArrays | None,
+        driver_soa: TrajectoryArrays | None,
+    ) -> Tuple[
+        Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None
+    ]:
+        if not driver_train_enabled or driver_train.preserve_prehistory_in_output:
+            return rider_traj, driver_traj, rider_soa, driver_soa
+        start = min(active_start, len(rider_traj))
+        stop = len(rider_traj)
+        return (
+            rider_traj[start:stop],
+            driver_traj[start:stop],
+            _slice_trajectory_arrays(rider_soa, start, stop),
+            _slice_trajectory_arrays(driver_soa, start, stop),
+        )
 
     _adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
-    for i in range(steps):
+    for i in range(total_steps):
         if cancel_callback is not None and cancel_callback():
             raise IntegrationCancelled("Integration cancelled by caller.")
-        if i == 0:
-            trajectory[i] = init_rider
+        if i <= active_start:
+            trajectory[i] = (
+                rider_seed_history[i] if driver_train_enabled else init_rider
+            )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(trajectory[i], None)
             _traj_builder.set_step(i, trajectory[i])
             if sim_type == SimulationType.CONDUCTING_WALL:
                 trajectory_drv[i] = generate_conducting_image(
-                    init_rider,
+                    trajectory[i],
                     wall_z,
                     aperture_radius,
                     subcharge_count=image_subcharge_count,
@@ -1638,20 +1822,24 @@ def retarded_integrator(
                 )
             elif sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
-                    init_rider, wall_z, aperture_radius, z_cutoff
+                    trajectory[i], wall_z, aperture_radius, z_cutoff
                 )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
                 if init_driver is None:
                     raise ValueError(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
-                trajectory_drv[i] = init_driver
+                if driver_train_enabled and driver_seed_history is not None:
+                    trajectory_drv[i] = driver_seed_history[i]
+                else:
+                    trajectory_drv[i] = init_driver
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             _n_particles_drv = len(trajectory_drv[i]["x"])
-            _traj_drv_builder = TrajectoryBuilder(steps, _n_particles_drv)
+            if _traj_drv_builder is None:
+                _traj_drv_builder = TrajectoryBuilder(total_steps, _n_particles_drv)
             _traj_drv_builder.set_step(i, trajectory_drv[i])
-            if pseudo_grid.enabled:
+            if pseudo_grid.enabled and i == active_start:
                 _pseudo_grid_planner_state = initialize_pseudo_grid_planner_state(
                     rider_particle_count=_n_particles_rider,
                     driver_particle_count=_n_particles_drv,
@@ -1665,6 +1853,8 @@ def retarded_integrator(
                 if _pseudo_grid_retention_active:
                     _rider_retained_history = [trajectory[i]]
                     _driver_retained_history = [trajectory_drv[i]]
+            if i < active_start:
+                continue
         else:
             _current_pseudo_grid_schedule = None
             if pseudo_grid.enabled:
@@ -1682,7 +1872,7 @@ def retarded_integrator(
 
             trajectory[i] = _run_adaptive_step(
                 i=i,
-                steps=steps,
+                steps=total_steps,
                 h_step=h_step,
                 wall_z=wall_z,
                 aperture_radius=aperture_radius,
@@ -1734,6 +1924,7 @@ def retarded_integrator(
                     if _traj_drv_builder is not None
                     else None
                 ),
+                use_full_history=driver_train_enabled,
             )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(
@@ -1791,16 +1982,20 @@ def retarded_integrator(
 
                 # Store halt information
                 trajectory[-1]["_halted_early"] = True
+                active_halt_step = max(0, i - active_start)
                 trajectory[-1][
                     "_halt_reason"
-                ] = f"all_particles_dead at step {i}/{steps}. {failure_summary}"
-                trajectory[-1]["_halt_step"] = i
-                trajectory[-1]["_requested_steps"] = steps
+                ] = f"all_particles_dead at step {active_halt_step}/{requested_steps}. {failure_summary}"
+                trajectory[-1]["_halt_step"] = active_halt_step
+                trajectory[-1]["_requested_steps"] = requested_steps
                 _traj_builder.set_halt_metadata(
                     step=i,
-                    reason=f"all_particles_dead at step {i}/{steps}. {failure_summary}",
-                    halt_step=i,
-                    requested_steps=steps,
+                    reason=(
+                        f"all_particles_dead at step {active_halt_step}/{requested_steps}. "
+                        f"{failure_summary}"
+                    ),
+                    halt_step=active_halt_step,
+                    requested_steps=requested_steps,
                 )
                 _traj_soa = _traj_builder.build()
                 _traj_drv_soa = (
@@ -1813,7 +2008,12 @@ def retarded_integrator(
                         if _traj_drv_soa is not None
                         else []
                     )
-                return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
+                return _to_public_return(
+                    trajectory,
+                    trajectory_drv,
+                    _traj_soa,
+                    _traj_drv_soa,
+                )
 
             if sim_type == SimulationType.SWITCHING_WALL:
                 trajectory_drv[i] = generate_switching_image(
@@ -1924,7 +2124,7 @@ def retarded_integrator(
                         ),
                         **(
                             {"space_charge": space_charge}
-                            if space_charge is not None
+                            if space_charge is not None and not driver_train_enabled
                             else {}
                         ),
                         **(
@@ -2032,6 +2232,7 @@ def retarded_integrator(
         if (
             z_cutoff_mode == "relative"
             and sim_type == SimulationType.BUNCH_TO_BUNCH
+            and i >= active_start
             and z_initial is not None
             and z_cutoff > 0
         ):
@@ -2049,16 +2250,20 @@ def retarded_integrator(
                 trajectory_drv_truncated = trajectory_drv[: i + 1]
                 # Store halt information in the last particle's metadata
                 trajectory_truncated[-1]["_halted_early"] = True
+                active_halt_step = max(0, i - active_start)
                 trajectory_truncated[-1][
                     "_halt_reason"
-                ] = f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})"
-                trajectory_truncated[-1]["_halt_step"] = i
-                trajectory_truncated[-1]["_requested_steps"] = steps
+                ] = f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {active_halt_step}/{requested_steps})"
+                trajectory_truncated[-1]["_halt_step"] = active_halt_step
+                trajectory_truncated[-1]["_requested_steps"] = requested_steps
                 _traj_builder.set_halt_metadata(
                     step=i,
-                    reason=f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm at step {i}/{steps})",
-                    halt_step=i,
-                    requested_steps=steps,
+                    reason=(
+                        f"distance_reached ({distance_traveled:.2f} mm > {z_cutoff:.2f} mm "
+                        f"at step {active_halt_step}/{requested_steps})"
+                    ),
+                    halt_step=active_halt_step,
+                    requested_steps=requested_steps,
                 )
                 _traj_soa = _traj_builder.build()
                 _traj_drv_soa = (
@@ -2071,7 +2276,7 @@ def retarded_integrator(
                         if _traj_drv_soa is not None
                         else []
                     )
-                return (
+                return _to_public_return(
                     trajectory_truncated,
                     trajectory_drv_truncated,
                     _traj_soa,
@@ -2092,7 +2297,7 @@ def retarded_integrator(
                 )
                 if relative_change > energy_monitor.relative_threshold:
                     msg = (
-                        f"Energy jump detected at step {i}/{steps}: "
+                        f"Energy jump detected at step {i}/{requested_steps}: "
                         f"ΔE/E = {relative_change:.2e} "
                         f"(threshold = {energy_monitor.relative_threshold:.2e})"
                     )
@@ -2106,15 +2311,18 @@ def retarded_integrator(
                     )
             previous_energy = current_energy
 
-        if progress_callback is not None:
-            progress_callback(i + 1, steps)
+        if progress_callback is not None and i >= active_start:
+            progress_callback(
+                min(i - active_start + 1, requested_steps),
+                requested_steps,
+            )
 
     _traj_soa = _traj_builder.build()
     _traj_drv_soa = _traj_drv_builder.build() if _traj_drv_builder is not None else None
     if _legacy_history_compacted:
         trajectory = _traj_soa.to_legacy()
         trajectory_drv = _traj_drv_soa.to_legacy() if _traj_drv_soa is not None else []
-    return trajectory, trajectory_drv, _traj_soa, _traj_drv_soa
+    return _to_public_return(trajectory, trajectory_drv, _traj_soa, _traj_drv_soa)
 
 
 def run_integrator(
@@ -2191,6 +2399,7 @@ def run_integrator(
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
         pseudo_grid=config.pseudo_grid,
+        driver_train=config.driver_train,
         particle_loss=config.particle_loss,
     )
 

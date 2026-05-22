@@ -24,6 +24,7 @@ from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import retarded_integrator
 from core.types import (
     ChronoMatchingMode,
+    DriverTrainConfig,
     ExternalFieldConfig,
     IntegratorConfig,
     ParticleLossConfig,
@@ -101,6 +102,15 @@ DEFAULT_PSEUDO_GRID: Dict[str, Any] = {
     "loss_tracking_enabled": True,
     "causal_history_pruning_enabled": False,
     "causal_history_safety_margin_steps": 2,
+}
+
+DEFAULT_DRIVER_TRAIN: Dict[str, Any] = {
+    "enabled": False,
+    "bunch_count": 1,
+    "z_spacing_mm": 0.0,
+    "z_offsets_mm": [],
+    "prehistory_steps": 0,
+    "preserve_prehistory_in_output": False,
 }
 
 SIMULATION_TYPE_ALIASES: Mapping[str, SimulationType] = {
@@ -525,6 +535,57 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Safety margin, in steps, retained beyond the causal pruning bound.",
     )
     parser.add_argument(
+        "--driver-train",
+        dest="driver_train_enabled",
+        action="store_true",
+        help="Enable flat BUNCH_TO_BUNCH driver-train expansion.",
+    )
+    parser.add_argument(
+        "--no-driver-train",
+        dest="driver_train_enabled",
+        action="store_false",
+        help="Disable driver-train mode explicitly.",
+    )
+    parser.set_defaults(driver_train_enabled=None)
+    parser.add_argument(
+        "--driver-train-bunch-count",
+        type=int,
+        dest="driver_train_bunch_count",
+        help="Number of longitudinal driver bunch copies in the train.",
+    )
+    parser.add_argument(
+        "--driver-train-z-spacing-mm",
+        type=float,
+        dest="driver_train_z_spacing_mm",
+        help="Longitudinal spacing between driver bunch copies in millimetres.",
+    )
+    parser.add_argument(
+        "--driver-train-z-offsets-mm",
+        type=float,
+        nargs="+",
+        dest="driver_train_z_offsets_mm",
+        help="Explicit z offsets for each driver bunch copy in millimetres.",
+    )
+    parser.add_argument(
+        "--driver-train-prehistory-steps",
+        type=int,
+        dest="driver_train_prehistory_steps",
+        help="Number of inertial coasting history rows before the active window.",
+    )
+    parser.add_argument(
+        "--driver-train-preserve-prehistory",
+        dest="driver_train_preserve_prehistory_in_output",
+        action="store_true",
+        help="Keep prehistory rows in returned/saved trajectories.",
+    )
+    parser.add_argument(
+        "--driver-train-trim-prehistory",
+        dest="driver_train_preserve_prehistory_in_output",
+        action="store_false",
+        help="Trim prehistory rows from returned/saved trajectories.",
+    )
+    parser.set_defaults(driver_train_preserve_prehistory_in_output=None)
+    parser.add_argument(
         "--driver-from-rider",
         action="store_true",
         help=(
@@ -683,6 +744,7 @@ def _merge_simulation_payload(
     result = dict(DEFAULT_SIMULATION)
     result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
+    result["driver_train"] = dict(DEFAULT_DRIVER_TRAIN)
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
@@ -697,6 +759,9 @@ def _merge_simulation_payload(
     file_pseudo_grid = file_payload.get("pseudo_grid")
     if isinstance(file_pseudo_grid, Mapping):
         result["pseudo_grid"].update(file_pseudo_grid)
+    file_driver_train = file_payload.get("driver_train")
+    if isinstance(file_driver_train, Mapping):
+        result["driver_train"].update(file_driver_train)
     if "external_field" in file_payload:
         result["external_field"] = file_payload["external_field"]
 
@@ -836,6 +901,21 @@ def _merge_simulation_payload(
         if value is not None:
             pseudo_grid[key] = value
 
+    driver_train = result["driver_train"]
+    driver_train_override_keys = (
+        "enabled",
+        "bunch_count",
+        "z_spacing_mm",
+        "z_offsets_mm",
+        "prehistory_steps",
+        "preserve_prehistory_in_output",
+    )
+    for key in driver_train_override_keys:
+        arg_name = f"driver_train_{key}"
+        value = getattr(args, arg_name, None)
+        if value is not None:
+            driver_train[key] = value
+
     return result
 
 
@@ -888,6 +968,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
 
     particle_loss = _build_particle_loss_config(payload.get("particle_loss"))
     pseudo_grid = _build_pseudo_grid_config(payload.get("pseudo_grid"))
+    driver_train = _build_driver_train_config(payload.get("driver_train"))
 
     return IntegratorConfig(
         steps=int(payload["steps"]),
@@ -911,6 +992,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             )
         ),
         pseudo_grid=pseudo_grid,
+        driver_train=driver_train,
         particle_loss=particle_loss,
     )
 
@@ -1105,6 +1187,63 @@ def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
         raise SimulationConfigError(str(exc)) from exc
 
 
+def _build_driver_train_config(payload: Any) -> DriverTrainConfig:
+    if payload is None:
+        return DriverTrainConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("driver_train must be a JSON object")
+
+    def _as_int(name: str, default: int) -> int:
+        value = payload.get(name, default)
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"driver_train.{name} must be an integer"
+            ) from exc
+
+    def _as_float(name: str, default: float) -> float:
+        value = payload.get(name, default)
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(f"driver_train.{name} must be numeric") from exc
+
+    offsets_raw = payload.get("z_offsets_mm", DEFAULT_DRIVER_TRAIN["z_offsets_mm"])
+    if offsets_raw in (None, ""):
+        offsets: tuple[float, ...] = ()
+    elif isinstance(offsets_raw, (list, tuple)):
+        try:
+            offsets = tuple(float(value) for value in offsets_raw)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                "driver_train.z_offsets_mm must contain numeric values"
+            ) from exc
+    else:
+        raise SimulationConfigError("driver_train.z_offsets_mm must be a list")
+
+    try:
+        return DriverTrainConfig(
+            enabled=bool(payload.get("enabled", DEFAULT_DRIVER_TRAIN["enabled"])),
+            bunch_count=_as_int("bunch_count", DEFAULT_DRIVER_TRAIN["bunch_count"]),
+            z_spacing_mm=_as_float(
+                "z_spacing_mm", DEFAULT_DRIVER_TRAIN["z_spacing_mm"]
+            ),
+            z_offsets_mm=offsets,
+            prehistory_steps=_as_int(
+                "prehistory_steps", DEFAULT_DRIVER_TRAIN["prehistory_steps"]
+            ),
+            preserve_prehistory_in_output=bool(
+                payload.get(
+                    "preserve_prehistory_in_output",
+                    DEFAULT_DRIVER_TRAIN["preserve_prehistory_in_output"],
+                )
+            ),
+        )
+    except ValueError as exc:
+        raise SimulationConfigError(str(exc)) from exc
+
+
 def _optional_float_field(payload: Mapping[str, Any], name: str) -> Optional[float]:
     value = payload.get(name)
     if value is None:
@@ -1293,6 +1432,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         space_charge=request.space_charge,
         external_field=request.external_field,
         pseudo_grid=request.config.pseudo_grid,
+        driver_train=request.config.driver_train,
         particle_loss=request.config.particle_loss,
     )
 
