@@ -212,7 +212,7 @@ def build_single_integration_setup(
             config, "macroparticle_smearing_use_internal_cloud", True
         ),
         macroparticle_smearing_apply_to_active_observers=getattr(
-            config, "macroparticle_smearing_apply_to_active_observers", False
+            config, "macroparticle_smearing_apply_to_active_observers", True
         ),
         macroparticle_smearing_apply_to_active_sources=getattr(
             config, "macroparticle_smearing_apply_to_active_sources", True

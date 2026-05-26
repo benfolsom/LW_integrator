@@ -152,7 +152,7 @@ class MacroparticleSmearingConfig:
     use_momentum_errors: bool = True
     use_centroid_errors: bool = True
     use_internal_cloud: bool = True
-    apply_to_active_observers: bool = False
+    apply_to_active_observers: bool = True
     apply_to_active_sources: bool = True
     apply_to_passive_sources: bool = True
     apply_to_passive_updates: bool = False
@@ -182,10 +182,6 @@ class MacroparticleSmearingConfig:
         if self.refresh_policy not in {"fixed_per_particle", "per_step"}:
             raise ValueError(
                 "macroparticle smearing refresh_policy must be fixed_per_particle or per_step"
-            )
-        if self.apply_to_active_observers:
-            raise ValueError(
-                "macroparticle smearing apply_to_active_observers is not implemented yet"
             )
         if self.apply_to_passive_updates:
             raise ValueError(

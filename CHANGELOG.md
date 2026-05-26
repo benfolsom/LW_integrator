@@ -8,6 +8,7 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 - Added an opt-in bounded macroparticle source-smearing configuration, CLI flags, GUI controls, and sweep-config plumbing. Smearing is deterministic for a fixed seed, splits source macroparticles into charge-conserving subcharges, derives default position width from macro population, and caps/truncates offsets relative to an estimated inter-macroparticle spacing.
 - Threaded source smearing into external BUNCH_TO_BUNCH force evaluation and same-bunch space-charge source sampling, including pseudo-grid active reduced solves. The first implementation keeps observer/passive-update smearing disabled by default while preserving no-op behavior unless `macroparticle_smearing.enabled` is set.
+- Fixed macroparticle observer dynamics so particles are advanced with unit-particle-equivalent observer charge while retaining macrocharges as field sources. This normalization is now default core-equation behavior across modes and works independently of source smearing; it stabilizes compact H-/proton pseudo-grid probes that were dominated by observer self-macrocharge dynamics.
 - Tests: added macroparticle-smearing helper coverage and CLI/config plumbing checks.
 
 ### Sweep Metrics For Compact Spallation Studies (May 2026)

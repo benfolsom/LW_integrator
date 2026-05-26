@@ -86,7 +86,7 @@ from .distances import (
     compute_retarded_distance_soa,
 )
 from .external_fields import compute_uniform_external_field_impulse
-from .macroparticle_smearing import smear_source_samples
+from .macroparticle_smearing import effective_observer_charge, smear_source_samples
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
@@ -1531,6 +1531,7 @@ def retarded_equations_of_motion(
 
             # Extract particle properties
             particle_charge = _get_particle_charge(current_state, particle_idx)
+            force_particle_charge = effective_observer_charge(float(particle_charge))
             particle_mass = _get_particle_mass(current_state, particle_idx)
 
             # ================================================================
@@ -1648,7 +1649,7 @@ def retarded_equations_of_motion(
                     delta_scalar_potential,
                 ) = compute_vectorized_contributions(
                     h=h,
-                    charge_i=float(particle_charge),
+                    charge_i=float(force_particle_charge),
                     mass_i=float(particle_mass),
                     gamma_i=particle_gamma,
                     beta_vec=particle_beta,
@@ -1891,7 +1892,7 @@ def retarded_equations_of_motion(
                         sc_dscalar,
                     ) = compute_vectorized_contributions(
                         h=h,
-                        charge_i=float(particle_charge),
+                        charge_i=float(force_particle_charge),
                         mass_i=float(particle_mass),
                         gamma_i=particle_gamma,
                         beta_vec=particle_beta,
@@ -1923,7 +1924,7 @@ def retarded_equations_of_motion(
                     ext_dp_t,
                 ) = compute_uniform_external_field_impulse(
                     external_field,
-                    charge=float(particle_charge),
+                    charge=float(force_particle_charge),
                     gamma=float(particle_gamma),
                     beta=(
                         float(particle_beta[0]),
@@ -2015,7 +2016,7 @@ def retarded_equations_of_motion(
             # This gives the correct kinetic energy, accounting for electromagnetic potential
             # Use float64 precision for gamma calculation
             scalar_potential_contribution = np.float64(
-                particle_charge * accumulated_scalar_potential
+                force_particle_charge * accumulated_scalar_potential
             )
             kinetic_energy = (
                 np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
@@ -2282,7 +2283,7 @@ def retarded_equations_of_motion(
                 float(result["bdotz"][particle_idx] * C_MMNS),
             )
             radiation_power = _compute_lienard_radiated_power(
-                float(particle_charge),
+                float(force_particle_charge),
                 beta_tuple,
                 beta_dot_t,
                 float(result["gamma"][particle_idx]),
@@ -2335,7 +2336,7 @@ def retarded_equations_of_motion(
                     )
                     result["gamma"][particle_idx] = damped_gamma
                     scalar_potential_contribution = np.float64(
-                        particle_charge * accumulated_scalar_potential
+                        force_particle_charge * accumulated_scalar_potential
                     )
                     result["Pt"][particle_idx] = (
                         damped_gamma * particle_mass * C_MMNS
@@ -2441,7 +2442,7 @@ def retarded_equations_of_motion(
                             gamma=float(result["gamma"][particle_idx]),
                             dgamma_dt=dgamma_dt,
                             mass=float(particle_mass),
-                            charge=float(particle_charge),
+                            charge=float(force_particle_charge),
                             coordinate_dt=float(coordinate_dt),
                         )
                     )
@@ -2475,7 +2476,7 @@ def retarded_equations_of_motion(
                         )
                         result["gamma"][particle_idx] = medina_gamma
                         scalar_potential_contribution = np.float64(
-                            particle_charge * accumulated_scalar_potential
+                            force_particle_charge * accumulated_scalar_potential
                         )
                         result["Pt"][particle_idx] = (
                             medina_gamma * particle_mass * C_MMNS
@@ -2681,7 +2682,7 @@ def retarded_equations_of_motion(
             Pz_64 = np.float64(result["Pz"][particle_idx])
             Pt_64 = np.float64(result["Pt"][particle_idx])
             scalar_potential_contribution = np.float64(
-                particle_charge * accumulated_scalar_potential
+                force_particle_charge * accumulated_scalar_potential
             )
             kinetic_pt = Pt_64 - scalar_potential_contribution
             mechanical_px = Px_64 - np.float64(accumulated_field_x * particle_mass)

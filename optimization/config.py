@@ -209,7 +209,7 @@ class OptimizationConfig:
     macroparticle_smearing_use_momentum_errors: bool = True
     macroparticle_smearing_use_centroid_errors: bool = True
     macroparticle_smearing_use_internal_cloud: bool = True
-    macroparticle_smearing_apply_to_active_observers: bool = False
+    macroparticle_smearing_apply_to_active_observers: bool = True
     macroparticle_smearing_apply_to_active_sources: bool = True
     macroparticle_smearing_apply_to_passive_sources: bool = True
     macroparticle_smearing_apply_to_passive_updates: bool = False

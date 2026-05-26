@@ -70,6 +70,11 @@ def _macro_population(charge_native: float) -> float:
     return max(1.0, abs(float(charge_native)) / ELEMENTARY_CHARGE)
 
 
+def effective_observer_charge(charge_native: float) -> float:
+    population = _macro_population(charge_native)
+    return float(charge_native) / population
+
+
 def _population_fraction(population: float, dimension: int) -> float:
     if population <= 1.0:
         return 0.0
@@ -300,4 +305,4 @@ def smear_source_samples(
     return smeared, nhat
 
 
-__all__ = ["smear_source_samples"]
+__all__ = ["effective_observer_charge", "smear_source_samples"]

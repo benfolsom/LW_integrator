@@ -117,7 +117,7 @@ DEFAULT_MACROPARTICLE_SMEARING: Dict[str, Any] = {
     "use_momentum_errors": True,
     "use_centroid_errors": True,
     "use_internal_cloud": True,
-    "apply_to_active_observers": False,
+    "apply_to_active_observers": True,
     "apply_to_active_sources": True,
     "apply_to_passive_sources": True,
     "apply_to_passive_updates": False,
@@ -610,6 +610,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         dest="macroparticle_smearing_refresh_policy",
         help="Use persistent per-particle offsets or refresh them each step.",
     )
+
     parser.add_argument(
         "--macroparticle-smearing-passive-updates",
         dest="macroparticle_smearing_apply_to_passive_updates",
