@@ -27,6 +27,7 @@ from core.types import (
     DriverTrainConfig,
     ExternalFieldConfig,
     IntegratorConfig,
+    MacroparticleSmearingConfig,
     ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
@@ -102,6 +103,26 @@ DEFAULT_PSEUDO_GRID: Dict[str, Any] = {
     "loss_tracking_enabled": True,
     "causal_history_pruning_enabled": False,
     "causal_history_safety_margin_steps": 2,
+}
+
+DEFAULT_MACROPARTICLE_SMEARING: Dict[str, Any] = {
+    "enabled": False,
+    "mode": "deterministic_subcharge",
+    "subcharge_count": 8,
+    "sigma_multiplier": 1.0,
+    "position_sigma_mm": None,
+    "longitudinal_sigma_mm": None,
+    "momentum_sigma_amu_mm_ns": None,
+    "use_position_errors": True,
+    "use_momentum_errors": True,
+    "use_centroid_errors": True,
+    "use_internal_cloud": True,
+    "apply_to_active_observers": False,
+    "apply_to_active_sources": True,
+    "apply_to_passive_sources": True,
+    "apply_to_passive_updates": False,
+    "seed": 12345,
+    "refresh_policy": "fixed_per_particle",
 }
 
 DEFAULT_DRIVER_TRAIN: Dict[str, Any] = {
@@ -535,6 +556,68 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Safety margin, in steps, retained beyond the causal pruning bound.",
     )
     parser.add_argument(
+        "--macroparticle-smearing",
+        dest="macroparticle_smearing_enabled",
+        action="store_true",
+        help="Enable bounded deterministic macroparticle source smearing.",
+    )
+    parser.add_argument(
+        "--no-macroparticle-smearing",
+        dest="macroparticle_smearing_enabled",
+        action="store_false",
+        help="Disable macroparticle source smearing explicitly.",
+    )
+    parser.set_defaults(macroparticle_smearing_enabled=None)
+    parser.add_argument(
+        "--macroparticle-smearing-subcharge-count",
+        type=int,
+        dest="macroparticle_smearing_subcharge_count",
+        help="Number of deterministic source subcharges per macroparticle.",
+    )
+    parser.add_argument(
+        "--macroparticle-smearing-sigma-multiplier",
+        type=float,
+        dest="macroparticle_smearing_sigma_multiplier",
+        help="Multiplier for automatically derived smearing widths.",
+    )
+    parser.add_argument(
+        "--macroparticle-smearing-position-sigma-mm",
+        type=float,
+        dest="macroparticle_smearing_position_sigma_mm",
+        help="Override transverse position smearing sigma in millimetres.",
+    )
+    parser.add_argument(
+        "--macroparticle-smearing-longitudinal-sigma-mm",
+        type=float,
+        dest="macroparticle_smearing_longitudinal_sigma_mm",
+        help="Override longitudinal position smearing sigma in millimetres.",
+    )
+    parser.add_argument(
+        "--macroparticle-smearing-momentum-sigma",
+        type=float,
+        dest="macroparticle_smearing_momentum_sigma_amu_mm_ns",
+        help="Momentum smearing sigma in amu*mm/ns.",
+    )
+    parser.add_argument(
+        "--macroparticle-smearing-seed",
+        type=int,
+        dest="macroparticle_smearing_seed",
+        help="Seed for deterministic macroparticle smearing offsets.",
+    )
+    parser.add_argument(
+        "--macroparticle-smearing-refresh-policy",
+        choices=("fixed-per-particle", "fixed_per_particle", "per-step", "per_step"),
+        dest="macroparticle_smearing_refresh_policy",
+        help="Use persistent per-particle offsets or refresh them each step.",
+    )
+    parser.add_argument(
+        "--macroparticle-smearing-passive-updates",
+        dest="macroparticle_smearing_apply_to_passive_updates",
+        action="store_true",
+        help="Enable experimental smearing for pseudo-grid passive updates.",
+    )
+    parser.set_defaults(macroparticle_smearing_apply_to_passive_updates=None)
+    parser.add_argument(
         "--driver-train",
         dest="driver_train_enabled",
         action="store_true",
@@ -745,6 +828,7 @@ def _merge_simulation_payload(
     result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
     result["driver_train"] = dict(DEFAULT_DRIVER_TRAIN)
+    result["macroparticle_smearing"] = dict(DEFAULT_MACROPARTICLE_SMEARING)
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
@@ -762,6 +846,9 @@ def _merge_simulation_payload(
     file_driver_train = file_payload.get("driver_train")
     if isinstance(file_driver_train, Mapping):
         result["driver_train"].update(file_driver_train)
+    file_smearing = file_payload.get("macroparticle_smearing")
+    if isinstance(file_smearing, Mapping):
+        result["macroparticle_smearing"].update(file_smearing)
     if "external_field" in file_payload:
         result["external_field"] = file_payload["external_field"]
 
@@ -901,6 +988,33 @@ def _merge_simulation_payload(
         if value is not None:
             pseudo_grid[key] = value
 
+    smearing = result["macroparticle_smearing"]
+    smearing_override_keys = (
+        "enabled",
+        "subcharge_count",
+        "sigma_multiplier",
+        "position_sigma_mm",
+        "longitudinal_sigma_mm",
+        "momentum_sigma_amu_mm_ns",
+        "use_position_errors",
+        "use_momentum_errors",
+        "use_centroid_errors",
+        "use_internal_cloud",
+        "apply_to_active_observers",
+        "apply_to_active_sources",
+        "apply_to_passive_sources",
+        "apply_to_passive_updates",
+        "seed",
+        "refresh_policy",
+    )
+    for key in smearing_override_keys:
+        arg_name = f"macroparticle_smearing_{key}"
+        value = getattr(args, arg_name, None)
+        if value is not None:
+            if key == "refresh_policy" and isinstance(value, str):
+                value = value.replace("-", "_")
+            smearing[key] = value
+
     driver_train = result["driver_train"]
     driver_train_override_keys = (
         "enabled",
@@ -969,6 +1083,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     particle_loss = _build_particle_loss_config(payload.get("particle_loss"))
     pseudo_grid = _build_pseudo_grid_config(payload.get("pseudo_grid"))
     driver_train = _build_driver_train_config(payload.get("driver_train"))
+    macroparticle_smearing = _build_macroparticle_smearing_config(
+        payload.get("macroparticle_smearing")
+    )
 
     return IntegratorConfig(
         steps=int(payload["steps"]),
@@ -992,6 +1109,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             )
         ),
         pseudo_grid=pseudo_grid,
+        macroparticle_smearing=macroparticle_smearing,
         driver_train=driver_train,
         particle_loss=particle_loss,
     )
@@ -1182,6 +1300,120 @@ def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
                 "causal_history_safety_margin_steps",
                 DEFAULT_PSEUDO_GRID["causal_history_safety_margin_steps"],
             ),
+        )
+    except ValueError as exc:
+        raise SimulationConfigError(str(exc)) from exc
+
+
+def _build_macroparticle_smearing_config(payload: Any) -> MacroparticleSmearingConfig:
+    if payload is None:
+        return MacroparticleSmearingConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("macroparticle_smearing must be a JSON object")
+
+    def _as_int(name: str, default: int) -> int:
+        value = payload.get(name, default)
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"macroparticle_smearing.{name} must be an integer"
+            ) from exc
+
+    def _as_float(name: str, default: float) -> float:
+        value = payload.get(name, default)
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"macroparticle_smearing.{name} must be numeric"
+            ) from exc
+
+    def _as_optional_float(name: str) -> Optional[float]:
+        value = payload.get(name)
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"macroparticle_smearing.{name} must be numeric"
+            ) from exc
+
+    refresh_policy = str(
+        payload.get(
+            "refresh_policy",
+            DEFAULT_MACROPARTICLE_SMEARING["refresh_policy"],
+        )
+    ).replace("-", "_")
+
+    try:
+        return MacroparticleSmearingConfig(
+            enabled=bool(
+                payload.get("enabled", DEFAULT_MACROPARTICLE_SMEARING["enabled"])
+            ),
+            mode=str(payload.get("mode", DEFAULT_MACROPARTICLE_SMEARING["mode"])),
+            subcharge_count=_as_int(
+                "subcharge_count",
+                DEFAULT_MACROPARTICLE_SMEARING["subcharge_count"],
+            ),
+            sigma_multiplier=_as_float(
+                "sigma_multiplier",
+                DEFAULT_MACROPARTICLE_SMEARING["sigma_multiplier"],
+            ),
+            position_sigma_mm=_as_optional_float("position_sigma_mm"),
+            longitudinal_sigma_mm=_as_optional_float("longitudinal_sigma_mm"),
+            momentum_sigma_amu_mm_ns=_as_optional_float("momentum_sigma_amu_mm_ns"),
+            use_position_errors=bool(
+                payload.get(
+                    "use_position_errors",
+                    DEFAULT_MACROPARTICLE_SMEARING["use_position_errors"],
+                )
+            ),
+            use_momentum_errors=bool(
+                payload.get(
+                    "use_momentum_errors",
+                    DEFAULT_MACROPARTICLE_SMEARING["use_momentum_errors"],
+                )
+            ),
+            use_centroid_errors=bool(
+                payload.get(
+                    "use_centroid_errors",
+                    DEFAULT_MACROPARTICLE_SMEARING["use_centroid_errors"],
+                )
+            ),
+            use_internal_cloud=bool(
+                payload.get(
+                    "use_internal_cloud",
+                    DEFAULT_MACROPARTICLE_SMEARING["use_internal_cloud"],
+                )
+            ),
+            apply_to_active_observers=bool(
+                payload.get(
+                    "apply_to_active_observers",
+                    DEFAULT_MACROPARTICLE_SMEARING["apply_to_active_observers"],
+                )
+            ),
+            apply_to_active_sources=bool(
+                payload.get(
+                    "apply_to_active_sources",
+                    DEFAULT_MACROPARTICLE_SMEARING["apply_to_active_sources"],
+                )
+            ),
+            apply_to_passive_sources=bool(
+                payload.get(
+                    "apply_to_passive_sources",
+                    DEFAULT_MACROPARTICLE_SMEARING["apply_to_passive_sources"],
+                )
+            ),
+            apply_to_passive_updates=bool(
+                payload.get(
+                    "apply_to_passive_updates",
+                    DEFAULT_MACROPARTICLE_SMEARING["apply_to_passive_updates"],
+                )
+            ),
+            seed=_as_int("seed", DEFAULT_MACROPARTICLE_SMEARING["seed"]),
+            refresh_policy=refresh_policy,
         )
     except ValueError as exc:
         raise SimulationConfigError(str(exc)) from exc
@@ -1434,6 +1666,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         pseudo_grid=request.config.pseudo_grid,
         driver_train=request.config.driver_train,
         particle_loss=request.config.particle_loss,
+        macroparticle_smearing=request.config.macroparticle_smearing,
     )
 
 

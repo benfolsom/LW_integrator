@@ -198,6 +198,24 @@ class OptimizationConfig:
         True  # Include momentum-based cumulative errors
     )
 
+    # Bounded macroparticle source smearing options
+    macroparticle_smearing_enabled: bool = False
+    macroparticle_smearing_subcharge_count: int = 8
+    macroparticle_smearing_sigma_multiplier: float = 1.0
+    macroparticle_smearing_position_sigma_mm: Optional[float] = None
+    macroparticle_smearing_longitudinal_sigma_mm: Optional[float] = None
+    macroparticle_smearing_momentum_sigma_amu_mm_ns: Optional[float] = None
+    macroparticle_smearing_use_position_errors: bool = True
+    macroparticle_smearing_use_momentum_errors: bool = True
+    macroparticle_smearing_use_centroid_errors: bool = True
+    macroparticle_smearing_use_internal_cloud: bool = True
+    macroparticle_smearing_apply_to_active_observers: bool = False
+    macroparticle_smearing_apply_to_active_sources: bool = True
+    macroparticle_smearing_apply_to_passive_sources: bool = True
+    macroparticle_smearing_apply_to_passive_updates: bool = False
+    macroparticle_smearing_seed: int = 12345
+    macroparticle_smearing_refresh_policy: str = "fixed_per_particle"
+
     # Conducting wall image parameters
     image_subcharge_count: int = 12  # Number of subcharges for conducting wall images
     use_image_weighting: bool = True  # Apply radial weighting to image subcharges

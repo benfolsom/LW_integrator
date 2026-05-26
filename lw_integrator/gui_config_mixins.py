@@ -223,6 +223,40 @@ class IntegratorGUIConfigMixin:
         self.macroparticle_use_momentum_errors_var.set(
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
+        self.macroparticle_smearing_enabled_var.set(
+            getattr(options, "macroparticle_smearing_enabled", False)
+        )
+        self.macroparticle_smearing_subcharge_count_var.set(
+            getattr(options, "macroparticle_smearing_subcharge_count", 8)
+        )
+        self.macroparticle_smearing_sigma_multiplier_var.set(
+            getattr(options, "macroparticle_smearing_sigma_multiplier", 1.0)
+        )
+        self.macroparticle_smearing_position_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_position_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_longitudinal_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_longitudinal_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_momentum_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(
+                    options,
+                    "macroparticle_smearing_momentum_sigma_amu_mm_ns",
+                    None,
+                )
+            )
+        )
+        self.macroparticle_smearing_apply_to_passive_updates_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_passive_updates", False)
+        )
+        self.macroparticle_smearing_seed_var.set(
+            getattr(options, "macroparticle_smearing_seed", 12345)
+        )
         if hasattr(self, "pseudo_grid_enabled_var"):
             self.pseudo_grid_enabled_var.set(
                 getattr(options, "pseudo_grid_enabled", False)
@@ -438,6 +472,8 @@ class IntegratorGUIConfigMixin:
         self.auto_duration_post_factor_var.set(
             getattr(options, "auto_duration_post_factor", 2.0)
         )
+        if hasattr(self, "_toggle_macroparticle_smearing_controls"):
+            self._toggle_macroparticle_smearing_controls()
         self._toggle_space_charge_controls()
         self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
@@ -660,6 +696,31 @@ class IntegratorGUIConfigMixin:
             macroparticle_use_momentum_errors=bool(
                 self.macroparticle_use_momentum_errors_var.get()
             ),
+            macroparticle_smearing_enabled=bool(
+                self.macroparticle_smearing_enabled_var.get()
+            ),
+            macroparticle_smearing_subcharge_count=int(
+                self.macroparticle_smearing_subcharge_count_var.get()
+            ),
+            macroparticle_smearing_sigma_multiplier=float(
+                self.macroparticle_smearing_sigma_multiplier_var.get()
+            ),
+            macroparticle_smearing_position_sigma_mm=_parse_gui_optional_float(
+                self.macroparticle_smearing_position_sigma_var.get(),
+                "Macroparticle smearing position sigma",
+            ),
+            macroparticle_smearing_longitudinal_sigma_mm=_parse_gui_optional_float(
+                self.macroparticle_smearing_longitudinal_sigma_var.get(),
+                "Macroparticle smearing longitudinal sigma",
+            ),
+            macroparticle_smearing_momentum_sigma_amu_mm_ns=_parse_gui_optional_float(
+                self.macroparticle_smearing_momentum_sigma_var.get(),
+                "Macroparticle smearing momentum sigma",
+            ),
+            macroparticle_smearing_apply_to_passive_updates=bool(
+                self.macroparticle_smearing_apply_to_passive_updates_var.get()
+            ),
+            macroparticle_smearing_seed=int(self.macroparticle_smearing_seed_var.get()),
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()

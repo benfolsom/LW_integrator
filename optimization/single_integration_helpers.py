@@ -181,6 +181,54 @@ def build_single_integration_setup(
         macroparticle_charge_multiplier=macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
         macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,
+        macroparticle_smearing_enabled=getattr(
+            config, "macroparticle_smearing_enabled", False
+        ),
+        macroparticle_smearing_subcharge_count=getattr(
+            config, "macroparticle_smearing_subcharge_count", 8
+        ),
+        macroparticle_smearing_sigma_multiplier=getattr(
+            config, "macroparticle_smearing_sigma_multiplier", 1.0
+        ),
+        macroparticle_smearing_position_sigma_mm=getattr(
+            config, "macroparticle_smearing_position_sigma_mm", None
+        ),
+        macroparticle_smearing_longitudinal_sigma_mm=getattr(
+            config, "macroparticle_smearing_longitudinal_sigma_mm", None
+        ),
+        macroparticle_smearing_momentum_sigma_amu_mm_ns=getattr(
+            config, "macroparticle_smearing_momentum_sigma_amu_mm_ns", None
+        ),
+        macroparticle_smearing_use_position_errors=getattr(
+            config, "macroparticle_smearing_use_position_errors", True
+        ),
+        macroparticle_smearing_use_momentum_errors=getattr(
+            config, "macroparticle_smearing_use_momentum_errors", True
+        ),
+        macroparticle_smearing_use_centroid_errors=getattr(
+            config, "macroparticle_smearing_use_centroid_errors", True
+        ),
+        macroparticle_smearing_use_internal_cloud=getattr(
+            config, "macroparticle_smearing_use_internal_cloud", True
+        ),
+        macroparticle_smearing_apply_to_active_observers=getattr(
+            config, "macroparticle_smearing_apply_to_active_observers", False
+        ),
+        macroparticle_smearing_apply_to_active_sources=getattr(
+            config, "macroparticle_smearing_apply_to_active_sources", True
+        ),
+        macroparticle_smearing_apply_to_passive_sources=getattr(
+            config, "macroparticle_smearing_apply_to_passive_sources", True
+        ),
+        macroparticle_smearing_apply_to_passive_updates=getattr(
+            config, "macroparticle_smearing_apply_to_passive_updates", False
+        ),
+        macroparticle_smearing_seed=getattr(
+            config, "macroparticle_smearing_seed", 12345
+        ),
+        macroparticle_smearing_refresh_policy=getattr(
+            config, "macroparticle_smearing_refresh_policy", "fixed_per_particle"
+        ),
         image_subcharge_count=config.image_subcharge_count,
         use_image_weighting=config.use_image_weighting,
         output_dir=run_output_dir,

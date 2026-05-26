@@ -4,11 +4,19 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Macroparticle Smearing Controls (May 2026)
+
+- Added an opt-in bounded macroparticle source-smearing configuration, CLI flags, GUI controls, and sweep-config plumbing. Smearing is deterministic for a fixed seed, splits source macroparticles into charge-conserving subcharges, derives default position width from macro population, and caps/truncates offsets relative to an estimated inter-macroparticle spacing.
+- Threaded source smearing into external BUNCH_TO_BUNCH force evaluation and same-bunch space-charge source sampling, including pseudo-grid active reduced solves. The first implementation keeps observer/passive-update smearing disabled by default while preserving no-op behavior unless `macroparticle_smearing.enabled` is set.
+- Tests: added macroparticle-smearing helper coverage and CLI/config plumbing checks.
+
 ### Sweep Metrics For Compact Spallation Studies (May 2026)
 
 - Added explicit rider final-vs-peak energy-gain metrics for sweep outputs, including kinetic-energy-normalized `rider_final_percent_energy_gain` and `rider_max_percent_energy_gain`, while retaining legacy `max_percent_energy_gain` fields for compatibility.
 - Added rider/driver loss count and loss fraction metrics derived from final alive fractions when trajectory summaries are available, and included final-vs-peak gain plus loss counts in compact sweep logs.
-- Tests: updated single-integration helper coverage for final/peak gain and loss-count metrics.
+- Fixed multi-particle testbed energy summaries to use mean per-particle gamma over alive particles instead of recomputing gamma from the mean momentum vector. This prevents symmetric momentum spread from appearing as false bunch deceleration.
+- Documented `COLD_START` as the default startup mode for generated configs, CLI/GUI runs, and integration-style tests; `APPROXIMATE_BACK_HISTORY` should be used only as an explicitly labeled diagnostic or for reproducing older examples.
+- Tests: updated single-integration, sweep-result, and testbed-helper coverage for final/peak gain, loss-count metrics, and alive-particle gamma averaging.
 
 ### Experimental Pseudo-grid Reduced Solver (June 2026)
 

@@ -86,6 +86,7 @@ from .distances import (
     compute_retarded_distance_soa,
 )
 from .external_fields import compute_uniform_external_field_impulse
+from .macroparticle_smearing import smear_source_samples
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
@@ -93,6 +94,7 @@ from .self_consistency import (
 from .types import (
     ChronoMatchingMode,
     GammaReconciliationMethod,
+    MacroparticleSmearingConfig,
     ParticleState,
     SimulationType,
     StartupMode,
@@ -1163,6 +1165,7 @@ def retarded_equations_of_motion(
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
     pseudo_grid_space_charge_source_charges: Optional[np.ndarray] = None,
+    macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1563,6 +1566,14 @@ def retarded_equations_of_motion(
                         indices_next=chrono_result.indices_next,
                         weights=chrono_result.weights,
                         needs_interpolation=chrono_result.needs_interpolation,
+                        include_positions=bool(
+                            macroparticle_smearing
+                            and macroparticle_smearing.enabled
+                            and (
+                                macroparticle_smearing.apply_to_active_sources
+                                or macroparticle_smearing.apply_to_passive_sources
+                            )
+                        ),
                     )
                 elif chrono_result is not None:
                     # Use interpolation (with cubic and position interpolation if high-precision)
@@ -1575,18 +1586,55 @@ def retarded_equations_of_motion(
                         indices_next2=chrono_result.indices_next2,
                         use_cubic=chrono_result.use_cubic,
                         interpolate_positions=chrono_high_precision,
+                        include_positions=bool(
+                            macroparticle_smearing
+                            and macroparticle_smearing.enabled
+                            and (
+                                macroparticle_smearing.apply_to_active_sources
+                                or macroparticle_smearing.apply_to_passive_sources
+                            )
+                        ),
                     )
                 elif traj_ext_soa is not None:
                     external_samples = gather_external_samples_soa(
                         traj_ext_soa,
                         indices_bounded,
+                        include_positions=bool(
+                            macroparticle_smearing
+                            and macroparticle_smearing.enabled
+                            and (
+                                macroparticle_smearing.apply_to_active_sources
+                                or macroparticle_smearing.apply_to_passive_sources
+                            )
+                        ),
                     )
                 else:
                     # Legacy path: no interpolation
                     external_samples = gather_external_samples(
                         trajectory_ext,
                         indices_bounded,
+                        include_positions=bool(
+                            macroparticle_smearing
+                            and macroparticle_smearing.enabled
+                            and (
+                                macroparticle_smearing.apply_to_active_sources
+                                or macroparticle_smearing.apply_to_passive_sources
+                            )
+                        ),
                     )
+
+                external_samples, smeared_nhat = smear_source_samples(
+                    samples=external_samples,
+                    observer_position=(
+                        float(working_x),
+                        float(working_y),
+                        float(working_z),
+                    ),
+                    config=macroparticle_smearing,
+                    step_index=index_traj,
+                )
+                if smeared_nhat:
+                    nhat = smeared_nhat
 
                 # Compute electromagnetic force contributions
                 (
@@ -1742,6 +1790,14 @@ def retarded_equations_of_motion(
                                 indices_next=sc_chrono_result.indices_next,
                                 weights=sc_chrono_result.weights,
                                 needs_interpolation=sc_chrono_result.needs_interpolation,
+                                include_positions=bool(
+                                    macroparticle_smearing
+                                    and macroparticle_smearing.enabled
+                                    and (
+                                        macroparticle_smearing.apply_to_active_sources
+                                        or macroparticle_smearing.apply_to_passive_sources
+                                    )
+                                ),
                             )
                         else:
                             sc_samples = gather_external_samples(
@@ -1753,17 +1809,41 @@ def retarded_equations_of_motion(
                                 indices_next2=sc_chrono_result.indices_next2,
                                 use_cubic=sc_chrono_result.use_cubic,
                                 interpolate_positions=chrono_high_precision,
+                                include_positions=bool(
+                                    macroparticle_smearing
+                                    and macroparticle_smearing.enabled
+                                    and (
+                                        macroparticle_smearing.apply_to_active_sources
+                                        or macroparticle_smearing.apply_to_passive_sources
+                                    )
+                                ),
                             )
                     else:
                         if use_sc_soa:
                             sc_samples = gather_external_samples_soa(
                                 traj_soa,
                                 sc_indices,
+                                include_positions=bool(
+                                    macroparticle_smearing
+                                    and macroparticle_smearing.enabled
+                                    and (
+                                        macroparticle_smearing.apply_to_active_sources
+                                        or macroparticle_smearing.apply_to_passive_sources
+                                    )
+                                ),
                             )
                         else:
                             sc_samples = gather_external_samples(
                                 trajectory,
                                 sc_indices,
+                                include_positions=bool(
+                                    macroparticle_smearing
+                                    and macroparticle_smearing.enabled
+                                    and (
+                                        macroparticle_smearing.apply_to_active_sources
+                                        or macroparticle_smearing.apply_to_passive_sources
+                                    )
+                                ),
                             )
 
                     sc_source_charges = sc_samples.charge.copy()
@@ -1781,6 +1861,24 @@ def retarded_equations_of_motion(
                     sc_samples.charge[...] = sc_source_charges
                     sc_samples.valid_mask = sc_samples.valid_mask.copy()
                     sc_samples.valid_mask[particle_idx] = False
+
+                    sc_samples, smeared_sc_nhat = smear_source_samples(
+                        samples=sc_samples,
+                        observer_position=(
+                            float(working_x),
+                            float(working_y),
+                            float(working_z),
+                        ),
+                        config=macroparticle_smearing,
+                        step_index=index_traj,
+                    )
+                    if smeared_sc_nhat:
+                        sc_nhat = smeared_sc_nhat
+                        sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                        if sc_softening > 0.0:
+                            sc_R = np.sqrt(sc_R**2 + sc_softening**2)
+                            sc_nhat = dict(sc_nhat)
+                            sc_nhat["R"] = sc_R
 
                     (
                         sc_dp_x,

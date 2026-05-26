@@ -17,6 +17,7 @@ class IntegratorGUIStateMixin:
         self._update_cavity_spacing_state()
         self._update_image_subcharge_state()
         self._update_macroparticle_state()
+        self._toggle_macroparticle_smearing_controls()
         self._update_pseudo_grid_state()
         self._update_driver_train_state()
         self._refresh_initial_summary()
@@ -215,6 +216,21 @@ class IntegratorGUIStateMixin:
                     widget.configure(state=widget_state)
                 elif isinstance(widget, ttk.Label):
                     widget.configure(foreground=label_color)
+
+    def _toggle_macroparticle_smearing_controls(self) -> None:
+        if not hasattr(self, "macroparticle_smearing_enabled_var"):
+            return
+
+        enabled = bool(self.macroparticle_smearing_enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        label_color = "black" if enabled else "gray"
+        for widget in getattr(self, "_macroparticle_smearing_widgets", []):
+            if isinstance(widget, ttk.Entry):
+                widget.configure(state=state)
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(state=state)
+            elif isinstance(widget, ttk.Label):
+                widget.configure(foreground=label_color)
 
     def _toggle_pseudo_grid_controls(self) -> None:
         if not hasattr(self, "pseudo_grid_enabled_var"):

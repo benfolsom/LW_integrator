@@ -56,6 +56,15 @@ def _make_args(**overrides) -> argparse.Namespace:
         "pseudo_grid_loss_tracking_enabled": None,
         "pseudo_grid_causal_history_pruning_enabled": None,
         "pseudo_grid_causal_history_safety_margin_steps": None,
+        "macroparticle_smearing_enabled": None,
+        "macroparticle_smearing_subcharge_count": None,
+        "macroparticle_smearing_sigma_multiplier": None,
+        "macroparticle_smearing_position_sigma_mm": None,
+        "macroparticle_smearing_longitudinal_sigma_mm": None,
+        "macroparticle_smearing_momentum_sigma_amu_mm_ns": None,
+        "macroparticle_smearing_seed": None,
+        "macroparticle_smearing_refresh_policy": None,
+        "macroparticle_smearing_apply_to_passive_updates": None,
         "driver_train_enabled": None,
         "driver_train_bunch_count": None,
         "driver_train_z_spacing_mm": None,
@@ -491,6 +500,25 @@ class TestCliBuildRequest:
         assert payload["pseudo_grid"]["passive_neighbor_count"] == 2
         assert payload["pseudo_grid"]["pair_reuse_window"] == 30
         assert payload["pseudo_grid"]["causal_history_pruning_enabled"] is True
+
+    def test_merge_simulation_payload_applies_macroparticle_smearing_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {"macroparticle_smearing": {"enabled": False, "subcharge_count": 4}},
+            _make_args(
+                macroparticle_smearing_enabled=True,
+                macroparticle_smearing_subcharge_count=6,
+                macroparticle_smearing_sigma_multiplier=0.5,
+                macroparticle_smearing_position_sigma_mm=0.1,
+                macroparticle_smearing_refresh_policy="per-step",
+            ),
+        )
+
+        smearing = payload["macroparticle_smearing"]
+        assert smearing["enabled"] is True
+        assert smearing["subcharge_count"] == 6
+        assert smearing["sigma_multiplier"] == pytest.approx(0.5)
+        assert smearing["position_sigma_mm"] == pytest.approx(0.1)
+        assert smearing["refresh_policy"] == "per_step"
 
     def test_merge_simulation_payload_applies_driver_train_overrides(self):
         payload = cli._merge_simulation_payload(
@@ -1160,6 +1188,9 @@ class TestCliRuntimeHelpers:
         assert captured["external_field"] is request.external_field
         assert captured["pseudo_grid"] is request.config.pseudo_grid
         assert captured["driver_train"] is request.config.driver_train
+        assert (
+            captured["macroparticle_smearing"] is request.config.macroparticle_smearing
+        )
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

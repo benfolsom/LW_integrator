@@ -264,6 +264,24 @@ class SimulationOptions:
     macroparticle_sigma_multiplier: float = 1.0
     macroparticle_use_momentum_errors: bool = True
 
+    # Bounded macroparticle source smearing options
+    macroparticle_smearing_enabled: bool = False
+    macroparticle_smearing_subcharge_count: int = 8
+    macroparticle_smearing_sigma_multiplier: float = 1.0
+    macroparticle_smearing_position_sigma_mm: Optional[float] = None
+    macroparticle_smearing_longitudinal_sigma_mm: Optional[float] = None
+    macroparticle_smearing_momentum_sigma_amu_mm_ns: Optional[float] = None
+    macroparticle_smearing_use_position_errors: bool = True
+    macroparticle_smearing_use_momentum_errors: bool = True
+    macroparticle_smearing_use_centroid_errors: bool = True
+    macroparticle_smearing_use_internal_cloud: bool = True
+    macroparticle_smearing_apply_to_active_observers: bool = False
+    macroparticle_smearing_apply_to_active_sources: bool = True
+    macroparticle_smearing_apply_to_passive_sources: bool = True
+    macroparticle_smearing_apply_to_passive_updates: bool = False
+    macroparticle_smearing_seed: int = 12345
+    macroparticle_smearing_refresh_policy: str = "fixed_per_particle"
+
     # Self-consistency options
     self_consistency_enabled: bool = True
     self_consistency_tolerance: float = (
@@ -444,6 +462,24 @@ class SimulationOptions:
             "macroparticle_charge_multiplier": self.macroparticle_charge_multiplier,
             "macroparticle_sigma_multiplier": self.macroparticle_sigma_multiplier,
             "macroparticle_use_momentum_errors": self.macroparticle_use_momentum_errors,
+            "macroparticle_smearing": {
+                "enabled": self.macroparticle_smearing_enabled,
+                "subcharge_count": self.macroparticle_smearing_subcharge_count,
+                "sigma_multiplier": self.macroparticle_smearing_sigma_multiplier,
+                "position_sigma_mm": self.macroparticle_smearing_position_sigma_mm,
+                "longitudinal_sigma_mm": self.macroparticle_smearing_longitudinal_sigma_mm,
+                "momentum_sigma_amu_mm_ns": self.macroparticle_smearing_momentum_sigma_amu_mm_ns,
+                "use_position_errors": self.macroparticle_smearing_use_position_errors,
+                "use_momentum_errors": self.macroparticle_smearing_use_momentum_errors,
+                "use_centroid_errors": self.macroparticle_smearing_use_centroid_errors,
+                "use_internal_cloud": self.macroparticle_smearing_use_internal_cloud,
+                "apply_to_active_observers": self.macroparticle_smearing_apply_to_active_observers,
+                "apply_to_active_sources": self.macroparticle_smearing_apply_to_active_sources,
+                "apply_to_passive_sources": self.macroparticle_smearing_apply_to_passive_sources,
+                "apply_to_passive_updates": self.macroparticle_smearing_apply_to_passive_updates,
+                "seed": self.macroparticle_smearing_seed,
+                "refresh_policy": self.macroparticle_smearing_refresh_policy,
+            },
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_convergence_mode": self.self_consistency_convergence_mode,
@@ -653,6 +689,43 @@ class SimulationOptions:
             value = _pseudo_value(name, default)
             return str(value) if value is not None else default
 
+        smearing_payload_raw = payload.get("macroparticle_smearing")
+        smearing_payload = (
+            smearing_payload_raw if isinstance(smearing_payload_raw, dict) else {}
+        )
+
+        def _smearing_value(name: str, default: object) -> object:
+            flat_name = f"macroparticle_smearing_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return smearing_payload.get(name, default)
+
+        def _smearing_bool(name: str, default: bool) -> bool:
+            return bool(_smearing_value(name, default))
+
+        def _smearing_int(name: str, default: int) -> int:
+            value = _smearing_value(name, default)
+            try:
+                return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
+            except (TypeError, ValueError):
+                return default
+
+        def _smearing_float(name: str, default: float) -> float:
+            value = _smearing_value(name, default)
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        def _smearing_optional_float(name: str) -> Optional[float]:
+            value = _smearing_value(name, None)
+            if value in (None, ""):
+                return None
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
         driver_train_payload_raw = payload.get("driver_train")
         driver_train_payload = (
             driver_train_payload_raw
@@ -778,6 +851,48 @@ class SimulationOptions:
             macroparticle_use_momentum_errors=_bool(
                 "macroparticle_use_momentum_errors", True
             ),
+            macroparticle_smearing_enabled=_smearing_bool("enabled", False),
+            macroparticle_smearing_subcharge_count=_smearing_int("subcharge_count", 8),
+            macroparticle_smearing_sigma_multiplier=_smearing_float(
+                "sigma_multiplier", 1.0
+            ),
+            macroparticle_smearing_position_sigma_mm=_smearing_optional_float(
+                "position_sigma_mm"
+            ),
+            macroparticle_smearing_longitudinal_sigma_mm=_smearing_optional_float(
+                "longitudinal_sigma_mm"
+            ),
+            macroparticle_smearing_momentum_sigma_amu_mm_ns=_smearing_optional_float(
+                "momentum_sigma_amu_mm_ns"
+            ),
+            macroparticle_smearing_use_position_errors=_smearing_bool(
+                "use_position_errors", True
+            ),
+            macroparticle_smearing_use_momentum_errors=_smearing_bool(
+                "use_momentum_errors", True
+            ),
+            macroparticle_smearing_use_centroid_errors=_smearing_bool(
+                "use_centroid_errors", True
+            ),
+            macroparticle_smearing_use_internal_cloud=_smearing_bool(
+                "use_internal_cloud", True
+            ),
+            macroparticle_smearing_apply_to_active_observers=_smearing_bool(
+                "apply_to_active_observers", False
+            ),
+            macroparticle_smearing_apply_to_active_sources=_smearing_bool(
+                "apply_to_active_sources", True
+            ),
+            macroparticle_smearing_apply_to_passive_sources=_smearing_bool(
+                "apply_to_passive_sources", True
+            ),
+            macroparticle_smearing_apply_to_passive_updates=_smearing_bool(
+                "apply_to_passive_updates", False
+            ),
+            macroparticle_smearing_seed=_smearing_int("seed", 12345),
+            macroparticle_smearing_refresh_policy=str(
+                _smearing_value("refresh_policy", "fixed_per_particle")
+            ).replace("-", "_"),
             self_consistency_enabled=_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=canonicalize_self_consistency_mode(
@@ -1065,6 +1180,26 @@ def _empty_distribution_summary() -> Dict[str, float]:
 
 def _summary_series(summaries: list[Dict[str, float]], key: str) -> np.ndarray:
     return np.array([summary.get(key, 0.0) for summary in summaries], dtype=float)
+
+
+def _alive_average_series(
+    states: list[Dict[str, Any]],
+    field: str,
+    *,
+    default: float,
+) -> np.ndarray:
+    return np.array(
+        [compute_alive_particle_average(state, field) or default for state in states],
+        dtype=float,
+    )
+
+
+def _mean_alive_gamma(state: Dict[str, Any]) -> float | None:
+    return compute_alive_particle_average(state, "gamma")
+
+
+def _mean_alive_gamma_series(states: list[Dict[str, Any]]) -> np.ndarray:
+    return _alive_average_series(states, "gamma", default=1.0)
 
 
 def _compute_alive_particle_radial_summary(
@@ -1548,6 +1683,40 @@ def build_pseudo_grid_config(options: SimulationOptions) -> object:
     )
 
 
+def build_macroparticle_smearing_config(options: SimulationOptions) -> object:
+    """Build MacroparticleSmearingConfig from SimulationOptions."""
+    from core.types import MacroparticleSmearingConfig
+
+    return MacroparticleSmearingConfig(
+        enabled=bool(options.macroparticle_smearing_enabled),
+        subcharge_count=int(options.macroparticle_smearing_subcharge_count),
+        sigma_multiplier=float(options.macroparticle_smearing_sigma_multiplier),
+        position_sigma_mm=options.macroparticle_smearing_position_sigma_mm,
+        longitudinal_sigma_mm=options.macroparticle_smearing_longitudinal_sigma_mm,
+        momentum_sigma_amu_mm_ns=options.macroparticle_smearing_momentum_sigma_amu_mm_ns,
+        use_position_errors=bool(options.macroparticle_smearing_use_position_errors),
+        use_momentum_errors=bool(options.macroparticle_smearing_use_momentum_errors),
+        use_centroid_errors=bool(options.macroparticle_smearing_use_centroid_errors),
+        use_internal_cloud=bool(options.macroparticle_smearing_use_internal_cloud),
+        apply_to_active_observers=bool(
+            options.macroparticle_smearing_apply_to_active_observers
+        ),
+        apply_to_active_sources=bool(
+            options.macroparticle_smearing_apply_to_active_sources
+        ),
+        apply_to_passive_sources=bool(
+            options.macroparticle_smearing_apply_to_passive_sources
+        ),
+        apply_to_passive_updates=bool(
+            options.macroparticle_smearing_apply_to_passive_updates
+        ),
+        seed=int(options.macroparticle_smearing_seed),
+        refresh_policy=str(options.macroparticle_smearing_refresh_policy).replace(
+            "-", "_"
+        ),
+    )
+
+
 def build_driver_train_config(options: SimulationOptions) -> object:
     """Build DriverTrainConfig from SimulationOptions."""
     from core.types import DriverTrainConfig
@@ -1796,6 +1965,7 @@ def run_testbed(
     adaptive_timestep_config = build_adaptive_timestep_config(options)
     particle_loss_config = build_particle_loss_config(options)
     pseudo_grid_config = build_pseudo_grid_config(options)
+    macroparticle_smearing_config = build_macroparticle_smearing_config(options)
     driver_train_config = build_driver_train_config(options)
     space_charge_config = build_space_charge_config(options)
     external_field_config = build_external_field_config(options)
@@ -1918,6 +2088,7 @@ def run_testbed(
             pseudo_grid=pseudo_grid_config,
             driver_train=driver_train_config,
             particle_loss=particle_loss_config,
+            macroparticle_smearing=macroparticle_smearing_config,
         )
 
         # Build a normalized payload shared by the GUI and CLI surfaces.
@@ -2069,18 +2240,10 @@ def run_testbed(
             rider_z_rel = rider_z  # Use absolute z-positions for plotting
 
             # Compute transverse energy components (use alive particles only)
-            rider_gamma_series = np.array(
-                [
-                    compute_alive_particle_average(s, "gamma") or 1.0
-                    for s in rider_states
-                ]
-            )
-            rider_bx_series = np.array(
-                [compute_alive_particle_average(s, "bx") or 0.0 for s in rider_states]
-            )
-            rider_by_series = np.array(
-                [compute_alive_particle_average(s, "by") or 0.0 for s in rider_states]
-            )
+            rider_gamma_series = _mean_alive_gamma_series(rider_states)
+            rider_z_rel = _alive_average_series(rider_states, "z", default=0.0)
+            rider_bx_series = _alive_average_series(rider_states, "bx", default=0.0)
+            rider_by_series = _alive_average_series(rider_states, "by", default=0.0)
             rider_initial_gamma = (
                 compute_alive_particle_average(rider_initial, "gamma") or 1.0
             )
@@ -2091,6 +2254,13 @@ def run_testbed(
                 compute_alive_particle_average(rider_initial, "by") or 0.0
             )
             rider_rest_gev = rider_rest_mev * 1e-3
+            rider_delta_e_total = (
+                rider_gamma_series - rider_initial_gamma
+            ) * rider_rest_gev
+            rider_delta_e = rider_delta_e_total
+            rider_delta_e_final = (
+                float(rider_delta_e[-1]) * 1e3 if len(rider_delta_e) > 0 else None
+            )
 
             rider_delta_e_x = (
                 rider_gamma_series * rider_bx_series
@@ -2102,41 +2272,14 @@ def run_testbed(
             ) * rider_rest_gev
             rider_e_total = rider_gamma_series * rider_rest_gev
 
-            # Extract values for RunResult
-            if rider_delta_e is not None and len(rider_delta_e) > 0:
-                rider_delta_e_final = float(rider_delta_e[-1])
-
             # Compute gamma values from trajectory states (for final state)
             if rider_states and len(rider_states) > 0:
-                # Override initial gamma with trajectory data if available (more accurate)
-                initial_state = rider_states[0]
-                Pz_init = float(np.asarray(initial_state.get("Pz", 0)).flat[0])
-                Px_init = float(np.asarray(initial_state.get("Px", 0)).flat[0])
-                Py_init = float(np.asarray(initial_state.get("Py", 0)).flat[0])
-                P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
-                mass_init = float(np.asarray(initial_state.get("m", 1)).flat[0])
-                p_init = P_init / (mass_init * C_MMNS)
-                rider_gamma_initial = float(np.sqrt(1 + p_init**2))
-
-                # Compute final gamma from trajectory (using alive particles only)
+                rider_gamma_initial = (
+                    _mean_alive_gamma(rider_states[0]) or rider_gamma_initial
+                )
                 final_state = rider_states[-1]
-
-                # Use alive particles only for final gamma computation
-                Pz_final_alive = get_alive_particle_values(final_state, "Pz")
-                Px_final_alive = get_alive_particle_values(final_state, "Px")
-                Py_final_alive = get_alive_particle_values(final_state, "Py")
-
-                if Pz_final_alive is not None and len(Pz_final_alive) > 0:
-                    # Average over alive particles
-                    Pz_final = float(np.mean(Pz_final_alive))
-                    Px_final = float(np.mean(Px_final_alive))
-                    Py_final = float(np.mean(Py_final_alive))
-                    P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
-                    mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
-                    p_final = P_final / (mass_final * C_MMNS)
-                    rider_gamma_final = float(np.sqrt(1 + p_final**2))
-                else:
-                    # All particles dead - use initial gamma as fallback
+                rider_gamma_final = _mean_alive_gamma(final_state)
+                if rider_gamma_final is None:
                     rider_gamma_final = rider_gamma_initial
                     _log(
                         "[WARNING] All particles dead at final step - using initial gamma"
@@ -2217,11 +2360,7 @@ def run_testbed(
                 )
                 # Compute transverse momentum magnitude
                 Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
-
-                # Compute gamma for full trajectory
-                P_total_arr = np.sqrt(Pz_arr**2 + Px_arr**2 + Py_arr**2)
-                p_normalized_arr = P_total_arr / (m_arr * C_MMNS)
-                gamma_arr = np.sqrt(1 + p_normalized_arr**2)
+                gamma_arr = rider_gamma_series
 
                 rider_trajectory_data = {
                     "z": z_arr,
@@ -2347,23 +2486,13 @@ def run_testbed(
                 driver_z_rel = driver_z  # Use absolute z-positions for plotting
 
                 # Compute transverse energy components
-                driver_gamma_series = np.array(
-                    [
-                        compute_alive_particle_average(s, "gamma") or 1.0
-                        for s in driver_states
-                    ]
+                driver_gamma_series = _mean_alive_gamma_series(driver_states)
+                driver_z_rel = _alive_average_series(driver_states, "z", default=0.0)
+                driver_bx_series = _alive_average_series(
+                    driver_states, "bx", default=0.0
                 )
-                driver_bx_series = np.array(
-                    [
-                        compute_alive_particle_average(s, "bx") or 0.0
-                        for s in driver_states
-                    ]
-                )
-                driver_by_series = np.array(
-                    [
-                        compute_alive_particle_average(s, "by") or 0.0
-                        for s in driver_states
-                    ]
+                driver_by_series = _alive_average_series(
+                    driver_states, "by", default=0.0
                 )
                 driver_initial_gamma = (
                     compute_alive_particle_average(driver_initial, "gamma") or 1.0
@@ -2387,29 +2516,12 @@ def run_testbed(
                 driver_e_total = driver_gamma_series * driver_rest_gev
 
                 if driver_states and len(driver_states) > 0:
-                    initial_state = driver_states[0]
-                    Pz_init = float(np.asarray(initial_state.get("Pz", 0)).flat[0])
-                    Px_init = float(np.asarray(initial_state.get("Px", 0)).flat[0])
-                    Py_init = float(np.asarray(initial_state.get("Py", 0)).flat[0])
-                    P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
-                    mass_init = float(np.asarray(initial_state.get("m", 1)).flat[0])
-                    p_init = P_init / (mass_init * C_MMNS)
-                    driver_gamma_initial = float(np.sqrt(1 + p_init**2))
-
+                    driver_gamma_initial = (
+                        _mean_alive_gamma(driver_states[0]) or driver_initial_gamma
+                    )
                     final_state = driver_states[-1]
-                    Pz_final_alive = get_alive_particle_values(final_state, "Pz")
-                    Px_final_alive = get_alive_particle_values(final_state, "Px")
-                    Py_final_alive = get_alive_particle_values(final_state, "Py")
-
-                    if Pz_final_alive is not None and len(Pz_final_alive) > 0:
-                        Pz_final = float(np.mean(Pz_final_alive))
-                        Px_final = float(np.mean(Px_final_alive))
-                        Py_final = float(np.mean(Py_final_alive))
-                        P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
-                        mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
-                        p_final = P_final / (mass_final * C_MMNS)
-                        driver_gamma_final = float(np.sqrt(1 + p_final**2))
-                    else:
+                    driver_gamma_final = _mean_alive_gamma(final_state)
+                    if driver_gamma_final is None:
                         driver_gamma_final = driver_gamma_initial
 
                     z_arr = np.array(
@@ -2483,9 +2595,7 @@ def run_testbed(
                         ]
                     )
                     Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
-                    P_total_arr = np.sqrt(Pz_arr**2 + Px_arr**2 + Py_arr**2)
-                    p_normalized_arr = P_total_arr / (m_arr * C_MMNS)
-                    gamma_arr = np.sqrt(1 + p_normalized_arr**2)
+                    gamma_arr = driver_gamma_series
 
                     driver_trajectory_data = {
                         "z": z_arr,
@@ -3652,6 +3762,7 @@ __all__ = [
     "apply_species_preset",
     "build_external_field_config",
     "build_pseudo_grid_config",
+    "build_macroparticle_smearing_config",
     "build_driver_train_config",
     "compute_initial_summary",
     "ensure_directory",

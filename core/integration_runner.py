@@ -42,6 +42,7 @@ from .types import (
     DriverTrainConfig,
     IndexedTrajectoryArrays,
     IntegratorConfig,
+    MacroparticleSmearingConfig,
     ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
@@ -536,6 +537,7 @@ def _run_pseudo_grid_reduced_step(
     observer_soa: TrajectoryArrays | None = None,
     source_soa: TrajectoryArrays | None = None,
     raise_gamma_blowup: bool = False,
+    macroparticle_smearing: MacroparticleSmearingConfig | None = None,
 ) -> ParticleState:
     """Advance one pseudo-grid half-step via active-only observer/source solves."""
     if not observer_history:
@@ -620,6 +622,7 @@ def _run_pseudo_grid_reduced_step(
             pseudo_grid_space_charge_source_charges=(
                 pseudo_grid_space_charge_source_charges
             ),
+            macroparticle_smearing=macroparticle_smearing,
             traj_soa=observer_active_soa,
             traj_ext_soa=source_active_soa,
             **(
@@ -733,6 +736,7 @@ def _run_adaptive_step(
     pseudo_grid_observer_soa: TrajectoryArrays | None = None,
     pseudo_grid_source_soa: TrajectoryArrays | None = None,
     use_full_history: bool = False,
+    macroparticle_smearing: MacroparticleSmearingConfig | None = None,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -900,6 +904,7 @@ def _run_adaptive_step(
             observer_history_base_index=pseudo_grid_observer_history_base_index,
             observer_soa=pseudo_grid_observer_soa,
             source_soa=pseudo_grid_source_soa,
+            macroparticle_smearing=macroparticle_smearing,
         )
         adaptive_state.reduced_timestep_mode = reduced_timestep_mode
         adaptive_state.reduced_h_step = reduced_h_step
@@ -1047,6 +1052,7 @@ def _run_adaptive_step(
                         raise_gamma_blowup=_adaptive_timestep_enabled(
                             adaptive_timestep
                         ),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
                 else:
                     trial_state = self_consistent_step(
@@ -1096,6 +1102,7 @@ def _run_adaptive_step(
                             if _scs_accepts_soa
                             else {}
                         ),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
             except GammaBlowupError as e:
                 if adaptive_timestep is None or not adaptive_timestep.enabled:
@@ -1490,6 +1497,7 @@ def retarded_integrator(
     pseudo_grid: Optional[PseudoGridConfig] = None,
     driver_train: Optional[DriverTrainConfig] = None,
     particle_loss: Optional[ParticleLossConfig] = None,
+    macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
 ) -> Tuple[
     Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
 ]:
@@ -1624,6 +1632,7 @@ def retarded_integrator(
     pseudo_grid = pseudo_grid or PseudoGridConfig()
     driver_train = driver_train or DriverTrainConfig()
     particle_loss = particle_loss or ParticleLossConfig()
+    macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     driver_train_enabled = bool(driver_train.enabled)
     if pseudo_grid.enabled and sim_type != SimulationType.BUNCH_TO_BUNCH:
         raise NotImplementedError(
@@ -1925,6 +1934,7 @@ def retarded_integrator(
                     else None
                 ),
                 use_full_history=driver_train_enabled,
+                macroparticle_smearing=macroparticle_smearing,
             )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(
@@ -2094,6 +2104,7 @@ def retarded_integrator(
                             else None
                         ),
                         source_soa=_traj_builder.build_partial(i),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
                 else:
                     _b2b_scs_accepts_soa = _call_accepts_kw(
@@ -2143,6 +2154,7 @@ def retarded_integrator(
                             if _b2b_scs_accepts_soa
                             else {}
                         ),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
@@ -2401,6 +2413,7 @@ def run_integrator(
         pseudo_grid=config.pseudo_grid,
         driver_train=config.driver_train,
         particle_loss=config.particle_loss,
+        macroparticle_smearing=config.macroparticle_smearing,
     )
 
 

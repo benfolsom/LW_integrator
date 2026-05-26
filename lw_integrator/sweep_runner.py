@@ -1456,6 +1456,33 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
             if source_key in pseudo_grid_payload:
                 converted[target_key] = pseudo_grid_payload[source_key]
 
+    smearing_payload = converted.pop("macroparticle_smearing", None)
+    if isinstance(smearing_payload, dict):
+        _smearing_field_map = {
+            "enabled": "macroparticle_smearing_enabled",
+            "subcharge_count": "macroparticle_smearing_subcharge_count",
+            "sigma_multiplier": "macroparticle_smearing_sigma_multiplier",
+            "position_sigma_mm": "macroparticle_smearing_position_sigma_mm",
+            "longitudinal_sigma_mm": "macroparticle_smearing_longitudinal_sigma_mm",
+            "momentum_sigma_amu_mm_ns": "macroparticle_smearing_momentum_sigma_amu_mm_ns",
+            "use_position_errors": "macroparticle_smearing_use_position_errors",
+            "use_momentum_errors": "macroparticle_smearing_use_momentum_errors",
+            "use_centroid_errors": "macroparticle_smearing_use_centroid_errors",
+            "use_internal_cloud": "macroparticle_smearing_use_internal_cloud",
+            "apply_to_active_observers": "macroparticle_smearing_apply_to_active_observers",
+            "apply_to_active_sources": "macroparticle_smearing_apply_to_active_sources",
+            "apply_to_passive_sources": "macroparticle_smearing_apply_to_passive_sources",
+            "apply_to_passive_updates": "macroparticle_smearing_apply_to_passive_updates",
+            "seed": "macroparticle_smearing_seed",
+            "refresh_policy": "macroparticle_smearing_refresh_policy",
+        }
+        for source_key, target_key in _smearing_field_map.items():
+            if source_key in smearing_payload:
+                value = smearing_payload[source_key]
+                if source_key == "refresh_policy" and isinstance(value, str):
+                    value = value.replace("-", "_")
+                converted[target_key] = value
+
     driver_train_payload = converted.pop("driver_train", None)
     if isinstance(driver_train_payload, dict):
         _driver_train_field_map = {

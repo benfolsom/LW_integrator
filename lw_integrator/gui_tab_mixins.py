@@ -263,6 +263,105 @@ class IntegratorGUITabMixin:
 
         ttk.Label(
             particle_frame,
+            text="Macroparticle Smearing (all modes):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        next_row += 1
+
+        self.macroparticle_smearing_enable_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable bounded source smearing",
+            variable=self.macroparticle_smearing_enabled_var,
+            command=self._toggle_macroparticle_smearing_controls,
+        )
+        self.macroparticle_smearing_enable_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        next_row += 1
+
+        smearing_fields = [
+            (
+                "Subcharge count:",
+                "macroparticle_smearing_subcharge_count_var",
+                "macroparticle_smearing_subcharge_count_entry",
+            ),
+            (
+                "Sigma multiplier:",
+                "macroparticle_smearing_sigma_multiplier_var",
+                "macroparticle_smearing_sigma_multiplier_entry",
+            ),
+            (
+                "Position sigma mm (blank=auto):",
+                "macroparticle_smearing_position_sigma_var",
+                "macroparticle_smearing_position_sigma_entry",
+            ),
+            (
+                "Longitudinal sigma mm (blank=0):",
+                "macroparticle_smearing_longitudinal_sigma_var",
+                "macroparticle_smearing_longitudinal_sigma_entry",
+            ),
+            (
+                "Momentum sigma amu*mm/ns (blank=0):",
+                "macroparticle_smearing_momentum_sigma_var",
+                "macroparticle_smearing_momentum_sigma_entry",
+            ),
+            (
+                "Smearing seed:",
+                "macroparticle_smearing_seed_var",
+                "macroparticle_smearing_seed_entry",
+            ),
+        ]
+        self._macroparticle_smearing_widgets = []
+        for label_text, var_name, entry_name in smearing_fields:
+            label = ttk.Label(particle_frame, text=label_text)
+            label.grid(row=next_row, column=0, sticky="w", pady=2, padx=(20, 0))
+            entry = ttk.Entry(
+                particle_frame,
+                textvariable=getattr(self, var_name),
+                width=12,
+            )
+            entry.grid(row=next_row, column=1, sticky="ew", pady=2)
+            setattr(self, entry_name, entry)
+            self._macroparticle_smearing_widgets.extend([label, entry])
+            next_row += 1
+
+        self.macroparticle_smearing_passive_updates_check = ttk.Checkbutton(
+            particle_frame,
+            text="Apply to pseudo-grid passive updates (experimental)",
+            variable=self.macroparticle_smearing_apply_to_passive_updates_var,
+        )
+        self.macroparticle_smearing_passive_updates_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        self._macroparticle_smearing_widgets.append(
+            self.macroparticle_smearing_passive_updates_check
+        )
+        next_row += 1
+
+        help_text_smearing = ttk.Label(
+            particle_frame,
+            text=(
+                "Smearing splits source macroparticles into deterministic random subcharges.\n"
+                "Auto position width scales with macro population but is capped near half\n"
+                "an estimated inter-macroparticle spacing. Leave sigmas blank for defaults."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_text_smearing.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+        self._macroparticle_smearing_widgets.append(help_text_smearing)
+
+        next_row += 1
+        ttk.Separator(particle_frame, orient="horizontal").grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(12, 12)
+        )
+        next_row += 1
+
+        ttk.Label(
+            particle_frame,
             text="Pseudo-grid Mode (Bunch-to-Bunch only):",
             font=("TkDefaultFont", 9, "bold"),
         ).grid(row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 5))

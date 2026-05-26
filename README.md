@@ -444,6 +444,10 @@ optimization tooling.
 
 ---
 
+## Startup-mode default
+
+`COLD_START` is the default startup mode for generated configs, CLI/GUI runs, and integration-style tests. Use `APPROXIMATE_BACK_HISTORY` only for explicitly labeled diagnostics or for reproducing older examples that require approximate retarded history initialization.
+
 ## Example configurations
 
 Simple example configs live under `configs/`. Load them via the GUI

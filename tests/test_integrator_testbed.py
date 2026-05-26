@@ -91,6 +91,28 @@ class TestComputeDeltaEnergySeries:
         assert z_series[1] > z_series[0]
 
 
+class TestAliveAveraging:
+    def test_mean_alive_gamma_series_uses_per_particle_gamma_not_mean_momentum(self):
+        states = [
+            {
+                "gamma": np.array([10.0, 20.0, 30.0]),
+                "Pz": np.array([100.0, -100.0, 0.0]),
+                "_dead_particles": np.array([False, False, False]),
+            },
+            {
+                "gamma": np.array([11.0, 21.0, 31.0]),
+                "Pz": np.array([500.0, -500.0, 0.0]),
+                "_dead_particles": np.array([True, False, False]),
+            },
+        ]
+
+        np.testing.assert_allclose(
+            testbed_runner._mean_alive_gamma_series(states),
+            np.array([20.0, 26.0]),
+        )
+        assert testbed_runner._mean_alive_gamma(states[-1]) == pytest.approx(26.0)
+
+
 class TestNormalizeState:
     def test_normalize_state_wraps_scalars_and_preserves_metadata(self):
         normalized = normalize_state(
@@ -111,7 +133,9 @@ class TestFilenameGeneration:
 
     def test_filename_base_strips_json_extension(self, monkeypatch):
         """Test that generated filename bases include sanitized config names."""
-        monkeypatch.setattr(testbed_runner.time, "strftime", lambda *_args: "20251022_123456")
+        monkeypatch.setattr(
+            testbed_runner.time, "strftime", lambda *_args: "20251022_123456"
+        )
 
         assert (
             testbed_runner.generate_filename_base("electronwall10.3gev.json")
@@ -127,7 +151,9 @@ class TestFilenameGeneration:
         )
 
     def test_filename_base_defaults_empty_config_name(self, monkeypatch):
-        monkeypatch.setattr(testbed_runner.time, "strftime", lambda *_args: "20251022_123456")
+        monkeypatch.setattr(
+            testbed_runner.time, "strftime", lambda *_args: "20251022_123456"
+        )
 
         assert (
             testbed_runner.generate_filename_base("  ")
@@ -245,5 +271,7 @@ class TestConfigManagement:
         assert loaded["steps"] == 1000
         assert loaded["seed"] == 12345
         assert loaded["energy_save"] is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
