@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, TextIO
@@ -45,6 +46,7 @@ class DebugLogger:
     # Configuration
     MAX_LOG_SIZE_MB = 50  # Max size per log file (10-20 min at full verbosity)
     MAX_CACHE_SIZE_MB = 500  # Max total cache size
+    MIN_PURGE_INTERVAL_SECONDS = 300.0
     LOGCACHE_DIR = "logcache"
 
     def __new__(cls):
@@ -69,6 +71,7 @@ class DebugLogger:
         self._original_stderr = sys.stderr
         self._is_active = False
         self._context_name = "default"
+        self._last_purge_monotonic = 0.0
 
         # Register cleanup on exit
         atexit.register(self.close)
@@ -109,7 +112,7 @@ class DebugLogger:
             logcache_path.mkdir(parents=True, exist_ok=True)
 
             # Purge old logs if cache is too large
-            self._purge_old_logs(logcache_path)
+            self._purge_old_logs(logcache_path, force=True)
 
             # Create initial log file
             self._create_new_log(logcache_path)
@@ -176,14 +179,25 @@ class DebugLogger:
         except Exception as e:
             print(f"[WARNING] Failed to rotate log: {e}", file=self._original_stdout)
 
-    def _purge_old_logs(self, logcache_path: Path):
+    def _purge_old_logs(self, logcache_path: Path, *, force: bool = False):
         """Remove oldest logs if total cache size exceeds limit.
 
         Parameters
         ----------
         logcache_path : Path
             Path to logcache directory
+        force : bool
+            Run the potentially expensive directory scan even if a recent purge
+            check already ran in this process.
         """
+        now = time.monotonic()
+        if (
+            not force
+            and now - self._last_purge_monotonic < self.MIN_PURGE_INTERVAL_SECONDS
+        ):
+            return
+        self._last_purge_monotonic = now
+
         try:
             # Get all log files sorted by modification time (oldest first)
             # Match both old format (debug_*) and new format (timestamp_*)

@@ -46,12 +46,21 @@ def _result(**overrides):
         "rider_gamma_initial": None,
         "rider_gamma_final": None,
         "rider_trajectory": None,
+        "driver_gamma_initial": None,
+        "driver_gamma_final": None,
+        "driver_trajectory": None,
         "rider_emittance_x_mm_mrad": None,
         "rider_emittance_y_mm_mrad": None,
         "rider_norm_emittance_x_mm_mrad": None,
         "rider_norm_emittance_y_mm_mrad": None,
         "rider_beta_x_m": None,
         "rider_beta_y_m": None,
+        "driver_emittance_x_mm_mrad": None,
+        "driver_emittance_y_mm_mrad": None,
+        "driver_norm_emittance_x_mm_mrad": None,
+        "driver_norm_emittance_y_mm_mrad": None,
+        "driver_beta_x_m": None,
+        "driver_beta_y_m": None,
         "num_particles_dead": 0,
         "halted_early": False,
         "halt_reason": None,
@@ -84,10 +93,15 @@ def _config(**overrides):
         "use_image_weighting": True,
         "self_consistency_enabled": False,
         "self_consistency_tolerance": 1e-3,
+        "self_consistency_convergence_mode": "variable_geometry",
+        "self_consistency_target_ms_tolerance": 3e-7,
         "self_consistency_max_iterations": 5,
+        "self_consistency_mass_shell_tolerance": 4e-3,
+        "self_consistency_mass_shell_relaxation": 0.42,
         "self_consistency_verbosity": 0,
         "self_consistency_chrono_interpolate": True,
         "self_consistency_chrono_tolerance": 2e-3,
+        "self_consistency_chrono_matching_mode": "AVERAGED",
         "self_consistency_chrono_high_precision": True,
         "self_consistency_chrono_adaptive_tolerance": True,
         "self_consistency_gamma_reconciliation_method": "FIXED_WEIGHTED",
@@ -101,6 +115,41 @@ def _config(**overrides):
         "adaptive_timestep_probe_threshold": 0.01,
         "adaptive_timestep_max_probe_steps": 3,
         "adaptive_timestep_debug": False,
+        "space_charge_enabled": True,
+        "space_charge_retarded": False,
+        "space_charge_softening_mm": 0.012,
+        "space_charge_bunch_sigma_mm": 0.034,
+        "space_charge_min_retarded_steps": 6,
+        "external_field_enabled": True,
+        "external_electric_field_native": (1.0, 0.0, 0.0),
+        "external_electric_field_v_per_m": (0.0, 2.0, 0.0),
+        "external_magnetic_field_native": (0.0, 0.0, 3.0),
+        "external_field_x_min": -1.0,
+        "external_field_x_max": 1.0,
+        "external_field_y_min": -2.0,
+        "external_field_y_max": 2.0,
+        "external_field_z_min": -3.0,
+        "external_field_z_max": 3.0,
+        "external_field_t_min": 1.0e-6,
+        "external_field_t_max": 2.0e-6,
+        "radiation_reaction_mode": "power_matched_damping",
+        "particle_loss_enabled": False,
+        "particle_loss_radius_mm": 123.0,
+        "particle_loss_conducting_wall_aperture_loss_enabled": False,
+        "particle_loss_initial_radial_quantile": 0.95,
+        "particle_loss_initial_radial_multiplier": 1.5,
+        "particle_loss_initial_radial_margin_mm": 0.25,
+        "pseudo_grid_enabled": True,
+        "pseudo_grid_active_rider_count": 6,
+        "pseudo_grid_active_driver_count": 5,
+        "pseudo_grid_passive_neighbor_count": 3,
+        "pseudo_grid_coverage_strategy": "farthest_point",
+        "pseudo_grid_coverage_space": "phase_space",
+        "pseudo_grid_pair_reuse_window": 8,
+        "pseudo_grid_source_weighting_mode": "nearest",
+        "pseudo_grid_loss_tracking_enabled": False,
+        "pseudo_grid_causal_history_pruning_enabled": True,
+        "pseudo_grid_causal_history_safety_margin_steps": 4,
         "smoothness_enabled": True,
         "smoothness_window_size": 20,
         "smoothness_oscillation_threshold": 0.2,
@@ -113,9 +162,7 @@ def _config(**overrides):
 
 
 def test_calculate_rider_starting_pz_uses_b2b_kinetic_energy():
-    wall_pz = calculate_rider_starting_pz(
-        5.0, 1.0, SimulationType.CONDUCTING_WALL
-    )
+    wall_pz = calculate_rider_starting_pz(5.0, 1.0, SimulationType.CONDUCTING_WALL)
     b2b_pz = calculate_rider_starting_pz(5.0, 1.0, "BUNCH_TO_BUNCH")
 
     assert b2b_pz > wall_pz
@@ -146,12 +193,60 @@ def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
     assert setup.options.rider_params["starting_Pz"] > 0.0
     assert setup.options.core_params["cav_spacing"] == 321.0
     assert setup.options.core_params["z_cutoff"] == 25.0
+    assert setup.options.self_consistency_convergence_mode == "variable_geometry"
+    assert setup.options.self_consistency_target_ms_tolerance == pytest.approx(3e-7)
     assert setup.options.self_consistency_chrono_interpolate is True
     assert setup.options.self_consistency_chrono_tolerance == pytest.approx(2e-3)
+    assert setup.options.self_consistency_chrono_matching_mode == "AVERAGED"
     assert setup.options.self_consistency_chrono_high_precision is True
     assert setup.options.self_consistency_chrono_adaptive_tolerance is True
-    assert setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
+    assert setup.options.self_consistency_mass_shell_tolerance == pytest.approx(4e-3)
+    assert setup.options.self_consistency_mass_shell_relaxation == pytest.approx(0.42)
+    assert (
+        setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
+    )
     assert setup.options.self_consistency_gamma_reconciliation_fixed_weight == 0.25
+    assert setup.options.space_charge_enabled is True
+    assert setup.options.space_charge_retarded is False
+    assert setup.options.space_charge_softening_mm == pytest.approx(0.012)
+    assert setup.options.space_charge_bunch_sigma_mm == pytest.approx(0.034)
+    assert setup.options.space_charge_min_retarded_steps == 6
+    assert setup.options.external_field_enabled is True
+    assert setup.options.external_electric_field_native == pytest.approx(
+        (1.0, 0.0, 0.0)
+    )
+    assert setup.options.external_electric_field_v_per_m == pytest.approx(
+        (0.0, 2.0, 0.0)
+    )
+    assert setup.options.external_magnetic_field_native == pytest.approx(
+        (0.0, 0.0, 3.0)
+    )
+    assert setup.options.external_field_x_min == pytest.approx(-1.0)
+    assert setup.options.external_field_x_max == pytest.approx(1.0)
+    assert setup.options.external_field_y_min == pytest.approx(-2.0)
+    assert setup.options.external_field_y_max == pytest.approx(2.0)
+    assert setup.options.external_field_z_min == pytest.approx(-3.0)
+    assert setup.options.external_field_z_max == pytest.approx(3.0)
+    assert setup.options.external_field_t_min == pytest.approx(1.0e-6)
+    assert setup.options.external_field_t_max == pytest.approx(2.0e-6)
+    assert setup.options.radiation_reaction_mode == "power_matched_damping"
+    assert setup.options.particle_loss_enabled is False
+    assert setup.options.particle_loss_radius_mm == pytest.approx(123.0)
+    assert setup.options.particle_loss_conducting_wall_aperture_loss_enabled is False
+    assert setup.options.particle_loss_initial_radial_quantile == pytest.approx(0.95)
+    assert setup.options.particle_loss_initial_radial_multiplier == pytest.approx(1.5)
+    assert setup.options.particle_loss_initial_radial_margin_mm == pytest.approx(0.25)
+    assert setup.options.pseudo_grid_enabled is True
+    assert setup.options.pseudo_grid_active_rider_count == 6
+    assert setup.options.pseudo_grid_active_driver_count == 5
+    assert setup.options.pseudo_grid_passive_neighbor_count == 3
+    assert setup.options.pseudo_grid_coverage_strategy == "farthest_point"
+    assert setup.options.pseudo_grid_coverage_space == "phase_space"
+    assert setup.options.pseudo_grid_pair_reuse_window == 8
+    assert setup.options.pseudo_grid_source_weighting_mode == "nearest"
+    assert setup.options.pseudo_grid_loss_tracking_enabled is False
+    assert setup.options.pseudo_grid_causal_history_pruning_enabled is True
+    assert setup.options.pseudo_grid_causal_history_safety_margin_steps == 4
     assert setup.options.output_dir == tmp_path
 
 
@@ -161,7 +256,10 @@ def test_build_integration_metrics_uses_direct_gamma_values():
             rider_delta_e=1.0,
             rider_gamma_initial=10.0,
             rider_gamma_final=12.0,
+            driver_gamma_initial=8.0,
+            driver_gamma_final=7.5,
             rider_emittance_x_mm_mrad=0.5,
+            driver_emittance_x_mm_mrad=0.25,
             num_particles_dead=2,
         ),
         rider_m_particle=1.0,
@@ -173,12 +271,19 @@ def test_build_integration_metrics_uses_direct_gamma_values():
     assert outcome.metrics["initial_gamma_mean"] == 10.0
     assert outcome.metrics["final_gamma_mean"] == 12.0
     assert outcome.metrics["max_percent_energy_gain"] == pytest.approx(20.0)
-    assert outcome.metrics["delta_e_mev"] == pytest.approx(2.0 * 931.494)
-    assert outcome.metrics["max_energy_gain_gev"] == pytest.approx(
-        2.0 * 931.494 / 1e3
+    assert outcome.metrics["rider_final_percent_energy_gain"] == pytest.approx(
+        200.0 / 9.0
     )
+    assert outcome.metrics["rider_max_percent_energy_gain"] == pytest.approx(
+        200.0 / 9.0
+    )
+    assert outcome.metrics["delta_e_mev"] == pytest.approx(2.0 * 931.494)
+    assert outcome.metrics["max_energy_gain_gev"] == pytest.approx(2.0 * 931.494 / 1e3)
     assert outcome.metrics["max_relative_gain"] == pytest.approx(0.2)
     assert outcome.metrics["rider_emittance_x_mm_mrad"] == 0.5
+    assert outcome.metrics["driver_gamma_initial"] == 8.0
+    assert outcome.metrics["driver_gamma_final"] == 7.5
+    assert outcome.metrics["driver_emittance_x_mm_mrad"] == 0.25
     assert outcome.metrics["num_particles_dead"] == 2
     assert any("optimizer_objective" in line for line in outcome.log_lines)
 
@@ -191,9 +296,42 @@ def test_build_integration_metrics_falls_back_to_trajectory_gamma():
     )
 
     assert outcome.metrics["max_percent_energy_gain"] == pytest.approx(10.0)
+    assert outcome.metrics["rider_final_percent_energy_gain"] == pytest.approx(
+        100.0 / 9.0
+    )
+    assert outcome.metrics["rider_max_percent_energy_gain"] == pytest.approx(
+        100.0 / 9.0
+    )
     assert outcome.metrics["delta_e_mev"] == pytest.approx(1.0 * 2.0 * 931.494)
     assert any("Fallback calculation successful" in line for line in outcome.log_lines)
     assert any("gamma_initial (from traj)" in line for line in outcome.log_lines)
+
+
+def test_build_integration_metrics_records_final_and_peak_rider_gain():
+    outcome = build_integration_metrics(
+        _result(
+            rider_gamma_initial=10.0,
+            rider_gamma_final=11.0,
+            rider_trajectory={"gamma": [10.0, 12.0, 11.0]},
+        ),
+        rider_m_particle=1.0,
+        run_num=5,
+    )
+
+    assert outcome.metrics["rider_final_energy_gain_mev"] == pytest.approx(931.494)
+    assert outcome.metrics["rider_final_percent_energy_gain"] == pytest.approx(
+        100.0 / 9.0
+    )
+    assert outcome.metrics["rider_final_percent_total_energy_gain"] == pytest.approx(
+        10.0
+    )
+    assert outcome.metrics["rider_max_gamma"] == pytest.approx(12.0)
+    assert outcome.metrics["rider_max_energy_gain_mev"] == pytest.approx(2.0 * 931.494)
+    assert outcome.metrics["rider_max_percent_energy_gain"] == pytest.approx(
+        200.0 / 9.0
+    )
+    assert outcome.metrics["rider_max_percent_total_energy_gain"] == pytest.approx(20.0)
+    assert outcome.metrics["rider_max_energy_gain_step"] == 1
 
 
 def test_build_integration_metrics_reports_missing_gamma():
@@ -205,7 +343,9 @@ def test_build_integration_metrics_reports_missing_gamma():
 
     assert "max_percent_energy_gain" not in outcome.metrics
     assert any("No trajectory data available" in line for line in outcome.log_lines)
-    assert any("could not be calculated for Run 6" in line for line in outcome.log_lines)
+    assert any(
+        "could not be calculated for Run 6" in line for line in outcome.log_lines
+    )
 
 
 def test_build_halted_integration_output_can_save_sampled_trajectory():
@@ -215,11 +355,23 @@ def test_build_halted_integration_output_can_save_sampled_trajectory():
             halt_reason="cancelled",
             rider_trajectory={
                 "z": [0.0, 1.0, 2.0],
+                "x": [0.0, 0.1, 0.2],
+                "y": [0.0, 0.0, 0.0],
                 "r": [0.0, 0.1, 0.2],
                 "pz": [1.0, 2.0, 3.0],
                 "pr": [0.1, 0.2, 0.3],
                 "t": [0.0, 0.5, 1.0],
                 "gamma": [10.0, 11.0, 12.0],
+            },
+            driver_trajectory={
+                "z": [5.0, 4.0, 3.0],
+                "x": [0.2, 0.1, 0.0],
+                "y": [0.0, 0.0, 0.0],
+                "r": [0.2, 0.1, 0.0],
+                "pz": [-1.0, -2.0, -3.0],
+                "pr": [0.2, 0.1, 0.0],
+                "t": [0.0, 0.5, 1.0],
+                "gamma": [9.0, 8.0, 7.0],
             },
         ),
         run_num=7,
@@ -234,11 +386,23 @@ def test_build_halted_integration_output_can_save_sampled_trajectory():
         "halt_reason": "cancelled",
         "trajectory": {
             "z": [0.0, 2.0],
+            "x": [0.0, 0.2],
+            "y": [0.0, 0.0],
             "r": [0.0, 0.2],
             "pz": [1.0, 3.0],
             "pr": [0.1, 0.3],
             "t": [0.0, 1.0],
             "gamma": [10.0, 12.0],
+        },
+        "driver_trajectory": {
+            "z": [5.0, 3.0],
+            "x": [0.2, 0.0],
+            "y": [0.0, 0.0],
+            "r": [0.2, 0.0],
+            "pz": [-1.0, -3.0],
+            "pr": [0.2, 0.0],
+            "t": [0.0, 1.0],
+            "gamma": [9.0, 7.0],
         },
     }
     assert "    Halted trajectory saved (3 points, stride=2)" in outcome.log_lines
@@ -263,8 +427,9 @@ def test_build_halted_integration_output_warns_on_bad_trajectory_payload():
         "metrics": {},
         "halted_early": True,
         "halt_reason": "cancelled",
+        "trajectory": {"z": [0.0]},
     }
-    assert any(
+    assert not any(
         line.startswith("    [WARNING] Failed to save halted trajectory:")
         for line in outcome.log_lines
     )
@@ -296,21 +461,48 @@ def test_build_integration_trajectory_output_reports_missing_trajectory():
 
 
 def test_build_integration_trajectory_output_can_save_without_stability():
+    metrics = {}
     outcome = build_integration_trajectory_output(
         _result(
             rider_trajectory={
                 "z": [3.0, 7.0],
+                "x": [1.0, 2.0],
+                "y": [0.5, 0.25],
                 "r": [0.0, 0.2],
+                "r_rms_particle": [0.4, 0.1],
+                "r_p95_particle": [0.8, 0.3],
+                "halo_gt_2_initial_rms_fraction": [0.5, 0.25],
+                "alive_fraction": [1.0, 0.75],
+                "z_width_p90_particle": [0.6, 0.9],
+                "gamma_std_particle": [0.1, 0.2],
+                "pz_std_particle": [0.3, 0.15],
                 "pz": [1.0, 3.0],
                 "pr": [0.1, 0.3],
                 "t": [0.0, 1.0],
                 "gamma": [10.0, 12.0],
             },
+            driver_trajectory={
+                "z": [11.0, 5.0],
+                "x": [0.4, 0.1],
+                "y": [0.2, 0.3],
+                "r": [0.4472135955, 0.3162277660],
+                "r_rms_particle": [0.5, 0.25],
+                "r_p95_particle": [1.2, 0.7],
+                "halo_gt_2_initial_rms_fraction": [0.4, 0.1],
+                "alive_fraction": [1.0, 1.0],
+                "z_width_p90_particle": [1.6, 1.1],
+                "gamma_std_particle": [0.4, 0.35],
+                "pz_std_particle": [0.25, 0.2],
+                "pz": [-3.0, -1.0],
+                "pr": [0.2, 0.1],
+                "t": [0.0, 1.0],
+                "gamma": [20.0, 21.0],
+            },
         ),
-        _config(smoothness_enabled=False),
+        _config(smoothness_enabled=False, driver_pcount=4),
         run_num=8,
         rider_m_particle=1.0,
-        metrics={},
+        metrics=metrics,
         save_trajectory=True,
         trajectory_stride=1,
     )
@@ -320,7 +512,73 @@ def test_build_integration_trajectory_output_can_save_without_stability():
         "z_end": 7.0,
         "num_steps": 2,
     }
+    assert outcome.output_updates["_driver_distance_info"] == {
+        "z_start": 11.0,
+        "z_end": 5.0,
+        "num_steps": 2,
+    }
     assert outcome.output_updates["trajectory"]["gamma"] == [10.0, 12.0]
+    assert outcome.output_updates["driver_trajectory"]["z"] == [11.0, 5.0]
+    assert metrics["rider_x_initial_mm"] == pytest.approx(1.0)
+    assert metrics["rider_x_final_mm"] == pytest.approx(2.0)
+    assert metrics["rider_x_delta_mm"] == pytest.approx(1.0)
+    assert metrics["rider_y_initial_mm"] == pytest.approx(0.5)
+    assert metrics["rider_y_final_mm"] == pytest.approx(0.25)
+    assert metrics["rider_y_delta_mm"] == pytest.approx(-0.25)
+    assert metrics["rider_z_initial_mm"] == pytest.approx(3.0)
+    assert metrics["rider_z_final_mm"] == pytest.approx(7.0)
+    assert metrics["rider_z_delta_mm"] == pytest.approx(4.0)
+    assert metrics["rider_radial_initial_mm"] == pytest.approx(0.0)
+    assert metrics["rider_radial_final_mm"] == pytest.approx(0.2)
+    assert metrics["rider_radial_min_mm"] == pytest.approx(0.0)
+    assert metrics["rider_radial_max_mm"] == pytest.approx(0.2)
+    assert metrics["rider_radial_delta_mm"] == pytest.approx(0.2)
+    assert metrics["rider_radial_toward_driver_mm"] == pytest.approx(-0.2)
+    assert metrics["rider_radial_peak_inward_mm"] == pytest.approx(0.0)
+    assert metrics["rider_radial_rms_initial_mm"] == pytest.approx(0.4)
+    assert metrics["rider_radial_rms_final_mm"] == pytest.approx(0.1)
+    assert metrics["rider_radial_rms_min_mm"] == pytest.approx(0.1)
+    assert metrics["rider_radial_rms_max_mm"] == pytest.approx(0.4)
+    assert metrics["rider_radial_rms_delta_mm"] == pytest.approx(-0.3)
+    assert metrics["rider_radial_rms_toward_driver_mm"] == pytest.approx(0.3)
+    assert metrics["rider_radial_rms_peak_inward_mm"] == pytest.approx(0.3)
+    assert metrics["rider_radial_p95_mm_initial"] == pytest.approx(0.8)
+    assert metrics["rider_radial_p95_mm_final"] == pytest.approx(0.3)
+    assert metrics["rider_radial_p95_mm_reduction"] == pytest.approx(0.5)
+    assert metrics["rider_halo_gt_2_initial_rms_fraction_initial"] == pytest.approx(0.5)
+    assert metrics["rider_halo_gt_2_initial_rms_fraction_final"] == pytest.approx(0.25)
+    assert metrics["rider_alive_fraction_final"] == pytest.approx(0.75)
+    assert metrics["rider_loss_fraction"] == pytest.approx(0.25)
+    assert metrics["rider_loss_count"] == 1
+    assert metrics["rider_longitudinal_width_p90_mm_delta"] == pytest.approx(0.3)
+    assert metrics["rider_gamma_std_delta"] == pytest.approx(0.1)
+    assert metrics["rider_normalized_pz_std_reduction"] == pytest.approx(0.15)
+    assert metrics["driver_x_initial_mm"] == pytest.approx(0.4)
+    assert metrics["driver_x_final_mm"] == pytest.approx(0.1)
+    assert metrics["driver_x_delta_mm"] == pytest.approx(-0.3)
+    assert metrics["driver_y_initial_mm"] == pytest.approx(0.2)
+    assert metrics["driver_y_final_mm"] == pytest.approx(0.3)
+    assert metrics["driver_y_delta_mm"] == pytest.approx(0.1)
+    assert metrics["driver_z_initial_mm"] == pytest.approx(11.0)
+    assert metrics["driver_z_final_mm"] == pytest.approx(5.0)
+    assert metrics["driver_z_delta_mm"] == pytest.approx(-6.0)
+    assert metrics["driver_radial_initial_mm"] == pytest.approx(0.4472135955)
+    assert metrics["driver_radial_final_mm"] == pytest.approx(0.3162277660)
+    assert metrics["driver_radial_min_mm"] == pytest.approx(0.3162277660)
+    assert metrics["driver_radial_max_mm"] == pytest.approx(0.4472135955)
+    assert metrics["driver_radial_delta_mm"] == pytest.approx(-0.1309858295)
+    assert metrics["driver_radial_rms_initial_mm"] == pytest.approx(0.5)
+    assert metrics["driver_radial_rms_final_mm"] == pytest.approx(0.25)
+    assert metrics["driver_radial_rms_min_mm"] == pytest.approx(0.25)
+    assert metrics["driver_radial_rms_max_mm"] == pytest.approx(0.5)
+    assert metrics["driver_radial_rms_delta_mm"] == pytest.approx(-0.25)
+    assert metrics["driver_radial_p95_mm_reduction"] == pytest.approx(0.5)
+    assert metrics["driver_halo_gt_2_initial_rms_fraction_reduction"] == pytest.approx(
+        0.3
+    )
+    assert metrics["driver_loss_fraction"] == pytest.approx(0.0)
+    assert metrics["driver_loss_count"] == 0
+    assert "driver_radial_toward_driver_mm" not in metrics
     assert outcome.log_lines == [
         "  [DEBUG] Processing trajectory data for Run 8...",
         "  [INFO] Stability analysis DISABLED for Run 8 (smoothness_enabled=False)",
@@ -381,26 +639,33 @@ def test_build_integration_trajectory_output_rejects_failed_smoothness(monkeypat
     assert "      - extra" not in outcome.log_lines
 
 
-def test_sample_trajectory_arrays_applies_stride():
+def test_sample_trajectory_arrays_applies_stride_and_keeps_last_step():
     sampled = sample_trajectory_arrays(
         {
-            "z": [0.0, 1.0, 2.0],
-            "r": [0.0, 0.1, 0.2],
-            "pz": [1.0, 2.0, 3.0],
-            "pr": [0.1, 0.2, 0.3],
-            "t": [0.0, 0.5, 1.0],
-            "gamma": [10.0, 11.0, 12.0],
+            "z": [0.0, 1.0, 2.0, 3.0],
+            "x": [0.0, 0.1, 0.2, 0.3],
+            "y": [0.0, 0.0, 0.0, 0.0],
+            "r": [0.0, 0.1, 0.2, 0.3],
+            "pz": [1.0, 2.0, 3.0, 4.0],
+            "pr": [0.1, 0.2, 0.3, 0.4],
+            "t": [0.0, 0.5, 1.0, 1.5],
+            "gamma": [10.0, 11.0, 12.0, 13.0],
+            "r_p95_particle": [0.0, 0.2, 0.4, 0.6],
+            "ignored_scalar": 3.0,
         },
-        stride=2,
+        stride=3,
     )
 
     assert sampled == {
-        "z": [0.0, 2.0],
-        "r": [0.0, 0.2],
-        "pz": [1.0, 3.0],
-        "pr": [0.1, 0.3],
-        "t": [0.0, 1.0],
-        "gamma": [10.0, 12.0],
+        "z": [0.0, 3.0],
+        "x": [0.0, 0.3],
+        "y": [0.0, 0.0],
+        "r": [0.0, 0.3],
+        "pz": [1.0, 4.0],
+        "pr": [0.1, 0.4],
+        "t": [0.0, 1.5],
+        "gamma": [10.0, 13.0],
+        "r_p95_particle": [0.0, 0.6],
     }
 
 

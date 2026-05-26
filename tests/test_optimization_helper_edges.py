@@ -199,12 +199,15 @@ def test_compute_soft_penalty_is_zero_for_safe_region_and_positive_for_risky_cas
         == 0.0
     )
 
-    assert compute_soft_penalty(
-        electron,
-        aperture_radius=0.005,
-        macroparticle_charge_multiplier=1600.0,
-        initial_energy_gev=500.0,
-    ) > 0.0
+    assert (
+        compute_soft_penalty(
+            electron,
+            aperture_radius=0.005,
+            macroparticle_charge_multiplier=1600.0,
+            initial_energy_gev=500.0,
+        )
+        > 0.0
+    )
 
     assert (
         compute_soft_penalty(
@@ -327,6 +330,16 @@ def test_validate_optimization_inputs_reports_fixed_particle_constraints():
     )
 
     assert error == "rider_m_particle: Particle mass must be positive"
+
+
+def test_validate_optimization_inputs_rejects_nonpositive_worker_count():
+    error = validate_optimization_inputs(
+        **_validation_params(
+            workers="0",
+        )
+    )
+
+    assert error == "Worker count must be at least 1"
 
 
 def test_build_extreme_parameter_warning_returns_none_for_safe_config():

@@ -249,6 +249,7 @@ def build_full_debug_parameter_log_lines(
                 f"    driver_pcount: {driver['pcount']}",
                 f"    driver_transv_mom: {driver['transv_mom']:.4e} amu·mm/ns",
                 f"    driver_transv_dist: {driver['transv_dist']:.4e} mm",
+                f"    driver_transverse_geometry: {driver.get('transverse_geometry', 'square')}",
                 (
                     "    driver_starting_distance: "
                     f"{driver['starting_distance']:.4f} mm"
@@ -284,6 +285,9 @@ def _resolve_driver_params(
         "pcount": int(params_dict.get("driver_pcount", config.driver_pcount)),
         "transv_mom": params_dict.get("driver_transv_mom", config.driver_transv_mom),
         "transv_dist": params_dict.get("driver_transv_dist", config.driver_transv_dist),
+        "transverse_geometry": getattr(config, "driver_transverse_geometry", "square"),
+        "transv_offset_x": getattr(config, "driver_transv_offset_x", 0.0),
+        "transv_offset_y": getattr(config, "driver_transv_offset_y", 0.0),
         "starting_distance": params_dict.get(
             "driver_starting_distance",
             config.driver_starting_distance,

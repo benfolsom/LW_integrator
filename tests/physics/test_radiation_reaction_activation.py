@@ -1,12 +1,4 @@
-"""
-Tests to trigger and verify radiation reaction activation.
-
-Radiation reaction activates when acceleration (beta_dot) changes by > 0.1% between steps.
-This requires scenarios with rapidly changing forces, such as:
-1. Very close particle encounters (strong Coulomb forces)
-2. Rapid acceleration changes near walls
-3. High-energy particles with sudden deflection
-"""
+"""Tests for high-acceleration trajectory regimes and radiation diagnostics."""
 
 from __future__ import annotations
 
@@ -79,9 +71,7 @@ def detect_radiation_reaction_activation(
     trajectory: list[dict[str, np.ndarray]],
     threshold: float = 0.001,
 ) -> tuple[int, list[int]]:
-    """Detect when radiation reaction was likely active.
-
-    Radiation reaction activates when bdot changes by > threshold (default 0.1%).
+    """Detect large step-to-step changes in stored acceleration.
 
     Parameters
     ----------
@@ -148,14 +138,13 @@ def compute_max_acceleration(trajectory: list[dict[str, np.ndarray]]) -> float:
 
 
 @pytest.mark.physics
-class TestRadiationReactionTriggers:
-    """Test scenarios that should trigger radiation reaction."""
+class TestHighAccelerationDiagnostics:
+    """Test scenarios that should produce large stored-acceleration changes."""
 
     def test_ultra_close_encounter(self):
-        """Test radiation reaction with ultra-close particle encounter.
+        """Test acceleration diagnostics with an ultra-close particle encounter.
 
-        Very close encounters should produce rapidly changing acceleration,
-        triggering radiation reaction force.
+        Very close encounters should produce rapidly changing acceleration.
         """
         gamma = 100.0  # High energy
         separation = 0.05  # mm - VERY close
@@ -182,9 +171,7 @@ class TestRadiationReactionTriggers:
         max_bdot = compute_max_acceleration(trajectory)
 
         print(f"\nUltra-close encounter (γ={gamma}, sep={separation} mm):")
-        print(
-            f"  Radiation reaction activations: {activations}/{len(trajectory) - 1} steps"
-        )
+        print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(f"  Max acceleration: {max_bdot:.3e} c/ns")
         print(
             f"  Activation steps: {steps[:10]}..."
@@ -192,13 +179,12 @@ class TestRadiationReactionTriggers:
             else f"  Activation steps: {steps}"
         )
 
-        # Should trigger radiation reaction
         assert activations > 0, (
-            f"Expected radiation reaction with ultra-close encounter, got {activations} activations"
+            f"Expected large bdot changes with ultra-close encounter, got {activations}"
         )
 
     def test_glancing_collision(self):
-        """Test radiation reaction with glancing collision.
+        """Test acceleration diagnostics with a glancing collision.
 
         Glancing collision should produce sudden transverse acceleration.
         """
@@ -229,18 +215,15 @@ class TestRadiationReactionTriggers:
         max_bdot = compute_max_acceleration(trajectory)
 
         print(f"\nGlancing collision (γ={gamma}, offset={transverse_offset} mm):")
-        print(
-            f"  Radiation reaction activations: {activations}/{len(trajectory) - 1} steps"
-        )
+        print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(f"  Max acceleration: {max_bdot:.3e} c/ns")
 
-        # Should trigger some radiation reaction
-        assert activations > 0, "Expected radiation reaction with glancing collision"
+        assert activations > 0, "Expected large bdot changes with glancing collision"
 
     def test_progressive_separation_scan(self):
-        """Scan multiple separations to find radiation reaction threshold.
+        """Scan multiple separations to find large-acceleration thresholds.
 
-        This documents at what separation radiation reaction typically activates.
+        This documents where stored acceleration begins changing rapidly.
         """
         gamma = 50.0
         separations = [1.0, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01]  # mm
@@ -277,7 +260,7 @@ class TestRadiationReactionTriggers:
                 }
             )
 
-        print(f"\nRadiation reaction activation scan (γ={gamma}):")
+        print(f"\nLarge bdot-change scan (γ={gamma}):")
         print("  Sep (mm)  | Activations | Max bdot    | Rate")
         print("  ----------|-------------|-------------|------")
         for r in results:
@@ -286,25 +269,24 @@ class TestRadiationReactionTriggers:
                 f"{r['max_bdot']:11.3e} | {r['activation_rate']:5.1%}"
             )
 
-        # At least one separation should trigger radiation reaction
         total_activations = sum(r["activations"] for r in results)
         assert total_activations > 0, (
-            "Expected at least some radiation reaction activations"
+            "Expected at least some large bdot-change steps"
         )
 
 
 @pytest.mark.physics
-class TestRadiationReactionWithMassShell:
-    """Test radiation reaction combined with mass-shell clamping."""
+class TestHighAccelerationMassShell:
+    """Test mass-shell behavior in high-acceleration regimes."""
 
     def test_mass_shell_during_radiation_reaction(self):
-        """Verify mass-shell constraint when radiation reaction is active.
+        """Verify mass-shell constraint during large acceleration changes.
 
-        This is the critical test: does radiation reaction (which modifies bdot)
-        indirectly cause mass-shell violations?
+        This remains useful after removing the legacy bdot reaction formalism:
+        it checks whether severe force changes correlate with mass-shell errors.
         """
         gamma = 100.0
-        separation = 0.03  # mm - should trigger radiation reaction
+        separation = 0.03  # mm - should trigger large acceleration changes
 
         init_state = create_close_encounter_state(gamma, separation)
 
@@ -345,10 +327,8 @@ class TestRadiationReactionWithMassShell:
 
         max_mass_shell_error = max(mass_shell_errors)
 
-        print(f"\nMass-shell during radiation reaction (γ={gamma}):")
-        print(
-            f"  Radiation reaction activations: {activations}/{len(trajectory) - 1} steps"
-        )
+        print(f"\nMass-shell during large acceleration changes (γ={gamma}):")
+        print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(f"  Max mass-shell error: {max_mass_shell_error:.3e}")
         print("  Mass-shell errors at activation steps:")
         for step in activation_steps[:5]:  # First 5 activations
@@ -367,18 +347,16 @@ class TestRadiationReactionWithMassShell:
                     step_errors.append(rel_error)
                 print(f"    Step {step}: {max(step_errors):.3e}")
 
-        # Verify radiation reaction was active
-        assert activations > 0, "Expected radiation reaction to activate"
+        assert activations > 0, "Expected large acceleration changes"
 
-        # Verify mass-shell constraint maintained despite radiation reaction
         assert max_mass_shell_error < 1e-2, (
-            f"Mass-shell violation during radiation reaction: {max_mass_shell_error:.3e}"
+            f"Mass-shell violation during high-acceleration regime: {max_mass_shell_error:.3e}"
         )
 
     def test_extreme_acceleration_regime(self):
         """Test most extreme scenario: ultra-high gamma, ultra-close approach.
 
-        This pushes the limits of both radiation reaction and mass-shell clamping.
+        This pushes the limits of force changes and mass-shell clamping.
         """
         gamma = 500.0  # Ultra-relativistic
         separation = 0.01  # mm - extremely close
@@ -422,9 +400,7 @@ class TestRadiationReactionWithMassShell:
         max_mass_shell_error = max(mass_shell_errors)
 
         print(f"\nExtreme regime (γ={gamma}, sep={separation} mm):")
-        print(
-            f"  Radiation reaction activations: {activations}/{len(trajectory) - 1} steps"
-        )
+        print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(f"  Max acceleration: {max_bdot:.3e} c/ns")
         print(f"  Max mass-shell error: {max_mass_shell_error:.3e}")
 
@@ -435,14 +411,11 @@ class TestRadiationReactionWithMassShell:
 
 
 @pytest.mark.physics
-class TestRadiationReactionPhysics:
-    """Test physical correctness of radiation reaction."""
+class TestRadiationDiagnostics:
+    """Test passive radiation diagnostics in high-acceleration runs."""
 
-    def test_radiation_reaction_causes_energy_loss(self):
-        """Verify that radiation reaction causes energy dissipation.
-
-        When active, radiation reaction should reduce total kinetic energy.
-        """
+    def test_high_acceleration_run_records_energy_context(self):
+        """Document energy context for high-acceleration diagnostic runs."""
         gamma = 100.0
         separation = 0.02  # mm
 
@@ -465,7 +438,7 @@ class TestRadiationReactionPhysics:
 
         activations, activation_steps = detect_radiation_reaction_activation(trajectory)
 
-        # Compute energy before and during/after radiation reaction
+        # Compute energy before and during/after large acceleration changes.
         energies = [
             np.sum(state["gamma"] * state["m"] * C_MMNS) for state in trajectory
         ]
@@ -476,17 +449,16 @@ class TestRadiationReactionPhysics:
             energy_during = energies[min(len(energies) - 1, first_activation + 10)]
             energy_change = (energy_during - energy_before) / energy_before
 
-            print("\nRadiation reaction energy dissipation:")
-            print(f"  Activations: {activations}")
+            print("\nHigh-acceleration energy context:")
+            print(f"  Large bdot-change steps: {activations}")
             print(f"  Energy before: {energy_before:.6e}")
             print(f"  Energy during/after: {energy_during:.6e}")
             print(
                 f"  Relative change: {energy_change:.3e} ({energy_change * 100:.2f}%)"
             )
 
-            # Document energy change (may be positive or negative depending on EM work)
-            # The key is that radiation reaction is active
-            print("  Radiation reaction was active (detected)")
+            # Document energy change; with default radiation_reaction_mode='off',
+            # this is EM/integrator energy context, not self-force dissipation.
 
 
 if __name__ == "__main__":

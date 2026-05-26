@@ -43,9 +43,12 @@ class _MockVar:
 class _WidgetRecorder:
     def __init__(self):
         self.calls = []
+        self.text = None
 
     def config(self, **kwargs):
         self.calls.append(kwargs)
+        if "text" in kwargs:
+            self.text = kwargs["text"]
 
     def configure(self, **kwargs):
         self.config(**kwargs)
@@ -341,6 +344,7 @@ class TestOptimizationPluginIntegration:
             self_consistency_tolerance=2e-4,
             adaptive_timestep_enabled=False,
             adaptive_timestep_threshold=0.25,
+            radiation_reaction_mode="medina_lad",
             self_consistency_gamma_reconciliation_method="FIXED_WEIGHTED",
             self_consistency_gamma_reconciliation_fixed_weight=0.7,
         )
@@ -350,6 +354,7 @@ class TestOptimizationPluginIntegration:
             self_consistency_target_ms_tolerance_var=_MockVar("5e-4"),
             adaptive_timestep_enabled_var=_MockVar(True),
         )
+        harness.radiation_reaction_mode_var = _MockVar("power_matched_damping")
 
         kwargs = harness._gather_stability_config_kwargs(existing_config)
 
@@ -359,6 +364,7 @@ class TestOptimizationPluginIntegration:
         assert kwargs["use_image_weighting"] is False
         assert kwargs["self_consistency_enabled"] is False
         assert kwargs["adaptive_timestep_threshold"] == pytest.approx(0.25)
+        assert kwargs["radiation_reaction_mode"] == "power_matched_damping"
         assert (
             kwargs["self_consistency_gamma_reconciliation_method"] == "FIXED_WEIGHTED"
         )
@@ -371,6 +377,31 @@ class TestOptimizationPluginIntegration:
         )
 
         assert _stability_dialog_logging_defaults(config) == ("0", False)
+
+    def test_gather_output_and_failure_kwargs_includes_worker_count(self):
+        harness = OptimizationPluginControlMixin()
+        harness.save_top_n_traj_var = _MockVar(True)
+        harness.save_all_traj_var = _MockVar(False)
+        harness.save_failed_traj_var = _MockVar(True)
+        harness.trajectory_stride_var = _MockVar("25")
+        harness.metrics_format_var = _MockVar("json")
+        harness.metrics_scope_var = _MockVar("all")
+        harness.log_verbosity_var = _MockVar("truncated")
+        harness.smoothness_enabled_var = _MockVar(False)
+        harness.smoothness_window_var = _MockVar("12")
+        harness.smoothness_oscillation_var = _MockVar("0.75")
+        harness.smoothness_reject_var = _MockVar(True)
+        harness.workers_var = _MockVar("4")
+        harness.per_run_timeout_var = _MockVar("15.0")
+        harness.skip_failed_runs_var = _MockVar(True)
+        harness.failed_run_retry_attempts_var = _MockVar("2")
+
+        kwargs = harness._gather_output_and_failure_kwargs(
+            OptimizationConfig(smoothness_trend_threshold=0.33)
+        )
+
+        assert kwargs["workers"] == 4
+        assert kwargs["smoothness_trend_threshold"] == pytest.approx(0.33)
 
     def test_gather_particle_config_kwargs_reads_fixed_sweep_values(self):
         harness = OptimizationPluginControlMixin()
@@ -491,6 +522,7 @@ class TestOptimizationPluginIntegration:
         )
         monkeypatch.setattr(run_mixins_module, "run_testbed", fake_run_testbed)
 
+        mock_config.radiation_reaction_mode = "power_matched_damping"
         harness = SimpleNamespace(
             config=mock_config,
             sweep_output_dir=tmp_path,
@@ -511,6 +543,7 @@ class TestOptimizationPluginIntegration:
 
         assert captured["kwargs"]["output_dir"].parent == tmp_path
         assert captured["kwargs"]["seed"] == mock_config.seed + 3
+        assert captured["kwargs"]["radiation_reaction_mode"] == "power_matched_damping"
 
     def test_run_optimization_evaluation_integration_runs_directly(self):
         captured = {}
@@ -782,6 +815,61 @@ class TestOptimizationPluginIntegration:
             harness.sweep_params["driver_energy_gev"]["fixed_var"].get()
         ) == pytest.approx(calculate_energy_from_pz(-4925.0, 207.2))
         assert harness.sweep_params["driver_stripped_ions"]["fixed_var"].get() == "54.0"
+
+    def test_linked_energy_presentation_shows_rider_sweep_range(self):
+        label_widget = _WidgetRecorder()
+        help_label = _WidgetRecorder()
+        harness = SimpleNamespace(
+            link_driver_rider_energy_var=_MockVar(True),
+            energy_min_var=_MockVar("0.5"),
+            energy_max_var=_MockVar("3000"),
+            energy_points_var=_MockVar("80"),
+            link_energy_help_label=help_label,
+            sweep_params={
+                "driver_energy_gev": {
+                    "label_text": "Kinetic Energy (GeV):",
+                    "label_widget": label_widget,
+                }
+            },
+        )
+
+        OptimizationPluginFormMixin._update_linked_energy_presentation(harness)
+
+        assert label_widget.text == "Kinetic Energy (GeV, linked):"
+        assert (
+            help_label.text == "(Driver follows rider sweep: 0.5 to 3000 GeV, 80 pts)"
+        )
+
+    def test_on_link_energy_toggled_grays_out_driver_energy_entry(self):
+        fixed_entry = _WidgetRecorder()
+        harness = SimpleNamespace(
+            link_driver_rider_energy_var=_MockVar(True),
+            driver_frame=SimpleNamespace(winfo_children=lambda: []),
+            sweep_params={
+                "driver_energy_gev": {
+                    "fixed_entry": fixed_entry,
+                    "sweep_var": _MockVar(True),
+                }
+            },
+            _toggle_sweep_controls=Mock(),
+            _update_linked_energy_presentation=Mock(),
+            _update_driver_pz_helper=Mock(),
+            _ensure_linked_disabled_entry_style=Mock(),
+            _LINKED_DISABLED_ENTRY_STYLE=(
+                OptimizationPluginFormMixin._LINKED_DISABLED_ENTRY_STYLE
+            ),
+        )
+        harness._set_driver_energy_entry_linked_state = lambda linked: OptimizationPluginFormMixin._set_driver_energy_entry_linked_state(
+            harness, linked
+        )
+
+        OptimizationPluginFormMixin._on_link_energy_toggled(harness)
+
+        assert harness.sweep_params["driver_energy_gev"]["sweep_var"].get() is False
+        assert {
+            "style": "LinkedDriverEnergyDisabled.TEntry",
+            "state": "disabled",
+        } in fixed_entry.calls
 
     def test_sync_main_gui_simulation_type_updates_controller(self):
         sim_type_var = _MockVar()

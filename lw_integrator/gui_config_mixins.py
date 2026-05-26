@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from tkinter import messagebox
 
-from core.particle_config import DEFAULT_DRIVER_PARAMS
+from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
 from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
@@ -23,6 +23,45 @@ from .testbed_runner import (
 
 
 _SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
+
+
+def _format_gui_float(value: object) -> str:
+    return f"{float(value):.12g}"
+
+
+def _format_gui_optional_float(value: object) -> str:
+    return "" if value is None else _format_gui_float(value)
+
+
+def _parse_gui_float(text: object, label: str) -> float:
+    try:
+        return float(str(text).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be numeric.") from exc
+
+
+def _parse_gui_optional_float(text: object, label: str):
+    cleaned = str(text).strip()
+    if cleaned == "":
+        return None
+    return _parse_gui_float(cleaned, label)
+
+
+def _parse_gui_float_lenient(text: object, default: float) -> float:
+    try:
+        return float(str(text).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_gui_optional_float_lenient(text: object):
+    cleaned = str(text).strip()
+    if cleaned == "":
+        return None
+    try:
+        return float(cleaned)
+    except (TypeError, ValueError):
+        return None
 
 
 def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
@@ -82,6 +121,12 @@ class IntegratorGUIConfigMixin:
         self._toggle_z_cutoff_controls()
         self._toggle_macroparticle_controls()
         self._update_macroparticle_state()
+        if hasattr(self, "_toggle_pseudo_grid_controls"):
+            self._toggle_pseudo_grid_controls()
+        if hasattr(self, "_update_pseudo_grid_state"):
+            self._update_pseudo_grid_state()
+        if hasattr(self, "_update_driver_train_state"):
+            self._update_driver_train_state()
 
         current_value = self.sim_type_var.get()
         try:
@@ -178,6 +223,82 @@ class IntegratorGUIConfigMixin:
         self.macroparticle_use_momentum_errors_var.set(
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
+        if hasattr(self, "pseudo_grid_enabled_var"):
+            self.pseudo_grid_enabled_var.set(
+                getattr(options, "pseudo_grid_enabled", False)
+            )
+            self.pseudo_grid_active_rider_count_var.set(
+                getattr(options, "pseudo_grid_active_rider_count", 4)
+            )
+            self.pseudo_grid_active_driver_count_var.set(
+                getattr(options, "pseudo_grid_active_driver_count", 4)
+            )
+            self.pseudo_grid_passive_neighbor_count_var.set(
+                getattr(options, "pseudo_grid_passive_neighbor_count", 4)
+            )
+            self.pseudo_grid_coverage_strategy_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_coverage_strategy",
+                    "farthest_point_staleness",
+                )
+            )
+            self.pseudo_grid_coverage_space_var.set(
+                getattr(options, "pseudo_grid_coverage_space", "position")
+            )
+            self.pseudo_grid_pair_reuse_window_var.set(
+                getattr(options, "pseudo_grid_pair_reuse_window", 16)
+            )
+            self.pseudo_grid_source_weighting_mode_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_source_weighting_mode",
+                    "inverse_distance",
+                )
+            )
+            self.pseudo_grid_loss_tracking_enabled_var.set(
+                getattr(options, "pseudo_grid_loss_tracking_enabled", True)
+            )
+            self.pseudo_grid_causal_history_pruning_enabled_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_causal_history_pruning_enabled",
+                    False,
+                )
+            )
+            self.pseudo_grid_causal_history_safety_margin_steps_var.set(
+                getattr(
+                    options,
+                    "pseudo_grid_causal_history_safety_margin_steps",
+                    2,
+                )
+            )
+        if hasattr(self, "driver_train_enabled_var"):
+            self.driver_train_enabled_var.set(
+                getattr(options, "driver_train_enabled", False)
+            )
+            self.driver_train_bunch_count_var.set(
+                getattr(options, "driver_train_bunch_count", 1)
+            )
+            self.driver_train_z_spacing_mm_var.set(
+                getattr(options, "driver_train_z_spacing_mm", 0.0)
+            )
+            self.driver_train_z_offsets_mm_var.set(
+                " ".join(
+                    _format_gui_float(value)
+                    for value in getattr(options, "driver_train_z_offsets_mm", ())
+                )
+            )
+            self.driver_train_prehistory_steps_var.set(
+                getattr(options, "driver_train_prehistory_steps", 0)
+            )
+            self.driver_train_preserve_prehistory_var.set(
+                getattr(
+                    options,
+                    "driver_train_preserve_prehistory_in_output",
+                    False,
+                )
+            )
         self.self_consistency_enabled_var.set(options.self_consistency_enabled)
         self.self_consistency_convergence_mode_var.set(
             options.self_consistency_convergence_mode
@@ -211,7 +332,7 @@ class IntegratorGUIConfigMixin:
             getattr(
                 options,
                 "self_consistency_gamma_reconciliation_method",
-                "ADAPTIVE_WEIGHTED",
+                "DISABLED",
             )
         )
         self.self_consistency_gamma_reconciliation_low_beta_threshold_var.set(
@@ -263,14 +384,69 @@ class IntegratorGUIConfigMixin:
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
         self._update_max_substeps_display()
-        self.space_charge_enabled_var.set(getattr(options, "space_charge_enabled", False))
-        self.space_charge_retarded_var.set(getattr(options, "space_charge_retarded", True))
-        self.space_charge_softening_mm_var.set(getattr(options, "space_charge_softening_mm", 0.0))
-        self.auto_duration_enabled_var.set(getattr(options, "auto_duration_enabled", False))
-        self.auto_duration_crossing_steps_var.set(getattr(options, "auto_duration_crossing_steps", 200))
-        self.auto_duration_post_factor_var.set(getattr(options, "auto_duration_post_factor", 2.0))
+        self.radiation_reaction_mode_var.set(
+            getattr(options, "radiation_reaction_mode", "medina_lad")
+        )
+        self.space_charge_enabled_var.set(
+            getattr(options, "space_charge_enabled", False)
+        )
+        self.space_charge_retarded_var.set(
+            getattr(options, "space_charge_retarded", True)
+        )
+        self.space_charge_softening_mm_var.set(
+            getattr(options, "space_charge_softening_mm", 0.0)
+        )
+        self.space_charge_bunch_sigma_mm_var.set(
+            getattr(options, "space_charge_bunch_sigma_mm", 0.01)
+        )
+        min_ret_steps = getattr(options, "space_charge_min_retarded_steps", None)
+        self.space_charge_min_retarded_steps_var.set(
+            "" if min_ret_steps is None else str(min_ret_steps)
+        )
+        self.external_field_enabled_var.set(
+            getattr(options, "external_field_enabled", False)
+        )
+        electric_si = getattr(options, "external_electric_field_v_per_m", None)
+        self.external_field_input_mode_var.set("SI V/m" if electric_si else "Native")
+        for var, value in zip(
+            self.external_electric_native_vars,
+            getattr(options, "external_electric_field_native", (0.0, 0.0, 0.0)),
+        ):
+            var.set(_format_gui_float(value))
+        for var, value in zip(
+            self.external_electric_si_vars, electric_si or (0.0, 0.0, 0.0)
+        ):
+            var.set(_format_gui_float(value))
+        for var, value in zip(
+            self.external_magnetic_native_vars,
+            getattr(options, "external_magnetic_field_native", (0.0, 0.0, 0.0)),
+        ):
+            var.set(_format_gui_float(value))
+        for axis in ("x", "y", "z", "t"):
+            for bound in ("min", "max"):
+                key = f"{axis}_{bound}"
+                option_name = f"external_field_{key}"
+                self.external_field_window_vars[key].set(
+                    _format_gui_optional_float(getattr(options, option_name, None))
+                )
+        self.auto_duration_enabled_var.set(
+            getattr(options, "auto_duration_enabled", False)
+        )
+        self.auto_duration_crossing_steps_var.set(
+            getattr(options, "auto_duration_crossing_steps", 200)
+        )
+        self.auto_duration_post_factor_var.set(
+            getattr(options, "auto_duration_post_factor", 2.0)
+        )
         self._toggle_space_charge_controls()
+        self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
+        if hasattr(self, "_toggle_pseudo_grid_controls"):
+            self._toggle_pseudo_grid_controls()
+        if hasattr(self, "_update_pseudo_grid_state"):
+            self._update_pseudo_grid_state()
+        if hasattr(self, "_update_driver_train_state"):
+            self._update_driver_train_state()
         self.save_log_file_var.set(options.save_log_file)
 
         if not preserve_directories:
@@ -286,7 +462,8 @@ class IntegratorGUIConfigMixin:
         self.driver_species_var.set(default_species_label)
 
         for name in PARTICLE_PARAM_FIELDS:
-            self.rider_param_vars[name].set(options.rider_params[name])
+            rider_value = options.rider_params.get(name, DEFAULT_RIDER_PARAMS[name])
+            self.rider_param_vars[name].set(rider_value)
             driver_value = (
                 options.driver_params[name]
                 if options.driver_params is not None and name in options.driver_params
@@ -364,6 +541,81 @@ class IntegratorGUIConfigMixin:
             seed = random.randint(1, 2**31 - 1)
         else:
             seed = int(self.seed_var.get())
+
+        external_field_enabled = bool(self.external_field_enabled_var.get())
+        external_input_mode = self.external_field_input_mode_var.get()
+
+        driver_train_offsets_text = self.driver_train_z_offsets_mm_var.get().strip()
+        driver_train_offsets = tuple(
+            _parse_gui_float(part, "Driver-train z offset")
+            for part in driver_train_offsets_text.replace(",", " ").split()
+        )
+        driver_train_bunch_count = int(self.driver_train_bunch_count_var.get())
+        driver_train_enabled = bool(self.driver_train_enabled_var.get())
+        pseudo_grid_enabled = bool(self.pseudo_grid_enabled_var.get())
+        if (
+            driver_train_offsets
+            and len(driver_train_offsets) != driver_train_bunch_count
+        ):
+            raise ValueError(
+                "Driver-train explicit z offsets must match the driver bunch count."
+            )
+        if driver_train_enabled and pseudo_grid_enabled:
+            raise ValueError(
+                "Driver-train mode is not yet compatible with pseudo-grid mode."
+            )
+
+        if external_field_enabled:
+            external_electric_native = tuple(
+                _parse_gui_float(var.get(), f"External E native {axis}")
+                for var, axis in zip(
+                    self.external_electric_native_vars, ("x", "y", "z")
+                )
+            )
+            external_electric_si = None
+            if external_input_mode == "SI V/m":
+                external_electric_si = tuple(
+                    _parse_gui_float(var.get(), f"External E V/m {axis}")
+                    for var, axis in zip(
+                        self.external_electric_si_vars, ("x", "y", "z")
+                    )
+                )
+            external_magnetic_native = tuple(
+                _parse_gui_float(var.get(), f"External B native {axis}")
+                for var, axis in zip(
+                    self.external_magnetic_native_vars, ("x", "y", "z")
+                )
+            )
+            external_bounds = {
+                f"{axis}_{bound}": _parse_gui_optional_float(
+                    self.external_field_window_vars[f"{axis}_{bound}"].get(),
+                    f"External field {axis}_{bound}",
+                )
+                for axis in ("x", "y", "z", "t")
+                for bound in ("min", "max")
+            }
+        else:
+            external_electric_native = tuple(
+                _parse_gui_float_lenient(var.get(), 0.0)
+                for var in self.external_electric_native_vars
+            )
+            external_electric_si = None
+            if external_input_mode == "SI V/m":
+                external_electric_si = tuple(
+                    _parse_gui_float_lenient(var.get(), 0.0)
+                    for var in self.external_electric_si_vars
+                )
+            external_magnetic_native = tuple(
+                _parse_gui_float_lenient(var.get(), 0.0)
+                for var in self.external_magnetic_native_vars
+            )
+            external_bounds = {
+                f"{axis}_{bound}": _parse_gui_optional_float_lenient(
+                    self.external_field_window_vars[f"{axis}_{bound}"].get()
+                )
+                for axis in ("x", "y", "z", "t")
+                for bound in ("min", "max")
+            }
 
         return SimulationOptions(
             simulation_type=sim_type,
@@ -487,9 +739,79 @@ class IntegratorGUIConfigMixin:
             space_charge_enabled=bool(self.space_charge_enabled_var.get()),
             space_charge_retarded=bool(self.space_charge_retarded_var.get()),
             space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
+            space_charge_bunch_sigma_mm=float(
+                self.space_charge_bunch_sigma_mm_var.get()
+            ),
+            space_charge_min_retarded_steps=(
+                int(self.space_charge_min_retarded_steps_var.get())
+                if self.space_charge_min_retarded_steps_var.get().strip()
+                else None
+            ),
+            external_field_enabled=external_field_enabled,
+            external_electric_field_native=external_electric_native,
+            external_electric_field_v_per_m=external_electric_si,
+            external_magnetic_field_native=external_magnetic_native,
+            external_field_x_min=external_bounds["x_min"],
+            external_field_x_max=external_bounds["x_max"],
+            external_field_y_min=external_bounds["y_min"],
+            external_field_y_max=external_bounds["y_max"],
+            external_field_z_min=external_bounds["z_min"],
+            external_field_z_max=external_bounds["z_max"],
+            external_field_t_min=external_bounds["t_min"],
+            external_field_t_max=external_bounds["t_max"],
+            radiation_reaction_mode=(
+                str(self.radiation_reaction_mode_var.get())
+                if hasattr(self, "radiation_reaction_mode_var")
+                else getattr(
+                    getattr(self, "options", None),
+                    "radiation_reaction_mode",
+                    "medina_lad",
+                )
+            ),
             auto_duration_enabled=bool(self.auto_duration_enabled_var.get()),
-            auto_duration_crossing_steps=int(self.auto_duration_crossing_steps_var.get()),
+            auto_duration_crossing_steps=int(
+                self.auto_duration_crossing_steps_var.get()
+            ),
             auto_duration_post_factor=float(self.auto_duration_post_factor_var.get()),
+            pseudo_grid_enabled=pseudo_grid_enabled,
+            pseudo_grid_active_rider_count=int(
+                self.pseudo_grid_active_rider_count_var.get()
+            ),
+            pseudo_grid_active_driver_count=int(
+                self.pseudo_grid_active_driver_count_var.get()
+            ),
+            pseudo_grid_passive_neighbor_count=int(
+                self.pseudo_grid_passive_neighbor_count_var.get()
+            ),
+            pseudo_grid_coverage_strategy=str(
+                self.pseudo_grid_coverage_strategy_var.get()
+            ),
+            pseudo_grid_coverage_space=str(self.pseudo_grid_coverage_space_var.get()),
+            pseudo_grid_pair_reuse_window=int(
+                self.pseudo_grid_pair_reuse_window_var.get()
+            ),
+            pseudo_grid_source_weighting_mode=str(
+                self.pseudo_grid_source_weighting_mode_var.get()
+            ),
+            pseudo_grid_loss_tracking_enabled=bool(
+                self.pseudo_grid_loss_tracking_enabled_var.get()
+            ),
+            pseudo_grid_causal_history_pruning_enabled=bool(
+                self.pseudo_grid_causal_history_pruning_enabled_var.get()
+            ),
+            pseudo_grid_causal_history_safety_margin_steps=int(
+                self.pseudo_grid_causal_history_safety_margin_steps_var.get()
+            ),
+            driver_train_enabled=driver_train_enabled,
+            driver_train_bunch_count=driver_train_bunch_count,
+            driver_train_z_spacing_mm=float(self.driver_train_z_spacing_mm_var.get()),
+            driver_train_z_offsets_mm=driver_train_offsets,
+            driver_train_prehistory_steps=int(
+                self.driver_train_prehistory_steps_var.get()
+            ),
+            driver_train_preserve_prehistory_in_output=bool(
+                self.driver_train_preserve_prehistory_var.get()
+            ),
             save_log_file=bool(self.save_log_file_var.get()),
         )
 

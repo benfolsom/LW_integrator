@@ -442,6 +442,10 @@ def create_smooth_heatmap(
     param1_neg=None,
     param2_neg=None,
     gains_neg=None,
+    color_min=None,
+    color_max=None,
+    axis_param1_min=None,
+    axis_param1_max=None,
 ):
     """
     Create ultra-smooth interpolated heatmap with 5-pass filtering.
@@ -683,9 +687,19 @@ def create_smooth_heatmap(
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
 
+    if color_min is not None or color_max is not None:
+        clip_min = -np.inf if color_min is None else float(color_min)
+        clip_max = np.inf if color_max is None else float(color_max)
+        gain_grid_final = np.ma.clip(gain_grid_final, clip_min, clip_max)
+
     # Determine color scale
     vmin = np.nanmin(gain_grid_final)
     vmax = np.nanmax(gain_grid_final)
+
+    if color_min is not None:
+        vmin = float(color_min)
+    if color_max is not None:
+        vmax = float(color_max)
 
     if grey_zero:
         # Build custom cmap: grey band at grey_centre, viridis for positives, red-orange for negatives
@@ -771,7 +785,9 @@ def create_smooth_heatmap(
         if vmax > pos_min:
             pos_levels = np.logspace(
                 np.log10(pos_min), np.log10(vmax), num_contours_high + 2
-            )[:-1]  # exclude vmax endpoint
+            )[
+                :-1
+            ]  # exclude vmax endpoint
         else:
             pos_levels = np.array([])
 
@@ -875,6 +891,13 @@ def create_smooth_heatmap(
         ax.set_xscale("log")
     if log_param2:
         ax.set_yscale("log")
+
+    if axis_param1_min is not None or axis_param1_max is not None:
+        xmin, xmax = ax.get_xlim()
+        ax.set_xlim(
+            xmin if axis_param1_min is None else float(axis_param1_min),
+            xmax if axis_param1_max is None else float(axis_param1_max),
+        )
 
     ax.set_xlabel(x_label, fontsize=16)
     ax.set_ylabel(y_label, fontsize=16)
@@ -1053,6 +1076,11 @@ def generate_heatmap(
     grey_zero=False,
     grey_centre=-10.0,
     show_markers=True,
+    title=None,
+    color_min=None,
+    color_max=None,
+    axis_param1_min=None,
+    axis_param1_max=None,
 ):
     """Generate publication-quality smooth heatmap from sweep results.
 
@@ -1223,10 +1251,11 @@ def generate_heatmap(
     if param2_min is not None:
         title_parts.append(f"{param2_label} ≥ {param2_min}")
 
-    if title_parts:
-        title = f"Energy Gain Map: {', '.join(title_parts)}"
-    else:
-        title = "Energy Gain Map"
+    if title is None:
+        if title_parts:
+            title = f"Energy Gain Map: {', '.join(title_parts)}"
+        else:
+            title = "Energy Gain Map"
 
     # Create heatmap
     output_path = sweep_dir / output_name
@@ -1258,6 +1287,10 @@ def generate_heatmap(
         param1_neg=param1_neg if (absolute_gains and show_markers) else None,
         param2_neg=param2_neg if (absolute_gains and show_markers) else None,
         gains_neg=gains_neg if (absolute_gains and show_markers) else None,
+        color_min=color_min,
+        color_max=color_max,
+        axis_param1_min=axis_param1_min,
+        axis_param1_max=axis_param1_max,
     )
 
 
@@ -1345,6 +1378,30 @@ def _build_parser():
         help="Maximum gain threshold (%%)",
     )
     parser.add_argument(
+        "--color-min",
+        type=float,
+        default=None,
+        help="Minimum color scale value after interpolation (%%)",
+    )
+    parser.add_argument(
+        "--color-max",
+        type=float,
+        default=None,
+        help="Maximum color scale value after interpolation (%%)",
+    )
+    parser.add_argument(
+        "--axis-param1-min",
+        type=float,
+        default=None,
+        help="Displayed minimum for the first parameter axis",
+    )
+    parser.add_argument(
+        "--axis-param1-max",
+        type=float,
+        default=None,
+        help="Displayed maximum for the first parameter axis",
+    )
+    parser.add_argument(
         "--log-param1",
         action="store_true",
         default=True,
@@ -1430,6 +1487,12 @@ def _build_parser():
         help="Hide the plot title (preserves headspace)",
     )
     parser.add_argument(
+        "--title",
+        type=str,
+        default=None,
+        help="Custom plot title",
+    )
+    parser.add_argument(
         "--no-markers",
         action="store_true",
         default=False,
@@ -1494,6 +1557,11 @@ def _generate_heatmap_from_args(args):
         num_contours_low=num_contours_low,
         num_contours_high=num_contours_high,
         contour_threshold=args.contour_threshold,
+        title=args.title,
+        color_min=args.color_min,
+        color_max=args.color_max,
+        axis_param1_min=args.axis_param1_min,
+        axis_param1_max=args.axis_param1_max,
     )
 
 

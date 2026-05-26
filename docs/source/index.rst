@@ -1,4 +1,4 @@
-LW Integrator Guide (v0.6.7)
+LW Integrator Guide (v0.8.0)
 =============================
 
 The LW (Liénard–Wiechert) Integrator is a first-principles electromagnetic particle tracking code that computes retarded Liénard–Wiechert potentials directly from the covariant equations of motion. Unlike conventional tracking codes that rely on field maps or wake function tabulations, this solver evaluates exact electromagnetic fields from moving charged particles and their image charges, making it particularly suited for studying beam-aperture interactions where relativistic particles pass within microns of conducting surfaces.
@@ -8,7 +8,11 @@ The LW (Liénard–Wiechert) Integrator is a first-principles electromagnetic pa
 * **Relativistic beam-wall interactions** – Asymptotic field enhancement as high-β particles approach conducting surfaces, producing strong longitudinal forces at small angles from the particle's direction of travel
 * **Residual wake acceleration** – After breaking line-of-sight with a conductor or charged body, particles continue accelerating in residual fields while recoil on the enclosing structure is reduced
 * **Conducting-wall boundary conditions** – Method-of-images for flat conducting surfaces perpendicular to the beam axis, with optional macroparticle simulation including charge scaling and stochastic emittance effects
-* **Bunch-to-bunch dynamics** – Trailing particles experiencing reflected wakes from leading particles near aperture exits
+* **Bunch-to-bunch dynamics** – Trailing particles experiencing reflected wakes
+  from leading particles near aperture exits. The maintained B2B example sweeps
+  illustrate screening after the driver bunch passes through a virtual exit
+  aperture, which blocks direct line of sight shortly downstream of the
+  interaction point.
 
 **Computational features:**
 
@@ -39,6 +43,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    :caption: Physics background
 
    theory
+   radiation_reaction_plan
    self_consistency
    adaptive_timestep
    recent_changes

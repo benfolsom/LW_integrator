@@ -1,7 +1,10 @@
 # LW Integrator
 
-## Recent Updates (v0.6.0 — March 2026)
+## Recent Updates (June 2026 + v0.6.0 highlights)
 
+- **Experimental pseudo-grid reduced solver** — pseudo-grid mode now has an opt-in reduced active/passive solve path for `BUNCH_TO_BUNCH` studies. Per-step schedules select active rider/driver subsets, aggregate passive source charge onto active representatives, and reconstruct passive particles from weighted active deltas while preserving full-state outputs. Adaptive-timestep runs are supported. Reduced same-bunch space charge is also supported when each bunch keeps at least two active particles, including retarded-space-charge validation cases, using observer-specific self-excluded source-charge matrices. When causal-history pruning is enabled, supported reduced B2B solves compact live histories and record retained-start/dropped-sample diagnostics. `scripts/pseudo_grid_feasibility_probe.py` provides a lightweight zero-charge/weak-charge sanity and `N > 100` timing probe; `scripts/pseudo_grid_feasibility_matrix.py` adds small matrix sweeps including crossing, adaptive crossing, stronger-charge, longer-window, and opt-in same-bunch space-charge cases; `scripts/pseudo_grid_microbenchmarks.py` times reduced-mode scheduling, slicing, active solve, space-charge matrix, and passive reconstruction phases; retarded same-bunch source histories are cached per source particle to reduce active-solve overhead. Maintained pseudo-grid unit and regression tests live in this `LW_integrator` repository; sibling feasibility-study workspaces should remain user-like screening/probe surfaces. The mode remains experimental, and too-small active sets still fall back to the canonical full solve.
+- **Parallel blind sweeps** — the Sweep/Optimization GUI now exposes a worker-count control and reuses the maintained headless `SweepRunner` parallel path when `workers > 1`. Saved sweep configs can persist `workers`, and CLI sweeps still support `-j/--workers` overrides.
+- **Radiation reaction surface** — radiation-reaction mode is now configurable from the main GUI Stability tab, the Sweep/Optimization tab, saved single-run configs, saved sweep configs, and the single-run CLI via `--radiation-reaction-mode`. The user-facing default is now `medina_lad`.
 - **CLI/GUI parity** — the CLI sweep runner now calls the same core code paths
   as the GUI (`run_testbed()`, `SimulationOptions`), eliminating divergent
   behaviour between the two entry points.
@@ -262,6 +265,7 @@ The GUI provides three operational modes:
 
 - Configure and run individual simulations with real-time progress tracking
 - Full control over particle properties, boundary conditions, and physics parameters
+- Direct radiation-reaction mode selection from the Stability tab (`medina_lad` default for new runs)
 - Interactive trajectory visualization and energy/position analysis
 - Export results in multiple formats (CSV, JSON, NPZ)
 - Self-consistency iteration controls for high-gamma physics
@@ -273,6 +277,8 @@ The GUI provides three operational modes:
 - **Parameter sweeps** over aperture radius, particle energy, transverse offset, and starting positions
 - **Sweepable fixed parameters** - mass, charge, transverse momentum, timestep, wall position
 - **Auto-timestep calculation** to maintain consistent integration resolution across energy ranges
+- **Parallel execution** with configurable worker count for blind sweeps (start with a modest count such as `2-4`)
+- **Radiation-reaction mode selection** persisted in saved sweep configs and mirrored into runtime execution
 - **Trajectory saving** with configurable stride
 - Results saved to timestamped directories with JSON summary and plots
 
@@ -306,8 +312,8 @@ Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergen
 
 Installing the project (`pip install -e .` or via a wheel) exposes the
 `lw-simulate` executable. The CLI uses sensible defaults (35 MeV electron
-approaching a conducting aperture) but accepts both inline parameter overrides
-and JSON configuration files.
+approaching a conducting aperture, `medina_lad` radiation reaction) but accepts
+both inline parameter overrides and JSON configuration files.
 
 **Basic usage with defaults:**
 
@@ -321,6 +327,12 @@ lw-simulate --quiet
 lw-simulate --steps 250 --time-step 5e-4 --aperture-radius 0.5 --output run.json
 ```
 
+**Run a baseline without radiation-reaction recoil:**
+
+```bash
+lw-simulate --radiation-reaction-mode off --quiet
+```
+
 **Use a configuration file:**
 
 ```bash
@@ -330,7 +342,7 @@ lw-simulate --config my_scenario.json --output results.json
 **Run a parameter sweep from a sweep configuration:**
 
 ```bash
-lw-simulate --sweep-config configs/sweep_configs/example_b2b_linked_energy_vs_driver_distance.json
+lw-simulate --sweep-config configs/sweep_configs/example_b2b_linked_energy_vs_driver_distance.json -j 4
 ```
 
 The sweep runner writes results to `results/sweeps/YYYYMMDD_HHMMSS_configname/`
@@ -360,9 +372,11 @@ Additional CLI options include:
 
 - `--chrono-mode`: Retardation sampling strategy (`averaged` or `fast`)
 - `--startup-mode`: Early-step handling (`cold-start` or `approximate-back-history`)
+- `--radiation-reaction-mode`: Single-run radiation-reaction handling (`off`, `diagnostic_only`, `power_matched_damping`, or `medina_lad`)
 - `--image-weighting` / `--no-image-weighting`: Control image charge distribution
 - `--self-consistency`: Enable self-consistency iterations for ultra-relativistic particles
 - `--sweep-config`: Path to a JSON sweep configuration (runs a full parameter sweep)
+- `-j/--workers`: Parallel worker-process count for sweeps (start with a modest value)
 - `--log-verbosity`: Override sweep log verbosity (`none`, `truncated`, or `full`)
 - `--sc-verbosity`: Override self-consistency verbosity (0–3)
 - `--adaptive-debug` / `--no-adaptive-debug`: Toggle adaptive timestep debug output
@@ -385,14 +399,20 @@ the maintained packaged command `lw-generate-sweep-heatmap`:
 
 ```bash
 lw-generate-sweep-heatmap results/sweeps/<sweep_dir> \
-    --no-title --output gains.png --absolute-gains --log-param2 \
-    --param1-max 1000 --num-contours 8 --no-markers --grey-zero \
-    --grey-centre 0 --gain-max 200 --param1-min 1 --log-colorbar
+    --output gains.png --absolute-gains --log-param2 \
+    --param1-min 1 --param1-max 140 --axis-param1-max 120 \
+    --gain-min -50 --gain-max 50 --color-min -30 --color-max 40 \
+    --num-contours 8 --no-markers --grey-zero --grey-centre 0 \
+    --no-title
 ```
 
-Contour lines use reduced alpha (0.18) and labels are automatically clamped
-to stay within the axes. Overlapping labels are culled after the final
-layout pass so they never stack on top of each other.
+Use `--param1-max` / `--param2-max` to choose the data included in the
+interpolation, and `--axis-param1-max` to crop the displayed x-axis after
+interpolation. The explicit color limits keep positive and negative gain
+regions visually comparable across related plots. Contour lines use reduced
+alpha (0.18) and labels are automatically clamped to stay within the axes.
+Overlapping labels are culled after the final layout pass so they never stack
+on top of each other.
 
 ### Live sweep plotting
 
@@ -447,6 +467,14 @@ Simple example configs live under `configs/`. Load them via the GUI
 **`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** — Same sweep geometry but with an asymmetric spot size: rider 35 µm, driver 0.1 µm. The larger rider spot reduces near-collision blowups.
 
 ![B2B 35 µm rider spot size](docs/assets/proton_proton_35micron.png)
+
+The bunch-to-bunch examples illustrate a screening regime: after the interaction
+point, the driver bunch is treated as proceeding through a virtual exit aperture
+that blocks direct line of sight to the rider a short distance downstream. The
+maps therefore visualize residual post-screening fields rather than an
+unbounded, permanently visible counter-propagating bunch interaction.
+
+![B2B screening example heatmap](docs/assets/b2b_screening_example_heatmap.png)
 
 ---
 

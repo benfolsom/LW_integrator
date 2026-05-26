@@ -118,6 +118,10 @@ def build_sweep_results_payload(
             "aperture_points": config.aperture_points,
             "energy_range": list(config.energy_range),
             "energy_points": config.energy_points,
+            "radiation_reaction_mode": getattr(
+                config, "radiation_reaction_mode", "medina_lad"
+            ),
+            "workers": getattr(config, "workers", 1),
             "param_grids": {key: values for key, values in param_grids.items()},
         },
         "total_runs": total_runs,
@@ -137,7 +141,13 @@ def build_interrupted_sweep_results_payload(
 ) -> dict[str, Any]:
     """Build the persisted partial-sweep payload for interrupted CLI sweeps."""
     return {
-        "config": {"simulation_type": simulation_type_name(config.simulation_type)},
+        "config": {
+            "simulation_type": simulation_type_name(config.simulation_type),
+            "radiation_reaction_mode": getattr(
+                config, "radiation_reaction_mode", "medina_lad"
+            ),
+            "workers": getattr(config, "workers", 1),
+        },
         "total_runs": total_runs,
         "successful": total_runs,
         "failed": 0,
@@ -156,9 +166,7 @@ def build_exception_sweep_run_log_lines(
 ) -> list[str]:
     """Build log lines for an exception raised while executing one sweep run."""
     log_lines = [f"  [EXCEPTION] Run {run_num}/{total_runs}: {error}"]
-    log_lines.extend(
-        f"    {line}" for line in error_detail.split("\n") if line
-    )
+    log_lines.extend(f"    {line}" for line in error_detail.split("\n") if line)
     return log_lines
 
 
@@ -267,7 +275,9 @@ def build_full_debug_sweep_result_log_lines(
         f"    Energy: ΔE={metrics.delta_e:.6f}MeV",
     ]
     if actual_distance < 0.1:
-        log_lines.append("  [WARNING] Particle barely moved! Check timestep calculation.")
+        log_lines.append(
+            "  [WARNING] Particle barely moved! Check timestep calculation."
+        )
     return log_lines
 
 
@@ -386,11 +396,26 @@ def build_successful_sweep_run_log(
         gamma_final=gamma_final,
     )
 
+    rider_final_percent_gain = metrics.get("rider_final_percent_energy_gain", 0)
+    rider_max_percent_gain = metrics.get("rider_max_percent_energy_gain", 0)
+    rider_loss_count = metrics.get("rider_loss_count", 0)
+    driver_loss_count = metrics.get("driver_loss_count", 0)
+
     optimization_lines = [
         (
             "[OPTIMIZATION] max_percent_energy_gain: "
             f"{metrics.get('max_percent_energy_gain', 0):.12e}%"
         ),
+        (
+            "[OPTIMIZATION] rider_final_percent_energy_gain: "
+            f"{rider_final_percent_gain:.12e}%"
+        ),
+        (
+            "[OPTIMIZATION] rider_max_percent_energy_gain: "
+            f"{rider_max_percent_gain:.12e}%"
+        ),
+        f"[OPTIMIZATION] rider_loss_count: {rider_loss_count}",
+        f"[OPTIMIZATION] driver_loss_count: {driver_loss_count}",
         (
             "[OPTIMIZATION] max_energy_gain: "
             f"{metrics.get('max_energy_gain_gev', 0):.12e} GeV"
@@ -415,6 +440,10 @@ def build_successful_sweep_run_log(
             "    max_percent_energy_gain: "
             f"{metrics.get('max_percent_energy_gain', 0):.12e}%"
         ),
+        f"    rider_final_percent_energy_gain: {rider_final_percent_gain:.12e}%",
+        f"    rider_max_percent_energy_gain: {rider_max_percent_gain:.12e}%",
+        f"    rider_loss_count: {rider_loss_count}",
+        f"    driver_loss_count: {driver_loss_count}",
         f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.12e} GeV",
         f"    max_relative_gain: {metrics.get('max_relative_gain', 0):.12e}",
     ]
@@ -433,6 +462,9 @@ def build_successful_sweep_run_log(
 
     compact_line = (
         f"Run #{run_num:4d} | {param_str} | "
+        f"final={rider_final_percent_gain:.3e}% "
+        f"max={rider_max_percent_gain:.3e}% "
+        f"loss=({rider_loss_count},{driver_loss_count}) "
         f"ΔE={delta_e_mev:.3e} Δγ={delta_gamma:.3e} "
         f"γ_i={gamma_initial:.2f} γ_f={gamma_final:.2f} | SUCCESS"
     )

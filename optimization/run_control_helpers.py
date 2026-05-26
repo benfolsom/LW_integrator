@@ -41,6 +41,7 @@ def validate_optimization_inputs(
     steps: Any,
     auto_steps_distance: Any,
     sweep_parameters: list[SweepParameterValidationInput],
+    workers: Any = 1,
 ) -> str | None:
     """Validate optimization run inputs without depending on Tk widgets."""
 
@@ -81,6 +82,7 @@ def validate_optimization_inputs(
             wall_z=wall_z,
             steps=steps,
             auto_steps_distance=auto_steps_distance,
+            workers=workers,
         )
         if error is not None:
             return error
@@ -159,6 +161,7 @@ def _validate_scalar_run_fields(
     wall_z: Any,
     steps: Any,
     auto_steps_distance: Any,
+    workers: Any,
 ) -> str | None:
     parse_float_list(offset_fractions)
     float(start_z)
@@ -170,6 +173,10 @@ def _validate_scalar_run_fields(
     distance_past_wall = float(auto_steps_distance)
     if distance_past_wall < 0:
         return "Distance past wall must be non-negative"
+
+    worker_count = int(workers)
+    if worker_count < 1:
+        return "Worker count must be at least 1"
     return None
 
 

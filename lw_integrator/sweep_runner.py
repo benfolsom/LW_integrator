@@ -32,12 +32,15 @@ from __future__ import annotations
 import concurrent.futures
 import itertools
 import json
+import signal
 import shutil
 import time
 import traceback as _traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from threading import current_thread, main_thread
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
@@ -60,6 +63,7 @@ from optimization.logging_policy import (
 from optimization.mode_helpers import normalize_sweep_or_optimization_mode
 from optimization.single_integration_helpers import (
     build_integration_metrics,
+    build_integration_trajectory_output,
     build_single_integration_setup,
     calculate_rider_starting_pz,
 )
@@ -97,6 +101,7 @@ class _ResolvedRiderOverrides:
     pcount: int
     transv_mom: float
     transv_dist: float
+    transverse_geometry: str
     stripped_ions: float
     macroparticle_charge_multiplier: float
     macroparticle_sigma_multiplier: float
@@ -124,6 +129,38 @@ class _CliStabilityOutcome:
     rejection_record: dict[str, Any] | None
 
 
+class _PerRunTimeoutError(TimeoutError):
+    """Raised when a CLI sweep integration exceeds its configured timeout."""
+
+    def __init__(self, timeout_seconds: float):
+        super().__init__(f"Run exceeded timeout of {timeout_seconds:.1f}s")
+        self.timeout_seconds = timeout_seconds
+
+
+@contextmanager
+def _per_run_timeout(timeout_seconds: float):
+    """Apply a wall-clock timeout to one integration attempt on Unix main threads."""
+    if timeout_seconds <= 0 or current_thread() is not main_thread():
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+
+    def _raise_timeout(_signum, _frame):
+        raise _PerRunTimeoutError(timeout_seconds)
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0.0:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+
+
 def _resolve_cli_rider_overrides(
     config: Any,
     sweep_overrides: Mapping[str, Any],
@@ -134,6 +171,7 @@ def _resolve_cli_rider_overrides(
         pcount=int(sweep_overrides.get("rider_pcount", config.pcount)),
         transv_mom=sweep_overrides.get("rider_transv_mom", config.transv_mom),
         transv_dist=sweep_overrides.get("rider_transv_dist", config.transv_dist),
+        transverse_geometry=getattr(config, "transverse_geometry", "square"),
         stripped_ions=sweep_overrides.get("rider_stripped_ions", config.stripped_ions),
         macroparticle_charge_multiplier=sweep_overrides.get(
             "macroparticle_charge_multiplier",
@@ -175,8 +213,9 @@ def _resolve_cli_driver_setup(
         "starting_distance": d_start_dist,
         "transv_mom": d_transv_mom,
         "transv_dist": d_transv_dist,
-        "transv_offset_x": 0.0,
-        "transv_offset_y": 0.0,
+        "transverse_geometry": getattr(config, "driver_transverse_geometry", "square"),
+        "transv_offset_x": getattr(config, "driver_transv_offset_x", 0.0),
+        "transv_offset_y": getattr(config, "driver_transv_offset_y", 0.0),
         "m_particle": d_m,
         "charge_sign": d_charge,
         "pcount": d_pcount,
@@ -507,12 +546,14 @@ def _build_cli_sweep_start_log_lines(
                 f"    stripped_ions: {config.stripped_ions:.2e}",
                 f"    transv_mom: {config.transv_mom:.4e}",
                 f"    transv_dist: {config.transv_dist:.4e}",
+                f"    transverse_geometry: {getattr(config, 'transverse_geometry', 'square')}",
                 "  Fixed driver parameters:",
                 f"    m_particle: {config.driver_m_particle:.4e} amu",
                 f"    charge_sign: {config.driver_charge_sign}",
                 f"    pcount: {config.driver_pcount}",
                 f"    stripped_ions: {config.driver_stripped_ions:.2e}",
                 f"    energy_gev: {config.driver_energy_gev:.4f}",
+                f"    transverse_geometry: {getattr(config, 'driver_transverse_geometry', 'square')}",
                 ("    starting_distance: " f"{config.driver_starting_distance:.2f}"),
             ]
         )
@@ -575,11 +616,15 @@ class SweepRunner:
         output_dir: Path,
         verbose: bool = True,
         workers: Optional[int] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ):
         self.config = config
         self.output_dir = Path(output_dir)
         self.verbose = verbose
         self.workers = workers
+        self.log_callback = log_callback
+        self.progress_callback = progress_callback
         self.results: List[Dict[str, Any]] = []
         self.log_file = None
 
@@ -598,6 +643,13 @@ class SweepRunner:
         if self.log_file is not None:
             self.log_file.write(f"{line}\n")
             self.log_file.flush()
+        if self.log_callback is not None:
+            self.log_callback(line)
+
+    def _emit_progress(self, completed: int, total: int) -> None:
+        """Emit sweep-progress updates when a callback is registered."""
+        if self.progress_callback is not None:
+            self.progress_callback(completed, total)
 
     # ------------------------------------------------------------------
     # Grid generation (unchanged from original)
@@ -756,15 +808,33 @@ class SweepRunner:
 
         # ── Call run_testbed (THE SAME function the GUI calls) ──
         try:
-            result = run_testbed(
-                options,
-                log=log_callback,
-                progress_callback=progress_callback if emit_run_diagnostics else None,
-            )
+            with _per_run_timeout(float(self.config.per_run_timeout)):
+                result = run_testbed(
+                    options,
+                    log=log_callback,
+                    progress_callback=(
+                        progress_callback if emit_run_diagnostics else None
+                    ),
+                )
             if emit_run_diagnostics:
                 self._log_line(
                     f"[OPTIMIZATION]   [DEBUG] run_testbed completed for Run {run_num}"
                 )
+        except _PerRunTimeoutError as e:
+            return {
+                "success": False,
+                "error": f"TIMEOUT after {e.timeout_seconds:.1f}s",
+                "timed_out": True,
+                "timeout_seconds": e.timeout_seconds,
+                "parameters": {
+                    "aperture": aperture,
+                    "energy_gev": energy_gev,
+                    "start_z": start_z,
+                    "transv_offset": timestep_setup.transv_offset,
+                    "timestep": timestep_setup.timestep,
+                    "steps": timestep_setup.steps,
+                },
+            }
         except Exception as e:
             import traceback
 
@@ -826,37 +896,27 @@ class SweepRunner:
             for line in metrics_outcome.log_lines:
                 self._log_line(f"[OPTIMIZATION] {line}")
 
-        # ── Stability analysis (same as GUI) ──
-        stability_outcome = _evaluate_cli_stability(
-            self.config,
+        trajectory_outcome = build_integration_trajectory_output(
             result,
-            metrics,
-            rider_m_particle=rider.m_particle,
+            self.config,
             run_num=run_num,
-            aperture=aperture,
-            energy_gev=energy_gev,
-            start_z=start_z,
-            transv_offset=timestep_setup.transv_offset,
+            rider_m_particle=rider.m_particle,
+            metrics=metrics,
+            save_trajectory=(
+                self.config.save_all_trajectories
+                or self.config.save_failed_trajectories
+            ),
+            trajectory_stride=self.config.trajectory_stride,
         )
-        metrics.update(stability_outcome.metrics_updates)
         if emit_run_diagnostics:
-            for line in stability_outcome.log_lines:
-                self._log_line(line)
-        elif emit_run_summary and stability_outcome.rejection_record is not None:
-            self._log_line(
-                f"[OPTIMIZATION]   [REJECT] Run {run_num} rejected due to "
-                "numerical instability"
-            )
-        if stability_outcome.rejection_record is not None:
-            return stability_outcome.rejection_record
-
-        if emit_run_diagnostics:
+            for line in trajectory_outcome.log_lines:
+                self._log_line(f"[OPTIMIZATION] {line}")
             self._log_line(
                 "[OPTIMIZATION]   [DEBUG] "
                 f"_run_single_integration returning for Run {run_num}"
             )
 
-        return {
+        output = {
             "success": True,
             "parameters": {
                 "aperture": aperture,
@@ -868,6 +928,15 @@ class SweepRunner:
             },
             "metrics": metrics,
         }
+        output.update(trajectory_outcome.output_updates)
+
+        if output.get("stability_rejected"):
+            output["success"] = False
+            output["error"] = (
+                "Smoothness violation: "
+                f"{metrics.get('smoothness_violations', 0)} violations"
+            )
+        return output
 
     # ------------------------------------------------------------------
     # Sweep orchestration
@@ -973,6 +1042,7 @@ class SweepRunner:
 
                 # ── Dispatch all combos in parallel ──
                 raw_results: Dict[int, dict] = {}
+                completed_count = 0
                 with concurrent.futures.ProcessPoolExecutor(
                     max_workers=self.workers
                 ) as executor:
@@ -994,6 +1064,8 @@ class SweepRunner:
                                     "parameters": payloads[rn - 1]["params_dict"],
                                     "_params_dict": payloads[rn - 1]["params_dict"],
                                 }
+                            completed_count += 1
+                            self._emit_progress(completed_count, total_runs)
                     except KeyboardInterrupt:
                         executor.shutdown(wait=False, cancel_futures=True)
                         raise
@@ -1013,7 +1085,9 @@ class SweepRunner:
                         **params_dict,
                         "transverse_offset_fraction": transv_offset_frac,
                     }
-                    run_params = resolve_sweep_run_parameters(self.config, helper_params)
+                    run_params = resolve_sweep_run_parameters(
+                        self.config, helper_params
+                    )
                     if run_params is None:
                         raise ValueError("Sweep run parameters are missing energy")
                     rider_m_particle = run_params.rider_m_particle
@@ -1078,7 +1152,9 @@ class SweepRunner:
                         **params_dict,
                         "transverse_offset_fraction": transv_offset_frac,
                     }
-                    run_params = resolve_sweep_run_parameters(self.config, helper_params)
+                    run_params = resolve_sweep_run_parameters(
+                        self.config, helper_params
+                    )
                     if run_params is None:
                         raise ValueError("Sweep run parameters are missing energy")
 
@@ -1166,6 +1242,8 @@ class SweepRunner:
                                     self._log(line)
                             self._log(log_output.compact_line)
 
+                    self._emit_progress(run_num, total_runs)
+
             # ── Save results ──
             elapsed_time = (time.time() - start_time) if start_time is not None else 0.0
 
@@ -1179,36 +1257,38 @@ class SweepRunner:
             self._log(f"Elapsed time: {elapsed_time:.1f}s ({elapsed_time / 60:.1f}min)")
             self._log("=" * 80)
 
-            # Save results to JSON
-            results_path = self.output_dir / "sweep_results.json"
-            with open(results_path, "w") as f:
-                json.dump(
-                    build_sweep_results_payload(
-                        config=self.config,
-                        param_grids=param_grids,
-                        total_runs=total_runs,
-                        successful=total_runs - failed_count,
-                        failed=failed_count,
-                        elapsed_time_seconds=elapsed_time,
-                        results=self.results,
-                    ),
-                    f,
-                    indent=2,
+            if self.config.save_results:
+                results_path = self.output_dir / "sweep_results.json"
+                with open(results_path, "w") as f:
+                    json.dump(
+                        build_sweep_results_payload(
+                            config=self.config,
+                            param_grids=param_grids,
+                            total_runs=total_runs,
+                            successful=total_runs - failed_count,
+                            failed=failed_count,
+                            elapsed_time_seconds=elapsed_time,
+                            results=self.results,
+                        ),
+                        f,
+                        indent=2,
+                    )
+
+                self._log("")
+                self._log(f"Results saved to: {results_path}")
+
+                from optimization.result_io import relocate_incomplete_sweep
+
+                relocated = relocate_incomplete_sweep(
+                    self.output_dir,
+                    min_runs=100,
+                    log_fn=self._log,
                 )
-
-            self._log("")
-            self._log(f"Results saved to: {results_path}")
-
-            # Move to archive/incomplete if below minimum run threshold
-            from optimization.result_io import relocate_incomplete_sweep
-
-            relocated = relocate_incomplete_sweep(
-                self.output_dir,
-                min_runs=100,
-                log_fn=self._log,
-            )
-            if relocated:
-                self.output_dir = relocated
+                if relocated:
+                    self.output_dir = relocated
+            else:
+                self._log("")
+                self._log("Result saving disabled (save_results=False)")
 
             return True
 
@@ -1329,6 +1409,8 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         converted["driver_transv_offset_x"] = float(converted.pop("driver_offset_x"))
     if "driver_offset_y" in converted:
         converted["driver_transv_offset_y"] = float(converted.pop("driver_offset_y"))
+    if "rider_transverse_geometry" in converted:
+        converted["transverse_geometry"] = converted.pop("rider_transverse_geometry")
 
     # Map auto_steps_distance to auto_steps_distance_past_wall
     if (
@@ -1340,6 +1422,53 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         )
     elif "auto_steps_distance" in converted:
         converted.pop("auto_steps_distance")
+
+    particle_loss_payload = converted.pop("particle_loss", None)
+    if isinstance(particle_loss_payload, dict):
+        _particle_loss_field_map = {
+            "enabled": "particle_loss_enabled",
+            "loss_radius_mm": "particle_loss_radius_mm",
+            "conducting_wall_aperture_loss_enabled": "particle_loss_conducting_wall_aperture_loss_enabled",
+            "initial_radial_quantile": "particle_loss_initial_radial_quantile",
+            "initial_radial_multiplier": "particle_loss_initial_radial_multiplier",
+            "initial_radial_margin_mm": "particle_loss_initial_radial_margin_mm",
+        }
+        for source_key, target_key in _particle_loss_field_map.items():
+            if source_key in particle_loss_payload:
+                converted[target_key] = particle_loss_payload[source_key]
+
+    pseudo_grid_payload = converted.pop("pseudo_grid", None)
+    if isinstance(pseudo_grid_payload, dict):
+        _pseudo_grid_field_map = {
+            "enabled": "pseudo_grid_enabled",
+            "active_rider_count": "pseudo_grid_active_rider_count",
+            "active_driver_count": "pseudo_grid_active_driver_count",
+            "passive_neighbor_count": "pseudo_grid_passive_neighbor_count",
+            "coverage_strategy": "pseudo_grid_coverage_strategy",
+            "coverage_space": "pseudo_grid_coverage_space",
+            "pair_reuse_window": "pseudo_grid_pair_reuse_window",
+            "source_weighting_mode": "pseudo_grid_source_weighting_mode",
+            "loss_tracking_enabled": "pseudo_grid_loss_tracking_enabled",
+            "causal_history_pruning_enabled": "pseudo_grid_causal_history_pruning_enabled",
+            "causal_history_safety_margin_steps": "pseudo_grid_causal_history_safety_margin_steps",
+        }
+        for source_key, target_key in _pseudo_grid_field_map.items():
+            if source_key in pseudo_grid_payload:
+                converted[target_key] = pseudo_grid_payload[source_key]
+
+    driver_train_payload = converted.pop("driver_train", None)
+    if isinstance(driver_train_payload, dict):
+        _driver_train_field_map = {
+            "enabled": "driver_train_enabled",
+            "bunch_count": "driver_train_bunch_count",
+            "z_spacing_mm": "driver_train_z_spacing_mm",
+            "z_offsets_mm": "driver_train_z_offsets_mm",
+            "prehistory_steps": "driver_train_prehistory_steps",
+            "preserve_prehistory_in_output": "driver_train_preserve_prehistory_in_output",
+        }
+        for source_key, target_key in _driver_train_field_map.items():
+            if source_key in driver_train_payload:
+                converted[target_key] = driver_train_payload[source_key]
 
     # Convert sweep_parameters to appropriate ranges and fixed values
     sweep_params = converted.get("sweep_parameters", {})
@@ -1360,6 +1489,7 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         "driver_pcount": "driver_pcount",
         "driver_transv_mom": "driver_transv_mom",
         "driver_transv_dist": "driver_transv_dist",
+        "driver_transverse_geometry": "driver_transverse_geometry",
         "driver_starting_distance": "driver_starting_distance",
         "driver_energy_gev": "driver_energy_gev",
         "driver_stripped_ions": "driver_stripped_ions",
@@ -1495,12 +1625,36 @@ def run_sweep_from_config(
                 if verbose:
                     print(f"[INFO] Overriding {key} from CLI: {value}", flush=True)
 
+    if config.mode == "optimization":
+        from lw_integrator.headless_optimization_runner import (
+            run_headless_optimization_config,
+        )
+
+        optimization_output_dir = (
+            output_dir if output_dir is not None else Path(config.output_dir)
+        )
+        return run_headless_optimization_config(
+            config,
+            output_dir=optimization_output_dir,
+            config_path=config_path,
+            verbose=verbose,
+        )
+
     # Determine output directory
     if output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         config_name = config_path.stem
         output_dir = Path(config.output_dir) / f"{timestamp}_{config_name}"
 
+    effective_workers = workers
+    if effective_workers is None:
+        effective_workers = getattr(config, "workers", 1)
+
     # Create and run sweep
-    runner = SweepRunner(config, output_dir, verbose=verbose, workers=workers)
+    runner = SweepRunner(
+        config,
+        output_dir,
+        verbose=verbose,
+        workers=effective_workers,
+    )
     return runner.run()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from lw_integrator.testbed_runner import RADIATION_REACTION_MODE_CHOICES
 from optimization.ui_helpers import ToolTip
 
 
@@ -145,6 +146,18 @@ class OptimizationPluginUIMixin:
             ("Maximize Energy Gain (GeV)", "max_energy_gain"),
             ("Maximize Energy Gain (%)", "max_percent_energy_gain"),
             ("Maximize Energy Efficiency", "max_energy_efficiency"),
+            (
+                "Maximize Inward Radial Focusing (final, 0 < dE ≤ 20%)",
+                "max_inward_rider_radial_focusing_constrained_energy",
+            ),
+            (
+                "Maximize Peak Inward Radial Focusing (centroid, 0 < dE ≤ 20%)",
+                "max_peak_inward_rider_radial_focusing_constrained_energy",
+            ),
+            (
+                "Maximize Peak Ring RMS Collapse (0 < dE ≤ 20%)",
+                "max_peak_rider_radial_rms_collapse_constrained_energy",
+            ),
             ("Minimize Transverse Deflection", "min_transverse_deflection"),
         ]
 
@@ -423,11 +436,57 @@ class OptimizationPluginUIMixin:
             robustness_frame, textvariable=self.per_run_timeout_var, width=8
         ).pack(side="left", padx=(0, 15))
 
+        ttk.Label(robustness_frame, text="Sweep workers:").pack(
+            side="left", padx=(0, 5)
+        )
+        self.workers_var = tk.StringVar(value="1")
+        ttk.Entry(robustness_frame, textvariable=self.workers_var, width=6).pack(
+            side="left", padx=(0, 5)
+        )
+        ttk.Label(
+            robustness_frame,
+            text="← 1=sequential; use a modest count (e.g. 2-4) to avoid oversubscribing the machine",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).pack(side="left", padx=(0, 15))
+
         self.skip_failed_runs_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             robustness_frame,
             text="Skip failed runs and continue sweep",
             variable=self.skip_failed_runs_var,
+        ).pack(side="left", padx=5)
+
+        rr_frame = ttk.Frame(frame)
+        rr_frame.pack(fill="x", pady=(5, 2))
+
+        ttk.Label(rr_frame, text="Radiation reaction mode:").pack(
+            side="left", padx=(5, 10)
+        )
+        self.radiation_reaction_mode_var = tk.StringVar(
+            value=getattr(self.config, "radiation_reaction_mode", "medina_lad")
+        )
+        rr_combo = ttk.Combobox(
+            rr_frame,
+            textvariable=self.radiation_reaction_mode_var,
+            values=RADIATION_REACTION_MODE_CHOICES,
+            state="readonly",
+            width=24,
+        )
+        rr_combo.pack(side="left", padx=(0, 5))
+        self._add_tooltip(
+            rr_combo,
+            "Radiation-reaction mode for sweep runs.\n\n"
+            "off - no momentum change from self-radiation\n"
+            "diagnostic_only - record radiated power without changing momentum\n"
+            "power_matched_damping - post-update energy-matched damping\n"
+            "medina_lad - recommended default for new study runs",
+        )
+        ttk.Label(
+            rr_frame,
+            text="← use medina_lad for normal study runs; compare against off/diagnostic_only when needed",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
         ).pack(side="left", padx=5)
 
         retry_frame = ttk.Frame(frame)

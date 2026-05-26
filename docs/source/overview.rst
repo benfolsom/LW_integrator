@@ -21,6 +21,9 @@ High-level anatomy
     utilities, and the ``IntegratorConfig`` data class).  Kernel-level Numba
     acceleration lives in ``vectorized_interactions.py`` and is used by the
     canonical integrator path without changing the underlying physics.
+    ``pseudo_grid.py`` contains the experimental active/passive reduced-solver
+    helpers for ``BUNCH_TO_BUNCH`` studies, including causal-history retention
+    metadata for supported reduced runs.
     ``self_consistency.py`` holds the fixed-point
     iteration used for radiation-reaction corrections and ensuring gamma
     consistency between energy and velocity calculations (enabled by default
@@ -84,6 +87,54 @@ High-level anatomy
     use the configuration in ``docs/source/conf.py`` and the helper script
     ``docs/build_docs.sh``.
 
+Pseudo-grid reduced solve sketch
+---------------------------------
+
+In ``BUNCH_TO_BUNCH`` pseudo-grid mode, each bunch is still stored and exported
+as a full particle state, but only a selected active subset performs the full
+retarded Liénard--Wiechert solve on a given step.  Passive particles are tied to
+nearby active anchors in the 2D/3D bunch geometry; their charge is folded into
+active source charges, and their state update is reconstructed from weighted
+active-particle deltas.
+
+.. only:: html
+
+   .. raw:: html
+      :file: _static/pseudo_grid_full_vs_reduced.svg.inc
+
+.. code-block:: text
+
+   One bunch, viewed as a 2D transverse slice for a single step
+
+          passive p0 ○
+                      \
+                       \ w0,1
+                        \
+          active A1  ●----●  active A2
+                    / \  / \
+             w1,1  /   \/   \  w2,2
+                  /    /\    \
+      passive p1 ○    /  \    ○ passive p2
+                      /    \
+             active A3 ●    ○ passive p3
+
+   Cross-bunch reduced force solve
+
+      rider active observers      retarded LW fields      driver active sources
+             ● A_r0  <----------------------------------  ● A_d0 + q_eff(d0)
+             ● A_r1  <----------------------------------  ● A_d1 + q_eff(d1)
+
+   Legend: ● = active particle solved exactly this step; ○ = passive particle.
+           w = passive-to-active interpolation/aggregation weight.
+           q_eff = active charge plus weighted passive source charge.
+
+After the active solve, each passive particle receives the weighted combination
+of its active anchors' changes in position, momentum, velocity, gamma, and
+radiation bookkeeping.  If a selected active particle is marked dead by the
+existing status machinery, pseudo-grid loss tracking removes it from later
+schedules and renormalizes passive-anchor weights onto surviving anchors when
+possible.
+
 Key ideas to keep in mind
 -------------------------
 
@@ -107,6 +158,14 @@ Key ideas to keep in mind
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
   matches the archived reference treatment).  Maintained CLI and GUI workflows
   surface the enum so you can pick the right transient treatment per study.
+* **Experimental pseudo-grid mode is now active for B2B studies.**
+  ``PseudoGridConfig`` exposes an opt-in reduced active/passive solve path for
+  ``SimulationType.BUNCH_TO_BUNCH`` runs.  The reduced path supports adaptive
+  timestep retries and reduced same-bunch space charge when each bunch keeps at
+  least two active particles.  Supported reduced B2B runs can compact live
+  causal histories while preserving full-state SoA/legacy outputs and retained-
+  history diagnostics.  Unsupported configurations fall back to the canonical
+  full solve.
 * **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
   (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
   same ``run_testbed()`` function with the same ``SimulationOptions`` dataclass.
@@ -153,7 +212,10 @@ Key ideas to keep in mind
   maintained command for producing
   publication-quality heatmaps from sweep results. Contour lines use a low
   alpha (0.18), labels are clamped to stay inside the axes after the final
-  layout pass, and overlapping labels are culled automatically.
+  layout pass, and overlapping labels are culled automatically. Use
+  ``--color-min`` / ``--color-max`` for comparable signed color scales across
+  related plots, and ``--axis-param1-max`` when a displayed x-axis crop should
+  preserve neighboring data columns for interpolation.
 * **Live sweep plotting.**  ``lw-plot-latest-live`` follows the newest sweep
   log automatically, while ``lw-plot-from-logcache-live`` can watch a specific
   log file or render a one-shot static plot from it.

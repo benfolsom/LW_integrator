@@ -6,12 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from core.external_fields import electric_field_v_per_m_to_native
 from core.types import SimulationType
 from lw_integrator.testbed_runner import (
     CORE_PARAM_DEFAULTS,
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
     SimulationOptions,
+    build_driver_train_config,
+    build_external_field_config,
+    build_pseudo_grid_config,
 )
 
 
@@ -35,6 +39,36 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         self_consistency_gamma_reconciliation_fixed_weight=0.7,
         energy_monitor_halt_on_jump=True,
         adaptive_timestep_min_factor=1e-5,
+        space_charge_enabled=True,
+        space_charge_retarded=True,
+        space_charge_softening_mm=0.004,
+        space_charge_bunch_sigma_mm=0.025,
+        space_charge_min_retarded_steps=5,
+        external_field_enabled=True,
+        external_electric_field_v_per_m=(0.0, 0.0, -1.5e9),
+        external_magnetic_field_native=(0.0, 3.0, 0.0),
+        external_field_z_min=-0.2,
+        external_field_z_max=0.2,
+        external_field_t_min=1.0e-6,
+        external_field_t_max=2.0e-6,
+        radiation_reaction_mode="power_matched_damping",
+        pseudo_grid_enabled=True,
+        pseudo_grid_active_rider_count=6,
+        pseudo_grid_active_driver_count=7,
+        pseudo_grid_passive_neighbor_count=3,
+        pseudo_grid_coverage_strategy="farthest_point",
+        pseudo_grid_coverage_space="phase_space",
+        pseudo_grid_pair_reuse_window=25,
+        pseudo_grid_source_weighting_mode="nearest",
+        pseudo_grid_loss_tracking_enabled=False,
+        pseudo_grid_causal_history_pruning_enabled=True,
+        pseudo_grid_causal_history_safety_margin_steps=5,
+        driver_train_enabled=True,
+        driver_train_bunch_count=3,
+        driver_train_z_spacing_mm=2997.92458,
+        driver_train_z_offsets_mm=(0.0, 100.0, 250.0),
+        driver_train_prehistory_steps=12,
+        driver_train_preserve_prehistory_in_output=True,
         log_file_path="custom.log",
     )
 
@@ -51,27 +85,104 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.config_name == "custom.json"
     assert loaded.self_consistency_convergence_mode == "variable_geometry"
     assert loaded.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
-    assert loaded.self_consistency_gamma_reconciliation_low_beta_threshold == pytest.approx(
-        0.85
+    assert (
+        loaded.self_consistency_gamma_reconciliation_low_beta_threshold
+        == pytest.approx(0.85)
     )
-    assert loaded.self_consistency_gamma_reconciliation_high_beta_threshold == pytest.approx(
-        0.995
+    assert (
+        loaded.self_consistency_gamma_reconciliation_high_beta_threshold
+        == pytest.approx(0.995)
     )
-    assert loaded.self_consistency_gamma_reconciliation_low_beta_weight == pytest.approx(
-        0.9
+    assert (
+        loaded.self_consistency_gamma_reconciliation_low_beta_weight
+        == pytest.approx(0.9)
     )
-    assert loaded.self_consistency_gamma_reconciliation_high_beta_weight == pytest.approx(
-        0.1
+    assert (
+        loaded.self_consistency_gamma_reconciliation_high_beta_weight
+        == pytest.approx(0.1)
     )
-    assert loaded.self_consistency_gamma_reconciliation_mid_beta_weight == pytest.approx(
-        0.6
+    assert (
+        loaded.self_consistency_gamma_reconciliation_mid_beta_weight
+        == pytest.approx(0.6)
     )
     assert loaded.self_consistency_gamma_reconciliation_fixed_weight == pytest.approx(
         0.7
     )
     assert loaded.energy_monitor_halt_on_jump is True
     assert loaded.adaptive_timestep_min_factor == pytest.approx(1e-5)
+    assert loaded.space_charge_enabled is True
+    assert loaded.space_charge_retarded is True
+    assert loaded.space_charge_softening_mm == pytest.approx(0.004)
+    assert loaded.space_charge_bunch_sigma_mm == pytest.approx(0.025)
+    assert loaded.space_charge_min_retarded_steps == 5
+    assert loaded.external_field_enabled is True
+    assert loaded.external_electric_field_v_per_m == pytest.approx((0.0, 0.0, -1.5e9))
+    assert loaded.external_magnetic_field_native == pytest.approx((0.0, 3.0, 0.0))
+    assert loaded.external_field_z_min == pytest.approx(-0.2)
+    assert loaded.external_field_z_max == pytest.approx(0.2)
+    assert loaded.external_field_t_min == pytest.approx(1.0e-6)
+    assert loaded.external_field_t_max == pytest.approx(2.0e-6)
+    assert payload["radiation_reaction_mode"] == "power_matched_damping"
+    assert payload["pseudo_grid"] == {
+        "enabled": True,
+        "active_rider_count": 6,
+        "active_driver_count": 7,
+        "passive_neighbor_count": 3,
+        "coverage_strategy": "farthest_point",
+        "coverage_space": "phase_space",
+        "pair_reuse_window": 25,
+        "source_weighting_mode": "nearest",
+        "loss_tracking_enabled": False,
+        "causal_history_pruning_enabled": True,
+        "causal_history_safety_margin_steps": 5,
+    }
+    assert loaded.radiation_reaction_mode == "power_matched_damping"
+    assert loaded.pseudo_grid_enabled is True
+    assert loaded.pseudo_grid_active_rider_count == 6
+    assert loaded.pseudo_grid_active_driver_count == 7
+    assert loaded.pseudo_grid_passive_neighbor_count == 3
+    assert loaded.pseudo_grid_coverage_strategy == "farthest_point"
+    assert loaded.pseudo_grid_coverage_space == "phase_space"
+    assert loaded.pseudo_grid_pair_reuse_window == 25
+    assert loaded.pseudo_grid_source_weighting_mode == "nearest"
+    assert loaded.pseudo_grid_loss_tracking_enabled is False
+    assert loaded.pseudo_grid_causal_history_pruning_enabled is True
+    assert loaded.pseudo_grid_causal_history_safety_margin_steps == 5
+    assert payload["driver_train"] == {
+        "enabled": True,
+        "bunch_count": 3,
+        "z_spacing_mm": 2997.92458,
+        "z_offsets_mm": [0.0, 100.0, 250.0],
+        "prehistory_steps": 12,
+        "preserve_prehistory_in_output": True,
+    }
+    assert loaded.driver_train_enabled is True
+    assert loaded.driver_train_bunch_count == 3
+    assert loaded.driver_train_z_spacing_mm == pytest.approx(2997.92458)
+    assert loaded.driver_train_z_offsets_mm == pytest.approx((0.0, 100.0, 250.0))
+    assert loaded.driver_train_prehistory_steps == 12
+    assert loaded.driver_train_preserve_prehistory_in_output is True
     assert loaded.log_file_path == "custom.log"
+
+
+def test_build_external_field_config_converts_si_electric_field():
+    options = SimulationOptions(
+        external_field_enabled=True,
+        external_electric_field_v_per_m=(0.0, 0.0, -1.5e9),
+        external_magnetic_field_native=(0.0, 3.0, 0.0),
+        external_field_z_min=-0.2,
+        external_field_z_max=0.2,
+    )
+
+    config = build_external_field_config(options)
+
+    assert config is not None
+    assert config.electric_field_native[2] == pytest.approx(
+        electric_field_v_per_m_to_native(-1.5e9)
+    )
+    assert config.magnetic_field_native == pytest.approx((0.0, 3.0, 0.0))
+    assert config.z_min == pytest.approx(-0.2)
+    assert config.z_max == pytest.approx(0.2)
 
 
 def test_simulation_options_from_dict_accepts_legacy_mode_alias_and_int_enum():
@@ -95,6 +206,9 @@ def test_simulation_options_from_dict_uses_defaults_for_missing_nested_payloads(
         key: (float(value) if isinstance(value, (int, float)) else value)
         for key, value in CORE_PARAM_DEFAULTS.items()
     }
+    assert options.radiation_reaction_mode == "medina_lad"
+    assert options.pseudo_grid_enabled is False
+    assert options.driver_train_enabled is False
     assert options.output_dir == Path("test_outputs/testbed_runs")
 
 
@@ -115,3 +229,44 @@ def test_simulation_options_from_dict_falls_back_on_invalid_numeric_values():
     assert options.energy_monitor_threshold == pytest.approx(2.0)
     assert options.trajectory_interval == 10
 
+
+def test_build_pseudo_grid_config_reflects_simulation_options():
+    options = SimulationOptions(
+        pseudo_grid_enabled=True,
+        pseudo_grid_active_rider_count=9,
+        pseudo_grid_active_driver_count=11,
+        pseudo_grid_passive_neighbor_count=2,
+        pseudo_grid_pair_reuse_window=14,
+        pseudo_grid_causal_history_pruning_enabled=True,
+        pseudo_grid_causal_history_safety_margin_steps=4,
+    )
+
+    config = build_pseudo_grid_config(options)
+
+    assert config.enabled is True
+    assert config.active_rider_count == 9
+    assert config.active_driver_count == 11
+    assert config.passive_neighbor_count == 2
+    assert config.pair_reuse_window == 14
+    assert config.causal_history_pruning_enabled is True
+    assert config.causal_history_safety_margin_steps == 4
+
+
+def test_build_driver_train_config_reflects_simulation_options():
+    options = SimulationOptions(
+        driver_train_enabled=True,
+        driver_train_bunch_count=3,
+        driver_train_z_spacing_mm=100.0,
+        driver_train_z_offsets_mm=(0.0, 100.0, 250.0),
+        driver_train_prehistory_steps=8,
+        driver_train_preserve_prehistory_in_output=True,
+    )
+
+    config = build_driver_train_config(options)
+
+    assert config.enabled is True
+    assert config.bunch_count == 3
+    assert config.z_spacing_mm == pytest.approx(100.0)
+    assert config.z_offsets_mm == pytest.approx((0.0, 100.0, 250.0))
+    assert config.prehistory_steps == 8
+    assert config.preserve_prehistory_in_output is True

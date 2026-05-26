@@ -109,6 +109,14 @@ simulation, and confirm that the regression tooling works on your machine.
    with detailed debug logs in ``logcache/``.  Sweeps with fewer than 100
    completed runs are automatically relocated to
    ``results/archive/incomplete/``.
+   Sequential CLI sweeps also honor the config's ``per_run_timeout`` value:
+   a point that exceeds the timeout is saved as a failed timed-out run and the
+   sweep continues to the next grid point.
+
+   Bunch-to-bunch sweep examples model the driver bunch passing through a
+   virtual exit aperture shortly after the interaction point. This screens the
+   rider from direct line of sight downstream, so the heatmaps show residual
+   post-screening fields rather than indefinitely visible bunch-bunch coupling.
 
    Fine-tune diagnostic output during sweeps without editing the JSON config:
 

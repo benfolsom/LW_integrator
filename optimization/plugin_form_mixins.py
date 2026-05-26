@@ -11,11 +11,14 @@ from optimization.sweep_helpers import calculate_starting_pz_from_energy
 class OptimizationPluginFormMixin:
     """Shared particle/sweep form helpers for the optimization plugin."""
 
+    _LINKED_DISABLED_ENTRY_STYLE = "LinkedDriverEnergyDisabled.TEntry"
+
     def _add_sweepable_param(
         self, parent, row, param_name, label, default_value, width=15
     ):
         """Add a parameter row with optional sweep controls."""
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", pady=2)
 
         var = tk.StringVar(value=default_value)
         entry = ttk.Entry(parent, textvariable=var, width=width)
@@ -54,6 +57,8 @@ class OptimizationPluginFormMixin:
         )
 
         self.sweep_params[param_name] = {
+            "label_text": label,
+            "label_widget": label_widget,
             "fixed_var": var,
             "fixed_entry": entry,
             "sweep_var": sweep_var,
@@ -80,9 +85,9 @@ class OptimizationPluginFormMixin:
         driver_energy_controls = self.sweep_params["driver_energy_gev"]
 
         if linked:
-            driver_energy_controls["fixed_entry"].config(state="disabled")
             driver_energy_controls["sweep_var"].set(False)
             self._toggle_sweep_controls("driver_energy_gev")
+            self._set_driver_energy_entry_linked_state(True)
 
             for widget in self.driver_frame.winfo_children():
                 if isinstance(widget, ttk.Checkbutton):
@@ -94,12 +99,10 @@ class OptimizationPluginFormMixin:
                     except Exception:
                         pass
 
-            self.link_energy_help_label.config(
-                text="(Driver energy = Rider energy for each sweep point)"
-            )
+            self._update_linked_energy_presentation()
             self._update_driver_pz_helper()
         else:
-            driver_energy_controls["fixed_entry"].config(state="normal")
+            self._set_driver_energy_entry_linked_state(False)
 
             for widget in self.driver_frame.winfo_children():
                 if isinstance(widget, ttk.Checkbutton):
@@ -111,13 +114,76 @@ class OptimizationPluginFormMixin:
                     except Exception:
                         pass
 
-            self.link_energy_help_label.config(text="")
+            self._update_linked_energy_presentation()
             self._update_driver_pz_helper()
+
+    def _set_driver_energy_entry_linked_state(self, linked: bool) -> None:
+        """Apply a visibly grayed-out disabled style to driver energy in linked mode."""
+        controls = self.sweep_params.get("driver_energy_gev")
+        if not controls:
+            return
+
+        entry = controls["fixed_entry"]
+        if linked:
+            self._ensure_linked_disabled_entry_style()
+            entry.config(style=self._LINKED_DISABLED_ENTRY_STYLE, state="disabled")
+        else:
+            entry.config(style="TEntry", state="normal")
+
+    def _ensure_linked_disabled_entry_style(self) -> None:
+        """Create the linked-mode disabled style once."""
+        if getattr(self, "_linked_disabled_entry_style_ready", False):
+            return
+
+        style = ttk.Style()
+        style.configure(self._LINKED_DISABLED_ENTRY_STYLE, foreground="#7a7a7a")
+        style.map(
+            self._LINKED_DISABLED_ENTRY_STYLE,
+            foreground=[("disabled", "#7a7a7a")],
+            fieldbackground=[("disabled", "#f0f0f0")],
+        )
+        self._linked_disabled_entry_style_ready = True
 
     def _update_driver_energy_link_state(self):
         """Update driver energy controls based on link state (called during load)."""
         if hasattr(self, "link_driver_rider_energy_var"):
             self._on_link_energy_toggled()
+
+    def _update_linked_energy_presentation(self):
+        """Update driver-energy label/help text to reflect linked rider sweep mode."""
+        if not hasattr(self, "link_driver_rider_energy_var"):
+            return
+
+        controls = self.sweep_params.get("driver_energy_gev")
+        if not controls:
+            return
+
+        label_widget = controls.get("label_widget")
+        base_label = controls.get("label_text", "Kinetic Energy (GeV):")
+        linked = self.link_driver_rider_energy_var.get()
+
+        if linked:
+            if label_widget is not None:
+                label_widget.config(text="Kinetic Energy (GeV, linked):")
+
+            try:
+                energy_min = float(self.energy_min_var.get())
+                energy_max = float(self.energy_max_var.get())
+                energy_points = int(self.energy_points_var.get())
+                self.link_energy_help_label.config(
+                    text=(
+                        f"(Driver follows rider sweep: {energy_min:g} to "
+                        f"{energy_max:g} GeV, {energy_points} pts)"
+                    )
+                )
+            except (ValueError, TypeError):
+                self.link_energy_help_label.config(
+                    text="(Driver energy = Rider energy for each sweep point)"
+                )
+        else:
+            if label_widget is not None:
+                label_widget.config(text=base_label)
+            self.link_energy_help_label.config(text="")
 
     def _update_rider_pz_helper(self):
         """Update helper text showing rider starting Pz calculated from energy."""
@@ -394,9 +460,7 @@ class OptimizationPluginFormMixin:
                 foreground=driver_offset_color
             )
         if "driver_offset_entry" in self._param_widgets:
-            self._param_widgets["driver_offset_entry"].config(
-                state=driver_offset_state
-            )
+            self._param_widgets["driver_offset_entry"].config(state=driver_offset_state)
         if "driver_offset_desc_label" in self._param_widgets:
             self._param_widgets["driver_offset_desc_label"].config(
                 foreground="gray40" if is_bunch_to_bunch else "gray"

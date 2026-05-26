@@ -40,13 +40,29 @@ class OptimizationPluginConfigMixin:
                 self.gui_controller.self_consistency_enabled_var.set(
                     config.self_consistency_enabled
                 )
+            if hasattr(self.gui_controller, "self_consistency_convergence_mode_var"):
+                self.gui_controller.self_consistency_convergence_mode_var.set(
+                    config.self_consistency_convergence_mode
+                )
             if hasattr(self.gui_controller, "self_consistency_target_ms_tolerance_var"):
                 self.gui_controller.self_consistency_target_ms_tolerance_var.set(
-                    f"{config.self_consistency_tolerance:.1e}"
+                    f"{config.self_consistency_target_ms_tolerance:.1e}"
                 )
             if hasattr(self.gui_controller, "self_consistency_max_iterations_var"):
                 self.gui_controller.self_consistency_max_iterations_var.set(
                     str(config.self_consistency_max_iterations)
+                )
+            if hasattr(
+                self.gui_controller, "self_consistency_mass_shell_tolerance_var"
+            ):
+                self.gui_controller.self_consistency_mass_shell_tolerance_var.set(
+                    f"{config.self_consistency_mass_shell_tolerance:.1e}"
+                )
+            if hasattr(
+                self.gui_controller, "self_consistency_mass_shell_relaxation_var"
+            ):
+                self.gui_controller.self_consistency_mass_shell_relaxation_var.set(
+                    f"{config.self_consistency_mass_shell_relaxation:.2f}"
                 )
             if hasattr(self.gui_controller, "self_consistency_verbosity_var"):
                 self.gui_controller.self_consistency_verbosity_var.set(
@@ -105,6 +121,10 @@ class OptimizationPluginConfigMixin:
             if hasattr(self.gui_controller, "adaptive_timestep_debug_var"):
                 self.gui_controller.adaptive_timestep_debug_var.set(
                     config.adaptive_timestep_debug
+                )
+            if hasattr(self.gui_controller, "radiation_reaction_mode_var"):
+                self.gui_controller.radiation_reaction_mode_var.set(
+                    config.radiation_reaction_mode
                 )
 
             if hasattr(
@@ -211,6 +231,14 @@ class OptimizationPluginConfigMixin:
             self._set_fixed_sweep_value(
                 "rider_transv_dist", f"{opt_config.transv_dist:.2e}"
             )
+            if hasattr(self, "rider_transverse_geometry_var"):
+                self.rider_transverse_geometry_var.set(
+                    getattr(opt_config, "transverse_geometry", "square")
+                )
+            if hasattr(self, "driver_transverse_geometry_var"):
+                self.driver_transverse_geometry_var.set(
+                    getattr(opt_config, "driver_transverse_geometry", "square")
+                )
             self._apply_macroparticle_ui_state(
                 enabled=getattr(opt_config, "macroparticle_enabled", False),
                 charge_multiplier=f"{getattr(opt_config, 'macroparticle_charge_multiplier', 1.0):.2e}",
@@ -239,6 +267,8 @@ class OptimizationPluginConfigMixin:
                     ),
                     reject_on_violation=opt_config.smoothness_reject_on_violation,
                 )
+            if hasattr(self, "radiation_reaction_mode_var"):
+                self.radiation_reaction_mode_var.set(opt_config.radiation_reaction_mode)
 
             self._log_result("[OK] Loaded parameters from main GUI configuration")
             self._log_result(f"  Simulation type: {opt_config.simulation_type.name}")
@@ -267,6 +297,9 @@ class OptimizationPluginConfigMixin:
             )
             self._log_result(
                 f"  Adaptive timestep: {opt_config.adaptive_timestep_enabled} (threshold={opt_config.adaptive_timestep_threshold * 100:.0f}%)"
+            )
+            self._log_result(
+                f"  Radiation reaction: {opt_config.radiation_reaction_mode}"
             )
             self._log_result("")
 
@@ -338,6 +371,10 @@ class OptimizationPluginConfigMixin:
         self._set_fixed_sweep_value(
             "driver_transv_dist", f"{driver_params.get('transv_dist', -0.07998):.6e}"
         )
+        if hasattr(self, "driver_transverse_geometry_var"):
+            self.driver_transverse_geometry_var.set(
+                driver_params.get("transverse_geometry", "square")
+            )
         self._set_fixed_sweep_value(
             "driver_starting_distance",
             f"{driver_params.get('starting_distance', 1000.0):.2e}",
@@ -472,6 +509,11 @@ class OptimizationPluginConfigMixin:
 
             self.config = loaded_config
 
+            self.workers_var.set(str(loaded_config.workers))
+            if hasattr(self, "radiation_reaction_mode_var"):
+                self.radiation_reaction_mode_var.set(
+                    loaded_config.radiation_reaction_mode
+                )
             self.per_run_timeout_var.set(str(loaded_config.per_run_timeout))
             self.skip_failed_runs_var.set(loaded_config.skip_failed_runs)
             self.failed_run_retry_attempts_var.set(
@@ -484,6 +526,17 @@ class OptimizationPluginConfigMixin:
             self.sweep_params["rider_stripped_ions"]["fixed_var"].set(
                 str(data.get("rider_stripped_ions", 1.0))
             )
+            if hasattr(self, "rider_transverse_geometry_var"):
+                self.rider_transverse_geometry_var.set(
+                    data.get(
+                        "rider_transverse_geometry",
+                        data.get("transverse_geometry", "square"),
+                    )
+                )
+            if hasattr(self, "driver_transverse_geometry_var"):
+                self.driver_transverse_geometry_var.set(
+                    data.get("driver_transverse_geometry", "square")
+                )
             rider_x = data.get("rider_offset_x", 0.0)
             rider_y = data.get("rider_offset_y", 0.0)
             self.offset_fractions_var.set(f"{rider_x}, {rider_y}")
@@ -609,6 +662,9 @@ class OptimizationPluginConfigMixin:
                 f"  Max probe steps: {self.config.adaptive_timestep_max_probe_steps}"
             )
             self._log_result(f"  Debug: {self.config.adaptive_timestep_debug}")
+            self._log_result("")
+            self._log_result("[Radiation Reaction]")
+            self._log_result(f"  Mode: {self.config.radiation_reaction_mode}")
             self._log_result("")
             self._log_result("[Trajectory Smoothness Analysis]")
             self._log_result(f"  Enabled: {self.config.smoothness_enabled}")

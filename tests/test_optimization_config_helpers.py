@@ -87,10 +87,15 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         core_params={"time_step": 1.5e-7, "wall_z": 250.0, "startup_mode": "FAST"},
         self_consistency_enabled=False,
         self_consistency_tolerance=3e-4,
+        self_consistency_convergence_mode="variable_geometry",
+        self_consistency_target_ms_tolerance=7e-7,
         self_consistency_max_iterations=8,
+        self_consistency_mass_shell_tolerance=9e-3,
+        self_consistency_mass_shell_relaxation=0.33,
         self_consistency_verbosity=1,
         self_consistency_chrono_interpolate=True,
         self_consistency_chrono_tolerance=5e-4,
+        self_consistency_chrono_matching_mode="AVERAGED",
         self_consistency_chrono_high_precision=True,
         self_consistency_chrono_adaptive_tolerance=True,
         energy_monitor_halt_on_jump=True,
@@ -102,6 +107,24 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         adaptive_timestep_probe_threshold=0.05,
         adaptive_timestep_max_probe_steps=6,
         adaptive_timestep_debug=True,
+        space_charge_enabled=True,
+        space_charge_retarded=False,
+        space_charge_softening_mm=0.123,
+        space_charge_bunch_sigma_mm=0.045,
+        space_charge_min_retarded_steps=9,
+        external_field_enabled=True,
+        external_electric_field_native=(1.0, 2.0, 3.0),
+        external_electric_field_v_per_m=(4.0, 5.0, 6.0),
+        external_magnetic_field_native=(7.0, 8.0, 9.0),
+        external_field_x_min=-10.0,
+        external_field_x_max=10.0,
+        external_field_y_min=-20.0,
+        external_field_y_max=20.0,
+        external_field_z_min=-30.0,
+        external_field_z_max=30.0,
+        external_field_t_min=1.0e-6,
+        external_field_t_max=2.0e-6,
+        radiation_reaction_mode="medina_lad",
     )
 
     config = OptimizationConfig.from_simulation_options(options)
@@ -120,10 +143,15 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.startup_mode == "FAST"
     assert config.self_consistency_enabled is False
     assert config.self_consistency_tolerance == pytest.approx(3e-4)
+    assert config.self_consistency_convergence_mode == "variable_geometry"
+    assert config.self_consistency_target_ms_tolerance == pytest.approx(7e-7)
     assert config.self_consistency_max_iterations == 8
+    assert config.self_consistency_mass_shell_tolerance == pytest.approx(9e-3)
+    assert config.self_consistency_mass_shell_relaxation == pytest.approx(0.33)
     assert config.self_consistency_verbosity == 1
     assert config.self_consistency_chrono_interpolate is True
     assert config.self_consistency_chrono_tolerance == pytest.approx(5e-4)
+    assert config.self_consistency_chrono_matching_mode == "AVERAGED"
     assert config.self_consistency_chrono_high_precision is True
     assert config.self_consistency_chrono_adaptive_tolerance is True
     assert config.energy_monitor_halt_on_jump is True
@@ -135,6 +163,24 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.adaptive_timestep_probe_threshold == pytest.approx(0.05)
     assert config.adaptive_timestep_max_probe_steps == 6
     assert config.adaptive_timestep_debug is True
+    assert config.space_charge_enabled is True
+    assert config.space_charge_retarded is False
+    assert config.space_charge_softening_mm == pytest.approx(0.123)
+    assert config.space_charge_bunch_sigma_mm == pytest.approx(0.045)
+    assert config.space_charge_min_retarded_steps == 9
+    assert config.external_field_enabled is True
+    assert config.external_electric_field_native == pytest.approx((1.0, 2.0, 3.0))
+    assert config.external_electric_field_v_per_m == pytest.approx((4.0, 5.0, 6.0))
+    assert config.external_magnetic_field_native == pytest.approx((7.0, 8.0, 9.0))
+    assert config.external_field_x_min == pytest.approx(-10.0)
+    assert config.external_field_x_max == pytest.approx(10.0)
+    assert config.external_field_y_min == pytest.approx(-20.0)
+    assert config.external_field_y_max == pytest.approx(20.0)
+    assert config.external_field_z_min == pytest.approx(-30.0)
+    assert config.external_field_z_max == pytest.approx(30.0)
+    assert config.external_field_t_min == pytest.approx(1.0e-6)
+    assert config.external_field_t_max == pytest.approx(2.0e-6)
+    assert config.radiation_reaction_mode == "medina_lad"
 
 
 def test_auto_timestep_and_auto_steps_helpers_are_consistent():
@@ -161,7 +207,9 @@ def test_auto_timestep_and_auto_steps_helpers_are_consistent():
 
 
 def test_calculate_steps_from_duration_uses_minimum_step_count():
-    steps, timestep = calculate_steps_from_duration(total_duration_ns=8.0, particle_energy_gev=2.0)
+    steps, timestep = calculate_steps_from_duration(
+        total_duration_ns=8.0, particle_energy_gev=2.0
+    )
 
     assert steps == 20
     assert timestep == pytest.approx(0.4)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Optional
 
 from .types import (
@@ -45,6 +46,11 @@ StepFunction = Callable[
     ],
     ParticleState,
 ]
+
+
+@lru_cache(maxsize=None)
+def _signature_parameters(step_function: StepFunction):
+    return inspect.signature(step_function).parameters
 
 
 def canonicalize_self_consistency_mode(mode: object) -> str:
@@ -128,7 +134,7 @@ class SelfConsistencyConfig:
         Default is False (use nearest discrete sample).
     chrono_tolerance : float
         Time residual tolerance for chrono-matching, in nanoseconds.
-        If |t_matched - t_target| > chrono_tolerance, interpolation is applied
+        If ``|t_matched - t_target|`` > chrono_tolerance, interpolation is applied
         (if chrono_interpolate=True) or a warning is issued (if verbosity >= 2).
         Default is 1e-3 ns (1 picosecond).
     chrono_matching_mode : str
@@ -302,6 +308,7 @@ class SelfConsistencyConfig:
             verbosity=0,
         )
 
+
 def self_consistent_step(
     step_function: StepFunction,
     h_step: float,
@@ -318,6 +325,9 @@ def self_consistent_step(
     cancel_callback: Optional[Any] = None,
     traj_soa: Optional[Any] = None,
     traj_ext_soa: Optional[Any] = None,
+    radiation_reaction_mode: Optional[str] = "off",
+    external_field: Optional[Any] = None,
+    pseudo_grid_space_charge_source_charges: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -368,10 +378,11 @@ def self_consistent_step(
     """
 
     # Check whether step_function accepts SOA keyword arguments
-    _sig_params = inspect.signature(step_function).parameters
-    _accepts_soa = "traj_soa" in _sig_params or any(
+    _sig_params = _signature_parameters(step_function)
+    _accepts_var_kwargs = any(
         p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
     )
+    _accepts_soa = "traj_soa" in _sig_params or _accepts_var_kwargs
 
     result = step_function(
         h_step,
@@ -386,8 +397,36 @@ def self_consistent_step(
         step_idx,
         cancel_callback,
         **({"space_charge": space_charge} if space_charge is not None else {}),
+        **(
+            {
+                "pseudo_grid_space_charge_source_charges": (
+                    pseudo_grid_space_charge_source_charges
+                )
+            }
+            if pseudo_grid_space_charge_source_charges is not None
+            and (
+                "pseudo_grid_space_charge_source_charges" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
+            {"external_field": external_field}
+            if external_field is not None
+            and ("external_field" in _sig_params or _accepts_var_kwargs)
+            else {}
+        ),
         **({"traj_soa": traj_soa} if _accepts_soa and traj_soa is not None else {}),
-        **({"traj_ext_soa": traj_ext_soa} if _accepts_soa and traj_ext_soa is not None else {}),
+        **(
+            {"traj_ext_soa": traj_ext_soa}
+            if _accepts_soa and traj_ext_soa is not None
+            else {}
+        ),
+        **(
+            {"radiation_reaction_mode": radiation_reaction_mode}
+            if "radiation_reaction_mode" in _sig_params or _accepts_var_kwargs
+            else {}
+        ),
     )
 
     return result

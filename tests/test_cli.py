@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import lw_integrator
+from core.external_fields import electric_field_v_per_m_to_native
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 from lw_integrator import cli
 
@@ -24,6 +25,13 @@ def _make_args(**overrides) -> argparse.Namespace:
         "log_verbosity": None,
         "sc_verbosity": None,
         "adaptive_debug": None,
+        "space_charge": False,
+        "space_charge_softening_mm": 0.0,
+        "space_charge_bunch_sigma_mm": None,
+        "space_charge_min_retarded_steps": None,
+        "auto_duration": False,
+        "auto_duration_crossing_steps": None,
+        "auto_duration_post_factor": None,
         "steps": None,
         "time_step": None,
         "simulation_type": None,
@@ -34,12 +42,37 @@ def _make_args(**overrides) -> argparse.Namespace:
         "z_cutoff": None,
         "chrono_mode": None,
         "startup_mode": None,
+        "radiation_reaction_mode": None,
         "image_subcharge_count": None,
         "use_image_weighting": None,
+        "pseudo_grid_enabled": None,
+        "pseudo_grid_active_rider_count": None,
+        "pseudo_grid_active_driver_count": None,
+        "pseudo_grid_passive_neighbor_count": None,
+        "pseudo_grid_coverage_strategy": None,
+        "pseudo_grid_coverage_space": None,
+        "pseudo_grid_pair_reuse_window": None,
+        "pseudo_grid_source_weighting_mode": None,
+        "pseudo_grid_loss_tracking_enabled": None,
+        "pseudo_grid_causal_history_pruning_enabled": None,
+        "pseudo_grid_causal_history_safety_margin_steps": None,
+        "driver_train_enabled": None,
+        "driver_train_bunch_count": None,
+        "driver_train_z_spacing_mm": None,
+        "driver_train_z_offsets_mm": None,
+        "driver_train_prehistory_steps": None,
+        "driver_train_preserve_prehistory_in_output": None,
         "driver_from_rider": False,
         "output": None,
         "quiet": False,
+        "external_field": False,
+        "external_e_field_native": None,
+        "external_e_field_v_per_m": None,
+        "external_b_field_native": None,
     }
+    for axis in ("x", "y", "z", "t"):
+        defaults[f"external_field_{axis}_min"] = None
+        defaults[f"external_field_{axis}_max"] = None
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -60,7 +93,8 @@ class TestCliConfigParsing:
         help_text = capsys.readouterr().out
         assert "--results-file RESULTS_FILE" in help_text
         assert "saved sweep or optimization results JSON" in help_text
-        assert "'fast' uses the single-sample matching path." in help_text
+        assert "'fast' is the" in help_text
+        assert "maintained default" in help_text
 
     def test_parse_args_accepts_results_file(self):
         args = cli.parse_args(["--results-file", "results/sweep_results.json"])
@@ -107,11 +141,104 @@ class TestCliConfigParsing:
         assert args.use_image_weighting is True
         assert args.simulation_type == "wall"
 
+    def test_parse_args_accepts_external_field_options(self):
+        args = cli.parse_args(
+            [
+                "--external-e-field-v-per-m",
+                "0",
+                "0",
+                "-1.5e9",
+                "--external-b-field-native",
+                "0",
+                "3",
+                "0",
+                "--external-field-z-min",
+                "-0.2",
+                "--external-field-t-max",
+                "1e-6",
+            ]
+        )
+
+        assert args.external_e_field_v_per_m == [0.0, 0.0, -1.5e9]
+        assert args.external_b_field_native == [0.0, 3.0, 0.0]
+        assert args.external_field_z_min == pytest.approx(-0.2)
+        assert args.external_field_t_max == pytest.approx(1.0e-6)
+
+    def test_parse_args_accepts_radiation_reaction_mode(self):
+        args = cli.parse_args(["--radiation-reaction-mode", "off"])
+
+        assert args.radiation_reaction_mode == "off"
+
+    def test_parse_args_accepts_pseudo_grid_options(self):
+        args = cli.parse_args(
+            [
+                "--pseudo-grid",
+                "--pseudo-grid-active-rider-count",
+                "6",
+                "--pseudo-grid-active-driver-count",
+                "8",
+                "--pseudo-grid-passive-neighbor-count",
+                "3",
+                "--pseudo-grid-coverage-strategy",
+                "farthest_point",
+                "--pseudo-grid-coverage-space",
+                "phase_space",
+                "--pseudo-grid-pair-reuse-window",
+                "21",
+                "--pseudo-grid-source-weighting-mode",
+                "nearest",
+                "--pseudo-grid-loss-tracking",
+                "--pseudo-grid-causal-pruning",
+                "--pseudo-grid-causal-safety-margin-steps",
+                "5",
+            ]
+        )
+
+        assert args.pseudo_grid_enabled is True
+        assert args.pseudo_grid_active_rider_count == 6
+        assert args.pseudo_grid_active_driver_count == 8
+        assert args.pseudo_grid_passive_neighbor_count == 3
+        assert args.pseudo_grid_coverage_strategy == "farthest_point"
+        assert args.pseudo_grid_coverage_space == "phase_space"
+        assert args.pseudo_grid_pair_reuse_window == 21
+        assert args.pseudo_grid_source_weighting_mode == "nearest"
+        assert args.pseudo_grid_loss_tracking_enabled is True
+        assert args.pseudo_grid_causal_history_pruning_enabled is True
+        assert args.pseudo_grid_causal_history_safety_margin_steps == 5
+
+    def test_parse_args_accepts_driver_train_options(self):
+        args = cli.parse_args(
+            [
+                "--driver-train",
+                "--driver-train-bunch-count",
+                "3",
+                "--driver-train-z-spacing-mm",
+                "2997.9",
+                "--driver-train-z-offsets-mm",
+                "0",
+                "100",
+                "250",
+                "--driver-train-prehistory-steps",
+                "12",
+                "--driver-train-preserve-prehistory",
+            ]
+        )
+
+        assert args.driver_train_enabled is True
+        assert args.driver_train_bunch_count == 3
+        assert args.driver_train_z_spacing_mm == pytest.approx(2997.9)
+        assert args.driver_train_z_offsets_mm == [0.0, 100.0, 250.0]
+        assert args.driver_train_prehistory_steps == 12
+        assert args.driver_train_preserve_prehistory_in_output is True
+
     def test_parse_args_allows_disabling_boolean_flags(self):
-        args = cli.parse_args(["--no-adaptive-debug", "--no-image-weighting"])
+        args = cli.parse_args(
+            ["--no-adaptive-debug", "--no-image-weighting", "--no-driver-train"]
+        )
 
         assert args.adaptive_debug is False
         assert args.use_image_weighting is False
+        assert args.driver_train_enabled is False
 
     def test_parse_simulation_type_accepts_aliases(self):
         assert cli._parse_simulation_type("wall") == SimulationType.CONDUCTING_WALL
@@ -220,6 +347,23 @@ class TestCliConfigParsing:
                 "startup_mode": "approximate-back-history",
                 "image_subcharge_count": "16",
                 "use_image_weighting": "no",
+                "pseudo_grid": {
+                    "enabled": True,
+                    "active_rider_count": 6,
+                    "active_driver_count": 7,
+                    "passive_neighbor_count": 3,
+                    "pair_reuse_window": 20,
+                    "causal_history_pruning_enabled": True,
+                    "causal_history_safety_margin_steps": 5,
+                },
+                "driver_train": {
+                    "enabled": True,
+                    "bunch_count": 3,
+                    "z_spacing_mm": 100.0,
+                    "z_offsets_mm": [0.0, 100.0, 250.0],
+                    "prehistory_steps": 8,
+                    "preserve_prehistory_in_output": True,
+                },
             }
         )
 
@@ -230,6 +374,19 @@ class TestCliConfigParsing:
         assert config.startup_mode == StartupMode.APPROXIMATE_BACK_HISTORY
         assert config.image_subcharge_count == 16
         assert config.use_image_weighting is False
+        assert config.pseudo_grid.enabled is True
+        assert config.pseudo_grid.active_rider_count == 6
+        assert config.pseudo_grid.active_driver_count == 7
+        assert config.pseudo_grid.passive_neighbor_count == 3
+        assert config.pseudo_grid.pair_reuse_window == 20
+        assert config.pseudo_grid.causal_history_pruning_enabled is True
+        assert config.pseudo_grid.causal_history_safety_margin_steps == 5
+        assert config.driver_train.enabled is True
+        assert config.driver_train.bunch_count == 3
+        assert config.driver_train.z_spacing_mm == pytest.approx(100.0)
+        assert config.driver_train.z_offsets_mm == pytest.approx((0.0, 100.0, 250.0))
+        assert config.driver_train.prehistory_steps == 8
+        assert config.driver_train.preserve_prehistory_in_output is True
 
     def test_build_integrator_config_requires_simulation_type(self):
         with pytest.raises(
@@ -270,6 +427,145 @@ class TestCliBuildRequest:
         assert payload["simulation_type"] == "switching-wall"
         assert payload["z_cutoff"] == 4.5
 
+    def test_merge_simulation_payload_applies_external_field_overrides(self):
+        args = _make_args(
+            external_e_field_v_per_m=[0.0, 0.0, -1.5e9],
+            external_b_field_native=[0.0, 3.0, 0.0],
+            external_field_z_min=-0.2,
+            external_field_t_max=1.0e-6,
+        )
+
+        payload = cli._merge_simulation_payload({}, args)
+
+        assert payload["external_field"] == {
+            "enabled": True,
+            "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
+            "magnetic_field_native": [0.0, 3.0, 0.0],
+            "z_min": -0.2,
+            "t_max": 1.0e-6,
+        }
+
+    def test_merge_simulation_payload_keeps_file_passthrough_fields(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "space_charge_enabled": True,
+                "space_charge_retarded": False,
+                "space_charge_softening_mm": 0.05,
+                "auto_duration_enabled": True,
+                "auto_duration_crossing_steps": 180,
+                "auto_duration_post_factor": 2.25,
+            },
+            _make_args(),
+        )
+
+        assert payload["space_charge_enabled"] is True
+        assert payload["space_charge_retarded"] is False
+        assert payload["space_charge_softening_mm"] == pytest.approx(0.05)
+        assert payload["auto_duration_enabled"] is True
+        assert payload["auto_duration_crossing_steps"] == 180
+        assert payload["auto_duration_post_factor"] == pytest.approx(2.25)
+
+    def test_merge_simulation_payload_applies_pseudo_grid_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "pseudo_grid": {
+                    "enabled": False,
+                    "active_rider_count": 4,
+                    "active_driver_count": 4,
+                    "pair_reuse_window": 8,
+                }
+            },
+            _make_args(
+                pseudo_grid_enabled=True,
+                pseudo_grid_active_rider_count=7,
+                pseudo_grid_active_driver_count=9,
+                pseudo_grid_passive_neighbor_count=2,
+                pseudo_grid_pair_reuse_window=30,
+                pseudo_grid_causal_history_pruning_enabled=True,
+            ),
+        )
+
+        assert payload["pseudo_grid"]["enabled"] is True
+        assert payload["pseudo_grid"]["active_rider_count"] == 7
+        assert payload["pseudo_grid"]["active_driver_count"] == 9
+        assert payload["pseudo_grid"]["passive_neighbor_count"] == 2
+        assert payload["pseudo_grid"]["pair_reuse_window"] == 30
+        assert payload["pseudo_grid"]["causal_history_pruning_enabled"] is True
+
+    def test_merge_simulation_payload_applies_driver_train_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {"driver_train": {"enabled": False, "bunch_count": 1}},
+            _make_args(
+                driver_train_enabled=True,
+                driver_train_bunch_count=4,
+                driver_train_z_spacing_mm=2997.9,
+                driver_train_z_offsets_mm=[0.0, 10.0, 20.0, 30.0],
+                driver_train_prehistory_steps=16,
+                driver_train_preserve_prehistory_in_output=True,
+            ),
+        )
+
+        assert payload["driver_train"]["enabled"] is True
+        assert payload["driver_train"]["bunch_count"] == 4
+        assert payload["driver_train"]["z_spacing_mm"] == pytest.approx(2997.9)
+        assert payload["driver_train"]["z_offsets_mm"] == [0.0, 10.0, 20.0, 30.0]
+        assert payload["driver_train"]["prehistory_steps"] == 16
+        assert payload["driver_train"]["preserve_prehistory_in_output"] is True
+
+    def test_build_request_defaults_to_medina_lad_rr(self):
+        request = cli.build_request(_make_args())
+
+        assert request.config.radiation_reaction_mode == "medina_lad"
+
+    def test_build_request_rr_flag_overrides_config_file(self, tmp_path: Path):
+        config_path = tmp_path / "rr_mode.json"
+        config_path.write_text(
+            json.dumps({"radiation_reaction_mode": "off"}),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(
+            _make_args(
+                config=config_path,
+                radiation_reaction_mode="power_matched_damping",
+            )
+        )
+
+        assert request.config.radiation_reaction_mode == "power_matched_damping"
+
+    def test_build_request_parses_external_field_config(self, tmp_path: Path):
+        config_path = tmp_path / "external_field.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "external_field": {
+                        "enabled": True,
+                        "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
+                        "magnetic_field_native": [0.0, 3.0, 0.0],
+                        "z_min": -0.2,
+                        "z_max": 0.2,
+                        "t_min": 1.0e-6,
+                        "t_max": 2.0e-6,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+
+        assert request.external_field is not None
+        assert request.external_field.electric_field_native[2] == pytest.approx(
+            electric_field_v_per_m_to_native(-1.5e9)
+        )
+        assert request.external_field.magnetic_field_native == pytest.approx(
+            (0.0, 3.0, 0.0)
+        )
+        assert request.external_field.z_min == pytest.approx(-0.2)
+        assert request.external_field.z_max == pytest.approx(0.2)
+        assert request.external_field.t_min == pytest.approx(1.0e-6)
+        assert request.external_field.t_max == pytest.approx(2.0e-6)
+
     def test_build_request_clones_driver_from_rider(self):
         args = _make_args(
             simulation_type="bunch-to-bunch",
@@ -282,6 +578,52 @@ class TestCliBuildRequest:
         for key, rider_value in request.rider.items():
             assert np.array_equal(request.driver[key], rider_value)
             assert request.driver[key] is not rider_value
+
+    def test_build_request_parses_space_charge_config(self, tmp_path: Path):
+        config_path = tmp_path / "space_charge.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "space_charge_enabled": True,
+                    "space_charge_retarded": False,
+                    "space_charge_softening_mm": 0.125,
+                    "space_charge_bunch_sigma_mm": 0.02,
+                    "space_charge_min_retarded_steps": 7,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+
+        assert request.space_charge is not None
+        assert request.space_charge.enabled is True
+        assert request.space_charge.retarded is False
+        assert request.space_charge.softening_mm == pytest.approx(0.125)
+        assert request.space_charge.bunch_sigma_mm == pytest.approx(0.02)
+        assert request.space_charge.min_retarded_steps == 7
+
+    def test_build_request_rejects_auto_duration_for_non_b2b(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="auto_duration is only supported for BUNCH_TO_BUNCH simulations",
+        ):
+            cli.build_request(_make_args(auto_duration=True))
+
+    def test_build_request_accepts_auto_duration_for_b2b(self):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                auto_duration=True,
+                auto_duration_crossing_steps=150,
+                auto_duration_post_factor=2.5,
+            )
+        )
+
+        assert request.auto_duration_enabled is True
+        assert request.auto_duration_crossing_steps == 150
+        assert request.auto_duration_post_factor == pytest.approx(2.5)
 
     def test_build_request_requires_driver_for_bunch_to_bunch(self):
         args = _make_args(simulation_type="bunch-to-bunch")
@@ -810,6 +1152,45 @@ class TestCliRuntimeHelpers:
             captured["use_conducting_image_weighting"]
             == request.config.use_image_weighting
         )
+        assert (
+            captured["radiation_reaction_mode"]
+            == request.config.radiation_reaction_mode
+        )
+        assert captured["space_charge"] is request.space_charge
+        assert captured["external_field"] is request.external_field
+        assert captured["pseudo_grid"] is request.config.pseudo_grid
+        assert captured["driver_train"] is request.config.driver_train
+
+    def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                auto_duration=True,
+                auto_duration_crossing_steps=120,
+                auto_duration_post_factor=2.5,
+            )
+        )
+
+        request.driver["z"] = request.driver["z"] + 1000.0
+
+        expected_steps, expected_h_step = cli._resolve_auto_duration(request)
+        captured = {}
+
+        def fake_retarded_integrator(**kwargs):
+            captured.update(kwargs)
+            return ["rider"], ["driver"]
+
+        monkeypatch.setattr(cli, "retarded_integrator", fake_retarded_integrator)
+
+        rider, driver = cli.run_simulation(request)
+
+        assert rider == ["rider"]
+        assert driver == ["driver"]
+        assert captured["steps"] == expected_steps
+        assert captured["h_step"] == pytest.approx(expected_h_step)
+        assert captured["steps"] == 300
+        assert captured["h_step"] != pytest.approx(request.config.time_step)
 
     def test_summarise_trajectory_uses_means_and_max_abs(self):
         trajectory = [

@@ -1,11 +1,138 @@
+.. _recent_changes:
+
 Recent Changes
 ==============
 
-*Last updated: March 2026*
+*Last updated: June 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+June 2026 Updates
+-----------------
+
+Sweep Metrics For Compact Spallation Studies (May 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sweep and optimization result processing now records explicit rider final-vs-
+peak gain metrics plus particle-loss counts for compact spallation studies.
+
+* Sweep outputs now include rider final and peak kinetic-energy-normalized gain
+  fields (``rider_final_percent_energy_gain`` and
+  ``rider_max_percent_energy_gain``) while retaining the legacy
+  ``max_percent_energy_gain`` field for compatibility.
+* Trajectory-derived alive fractions are now converted into rider/driver loss
+  fractions and integer loss counts when particle totals are available.
+* Compact sweep logging now includes final-vs-peak rider gain plus rider/driver
+  loss counts on optimization, detailed, and compact progress lines.
+
+Experimental Pseudo-grid Reduced Solver (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An experimental pseudo-grid reduced solver is now available for
+``BUNCH_TO_BUNCH`` studies.
+
+* ``core.types.PseudoGridConfig`` is now part of ``IntegratorConfig`` and the
+  same pseudo-grid settings round-trip through ``SimulationOptions``, the
+  single-run CLI, the main GUI ``Particles`` tab, and saved single-run configs.
+* ``core/pseudo_grid.py`` now provides deterministic active-subset selection,
+  passive-anchor maps, effective source-charge aggregation, bounded pair-reuse
+  tracking, passive reconstruction helpers, conservative causal-history cutoff
+  helpers, and observer-specific self-excluded source-charge matrices for
+  reduced same-bunch space charge.
+* The integrator now builds per-step pseudo-grid schedules, stores them on the
+  legacy and SoA trajectory paths, advances active observers against reduced
+  active-source histories with effective source charges, and reconstructs
+  passive particles from weighted active deltas while preserving full-state
+  outputs.
+* When causal-history pruning is enabled for supported reduced B2B solves, live
+  rider/driver histories are compacted after each completed step and schedule
+  snapshots record retained-start indices plus dropped-sample counts.
+* Adaptive-timestep retries now participate in the reduced pseudo-grid path.
+* Reduced intra-bunch space charge is also supported when each bunch keeps at
+  least two active particles, using observer-specific self-excluded source-
+  charge matrices. If the active counts are too small, the integrator
+  conservatively falls back to the canonical full-history solve.
+* ``scripts/pseudo_grid_feasibility_probe.py`` provides a lightweight sanity and
+  scale probe covering zero-charge drift, weak-charge full-vs-reduced
+  comparisons, optional instantaneous or retarded same-bunch space-charge
+  checks, optional adaptive-timestep checks, and optional ``N > 100`` timing
+  checks.
+* ``scripts/pseudo_grid_feasibility_matrix.py`` runs small ``N/K/neighbor``
+  matrices and includes crossing scenarios where both bunches have enough time
+  to reach and pass the nominal interaction point at ``z=0``. Space-charge
+  scenarios are opt-in with ``--include-space-charge`` and can include
+  instantaneous and retarded modes. Additional opt-in matrix slices cover
+  adaptive crossing runs, stronger charge/current regimes, and longer stability
+  windows.
+* ``scripts/pseudo_grid_microbenchmarks.py`` times pseudo-grid schedule
+  construction, observer/source history slicing, observer-specific same-bunch
+  space-charge matrix construction, active-only solve cost, and passive
+  reconstruction so reduced-mode speedups can be interpreted by phase.
+* Retarded same-bunch space-charge source histories are cached per source
+  particle inside each equations-of-motion call instead of being rebuilt for
+  every observer/source pair.
+* ``tests/physics/test_pseudo_grid_feasibility.py`` adds physics-facing crossing
+  baselines: zero-charge pseudo-grid motion is checked against inertial motion,
+  weak-charge crossing runs are compared against the full solver, instantaneous
+  and retarded same-bunch space-charge crossing cases are covered, and adaptive
+  retarded-space-charge plus stronger-charge longer-window cases are checked for
+  finite behavior.
+* ``tests/unit/test_pseudo_grid_feasibility_scripts.py`` pins the probe,
+  matrix, and microbenchmark surfaces so script-level options for retarded space
+  charge, adaptive crossing runs, stronger regimes, long windows, and
+  reduced-mode phase timing stay covered in the maintained ``LW_integrator``
+  test suite.
+
+The mode remains experimental. Causal-history deletion is currently limited to
+supported reduced pseudo-grid B2B solves; canonical fallback paths still retain
+full histories. The maintained action plan for this work is this section of
+``docs/source/recent_changes.rst``: keep proper unit/regression coverage in
+``LW_integrator`` and use sibling feasibility-study repositories as user-like
+screening workspaces for run matrices, result artifacts, and operator-facing
+probes rather than the primary home for maintained pseudo-grid regression tests.
+
+Current validation status:
+
+* Small next-step smoke matrix covering retarded SC, adaptive crossing, stronger
+  charge, and longer windows stayed finite in 22/22 runs with max comparison
+  deltas below ``3e-5 mm`` in position and ``2e-5`` in gamma.
+* Medium screening matrix in the sibling feasibility-study scratch workspace
+  (directory ``pseudo_grid_medium_validation_20260520``)
+  covered ``N=12,32,64``, active counts ``K=6,12``, neighbour counts ``M=2,4``,
+  retarded same-bunch space charge, adaptive crossings, stronger-charge cases,
+  and 72-step longer-window cases. It stayed finite in 176/176 runs, produced
+  44 full-vs-pseudo comparisons, and had max deltas of ``4.50e-5 mm`` in x,
+  ``5.61e-5 mm`` in z, and ``1.41e-5`` in gamma. Retained-history compaction
+  dropped at most one rider/driver sample in this matrix.
+* The same medium matrix re-run after retarded SC source-history caching in
+  scratch directory ``pseudo_grid_medium_validation_cached_sc_20260520``
+  remained finite in 176/176 runs with the same max comparison deltas and
+  retained-history drop counts. The slowest run dropped from roughly 31 s in the
+  pre-cache matrix to roughly 7.3 s in the cached matrix.
+
+Next validation/engineering steps:
+
+* Inspect the medium matrix CSV/JSON for the largest-delta retarded SC and
+  longer-window cases before expanding the grid further.
+* Use ``scripts/pseudo_grid_microbenchmarks.py`` to keep timing baselines for
+  representative ``N/K/M`` settings, then optimize the largest remaining
+  overheads. Initial smoke output in scratch directory
+  ``pseudo_grid_microbenchmarks_smoke_20260520``
+  showed non-solve overheads in the few-ms range for ``N=32,64`` and retarded-SC
+  active solves scaling from roughly tens of ms at ``K=6`` to roughly
+  0.12-0.13 s at ``K=12``. After caching same-bunch source histories, smoke
+  output in scratch directory
+  ``pseudo_grid_microbenchmarks_cached_sc_20260520``
+  puts active retarded-SC solve cost at roughly 6-22 ms for the same measured
+  ``N=32,64`` and ``K=6,12`` cases.
+* Inspect the cached medium validation matrix speed and delta outliers, then
+  scale cautiously to larger pseudo-only ``N`` and longer windows,
+  keeping full-solver references to small ``N`` where runtime remains practical.
+* If larger retarded-SC cases diverge, add maintained ``LW_integrator``
+  regression tests for the smallest reproducer before iterating on the reduced
+  same-bunch source-charge model.
 
 March 2026 Updates (v0.6.0)
 ----------------------------
@@ -58,6 +185,12 @@ Heatmap Contour Improvements (March 2026)
 * **Overlap culling** — after clamping, a second pass hides labels that
   genuinely intersect previously-accepted labels (using a negative pixel
   padding of −4 px so that merely-touching labels are kept).
+* **Explicit signed color limits** — ``--color-min`` and ``--color-max`` clamp
+  the interpolated color scale after smoothing, making positive and negative
+  gain regions comparable across related B2B maps.
+* **Displayed-axis crop** — ``--axis-param1-max`` crops the rendered x-axis
+  while preserving neighboring data columns for interpolation, useful for
+  removing high-energy dead space from sparse log-spaced sweeps.
 
 These changes prevent contour labels from being clipped by ``tight_layout`` /
 ``savefig`` redraws and avoid label stacking in dense contour regions.

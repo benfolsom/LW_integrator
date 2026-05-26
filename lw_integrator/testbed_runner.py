@@ -59,6 +59,12 @@ COLOR_DRIVER = "#D55E00"
 SCATTER_STYLE = {"s": 140, "alpha": 0.78, "linewidth": 0, "edgecolors": "none"}
 AVAILABLE_DPI_CHOICES: Tuple[int, ...] = (150, 300, 450, 600)
 DEFAULT_PLOT_DPI = 300
+RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
+    "off",
+    "diagnostic_only",
+    "power_matched_damping",
+    "medina_lad",
+)
 
 PARAM_LABELS: Dict[str, str] = {
     "starting_distance": "Start z (mm)",
@@ -66,7 +72,8 @@ PARAM_LABELS: Dict[str, str] = {
     "starting_Pz": "Initial Pz (amu*mm/ns)",
     "stripped_ions": "Stripped ions",
     "m_particle": "Mass (amu)",
-    "transv_dist": "Transverse spread (mm, half-width)",
+    "transv_dist": "Transverse spread/radius (mm)",
+    "transverse_geometry": "Transverse geometry",
     "transv_offset_x": "Transverse offset x (mm)",
     "transv_offset_y": "Transverse offset y (mm)",
     "pcount": "Particle count (bunch size)",
@@ -236,10 +243,10 @@ class SimulationOptions:
     output_dir: Path = Path("test_outputs/testbed_runs")
     config_dir: Path = Path("configs/testbed_runs")
     config_name: str = "testbed_config.json"
-    rider_params: Dict[str, float | int] = field(
+    rider_params: Dict[str, float | int | str] = field(
         default_factory=lambda: dict(DEFAULT_RIDER_PARAMS)
     )
-    driver_params: Optional[Dict[str, float | int]] = field(
+    driver_params: Optional[Dict[str, float | int | str]] = field(
         default_factory=lambda: dict(DEFAULT_DRIVER_PARAMS)
     )
     core_params: Dict[str, float | str] = field(
@@ -292,7 +299,9 @@ class SimulationOptions:
         False  # Auto-set tolerance = 0.1 × timestep
     )
     # Gamma reconciliation options
-    self_consistency_gamma_reconciliation_method: str = "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
+    self_consistency_gamma_reconciliation_method: str = (
+        "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
+    )
     self_consistency_gamma_reconciliation_low_beta_threshold: float = (
         0.9  # Below this β: trust energy (for ADAPTIVE_WEIGHTED)
     )
@@ -340,11 +349,58 @@ class SimulationOptions:
     space_charge_enabled: bool = False
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
+    space_charge_bunch_sigma_mm: float = 0.01
+    space_charge_min_retarded_steps: Optional[int] = None
+
+    # Prescribed external uniform field options
+    external_field_enabled: bool = False
+    external_electric_field_native: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    external_electric_field_v_per_m: Optional[Tuple[float, float, float]] = None
+    external_magnetic_field_native: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    external_field_x_min: Optional[float] = None
+    external_field_x_max: Optional[float] = None
+    external_field_y_min: Optional[float] = None
+    external_field_y_max: Optional[float] = None
+    external_field_z_min: Optional[float] = None
+    external_field_z_max: Optional[float] = None
+    external_field_t_min: Optional[float] = None
+    external_field_t_max: Optional[float] = None
+
+    radiation_reaction_mode: str = "medina_lad"
+
+    # Fixed-size physical particle-loss options
+    particle_loss_enabled: bool = True
+    particle_loss_radius_mm: Optional[float] = 500.0
+    particle_loss_conducting_wall_aperture_loss_enabled: bool = True
+    particle_loss_initial_radial_quantile: Optional[float] = None
+    particle_loss_initial_radial_multiplier: float = 1.0
+    particle_loss_initial_radial_margin_mm: float = 0.0
 
     # Auto-duration crossing mode (BUNCH_TO_BUNCH only)
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
     auto_duration_post_factor: float = 2.0
+
+    # Experimental pseudo-grid options (BUNCH_TO_BUNCH only)
+    pseudo_grid_enabled: bool = False
+    pseudo_grid_active_rider_count: int = 4
+    pseudo_grid_active_driver_count: int = 4
+    pseudo_grid_passive_neighbor_count: int = 4
+    pseudo_grid_coverage_strategy: str = "farthest_point_staleness"
+    pseudo_grid_coverage_space: str = "position"
+    pseudo_grid_pair_reuse_window: int = 16
+    pseudo_grid_source_weighting_mode: str = "inverse_distance"
+    pseudo_grid_loss_tracking_enabled: bool = True
+    pseudo_grid_causal_history_pruning_enabled: bool = False
+    pseudo_grid_causal_history_safety_margin_steps: int = 2
+
+    # Driver-train options (BUNCH_TO_BUNCH only)
+    driver_train_enabled: bool = False
+    driver_train_bunch_count: int = 1
+    driver_train_z_spacing_mm: float = 0.0
+    driver_train_z_offsets_mm: Tuple[float, ...] = field(default_factory=tuple)
+    driver_train_prehistory_steps: int = 0
+    driver_train_preserve_prehistory_in_output: bool = False
 
     # Logging options
     save_log_file: bool = False
@@ -426,9 +482,57 @@ class SimulationOptions:
             "space_charge_enabled": self.space_charge_enabled,
             "space_charge_retarded": self.space_charge_retarded,
             "space_charge_softening_mm": self.space_charge_softening_mm,
+            "space_charge_bunch_sigma_mm": self.space_charge_bunch_sigma_mm,
+            "space_charge_min_retarded_steps": self.space_charge_min_retarded_steps,
+            "external_field_enabled": self.external_field_enabled,
+            "external_electric_field_native": list(self.external_electric_field_native),
+            "external_electric_field_v_per_m": (
+                list(self.external_electric_field_v_per_m)
+                if self.external_electric_field_v_per_m is not None
+                else None
+            ),
+            "external_magnetic_field_native": list(self.external_magnetic_field_native),
+            "external_field_x_min": self.external_field_x_min,
+            "external_field_x_max": self.external_field_x_max,
+            "external_field_y_min": self.external_field_y_min,
+            "external_field_y_max": self.external_field_y_max,
+            "external_field_z_min": self.external_field_z_min,
+            "external_field_z_max": self.external_field_z_max,
+            "external_field_t_min": self.external_field_t_min,
+            "external_field_t_max": self.external_field_t_max,
+            "radiation_reaction_mode": self.radiation_reaction_mode,
+            "particle_loss": {
+                "enabled": self.particle_loss_enabled,
+                "loss_radius_mm": self.particle_loss_radius_mm,
+                "conducting_wall_aperture_loss_enabled": self.particle_loss_conducting_wall_aperture_loss_enabled,
+                "initial_radial_quantile": self.particle_loss_initial_radial_quantile,
+                "initial_radial_multiplier": self.particle_loss_initial_radial_multiplier,
+                "initial_radial_margin_mm": self.particle_loss_initial_radial_margin_mm,
+            },
             "auto_duration_enabled": self.auto_duration_enabled,
             "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
             "auto_duration_post_factor": self.auto_duration_post_factor,
+            "pseudo_grid": {
+                "enabled": self.pseudo_grid_enabled,
+                "active_rider_count": self.pseudo_grid_active_rider_count,
+                "active_driver_count": self.pseudo_grid_active_driver_count,
+                "passive_neighbor_count": self.pseudo_grid_passive_neighbor_count,
+                "coverage_strategy": self.pseudo_grid_coverage_strategy,
+                "coverage_space": self.pseudo_grid_coverage_space,
+                "pair_reuse_window": self.pseudo_grid_pair_reuse_window,
+                "source_weighting_mode": self.pseudo_grid_source_weighting_mode,
+                "loss_tracking_enabled": self.pseudo_grid_loss_tracking_enabled,
+                "causal_history_pruning_enabled": self.pseudo_grid_causal_history_pruning_enabled,
+                "causal_history_safety_margin_steps": self.pseudo_grid_causal_history_safety_margin_steps,
+            },
+            "driver_train": {
+                "enabled": self.driver_train_enabled,
+                "bunch_count": self.driver_train_bunch_count,
+                "z_spacing_mm": self.driver_train_z_spacing_mm,
+                "z_offsets_mm": list(self.driver_train_z_offsets_mm),
+                "prehistory_steps": self.driver_train_prehistory_steps,
+                "preserve_prehistory_in_output": self.driver_train_preserve_prehistory_in_output,
+            },
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
@@ -457,6 +561,139 @@ class SimulationOptions:
             value = payload.get(name, default)
             return str(value) if value is not None else default
 
+        def _optional_float(name: str) -> Optional[float]:
+            value = payload.get(name)
+            if value is None:
+                return None
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
+        def _tuple3(name: str) -> Optional[Tuple[float, float, float]]:
+            value = payload.get(name)
+            if value is None:
+                return None
+            if not isinstance(value, (list, tuple)) or len(value) != 3:
+                return None
+            try:
+                return (float(value[0]), float(value[1]), float(value[2]))
+            except (TypeError, ValueError):
+                return None
+
+        particle_loss_payload_raw = payload.get("particle_loss")
+        particle_loss_payload = (
+            particle_loss_payload_raw
+            if isinstance(particle_loss_payload_raw, dict)
+            else {}
+        )
+
+        def _particle_loss_value(name: str, default: object) -> object:
+            flat_name = f"particle_loss_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return particle_loss_payload.get(name, default)
+
+        def _particle_loss_bool(name: str, default: bool) -> bool:
+            return bool(_particle_loss_value(name, default))
+
+        def _particle_loss_enabled(default: bool) -> bool:
+            value = _particle_loss_value("enabled", None)
+            if value is not None:
+                return bool(value)
+            return (
+                any(
+                    _particle_loss_value(key, None) is not None
+                    for key in ("loss_radius_mm", "initial_radial_quantile")
+                )
+                or default
+            )
+
+        def _particle_loss_float(name: str, default: float) -> float:
+            value = _particle_loss_value(name, default)
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        def _particle_loss_optional_float(
+            name: str,
+            default: Optional[float] = None,
+        ) -> Optional[float]:
+            value = _particle_loss_value(name, default)
+            if value is None:
+                return None
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        pseudo_grid_payload_raw = payload.get("pseudo_grid")
+        pseudo_grid_payload = (
+            pseudo_grid_payload_raw if isinstance(pseudo_grid_payload_raw, dict) else {}
+        )
+
+        def _pseudo_value(name: str, default: object) -> object:
+            flat_name = f"pseudo_grid_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return pseudo_grid_payload.get(name, default)
+
+        def _pseudo_bool(name: str, default: bool) -> bool:
+            return bool(_pseudo_value(name, default))
+
+        def _pseudo_int(name: str, default: int) -> int:
+            value = _pseudo_value(name, default)
+            try:
+                return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
+            except (TypeError, ValueError):
+                return default
+
+        def _pseudo_str(name: str, default: str) -> str:
+            value = _pseudo_value(name, default)
+            return str(value) if value is not None else default
+
+        driver_train_payload_raw = payload.get("driver_train")
+        driver_train_payload = (
+            driver_train_payload_raw
+            if isinstance(driver_train_payload_raw, dict)
+            else {}
+        )
+
+        def _driver_train_value(name: str, default: object) -> object:
+            flat_name = f"driver_train_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return driver_train_payload.get(name, default)
+
+        def _driver_train_bool(name: str, default: bool) -> bool:
+            return bool(_driver_train_value(name, default))
+
+        def _driver_train_int(name: str, default: int) -> int:
+            value = _driver_train_value(name, default)
+            try:
+                return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
+            except (TypeError, ValueError):
+                return default
+
+        def _driver_train_float(name: str, default: float) -> float:
+            value = _driver_train_value(name, default)
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        def _driver_train_offsets() -> Tuple[float, ...]:
+            value = _driver_train_value("z_offsets_mm", ())
+            if value in (None, ""):
+                return ()
+            if not isinstance(value, (list, tuple)):
+                return ()
+            try:
+                return tuple(float(item) for item in value)
+            except (TypeError, ValueError):
+                return ()
+
         sim_value = payload.get("simulation_type", "BUNCH_TO_BUNCH")
         if isinstance(sim_value, SimulationType):
             simulation_type = sim_value
@@ -472,10 +709,11 @@ class SimulationOptions:
         if isinstance(rider_payload, dict):
             rider_params.update(rider_payload)
 
-        driver_params: Optional[Dict[str, float | int]]
+        driver_params: Optional[Dict[str, float | int | str]]
         driver_payload = payload.get("driver_params")
         if isinstance(driver_payload, dict):
-            driver_params = dict(driver_payload)
+            driver_params = dict(DEFAULT_DRIVER_PARAMS)
+            driver_params.update(driver_payload)
         else:
             driver_params = dict(DEFAULT_DRIVER_PARAMS)
 
@@ -597,9 +835,80 @@ class SimulationOptions:
             space_charge_enabled=_bool("space_charge_enabled", False),
             space_charge_retarded=_bool("space_charge_retarded", True),
             space_charge_softening_mm=_float("space_charge_softening_mm", 0.0),
+            space_charge_bunch_sigma_mm=_float("space_charge_bunch_sigma_mm", 0.01),
+            space_charge_min_retarded_steps=(
+                _int("space_charge_min_retarded_steps", 0)
+                if payload.get("space_charge_min_retarded_steps") is not None
+                else None
+            ),
+            external_field_enabled=_bool("external_field_enabled", False),
+            external_electric_field_native=_tuple3("external_electric_field_native")
+            or (0.0, 0.0, 0.0),
+            external_electric_field_v_per_m=_tuple3("external_electric_field_v_per_m"),
+            external_magnetic_field_native=_tuple3("external_magnetic_field_native")
+            or (0.0, 0.0, 0.0),
+            external_field_x_min=_optional_float("external_field_x_min"),
+            external_field_x_max=_optional_float("external_field_x_max"),
+            external_field_y_min=_optional_float("external_field_y_min"),
+            external_field_y_max=_optional_float("external_field_y_max"),
+            external_field_z_min=_optional_float("external_field_z_min"),
+            external_field_z_max=_optional_float("external_field_z_max"),
+            external_field_t_min=_optional_float("external_field_t_min"),
+            external_field_t_max=_optional_float("external_field_t_max"),
+            radiation_reaction_mode=_str("radiation_reaction_mode", "medina_lad"),
+            particle_loss_enabled=_particle_loss_enabled(True),
+            particle_loss_radius_mm=_particle_loss_optional_float(
+                "loss_radius_mm",
+                500.0,
+            ),
+            particle_loss_conducting_wall_aperture_loss_enabled=_particle_loss_bool(
+                "conducting_wall_aperture_loss_enabled",
+                True,
+            ),
+            particle_loss_initial_radial_quantile=_particle_loss_optional_float(
+                "initial_radial_quantile"
+            ),
+            particle_loss_initial_radial_multiplier=_particle_loss_float(
+                "initial_radial_multiplier",
+                1.0,
+            ),
+            particle_loss_initial_radial_margin_mm=_particle_loss_float(
+                "initial_radial_margin_mm",
+                0.0,
+            ),
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
+            pseudo_grid_enabled=_pseudo_bool("enabled", False),
+            pseudo_grid_active_rider_count=_pseudo_int("active_rider_count", 4),
+            pseudo_grid_active_driver_count=_pseudo_int("active_driver_count", 4),
+            pseudo_grid_passive_neighbor_count=_pseudo_int("passive_neighbor_count", 4),
+            pseudo_grid_coverage_strategy=_pseudo_str(
+                "coverage_strategy", "farthest_point_staleness"
+            ),
+            pseudo_grid_coverage_space=_pseudo_str("coverage_space", "position"),
+            pseudo_grid_pair_reuse_window=_pseudo_int("pair_reuse_window", 16),
+            pseudo_grid_source_weighting_mode=_pseudo_str(
+                "source_weighting_mode", "inverse_distance"
+            ),
+            pseudo_grid_loss_tracking_enabled=_pseudo_bool(
+                "loss_tracking_enabled", True
+            ),
+            pseudo_grid_causal_history_pruning_enabled=_pseudo_bool(
+                "causal_history_pruning_enabled", False
+            ),
+            pseudo_grid_causal_history_safety_margin_steps=_pseudo_int(
+                "causal_history_safety_margin_steps", 2
+            ),
+            driver_train_enabled=_driver_train_bool("enabled", False),
+            driver_train_bunch_count=_driver_train_int("bunch_count", 1),
+            driver_train_z_spacing_mm=_driver_train_float("z_spacing_mm", 0.0),
+            driver_train_z_offsets_mm=_driver_train_offsets(),
+            driver_train_prehistory_steps=_driver_train_int("prehistory_steps", 0),
+            driver_train_preserve_prehistory_in_output=_driver_train_bool(
+                "preserve_prehistory_in_output",
+                False,
+            ),
             self_consistency_gamma_reconciliation_method=_str(
                 "self_consistency_gamma_reconciliation_method", "DISABLED"
             ),
@@ -622,9 +931,11 @@ class SimulationOptions:
                 "self_consistency_gamma_reconciliation_fixed_weight", 0.5
             ),
             save_log_file=_bool("save_log_file", False),
-            log_file_path=str(payload.get("log_file_path"))
-            if payload.get("log_file_path") is not None
-            else None,
+            log_file_path=(
+                str(payload.get("log_file_path"))
+                if payload.get("log_file_path") is not None
+                else None
+            ),
         )
         return options
 
@@ -744,6 +1055,125 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     }
 
 
+def _empty_distribution_summary() -> Dict[str, float]:
+    return {
+        "alive_count": 0.0,
+        "total_count": 0.0,
+        "alive_fraction": 0.0,
+    }
+
+
+def _summary_series(summaries: list[Dict[str, float]], key: str) -> np.ndarray:
+    return np.array([summary.get(key, 0.0) for summary in summaries], dtype=float)
+
+
+def _compute_alive_particle_radial_summary(
+    state: Dict[str, Any],
+    *,
+    initial_rms_radius_mm: float | None = None,
+) -> Dict[str, float]:
+    x_alive = get_alive_particle_values(state, "x")
+    y_alive = get_alive_particle_values(state, "y")
+    total_count = float(len(np.asarray(state.get("x", []))))
+    if x_alive is None or y_alive is None or len(x_alive) == 0 or len(y_alive) == 0:
+        summary = _empty_distribution_summary()
+        summary["total_count"] = total_count
+        return summary
+
+    radii = np.sqrt(
+        np.asarray(x_alive, dtype=float) ** 2 + np.asarray(y_alive, dtype=float) ** 2
+    )
+    if len(radii) == 0:
+        summary = _empty_distribution_summary()
+        summary["total_count"] = total_count
+        return summary
+
+    summary = {
+        "alive_count": float(len(radii)),
+        "total_count": total_count,
+        "alive_fraction": float(len(radii) / total_count) if total_count > 0 else 0.0,
+        "r_mean_particle": float(np.mean(radii)),
+        "r_rms_particle": float(np.sqrt(np.mean(radii**2))),
+    }
+    for percentile in (50, 68, 90, 95, 99):
+        summary[f"r_p{percentile}_particle"] = float(np.percentile(radii, percentile))
+
+    if initial_rms_radius_mm is not None and initial_rms_radius_mm > 0.0:
+        for multiplier in (2, 3, 5):
+            threshold = multiplier * initial_rms_radius_mm
+            summary[f"halo_gt_{multiplier}_initial_rms_fraction"] = float(
+                np.mean(radii > threshold)
+            )
+
+    return summary
+
+
+def _compute_alive_particle_radial_stats(state: Dict[str, Any]) -> tuple[float, float]:
+    summary = _compute_alive_particle_radial_summary(state)
+    return summary.get("r_mean_particle", 0.0), summary.get("r_rms_particle", 0.0)
+
+
+def _compute_alive_particle_longitudinal_summary(
+    state: Dict[str, Any],
+) -> Dict[str, float]:
+    z_alive = get_alive_particle_values(state, "z")
+    total_count = float(len(np.asarray(state.get("z", []))))
+    if z_alive is None or len(z_alive) == 0:
+        summary = _empty_distribution_summary()
+        summary["total_count"] = total_count
+        return summary
+
+    z_values = np.asarray(z_alive, dtype=float)
+    summary = {
+        "alive_count": float(len(z_values)),
+        "total_count": total_count,
+        "alive_fraction": (
+            float(len(z_values) / total_count) if total_count > 0 else 0.0
+        ),
+        "z_std_particle": float(np.std(z_values)),
+    }
+    percentiles = {
+        "p01": 1,
+        "p05": 5,
+        "p50": 50,
+        "p95": 95,
+        "p99": 99,
+    }
+    percentile_values = {
+        label: float(np.percentile(z_values, percentile))
+        for label, percentile in percentiles.items()
+    }
+    for label, value in percentile_values.items():
+        summary[f"z_{label}_particle"] = value
+    summary["z_width_p90_particle"] = (
+        percentile_values["p95"] - percentile_values["p05"]
+    )
+    summary["z_width_p98_particle"] = (
+        percentile_values["p99"] - percentile_values["p01"]
+    )
+    return summary
+
+
+def _compute_alive_particle_momentum_summary(state: Dict[str, Any]) -> Dict[str, float]:
+    gamma_alive = get_alive_particle_values(state, "gamma")
+    pz_alive = get_alive_particle_values(state, "Pz")
+    m_alive = get_alive_particle_values(state, "m")
+    if gamma_alive is None or len(gamma_alive) == 0:
+        return {"gamma_std_particle": 0.0, "pz_std_particle": 0.0}
+
+    summary = {
+        "gamma_std_particle": float(np.std(np.asarray(gamma_alive, dtype=float)))
+    }
+    if pz_alive is not None and m_alive is not None and len(pz_alive) > 0:
+        normalized_pz = np.asarray(pz_alive, dtype=float) / (
+            np.asarray(m_alive, dtype=float) * C_MMNS
+        )
+        summary["pz_std_particle"] = float(np.std(normalized_pz))
+    else:
+        summary["pz_std_particle"] = 0.0
+    return summary
+
+
 @dataclass
 class RunResult:
     metrics: Optional[Dict[str, Dict[str, float]]]
@@ -759,6 +1189,9 @@ class RunResult:
     rider_gamma_initial: Optional[float] = None
     rider_gamma_final: Optional[float] = None
     rider_trajectory: Optional[Dict[str, Any]] = None
+    driver_gamma_initial: Optional[float] = None
+    driver_gamma_final: Optional[float] = None
+    driver_trajectory: Optional[Dict[str, Any]] = None
     # Beam optics parameters (initial)
     rider_emittance_x_mm_mrad: Optional[float] = None
     rider_emittance_y_mm_mrad: Optional[float] = None
@@ -766,6 +1199,12 @@ class RunResult:
     rider_norm_emittance_y_mm_mrad: Optional[float] = None
     rider_beta_x_m: Optional[float] = None
     rider_beta_y_m: Optional[float] = None
+    driver_emittance_x_mm_mrad: Optional[float] = None
+    driver_emittance_y_mm_mrad: Optional[float] = None
+    driver_norm_emittance_x_mm_mrad: Optional[float] = None
+    driver_norm_emittance_y_mm_mrad: Optional[float] = None
+    driver_beta_x_m: Optional[float] = None
+    driver_beta_y_m: Optional[float] = None
     # Early termination tracking
     halted_early: bool = False  # True if integration was halted before completion
     halt_reason: Optional[str] = (
@@ -1068,6 +1507,63 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
     )
 
 
+def build_particle_loss_config(options: SimulationOptions) -> object:
+    """Build ParticleLossConfig from SimulationOptions."""
+    from core.types import ParticleLossConfig
+
+    return ParticleLossConfig(
+        enabled=bool(options.particle_loss_enabled),
+        loss_radius_mm=options.particle_loss_radius_mm,
+        conducting_wall_aperture_loss_enabled=bool(
+            options.particle_loss_conducting_wall_aperture_loss_enabled
+        ),
+        initial_radial_quantile=options.particle_loss_initial_radial_quantile,
+        initial_radial_multiplier=float(
+            options.particle_loss_initial_radial_multiplier
+        ),
+        initial_radial_margin_mm=float(options.particle_loss_initial_radial_margin_mm),
+    )
+
+
+def build_pseudo_grid_config(options: SimulationOptions) -> object:
+    """Build PseudoGridConfig from SimulationOptions."""
+    from core.types import PseudoGridConfig
+
+    return PseudoGridConfig(
+        enabled=bool(options.pseudo_grid_enabled),
+        active_rider_count=int(options.pseudo_grid_active_rider_count),
+        active_driver_count=int(options.pseudo_grid_active_driver_count),
+        passive_neighbor_count=int(options.pseudo_grid_passive_neighbor_count),
+        coverage_strategy=str(options.pseudo_grid_coverage_strategy),
+        coverage_space=str(options.pseudo_grid_coverage_space),
+        pair_reuse_window=int(options.pseudo_grid_pair_reuse_window),
+        source_weighting_mode=str(options.pseudo_grid_source_weighting_mode),
+        loss_tracking_enabled=bool(options.pseudo_grid_loss_tracking_enabled),
+        causal_history_pruning_enabled=bool(
+            options.pseudo_grid_causal_history_pruning_enabled
+        ),
+        causal_history_safety_margin_steps=int(
+            options.pseudo_grid_causal_history_safety_margin_steps
+        ),
+    )
+
+
+def build_driver_train_config(options: SimulationOptions) -> object:
+    """Build DriverTrainConfig from SimulationOptions."""
+    from core.types import DriverTrainConfig
+
+    return DriverTrainConfig(
+        enabled=bool(options.driver_train_enabled),
+        bunch_count=int(options.driver_train_bunch_count),
+        z_spacing_mm=float(options.driver_train_z_spacing_mm),
+        z_offsets_mm=tuple(float(value) for value in options.driver_train_z_offsets_mm),
+        prehistory_steps=int(options.driver_train_prehistory_steps),
+        preserve_prehistory_in_output=bool(
+            options.driver_train_preserve_prehistory_in_output
+        ),
+    )
+
+
 def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
     """Build SpaceChargeConfig from SimulationOptions.
 
@@ -1082,6 +1578,43 @@ def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
         enabled=True,
         retarded=options.space_charge_retarded,
         softening_mm=options.space_charge_softening_mm,
+        bunch_sigma_mm=options.space_charge_bunch_sigma_mm,
+        min_retarded_steps=options.space_charge_min_retarded_steps,
+    )
+
+
+def build_external_field_config(options: SimulationOptions) -> Optional[object]:
+    """Build ExternalFieldConfig from SimulationOptions.
+
+    Returns None if prescribed external fields are disabled.
+    """
+    if not options.external_field_enabled:
+        return None
+
+    from core.external_fields import electric_field_v_per_m_to_native
+    from core.types import ExternalFieldConfig
+
+    electric_native = tuple(float(v) for v in options.external_electric_field_native)
+    if options.external_electric_field_v_per_m is not None:
+        electric_native = tuple(
+            electric_field_v_per_m_to_native(float(v))
+            for v in options.external_electric_field_v_per_m
+        )
+
+    return ExternalFieldConfig(
+        enabled=True,
+        electric_field_native=electric_native,
+        magnetic_field_native=tuple(
+            float(v) for v in options.external_magnetic_field_native
+        ),
+        x_min=options.external_field_x_min,
+        x_max=options.external_field_x_max,
+        y_min=options.external_field_y_min,
+        y_max=options.external_field_y_max,
+        z_min=options.external_field_z_min,
+        z_max=options.external_field_z_max,
+        t_min=options.external_field_t_min,
+        t_max=options.external_field_t_max,
     )
 
 
@@ -1095,8 +1628,8 @@ def build_chrono_mode_enum(chrono_mode_str: str) -> object:
     elif chrono_mode_upper == "AVERAGED":
         return ChronoMatchingMode.AVERAGED
     else:
-        # Default to AVERAGED if invalid
-        return ChronoMatchingMode.AVERAGED
+        # Keep old configs running, but default invalid values to the maintained mode.
+        return ChronoMatchingMode.FAST
 
 
 def build_startup_mode_enum(startup_mode_str: str) -> object:
@@ -1236,6 +1769,14 @@ def run_testbed(
     _log(
         f"  Adaptive timestep: {options.adaptive_timestep_enabled} (threshold={options.adaptive_timestep_threshold * 100:.0f}%, reduction={options.adaptive_timestep_reduction_factor}x)"
     )
+    _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
+    if options.driver_train_enabled and sim_type == SimulationType.BUNCH_TO_BUNCH:
+        _log(
+            "  Driver train: enabled "
+            f"(bunches={options.driver_train_bunch_count}, "
+            f"spacing={options.driver_train_z_spacing_mm} mm, "
+            f"prehistory_steps={options.driver_train_prehistory_steps})"
+        )
     _log("")
 
     # Capture stdout/stderr to get verbose SC and adaptive timestep logs
@@ -1253,7 +1794,11 @@ def run_testbed(
     self_consistency_config = build_self_consistency_config(options)
     energy_monitor_config = build_energy_monitor_config(options)
     adaptive_timestep_config = build_adaptive_timestep_config(options)
+    particle_loss_config = build_particle_loss_config(options)
+    pseudo_grid_config = build_pseudo_grid_config(options)
+    driver_train_config = build_driver_train_config(options)
     space_charge_config = build_space_charge_config(options)
+    external_field_config = build_external_field_config(options)
     chrono_mode_enum = build_chrono_mode_enum(
         options.self_consistency_chrono_matching_mode
     )
@@ -1345,27 +1890,34 @@ def run_testbed(
             energy_monitor=energy_monitor_config,
             adaptive_timestep=adaptive_timestep_config,
             space_charge=space_charge_config,
+            external_field=external_field_config,
             image_subcharge_count=int(options.image_subcharge_count),
             use_conducting_image_weighting=bool(options.use_image_weighting),
-            macroparticle_charge_multiplier=float(
-                options.macroparticle_charge_multiplier
-            )
-            if options.macroparticle_enabled
-            else 1.0,
-            macroparticle_sigma_multiplier=float(options.macroparticle_sigma_multiplier)
-            if options.macroparticle_enabled
-            else 1.0,
-            macroparticle_use_momentum_errors=bool(
-                options.macroparticle_use_momentum_errors
-            )
-            if options.macroparticle_enabled
-            else True,
+            macroparticle_charge_multiplier=(
+                float(options.macroparticle_charge_multiplier)
+                if options.macroparticle_enabled
+                else 1.0
+            ),
+            macroparticle_sigma_multiplier=(
+                float(options.macroparticle_sigma_multiplier)
+                if options.macroparticle_enabled
+                else 1.0
+            ),
+            macroparticle_use_momentum_errors=(
+                bool(options.macroparticle_use_momentum_errors)
+                if options.macroparticle_enabled
+                else True
+            ),
             bunch_transv_dist=float(options.rider_params.get("transv_dist", 0.0)),
             bunch_transv_mom=float(options.rider_params.get("transv_mom", 0.0)),
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
             logger=log,
             use_numba=getattr(options, "use_numba", True),
+            radiation_reaction_mode=options.radiation_reaction_mode,
+            pseudo_grid=pseudo_grid_config,
+            driver_train=driver_train_config,
+            particle_loss=particle_loss_config,
         )
 
         # Build a normalized payload shared by the GUI and CLI surfaces.
@@ -1419,12 +1971,21 @@ def run_testbed(
     rider_gamma_initial = None
     rider_gamma_final = None
     rider_trajectory_data = None
+    driver_gamma_initial = None
+    driver_gamma_final = None
+    driver_trajectory_data = None
     rider_emittance_x = None
     rider_emittance_y = None
     rider_norm_emittance_x = None
     rider_norm_emittance_y = None
     rider_beta_x = None
     rider_beta_y = None
+    driver_emittance_x = None
+    driver_emittance_y = None
+    driver_norm_emittance_x = None
+    driver_norm_emittance_y = None
+    driver_beta_x = None
+    driver_beta_y = None
 
     # Compute gamma and beam optics from initial parameters even if trajectories aren't saved
     # This ensures metrics are available for optimization sweeps
@@ -1464,6 +2025,29 @@ def run_testbed(
                 _log(f"  βx={rider_beta_x:.3e} m, βy={rider_beta_y:.3e} m")
             except Exception as exc:
                 _log(f"[WARNING] Failed to compute beam optics: {exc}")
+
+    driver_initial = initial_states.get("driver") if driver_allowed else None
+    if driver_initial:
+        Pz_init = float(np.asarray(driver_initial.get("Pz", 0)).flat[0])
+        Px_init = float(np.asarray(driver_initial.get("Px", 0)).flat[0])
+        Py_init = float(np.asarray(driver_initial.get("Py", 0)).flat[0])
+        P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
+        mass = float(np.asarray(driver_initial.get("m", 1)).flat[0])
+        p_init = P_init / (mass * C_MMNS)
+        driver_gamma_initial = float(np.sqrt(1 + p_init**2))
+
+        driver_pcount = options.driver_params.get("pcount", 1)
+        if driver_pcount > 1:
+            try:
+                beam_optics = compute_beam_optics(driver_initial, driver_gamma_initial)
+                driver_emittance_x = beam_optics.get("emittance_x_mm_mrad")
+                driver_emittance_y = beam_optics.get("emittance_y_mm_mrad")
+                driver_norm_emittance_x = beam_optics.get("norm_emittance_x_mm_mrad")
+                driver_norm_emittance_y = beam_optics.get("norm_emittance_y_mm_mrad")
+                driver_beta_x = beam_optics.get("beta_x_m")
+                driver_beta_y = beam_optics.get("beta_y_m")
+            except Exception as exc:
+                _log(f"[WARNING] Failed to compute driver beam optics: {exc}")
 
     if core_traj:
         rider_states = core_traj.get("rider", [])
@@ -1579,6 +2163,32 @@ def run_testbed(
                     ]
                 )
                 r_arr = np.sqrt(x_arr**2 + y_arr**2)
+                rider_initial_radial_summary = _compute_alive_particle_radial_summary(
+                    rider_states[0]
+                )
+                rider_initial_rms = rider_initial_radial_summary.get(
+                    "r_rms_particle", 0.0
+                )
+                rider_radial_summaries = [
+                    _compute_alive_particle_radial_summary(
+                        s,
+                        initial_rms_radius_mm=rider_initial_rms,
+                    )
+                    for s in rider_states
+                ]
+                rider_longitudinal_summaries = [
+                    _compute_alive_particle_longitudinal_summary(s)
+                    for s in rider_states
+                ]
+                rider_momentum_summaries = [
+                    _compute_alive_particle_momentum_summary(s) for s in rider_states
+                ]
+                r_mean_particle_arr = _summary_series(
+                    rider_radial_summaries, "r_mean_particle"
+                )
+                r_rms_particle_arr = _summary_series(
+                    rider_radial_summaries, "r_rms_particle"
+                )
 
                 # Extract momentum components (capital P) and normalize by m*c
                 Pz_arr = np.array(
@@ -1615,10 +2225,74 @@ def run_testbed(
 
                 rider_trajectory_data = {
                     "z": z_arr,
+                    "x": x_arr,
+                    "y": y_arr,
                     "r": r_arr,
-                    "pz": Pz_arr / (m_arr * C_MMNS),  # Normalized longitudinal momentum
-                    "pr": Pr_arr / (m_arr * C_MMNS),  # Normalized transverse momentum
-                    "gamma": gamma_arr,  # Lorentz factor for stability analysis
+                    "r_mean_particle": r_mean_particle_arr,
+                    "r_rms_particle": r_rms_particle_arr,
+                    "r_p50_particle": _summary_series(
+                        rider_radial_summaries, "r_p50_particle"
+                    ),
+                    "r_p68_particle": _summary_series(
+                        rider_radial_summaries, "r_p68_particle"
+                    ),
+                    "r_p90_particle": _summary_series(
+                        rider_radial_summaries, "r_p90_particle"
+                    ),
+                    "r_p95_particle": _summary_series(
+                        rider_radial_summaries, "r_p95_particle"
+                    ),
+                    "r_p99_particle": _summary_series(
+                        rider_radial_summaries, "r_p99_particle"
+                    ),
+                    "halo_gt_2_initial_rms_fraction": _summary_series(
+                        rider_radial_summaries,
+                        "halo_gt_2_initial_rms_fraction",
+                    ),
+                    "halo_gt_3_initial_rms_fraction": _summary_series(
+                        rider_radial_summaries,
+                        "halo_gt_3_initial_rms_fraction",
+                    ),
+                    "halo_gt_5_initial_rms_fraction": _summary_series(
+                        rider_radial_summaries,
+                        "halo_gt_5_initial_rms_fraction",
+                    ),
+                    "alive_fraction": _summary_series(
+                        rider_radial_summaries, "alive_fraction"
+                    ),
+                    "z_p01_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p01_particle"
+                    ),
+                    "z_p05_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p05_particle"
+                    ),
+                    "z_p50_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p50_particle"
+                    ),
+                    "z_p95_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p95_particle"
+                    ),
+                    "z_p99_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_p99_particle"
+                    ),
+                    "z_width_p90_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_width_p90_particle"
+                    ),
+                    "z_width_p98_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_width_p98_particle"
+                    ),
+                    "z_std_particle": _summary_series(
+                        rider_longitudinal_summaries, "z_std_particle"
+                    ),
+                    "gamma_std_particle": _summary_series(
+                        rider_momentum_summaries, "gamma_std_particle"
+                    ),
+                    "pz_std_particle": _summary_series(
+                        rider_momentum_summaries, "pz_std_particle"
+                    ),
+                    "pz": Pz_arr / (m_arr * C_MMNS),
+                    "pr": Pr_arr / (m_arr * C_MMNS),
+                    "gamma": gamma_arr,
                     "t": np.array(
                         [
                             compute_alive_particle_average(s, "t") or 0.0
@@ -1711,6 +2385,185 @@ def run_testbed(
                     - driver_initial_gamma * driver_initial_by
                 ) * driver_rest_gev
                 driver_e_total = driver_gamma_series * driver_rest_gev
+
+                if driver_states and len(driver_states) > 0:
+                    initial_state = driver_states[0]
+                    Pz_init = float(np.asarray(initial_state.get("Pz", 0)).flat[0])
+                    Px_init = float(np.asarray(initial_state.get("Px", 0)).flat[0])
+                    Py_init = float(np.asarray(initial_state.get("Py", 0)).flat[0])
+                    P_init = np.sqrt(Pz_init**2 + Px_init**2 + Py_init**2)
+                    mass_init = float(np.asarray(initial_state.get("m", 1)).flat[0])
+                    p_init = P_init / (mass_init * C_MMNS)
+                    driver_gamma_initial = float(np.sqrt(1 + p_init**2))
+
+                    final_state = driver_states[-1]
+                    Pz_final_alive = get_alive_particle_values(final_state, "Pz")
+                    Px_final_alive = get_alive_particle_values(final_state, "Px")
+                    Py_final_alive = get_alive_particle_values(final_state, "Py")
+
+                    if Pz_final_alive is not None and len(Pz_final_alive) > 0:
+                        Pz_final = float(np.mean(Pz_final_alive))
+                        Px_final = float(np.mean(Px_final_alive))
+                        Py_final = float(np.mean(Py_final_alive))
+                        P_final = np.sqrt(Pz_final**2 + Px_final**2 + Py_final**2)
+                        mass_final = float(np.asarray(final_state.get("m", 1)).flat[0])
+                        p_final = P_final / (mass_final * C_MMNS)
+                        driver_gamma_final = float(np.sqrt(1 + p_final**2))
+                    else:
+                        driver_gamma_final = driver_gamma_initial
+
+                    z_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "z") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    x_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "x") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    y_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "y") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    r_arr = np.sqrt(x_arr**2 + y_arr**2)
+                    driver_initial_radial_summary = (
+                        _compute_alive_particle_radial_summary(driver_states[0])
+                    )
+                    driver_initial_rms = driver_initial_radial_summary.get(
+                        "r_rms_particle", 0.0
+                    )
+                    driver_radial_summaries = [
+                        _compute_alive_particle_radial_summary(
+                            s,
+                            initial_rms_radius_mm=driver_initial_rms,
+                        )
+                        for s in driver_states
+                    ]
+                    driver_longitudinal_summaries = [
+                        _compute_alive_particle_longitudinal_summary(s)
+                        for s in driver_states
+                    ]
+                    driver_momentum_summaries = [
+                        _compute_alive_particle_momentum_summary(s)
+                        for s in driver_states
+                    ]
+                    r_mean_particle_arr = _summary_series(
+                        driver_radial_summaries, "r_mean_particle"
+                    )
+                    r_rms_particle_arr = _summary_series(
+                        driver_radial_summaries, "r_rms_particle"
+                    )
+                    Pz_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "Pz") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    Px_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "Px") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    Py_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "Py") or 0.0
+                            for s in driver_states
+                        ]
+                    )
+                    m_arr = np.array(
+                        [
+                            compute_alive_particle_average(s, "m") or 1.0
+                            for s in driver_states
+                        ]
+                    )
+                    Pr_arr = np.sqrt(Px_arr**2 + Py_arr**2)
+                    P_total_arr = np.sqrt(Pz_arr**2 + Px_arr**2 + Py_arr**2)
+                    p_normalized_arr = P_total_arr / (m_arr * C_MMNS)
+                    gamma_arr = np.sqrt(1 + p_normalized_arr**2)
+
+                    driver_trajectory_data = {
+                        "z": z_arr,
+                        "x": x_arr,
+                        "y": y_arr,
+                        "r": r_arr,
+                        "r_mean_particle": r_mean_particle_arr,
+                        "r_rms_particle": r_rms_particle_arr,
+                        "r_p50_particle": _summary_series(
+                            driver_radial_summaries, "r_p50_particle"
+                        ),
+                        "r_p68_particle": _summary_series(
+                            driver_radial_summaries, "r_p68_particle"
+                        ),
+                        "r_p90_particle": _summary_series(
+                            driver_radial_summaries, "r_p90_particle"
+                        ),
+                        "r_p95_particle": _summary_series(
+                            driver_radial_summaries, "r_p95_particle"
+                        ),
+                        "r_p99_particle": _summary_series(
+                            driver_radial_summaries, "r_p99_particle"
+                        ),
+                        "halo_gt_2_initial_rms_fraction": _summary_series(
+                            driver_radial_summaries,
+                            "halo_gt_2_initial_rms_fraction",
+                        ),
+                        "halo_gt_3_initial_rms_fraction": _summary_series(
+                            driver_radial_summaries,
+                            "halo_gt_3_initial_rms_fraction",
+                        ),
+                        "halo_gt_5_initial_rms_fraction": _summary_series(
+                            driver_radial_summaries,
+                            "halo_gt_5_initial_rms_fraction",
+                        ),
+                        "alive_fraction": _summary_series(
+                            driver_radial_summaries, "alive_fraction"
+                        ),
+                        "z_p01_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p01_particle"
+                        ),
+                        "z_p05_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p05_particle"
+                        ),
+                        "z_p50_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p50_particle"
+                        ),
+                        "z_p95_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p95_particle"
+                        ),
+                        "z_p99_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_p99_particle"
+                        ),
+                        "z_width_p90_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_width_p90_particle"
+                        ),
+                        "z_width_p98_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_width_p98_particle"
+                        ),
+                        "z_std_particle": _summary_series(
+                            driver_longitudinal_summaries, "z_std_particle"
+                        ),
+                        "gamma_std_particle": _summary_series(
+                            driver_momentum_summaries, "gamma_std_particle"
+                        ),
+                        "pz_std_particle": _summary_series(
+                            driver_momentum_summaries, "pz_std_particle"
+                        ),
+                        "pz": Pz_arr / (m_arr * C_MMNS),
+                        "pr": Pr_arr / (m_arr * C_MMNS),
+                        "gamma": gamma_arr,
+                        "t": np.array(
+                            [
+                                compute_alive_particle_average(s, "t") or 0.0
+                                for s in driver_states
+                            ]
+                        ),
+                    }
             except Exception as exc:  # pragma: no cover - defensive guard
                 _log(f"Failed to compute driver energy series: {exc}")
                 _log(
@@ -1818,54 +2671,80 @@ def run_testbed(
 
                 fig_energy._lw_plot_data = {
                     "plot_type": "energy",
-                    "times_ns": rider_times[valid_mask]
-                    if np.any(valid_mask)
-                    else np.array([]),
-                    "z_mm": rider_z_rel[valid_mask]
-                    if np.any(valid_mask)
-                    else np.array([]),
-                    "z_mm_driver": driver_z_rel[driver_valid]
-                    if driver_delta_e is not None and np.any(driver_valid)
-                    else None,
-                    "core_r_energy_changes": rider_delta_e[valid_mask]
-                    if np.any(valid_mask)
-                    else np.array([]),
-                    "core_d_energy_changes": driver_delta_e[driver_valid]
-                    if driver_delta_e is not None and np.any(driver_valid)
-                    else None,
+                    "times_ns": (
+                        rider_times[valid_mask] if np.any(valid_mask) else np.array([])
+                    ),
+                    "z_mm": (
+                        rider_z_rel[valid_mask] if np.any(valid_mask) else np.array([])
+                    ),
+                    "z_mm_driver": (
+                        driver_z_rel[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None
+                    ),
+                    "core_r_energy_changes": (
+                        rider_delta_e[valid_mask]
+                        if np.any(valid_mask)
+                        else np.array([])
+                    ),
+                    "core_d_energy_changes": (
+                        driver_delta_e[driver_valid]
+                        if driver_delta_e is not None and np.any(driver_valid)
+                        else None
+                    ),
                     "driver_allowed": driver_allowed,
                     # Energy components for Y-axis switching
                     "energy_components": {
-                        "delta_total_r": rider_delta_e_total[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_z_r": rider_delta_e_z[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_x_r": rider_delta_e_x[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_y_r": rider_delta_e_y[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "total_r": rider_e_total[valid_mask]
-                        if np.any(valid_mask)
-                        else np.array([]),
-                        "delta_total_d": driver_delta_e_total[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "delta_z_d": driver_delta_e_z[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "delta_x_d": driver_delta_e_x[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "delta_y_d": driver_delta_e_y[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
-                        "total_d": driver_e_total[driver_valid]
-                        if driver_delta_e is not None and np.any(driver_valid)
-                        else None,
+                        "delta_total_r": (
+                            rider_delta_e_total[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_z_r": (
+                            rider_delta_e_z[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_x_r": (
+                            rider_delta_e_x[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_y_r": (
+                            rider_delta_e_y[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "total_r": (
+                            rider_e_total[valid_mask]
+                            if np.any(valid_mask)
+                            else np.array([])
+                        ),
+                        "delta_total_d": (
+                            driver_delta_e_total[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "delta_z_d": (
+                            driver_delta_e_z[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "delta_x_d": (
+                            driver_delta_e_x[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "delta_y_d": (
+                            driver_delta_e_y[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
+                        "total_d": (
+                            driver_e_total[driver_valid]
+                            if driver_delta_e is not None and np.any(driver_valid)
+                            else None
+                        ),
                     },
                 }
 
@@ -1880,8 +2759,13 @@ def run_testbed(
                 else:
                     plt.close(fig_energy)
 
-        core_r_hist = np.array(
-            [[s["t"][0], s["x"][0], s["y"][0], s["z"][0]] for s in rider_states]
+        core_r_hist = np.column_stack(
+            (
+                _extract_scalar_series(rider_states, "t"),
+                _extract_scalar_series(rider_states, "x"),
+                _extract_scalar_series(rider_states, "y"),
+                _extract_scalar_series(rider_states, "z"),
+            )
         )
         core_r_gamma = _extract_scalar_series(rider_states, "gamma")
         core_r_momentum = _extract_vector_series(rider_states, ("Px", "Py", "Pz"))
@@ -1894,8 +2778,13 @@ def run_testbed(
         plot_z_mm = core_r_hist[:, 3]
 
         if driver_allowed and driver_states is not None:
-            core_d_hist = np.array(
-                [[s["t"][0], s["x"][0], s["y"][0], s["z"][0]] for s in driver_states]
+            core_d_hist = np.column_stack(
+                (
+                    _extract_scalar_series(driver_states, "t"),
+                    _extract_scalar_series(driver_states, "x"),
+                    _extract_scalar_series(driver_states, "y"),
+                    _extract_scalar_series(driver_states, "z"),
+                )
             )
             core_d_gamma = _extract_scalar_series(driver_states, "gamma")
             core_d_momentum = _extract_vector_series(driver_states, ("Px", "Py", "Pz"))
@@ -1922,9 +2811,11 @@ def run_testbed(
                 "plot_type": "transverse",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_hist": core_r_hist,
                 "core_d_hist": core_d_hist if driver_allowed else None,
                 "driver_allowed": driver_allowed,
@@ -2009,9 +2900,11 @@ def run_testbed(
                 "plot_type": "beta",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_beta": core_r_beta,
                 "core_d_beta": core_d_beta if driver_allowed else None,
                 "driver_allowed": driver_allowed,
@@ -2146,9 +3039,11 @@ def run_testbed(
                 "plot_type": "momentum",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_momentum": core_r_momentum,
                 "core_r_pt": core_r_pt,
                 "core_d_momentum": core_d_momentum if driver_allowed else None,
@@ -2456,9 +3351,11 @@ def run_testbed(
                 "plot_type": "gamma",
                 "times_ns": plot_times_ns,
                 "z_mm": plot_z_mm,
-                "z_mm_driver": core_d_hist[:, 3]
-                if driver_allowed and core_d_hist is not None
-                else None,
+                "z_mm_driver": (
+                    core_d_hist[:, 3]
+                    if driver_allowed and core_d_hist is not None
+                    else None
+                ),
                 "core_r_gamma": core_r_gamma,
                 "core_d_gamma": core_d_gamma,
                 "driver_allowed": driver_allowed,
@@ -2698,20 +3595,29 @@ def run_testbed(
         rider_gamma_initial=rider_gamma_initial,
         rider_gamma_final=rider_gamma_final,
         rider_trajectory=rider_trajectory_data,
+        driver_gamma_initial=driver_gamma_initial,
+        driver_gamma_final=driver_gamma_final,
+        driver_trajectory=driver_trajectory_data,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,
         rider_norm_emittance_x_mm_mrad=rider_norm_emittance_x,
         rider_norm_emittance_y_mm_mrad=rider_norm_emittance_y,
         rider_beta_x_m=rider_beta_x,
         rider_beta_y_m=rider_beta_y,
+        driver_emittance_x_mm_mrad=driver_emittance_x,
+        driver_emittance_y_mm_mrad=driver_emittance_y,
+        driver_norm_emittance_x_mm_mrad=driver_norm_emittance_x,
+        driver_norm_emittance_y_mm_mrad=driver_norm_emittance_y,
+        driver_beta_x_m=driver_beta_x,
+        driver_beta_y_m=driver_beta_y,
         halted_early=halted_early if "halted_early" in locals() else False,
         halt_reason=halt_reason if "halt_reason" in locals() else None,
-        num_particles_dead=num_particles_dead
-        if "num_particles_dead" in locals()
-        else 0,
-        particle_failure_info=particle_failure_info
-        if "particle_failure_info" in locals()
-        else None,
+        num_particles_dead=(
+            num_particles_dead if "num_particles_dead" in locals() else 0
+        ),
+        particle_failure_info=(
+            particle_failure_info if "particle_failure_info" in locals() else None
+        ),
     )
 
 
@@ -2737,12 +3643,16 @@ __all__ = [
     "CORE_REQUIRED_PARAMS",
     "PARAM_LABELS",
     "PARTICLE_PARAM_FIELDS",
+    "RADIATION_REACTION_MODE_CHOICES",
     "SimulationOptions",
     "InitialSummary",
     "RunResult",
     "SPECIES_OPTIONS",
     "SPECIES_PRESETS",
     "apply_species_preset",
+    "build_external_field_config",
+    "build_pseudo_grid_config",
+    "build_driver_train_config",
     "compute_initial_summary",
     "ensure_directory",
     "generate_filename_base",

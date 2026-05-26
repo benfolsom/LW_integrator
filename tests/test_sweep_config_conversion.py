@@ -70,3 +70,65 @@ def test_convert_json_config_normalizes_legacy_sweep_mode():
     converted = _convert_json_config_to_dataclass({"mode": "sweep"})
 
     assert converted["mode"] == "blind_sweep"
+
+
+def test_convert_json_config_preserves_runtime_rr_and_worker_settings():
+    converted = _convert_json_config_to_dataclass(
+        {
+            "radiation_reaction_mode": "power_matched_damping",
+            "workers": 4,
+        }
+    )
+    config = _build_optimization_config(converted)
+
+    assert config.radiation_reaction_mode == "power_matched_damping"
+    assert config.workers == 4
+
+
+def test_convert_json_config_maps_particle_loss_and_pseudo_grid_blocks():
+    converted = _convert_json_config_to_dataclass(
+        {
+            "particle_loss": {
+                "enabled": False,
+                "loss_radius_mm": 250.0,
+                "conducting_wall_aperture_loss_enabled": False,
+                "initial_radial_quantile": 0.99,
+                "initial_radial_multiplier": 2.0,
+                "initial_radial_margin_mm": 0.1,
+            },
+            "pseudo_grid": {
+                "enabled": True,
+                "active_rider_count": 12,
+                "active_driver_count": 10,
+                "passive_neighbor_count": 5,
+                "coverage_strategy": "farthest_point",
+                "coverage_space": "phase_space",
+                "pair_reuse_window": 6,
+                "source_weighting_mode": "nearest",
+                "loss_tracking_enabled": False,
+                "causal_history_pruning_enabled": True,
+                "causal_history_safety_margin_steps": 7,
+            },
+        }
+    )
+    config = _build_optimization_config(converted)
+
+    assert "particle_loss" not in converted
+    assert "pseudo_grid" not in converted
+    assert config.particle_loss_enabled is False
+    assert config.particle_loss_radius_mm == 250.0
+    assert config.particle_loss_conducting_wall_aperture_loss_enabled is False
+    assert config.particle_loss_initial_radial_quantile == 0.99
+    assert config.particle_loss_initial_radial_multiplier == 2.0
+    assert config.particle_loss_initial_radial_margin_mm == 0.1
+    assert config.pseudo_grid_enabled is True
+    assert config.pseudo_grid_active_rider_count == 12
+    assert config.pseudo_grid_active_driver_count == 10
+    assert config.pseudo_grid_passive_neighbor_count == 5
+    assert config.pseudo_grid_coverage_strategy == "farthest_point"
+    assert config.pseudo_grid_coverage_space == "phase_space"
+    assert config.pseudo_grid_pair_reuse_window == 6
+    assert config.pseudo_grid_source_weighting_mode == "nearest"
+    assert config.pseudo_grid_loss_tracking_enabled is False
+    assert config.pseudo_grid_causal_history_pruning_enabled is True
+    assert config.pseudo_grid_causal_history_safety_margin_steps == 7

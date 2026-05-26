@@ -194,6 +194,26 @@ def test_numba_path_adaptive_vs_python_parity():
             np.testing.assert_array_equal(traj_n[0][key], traj_p[0][key])
 
 
+def test_numba_kernel_mode_preserves_radiation_bookkeeping_soa():
+    result = _run(radiation_reaction_mode="diagnostic_only")
+    traj, _, traj_soa, _ = result
+
+    assert traj_soa is not None
+    assert traj_soa.radiation_power.shape == (_STEPS, 2)
+    assert traj_soa.radiation_energy.shape == (_STEPS, 2)
+    assert traj_soa.radiation_energy_applied.shape == (_STEPS, 2)
+
+    expected_power = np.vstack([state["radiation_power"] for state in traj])
+    expected_energy = np.vstack([state["radiation_energy"] for state in traj])
+    expected_applied = np.vstack(
+        [state["radiation_energy_applied"] for state in traj]
+    )
+
+    np.testing.assert_allclose(traj_soa.radiation_power, expected_power)
+    np.testing.assert_allclose(traj_soa.radiation_energy, expected_energy)
+    np.testing.assert_allclose(traj_soa.radiation_energy_applied, expected_applied)
+
+
 def test_adaptive_step_state_persists():
     """Cooldown state carries correctly across steps without crashing."""
     from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator

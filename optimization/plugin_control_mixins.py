@@ -65,6 +65,7 @@ class OptimizationPluginControlMixin:
             wall_z=self.wall_z_var.get(),
             steps=self.steps_var.get(),
             auto_steps_distance=self.auto_steps_distance_var.get(),
+            workers=self.workers_var.get(),
             sweep_parameters=sweep_parameters,
         )
 
@@ -103,6 +104,15 @@ class OptimizationPluginControlMixin:
         kwargs = self._gather_image_and_self_consistency_kwargs(existing_config)
         kwargs.update(self._gather_adaptive_timestep_kwargs(existing_config))
         kwargs.update(self._gather_gamma_reconciliation_kwargs(existing_config))
+        kwargs["radiation_reaction_mode"] = (
+            str(self.radiation_reaction_mode_var.get())
+            if hasattr(self, "radiation_reaction_mode_var")
+            else _existing_config_value(
+                existing_config,
+                "radiation_reaction_mode",
+                "medina_lad",
+            )
+        )
         return kwargs
 
     def _gather_image_and_self_consistency_kwargs(
@@ -131,10 +141,30 @@ class OptimizationPluginControlMixin:
                 "self_consistency_tolerance",
                 1e-4,
             ),
+            "self_consistency_convergence_mode": setting(
+                "self_consistency_convergence_mode_var",
+                "self_consistency_convergence_mode",
+                "fixed_geometry",
+            ),
+            "self_consistency_target_ms_tolerance": setting(
+                "self_consistency_target_ms_tolerance_var",
+                "self_consistency_target_ms_tolerance",
+                1e-6,
+            ),
             "self_consistency_max_iterations": setting(
                 "self_consistency_max_iterations_var",
                 "self_consistency_max_iterations",
                 5,
+            ),
+            "self_consistency_mass_shell_tolerance": setting(
+                "self_consistency_mass_shell_tolerance_var",
+                "self_consistency_mass_shell_tolerance",
+                1e-2,
+            ),
+            "self_consistency_mass_shell_relaxation": setting(
+                "self_consistency_mass_shell_relaxation_var",
+                "self_consistency_mass_shell_relaxation",
+                0.7,
             ),
             "self_consistency_verbosity": setting(
                 "self_consistency_verbosity_var", "self_consistency_verbosity", 0
@@ -148,6 +178,11 @@ class OptimizationPluginControlMixin:
                 "self_consistency_chrono_tolerance_var",
                 "self_consistency_chrono_tolerance",
                 1e-3,
+            ),
+            "self_consistency_chrono_matching_mode": config_value(
+                existing_config,
+                "self_consistency_chrono_matching_mode",
+                "FAST",
             ),
             "self_consistency_chrono_high_precision": setting(
                 "self_consistency_chrono_high_precision_var",
@@ -372,12 +407,23 @@ class OptimizationPluginControlMixin:
         self, rider_offset: tuple[float, float], driver_offset: tuple[float, float]
     ) -> dict:
         """Return particle and macroparticle config keyword arguments."""
+        rider_transverse_geometry_var = getattr(
+            self, "rider_transverse_geometry_var", None
+        )
+        driver_transverse_geometry_var = getattr(
+            self, "driver_transverse_geometry_var", None
+        )
         return {
             "transv_mom": float(
                 self.sweep_params["rider_transv_mom"]["fixed_var"].get()
             ),
             "transv_dist": float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
+            ),
+            "transverse_geometry": (
+                rider_transverse_geometry_var.get()
+                if rider_transverse_geometry_var is not None
+                else "square"
             ),
             "transv_offset_x": rider_offset[0],
             "transv_offset_y": rider_offset[1],
@@ -416,6 +462,11 @@ class OptimizationPluginControlMixin:
             "driver_transv_dist": float(
                 self.sweep_params["driver_transv_dist"]["fixed_var"].get()
             ),
+            "driver_transverse_geometry": (
+                driver_transverse_geometry_var.get()
+                if driver_transverse_geometry_var is not None
+                else "square"
+            ),
             "driver_starting_distance": float(
                 self.sweep_params["driver_starting_distance"]["fixed_var"].get()
             ),
@@ -450,6 +501,7 @@ class OptimizationPluginControlMixin:
             "smoothness_max_violations": config_value(
                 existing_config, "smoothness_max_violations", 3
             ),
+            "workers": int(self.workers_var.get()),
             "per_run_timeout": float(self.per_run_timeout_var.get()),
             "skip_failed_runs": self.skip_failed_runs_var.get(),
             "failed_run_retry_attempts": int(self.failed_run_retry_attempts_var.get()),
@@ -684,7 +736,9 @@ class OptimizationPluginControlMixin:
         def on_confirm():
             try:
                 self.config.self_consistency_enabled = sc_enabled_var.get()
-                self.config.self_consistency_tolerance = float(sc_tol_var.get())
+                sc_tolerance = float(sc_tol_var.get())
+                self.config.self_consistency_tolerance = sc_tolerance
+                self.config.self_consistency_target_ms_tolerance = sc_tolerance
                 self.config.self_consistency_max_iterations = int(sc_iter_var.get())
                 self.config.self_consistency_verbosity = int(sc_verb_var.get())
 
@@ -790,6 +844,7 @@ class OptimizationPluginControlMixin:
                 "[INFO] Using stability options from main GUI Stability tab"
             )
 
+            self.config.workers = int(self.workers_var.get())
             self.config.per_run_timeout = float(self.per_run_timeout_var.get())
             self.config.skip_failed_runs = self.skip_failed_runs_var.get()
             self.config.failed_run_retry_attempts = int(
@@ -808,6 +863,8 @@ class OptimizationPluginControlMixin:
         except Exception as e:
             _show_error_dialog(self, "Configuration Error", str(e))
             return
+
+        self._log_result(f"[INFO] Sweep worker processes: {self.config.workers}")
 
         self._was_cancelled = False
         self.running = True

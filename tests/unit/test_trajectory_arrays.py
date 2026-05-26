@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from core.types import TrajectoryArrays, TrajectoryBuilder
+from core.types import TrajectoryBuilder
 
 
 N_STEPS = 5
@@ -29,6 +29,9 @@ def _make_state(step: int, n: int, include_optional: bool = True) -> dict:
         "bdotx": rng.random(n),
         "bdoty": rng.random(n),
         "bdotz": rng.random(n),
+        "radiation_power": rng.random(n),
+        "radiation_energy": rng.random(n),
+        "radiation_energy_applied": rng.random(n),
         "q": np.ones(n) * float(step + 1),
         "m": np.ones(n) * 1.0,
         "char_time": np.ones(n) * 0.5,
@@ -67,8 +70,20 @@ class TestShapeProperties:
 
     def test_kinematic_array_shapes(self):
         traj, _ = _build_trajectory()
-        for field in ("x", "y", "z", "t", "Px", "Py", "Pz", "Pt",
-                      "gamma", "bx", "by", "bz"):
+        for field in (
+            "x",
+            "y",
+            "z",
+            "t",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+        ):
             arr = getattr(traj, field)
             assert arr.shape == (N_STEPS, N_PARTICLES), field
 
@@ -83,6 +98,16 @@ class TestShapeProperties:
             arr = getattr(traj, field)
             assert arr.shape == (N_PARTICLES,), field
 
+    def test_radiation_array_shapes(self):
+        traj, _ = _build_trajectory()
+        for field in (
+            "radiation_power",
+            "radiation_energy",
+            "radiation_energy_applied",
+        ):
+            arr = getattr(traj, field)
+            assert arr.shape == (N_STEPS, N_PARTICLES), field
+
 
 class TestRoundTrip:
     def test_state_at_kinematic_values(self):
@@ -92,6 +117,16 @@ class TestRoundTrip:
             np.testing.assert_array_equal(s["x"], states[step]["x"])
             np.testing.assert_array_equal(s["z"], states[step]["z"])
             np.testing.assert_array_equal(s["gamma"], states[step]["gamma"])
+            np.testing.assert_array_equal(
+                s["radiation_power"], states[step]["radiation_power"]
+            )
+            np.testing.assert_array_equal(
+                s["radiation_energy"], states[step]["radiation_energy"]
+            )
+            np.testing.assert_array_equal(
+                s["radiation_energy_applied"],
+                states[step]["radiation_energy_applied"],
+            )
 
     def test_particle_consts_from_step0(self):
         traj, states = _build_trajectory()
@@ -135,8 +170,9 @@ class TestHaltMetadata:
         builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
         for step in range(N_STEPS):
             builder.set_step(step, _make_state(step, N_PARTICLES))
-        builder.set_halt_metadata(step=3, reason="diverged", halt_step=3,
-                                  requested_steps=N_STEPS)
+        builder.set_halt_metadata(
+            step=3, reason="diverged", halt_step=3, requested_steps=N_STEPS
+        )
         traj = builder.build()
 
         assert traj.halted_early[3]
@@ -150,8 +186,9 @@ class TestHaltMetadata:
         builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
         for step in range(N_STEPS):
             builder.set_step(step, _make_state(step, N_PARTICLES))
-        builder.set_halt_metadata(step=1, reason="exploded", halt_step=1,
-                                  requested_steps=N_STEPS)
+        builder.set_halt_metadata(
+            step=1, reason="exploded", halt_step=1, requested_steps=N_STEPS
+        )
         traj = builder.build()
 
         s_halted = traj.state_at(1)
@@ -175,6 +212,19 @@ class TestMissingOptionalFields:
     def test_beta_samples_defaults_to_zero(self):
         traj, _ = _build_trajectory(include_optional=False)
         np.testing.assert_array_equal(traj.beta_samples, 0.0)
+
+    def test_radiation_fields_default_to_zero(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        for step in range(N_STEPS):
+            state = _make_state(step, N_PARTICLES)
+            state.pop("radiation_power")
+            state.pop("radiation_energy")
+            state.pop("radiation_energy_applied")
+            builder.set_step(step, state)
+        traj = builder.build()
+        np.testing.assert_array_equal(traj.radiation_power, 0.0)
+        np.testing.assert_array_equal(traj.radiation_energy, 0.0)
+        np.testing.assert_array_equal(traj.radiation_energy_applied, 0.0)
 
 
 class TestBuildPartial:
@@ -220,3 +270,36 @@ class TestParticleFailureInfo:
         traj = builder.build()
         assert (2, 1) in traj.particle_failure_info
         assert traj.particle_failure_info[(2, 1)]["reason"] == "nan"
+
+
+class TestPseudoGridScheduleMetadata:
+    def test_schedule_round_trip(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        schedule = {"step_index": 1, "active_indices": np.array([0, 2], dtype=int)}
+
+        for step in range(N_STEPS):
+            state = _make_state(step, N_PARTICLES)
+            if step == 1:
+                state["_pseudo_grid_schedule"] = schedule
+            builder.set_step(step, state)
+
+        traj = builder.build()
+
+        assert traj.pseudo_grid_schedule[1] is schedule
+        assert traj.state_at(1)["_pseudo_grid_schedule"] is schedule
+        assert "_pseudo_grid_schedule" not in traj.state_at(0)
+
+    def test_build_partial_preserves_schedule_slice(self):
+        builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
+        schedule = {"step_index": 1}
+
+        for step in range(N_STEPS):
+            state = _make_state(step, N_PARTICLES)
+            if step == 1:
+                state["_pseudo_grid_schedule"] = schedule
+            builder.set_step(step, state)
+
+        partial = builder.build_partial(2)
+
+        assert len(partial.pseudo_grid_schedule) == 2
+        assert partial.pseudo_grid_schedule[1] is schedule

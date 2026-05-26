@@ -245,6 +245,7 @@ class IntegratorGUI(
         self._refresh_initial_summary()
         self._update_driver_visibility()
         self._update_image_subcharge_state()
+        self._update_driver_train_state()
 
         # Set initial sash position for main horizontal pane (70/30 split)
         self.root.update_idletasks()  # Ensure window is laid out
@@ -289,17 +290,20 @@ class IntegratorGUI(
         self.driver_param_vars: Dict[str, tk.Variable] = {}
         for name, default in DEFAULT_RIDER_PARAMS.items():
             var: tk.Variable
-            if isinstance(default, int):
+            if isinstance(default, str):
+                var = tk.StringVar(value=default)
+            elif isinstance(default, int):
                 var = tk.IntVar(value=int(default))
             else:
                 var = tk.DoubleVar(value=float(default))
             self.rider_param_vars[name] = var
         for name, default in DEFAULT_DRIVER_PARAMS.items():
-            var = (
-                tk.IntVar(value=int(default))
-                if isinstance(default, int)
-                else tk.DoubleVar(value=float(default))
-            )
+            if isinstance(default, str):
+                var = tk.StringVar(value=default)
+            elif isinstance(default, int):
+                var = tk.IntVar(value=int(default))
+            else:
+                var = tk.DoubleVar(value=float(default))
             self.driver_param_vars[name] = var
 
         self.core_param_vars: Dict[str, tk.Variable] = {}
@@ -371,6 +375,84 @@ class IntegratorGUI(
         self.macroparticle_sigma_multiplier_var = tk.StringVar(value="1.0")
         self.macroparticle_use_momentum_errors_var = tk.BooleanVar(value=True)
 
+        # Experimental pseudo-grid options
+        self.pseudo_grid_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "pseudo_grid_enabled", False)
+        )
+        self.pseudo_grid_active_rider_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_active_rider_count", 4)
+        )
+        self.pseudo_grid_active_driver_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_active_driver_count", 4)
+        )
+        self.pseudo_grid_passive_neighbor_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_passive_neighbor_count", 4)
+        )
+        self.pseudo_grid_coverage_strategy_var = tk.StringVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_coverage_strategy",
+                "farthest_point_staleness",
+            )
+        )
+        self.pseudo_grid_coverage_space_var = tk.StringVar(
+            value=getattr(self.options, "pseudo_grid_coverage_space", "position")
+        )
+        self.pseudo_grid_pair_reuse_window_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_pair_reuse_window", 16)
+        )
+        self.pseudo_grid_source_weighting_mode_var = tk.StringVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_source_weighting_mode",
+                "inverse_distance",
+            )
+        )
+        self.pseudo_grid_loss_tracking_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "pseudo_grid_loss_tracking_enabled", True)
+        )
+        self.pseudo_grid_causal_history_pruning_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_causal_history_pruning_enabled",
+                False,
+            )
+        )
+        self.pseudo_grid_causal_history_safety_margin_steps_var = tk.IntVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_causal_history_safety_margin_steps",
+                2,
+            )
+        )
+
+        # Driver train / persistent prehistory options
+        self.driver_train_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "driver_train_enabled", False)
+        )
+        self.driver_train_bunch_count_var = tk.IntVar(
+            value=getattr(self.options, "driver_train_bunch_count", 1)
+        )
+        self.driver_train_z_spacing_mm_var = tk.DoubleVar(
+            value=getattr(self.options, "driver_train_z_spacing_mm", 0.0)
+        )
+        self.driver_train_z_offsets_mm_var = tk.StringVar(
+            value=" ".join(
+                str(value)
+                for value in getattr(self.options, "driver_train_z_offsets_mm", ())
+            )
+        )
+        self.driver_train_prehistory_steps_var = tk.IntVar(
+            value=getattr(self.options, "driver_train_prehistory_steps", 0)
+        )
+        self.driver_train_preserve_prehistory_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "driver_train_preserve_prehistory_in_output",
+                False,
+            )
+        )
+
         # Self-consistency options
         self.self_consistency_enabled_var = tk.BooleanVar(
             value=self.options.self_consistency_enabled
@@ -412,7 +494,7 @@ class IntegratorGUI(
             value=getattr(
                 self.options,
                 "self_consistency_gamma_reconciliation_method",
-                "ADAPTIVE_WEIGHTED",
+                "DISABLED",
             )
         )
         self.self_consistency_gamma_reconciliation_low_beta_threshold_var = (
@@ -505,9 +587,32 @@ class IntegratorGUI(
         # max_substeps is now calculated from min_timestep_factor (read-only display)
         self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 
+        self.radiation_reaction_mode_var = tk.StringVar(
+            value=getattr(self.options, "radiation_reaction_mode", "medina_lad")
+        )
+
         self.space_charge_enabled_var = tk.BooleanVar(value=False)
         self.space_charge_retarded_var = tk.BooleanVar(value=True)
         self.space_charge_softening_mm_var = tk.DoubleVar(value=0.0)
+        self.space_charge_bunch_sigma_mm_var = tk.DoubleVar(value=0.01)
+        self.space_charge_min_retarded_steps_var = tk.StringVar(value="")
+
+        self.external_field_enabled_var = tk.BooleanVar(value=False)
+        self.external_field_input_mode_var = tk.StringVar(value="SI V/m")
+        self.external_electric_native_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_electric_si_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_magnetic_native_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_field_window_vars = {
+            f"{axis}_{bound}": tk.StringVar(value="")
+            for axis in ("x", "y", "z", "t")
+            for bound in ("min", "max")
+        }
 
         self.auto_duration_enabled_var = tk.BooleanVar(value=False)
         self.auto_duration_crossing_steps_var = tk.IntVar(value=200)
@@ -537,6 +642,9 @@ class IntegratorGUI(
         self.summary_var = tk.StringVar(value="")
         self.progress_var = tk.DoubleVar(value=0.0)
 
+        self.driver_train_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_driver_train_controls()
+        )
         self.sim_type_var.trace_add("write", lambda *_: self._on_sim_type_change())
 
         for var in [self.seed_var, self.rider_species_var, self.driver_species_var]:
@@ -608,6 +716,8 @@ class IntegratorGUI(
 
         self._build_output_tab()
 
+        self._build_external_fields_tab()
+
         self._build_stability_tab()
 
         # Optimization/Sweep tab ----------------------------------------
@@ -638,6 +748,7 @@ class IntegratorGUI(
     # ------------------------------------------------------------------
     # Simulation execution
     # ------------------------------------------------------------------
+
 
 def main() -> None:
     # Set locale to system default for proper keyboard input (Swedish, etc.)

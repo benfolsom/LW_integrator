@@ -1,4 +1,5 @@
 .. _adaptive_timestep:
+.. _integration_runner:
 
 ================================================================================
 Adaptive Timestep System
@@ -55,7 +56,7 @@ Once timestep is reduced, the system uses **hysteresis** to prevent oscillation:
    Test whether base timestep can be safely restored:
 
    * Monitor energy changes
-   * If stable (|ΔE/E| < 1%) for 3 consecutive steps → return to base timestep
+   * If stable (``|ΔE/E| < 1%``) for 3 consecutive steps → return to base timestep
    * If unstable → return to cooldown
 
 This prevents rapid cycling between base and reduced timesteps.

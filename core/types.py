@@ -8,7 +8,7 @@ and example notebooks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from typing import Dict, List, Sequence
 
@@ -83,11 +83,12 @@ class GammaReconciliationMethod(Enum):
     ``DISABLED`` - No reconciliation; use γ_energy directly.
         May cause dual-gamma inconsistency and energy blowups.
 
-    ``ADAPTIVE_WEIGHTED`` - Weighted average with velocity-dependent α (default).
+    ``ADAPTIVE_WEIGHTED`` - Weighted average with velocity-dependent α.
         α = 0.8 (trust energy) for β < 0.9
         α = 0.2 (trust velocity) for β > 0.99
         α = 0.5 (balanced) for 0.9 ≤ β ≤ 0.99
-        Provides smooth transition across velocity regimes.
+        Provides smooth transition across velocity regimes, but remains an
+        opt-in stabilisation option rather than the default.
 
     ``USE_VELOCITY`` - Always use γ_velocity (γ = 1/√(1-β²)).
         Geometrically consistent but can break energy bookkeeping.
@@ -99,6 +100,10 @@ class GammaReconciliationMethod(Enum):
     ``FIXED_WEIGHTED`` - Fixed 50/50 weighted average.
         γ = 0.5·γ_energy + 0.5·γ_velocity
         Simple but doesn't adapt to physics regime.
+
+    The default is ``DISABLED``. Weighted reconciliation methods are kept for
+    diagnostics and legacy studies; production runs should prefer direct
+    energy bookkeeping unless a sweep explicitly validates the stabilisation.
     """
 
     DISABLED = auto()
@@ -106,6 +111,99 @@ class GammaReconciliationMethod(Enum):
     USE_VELOCITY = auto()
     USE_ENERGY = auto()
     FIXED_WEIGHTED = auto()
+
+
+@dataclass
+class ParticleLossConfig:
+    """Configuration for fixed-size physical particle-loss tracking."""
+
+    enabled: bool = True
+    loss_radius_mm: float | None = 500.0
+    conducting_wall_aperture_loss_enabled: bool = True
+    initial_radial_quantile: float | None = None
+    initial_radial_multiplier: float = 1.0
+    initial_radial_margin_mm: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.loss_radius_mm is not None and self.loss_radius_mm <= 0.0:
+            raise ValueError("particle_loss loss_radius_mm must be positive")
+        if self.initial_radial_quantile is not None and not (
+            0.0 < self.initial_radial_quantile <= 1.0
+        ):
+            raise ValueError("particle_loss initial_radial_quantile must be in (0, 1]")
+        if self.initial_radial_multiplier <= 0.0:
+            raise ValueError("particle_loss initial_radial_multiplier must be positive")
+        if self.initial_radial_margin_mm < 0.0:
+            raise ValueError("particle_loss initial_radial_margin_mm must be >= 0")
+
+
+@dataclass
+class PseudoGridConfig:
+    """Configuration surface for the experimental pseudo-grid solver mode.
+
+    The first implementation targets ``BUNCH_TO_BUNCH`` studies where only a
+    small active subset performs full retarded LW solves while the remaining
+    particles are advanced by neighborhood-weighted updates.
+
+    The configuration is threaded through the public API before the reduced
+    solver path is fully implemented so the CLI, GUI, saved configs, and tests
+    can evolve in lockstep.
+    """
+
+    enabled: bool = False
+    active_rider_count: int = 4
+    active_driver_count: int = 4
+    passive_neighbor_count: int = 4
+    coverage_strategy: str = "farthest_point_staleness"
+    coverage_space: str = "position"
+    pair_reuse_window: int = 16
+    source_weighting_mode: str = "inverse_distance"
+    loss_tracking_enabled: bool = True
+    causal_history_pruning_enabled: bool = False
+    causal_history_safety_margin_steps: int = 2
+
+    def __post_init__(self) -> None:
+        if self.active_rider_count <= 0:
+            raise ValueError("pseudo-grid active_rider_count must be positive")
+        if self.active_driver_count <= 0:
+            raise ValueError("pseudo-grid active_driver_count must be positive")
+        if self.passive_neighbor_count <= 0:
+            raise ValueError("pseudo-grid passive_neighbor_count must be positive")
+        if self.pair_reuse_window < 0:
+            raise ValueError("pseudo-grid pair_reuse_window must be non-negative")
+        if self.causal_history_safety_margin_steps < 0:
+            raise ValueError(
+                "pseudo-grid causal_history_safety_margin_steps must be non-negative"
+            )
+
+
+@dataclass
+class DriverTrainConfig:
+    """Configuration for flat BUNCH_TO_BUNCH driver-train sources."""
+
+    enabled: bool = False
+    bunch_count: int = 1
+    z_spacing_mm: float = 0.0
+    z_offsets_mm: tuple[float, ...] = field(default_factory=tuple)
+    prehistory_steps: int = 0
+    preserve_prehistory_in_output: bool = False
+
+    def __post_init__(self) -> None:
+        self.bunch_count = int(self.bunch_count)
+        self.z_spacing_mm = float(self.z_spacing_mm)
+        self.prehistory_steps = int(self.prehistory_steps)
+        self.z_offsets_mm = tuple(float(value) for value in self.z_offsets_mm)
+        if self.bunch_count < 1:
+            raise ValueError("driver_train bunch_count must be at least 1")
+        if self.prehistory_steps < 0:
+            raise ValueError("driver_train prehistory_steps must be non-negative")
+        if self.z_offsets_mm and len(self.z_offsets_mm) != self.bunch_count:
+            raise ValueError("driver_train z_offsets_mm length must match bunch_count")
+
+    def resolved_z_offsets_mm(self) -> tuple[float, ...]:
+        if self.z_offsets_mm:
+            return self.z_offsets_mm
+        return tuple(index * self.z_spacing_mm for index in range(self.bunch_count))
 
 
 @dataclass
@@ -151,6 +249,9 @@ class IntegratorConfig:
     use_image_weighting:
         Enables radial weighting when distributing conducting-wall subcharges.
         Defaults to ``True`` for improved agreement with the aperture geometry.
+    radiation_reaction_mode:
+        Radiation-reaction handling mode forwarded to the canonical integrator.
+        Defaults to ``"medina_lad"`` for user-facing runs.
     macroparticle_charge_multiplier:
         Multiplier for particle and image charges in macroparticle simulations.
         Defaults to ``1.0`` (no scaling). Use > 1.0 for macroparticle mode.
@@ -170,6 +271,14 @@ class IntegratorConfig:
     bunch_transv_mom:
         Transverse momentum spread (amu*mm/ns) from particle bunch initialization.
         Used to compute cumulative displacement errors. Defaults to ``0.0``.
+    pseudo_grid:
+        Experimental pseudo-grid solver settings. The initial plumbing keeps the
+        surface available across the API while the reduced-physics update path is
+        implemented incrementally. Defaults to a disabled configuration.
+    particle_loss:
+        Optional fixed-size particle-loss predicates. Lost particles are marked
+        dead, keep their trajectory slots, and stop contributing charge after
+        the loss step.
     """
 
     steps: int
@@ -185,11 +294,15 @@ class IntegratorConfig:
     z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
+    radiation_reaction_mode: str = "medina_lad"
     macroparticle_charge_multiplier: float = 1.0
     macroparticle_sigma_multiplier: float = 1.0
     macroparticle_use_momentum_errors: bool = True
     bunch_transv_dist: float = 0.0
     bunch_transv_mom: float = 0.0
+    pseudo_grid: PseudoGridConfig = field(default_factory=PseudoGridConfig)
+    driver_train: DriverTrainConfig = field(default_factory=DriverTrainConfig)
+    particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
 
 
 @dataclass
@@ -215,10 +328,22 @@ class SpaceChargeConfig:
     """
 
     enabled: bool = True
-    retarded: bool = True        # full retarded fields; False → always instantaneous Coulomb
-    softening_mm: float = 0.0    # Plummer softening ε (mm); 0 = no softening
-    bunch_sigma_mm: float = 0.01 # transverse RMS of the bunch (mm); used for auto threshold
-    min_retarded_steps: int | None = None  # None = auto from bunch_sigma_mm / (c * h_step)
+    retarded: bool = True  # full retarded fields; False → always instantaneous Coulomb
+    softening_mm: float = 0.0  # Plummer softening ε (mm); 0 = no softening
+    bunch_sigma_mm: float = (
+        0.01  # transverse RMS of the bunch (mm); used for auto threshold
+    )
+    min_retarded_steps: int | None = (
+        None  # None = auto from bunch_sigma_mm / (c * h_step)
+    )
+
+    def __post_init__(self) -> None:
+        if self.softening_mm < 0.0:
+            raise ValueError("space-charge softening_mm must be non-negative")
+        if self.bunch_sigma_mm <= 0.0:
+            raise ValueError("space-charge bunch_sigma_mm must be positive")
+        if self.min_retarded_steps is not None and self.min_retarded_steps < 0:
+            raise ValueError("space-charge min_retarded_steps must be non-negative")
 
     def resolve_min_retarded_steps(self, h_step: float) -> int:
         """Return the step threshold below which instantaneous Coulomb is used.
@@ -233,8 +358,53 @@ class SpaceChargeConfig:
         if self.min_retarded_steps is not None:
             return self.min_retarded_steps
         import math
+
         light_crossing_ns = self.bunch_sigma_mm / C_MMNS
         return max(1, math.ceil(light_crossing_ns / h_step))
+
+
+@dataclass
+class ExternalFieldConfig:
+    """Configuration for prescribed uniform external electromagnetic fields.
+
+    Field components use the solver's native units. Electric field components
+    are force per native charge, i.e. ``amu * mm / ns^2 / q_native``. Magnetic
+    field components are expressed in the same force-per-charge convention and
+    enter the Lorentz term as ``beta × B``.
+
+    This first implementation intentionally supports uniform fields with simple
+    spatial/temporal windows. More general field maps or callable field
+    providers can build on the same integrator hook later.
+    """
+
+    enabled: bool = True
+    electric_field_native: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    magnetic_field_native: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    z_min: float | None = None
+    z_max: float | None = None
+    t_min: float | None = None
+    t_max: float | None = None
+
+    def is_active(self, x: float, y: float, z: float, t: float) -> bool:
+        """Return whether the field should be applied at a particle location."""
+        if not self.enabled:
+            return False
+        bounds = (
+            (self.x_min, self.x_max, x),
+            (self.y_min, self.y_max, y),
+            (self.z_min, self.z_max, z),
+            (self.t_min, self.t_max, t),
+        )
+        for lower, upper, value in bounds:
+            if lower is not None and value < lower:
+                return False
+            if upper is not None and value > upper:
+                return False
+        return True
 
 
 @dataclass
@@ -262,6 +432,9 @@ class TrajectoryArrays:
     bdotx: np.ndarray
     bdoty: np.ndarray
     bdotz: np.ndarray
+    radiation_power: np.ndarray
+    radiation_energy: np.ndarray
+    radiation_energy_applied: np.ndarray
     origin_x: np.ndarray
     origin_y: np.ndarray
     origin_z: np.ndarray
@@ -279,12 +452,13 @@ class TrajectoryArrays:
     char_time: np.ndarray
 
     # Per-step scalars — [n_steps]
-    halted_early: np.ndarray   # dtype bool
-    halt_step: np.ndarray      # dtype int64, -1 if not halted
+    halted_early: np.ndarray  # dtype bool
+    halt_step: np.ndarray  # dtype int64, -1 if not halted
 
     # Non-array side-channels
-    halt_reason: list           # length n_steps, str or None
+    halt_reason: list  # length n_steps, str or None
     particle_failure_info: dict  # keyed by (step, particle_idx)
+    pseudo_grid_schedule: list  # length n_steps, object or None
 
     @property
     def n_steps(self) -> int:
@@ -312,6 +486,9 @@ class TrajectoryArrays:
             "bdotx": self.bdotx[step],
             "bdoty": self.bdoty[step],
             "bdotz": self.bdotz[step],
+            "radiation_power": self.radiation_power[step],
+            "radiation_energy": self.radiation_energy[step],
+            "radiation_energy_applied": self.radiation_energy_applied[step],
             "q": self.q,
             "m": self.m,
             "char_time": self.char_time,
@@ -328,10 +505,139 @@ class TrajectoryArrays:
             s["_halted_early"] = bool(self.halted_early[step])
             s["_halt_step"] = int(self.halt_step[step])
             s["_halt_reason"] = self.halt_reason[step]
+        pseudo_grid_schedule = self.pseudo_grid_schedule[step]
+        if pseudo_grid_schedule is not None:
+            s["_pseudo_grid_schedule"] = pseudo_grid_schedule
         return s
 
     def to_legacy(self) -> "Trajectory":
         """Return a full ``List[ParticleState]`` compatible with legacy consumers."""
+        return [self.state_at(i) for i in range(self.n_steps)]
+
+
+@dataclass
+class IndexedTrajectoryArrays:
+    """Particle-indexed view over a :class:`TrajectoryArrays` history."""
+
+    base: TrajectoryArrays
+    particle_indices: np.ndarray
+    start_step: int = 0
+    q_override: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        indices = np.asarray(self.particle_indices, dtype=int)
+        if indices.ndim != 1:
+            raise ValueError("particle_indices must be a 1-D array")
+        if np.any(indices < 0) or np.any(indices >= self.base.n_particles):
+            raise ValueError("particle_indices are out of bounds for base trajectory")
+        if self.start_step < 0 or self.start_step > self.base.n_steps:
+            raise ValueError("start_step is out of bounds for base trajectory")
+        if self.q_override is not None:
+            q_override = np.asarray(self.q_override, dtype=float)
+            if q_override.shape != (indices.size,):
+                raise ValueError("q_override must match the indexed particle count")
+            self.q_override = q_override
+        self.particle_indices = indices
+
+    @property
+    def n_steps(self) -> int:
+        return self.base.n_steps - int(self.start_step)
+
+    @property
+    def n_particles(self) -> int:
+        return int(self.particle_indices.size)
+
+    def global_step(self, step: int) -> int:
+        local_step = int(step)
+        if local_step < 0:
+            local_step += self.n_steps
+        if local_step < 0 or local_step >= self.n_steps:
+            raise IndexError("trajectory step index out of range")
+        return int(self.start_step) + local_step
+
+    def row(self, field_name: str, step: int) -> np.ndarray:
+        return np.asarray(getattr(self.base, field_name))[self.global_step(step), :][
+            self.particle_indices
+        ]
+
+    def scalar(self, field_name: str, step: int, particle_idx: int) -> float:
+        return float(
+            np.asarray(getattr(self.base, field_name))[
+                self.global_step(step),
+                int(self.particle_indices[int(particle_idx)]),
+            ]
+        )
+
+    def values_at_steps(
+        self,
+        field_name: str,
+        steps: np.ndarray,
+        particle_indices: np.ndarray,
+    ) -> np.ndarray:
+        local_steps = np.asarray(steps, dtype=int)
+        local_particles = np.asarray(particle_indices, dtype=int)
+        return np.asarray(getattr(self.base, field_name))[
+            int(self.start_step) + local_steps,
+            self.particle_indices[local_particles],
+        ]
+
+    def time_columns(self, up_to_step: int) -> np.ndarray:
+        end_step = self.global_step(up_to_step) + 1
+        return np.asarray(self.base.t)[int(self.start_step) : end_step, :][
+            :, self.particle_indices
+        ]
+
+    def constant(self, field_name: str) -> np.ndarray:
+        if field_name == "q" and self.q_override is not None:
+            return np.asarray(self.q_override, dtype=float)
+        return np.asarray(getattr(self.base, field_name))[self.particle_indices]
+
+    def state_at(self, step: int) -> ParticleState:
+        global_step = self.global_step(step)
+        state: ParticleState = {
+            "x": self.row("x", step),
+            "y": self.row("y", step),
+            "z": self.row("z", step),
+            "t": self.row("t", step),
+            "Px": self.row("Px", step),
+            "Py": self.row("Py", step),
+            "Pz": self.row("Pz", step),
+            "Pt": self.row("Pt", step),
+            "gamma": self.row("gamma", step),
+            "bx": self.row("bx", step),
+            "by": self.row("by", step),
+            "bz": self.row("bz", step),
+            "bdotx": self.row("bdotx", step),
+            "bdoty": self.row("bdoty", step),
+            "bdotz": self.row("bdotz", step),
+            "radiation_power": self.row("radiation_power", step),
+            "radiation_energy": self.row("radiation_energy", step),
+            "radiation_energy_applied": self.row("radiation_energy_applied", step),
+            "q": self.constant("q"),
+            "m": self.constant("m"),
+            "char_time": self.constant("char_time"),
+            "origin_x": self.row("origin_x", step),
+            "origin_y": self.row("origin_y", step),
+            "origin_z": self.row("origin_z", step),
+            "beta_avg_x": self.row("beta_avg_x", step),
+            "beta_avg_y": self.row("beta_avg_y", step),
+            "beta_avg_z": self.row("beta_avg_z", step),
+            "beta_samples": self.row("beta_samples", step),
+            "_dead_particles": np.asarray(self.base.dead)[
+                global_step,
+                self.particle_indices,
+            ],
+        }
+        pseudo_grid_schedule = self.base.pseudo_grid_schedule[global_step]
+        if pseudo_grid_schedule is not None:
+            state["_pseudo_grid_schedule"] = pseudo_grid_schedule
+        if self.base.halted_early[global_step]:
+            state["_halted_early"] = bool(self.base.halted_early[global_step])
+            state["_halt_step"] = int(self.base.halt_step[global_step])
+            state["_halt_reason"] = self.base.halt_reason[global_step]
+        return state
+
+    def to_legacy(self) -> "Trajectory":
         return [self.state_at(i) for i in range(self.n_steps)]
 
 
@@ -344,13 +650,30 @@ class TrajectoryBuilder:
 
     # Fields present in legacy state dicts that map to 2-D kinematic arrays
     _KINEMATIC_FIELDS: tuple = (
-        "x", "y", "z", "t",
-        "Px", "Py", "Pz", "Pt",
+        "x",
+        "y",
+        "z",
+        "t",
+        "Px",
+        "Py",
+        "Pz",
+        "Pt",
         "gamma",
-        "bx", "by", "bz",
-        "bdotx", "bdoty", "bdotz",
-        "origin_x", "origin_y", "origin_z",
-        "beta_avg_x", "beta_avg_y", "beta_avg_z",
+        "bx",
+        "by",
+        "bz",
+        "bdotx",
+        "bdoty",
+        "bdotz",
+        "radiation_power",
+        "radiation_energy",
+        "radiation_energy_applied",
+        "origin_x",
+        "origin_y",
+        "origin_z",
+        "beta_avg_x",
+        "beta_avg_y",
+        "beta_avg_z",
         "beta_samples",
     )
     _PARTICLE_CONST_FIELDS: tuple = ("q", "m", "char_time")
@@ -360,34 +683,37 @@ class TrajectoryBuilder:
         self._n_particles = n_particles
 
         self._arrays: dict = {
-            field: np.zeros((n_steps, n_particles), dtype=np.float64)
-            for field in self._KINEMATIC_FIELDS
+            field_name: np.zeros((n_steps, n_particles), dtype=np.float64)
+            for field_name in self._KINEMATIC_FIELDS
         }
         self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
 
-        for field in self._PARTICLE_CONST_FIELDS:
-            self._arrays[field] = np.zeros(n_particles, dtype=np.float64)
+        for field_name in self._PARTICLE_CONST_FIELDS:
+            self._arrays[field_name] = np.zeros(n_particles, dtype=np.float64)
 
         self._halted_early = np.zeros(n_steps, dtype=bool)
         self._halt_step_arr = np.full(n_steps, -1, dtype=np.int64)
         self._halt_reason: list = [None] * n_steps
         self._particle_failure_info: dict = {}
+        self._pseudo_grid_schedule: list = [None] * n_steps
 
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
-        for field in self._KINEMATIC_FIELDS:
-            if field in state:
-                self._arrays[field][step] = state[field]
+        for field_name in self._KINEMATIC_FIELDS:
+            if field_name in state:
+                self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
 
         dead = state.get("_dead_particles")
         if dead is not None:
             self._arrays["dead"][step] = dead
 
+        self._pseudo_grid_schedule[step] = state.get("_pseudo_grid_schedule")
+
         if step == 0:
-            for field in self._PARTICLE_CONST_FIELDS:
-                if field in state:
-                    self._arrays[field][:] = state[field]
+            for field_name in self._PARTICLE_CONST_FIELDS:
+                if field_name in state:
+                    self._arrays[field_name][:] = state[field_name]
 
     def set_halt_metadata(
         self,
@@ -401,9 +727,7 @@ class TrajectoryBuilder:
         self._halt_step_arr[step] = halt_step
         self._halt_reason[step] = reason
 
-    def set_particle_failure(
-        self, step: int, particle_idx: int, info: dict
-    ) -> None:
+    def set_particle_failure(self, step: int, particle_idx: int, info: dict) -> None:
         """Store per-particle failure info keyed by ``(step, particle_idx)``."""
         self._particle_failure_info[(step, particle_idx)] = info
 
@@ -432,6 +756,9 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"][:s],
             bdoty=self._arrays["bdoty"][:s],
             bdotz=self._arrays["bdotz"][:s],
+            radiation_power=self._arrays["radiation_power"][:s],
+            radiation_energy=self._arrays["radiation_energy"][:s],
+            radiation_energy_applied=self._arrays["radiation_energy_applied"][:s],
             origin_x=self._arrays["origin_x"][:s],
             origin_y=self._arrays["origin_y"][:s],
             origin_z=self._arrays["origin_z"][:s],
@@ -447,6 +774,7 @@ class TrajectoryBuilder:
             halt_step=self._halt_step_arr[:s],
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
+            pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
         )
 
     def build(self) -> TrajectoryArrays:
@@ -467,6 +795,9 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"],
             bdoty=self._arrays["bdoty"],
             bdotz=self._arrays["bdotz"],
+            radiation_power=self._arrays["radiation_power"],
+            radiation_energy=self._arrays["radiation_energy"],
+            radiation_energy_applied=self._arrays["radiation_energy_applied"],
             origin_x=self._arrays["origin_x"],
             origin_y=self._arrays["origin_y"],
             origin_z=self._arrays["origin_z"],
@@ -482,6 +813,7 @@ class TrajectoryBuilder:
             halt_step=self._halt_step_arr,
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
+            pseudo_grid_schedule=self._pseudo_grid_schedule,
         )
 
 
@@ -493,8 +825,11 @@ __all__ = [
     "ChronoMatchingMode",
     "StartupMode",
     "IntegratorConfig",
+    "DriverTrainConfig",
     "SpaceChargeConfig",
+    "ExternalFieldConfig",
     "C_MMNS",
     "TrajectoryArrays",
+    "IndexedTrajectoryArrays",
     "TrajectoryBuilder",
 ]

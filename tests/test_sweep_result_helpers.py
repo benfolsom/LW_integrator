@@ -114,6 +114,8 @@ def test_build_sweep_results_payload_serializes_completed_sweep_summary():
             "aperture_points": 2,
             "energy_range": [5.0, 6.0],
             "energy_points": 2,
+            "radiation_reaction_mode": "medina_lad",
+            "workers": 1,
             "param_grids": {"energy": [5.0, 6.0], "start_z": [100.0]},
         },
         "total_runs": 4,
@@ -133,7 +135,11 @@ def test_build_interrupted_sweep_results_payload_preserves_partial_shape():
     )
 
     assert payload == {
-        "config": {"simulation_type": "CONDUCTING_WALL"},
+        "config": {
+            "simulation_type": "CONDUCTING_WALL",
+            "radiation_reaction_mode": "medina_lad",
+            "workers": 1,
+        },
         "total_runs": 2,
         "successful": 2,
         "failed": 0,

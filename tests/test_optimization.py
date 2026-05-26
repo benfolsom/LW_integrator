@@ -550,12 +550,16 @@ class TestPluginPersistenceHelpers:
             {
                 "self_consistency_enabled": False,
                 "adaptive_timestep_threshold": 0.25,
+                "radiation_reaction_mode": "medina_lad",
+                "workers": 3,
                 "per_run_timeout": 12.5,
             },
         )
 
         assert config.self_consistency_enabled is False
         assert config.adaptive_timestep_threshold == pytest.approx(0.25)
+        assert config.radiation_reaction_mode == "medina_lad"
+        assert config.workers == 3
         assert config.per_run_timeout == pytest.approx(12.5)
         assert config.smoothness_enabled is True
         assert config.energy_monitor_enabled is False
@@ -571,6 +575,8 @@ class TestPluginPersistenceHelpers:
             starting_z_positions=[5.0],
             save_top_n_trajectories=True,
             linked_energy_sweep=True,
+            radiation_reaction_mode="power_matched_damping",
+            workers=4,
             transv_offset_x=1.2,
             transv_offset_y=-1.3,
             driver_transv_offset_x=2.4,
@@ -592,6 +598,8 @@ class TestPluginPersistenceHelpers:
         assert payload["save_top_n_trajectories"] is True
         assert payload["driver_direction"] == "+z"
         assert payload["linked_energy_sweep"] is True
+        assert payload["radiation_reaction_mode"] == "power_matched_damping"
+        assert payload["workers"] == 4
         assert payload["auto_steps_distance"] == pytest.approx(42.0)
         assert payload["rider_offset_x"] == pytest.approx(1.2)
         assert payload["driver_offset_y"] == pytest.approx(-2.5)
@@ -985,6 +993,7 @@ class TestOptimizationResultsMixin:
             "pcount": 4,
             "transv_mom": 0.03,
             "transv_dist": 0.04,
+            "transverse_geometry": "square",
             "starting_distance": 321.0,
             "starting_Pz": pytest.approx(
                 calculate_starting_pz_from_energy(12.0, 20.0, negative=True)

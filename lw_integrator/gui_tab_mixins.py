@@ -10,6 +10,7 @@ from .testbed_runner import (
     CORE_PARAM_LABELS,
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
+    RADIATION_REACTION_MODE_CHOICES,
     SPECIES_OPTIONS,
 )
 
@@ -73,9 +74,18 @@ class IntegratorGUITabMixin:
             rider_label = ttk.Label(particle_frame, text=PARAM_LABELS[name] + ":")
             rider_label.grid(row=row, column=0, sticky="w", pady=2)
 
-            rider_entry = ttk.Entry(
-                particle_frame, textvariable=self.rider_param_vars[name], width=12
-            )
+            if name == "transverse_geometry":
+                rider_entry = ttk.Combobox(
+                    particle_frame,
+                    textvariable=self.rider_param_vars[name],
+                    values=("square", "point", "gaussian", "ring"),
+                    state="readonly",
+                    width=12,
+                )
+            else:
+                rider_entry = ttk.Entry(
+                    particle_frame, textvariable=self.rider_param_vars[name], width=12
+                )
             rider_entry.grid(row=row, column=1, sticky="ew", pady=2)
 
             driver_label = ttk.Label(
@@ -83,9 +93,18 @@ class IntegratorGUITabMixin:
             )
             driver_label.grid(row=row, column=2, sticky="w", pady=2, padx=(12, 0))
 
-            driver_entry = ttk.Entry(
-                particle_frame, textvariable=self.driver_param_vars[name], width=12
-            )
+            if name == "transverse_geometry":
+                driver_entry = ttk.Combobox(
+                    particle_frame,
+                    textvariable=self.driver_param_vars[name],
+                    values=("square", "point", "gaussian", "ring"),
+                    state="readonly",
+                    width=12,
+                )
+            else:
+                driver_entry = ttk.Entry(
+                    particle_frame, textvariable=self.driver_param_vars[name], width=12
+                )
             driver_entry.grid(row=row, column=3, sticky="ew", pady=2)
             self._driver_entries.append(driver_entry)
 
@@ -236,6 +255,351 @@ class IntegratorGUITabMixin:
             self.macroparticle_momentum_errors_check,
         ]
 
+        next_row += 1
+        ttk.Separator(particle_frame, orient="horizontal").grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(12, 12)
+        )
+        next_row += 1
+
+        ttk.Label(
+            particle_frame,
+            text="Pseudo-grid Mode (Bunch-to-Bunch only):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        next_row += 1
+
+        self.pseudo_grid_enable_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable experimental pseudo-grid scheduler",
+            variable=self.pseudo_grid_enabled_var,
+            command=self._toggle_pseudo_grid_controls,
+        )
+        self.pseudo_grid_enable_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_active_rider_label = ttk.Label(
+            particle_frame, text="Active rider count:"
+        )
+        self.pseudo_grid_active_rider_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_active_rider_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_active_rider_count_var,
+            width=12,
+        )
+        self.pseudo_grid_active_rider_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_active_driver_label = ttk.Label(
+            particle_frame, text="Active driver count:"
+        )
+        self.pseudo_grid_active_driver_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_active_driver_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_active_driver_count_var,
+            width=12,
+        )
+        self.pseudo_grid_active_driver_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_passive_neighbor_label = ttk.Label(
+            particle_frame, text="Passive neighbor count:"
+        )
+        self.pseudo_grid_passive_neighbor_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_passive_neighbor_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_passive_neighbor_count_var,
+            width=12,
+        )
+        self.pseudo_grid_passive_neighbor_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_pair_reuse_label = ttk.Label(
+            particle_frame, text="Pair reuse window:"
+        )
+        self.pseudo_grid_pair_reuse_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_pair_reuse_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_pair_reuse_window_var,
+            width=12,
+        )
+        self.pseudo_grid_pair_reuse_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_coverage_strategy_label = ttk.Label(
+            particle_frame, text="Coverage strategy:"
+        )
+        self.pseudo_grid_coverage_strategy_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_coverage_strategy_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.pseudo_grid_coverage_strategy_var,
+            values=("farthest_point_staleness", "farthest_point"),
+            state="readonly",
+            width=24,
+        )
+        self.pseudo_grid_coverage_strategy_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_coverage_space_label = ttk.Label(
+            particle_frame, text="Coverage space:"
+        )
+        self.pseudo_grid_coverage_space_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_coverage_space_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.pseudo_grid_coverage_space_var,
+            values=("position", "phase_space"),
+            state="readonly",
+            width=24,
+        )
+        self.pseudo_grid_coverage_space_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_source_weighting_label = ttk.Label(
+            particle_frame, text="Source weighting mode:"
+        )
+        self.pseudo_grid_source_weighting_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_source_weighting_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.pseudo_grid_source_weighting_mode_var,
+            values=("inverse_distance", "nearest"),
+            state="readonly",
+            width=24,
+        )
+        self.pseudo_grid_source_weighting_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_loss_tracking_check = ttk.Checkbutton(
+            particle_frame,
+            text="Track particle losses in pseudo-grid mode",
+            variable=self.pseudo_grid_loss_tracking_enabled_var,
+        )
+        self.pseudo_grid_loss_tracking_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        next_row += 1
+
+        self.pseudo_grid_causal_pruning_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable causal-history pruning",
+            variable=self.pseudo_grid_causal_history_pruning_enabled_var,
+            command=self._toggle_pseudo_grid_controls,
+        )
+        self.pseudo_grid_causal_pruning_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        next_row += 1
+
+        self.pseudo_grid_causal_safety_label = ttk.Label(
+            particle_frame, text="Causal safety margin (steps):"
+        )
+        self.pseudo_grid_causal_safety_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.pseudo_grid_causal_safety_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_causal_history_safety_margin_steps_var,
+            width=12,
+        )
+        self.pseudo_grid_causal_safety_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        help_text_pseudo_grid = ttk.Label(
+            particle_frame,
+            text=(
+                "Pseudo-grid mode is currently an experimental configuration surface for BUNCH_TO_BUNCH runs.\n"
+                "Plumbing is present in the GUI, CLI, and saved configs while the reduced active/passive solver path is built incrementally.\n"
+                "Use the pair-reuse window to discourage repeated active matches, and causal-history pruning to prepare for bounded history retention."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_text_pseudo_grid.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        self._pseudo_grid_widgets = [
+            self.pseudo_grid_active_rider_label,
+            self.pseudo_grid_active_rider_entry,
+            self.pseudo_grid_active_driver_label,
+            self.pseudo_grid_active_driver_entry,
+            self.pseudo_grid_passive_neighbor_label,
+            self.pseudo_grid_passive_neighbor_entry,
+            self.pseudo_grid_pair_reuse_label,
+            self.pseudo_grid_pair_reuse_entry,
+            self.pseudo_grid_coverage_strategy_label,
+            self.pseudo_grid_coverage_strategy_combo,
+            self.pseudo_grid_coverage_space_label,
+            self.pseudo_grid_coverage_space_combo,
+            self.pseudo_grid_source_weighting_label,
+            self.pseudo_grid_source_weighting_combo,
+            self.pseudo_grid_loss_tracking_check,
+            self.pseudo_grid_causal_pruning_check,
+            self.pseudo_grid_causal_safety_label,
+            self.pseudo_grid_causal_safety_entry,
+        ]
+        self._pseudo_grid_causal_widgets = [
+            self.pseudo_grid_causal_safety_label,
+            self.pseudo_grid_causal_safety_entry,
+        ]
+        self._toggle_pseudo_grid_controls()
+
+        next_row += 1
+        ttk.Separator(particle_frame, orient="horizontal").grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(12, 12)
+        )
+        next_row += 1
+
+        ttk.Label(
+            particle_frame,
+            text="Driver Train / Persistent Prehistory (Bunch-to-Bunch only):",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        next_row += 1
+
+        self.driver_train_enable_check = ttk.Checkbutton(
+            particle_frame,
+            text="Enable flat driver-train source",
+            variable=self.driver_train_enabled_var,
+            command=self._toggle_driver_train_controls,
+        )
+        self.driver_train_enable_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_bunch_count_label = ttk.Label(
+            particle_frame, text="Driver bunch count:"
+        )
+        self.driver_train_bunch_count_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_bunch_count_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_bunch_count_var,
+            width=12,
+        )
+        self.driver_train_bunch_count_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_z_spacing_label = ttk.Label(
+            particle_frame, text="z spacing (mm):"
+        )
+        self.driver_train_z_spacing_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_z_spacing_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_z_spacing_mm_var,
+            width=12,
+        )
+        self.driver_train_z_spacing_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_z_offsets_label = ttk.Label(
+            particle_frame, text="Explicit z offsets (mm):"
+        )
+        self.driver_train_z_offsets_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_z_offsets_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_z_offsets_mm_var,
+            width=24,
+        )
+        self.driver_train_z_offsets_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_prehistory_label = ttk.Label(
+            particle_frame, text="Prehistory rows:"
+        )
+        self.driver_train_prehistory_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.driver_train_prehistory_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.driver_train_prehistory_steps_var,
+            width=12,
+        )
+        self.driver_train_prehistory_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.driver_train_preserve_check = ttk.Checkbutton(
+            particle_frame,
+            text="Preserve prehistory rows in output",
+            variable=self.driver_train_preserve_prehistory_var,
+        )
+        self.driver_train_preserve_check.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        next_row += 1
+
+        help_text_driver_train = ttk.Label(
+            particle_frame,
+            text=(
+                "Expands the configured driver bunch into longitudinal copies and can seed inertial back-history.\n"
+                "Leave explicit offsets blank to use count × spacing; pseudo-grid reduction is disabled for this mode."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+        )
+        help_text_driver_train.grid(
+            row=next_row, column=0, columnspan=2, sticky="w", pady=(0, 2), padx=(20, 0)
+        )
+
+        self._driver_train_widgets = [
+            self.driver_train_bunch_count_label,
+            self.driver_train_bunch_count_entry,
+            self.driver_train_z_spacing_label,
+            self.driver_train_z_spacing_entry,
+            self.driver_train_z_offsets_label,
+            self.driver_train_z_offsets_entry,
+            self.driver_train_prehistory_label,
+            self.driver_train_prehistory_entry,
+            self.driver_train_preserve_check,
+        ]
+        self._toggle_driver_train_controls()
+
     def _build_core_tab(self) -> None:
         """Build integration and force-cutoff controls."""
         from .gui import Tooltip
@@ -307,7 +671,9 @@ class IntegratorGUITabMixin:
                     foreground="gray",
                     font=("TkDefaultFont", 8, "italic"),
                 )
-                self.time_step_auto_hint.grid(row=row, column=1, sticky="w", pady=(0, 2))
+                self.time_step_auto_hint.grid(
+                    row=row, column=1, sticky="w", pady=(0, 2)
+                )
                 self.time_step_auto_hint.grid_remove()
                 row += 1
 
@@ -631,6 +997,181 @@ class IntegratorGUITabMixin:
             foreground="gray50",
         ).grid(row=25, column=0, columnspan=2, sticky="w", padx=(20, 0))
 
+    def _build_external_fields_tab(self) -> None:
+        """Build prescribed external-field controls."""
+        from .gui import Tooltip
+
+        field_frame = self._create_scrollable_tab(
+            self.notebook, "External Fields", padding=12
+        )
+        field_frame.columnconfigure(1, weight=1)
+        field_frame.columnconfigure(2, weight=1)
+        field_frame.columnconfigure(3, weight=1)
+
+        ttk.Label(
+            field_frame,
+            text=(
+                "These settings apply to BOTH single runs and sweeps/optimizations. "
+                "Sweep runs inherit these fixed field settings for every point."
+            ),
+            font=("TkDefaultFont", 9, "bold"),
+            foreground="blue",
+            justify="left",
+            wraplength=720,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
+
+        enable_frame = ttk.Frame(field_frame)
+        enable_frame.grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        self.external_field_enable_check = ttk.Checkbutton(
+            enable_frame,
+            text="Enable prescribed uniform external field",
+            variable=self.external_field_enabled_var,
+            command=self._toggle_external_field_controls,
+        )
+        self.external_field_enable_check.pack(side="left")
+        enable_help = ttk.Label(
+            enable_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        enable_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            enable_help,
+            "Applies a prescribed uniform mechanical Lorentz-force field.\n\n"
+            "Current implementation supports fixed E and B vectors with optional\n"
+            "x/y/z/t windows. Time-dependent covariant potential providers are a\n"
+            "future extension, not this panel.",
+        )
+
+        ttk.Label(field_frame, text="Electric field input:").grid(
+            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_field_input_mode_combo = ttk.Combobox(
+            field_frame,
+            textvariable=self.external_field_input_mode_var,
+            values=("SI V/m", "Native"),
+            state="readonly",
+            width=12,
+        )
+        self.external_field_input_mode_combo.grid(row=2, column=1, sticky="w", pady=2)
+        self.external_field_input_mode_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._toggle_external_field_controls(),
+        )
+
+        for column, axis in enumerate(("x", "y", "z"), start=1):
+            ttk.Label(field_frame, text=axis).grid(row=3, column=column, sticky="w")
+
+        self.external_electric_si_labels = []
+        self.external_electric_si_entries = []
+        self.external_electric_native_labels = []
+        self.external_electric_native_entries = []
+        self.external_magnetic_labels = []
+        self.external_magnetic_entries = []
+
+        self.external_electric_si_label = ttk.Label(field_frame, text="E (V/m):")
+        self.external_electric_si_label.grid(
+            row=4, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_electric_si_labels.append(self.external_electric_si_label)
+        for column, var in enumerate(self.external_electric_si_vars, start=1):
+            entry = ttk.Entry(field_frame, textvariable=var, width=14)
+            entry.grid(row=4, column=column, sticky="ew", pady=2, padx=(0, 6))
+            self.external_electric_si_entries.append(entry)
+
+        self.external_electric_native_label = ttk.Label(field_frame, text="E (native):")
+        self.external_electric_native_label.grid(
+            row=5, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_electric_native_labels.append(self.external_electric_native_label)
+        for column, var in enumerate(self.external_electric_native_vars, start=1):
+            entry = ttk.Entry(field_frame, textvariable=var, width=14)
+            entry.grid(row=5, column=column, sticky="ew", pady=2, padx=(0, 6))
+            self.external_electric_native_entries.append(entry)
+
+        self.external_magnetic_label = ttk.Label(field_frame, text="B (native):")
+        self.external_magnetic_label.grid(
+            row=6, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_magnetic_labels.append(self.external_magnetic_label)
+        for column, var in enumerate(self.external_magnetic_native_vars, start=1):
+            entry = ttk.Entry(field_frame, textvariable=var, width=14)
+            entry.grid(row=6, column=column, sticky="ew", pady=2, padx=(0, 6))
+            self.external_magnetic_entries.append(entry)
+
+        ttk.Label(
+            field_frame,
+            text="Optional field window bounds in native simulation coordinates. Leave blank for unbounded.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+            wraplength=720,
+        ).grid(row=7, column=0, columnspan=4, sticky="w", pady=(12, 4), padx=(20, 0))
+
+        window_frame = ttk.LabelFrame(field_frame, text="Field Window", padding=8)
+        window_frame.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(0, 12))
+        window_frame.columnconfigure(1, weight=1)
+        window_frame.columnconfigure(2, weight=1)
+        ttk.Label(window_frame, text="min").grid(row=0, column=1, sticky="w")
+        ttk.Label(window_frame, text="max").grid(row=0, column=2, sticky="w")
+
+        self.external_field_window_entries = []
+        for row, axis in enumerate(("x", "y", "z", "t"), start=1):
+            ttk.Label(window_frame, text=f"{axis}:").grid(
+                row=row, column=0, sticky="w", pady=2
+            )
+            for column, bound in enumerate(("min", "max"), start=1):
+                entry = ttk.Entry(
+                    window_frame,
+                    textvariable=self.external_field_window_vars[f"{axis}_{bound}"],
+                    width=16,
+                )
+                entry.grid(row=row, column=column, sticky="ew", pady=2, padx=(0, 8))
+                self.external_field_window_entries.append(entry)
+
+        self._external_field_sub_widgets = [
+            self.external_field_input_mode_combo,
+            self.external_electric_si_label,
+            *self.external_electric_si_entries,
+            self.external_electric_native_label,
+            *self.external_electric_native_entries,
+            self.external_magnetic_label,
+            *self.external_magnetic_entries,
+            *self.external_field_window_entries,
+        ]
+
+        self._toggle_external_field_controls()
+
+    def _toggle_external_field_controls(self) -> None:
+        enabled = self.external_field_enabled_var.get()
+        base_state = "normal" if enabled else "disabled"
+        electric_mode = self.external_field_input_mode_var.get()
+
+        for widget in getattr(self, "_external_field_sub_widgets", []):
+            try:
+                widget.configure(state=base_state)
+            except Exception:
+                pass
+
+        if not enabled:
+            return
+
+        native_state = "normal" if electric_mode == "Native" else "disabled"
+        si_state = "normal" if electric_mode == "SI V/m" else "disabled"
+        for widget in [
+            self.external_electric_native_label,
+            *self.external_electric_native_entries,
+        ]:
+            try:
+                widget.configure(state=native_state)
+            except Exception:
+                pass
+        for widget in [
+            self.external_electric_si_label,
+            *self.external_electric_si_entries,
+        ]:
+            try:
+                widget.configure(state=si_state)
+            except Exception:
+                pass
+
     def _build_stability_tab(self) -> None:
         """Build self-consistency and adaptive timestep controls."""
         # Stability Settings tab ----------------------------------------
@@ -656,6 +1197,7 @@ class IntegratorGUITabMixin:
 
         self._build_self_consistency_section(stability_frame)
         self._build_adaptive_timestep_section(stability_frame)
+        self._build_radiation_reaction_section(stability_frame)
         self._build_space_charge_section(stability_frame)
         self._build_auto_duration_section(stability_frame)
 
@@ -1048,15 +1590,16 @@ class IntegratorGUITabMixin:
         Tooltip(
             method_help,
             "Gamma Reconciliation Method:\n\n"
-            "DISABLED - No reconciliation (not recommended; may cause blowups)\n\n"
-            "ADAPTIVE_WEIGHTED - Velocity-dependent weighting (recommended)\n"
+            "DISABLED - Default baseline. Keeps mass-shell projection without\n"
+            "  additional γ blending.\n\n"
+            "ADAPTIVE_WEIGHTED - Velocity-dependent blending.\n"
             "  • β < 0.9: Trust energy (weight=0.8)\n"
             "  • β > 0.99: Trust velocity (weight=0.2)\n"
             "  • Mid-range: Balanced (weight=0.5)\n\n"
-            "USE_VELOCITY - Always use γ from β (breaks energy)\n\n"
+            "USE_VELOCITY - Always use γ from β (can break energy consistency)\n\n"
             "USE_ENERGY - Always use γ from Pt\n\n"
             "FIXED_WEIGHTED - Fixed 50/50 blend\n\n"
-            "Recommended: ADAPTIVE_WEIGHTED",
+            "If you need strict baseline behavior, keep DISABLED.",
         )
 
         # Adaptive weighted parameters
@@ -1469,6 +2012,51 @@ class IntegratorGUITabMixin:
             row=10, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
+    def _build_radiation_reaction_section(self, stability_frame: ttk.Frame) -> None:
+        """Build radiation-reaction mode controls."""
+        from .gui import Tooltip
+
+        rr_frame = ttk.LabelFrame(stability_frame, text="Radiation Reaction", padding=8)
+        rr_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        rr_frame.columnconfigure(1, weight=1)
+
+        mode_frame = ttk.Frame(rr_frame)
+        mode_frame.grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Label(mode_frame, text="Mode:").pack(side="left")
+        rr_help = ttk.Label(mode_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        rr_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            rr_help,
+            "Radiation-reaction handling for the single-run integrator.\n\n"
+            "Modes:\n"
+            "  • off - No momentum change from self-radiation.\n"
+            "  • diagnostic_only - Record radiated power without changing momentum.\n"
+            "  • power_matched_damping - Remove radiated energy from mechanical momentum after the LW update.\n"
+            "  • medina_lad - Experimental Medina/LAD candidate reaction force.\n\n"
+            "Recommended default for new study runs: medina_lad.\n"
+            "Use off or diagnostic_only for baselines/comparisons.",
+        )
+        self.radiation_reaction_mode_combo = ttk.Combobox(
+            rr_frame,
+            textvariable=self.radiation_reaction_mode_var,
+            values=RADIATION_REACTION_MODE_CHOICES,
+            state="readonly",
+            width=24,
+        )
+        self.radiation_reaction_mode_combo.grid(row=0, column=1, sticky="w", pady=2)
+
+        ttk.Label(
+            rr_frame,
+            text=(
+                "Use medina_lad for normal study runs; "
+                "use off/diagnostic_only for baselines and power_matched_damping for targeted comparisons."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray40",
+            justify="left",
+            wraplength=700,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
     def _build_space_charge_section(self, stability_frame: ttk.Frame) -> None:
         """Build intra-bunch space-charge controls."""
         from .gui import Tooltip
@@ -1476,7 +2064,7 @@ class IntegratorGUITabMixin:
         sc_frame = ttk.LabelFrame(
             stability_frame, text="Intra-Bunch Space Charge", padding=8
         )
-        sc_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        sc_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         sc_frame.columnconfigure(1, weight=1)
 
         self.space_charge_enable_check = ttk.Checkbutton(
@@ -1491,7 +2079,9 @@ class IntegratorGUITabMixin:
 
         ret_frame = ttk.Frame(sc_frame)
         ret_frame.grid(row=1, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.space_charge_retarded_label = ttk.Label(ret_frame, text="Use retarded fields:")
+        self.space_charge_retarded_label = ttk.Label(
+            ret_frame, text="Use retarded fields:"
+        )
         self.space_charge_retarded_label.pack(side="left")
         ret_help = ttk.Label(ret_frame, text="ⓘ", foreground="blue", cursor="hand2")
         ret_help.pack(side="left", padx=(3, 0))
@@ -1533,11 +2123,62 @@ class IntegratorGUITabMixin:
         )
         self.space_charge_softening_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
+        sigma_frame = ttk.Frame(sc_frame)
+        sigma_frame.grid(row=3, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.space_charge_sigma_label = ttk.Label(
+            sigma_frame, text="Bunch sigma for retarded startup (mm):"
+        )
+        self.space_charge_sigma_label.pack(side="left")
+        sigma_help = ttk.Label(sigma_frame, text="ⓘ", foreground="blue", cursor="hand2")
+        sigma_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            sigma_help,
+            "Characteristic bunch width used to delay retarded rider-rider\n"
+            "space-charge fields until the trajectory contains at least one\n"
+            "light-crossing time of intra-bunch history.\n\n"
+            "Default: 0.01 mm.",
+        )
+        self.space_charge_sigma_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.space_charge_bunch_sigma_mm_var,
+            width=16,
+        )
+        self.space_charge_sigma_entry.grid(row=3, column=1, sticky="ew", pady=2)
+
+        min_ret_frame = ttk.Frame(sc_frame)
+        min_ret_frame.grid(row=4, column=0, sticky="w", pady=2, padx=(20, 0))
+        self.space_charge_min_retarded_steps_label = ttk.Label(
+            min_ret_frame, text="Min retarded SC steps:"
+        )
+        self.space_charge_min_retarded_steps_label.pack(side="left")
+        min_ret_help = ttk.Label(
+            min_ret_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        min_ret_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            min_ret_help,
+            "Optional explicit step threshold before retarded intra-bunch\n"
+            "space charge is used. Leave blank to compute it from bunch sigma\n"
+            "and timestep. Set 0 only for controlled diagnostics.",
+        )
+        self.space_charge_min_retarded_steps_entry = ttk.Entry(
+            sc_frame,
+            textvariable=self.space_charge_min_retarded_steps_var,
+            width=16,
+        )
+        self.space_charge_min_retarded_steps_entry.grid(
+            row=4, column=1, sticky="ew", pady=2
+        )
+
         self._space_charge_sub_widgets = [
             self.space_charge_retarded_label,
             self.space_charge_retarded_check,
             self.space_charge_softening_label,
             self.space_charge_softening_entry,
+            self.space_charge_sigma_label,
+            self.space_charge_sigma_entry,
+            self.space_charge_min_retarded_steps_label,
+            self.space_charge_min_retarded_steps_entry,
         ]
 
     def _toggle_space_charge_controls(self) -> None:
@@ -1558,7 +2199,7 @@ class IntegratorGUITabMixin:
             text="Auto-Duration Crossing (BUNCH_TO_BUNCH)",
             padding=8,
         )
-        ad_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ad_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         ad_frame.columnconfigure(1, weight=1)
 
         enable_frame = ttk.Frame(ad_frame)
@@ -1617,4 +2258,3 @@ class IntegratorGUITabMixin:
     def _toggle_auto_duration_controls(self) -> None:
         # Implemented in gui_state_mixins.IntegratorGUIStateMixin
         pass
-

@@ -549,7 +549,10 @@ class OptimizationRunMixin:
         error_container = [None]
         cancel_flag = [False]
 
-        if run_params.aperture < 0.1 and run_params.macroparticle_charge_multiplier > 1000:
+        if (
+            run_params.aperture < 0.1
+            and run_params.macroparticle_charge_multiplier > 1000
+        ):
             self._log_result(
                 f"  [WARNING] Run {run_num}: Very small aperture ({run_params.aperture:.4f} mm) "
                 f"with large charge multiplier ({run_params.macroparticle_charge_multiplier:.0f})"
@@ -591,6 +594,68 @@ class OptimizationRunMixin:
         if error_container[0] is not None:
             return None, error_container[0], timed_out
         return result_container[0], None, timed_out
+
+    def _run_parallel_sweep_background(self) -> None:
+        """Run blind sweep via the headless sweep runner with worker processes."""
+        import json
+        from datetime import datetime
+
+        from lw_integrator.sweep_runner import SweepRunner
+
+        config_name = "sweep"
+        if getattr(self, "last_loaded_config", None):
+            config_name = Path(self.last_loaded_config).stem
+
+        sweep_dir = Path(self.sweep_output_dir) / (
+            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{config_name}"
+        )
+
+        self._log_result(
+            f"[INFO] Running blind sweep with {self.config.workers} worker processes"
+        )
+        self._log_result(
+            "[INFO] Parallel sweeps work best with modest worker counts because each run already uses optimized kernels"
+        )
+        self._update_progress(
+            0,
+            f"Running parallel sweep with {self.config.workers} workers...",
+        )
+
+        def runner_log(line: str) -> None:
+            prefix = "[OPTIMIZATION] "
+            message = line[len(prefix) :] if line.startswith(prefix) else line
+            self._log_result(message)
+
+        def runner_progress(completed: int, total: int) -> None:
+            progress = 100.0 * completed / total if total else 0.0
+            self._update_progress(
+                progress,
+                f"Completed {completed}/{total} parallel sweep runs...",
+            )
+
+        runner = SweepRunner(
+            self.config,
+            sweep_dir,
+            verbose=False,
+            workers=self.config.workers,
+            log_callback=runner_log,
+            progress_callback=runner_progress,
+        )
+        success = runner.run()
+
+        if success and self.config.save_results:
+            results_path = runner.output_dir / "sweep_results.json"
+            if results_path.exists():
+                with open(results_path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                results = payload.get("results", [])
+                if results:
+                    self._generate_summary_plots(results, runner.output_dir)
+
+        if success:
+            self._update_progress(100, "Complete!")
+        else:
+            self._update_progress_text("Sweep ended with errors")
 
     def _run_sweep_background(self, is_finetune: bool = False, finetune_regions=None):
         """Run parameter sweep in background with real integration.
@@ -685,6 +750,10 @@ class OptimizationRunMixin:
             os.makedirs(self.config.output_dir, exist_ok=True)
             self._log_result(f"Output directory: {self.config.output_dir}")
             self._log_result("")
+
+            if self.config.workers > 1:
+                self._run_parallel_sweep_background()
+                return
 
             # Store all results and failed runs
             all_results = []
@@ -844,7 +913,7 @@ class OptimizationRunMixin:
                             steps=steps,
                             run_num=run_num,
                             seed_override=current_seed,
-                            )
+                        )
                     except Exception as e:
                         attempt_error = e
                         if use_full_debug:
@@ -884,7 +953,7 @@ class OptimizationRunMixin:
                             if retry_attempt > 0:
                                 self._log_result(
                                     f"  [SUCCESS] Run {run_num} succeeded on retry attempt {retry_attempt}"
-                            )
+                                )
                             break
                         else:
                             # No useful metrics - all particles died or halted early
@@ -1001,9 +1070,7 @@ class OptimizationRunMixin:
                     if self.config.skip_failed_runs:
                         self._log_result(f"[WARNING] Run {run_num} failed: {e}")
                         self._log_result(f"    Error details: {error_details}")
-                        self._log_result(
-                            "    Skipping and continuing with next run..."
-                        )
+                        self._log_result("    Skipping and continuing with next run...")
 
                         # Record failed run
                         failed_runs.append(
@@ -1032,9 +1099,7 @@ class OptimizationRunMixin:
                 # Handle timeout case
                 if run_timed_out:
                     if self.config.skip_failed_runs:
-                        self._log_result(
-                            "    Skipping and continuing with next run..."
-                        )
+                        self._log_result("    Skipping and continuing with next run...")
                         failed_runs.append(
                             build_timeout_sweep_run_record(
                                 run_num=run_num,
@@ -1178,10 +1243,7 @@ class OptimizationRunMixin:
         try:
             # Log diagnostic info for potentially problematic configurations
             # Only check aperture for CONDUCTING_WALL modes
-            if (
-                not is_bunch_to_bunch(self.config.simulation_type)
-                and aperture < 0.1
-            ):
+            if not is_bunch_to_bunch(self.config.simulation_type) and aperture < 0.1:
                 diagnostic_line = build_small_aperture_diagnostic_line(
                     run_num=run_num,
                     aperture=aperture,

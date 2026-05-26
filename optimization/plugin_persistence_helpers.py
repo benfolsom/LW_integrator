@@ -8,10 +8,15 @@ from typing import Any, Dict
 _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_enabled": True,
     "self_consistency_tolerance": 1e-4,
+    "self_consistency_convergence_mode": "fixed_geometry",
+    "self_consistency_target_ms_tolerance": 1e-6,
     "self_consistency_max_iterations": 5,
+    "self_consistency_mass_shell_tolerance": 1e-2,
+    "self_consistency_mass_shell_relaxation": 0.7,
     "self_consistency_verbosity": 0,
     "self_consistency_chrono_interpolate": False,
     "self_consistency_chrono_tolerance": 1e-3,
+    "self_consistency_chrono_matching_mode": "FAST",
     "self_consistency_chrono_high_precision": False,
     "self_consistency_chrono_adaptive_tolerance": False,
     "energy_monitor_halt_on_jump": False,
@@ -23,6 +28,47 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "adaptive_timestep_probe_threshold": 0.01,
     "adaptive_timestep_max_probe_steps": 3,
     "adaptive_timestep_debug": False,
+    "space_charge_enabled": False,
+    "space_charge_retarded": True,
+    "space_charge_softening_mm": 0.0,
+    "space_charge_bunch_sigma_mm": 0.01,
+    "space_charge_min_retarded_steps": None,
+    "external_field_enabled": False,
+    "external_electric_field_native": (0.0, 0.0, 0.0),
+    "external_electric_field_v_per_m": None,
+    "external_magnetic_field_native": (0.0, 0.0, 0.0),
+    "external_field_x_min": None,
+    "external_field_x_max": None,
+    "external_field_y_min": None,
+    "external_field_y_max": None,
+    "external_field_z_min": None,
+    "external_field_z_max": None,
+    "external_field_t_min": None,
+    "external_field_t_max": None,
+    "radiation_reaction_mode": "medina_lad",
+    "particle_loss_enabled": True,
+    "particle_loss_radius_mm": 500.0,
+    "particle_loss_conducting_wall_aperture_loss_enabled": True,
+    "particle_loss_initial_radial_quantile": None,
+    "particle_loss_initial_radial_multiplier": 1.0,
+    "particle_loss_initial_radial_margin_mm": 0.0,
+    "pseudo_grid_enabled": False,
+    "pseudo_grid_active_rider_count": 4,
+    "pseudo_grid_active_driver_count": 4,
+    "pseudo_grid_passive_neighbor_count": 4,
+    "pseudo_grid_coverage_strategy": "farthest_point_staleness",
+    "pseudo_grid_coverage_space": "position",
+    "pseudo_grid_pair_reuse_window": 16,
+    "pseudo_grid_source_weighting_mode": "inverse_distance",
+    "pseudo_grid_loss_tracking_enabled": True,
+    "pseudo_grid_causal_history_pruning_enabled": False,
+    "pseudo_grid_causal_history_safety_margin_steps": 2,
+    "driver_train_enabled": False,
+    "driver_train_bunch_count": 1,
+    "driver_train_z_spacing_mm": 0.0,
+    "driver_train_z_offsets_mm": (),
+    "driver_train_prehistory_steps": 0,
+    "driver_train_preserve_prehistory_in_output": False,
     "self_consistency_gamma_reconciliation_method": "DISABLED",
     "self_consistency_gamma_reconciliation_low_beta_threshold": 0.9,
     "self_consistency_gamma_reconciliation_high_beta_threshold": 0.99,
@@ -30,6 +76,7 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_gamma_reconciliation_high_beta_weight": 0.2,
     "self_consistency_gamma_reconciliation_mid_beta_weight": 0.5,
     "self_consistency_gamma_reconciliation_fixed_weight": 0.5,
+    "workers": 1,
     "per_run_timeout": 300.0,
     "skip_failed_runs": True,
     "failed_run_retry_attempts": 1,
@@ -51,6 +98,8 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "target_distance_mm": 100.0,
     "timestep": 3e-7,
     "energy_scale_exponent": 1.0,
+    "transverse_geometry": "square",
+    "driver_transverse_geometry": "square",
 }
 
 
@@ -64,8 +113,27 @@ def metrics_export_settings_from_data(data: Dict[str, Any]) -> tuple[str, str]:
 
 def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:
     """Apply persisted config values and defaults onto an OptimizationConfig."""
+    nested_driver_train = data.get("driver_train")
+    if isinstance(nested_driver_train, dict):
+        data = dict(data)
+        for source_key, target_key in {
+            "enabled": "driver_train_enabled",
+            "bunch_count": "driver_train_bunch_count",
+            "z_spacing_mm": "driver_train_z_spacing_mm",
+            "z_offsets_mm": "driver_train_z_offsets_mm",
+            "prehistory_steps": "driver_train_prehistory_steps",
+            "preserve_prehistory_in_output": "driver_train_preserve_prehistory_in_output",
+        }.items():
+            if source_key in nested_driver_train:
+                data[target_key] = nested_driver_train[source_key]
+
     for attr_name, default in _PERSISTED_CONFIG_DEFAULTS.items():
         setattr(config, attr_name, data.get(attr_name, default))
+    config.driver_train_z_offsets_mm = tuple(config.driver_train_z_offsets_mm or ())
+    config.transverse_geometry = data.get(
+        "rider_transverse_geometry", data.get("transverse_geometry", "square")
+    )
+    config.driver_transverse_geometry = data.get("driver_transverse_geometry", "square")
 
     # Energy monitor behavior was removed; keep internal defaults explicit.
     config.energy_monitor_enabled = False
@@ -120,17 +188,20 @@ def build_saved_config_payload(
         "optimization_n_starts": config.optimization_n_starts,
         "optimization_save_top_n": config.optimization_save_top_n,
         "optimization_convergence_tol": config.optimization_convergence_tol,
-        "optimization_convergence_patience": (
-            config.optimization_convergence_patience
-        ),
+        "optimization_convergence_patience": (config.optimization_convergence_patience),
         "self_consistency_enabled": config.self_consistency_enabled,
         "self_consistency_tolerance": config.self_consistency_tolerance,
+        "self_consistency_convergence_mode": config.self_consistency_convergence_mode,
+        "self_consistency_target_ms_tolerance": config.self_consistency_target_ms_tolerance,
         "self_consistency_max_iterations": config.self_consistency_max_iterations,
+        "self_consistency_mass_shell_tolerance": config.self_consistency_mass_shell_tolerance,
+        "self_consistency_mass_shell_relaxation": config.self_consistency_mass_shell_relaxation,
         "self_consistency_verbosity": config.self_consistency_verbosity,
         "self_consistency_chrono_interpolate": (
             config.self_consistency_chrono_interpolate
         ),
         "self_consistency_chrono_tolerance": config.self_consistency_chrono_tolerance,
+        "self_consistency_chrono_matching_mode": config.self_consistency_chrono_matching_mode,
         "self_consistency_chrono_high_precision": (
             config.self_consistency_chrono_high_precision
         ),
@@ -169,23 +240,79 @@ def build_saved_config_payload(
         "adaptive_timestep_probe_threshold": config.adaptive_timestep_probe_threshold,
         "adaptive_timestep_max_probe_steps": config.adaptive_timestep_max_probe_steps,
         "adaptive_timestep_debug": config.adaptive_timestep_debug,
+        "space_charge_enabled": config.space_charge_enabled,
+        "space_charge_retarded": config.space_charge_retarded,
+        "space_charge_softening_mm": config.space_charge_softening_mm,
+        "space_charge_bunch_sigma_mm": config.space_charge_bunch_sigma_mm,
+        "space_charge_min_retarded_steps": config.space_charge_min_retarded_steps,
+        "external_field_enabled": config.external_field_enabled,
+        "external_electric_field_native": list(config.external_electric_field_native),
+        "external_electric_field_v_per_m": (
+            list(config.external_electric_field_v_per_m)
+            if config.external_electric_field_v_per_m is not None
+            else None
+        ),
+        "external_magnetic_field_native": list(config.external_magnetic_field_native),
+        "external_field_x_min": config.external_field_x_min,
+        "external_field_x_max": config.external_field_x_max,
+        "external_field_y_min": config.external_field_y_min,
+        "external_field_y_max": config.external_field_y_max,
+        "external_field_z_min": config.external_field_z_min,
+        "external_field_z_max": config.external_field_z_max,
+        "external_field_t_min": config.external_field_t_min,
+        "external_field_t_max": config.external_field_t_max,
+        "radiation_reaction_mode": config.radiation_reaction_mode,
+        "particle_loss": {
+            "enabled": config.particle_loss_enabled,
+            "loss_radius_mm": config.particle_loss_radius_mm,
+            "conducting_wall_aperture_loss_enabled": (
+                config.particle_loss_conducting_wall_aperture_loss_enabled
+            ),
+            "initial_radial_quantile": config.particle_loss_initial_radial_quantile,
+            "initial_radial_multiplier": config.particle_loss_initial_radial_multiplier,
+            "initial_radial_margin_mm": config.particle_loss_initial_radial_margin_mm,
+        },
+        "pseudo_grid": {
+            "enabled": config.pseudo_grid_enabled,
+            "active_rider_count": config.pseudo_grid_active_rider_count,
+            "active_driver_count": config.pseudo_grid_active_driver_count,
+            "passive_neighbor_count": config.pseudo_grid_passive_neighbor_count,
+            "coverage_strategy": config.pseudo_grid_coverage_strategy,
+            "coverage_space": config.pseudo_grid_coverage_space,
+            "pair_reuse_window": config.pseudo_grid_pair_reuse_window,
+            "source_weighting_mode": config.pseudo_grid_source_weighting_mode,
+            "loss_tracking_enabled": config.pseudo_grid_loss_tracking_enabled,
+            "causal_history_pruning_enabled": (
+                config.pseudo_grid_causal_history_pruning_enabled
+            ),
+            "causal_history_safety_margin_steps": (
+                config.pseudo_grid_causal_history_safety_margin_steps
+            ),
+        },
+        "driver_train": {
+            "enabled": config.driver_train_enabled,
+            "bunch_count": config.driver_train_bunch_count,
+            "z_spacing_mm": config.driver_train_z_spacing_mm,
+            "z_offsets_mm": list(config.driver_train_z_offsets_mm),
+            "prehistory_steps": config.driver_train_prehistory_steps,
+            "preserve_prehistory_in_output": (
+                config.driver_train_preserve_prehistory_in_output
+            ),
+        },
+        "workers": config.workers,
         "per_run_timeout": config.per_run_timeout,
         "skip_failed_runs": config.skip_failed_runs,
         "failed_run_retry_attempts": config.failed_run_retry_attempts,
         "smoothness_enabled": config.smoothness_enabled,
         "smoothness_window_size": config.smoothness_window_size,
-        "smoothness_oscillation_threshold": (
-            config.smoothness_oscillation_threshold
-        ),
+        "smoothness_oscillation_threshold": (config.smoothness_oscillation_threshold),
         "smoothness_trend_threshold": config.smoothness_trend_threshold,
         "smoothness_reject_on_violation": config.smoothness_reject_on_violation,
         "smoothness_max_violations": config.smoothness_max_violations,
         "macroparticle_enabled": config.macroparticle_enabled,
         "macroparticle_charge_multiplier": config.macroparticle_charge_multiplier,
         "macroparticle_sigma_multiplier": config.macroparticle_sigma_multiplier,
-        "macroparticle_use_momentum_errors": (
-            config.macroparticle_use_momentum_errors
-        ),
+        "macroparticle_use_momentum_errors": (config.macroparticle_use_momentum_errors),
         "image_subcharge_count": config.image_subcharge_count,
         "use_image_weighting": config.use_image_weighting,
         "timestep_strategy": config.timestep_strategy,
@@ -198,6 +325,11 @@ def build_saved_config_payload(
         "auto_steps_distance": auto_steps_distance,
         "rider_stripped_ions": rider_stripped_ions,
         "driver_stripped_ions": driver_stripped_ions,
+        "transverse_geometry": getattr(config, "transverse_geometry", "square"),
+        "rider_transverse_geometry": getattr(config, "transverse_geometry", "square"),
+        "driver_transverse_geometry": getattr(
+            config, "driver_transverse_geometry", "square"
+        ),
         "rider_offset_x": config.transv_offset_x,
         "rider_offset_y": config.transv_offset_y,
         "driver_offset_x": config.driver_transv_offset_x,

@@ -30,7 +30,9 @@ from .integration_runner import (
 )
 from .types import (
     ChronoMatchingMode,
+    DriverTrainConfig,
     IntegratorConfig,
+    ParticleLossConfig,
     ParticleState,
     SimulationType,
     StartupMode,
@@ -121,8 +123,8 @@ class LienardWiechertIntegrator:
 
         Parameters mirror the historical signature but are forwarded to
         :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
-            preserved for backwards compatibility and contributes to the total step
-            count.
+        preserved for backwards compatibility and contributes to the total step
+        count.
         """
 
         sim_type_enum = (
@@ -186,6 +188,7 @@ class LienardWiechertIntegrator:
             ),
             image_subcharge_count=image_subcharge_count,
             use_conducting_image_weighting=use_image_weighting,
+            driver_train=self.config.driver_train if self.config else None,
         )
 
         return trajectory, driver
@@ -197,6 +200,8 @@ __all__ = [
     "DistanceResult",
     "EnergyMonitorConfig",
     "IntegratorConfig",
+    "DriverTrainConfig",
+    "ParticleLossConfig",
     "ParticleState",
     "SimulationType",
     "Trajectory",

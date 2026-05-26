@@ -68,6 +68,14 @@ def test_generate_sweep_heatmap_main_accepts_argv(monkeypatch):
             "--num-contours",
             "20",
             "--grey-zero",
+            "--title",
+            "Energy Gain Map",
+            "--color-min",
+            "-30",
+            "--color-max",
+            "40",
+            "--axis-param1-max",
+            "120",
         ]
     )
 
@@ -76,6 +84,10 @@ def test_generate_sweep_heatmap_main_accepts_argv(monkeypatch):
     assert captured["gain_filter"] == "all"
     assert captured["num_contours_low"] == 5
     assert captured["num_contours_high"] == 15
+    assert captured["title"] == "Energy Gain Map"
+    assert captured["color_min"] == -30
+    assert captured["color_max"] == 40
+    assert captured["axis_param1_max"] == 120
 
 
 def test_generate_sweep_heatmap_resolves_contour_counts():
