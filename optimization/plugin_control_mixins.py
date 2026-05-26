@@ -407,6 +407,12 @@ class OptimizationPluginControlMixin:
         self, rider_offset: tuple[float, float], driver_offset: tuple[float, float]
     ) -> dict:
         """Return particle and macroparticle config keyword arguments."""
+        rider_transverse_geometry_var = getattr(
+            self, "rider_transverse_geometry_var", None
+        )
+        driver_transverse_geometry_var = getattr(
+            self, "driver_transverse_geometry_var", None
+        )
         return {
             "transv_mom": float(
                 self.sweep_params["rider_transv_mom"]["fixed_var"].get()
@@ -414,9 +420,11 @@ class OptimizationPluginControlMixin:
             "transv_dist": float(
                 self.sweep_params["rider_transv_dist"]["fixed_var"].get()
             ),
-            "transverse_geometry": getattr(
-                self, "rider_transverse_geometry_var", tk.StringVar(value="square")
-            ).get(),
+            "transverse_geometry": (
+                rider_transverse_geometry_var.get()
+                if rider_transverse_geometry_var is not None
+                else "square"
+            ),
             "transv_offset_x": rider_offset[0],
             "transv_offset_y": rider_offset[1],
             "driver_transv_offset_x": driver_offset[0],
@@ -454,9 +462,11 @@ class OptimizationPluginControlMixin:
             "driver_transv_dist": float(
                 self.sweep_params["driver_transv_dist"]["fixed_var"].get()
             ),
-            "driver_transverse_geometry": getattr(
-                self, "driver_transverse_geometry_var", tk.StringVar(value="square")
-            ).get(),
+            "driver_transverse_geometry": (
+                driver_transverse_geometry_var.get()
+                if driver_transverse_geometry_var is not None
+                else "square"
+            ),
             "driver_starting_distance": float(
                 self.sweep_params["driver_starting_distance"]["fixed_var"].get()
             ),

@@ -467,6 +467,13 @@ def build_integration_metrics(
             rider_m_particle=rider_m_particle,
             source_prefix="",
         )
+        _add_rider_peak_energy_metrics(
+            metrics,
+            log_lines,
+            result.rider_trajectory,
+            gamma_initial=gamma_initial,
+            rider_m_particle=rider_m_particle,
+        )
         if optimization_mode:
             log_lines.append(
                 f"    optimizer_objective: {-metrics['max_percent_energy_gain']:.12e}"
@@ -592,6 +599,11 @@ def build_integration_trajectory_output(
         )
         if rider_position_metrics is not None:
             metrics.update(rider_position_metrics)
+        _add_loss_metrics_from_alive_fraction(
+            metrics,
+            prefix="rider",
+            total_count=getattr(config, "pcount", None),
+        )
     except Exception as exc:
         debug_print_lines.append(
             f"[DEBUG] Failed to extract rider position metrics: {exc}"
@@ -616,6 +628,11 @@ def build_integration_trajectory_output(
             )
             if driver_position_metrics is not None:
                 metrics.update(driver_position_metrics)
+            _add_loss_metrics_from_alive_fraction(
+                metrics,
+                prefix="driver",
+                total_count=getattr(config, "driver_pcount", None),
+            )
         except Exception as exc:
             debug_print_lines.append(
                 f"[DEBUG] Failed to extract driver position metrics: {exc}"
@@ -975,6 +992,16 @@ def _add_energy_gain_metrics(
         if initial_kinetic_energy_mev > 0.0
         else np.nan
     )
+    final_percent_energy_gain = 100.0 * delta_e_fraction_initial_kinetic
+
+    metrics["rider_final_energy_gain_mev"] = delta_e_mev
+    metrics["rider_final_energy_gain_gev"] = delta_e_mev / 1e3
+    metrics["rider_final_percent_energy_gain"] = final_percent_energy_gain
+    metrics["rider_final_percent_total_energy_gain"] = energy_gain_percent
+    metrics["rider_max_energy_gain_mev"] = delta_e_mev
+    metrics["rider_max_energy_gain_gev"] = delta_e_mev / 1e3
+    metrics["rider_max_percent_energy_gain"] = final_percent_energy_gain
+    metrics["rider_max_percent_total_energy_gain"] = energy_gain_percent
 
     metrics["max_percent_energy_gain"] = energy_gain_percent
     metrics["percent_delta_e"] = energy_gain_percent
@@ -1005,9 +1032,60 @@ def _add_energy_gain_metrics(
         [
             f"    delta_gamma: {delta_gamma:.12e}",
             f"    delta_e_mev: {delta_e_mev:.12e} MeV",
+            f"    rider_final_percent_energy_gain: {final_percent_energy_gain:.12e}%",
             f"    max_percent_energy_gain: {energy_gain_percent:.12e}%",
             f"    percent_delta_e: {energy_gain_percent:.12e}%",
             f"    energy_gain_ppm: {energy_gain_ppm:.6f} ppm",
+        ]
+    )
+
+
+def _add_rider_peak_energy_metrics(
+    metrics: dict[str, Any],
+    log_lines: list[str],
+    trajectory: Mapping[str, Any] | None,
+    *,
+    gamma_initial: float,
+    rider_m_particle: float,
+) -> None:
+    if trajectory is None:
+        return
+
+    gamma_values = np.asarray(trajectory.get("gamma", []), dtype=float)
+    finite_indices = np.flatnonzero(np.isfinite(gamma_values))
+    if finite_indices.size == 0:
+        return
+
+    finite_gamma_values = gamma_values[finite_indices]
+    local_max_index = int(np.argmax(finite_gamma_values))
+    max_step = int(finite_indices[local_max_index])
+    gamma_max = float(finite_gamma_values[local_max_index])
+    rest_energy_mev = rider_m_particle * AMU_TO_MEV
+    initial_kinetic_energy_mev = max((gamma_initial - 1.0) * rest_energy_mev, 0.0)
+    max_delta_e_mev = (gamma_max - gamma_initial) * rest_energy_mev
+    max_total_energy_gain_percent = (gamma_max - gamma_initial) / gamma_initial * 100.0
+    max_kinetic_energy_gain_percent = (
+        100.0 * max_delta_e_mev / initial_kinetic_energy_mev
+        if initial_kinetic_energy_mev > 0.0
+        else np.nan
+    )
+
+    metrics["rider_max_gamma"] = gamma_max
+    metrics["rider_max_energy_gain_step"] = max_step
+    metrics["rider_max_energy_gain_mev"] = max_delta_e_mev
+    metrics["rider_max_energy_gain_gev"] = max_delta_e_mev / 1e3
+    metrics["rider_max_percent_energy_gain"] = max_kinetic_energy_gain_percent
+    metrics["rider_max_percent_total_energy_gain"] = max_total_energy_gain_percent
+
+    log_lines.extend(
+        [
+            f"    rider_max_gamma: {gamma_max:.12e}",
+            f"    rider_max_energy_gain_mev: {max_delta_e_mev:.12e} MeV",
+            (
+                "    rider_max_percent_energy_gain: "
+                f"{max_kinetic_energy_gain_percent:.12e}%"
+            ),
+            f"    rider_max_energy_gain_step: {max_step}",
         ]
     )
 
@@ -1051,6 +1129,13 @@ def _add_fallback_energy_gain_metrics(
             rider_m_particle=rider_m_particle,
             source_prefix="from traj",
         )
+        _add_rider_peak_energy_metrics(
+            metrics,
+            log_lines,
+            result.rider_trajectory,
+            gamma_initial=gamma_initial,
+            rider_m_particle=rider_m_particle,
+        )
     except Exception as exc:
         log_lines.append(f"  [ERROR] Fallback calculation failed: {exc}")
         _log_missing_energy_gain(log_lines, run_num)
@@ -1063,6 +1148,27 @@ def _log_missing_energy_gain(log_lines: list[str], run_num: int) -> None:
             "  [CRITICAL] This will result in NaN/inf for optimization objective",
         ]
     )
+
+
+def _add_loss_metrics_from_alive_fraction(
+    metrics: dict[str, Any],
+    *,
+    prefix: str,
+    total_count: Any,
+) -> None:
+    alive_fraction = metrics.get(f"{prefix}_alive_fraction_final")
+    if alive_fraction is None:
+        return
+    try:
+        total = int(total_count)
+    except (TypeError, ValueError):
+        return
+    if total < 0:
+        return
+
+    loss_fraction = max(0.0, min(1.0, 1.0 - float(alive_fraction)))
+    metrics[f"{prefix}_loss_fraction"] = loss_fraction
+    metrics[f"{prefix}_loss_count"] = int(round(loss_fraction * total))
 
 
 def _add_beam_optics_metrics(result: Any, metrics: dict[str, Any]) -> None:

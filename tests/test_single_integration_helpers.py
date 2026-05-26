@@ -271,6 +271,12 @@ def test_build_integration_metrics_uses_direct_gamma_values():
     assert outcome.metrics["initial_gamma_mean"] == 10.0
     assert outcome.metrics["final_gamma_mean"] == 12.0
     assert outcome.metrics["max_percent_energy_gain"] == pytest.approx(20.0)
+    assert outcome.metrics["rider_final_percent_energy_gain"] == pytest.approx(
+        200.0 / 9.0
+    )
+    assert outcome.metrics["rider_max_percent_energy_gain"] == pytest.approx(
+        200.0 / 9.0
+    )
     assert outcome.metrics["delta_e_mev"] == pytest.approx(2.0 * 931.494)
     assert outcome.metrics["max_energy_gain_gev"] == pytest.approx(2.0 * 931.494 / 1e3)
     assert outcome.metrics["max_relative_gain"] == pytest.approx(0.2)
@@ -290,9 +296,42 @@ def test_build_integration_metrics_falls_back_to_trajectory_gamma():
     )
 
     assert outcome.metrics["max_percent_energy_gain"] == pytest.approx(10.0)
+    assert outcome.metrics["rider_final_percent_energy_gain"] == pytest.approx(
+        100.0 / 9.0
+    )
+    assert outcome.metrics["rider_max_percent_energy_gain"] == pytest.approx(
+        100.0 / 9.0
+    )
     assert outcome.metrics["delta_e_mev"] == pytest.approx(1.0 * 2.0 * 931.494)
     assert any("Fallback calculation successful" in line for line in outcome.log_lines)
     assert any("gamma_initial (from traj)" in line for line in outcome.log_lines)
+
+
+def test_build_integration_metrics_records_final_and_peak_rider_gain():
+    outcome = build_integration_metrics(
+        _result(
+            rider_gamma_initial=10.0,
+            rider_gamma_final=11.0,
+            rider_trajectory={"gamma": [10.0, 12.0, 11.0]},
+        ),
+        rider_m_particle=1.0,
+        run_num=5,
+    )
+
+    assert outcome.metrics["rider_final_energy_gain_mev"] == pytest.approx(931.494)
+    assert outcome.metrics["rider_final_percent_energy_gain"] == pytest.approx(
+        100.0 / 9.0
+    )
+    assert outcome.metrics["rider_final_percent_total_energy_gain"] == pytest.approx(
+        10.0
+    )
+    assert outcome.metrics["rider_max_gamma"] == pytest.approx(12.0)
+    assert outcome.metrics["rider_max_energy_gain_mev"] == pytest.approx(2.0 * 931.494)
+    assert outcome.metrics["rider_max_percent_energy_gain"] == pytest.approx(
+        200.0 / 9.0
+    )
+    assert outcome.metrics["rider_max_percent_total_energy_gain"] == pytest.approx(20.0)
+    assert outcome.metrics["rider_max_energy_gain_step"] == 1
 
 
 def test_build_integration_metrics_reports_missing_gamma():
@@ -460,7 +499,7 @@ def test_build_integration_trajectory_output_can_save_without_stability():
                 "gamma": [20.0, 21.0],
             },
         ),
-        _config(smoothness_enabled=False),
+        _config(smoothness_enabled=False, driver_pcount=4),
         run_num=8,
         rider_m_particle=1.0,
         metrics=metrics,
@@ -509,6 +548,8 @@ def test_build_integration_trajectory_output_can_save_without_stability():
     assert metrics["rider_halo_gt_2_initial_rms_fraction_initial"] == pytest.approx(0.5)
     assert metrics["rider_halo_gt_2_initial_rms_fraction_final"] == pytest.approx(0.25)
     assert metrics["rider_alive_fraction_final"] == pytest.approx(0.75)
+    assert metrics["rider_loss_fraction"] == pytest.approx(0.25)
+    assert metrics["rider_loss_count"] == 1
     assert metrics["rider_longitudinal_width_p90_mm_delta"] == pytest.approx(0.3)
     assert metrics["rider_gamma_std_delta"] == pytest.approx(0.1)
     assert metrics["rider_normalized_pz_std_reduction"] == pytest.approx(0.15)
@@ -535,6 +576,8 @@ def test_build_integration_trajectory_output_can_save_without_stability():
     assert metrics["driver_halo_gt_2_initial_rms_fraction_reduction"] == pytest.approx(
         0.3
     )
+    assert metrics["driver_loss_fraction"] == pytest.approx(0.0)
+    assert metrics["driver_loss_count"] == 0
     assert "driver_radial_toward_driver_mm" not in metrics
     assert outcome.log_lines == [
         "  [DEBUG] Processing trajectory data for Run 8...",

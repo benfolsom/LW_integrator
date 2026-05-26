@@ -993,6 +993,7 @@ class TestOptimizationResultsMixin:
             "pcount": 4,
             "transv_mom": 0.03,
             "transv_dist": 0.04,
+            "transverse_geometry": "square",
             "starting_distance": 321.0,
             "starting_Pz": pytest.approx(
                 calculate_starting_pz_from_energy(12.0, 20.0, negative=True)

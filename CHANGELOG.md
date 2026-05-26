@@ -4,6 +4,12 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Sweep Metrics For Compact Spallation Studies (May 2026)
+
+- Added explicit rider final-vs-peak energy-gain metrics for sweep outputs, including kinetic-energy-normalized `rider_final_percent_energy_gain` and `rider_max_percent_energy_gain`, while retaining legacy `max_percent_energy_gain` fields for compatibility.
+- Added rider/driver loss count and loss fraction metrics derived from final alive fractions when trajectory summaries are available, and included final-vs-peak gain plus loss counts in compact sweep logs.
+- Tests: updated single-integration helper coverage for final/peak gain and loss-count metrics.
+
 ### Experimental Pseudo-grid Reduced Solver (June 2026)
 
 - **Core config surface** — Added `PseudoGridConfig` and threaded it through `IntegratorConfig`, `run_integrator()`, `retarded_integrator()`, `SimulationOptions`, the single-run CLI, the main GUI, and saved single-run configs so the experimental mode can be configured consistently for `BUNCH_TO_BUNCH` studies.

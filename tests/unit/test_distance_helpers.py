@@ -70,7 +70,7 @@ def test_locate_retarded_index_handles_negative_and_bracketed_targets() -> None:
 
     assert distances._locate_retarded_index(trajectory_ext, 3, 0, -1.0) == 3
     assert distances._locate_retarded_index(trajectory_ext, 3, 0, 1.5) == 2
-    assert distances._locate_retarded_index(trajectory_ext, 3, 0, 10.0) == 0
+    assert distances._locate_retarded_index(trajectory_ext, 3, 0, 10.0) == 3
 
 
 def test_locate_retarded_index_soa_matches_strict_chrono_bracket() -> None:

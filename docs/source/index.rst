@@ -1,4 +1,4 @@
-LW Integrator Guide (v0.6.7)
+LW Integrator Guide (v0.8.0)
 =============================
 
 The LW (Liénard–Wiechert) Integrator is a first-principles electromagnetic particle tracking code that computes retarded Liénard–Wiechert potentials directly from the covariant equations of motion. Unlike conventional tracking codes that rely on field maps or wake function tabulations, this solver evaluates exact electromagnetic fields from moving charged particles and their image charges, making it particularly suited for studying beam-aperture interactions where relativistic particles pass within microns of conducting surfaces.

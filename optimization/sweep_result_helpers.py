@@ -396,11 +396,26 @@ def build_successful_sweep_run_log(
         gamma_final=gamma_final,
     )
 
+    rider_final_percent_gain = metrics.get("rider_final_percent_energy_gain", 0)
+    rider_max_percent_gain = metrics.get("rider_max_percent_energy_gain", 0)
+    rider_loss_count = metrics.get("rider_loss_count", 0)
+    driver_loss_count = metrics.get("driver_loss_count", 0)
+
     optimization_lines = [
         (
             "[OPTIMIZATION] max_percent_energy_gain: "
             f"{metrics.get('max_percent_energy_gain', 0):.12e}%"
         ),
+        (
+            "[OPTIMIZATION] rider_final_percent_energy_gain: "
+            f"{rider_final_percent_gain:.12e}%"
+        ),
+        (
+            "[OPTIMIZATION] rider_max_percent_energy_gain: "
+            f"{rider_max_percent_gain:.12e}%"
+        ),
+        f"[OPTIMIZATION] rider_loss_count: {rider_loss_count}",
+        f"[OPTIMIZATION] driver_loss_count: {driver_loss_count}",
         (
             "[OPTIMIZATION] max_energy_gain: "
             f"{metrics.get('max_energy_gain_gev', 0):.12e} GeV"
@@ -425,6 +440,10 @@ def build_successful_sweep_run_log(
             "    max_percent_energy_gain: "
             f"{metrics.get('max_percent_energy_gain', 0):.12e}%"
         ),
+        f"    rider_final_percent_energy_gain: {rider_final_percent_gain:.12e}%",
+        f"    rider_max_percent_energy_gain: {rider_max_percent_gain:.12e}%",
+        f"    rider_loss_count: {rider_loss_count}",
+        f"    driver_loss_count: {driver_loss_count}",
         f"    max_energy_gain: {metrics.get('max_energy_gain_gev', 0):.12e} GeV",
         f"    max_relative_gain: {metrics.get('max_relative_gain', 0):.12e}",
     ]
@@ -443,6 +462,9 @@ def build_successful_sweep_run_log(
 
     compact_line = (
         f"Run #{run_num:4d} | {param_str} | "
+        f"final={rider_final_percent_gain:.3e}% "
+        f"max={rider_max_percent_gain:.3e}% "
+        f"loss=({rider_loss_count},{driver_loss_count}) "
         f"ΔE={delta_e_mev:.3e} Δγ={delta_gamma:.3e} "
         f"γ_i={gamma_initial:.2f} γ_f={gamma_final:.2f} | SUCCESS"
     )

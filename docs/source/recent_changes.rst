@@ -12,6 +12,21 @@ corrections.
 June 2026 Updates
 -----------------
 
+Sweep Metrics For Compact Spallation Studies (May 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sweep and optimization result processing now records explicit rider final-vs-
+peak gain metrics plus particle-loss counts for compact spallation studies.
+
+* Sweep outputs now include rider final and peak kinetic-energy-normalized gain
+  fields (``rider_final_percent_energy_gain`` and
+  ``rider_max_percent_energy_gain``) while retaining the legacy
+  ``max_percent_energy_gain`` field for compatibility.
+* Trajectory-derived alive fractions are now converted into rider/driver loss
+  fractions and integer loss counts when particle totals are available.
+* Compact sweep logging now includes final-vs-peak rider gain plus rider/driver
+  loss counts on optimization, detailed, and compact progress lines.
+
 Experimental Pseudo-grid Reduced Solver (June 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -83,16 +98,16 @@ Current validation status:
 * Small next-step smoke matrix covering retarded SC, adaptive crossing, stronger
   charge, and longer windows stayed finite in 22/22 runs with max comparison
   deltas below ``3e-5 mm`` in position and ``2e-5`` in gamma.
-* Medium screening matrix at
-  ``../LW_feasibility_studies/local/pseudo_grid_medium_validation_20260520``
+* Medium screening matrix in the sibling feasibility-study scratch workspace
+  (directory ``pseudo_grid_medium_validation_20260520``)
   covered ``N=12,32,64``, active counts ``K=6,12``, neighbour counts ``M=2,4``,
   retarded same-bunch space charge, adaptive crossings, stronger-charge cases,
   and 72-step longer-window cases. It stayed finite in 176/176 runs, produced
   44 full-vs-pseudo comparisons, and had max deltas of ``4.50e-5 mm`` in x,
   ``5.61e-5 mm`` in z, and ``1.41e-5`` in gamma. Retained-history compaction
   dropped at most one rider/driver sample in this matrix.
-* The same medium matrix re-run after retarded SC source-history caching at
-  ``../LW_feasibility_studies/local/pseudo_grid_medium_validation_cached_sc_20260520``
+* The same medium matrix re-run after retarded SC source-history caching in
+  scratch directory ``pseudo_grid_medium_validation_cached_sc_20260520``
   remained finite in 176/176 runs with the same max comparison deltas and
   retained-history drop counts. The slowest run dropped from roughly 31 s in the
   pre-cache matrix to roughly 7.3 s in the cached matrix.
@@ -103,13 +118,13 @@ Next validation/engineering steps:
   longer-window cases before expanding the grid further.
 * Use ``scripts/pseudo_grid_microbenchmarks.py`` to keep timing baselines for
   representative ``N/K/M`` settings, then optimize the largest remaining
-  overheads. Initial smoke output at
-  ``../LW_feasibility_studies/local/pseudo_grid_microbenchmarks_smoke_20260520``
+  overheads. Initial smoke output in scratch directory
+  ``pseudo_grid_microbenchmarks_smoke_20260520``
   showed non-solve overheads in the few-ms range for ``N=32,64`` and retarded-SC
   active solves scaling from roughly tens of ms at ``K=6`` to roughly
   0.12-0.13 s at ``K=12``. After caching same-bunch source histories, smoke
-  output at
-  ``../LW_feasibility_studies/local/pseudo_grid_microbenchmarks_cached_sc_20260520``
+  output in scratch directory
+  ``pseudo_grid_microbenchmarks_cached_sc_20260520``
   puts active retarded-SC solve cost at roughly 6-22 ms for the same measured
   ``N=32,64`` and ``K=6,12`` cases.
 * Inspect the cached medium validation matrix speed and delta outliers, then
