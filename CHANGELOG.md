@@ -4,6 +4,11 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Scalar Potential Momentum Units (May 2026)
+
+- Fixed scalar-potential gamma bookkeeping to subtract/add `qΦ/c` in `Pt` momentum units instead of `qΦ` energy units. This removes the artificial MeV-scale no-driver/self-space-charge deceleration seen in compact H-/proton baseline probes while preserving pure drift behavior.
+- Tests: updated scalar-potential and equations-helper coverage for non-normalized `c` units and potential-preserving gamma reconciliation.
+
 ### Macroparticle Smearing Controls (May 2026)
 
 - Added an opt-in bounded macroparticle source-smearing configuration, CLI flags, GUI controls, and sweep-config plumbing. Smearing is deterministic for a fixed seed, splits source macroparticles into charge-conserving subcharges, derives default position width from macro population, and caps/truncates offsets relative to an estimated inter-macroparticle spacing.

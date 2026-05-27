@@ -32,13 +32,13 @@ compute_vectorized_contributions
     5-7. Field contributions for position updates (gauge field components)
     8. Scalar potential sum Φ = Σ(q_j / (R_j · k_j)) for energy corrections
 
-The scalar potential (item 8) is used to compute the correct kinetic energy::
+The scalar potential (item 8) is used to compute the correct kinetic momentum::
 
-    E_kinetic = Pt - q·Φ
-    γ = E_kinetic / (mc)
+    p0_kinetic = Pt - q·Φ/c
+    γ = p0_kinetic / (mc)
 
-This separates the particle's kinetic energy from the electromagnetic potential
-energy, which is critical for self-consistency iterations.
+This separates the particle's kinetic energy-over-c from the electromagnetic
+potential energy-over-c, which is critical for self-consistency iterations.
 
 k-factor Threshold
 ------------------

@@ -310,6 +310,13 @@ def _get_particle_mass(state: ParticleState, particle_idx: int):
     return mass
 
 
+def _scalar_potential_momentum_contribution(
+    charge: float, scalar_potential: float
+) -> np.float64:
+    """Return qΦ/c in the solver's momentum units."""
+    return np.float64(charge * scalar_potential / C_MMNS)
+
+
 def _get_particle_char_time(state: ParticleState, particle_idx: int):
     """Extract characteristic time for a single particle, handling scalar or array."""
     char_time = state["char_time"]
@@ -1062,7 +1069,7 @@ def _print_convergence_info(
     gamma_from_velocity : float
         Gamma computed from velocity: γ = 1/√(1-β²)
     gamma_from_energy : float
-        Gamma computed from kinetic energy: γ = (Pt - q·Φ)/(mc)
+        Gamma computed from kinetic energy: γ = (Pt - q·Φ/c)/(mc)
     gamma_mass_shell : float
         Gamma computed from mass-shell constraint: γ = √(P²+(mc)²)/(mc)
     mass_shell_error : float
@@ -1115,7 +1122,7 @@ def _print_convergence_info(
                 print(f"      Time: t={particle_time:.6e} ns")
             # Only print gamma values here, not the convergence-criteria summary.
             print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
-            print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
+            print(f"      γ_energy   (from Pt - q·Φ/c) = {gamma_from_energy:.15e}")
             print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
         else:
             # For converged steps at verbosity 2, just show summary
@@ -1143,7 +1150,7 @@ def _print_convergence_info(
             print(f"      Time: t={particle_time:.6e} ns")
         # Only print gamma values here, not the convergence-criteria summary.
         print(f"      γ_velocity (from β)        = {gamma_from_velocity:.15e}")
-        print(f"      γ_energy   (from Pt - q·Φ) = {gamma_from_energy:.15e}")
+        print(f"      γ_energy   (from Pt - q·Φ/c) = {gamma_from_energy:.15e}")
         print(f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}")
 
 
@@ -2012,11 +2019,10 @@ def retarded_equations_of_motion(
             # STEP 4b: Compute gamma from energy
             # ================================================================
             # Gamma from relativistic energy with scalar potential correction:
-            # γ = (Pt - q·Φ) / (mc) where Φ = Σ(q_j / (R_sep_j * k_factor_j))
-            # This gives the correct kinetic energy, accounting for electromagnetic potential
-            # Use float64 precision for gamma calculation
-            scalar_potential_contribution = np.float64(
-                force_particle_charge * accumulated_scalar_potential
+            # γ = (Pt - q·Φ/c) / (mc), where Φ = Σ(q_j / (R_sep_j * k_factor_j)).
+            # Pt is energy-over-c, so qΦ is converted to momentum units.
+            scalar_potential_contribution = _scalar_potential_momentum_contribution(
+                force_particle_charge, accumulated_scalar_potential
             )
             kinetic_energy = (
                 np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
@@ -2041,7 +2047,7 @@ def retarded_equations_of_motion(
                 gamma_from_conjugate_before = Pt_before_projection / (
                     particle_mass * C_MMNS
                 )
-                print(f"      γ_energy (Pt - q·Φ)/(mc) = {gamma_from_energy:.15e}")
+                print(f"      γ_energy (Pt - q·Φ/c)/(mc) = {gamma_from_energy:.15e}")
                 print(
                     f"      γ_conjugate (Pt/(mc), before projection) = {gamma_from_conjugate_before:.15e}"
                 )
@@ -2049,7 +2055,7 @@ def retarded_equations_of_motion(
                     f"      γ_mass_shell (√(P²+(mc)²)/(mc)) = {gamma_mass_shell:.15e}"
                 )
                 print(
-                    f"      Scalar potential term q·Φ = {scalar_potential_contribution:.15e}"
+                    f"      Scalar potential term q·Φ/c = {scalar_potential_contribution:.15e}"
                 )
                 # Show the mass-shell violation
                 mass_shell_violation = abs(
@@ -2335,8 +2341,8 @@ def retarded_equations_of_motion(
                         mechanical_pz + accumulated_field_z * particle_mass
                     )
                     result["gamma"][particle_idx] = damped_gamma
-                    scalar_potential_contribution = np.float64(
-                        force_particle_charge * accumulated_scalar_potential
+                    scalar_potential_contribution = _scalar_potential_momentum_contribution(
+                        force_particle_charge, accumulated_scalar_potential
                     )
                     result["Pt"][particle_idx] = (
                         damped_gamma * particle_mass * C_MMNS
@@ -2475,8 +2481,8 @@ def retarded_equations_of_motion(
                             mechanical_pz + accumulated_field_z * particle_mass
                         )
                         result["gamma"][particle_idx] = medina_gamma
-                        scalar_potential_contribution = np.float64(
-                            force_particle_charge * accumulated_scalar_potential
+                        scalar_potential_contribution = _scalar_potential_momentum_contribution(
+                            force_particle_charge, accumulated_scalar_potential
                         )
                         result["Pt"][particle_idx] = (
                             medina_gamma * particle_mass * C_MMNS
@@ -2681,8 +2687,8 @@ def retarded_equations_of_motion(
             Py_64 = np.float64(result["Py"][particle_idx])
             Pz_64 = np.float64(result["Pz"][particle_idx])
             Pt_64 = np.float64(result["Pt"][particle_idx])
-            scalar_potential_contribution = np.float64(
-                force_particle_charge * accumulated_scalar_potential
+            scalar_potential_contribution = _scalar_potential_momentum_contribution(
+                force_particle_charge, accumulated_scalar_potential
             )
             kinetic_pt = Pt_64 - scalar_potential_contribution
             mechanical_px = Px_64 - np.float64(accumulated_field_x * particle_mass)

@@ -72,7 +72,7 @@ class GammaReconciliationMethod(Enum):
     """Methods for reconciling dual gamma calculations (from energy vs velocity).
 
     The integrator computes gamma in two ways:
-    - γ_energy from conjugate momentum: γ = (Pt - q·Φ)/(mc)
+    - γ_energy from conjugate momentum: γ = (Pt - q·Φ/c)/(mc)
     - γ_velocity from velocity: γ = 1/√(1-β²)
 
     These should be identical in exact math but differ numerically due to
@@ -94,7 +94,7 @@ class GammaReconciliationMethod(Enum):
         Geometrically consistent but can break energy bookkeeping.
         Not recommended for production.
 
-    ``USE_ENERGY`` - Always use γ_energy (γ = (Pt - q·Φ)/(mc)).
+    ``USE_ENERGY`` - Always use γ_energy (γ = (Pt - q·Φ/c)/(mc)).
         Same as DISABLED; provided for symmetry/clarity.
 
     ``FIXED_WEIGHTED`` - Fixed 50/50 weighted average.

@@ -121,6 +121,15 @@ def test_particle_scalar_extractors_handle_arrays_and_scalars() -> None:
     assert equations._get_particle_char_time(scalar_state, 0) == pytest.approx(9.0)
 
 
+def test_scalar_potential_contribution_uses_momentum_units() -> None:
+    charge = 3.0
+    scalar_potential = 5.0
+
+    assert equations._scalar_potential_momentum_contribution(
+        charge, scalar_potential
+    ) == pytest.approx(charge * scalar_potential / C_MMNS)
+
+
 def test_compute_approximate_retarded_distance_uses_factored_correction() -> None:
     current_state = _make_state(x=[1.0], y=[0.0], z=[0.0])
     external_state = _make_state(x=[0.0], y=[0.0], z=[0.0], bx=[0.5])
@@ -847,6 +856,9 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
     source = _make_state(x=[1.0], charge=[1.0], mass=[1.0])
     vector_potential_x = 0.5 * C_MMNS
     scalar_potential = 0.25 * C_MMNS
+    scalar_potential_momentum = equations._scalar_potential_momentum_contribution(
+        equations.effective_observer_charge(float(state["q"][0])), scalar_potential
+    )
 
     monkeypatch.setattr(
         equations,
@@ -869,7 +881,7 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
             vector_potential_x,
             0.0,
             0.0,
-            scalar_potential,
+            scalar_potential_momentum,
             vector_potential_x,
             0.0,
             0.0,
@@ -898,7 +910,7 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
     )
 
     assert result["Px"][0] == pytest.approx(vector_potential_x)
-    assert result["Pt"][0] == pytest.approx(C_MMNS + scalar_potential)
+    assert result["Pt"][0] == pytest.approx(C_MMNS + scalar_potential_momentum)
     assert result["gamma"][0] == pytest.approx(1.0)
 
 
@@ -988,11 +1000,16 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
     )
     monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
 
+    scalar_potential = 5.0
+    scalar_potential_momentum = equations._scalar_potential_momentum_contribution(
+        equations.effective_observer_charge(float(state["q"][0])), scalar_potential
+    )
+
     def fake_contributions(**kwargs: object) -> tuple[float, ...]:
         del kwargs
         # Canonical Px=17 with vector-potential field Ax=7 means mechanical Px=10.
-        # Delta Pt equals qPhi, so gamma_energy remains the state's initial gamma=2.
-        return (17.0, 0.0, 0.0, 5.0, 7.0, 0.0, 0.0, 5.0)
+        # Delta Pt equals qPhi/c, so gamma_energy remains the state's initial gamma=2.
+        return (17.0, 0.0, 0.0, scalar_potential_momentum, 7.0, 0.0, 0.0, scalar_potential)
 
     monkeypatch.setattr(
         equations,
@@ -1021,7 +1038,9 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
     expected_gamma = 1.25
     expected_mechanical_px = C_MMNS * np.sqrt(expected_gamma**2 - 1.0)
     assert result["gamma"][0] == pytest.approx(expected_gamma)
-    assert result["Pt"][0] == pytest.approx(expected_gamma * C_MMNS + 5.0)
+    assert result["Pt"][0] == pytest.approx(
+        expected_gamma * C_MMNS + scalar_potential_momentum
+    )
     assert result["Px"][0] == pytest.approx(expected_mechanical_px + 7.0)
 
 
