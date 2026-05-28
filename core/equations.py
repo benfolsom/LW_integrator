@@ -317,6 +317,117 @@ def _scalar_potential_momentum_contribution(
     return np.float64(charge * scalar_potential / C_MMNS)
 
 
+def _mechanical_momentum_components(
+    *,
+    px: float,
+    py: float,
+    pz: float,
+    particle_mass: float,
+    field_x: float,
+    field_y: float,
+    field_z: float,
+) -> tuple[float, float, float]:
+    return (
+        float(np.float64(px) - np.float64(field_x * particle_mass)),
+        float(np.float64(py) - np.float64(field_y * particle_mass)),
+        float(np.float64(pz) - np.float64(field_z * particle_mass)),
+    )
+
+
+def _canonical_pt_from_mechanical_mass_shell(
+    *,
+    px: float,
+    py: float,
+    pz: float,
+    particle_mass: float,
+    scalar_potential_contribution: float,
+    field_x: float = 0.0,
+    field_y: float = 0.0,
+    field_z: float = 0.0,
+) -> tuple[float, float]:
+    mechanical_px, mechanical_py, mechanical_pz = _mechanical_momentum_components(
+        px=px,
+        py=py,
+        pz=pz,
+        particle_mass=particle_mass,
+        field_x=field_x,
+        field_y=field_y,
+        field_z=field_z,
+    )
+    p_spatial_sq = mechanical_px**2 + mechanical_py**2 + mechanical_pz**2
+    kinetic_pt = np.sqrt(p_spatial_sq + np.float64(particle_mass * C_MMNS) ** 2)
+    canonical_pt = kinetic_pt + np.float64(scalar_potential_contribution)
+    return float(kinetic_pt), float(canonical_pt)
+
+
+def _refresh_kinematics_from_canonical_momentum(
+    result: ParticleState,
+    current_state: ParticleState,
+    particle_idx: int,
+    h: float,
+    particle_mass: float,
+    field_x: float,
+    field_y: float,
+    field_z: float,
+) -> tuple[float, float, float, float, float, float, float]:
+    mechanical_px, mechanical_py, mechanical_pz = _mechanical_momentum_components(
+        px=result["Px"][particle_idx],
+        py=result["Py"][particle_idx],
+        pz=result["Pz"][particle_idx],
+        particle_mass=particle_mass,
+        field_x=field_x,
+        field_y=field_y,
+        field_z=field_z,
+    )
+
+    gamma = float(result["gamma"][particle_idx])
+    result["t"][particle_idx] = current_state["t"][particle_idx] + h * gamma
+    result["x"][particle_idx] = (
+        current_state["x"][particle_idx] + h / particle_mass * mechanical_px
+    )
+    result["y"][particle_idx] = (
+        current_state["y"][particle_idx] + h / particle_mass * mechanical_py
+    )
+    result["z"][particle_idx] = (
+        current_state["z"][particle_idx] + h / particle_mass * mechanical_pz
+    )
+
+    beta_denom = gamma * particle_mass * C_MMNS
+    if beta_denom > 0.0:
+        beta_x = float(mechanical_px / beta_denom)
+        beta_y = float(mechanical_py / beta_denom)
+        beta_z = float(mechanical_pz / beta_denom)
+    else:
+        beta_x = beta_y = beta_z = 0.0
+    beta_x, beta_y, beta_z = _limit_beta_magnitude(beta_x, beta_y, beta_z)
+    result["bx"][particle_idx] = beta_x
+    result["by"][particle_idx] = beta_y
+    result["bz"][particle_idx] = beta_z
+
+    coordinate_dt = result["t"][particle_idx] - current_state["t"][particle_idx]
+    time_factor = C_MMNS * coordinate_dt
+    if time_factor != 0.0:
+        result["bdotx"][particle_idx] = (
+            beta_x - current_state["bx"][particle_idx]
+        ) / time_factor
+        result["bdoty"][particle_idx] = (
+            beta_y - current_state["by"][particle_idx]
+        ) / time_factor
+        result["bdotz"][particle_idx] = (
+            beta_z - current_state["bz"][particle_idx]
+        ) / time_factor
+
+    return (
+        beta_x,
+        beta_y,
+        beta_z,
+        float(coordinate_dt),
+        float(mechanical_px),
+        float(mechanical_py),
+        float(mechanical_pz),
+    )
+
+
 def _get_particle_char_time(state: ParticleState, particle_idx: int):
     """Extract characteristic time for a single particle, handling scalar or array."""
     char_time = state["char_time"]
@@ -1000,26 +1111,33 @@ def _check_mass_shell_convergence(
     particle_mass: float,
     C_MMNS: float,
     tolerance: float,
+    *,
+    scalar_potential_contribution: float = 0.0,
+    field_x: float = 0.0,
+    field_y: float = 0.0,
+    field_z: float = 0.0,
 ) -> tuple[bool, float]:
-    """Check if mass-shell constraint is satisfied (PRIMARY convergence criterion).
-
-    Mass-shell constraint: Pt² - P² = (mc)²
-
-    Returns
-    -------
-    tuple[bool, float]
-        (has_converged, relative_mass_shell_error)
-    """
-    P_spatial_sq = Px**2 + Py**2 + Pz**2
+    """Check whether kinetic/mechanical momentum satisfies the mass shell."""
+    kinetic_pt = np.float64(Pt) - np.float64(scalar_potential_contribution)
+    mechanical_px, mechanical_py, mechanical_pz = _mechanical_momentum_components(
+        px=Px,
+        py=Py,
+        pz=Pz,
+        particle_mass=particle_mass,
+        field_x=field_x,
+        field_y=field_y,
+        field_z=field_z,
+    )
+    P_spatial_sq = mechanical_px**2 + mechanical_py**2 + mechanical_pz**2
     mass_shell_rhs = (particle_mass * C_MMNS) ** 2
-    mass_shell_lhs = Pt**2 - P_spatial_sq
+    mass_shell_lhs = kinetic_pt**2 - P_spatial_sq
 
     mass_shell_error_abs = abs(mass_shell_lhs - mass_shell_rhs)
     mass_shell_error_rel = mass_shell_error_abs / max(mass_shell_rhs, 1e-40)
 
-    has_converged = mass_shell_error_rel < tolerance
+    has_converged = bool(mass_shell_error_rel < tolerance)
 
-    return has_converged, mass_shell_error_rel
+    return has_converged, float(mass_shell_error_rel)
 
 
 def _check_gamma_consistency(
@@ -1310,6 +1428,16 @@ def retarded_equations_of_motion(
         working_y = current_state["y"][particle_idx]
         working_z = current_state["z"][particle_idx]
 
+        particle_charge: float = float(
+            _get_particle_charge(current_state, particle_idx)
+        )
+        force_particle_charge: float = float(effective_observer_charge(particle_charge))
+        particle_mass: float = float(_get_particle_mass(current_state, particle_idx))
+        accumulated_field_x: float = 0.0
+        accumulated_field_y: float = 0.0
+        accumulated_field_z: float = 0.0
+        accumulated_scalar_potential: float = 0.0
+
         # Self-consistency loop: iterate until gamma converges
         for sc_iteration in range(sc_max_iterations):
             # Check for cancellation during self-consistency iterations
@@ -1535,11 +1663,6 @@ def retarded_equations_of_motion(
 
             # Accumulated scalar potential (used in gamma calculation)
             accumulated_scalar_potential = 0.0
-
-            # Extract particle properties
-            particle_charge = _get_particle_charge(current_state, particle_idx)
-            force_particle_charge = effective_observer_charge(float(particle_charge))
-            particle_mass = _get_particle_mass(current_state, particle_idx)
 
             # ================================================================
             # STEP 4: Determine if external forces should be applied
@@ -1854,6 +1977,15 @@ def retarded_equations_of_motion(
                                 ),
                             )
 
+                    if not use_retarded_sc:
+                        sc_samples.bx = np.zeros_like(sc_samples.bx)
+                        sc_samples.by = np.zeros_like(sc_samples.by)
+                        sc_samples.bz = np.zeros_like(sc_samples.bz)
+                        sc_samples.bdotx = np.zeros_like(sc_samples.bdotx)
+                        sc_samples.bdoty = np.zeros_like(sc_samples.bdoty)
+                        sc_samples.bdotz = np.zeros_like(sc_samples.bdotz)
+                        sc_samples.gamma = np.ones_like(sc_samples.gamma)
+
                     sc_source_charges = sc_samples.charge.copy()
                     if observer_sc_charge_row is not None:
                         sc_source_charges = np.asarray(
@@ -1959,19 +2091,28 @@ def retarded_equations_of_motion(
             result["Pz"][particle_idx] = accumulated_momentum_z
             result["Pt"][particle_idx] = accumulated_momentum_t
 
+            scalar_potential_contribution = _scalar_potential_momentum_contribution(
+                force_particle_charge, accumulated_scalar_potential
+            )
+
             # ================================================================
             # STEP 4a: Correct Pt during SC iterations based on mode
             # ================================================================
             # CRITICAL: Enforce constraints at each iteration
             # Mode determines HOW we correct Pt, but both modes check both errors
             if sc_enabled and sc_iteration > 0:
-                # Compute mass-shell-constrained Pt
-                Px_64 = np.float64(result["Px"][particle_idx])
-                Py_64 = np.float64(result["Py"][particle_idx])
-                Pz_64 = np.float64(result["Pz"][particle_idx])
-                P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
-                mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
-                Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
+                kinetic_pt_from_mass_shell, Pt_from_mass_shell = (
+                    _canonical_pt_from_mechanical_mass_shell(
+                        px=result["Px"][particle_idx],
+                        py=result["Py"][particle_idx],
+                        pz=result["Pz"][particle_idx],
+                        particle_mass=particle_mass,
+                        scalar_potential_contribution=scalar_potential_contribution,
+                        field_x=accumulated_field_x,
+                        field_y=accumulated_field_y,
+                        field_z=accumulated_field_z,
+                    )
+                )
 
                 Pt_before_correction = np.float64(result["Pt"][particle_idx])
 
@@ -2021,26 +2162,27 @@ def retarded_equations_of_motion(
             # Gamma from relativistic energy with scalar potential correction:
             # γ = (Pt - q·Φ/c) / (mc), where Φ = Σ(q_j / (R_sep_j * k_factor_j)).
             # Pt is energy-over-c, so qΦ is converted to momentum units.
-            scalar_potential_contribution = _scalar_potential_momentum_contribution(
-                force_particle_charge, accumulated_scalar_potential
-            )
             kinetic_energy = (
                 np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
             )
             gamma_from_energy = kinetic_energy / np.float64(particle_mass * C_MMNS)
             result["gamma"][particle_idx] = gamma_from_energy
 
-            # Calculate gamma from mass-shell constraint for logging (if needed)
-            # Compute Pt from mass-shell: Pt = √(P² + (mc)²)
-            Px_64 = np.float64(result["Px"][particle_idx])
-            Py_64 = np.float64(result["Py"][particle_idx])
-            Pz_64 = np.float64(result["Pz"][particle_idx])
-            P_spatial_sq = Px_64**2 + Py_64**2 + Pz_64**2
-            mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
-            Pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
+            kinetic_pt_from_mass_shell, Pt_from_mass_shell = (
+                _canonical_pt_from_mechanical_mass_shell(
+                    px=result["Px"][particle_idx],
+                    py=result["Py"][particle_idx],
+                    pz=result["Pz"][particle_idx],
+                    particle_mass=particle_mass,
+                    scalar_potential_contribution=scalar_potential_contribution,
+                    field_x=accumulated_field_x,
+                    field_y=accumulated_field_y,
+                    field_z=accumulated_field_z,
+                )
+            )
             Pt_before_projection = np.float64(result["Pt"][particle_idx])
 
-            gamma_mass_shell = Pt_from_mass_shell / (particle_mass * C_MMNS)
+            gamma_mass_shell = kinetic_pt_from_mass_shell / (particle_mass * C_MMNS)
 
             if sc_verbosity >= 3 and sc_enabled and sc_iteration > 0:
                 # Use Pt BEFORE projection to show the actual difference
@@ -2150,12 +2292,13 @@ def retarded_equations_of_motion(
             physical_mechanical_pz = (
                 result["Pz"][particle_idx] - accumulated_field_z * particle_mass
             )
+            reconciled_gamma_for_iteration = float(result["gamma"][particle_idx])
 
             # ================================================================
             # GAMMA RECONCILIATION (configurable)
             # ================================================================
-            # Reconcile gamma_from_energy (from Pt) and gamma_from_velocity (from beta)
-            # to prevent dual-gamma inconsistency and blowups
+            # This influences the next self-consistency iteration seed only.
+            # The persisted solver state remains energy/momentum based.
             if (
                 sc_enabled
                 and self_consistency is not None
@@ -2167,28 +2310,20 @@ def retarded_equations_of_motion(
                     beta_x_limited**2 + beta_y_limited**2 + beta_z_limited**2
                 )
 
-                # Determine reconciliation method
                 method = self_consistency.gamma_reconciliation_method
 
                 if method == GammaReconciliationMethod.USE_VELOCITY:
-                    # Always use velocity-based gamma
                     gamma_reconciled = gamma_from_velocity
-                    alpha = 0.0  # For logging
-
+                    alpha = 0.0
                 elif method == GammaReconciliationMethod.USE_ENERGY:
-                    # Always use energy-based gamma (same as DISABLED)
                     gamma_reconciled = gamma_from_energy
-                    alpha = 1.0  # For logging
-
+                    alpha = 1.0
                 elif method == GammaReconciliationMethod.FIXED_WEIGHTED:
-                    # Fixed 50/50 weighted average (or custom weight)
                     alpha = self_consistency.gamma_reconciliation_fixed_weight
                     gamma_reconciled = (
                         alpha * gamma_from_energy + (1.0 - alpha) * gamma_from_velocity
                     )
-
                 elif method == GammaReconciliationMethod.ADAPTIVE_WEIGHTED:
-                    # Adaptive weighting based on velocity regime (default)
                     low_threshold = (
                         self_consistency.gamma_reconciliation_low_beta_threshold
                     )
@@ -2200,59 +2335,26 @@ def retarded_equations_of_motion(
                     mid_weight = self_consistency.gamma_reconciliation_mid_beta_weight
 
                     if beta_total < low_threshold:
-                        alpha = low_weight  # Trust energy at lower velocities
+                        alpha = low_weight
                     elif beta_total > high_threshold:
-                        alpha = high_weight  # Trust velocity near speed of light
+                        alpha = high_weight
                     else:
-                        alpha = mid_weight  # Balanced weighting
+                        alpha = mid_weight
 
                     gamma_reconciled = (
                         alpha * gamma_from_energy + (1.0 - alpha) * gamma_from_velocity
                     )
                 else:
-                    # Fallback to energy-based gamma for unknown methods
                     gamma_reconciled = gamma_from_energy
                     alpha = 1.0
 
-                # Update gamma and Pt while preserving scalar potential energy.
-                result["gamma"][particle_idx] = gamma_reconciled
-                result["Pt"][particle_idx] = (
-                    gamma_reconciled * particle_mass * C_MMNS
-                    + scalar_potential_contribution
-                )
-
-                # Rescale mechanical momentum, not canonical momentum, so the
-                # vector-potential contribution is preserved separately.
-                mechanical_magnitude_sq = (gamma_reconciled**2 - 1.0) * (
-                    particle_mass * C_MMNS
-                ) ** 2
-                if mechanical_magnitude_sq > 0:
-                    mechanical_magnitude = np.sqrt(mechanical_magnitude_sq)
-                    current_mechanical_mag = np.sqrt(
-                        physical_mechanical_px**2
-                        + physical_mechanical_py**2
-                        + physical_mechanical_pz**2
-                    )
-                    if current_mechanical_mag > 1e-20:
-                        scale_factor = mechanical_magnitude / current_mechanical_mag
-                        result["Px"][particle_idx] = (
-                            physical_mechanical_px * scale_factor
-                            + accumulated_field_x * particle_mass
-                        )
-                        result["Py"][particle_idx] = (
-                            physical_mechanical_py * scale_factor
-                            + accumulated_field_y * particle_mass
-                        )
-                        result["Pz"][particle_idx] = (
-                            physical_mechanical_pz * scale_factor
-                            + accumulated_field_z * particle_mass
-                        )
+                reconciled_gamma_for_iteration = float(gamma_reconciled)
 
                 if sc_verbosity >= 3:
                     print(
                         f"      Gamma reconciliation ({method.name}): α={alpha:.2f}, β={beta_total:.6f}, "
                         f"γ_energy={gamma_from_energy:.6e}, γ_velocity={gamma_from_velocity:.6e}, "
-                        f"γ_reconciled={gamma_reconciled:.6e}"
+                        f"γ_iter_seed={gamma_reconciled:.6e}"
                     )
 
             # ================================================================
@@ -2341,8 +2443,10 @@ def retarded_equations_of_motion(
                         mechanical_pz + accumulated_field_z * particle_mass
                     )
                     result["gamma"][particle_idx] = damped_gamma
-                    scalar_potential_contribution = _scalar_potential_momentum_contribution(
-                        force_particle_charge, accumulated_scalar_potential
+                    scalar_potential_contribution = (
+                        _scalar_potential_momentum_contribution(
+                            force_particle_charge, accumulated_scalar_potential
+                        )
                     )
                     result["Pt"][particle_idx] = (
                         damped_gamma * particle_mass * C_MMNS
@@ -2481,8 +2585,10 @@ def retarded_equations_of_motion(
                             mechanical_pz + accumulated_field_z * particle_mass
                         )
                         result["gamma"][particle_idx] = medina_gamma
-                        scalar_potential_contribution = _scalar_potential_momentum_contribution(
-                            force_particle_charge, accumulated_scalar_potential
+                        scalar_potential_contribution = (
+                            _scalar_potential_momentum_contribution(
+                                force_particle_charge, accumulated_scalar_potential
+                            )
                         )
                         result["Pt"][particle_idx] = (
                             medina_gamma * particle_mass * C_MMNS
@@ -2562,7 +2668,7 @@ def retarded_equations_of_motion(
             new_working_beta_x = result["bx"][particle_idx]
             new_working_beta_y = result["by"][particle_idx]
             new_working_beta_z = result["bz"][particle_idx]
-            new_working_gamma = result["gamma"][particle_idx]
+            new_working_gamma = reconciled_gamma_for_iteration
 
             if sc_enabled and sc_iteration > 0:
                 # Check mass-shell convergence
@@ -2577,6 +2683,10 @@ def retarded_equations_of_motion(
                     particle_mass,
                     C_MMNS,
                     sc_target_ms_tolerance,
+                    scalar_potential_contribution=scalar_potential_contribution,
+                    field_x=accumulated_field_x,
+                    field_y=accumulated_field_y,
+                    field_z=accumulated_field_z,
                 )
 
                 # Set dummy gamma consistency error (not checked)
@@ -2683,28 +2793,37 @@ def retarded_equations_of_motion(
         # ================================================================
         if sc_enabled:
             # Check final mass-shell error
-            Px_64 = np.float64(result["Px"][particle_idx])
-            Py_64 = np.float64(result["Py"][particle_idx])
-            Pz_64 = np.float64(result["Pz"][particle_idx])
             Pt_64 = np.float64(result["Pt"][particle_idx])
             scalar_potential_contribution = _scalar_potential_momentum_contribution(
                 force_particle_charge, accumulated_scalar_potential
             )
-            kinetic_pt = Pt_64 - scalar_potential_contribution
-            mechanical_px = Px_64 - np.float64(accumulated_field_x * particle_mass)
-            mechanical_py = Py_64 - np.float64(accumulated_field_y * particle_mass)
-            mechanical_pz = Pz_64 - np.float64(accumulated_field_z * particle_mass)
-            P_spatial_sq = mechanical_px**2 + mechanical_py**2 + mechanical_pz**2
-            mass_shell_rhs = np.float64(particle_mass * C_MMNS) ** 2
-            mass_shell_error_final = (
-                np.abs(kinetic_pt**2 - P_spatial_sq - mass_shell_rhs) / mass_shell_rhs
+            (
+                _final_converged,
+                mass_shell_error_final,
+            ) = _check_mass_shell_convergence(
+                result["Pt"][particle_idx],
+                result["Px"][particle_idx],
+                result["Py"][particle_idx],
+                result["Pz"][particle_idx],
+                particle_mass,
+                C_MMNS,
+                sc_mass_shell_tolerance,
+                scalar_potential_contribution=scalar_potential_contribution,
+                field_x=accumulated_field_x,
+                field_y=accumulated_field_y,
+                field_z=accumulated_field_z,
             )
-
-            # Projection needed as final safety net. The mass shell is a
-            # mechanical/kinetic constraint; keep potentials separate.
-            kinetic_pt_from_mass_shell = np.sqrt(P_spatial_sq + mass_shell_rhs)
-            Pt_from_mass_shell = (
-                kinetic_pt_from_mass_shell + scalar_potential_contribution
+            kinetic_pt_from_mass_shell, Pt_from_mass_shell = (
+                _canonical_pt_from_mechanical_mass_shell(
+                    px=result["Px"][particle_idx],
+                    py=result["Py"][particle_idx],
+                    pz=result["Pz"][particle_idx],
+                    particle_mass=particle_mass,
+                    scalar_potential_contribution=scalar_potential_contribution,
+                    field_x=accumulated_field_x,
+                    field_y=accumulated_field_y,
+                    field_z=accumulated_field_z,
+                )
             )
 
             if mass_shell_error_final > sc_mass_shell_tolerance:
@@ -2722,6 +2841,16 @@ def retarded_equations_of_motion(
                 )
                 result["gamma"][particle_idx] = kinetic_energy / (
                     particle_mass * C_MMNS
+                )
+                _refresh_kinematics_from_canonical_momentum(
+                    result,
+                    current_state,
+                    particle_idx,
+                    h,
+                    particle_mass,
+                    accumulated_field_x,
+                    accumulated_field_y,
+                    accumulated_field_z,
                 )
 
     # Log summary if any particles died in this step

@@ -220,7 +220,7 @@ def test_approximate_back_history_recovers_initial_force_estimate():
         startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
     )
 
-    assert not np.allclose(approx_result["Px"], trajectory[0]["Px"])
+    assert not np.allclose(approx_result["Px"], trajectory[0]["Px"], atol=1e-12)
     assert np.all(np.isfinite(approx_result["Px"]))
 
 

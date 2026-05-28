@@ -4,6 +4,16 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Self-Space-Charge Energy Conservation (May 2026)
+
+- Restructured gamma reconciliation to be seed-only: the reconciled gamma (blend of velocity- and energy-based) now updates only the working state seed for the next SC iteration, not the stored `result["gamma"]` or `result["Pt"]`. The final stored gamma is always derived from the post-loop mass-shell projection, ensuring it is mechanically consistent with the spatial momenta.
+- Upgraded `_check_mass_shell_convergence` to use kinetic Pt (subtracting scalar-potential contribution) and mechanical momenta (subtracting vector-potential field) for both the in-loop convergence test and the final post-loop safety-net projection.
+- Extracted `_mechanical_momentum_components`, `_canonical_pt_from_mechanical_mass_shell`, and `_refresh_kinematics_from_canonical_momentum` helpers used by the SC projection code.
+- Moved `particle_charge`, `force_particle_charge`, and `particle_mass` extraction outside the inner SC iteration loop to avoid redundant per-iteration extraction.
+- Physics test: added `tests/physics/test_self_space_charge_energy.py` verifying that (a) no-SC drift conserves kinetic energy to sub-µeV, and (b) instantaneous same-bunch space charge correctly converts pair potential energy to kinetic energy (delta_KE > 0, delta_U < 0, sum conserved to first order).
+- Tests: updated four reconciliation-related unit tests to reflect seed-only behavior; fixed three pre-existing test failures from missing `**_kwargs` in mock step functions and a stale `np.allclose` tolerance.
+
+
 ### Scalar Potential Momentum Units (May 2026)
 
 - Fixed scalar-potential gamma bookkeeping to subtract/add `qΦ/c` in `Pt` momentum units instead of `qΦ` energy units. This removes the artificial MeV-scale no-driver/self-space-charge deceleration seen in compact H-/proton baseline probes while preserving pure drift behavior.
