@@ -328,6 +328,7 @@ def self_consistent_step(
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
     pseudo_grid_space_charge_source_charges: Optional[Any] = None,
+    macroparticle_smearing: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -425,6 +426,12 @@ def self_consistent_step(
         **(
             {"radiation_reaction_mode": radiation_reaction_mode}
             if "radiation_reaction_mode" in _sig_params or _accepts_var_kwargs
+            else {}
+        ),
+        **(
+            {"macroparticle_smearing": macroparticle_smearing}
+            if macroparticle_smearing is not None
+            and ("macroparticle_smearing" in _sig_params or _accepts_var_kwargs)
             else {}
         ),
     )

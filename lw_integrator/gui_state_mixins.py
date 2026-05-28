@@ -17,6 +17,7 @@ class IntegratorGUIStateMixin:
         self._update_cavity_spacing_state()
         self._update_image_subcharge_state()
         self._update_macroparticle_state()
+        self._toggle_macroparticle_smearing_controls()
         self._update_pseudo_grid_state()
         self._update_driver_train_state()
         self._refresh_initial_summary()
@@ -216,6 +217,21 @@ class IntegratorGUIStateMixin:
                 elif isinstance(widget, ttk.Label):
                     widget.configure(foreground=label_color)
 
+    def _toggle_macroparticle_smearing_controls(self) -> None:
+        if not hasattr(self, "macroparticle_smearing_enabled_var"):
+            return
+
+        enabled = bool(self.macroparticle_smearing_enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        label_color = "black" if enabled else "gray"
+        for widget in getattr(self, "_macroparticle_smearing_widgets", []):
+            if isinstance(widget, ttk.Entry):
+                widget.configure(state=state)
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(state=state)
+            elif isinstance(widget, ttk.Label):
+                widget.configure(foreground=label_color)
+
     def _toggle_pseudo_grid_controls(self) -> None:
         if not hasattr(self, "pseudo_grid_enabled_var"):
             return
@@ -322,6 +338,15 @@ class IntegratorGUIStateMixin:
             self.adaptive_max_probe_entry,
             self.adaptive_halt_check,
             self.adaptive_debug_check,
+            self.adaptive_bunch_proximity_check,
+            self.adaptive_bunch_proximity_sigma_label,
+            self.adaptive_bunch_proximity_sigma_entry,
+            self.adaptive_bunch_proximity_n_sigma_label,
+            self.adaptive_bunch_proximity_n_sigma_entry,
+            self.adaptive_bunch_proximity_reduction_label,
+            self.adaptive_bunch_proximity_reduction_entry,
+            self.adaptive_bunch_proximity_transition_label,
+            self.adaptive_bunch_proximity_transition_entry,
             self.adaptive_max_substeps_label,
             self.adaptive_max_substeps_display,
         ]

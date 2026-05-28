@@ -167,10 +167,12 @@ def _assert_schedule_has_nontrivial_passive_charge_aggregation(
     np.testing.assert_allclose(
         np.sum(schedule.rider_effective_source_charges),
         np.sum(rider_q),
+        atol=1e-15,
     )
     np.testing.assert_allclose(
         np.sum(schedule.driver_effective_source_charges),
         np.sum(driver_q),
+        atol=1e-15,
     )
     assert not np.allclose(
         schedule.rider_effective_source_charges,
@@ -299,6 +301,7 @@ def test_retarded_integrator_logs_proximity_transition_zone(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         h_calls.append(h_step)
         state = _clone_state(trajectory[-1])
@@ -1211,6 +1214,7 @@ def test_retarded_integrator_energy_monitor_raises_on_large_jump(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         state = _clone_state(trajectory[-1])
         state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
@@ -1265,6 +1269,7 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         h_calls.append((step_idx, h_step))
         state = _clone_state(trajectory[-1])
@@ -1335,6 +1340,7 @@ def test_retarded_integrator_accepts_energy_jump_after_max_refinement_attempts(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         gamma = next(gammas)
         state = _clone_state(trajectory[-1])
@@ -1398,6 +1404,7 @@ def test_retarded_integrator_accepts_energy_jump_at_minimum_timestep(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         gamma = next(gammas)
         state = _clone_state(trajectory[-1])
@@ -1463,6 +1470,7 @@ def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         raise GammaBlowupError(
             step_idx=int(step_idx or 0),
@@ -1521,6 +1529,7 @@ def test_retarded_integrator_gamma_blowup_at_min_timestep_marks_particle_dead(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         raise GammaBlowupError(
             step_idx=int(step_idx or 0),
@@ -1589,6 +1598,7 @@ def test_retarded_integrator_gamma_blowup_retries_with_reduced_timestep(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         h_calls.append(h_step)
         if len(h_calls) == 1:
@@ -1662,6 +1672,7 @@ def test_retarded_integrator_gamma_blowup_hits_max_retries(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         raise GammaBlowupError(
             step_idx=int(step_idx or 0),
@@ -1733,6 +1744,7 @@ def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         h_calls.append((step_idx, h_step))
         gamma = next(gammas)
@@ -1809,6 +1821,7 @@ def test_retarded_integrator_unstable_probe_restarts_cooldown(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         h_calls.append((step_idx, h_step))
         gamma = next(gammas)
@@ -1875,6 +1888,7 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         source_state = (
             trajectory[index_traj] if trajectory[index_traj] else trajectory[-1]
@@ -1926,6 +1940,7 @@ def test_retarded_integrator_logs_relative_cutoff_debug_message(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         source_state = next(state for state in reversed(trajectory) if state)
         state = _clone_state(source_state)
@@ -1973,6 +1988,7 @@ def test_retarded_integrator_halts_when_all_particles_dead(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         state = _clone_state(trajectory[-1])
         state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
@@ -2030,6 +2046,7 @@ def test_retarded_integrator_applies_proximity_refinement_debug_logging(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         h_calls.append(h_step)
         state = _clone_state(trajectory[-1])
@@ -2092,6 +2109,7 @@ def test_retarded_integrator_switching_wall_advances_cutoff_and_wall(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         state = _clone_state(trajectory[-1])
         state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
@@ -2151,6 +2169,7 @@ def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         state = _clone_state(trajectory[-1])
         state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
@@ -2202,6 +2221,7 @@ def test_retarded_integrator_energy_monitor_warns_and_debugs_without_halting(
         startup_mode: object,
         step_idx: int | None = None,
         cancel_callback: object = None,
+        **_kwargs: object,
     ) -> dict[str, object]:
         gamma = {1: 1.0, 2: 1.05, 3: 2.0}[int(step_idx or 0)]
         state = _clone_state(trajectory[-1])

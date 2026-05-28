@@ -1332,8 +1332,14 @@ class OptimizationRunMixin:
                     except Exception as e:
                         self._log_result(f"    Error closing figure {fig_name}: {e}")
 
+            # distance_reached means the relative z-cutoff fired intentionally; compute metrics normally.
+            _distance_reached = (
+                result.halted_early
+                and isinstance(result.halt_reason, str)
+                and result.halt_reason.startswith("distance_reached")
+            )
             # Check if run was halted early - if so, skip metrics calculation
-            if result.halted_early:
+            if result.halted_early and not _distance_reached:
                 halted = build_halted_integration_output(
                     result,
                     run_num=run_num,

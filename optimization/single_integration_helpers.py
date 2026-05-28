@@ -29,6 +29,7 @@ class SingleIntegrationSetup:
     wall_z: float
     macroparticle_charge_multiplier: float
     macroparticle_sigma_multiplier: float
+    rider_long_dist: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ def build_single_integration_setup(
     rider_pcount: int | None = None,
     rider_transv_mom: float | None = None,
     rider_transv_dist: float | None = None,
+    rider_long_dist: float | None = None,
     rider_stripped_ions: float | None = None,
     macroparticle_charge_multiplier: float | None = None,
     macroparticle_sigma_multiplier: float | None = None,
@@ -93,6 +95,14 @@ def build_single_integration_setup(
     )
     rider_transv_dist = cast(
         float, _override_or_config(rider_transv_dist, config, "transv_dist")
+    )
+    rider_long_dist = cast(
+        float,
+        (
+            rider_long_dist
+            if rider_long_dist is not None
+            else getattr(config, "long_dist", 0.0)
+        ),
     )
     rider_stripped_ions = cast(
         float, _override_or_config(rider_stripped_ions, config, "stripped_ions")
@@ -119,6 +129,7 @@ def build_single_integration_setup(
         "starting_distance": start_z,
         "transv_mom": rider_transv_mom,
         "transv_dist": rider_transv_dist,
+        "long_dist": rider_long_dist,
         "transverse_geometry": getattr(config, "transverse_geometry", "square"),
         "transv_offset_x": transv_offset,
         "transv_offset_y": 0.0,
@@ -181,6 +192,54 @@ def build_single_integration_setup(
         macroparticle_charge_multiplier=macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
         macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,
+        macroparticle_smearing_enabled=getattr(
+            config, "macroparticle_smearing_enabled", False
+        ),
+        macroparticle_smearing_subcharge_count=getattr(
+            config, "macroparticle_smearing_subcharge_count", 8
+        ),
+        macroparticle_smearing_sigma_multiplier=getattr(
+            config, "macroparticle_smearing_sigma_multiplier", 1.0
+        ),
+        macroparticle_smearing_position_sigma_mm=getattr(
+            config, "macroparticle_smearing_position_sigma_mm", None
+        ),
+        macroparticle_smearing_longitudinal_sigma_mm=getattr(
+            config, "macroparticle_smearing_longitudinal_sigma_mm", None
+        ),
+        macroparticle_smearing_momentum_sigma_amu_mm_ns=getattr(
+            config, "macroparticle_smearing_momentum_sigma_amu_mm_ns", None
+        ),
+        macroparticle_smearing_use_position_errors=getattr(
+            config, "macroparticle_smearing_use_position_errors", True
+        ),
+        macroparticle_smearing_use_momentum_errors=getattr(
+            config, "macroparticle_smearing_use_momentum_errors", True
+        ),
+        macroparticle_smearing_use_centroid_errors=getattr(
+            config, "macroparticle_smearing_use_centroid_errors", True
+        ),
+        macroparticle_smearing_use_internal_cloud=getattr(
+            config, "macroparticle_smearing_use_internal_cloud", True
+        ),
+        macroparticle_smearing_apply_to_active_observers=getattr(
+            config, "macroparticle_smearing_apply_to_active_observers", True
+        ),
+        macroparticle_smearing_apply_to_active_sources=getattr(
+            config, "macroparticle_smearing_apply_to_active_sources", True
+        ),
+        macroparticle_smearing_apply_to_passive_sources=getattr(
+            config, "macroparticle_smearing_apply_to_passive_sources", True
+        ),
+        macroparticle_smearing_apply_to_passive_updates=getattr(
+            config, "macroparticle_smearing_apply_to_passive_updates", False
+        ),
+        macroparticle_smearing_seed=getattr(
+            config, "macroparticle_smearing_seed", 12345
+        ),
+        macroparticle_smearing_refresh_policy=getattr(
+            config, "macroparticle_smearing_refresh_policy", "fixed_per_particle"
+        ),
         image_subcharge_count=config.image_subcharge_count,
         use_image_weighting=config.use_image_weighting,
         output_dir=run_output_dir,
@@ -383,6 +442,7 @@ def build_single_integration_setup(
         rider_pcount=rider_pcount,
         rider_transv_mom=rider_transv_mom,
         rider_transv_dist=rider_transv_dist,
+        rider_long_dist=rider_long_dist,
         rider_stripped_ions=rider_stripped_ions,
         wall_z=wall_z,
         macroparticle_charge_multiplier=macroparticle_charge_multiplier,

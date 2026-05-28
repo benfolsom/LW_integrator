@@ -375,6 +375,68 @@ class IntegratorGUI(
         self.macroparticle_sigma_multiplier_var = tk.StringVar(value="1.0")
         self.macroparticle_use_momentum_errors_var = tk.BooleanVar(value=True)
 
+        self.macroparticle_smearing_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "macroparticle_smearing_enabled", False)
+        )
+        self.macroparticle_smearing_subcharge_count_var = tk.IntVar(
+            value=getattr(self.options, "macroparticle_smearing_subcharge_count", 8)
+        )
+        self.macroparticle_smearing_sigma_multiplier_var = tk.StringVar(
+            value=str(
+                getattr(self.options, "macroparticle_smearing_sigma_multiplier", 1.0)
+            )
+        )
+        self.macroparticle_smearing_position_sigma_var = tk.StringVar(
+            value=(
+                ""
+                if getattr(
+                    self.options, "macroparticle_smearing_position_sigma_mm", None
+                )
+                is None
+                else str(
+                    getattr(self.options, "macroparticle_smearing_position_sigma_mm")
+                )
+            )
+        )
+        self.macroparticle_smearing_longitudinal_sigma_var = tk.StringVar(
+            value=(
+                ""
+                if getattr(
+                    self.options, "macroparticle_smearing_longitudinal_sigma_mm", None
+                )
+                is None
+                else str(
+                    getattr(
+                        self.options, "macroparticle_smearing_longitudinal_sigma_mm"
+                    )
+                )
+            )
+        )
+        self.macroparticle_smearing_momentum_sigma_var = tk.StringVar(
+            value=(
+                ""
+                if getattr(
+                    self.options,
+                    "macroparticle_smearing_momentum_sigma_amu_mm_ns",
+                    None,
+                )
+                is None
+                else str(
+                    getattr(
+                        self.options, "macroparticle_smearing_momentum_sigma_amu_mm_ns"
+                    )
+                )
+            )
+        )
+        self.macroparticle_smearing_apply_to_passive_updates_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_apply_to_passive_updates", False
+            )
+        )
+        self.macroparticle_smearing_seed_var = tk.IntVar(
+            value=getattr(self.options, "macroparticle_smearing_seed", 12345)
+        )
+
         # Experimental pseudo-grid options
         self.pseudo_grid_enabled_var = tk.BooleanVar(
             value=getattr(self.options, "pseudo_grid_enabled", False)
@@ -583,6 +645,35 @@ class IntegratorGUI(
         )
         self.adaptive_timestep_debug_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_debug
+        )
+        self.adaptive_timestep_bunch_proximity_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "adaptive_timestep_bunch_proximity_enabled", False
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_sigma_mm_var = tk.DoubleVar(
+            value=getattr(
+                self.options, "adaptive_timestep_bunch_proximity_sigma_mm", 5.0
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_n_sigma_var = tk.DoubleVar(
+            value=getattr(
+                self.options, "adaptive_timestep_bunch_proximity_n_sigma", 5.0
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_reduction_factor_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "adaptive_timestep_bunch_proximity_reduction_factor",
+                10.0,
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_transition_n_sigma_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "adaptive_timestep_bunch_proximity_transition_n_sigma",
+                2.0,
+            )
         )
         # max_substeps is now calculated from min_timestep_factor (read-only display)
         self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")

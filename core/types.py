@@ -72,7 +72,7 @@ class GammaReconciliationMethod(Enum):
     """Methods for reconciling dual gamma calculations (from energy vs velocity).
 
     The integrator computes gamma in two ways:
-    - γ_energy from conjugate momentum: γ = (Pt - q·Φ)/(mc)
+    - γ_energy from conjugate momentum: γ = (Pt - q·Φ/c)/(mc)
     - γ_velocity from velocity: γ = 1/√(1-β²)
 
     These should be identical in exact math but differ numerically due to
@@ -94,7 +94,7 @@ class GammaReconciliationMethod(Enum):
         Geometrically consistent but can break energy bookkeeping.
         Not recommended for production.
 
-    ``USE_ENERGY`` - Always use γ_energy (γ = (Pt - q·Φ)/(mc)).
+    ``USE_ENERGY`` - Always use γ_energy (γ = (Pt - q·Φ/c)/(mc)).
         Same as DISABLED; provided for symmetry/clarity.
 
     ``FIXED_WEIGHTED`` - Fixed 50/50 weighted average.
@@ -135,6 +135,58 @@ class ParticleLossConfig:
             raise ValueError("particle_loss initial_radial_multiplier must be positive")
         if self.initial_radial_margin_mm < 0.0:
             raise ValueError("particle_loss initial_radial_margin_mm must be >= 0")
+
+
+@dataclass
+class MacroparticleSmearingConfig:
+    """Configuration for bounded macroparticle source smearing."""
+
+    enabled: bool = False
+    mode: str = "deterministic_subcharge"
+    subcharge_count: int = 8
+    sigma_multiplier: float = 1.0
+    position_sigma_mm: float | None = None
+    longitudinal_sigma_mm: float | None = None
+    momentum_sigma_amu_mm_ns: float | None = None
+    use_position_errors: bool = True
+    use_momentum_errors: bool = True
+    use_centroid_errors: bool = True
+    use_internal_cloud: bool = True
+    apply_to_active_observers: bool = True
+    apply_to_active_sources: bool = True
+    apply_to_passive_sources: bool = True
+    apply_to_passive_updates: bool = False
+    seed: int = 12345
+    refresh_policy: str = "fixed_per_particle"
+
+    def __post_init__(self) -> None:
+        if self.mode != "deterministic_subcharge":
+            raise ValueError(
+                "macroparticle smearing mode must be deterministic_subcharge"
+            )
+        if self.subcharge_count <= 0:
+            raise ValueError("macroparticle smearing subcharge_count must be positive")
+        if self.subcharge_count > 128:
+            raise ValueError("macroparticle smearing subcharge_count must be <= 128")
+        if self.sigma_multiplier < 0.0:
+            raise ValueError(
+                "macroparticle smearing sigma_multiplier must be non-negative"
+            )
+        for name, value in (
+            ("position_sigma_mm", self.position_sigma_mm),
+            ("longitudinal_sigma_mm", self.longitudinal_sigma_mm),
+            ("momentum_sigma_amu_mm_ns", self.momentum_sigma_amu_mm_ns),
+        ):
+            if value is not None and value < 0.0:
+                raise ValueError(f"macroparticle smearing {name} must be non-negative")
+        if self.refresh_policy not in {"fixed_per_particle", "per_step"}:
+            raise ValueError(
+                "macroparticle smearing refresh_policy must be fixed_per_particle or per_step"
+            )
+        if self.apply_to_passive_updates:
+            raise ValueError(
+                "macroparticle smearing apply_to_passive_updates is not implemented yet"
+            )
 
 
 @dataclass
@@ -301,6 +353,9 @@ class IntegratorConfig:
     bunch_transv_dist: float = 0.0
     bunch_transv_mom: float = 0.0
     pseudo_grid: PseudoGridConfig = field(default_factory=PseudoGridConfig)
+    macroparticle_smearing: MacroparticleSmearingConfig = field(
+        default_factory=MacroparticleSmearingConfig
+    )
     driver_train: DriverTrainConfig = field(default_factory=DriverTrainConfig)
     particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
 

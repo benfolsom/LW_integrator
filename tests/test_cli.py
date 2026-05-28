@@ -25,6 +25,15 @@ def _make_args(**overrides) -> argparse.Namespace:
         "log_verbosity": None,
         "sc_verbosity": None,
         "adaptive_debug": None,
+        "adaptive_timestep_enabled": None,
+        "adaptive_timestep_threshold": None,
+        "adaptive_timestep_reduction_factor": None,
+        "adaptive_timestep_min_factor": None,
+        "adaptive_timestep_bunch_proximity_enabled": None,
+        "adaptive_timestep_bunch_proximity_sigma_mm": None,
+        "adaptive_timestep_bunch_proximity_n_sigma": None,
+        "adaptive_timestep_bunch_proximity_reduction_factor": None,
+        "adaptive_timestep_bunch_proximity_transition_n_sigma": None,
         "space_charge": False,
         "space_charge_softening_mm": 0.0,
         "space_charge_bunch_sigma_mm": None,
@@ -56,6 +65,15 @@ def _make_args(**overrides) -> argparse.Namespace:
         "pseudo_grid_loss_tracking_enabled": None,
         "pseudo_grid_causal_history_pruning_enabled": None,
         "pseudo_grid_causal_history_safety_margin_steps": None,
+        "macroparticle_smearing_enabled": None,
+        "macroparticle_smearing_subcharge_count": None,
+        "macroparticle_smearing_sigma_multiplier": None,
+        "macroparticle_smearing_position_sigma_mm": None,
+        "macroparticle_smearing_longitudinal_sigma_mm": None,
+        "macroparticle_smearing_momentum_sigma_amu_mm_ns": None,
+        "macroparticle_smearing_seed": None,
+        "macroparticle_smearing_refresh_policy": None,
+        "macroparticle_smearing_apply_to_passive_updates": None,
         "driver_train_enabled": None,
         "driver_train_bunch_count": None,
         "driver_train_z_spacing_mm": None,
@@ -230,6 +248,31 @@ class TestCliConfigParsing:
         assert args.driver_train_z_offsets_mm == [0.0, 100.0, 250.0]
         assert args.driver_train_prehistory_steps == 12
         assert args.driver_train_preserve_prehistory_in_output is True
+
+    def test_parse_args_accepts_bunch_proximity_timestep_options(self):
+        args = cli.parse_args(
+            [
+                "--adaptive-bunch-proximity",
+                "--adaptive-bunch-proximity-sigma-mm",
+                "2.5",
+                "--adaptive-bunch-proximity-n-sigma",
+                "4",
+                "--adaptive-bunch-proximity-reduction-factor",
+                "8",
+                "--adaptive-bunch-proximity-transition-n-sigma",
+                "1.5",
+            ]
+        )
+
+        assert args.adaptive_timestep_bunch_proximity_enabled is True
+        assert args.adaptive_timestep_bunch_proximity_sigma_mm == pytest.approx(2.5)
+        assert args.adaptive_timestep_bunch_proximity_n_sigma == pytest.approx(4.0)
+        assert args.adaptive_timestep_bunch_proximity_reduction_factor == pytest.approx(
+            8.0
+        )
+        assert args.adaptive_timestep_bunch_proximity_transition_n_sigma == pytest.approx(
+            1.5
+        )
 
     def test_parse_args_allows_disabling_boolean_flags(self):
         args = cli.parse_args(
@@ -492,6 +535,25 @@ class TestCliBuildRequest:
         assert payload["pseudo_grid"]["pair_reuse_window"] == 30
         assert payload["pseudo_grid"]["causal_history_pruning_enabled"] is True
 
+    def test_merge_simulation_payload_applies_macroparticle_smearing_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {"macroparticle_smearing": {"enabled": False, "subcharge_count": 4}},
+            _make_args(
+                macroparticle_smearing_enabled=True,
+                macroparticle_smearing_subcharge_count=6,
+                macroparticle_smearing_sigma_multiplier=0.5,
+                macroparticle_smearing_position_sigma_mm=0.1,
+                macroparticle_smearing_refresh_policy="per-step",
+            ),
+        )
+
+        smearing = payload["macroparticle_smearing"]
+        assert smearing["enabled"] is True
+        assert smearing["subcharge_count"] == 6
+        assert smearing["sigma_multiplier"] == pytest.approx(0.5)
+        assert smearing["position_sigma_mm"] == pytest.approx(0.1)
+        assert smearing["refresh_policy"] == "per_step"
+
     def test_merge_simulation_payload_applies_driver_train_overrides(self):
         payload = cli._merge_simulation_payload(
             {"driver_train": {"enabled": False, "bunch_count": 1}},
@@ -511,6 +573,27 @@ class TestCliBuildRequest:
         assert payload["driver_train"]["z_offsets_mm"] == [0.0, 10.0, 20.0, 30.0]
         assert payload["driver_train"]["prehistory_steps"] == 16
         assert payload["driver_train"]["preserve_prehistory_in_output"] is True
+
+    def test_merge_simulation_payload_applies_adaptive_bunch_proximity_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {"adaptive_timestep": {"enabled": False}},
+            _make_args(
+                adaptive_timestep_enabled=True,
+                adaptive_timestep_bunch_proximity_enabled=True,
+                adaptive_timestep_bunch_proximity_sigma_mm=3.0,
+                adaptive_timestep_bunch_proximity_n_sigma=6.0,
+                adaptive_timestep_bunch_proximity_reduction_factor=12.0,
+                adaptive_timestep_bunch_proximity_transition_n_sigma=2.5,
+            ),
+        )
+
+        adaptive = payload["adaptive_timestep"]
+        assert adaptive["enabled"] is True
+        assert adaptive["bunch_proximity_enabled"] is True
+        assert adaptive["bunch_proximity_sigma_mm"] == pytest.approx(3.0)
+        assert adaptive["bunch_proximity_n_sigma"] == pytest.approx(6.0)
+        assert adaptive["bunch_proximity_reduction_factor"] == pytest.approx(12.0)
+        assert adaptive["bunch_proximity_transition_n_sigma"] == pytest.approx(2.5)
 
     def test_build_request_defaults_to_medina_lad_rr(self):
         request = cli.build_request(_make_args())
@@ -1160,6 +1243,9 @@ class TestCliRuntimeHelpers:
         assert captured["external_field"] is request.external_field
         assert captured["pseudo_grid"] is request.config.pseudo_grid
         assert captured["driver_train"] is request.config.driver_train
+        assert (
+            captured["macroparticle_smearing"] is request.config.macroparticle_smearing
+        )
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

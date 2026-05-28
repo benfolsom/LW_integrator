@@ -32,13 +32,13 @@ compute_vectorized_contributions
     5-7. Field contributions for position updates (gauge field components)
     8. Scalar potential sum Φ = Σ(q_j / (R_j · k_j)) for energy corrections
 
-The scalar potential (item 8) is used to compute the correct kinetic energy::
+The scalar potential (item 8) is used to compute the correct kinetic momentum::
 
-    E_kinetic = Pt - q·Φ
-    γ = E_kinetic / (mc)
+    p0_kinetic = Pt - q·Φ/c
+    γ = p0_kinetic / (mc)
 
-This separates the particle's kinetic energy from the electromagnetic potential
-energy, which is critical for self-consistency iterations.
+This separates the particle's kinetic energy-over-c from the electromagnetic
+potential energy-over-c, which is critical for self-consistency iterations.
 
 k-factor Threshold
 ------------------
@@ -247,6 +247,7 @@ class ExternalSampleBatch:
     x: np.ndarray | None = None
     y: np.ndarray | None = None
     z: np.ndarray | None = None
+    m: np.ndarray | None = None
 
     @property
     def any_valid(self) -> bool:
@@ -260,6 +261,7 @@ def gather_external_samples_soa(
     indices_next: np.ndarray | None = None,
     weights: np.ndarray | None = None,
     needs_interpolation: np.ndarray | None = None,
+    include_positions: bool = False,
 ) -> ExternalSampleBatch:
     """SOA fast path for gather_external_samples.
 
@@ -288,12 +290,17 @@ def gather_external_samples_soa(
         traj_ext, "gamma", safe_indices, particle_indices
     ).copy()
     charge = _soa_constant(traj_ext, "q").copy()
+    mass = _soa_constant(traj_ext, "m").copy()
     dead_at_sample = _soa_values_at_steps(
         traj_ext, "dead", safe_indices, particle_indices
     )
     charge[dead_at_sample] = 0.0
     valid_mask = valid_mask & ~dead_at_sample
     x = y = z = None
+    if include_positions:
+        x = _soa_values_at_steps(traj_ext, "x", safe_indices, particle_indices).copy()
+        y = _soa_values_at_steps(traj_ext, "y", safe_indices, particle_indices).copy()
+        z = _soa_values_at_steps(traj_ext, "z", safe_indices, particle_indices).copy()
 
     if not valid_all:
         invalid_mask = ~valid_mask
@@ -305,6 +312,11 @@ def gather_external_samples_soa(
         bdotz[invalid_mask] = 0.0
         gamma[invalid_mask] = 0.0
         charge[invalid_mask] = 0.0
+        mass[invalid_mask] = 0.0
+        if include_positions and x is not None and y is not None and z is not None:
+            x[invalid_mask] = 0.0
+            y[invalid_mask] = 0.0
+            z[invalid_mask] = 0.0
 
     if (
         weights is not None
@@ -319,15 +331,16 @@ def gather_external_samples_soa(
             & (indices_next < traj_ext.n_steps)
         )
         if np.any(interp_mask):
-            x = _soa_values_at_steps(
-                traj_ext, "x", safe_indices, particle_indices
-            ).copy()
-            y = _soa_values_at_steps(
-                traj_ext, "y", safe_indices, particle_indices
-            ).copy()
-            z = _soa_values_at_steps(
-                traj_ext, "z", safe_indices, particle_indices
-            ).copy()
+            if x is None or y is None or z is None:
+                x = _soa_values_at_steps(
+                    traj_ext, "x", safe_indices, particle_indices
+                ).copy()
+                y = _soa_values_at_steps(
+                    traj_ext, "y", safe_indices, particle_indices
+                ).copy()
+                z = _soa_values_at_steps(
+                    traj_ext, "z", safe_indices, particle_indices
+                ).copy()
             if not valid_all:
                 invalid_mask = ~valid_mask
                 x[invalid_mask] = 0.0
@@ -382,6 +395,7 @@ def gather_external_samples_soa(
         z=z,
         charge=charge,
         valid_mask=valid_mask,
+        m=mass,
     )
 
 
@@ -394,6 +408,7 @@ def gather_external_samples(
     indices_next2: np.ndarray | None = None,
     use_cubic: bool = False,
     interpolate_positions: bool = False,
+    include_positions: bool = False,
 ) -> ExternalSampleBatch:
     """Extract external bunch samples for the provided retarded indices.
 
@@ -426,6 +441,7 @@ def gather_external_samples(
     sample_count = int(len(indices))
     charge = np.zeros(sample_count, dtype=float)
     gamma = np.zeros(sample_count, dtype=float)
+    mass = np.zeros(sample_count, dtype=float)
     bx = np.zeros(sample_count, dtype=float)
     by = np.zeros(sample_count, dtype=float)
     bz = np.zeros(sample_count, dtype=float)
@@ -474,6 +490,12 @@ def gather_external_samples(
             gamma_val = float(gamma_j[j])
         else:
             gamma_val = float(gamma_j)
+
+        mass_j = state.get("m", 1.0)
+        if hasattr(mass_j, "__getitem__"):
+            mass_val = float(mass_j[j])
+        else:
+            mass_val = float(mass_j)
 
         # Store positions (may be interpolated later)
         x_vals[j] = float(state["x"][j])
@@ -649,6 +671,7 @@ def gather_external_samples(
         bdotz[j] = bdotz_val
         charge[j] = charge_val
         gamma[j] = gamma_val
+        mass[j] = mass_val
 
     return ExternalSampleBatch(
         charge=charge,
@@ -660,6 +683,10 @@ def gather_external_samples(
         bdoty=bdoty,
         bdotz=bdotz,
         valid_mask=valid_mask,
+        x=x_vals if include_positions or interpolate_positions else None,
+        y=y_vals if include_positions or interpolate_positions else None,
+        z=z_vals if include_positions or interpolate_positions else None,
+        m=mass,
     )
 
 

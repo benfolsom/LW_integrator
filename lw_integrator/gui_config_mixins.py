@@ -223,6 +223,40 @@ class IntegratorGUIConfigMixin:
         self.macroparticle_use_momentum_errors_var.set(
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
+        self.macroparticle_smearing_enabled_var.set(
+            getattr(options, "macroparticle_smearing_enabled", False)
+        )
+        self.macroparticle_smearing_subcharge_count_var.set(
+            getattr(options, "macroparticle_smearing_subcharge_count", 8)
+        )
+        self.macroparticle_smearing_sigma_multiplier_var.set(
+            getattr(options, "macroparticle_smearing_sigma_multiplier", 1.0)
+        )
+        self.macroparticle_smearing_position_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_position_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_longitudinal_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_longitudinal_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_momentum_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(
+                    options,
+                    "macroparticle_smearing_momentum_sigma_amu_mm_ns",
+                    None,
+                )
+            )
+        )
+        self.macroparticle_smearing_apply_to_passive_updates_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_passive_updates", False)
+        )
+        self.macroparticle_smearing_seed_var.set(
+            getattr(options, "macroparticle_smearing_seed", 12345)
+        )
         if hasattr(self, "pseudo_grid_enabled_var"):
             self.pseudo_grid_enabled_var.set(
                 getattr(options, "pseudo_grid_enabled", False)
@@ -383,6 +417,27 @@ class IntegratorGUIConfigMixin:
             options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
+        self.adaptive_timestep_bunch_proximity_enabled_var.set(
+            getattr(options, "adaptive_timestep_bunch_proximity_enabled", False)
+        )
+        self.adaptive_timestep_bunch_proximity_sigma_mm_var.set(
+            getattr(options, "adaptive_timestep_bunch_proximity_sigma_mm", 5.0)
+        )
+        self.adaptive_timestep_bunch_proximity_n_sigma_var.set(
+            getattr(options, "adaptive_timestep_bunch_proximity_n_sigma", 5.0)
+        )
+        self.adaptive_timestep_bunch_proximity_reduction_factor_var.set(
+            getattr(
+                options, "adaptive_timestep_bunch_proximity_reduction_factor", 10.0
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_transition_n_sigma_var.set(
+            getattr(
+                options,
+                "adaptive_timestep_bunch_proximity_transition_n_sigma",
+                2.0,
+            )
+        )
         self._update_max_substeps_display()
         self.radiation_reaction_mode_var.set(
             getattr(options, "radiation_reaction_mode", "medina_lad")
@@ -438,6 +493,8 @@ class IntegratorGUIConfigMixin:
         self.auto_duration_post_factor_var.set(
             getattr(options, "auto_duration_post_factor", 2.0)
         )
+        if hasattr(self, "_toggle_macroparticle_smearing_controls"):
+            self._toggle_macroparticle_smearing_controls()
         self._toggle_space_charge_controls()
         self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
@@ -660,6 +717,31 @@ class IntegratorGUIConfigMixin:
             macroparticle_use_momentum_errors=bool(
                 self.macroparticle_use_momentum_errors_var.get()
             ),
+            macroparticle_smearing_enabled=bool(
+                self.macroparticle_smearing_enabled_var.get()
+            ),
+            macroparticle_smearing_subcharge_count=int(
+                self.macroparticle_smearing_subcharge_count_var.get()
+            ),
+            macroparticle_smearing_sigma_multiplier=float(
+                self.macroparticle_smearing_sigma_multiplier_var.get()
+            ),
+            macroparticle_smearing_position_sigma_mm=_parse_gui_optional_float(
+                self.macroparticle_smearing_position_sigma_var.get(),
+                "Macroparticle smearing position sigma",
+            ),
+            macroparticle_smearing_longitudinal_sigma_mm=_parse_gui_optional_float(
+                self.macroparticle_smearing_longitudinal_sigma_var.get(),
+                "Macroparticle smearing longitudinal sigma",
+            ),
+            macroparticle_smearing_momentum_sigma_amu_mm_ns=_parse_gui_optional_float(
+                self.macroparticle_smearing_momentum_sigma_var.get(),
+                "Macroparticle smearing momentum sigma",
+            ),
+            macroparticle_smearing_apply_to_passive_updates=bool(
+                self.macroparticle_smearing_apply_to_passive_updates_var.get()
+            ),
+            macroparticle_smearing_seed=int(self.macroparticle_smearing_seed_var.get()),
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
@@ -736,6 +818,21 @@ class IntegratorGUIConfigMixin:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
+            adaptive_timestep_bunch_proximity_enabled=bool(
+                self.adaptive_timestep_bunch_proximity_enabled_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_sigma_mm=float(
+                self.adaptive_timestep_bunch_proximity_sigma_mm_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_n_sigma=float(
+                self.adaptive_timestep_bunch_proximity_n_sigma_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_reduction_factor=float(
+                self.adaptive_timestep_bunch_proximity_reduction_factor_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_transition_n_sigma=float(
+                self.adaptive_timestep_bunch_proximity_transition_n_sigma_var.get()
+            ),
             space_charge_enabled=bool(self.space_charge_enabled_var.get()),
             space_charge_retarded=bool(self.space_charge_retarded_var.get()),
             space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),

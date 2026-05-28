@@ -42,6 +42,7 @@ from .types import (
     DriverTrainConfig,
     IndexedTrajectoryArrays,
     IntegratorConfig,
+    MacroparticleSmearingConfig,
     ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
@@ -199,6 +200,13 @@ class AdaptiveTimestepConfig:
     )
     proximity_reduction_factor: int = 5  # Timestep reduction factor in proximity region
     proximity_transition_zone: float = 2.0  # Smooth transition zone (in aperture radii)
+
+    # Bunch-separation proximity refinement (BUNCH_TO_BUNCH mode only)
+    bunch_proximity_enabled: bool = False
+    bunch_proximity_sigma_mm: float = 5.0    # characteristic bunch length scale (mm)
+    bunch_proximity_n_sigma: float = 5.0     # engage when separation < n_sigma * sigma_mm
+    bunch_proximity_reduction_factor: float = 10.0  # divisor at full engagement
+    bunch_proximity_transition_n_sigma: float = 2.0  # ramp-in width (sigma units)
 
     debug: bool = False  # Print adaptive timestep actions
 
@@ -536,6 +544,7 @@ def _run_pseudo_grid_reduced_step(
     observer_soa: TrajectoryArrays | None = None,
     source_soa: TrajectoryArrays | None = None,
     raise_gamma_blowup: bool = False,
+    macroparticle_smearing: MacroparticleSmearingConfig | None = None,
 ) -> ParticleState:
     """Advance one pseudo-grid half-step via active-only observer/source solves."""
     if not observer_history:
@@ -620,6 +629,7 @@ def _run_pseudo_grid_reduced_step(
             pseudo_grid_space_charge_source_charges=(
                 pseudo_grid_space_charge_source_charges
             ),
+            macroparticle_smearing=macroparticle_smearing,
             traj_soa=observer_active_soa,
             traj_ext_soa=source_active_soa,
             **(
@@ -733,6 +743,7 @@ def _run_adaptive_step(
     pseudo_grid_observer_soa: TrajectoryArrays | None = None,
     pseudo_grid_source_soa: TrajectoryArrays | None = None,
     use_full_history: bool = False,
+    macroparticle_smearing: MacroparticleSmearingConfig | None = None,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -753,6 +764,8 @@ def _run_adaptive_step(
     temp_trajectory: Trajectory = []
     temp_driver: Trajectory = []
 
+    bunch_proximity_reduction_active = False
+    bunch_proximity_factor = 1.0
     proximity_reduction_active = False
     proximity_factor = 1.0
     if (
@@ -791,6 +804,46 @@ def _run_adaptive_step(
                     f"Distance to wall: {distance_to_wall:.6e} mm "
                     f"({distance_to_wall / aperture_radius:.1f} aperture radii). "
                     f"Reduction factor: {proximity_factor:.4f}x"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+
+    if (
+        adaptive_timestep is not None
+        and adaptive_timestep.bunch_proximity_enabled
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+        and len(trajectory_drv) >= i
+    ):
+        sigma_mm = adaptive_timestep.bunch_proximity_sigma_mm
+        n_sigma = adaptive_timestep.bunch_proximity_n_sigma
+        transition_n_sigma = adaptive_timestep.bunch_proximity_transition_n_sigma
+        engage_dist = n_sigma * sigma_mm
+        full_dist = max(0.0, (n_sigma - transition_n_sigma) * sigma_mm)
+
+        rider_z = float(np.mean(trajectory[i - 1]["z"]))
+        driver_z = float(np.mean(trajectory_drv[i - 1]["z"]))
+        separation = abs(driver_z - rider_z)
+
+        if separation <= engage_dist:
+            bunch_proximity_reduction_active = True
+            if separation <= full_dist:
+                bunch_proximity_factor = adaptive_timestep.bunch_proximity_reduction_factor
+                zone_name = "full reduction"
+            else:
+                transition_width = engage_dist - full_dist
+                ramp = (engage_dist - separation) / transition_width
+                bunch_proximity_factor = (
+                    1.0 + (adaptive_timestep.bunch_proximity_reduction_factor - 1.0) * ramp
+                )
+                zone_name = "transition"
+
+            if adaptive_timestep.debug:
+                msg = (
+                    f"Step {i}: Bunch proximity refinement active ({zone_name} zone). "
+                    f"Separation: {separation:.4f} mm ({separation / sigma_mm:.2f} sigma). "
+                    f"Reduction factor: {bunch_proximity_factor:.4f}x"
                 )
                 if logger:
                     logger(msg)
@@ -857,11 +910,21 @@ def _run_adaptive_step(
                     print(msg)
     else:
         current_h_step = h_step
-        if proximity_reduction_active and adaptive_timestep is not None:
-            current_h_step = h_step / proximity_factor
+        combined_factor = max(
+            proximity_factor if proximity_reduction_active else 1.0,
+            bunch_proximity_factor if bunch_proximity_reduction_active else 1.0,
+        )
+        if combined_factor > 1.0 and adaptive_timestep is not None:
+            current_h_step = h_step / combined_factor
             if adaptive_timestep.debug:
+                active_parts = []
+                if proximity_reduction_active:
+                    active_parts.append(f"wall({proximity_factor:.2f}x)")
+                if bunch_proximity_reduction_active:
+                    active_parts.append(f"bunch({bunch_proximity_factor:.2f}x)")
                 msg = (
-                    f"Step {i}: Applying proximity refinement: "
+                    f"Step {i}: Applying proximity refinement "
+                    f"[{', '.join(active_parts)}]: "
                     f"{h_step:.6e} \u2192 {current_h_step:.6e} ns"
                 )
                 if logger:
@@ -900,6 +963,7 @@ def _run_adaptive_step(
             observer_history_base_index=pseudo_grid_observer_history_base_index,
             observer_soa=pseudo_grid_observer_soa,
             source_soa=pseudo_grid_source_soa,
+            macroparticle_smearing=macroparticle_smearing,
         )
         adaptive_state.reduced_timestep_mode = reduced_timestep_mode
         adaptive_state.reduced_h_step = reduced_h_step
@@ -1047,6 +1111,7 @@ def _run_adaptive_step(
                         raise_gamma_blowup=_adaptive_timestep_enabled(
                             adaptive_timestep
                         ),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
                 else:
                     trial_state = self_consistent_step(
@@ -1096,6 +1161,7 @@ def _run_adaptive_step(
                             if _scs_accepts_soa
                             else {}
                         ),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
             except GammaBlowupError as e:
                 if adaptive_timestep is None or not adaptive_timestep.enabled:
@@ -1490,6 +1556,7 @@ def retarded_integrator(
     pseudo_grid: Optional[PseudoGridConfig] = None,
     driver_train: Optional[DriverTrainConfig] = None,
     particle_loss: Optional[ParticleLossConfig] = None,
+    macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
 ) -> Tuple[
     Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
 ]:
@@ -1624,6 +1691,7 @@ def retarded_integrator(
     pseudo_grid = pseudo_grid or PseudoGridConfig()
     driver_train = driver_train or DriverTrainConfig()
     particle_loss = particle_loss or ParticleLossConfig()
+    macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     driver_train_enabled = bool(driver_train.enabled)
     if pseudo_grid.enabled and sim_type != SimulationType.BUNCH_TO_BUNCH:
         raise NotImplementedError(
@@ -1925,6 +1993,7 @@ def retarded_integrator(
                     else None
                 ),
                 use_full_history=driver_train_enabled,
+                macroparticle_smearing=macroparticle_smearing,
             )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(
@@ -2094,6 +2163,7 @@ def retarded_integrator(
                             else None
                         ),
                         source_soa=_traj_builder.build_partial(i),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
                 else:
                     _b2b_scs_accepts_soa = _call_accepts_kw(
@@ -2143,6 +2213,7 @@ def retarded_integrator(
                             if _b2b_scs_accepts_soa
                             else {}
                         ),
+                        macroparticle_smearing=macroparticle_smearing,
                     )
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
@@ -2401,6 +2472,7 @@ def run_integrator(
         pseudo_grid=config.pseudo_grid,
         driver_train=config.driver_train,
         particle_loss=config.particle_loss,
+        macroparticle_smearing=config.macroparticle_smearing,
     )
 
 

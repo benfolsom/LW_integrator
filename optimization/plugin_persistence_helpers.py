@@ -240,6 +240,21 @@ def build_saved_config_payload(
         "adaptive_timestep_probe_threshold": config.adaptive_timestep_probe_threshold,
         "adaptive_timestep_max_probe_steps": config.adaptive_timestep_max_probe_steps,
         "adaptive_timestep_debug": config.adaptive_timestep_debug,
+        "adaptive_timestep_bunch_proximity_enabled": (
+            config.adaptive_timestep_bunch_proximity_enabled
+        ),
+        "adaptive_timestep_bunch_proximity_sigma_mm": (
+            config.adaptive_timestep_bunch_proximity_sigma_mm
+        ),
+        "adaptive_timestep_bunch_proximity_n_sigma": (
+            config.adaptive_timestep_bunch_proximity_n_sigma
+        ),
+        "adaptive_timestep_bunch_proximity_reduction_factor": (
+            config.adaptive_timestep_bunch_proximity_reduction_factor
+        ),
+        "adaptive_timestep_bunch_proximity_transition_n_sigma": (
+            config.adaptive_timestep_bunch_proximity_transition_n_sigma
+        ),
         "space_charge_enabled": config.space_charge_enabled,
         "space_charge_retarded": config.space_charge_retarded,
         "space_charge_softening_mm": config.space_charge_softening_mm,

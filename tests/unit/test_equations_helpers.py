@@ -121,6 +121,15 @@ def test_particle_scalar_extractors_handle_arrays_and_scalars() -> None:
     assert equations._get_particle_char_time(scalar_state, 0) == pytest.approx(9.0)
 
 
+def test_scalar_potential_contribution_uses_momentum_units() -> None:
+    charge = 3.0
+    scalar_potential = 5.0
+
+    assert equations._scalar_potential_momentum_contribution(
+        charge, scalar_potential
+    ) == pytest.approx(charge * scalar_potential / C_MMNS)
+
+
 def test_compute_approximate_retarded_distance_uses_factored_correction() -> None:
     current_state = _make_state(x=[1.0], y=[0.0], z=[0.0])
     external_state = _make_state(x=[0.0], y=[0.0], z=[0.0], bx=[0.5])
@@ -712,6 +721,26 @@ def test_convergence_helpers_and_logging_report_expected_values() -> None:
     assert "Position: x=1.000000e+00 mm" in output
 
 
+def test_mass_shell_convergence_uses_kinetic_and_mechanical_momentum() -> None:
+    scalar_potential_momentum = 0.25 * C_MMNS
+    vector_potential_x = 0.5 * C_MMNS
+
+    converged, mass_shell_error = equations._check_mass_shell_convergence(
+        Pt=C_MMNS + scalar_potential_momentum,
+        Px=vector_potential_x,
+        Py=0.0,
+        Pz=0.0,
+        particle_mass=1.0,
+        C_MMNS=C_MMNS,
+        tolerance=1e-12,
+        scalar_potential_contribution=scalar_potential_momentum,
+        field_x=vector_potential_x,
+    )
+
+    assert converged is True
+    assert mass_shell_error == pytest.approx(0.0)
+
+
 def test_convergence_logging_summary_and_full_detail_modes() -> None:
     summary_stream = io.StringIO()
     with redirect_stdout(summary_stream):
@@ -847,6 +876,9 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
     source = _make_state(x=[1.0], charge=[1.0], mass=[1.0])
     vector_potential_x = 0.5 * C_MMNS
     scalar_potential = 0.25 * C_MMNS
+    scalar_potential_momentum = equations._scalar_potential_momentum_contribution(
+        equations.effective_observer_charge(float(state["q"][0])), scalar_potential
+    )
 
     monkeypatch.setattr(
         equations,
@@ -869,7 +901,7 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
             vector_potential_x,
             0.0,
             0.0,
-            scalar_potential,
+            scalar_potential_momentum,
             vector_potential_x,
             0.0,
             0.0,
@@ -898,7 +930,71 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
     )
 
     assert result["Px"][0] == pytest.approx(vector_potential_x)
-    assert result["Pt"][0] == pytest.approx(C_MMNS + scalar_potential)
+    assert result["Pt"][0] == pytest.approx(C_MMNS + scalar_potential_momentum)
+    assert result["gamma"][0] == pytest.approx(1.0)
+
+
+def test_sc_iteration_projection_uses_mechanical_momentum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _make_state(gamma=[1.0], charge=[1.0], mass=[1.0])
+    source = _make_state(x=[1.0], charge=[1.0], mass=[1.0])
+    vector_potential_x = 0.5 * C_MMNS
+    scalar_potential = 0.25 * C_MMNS
+    scalar_potential_momentum = equations._scalar_potential_momentum_contribution(
+        equations.effective_observer_charge(float(state["q"][0])), scalar_potential
+    )
+
+    monkeypatch.setattr(
+        equations,
+        "_compute_approximate_retarded_distance",
+        lambda *args, **kwargs: (
+            {
+                "R": np.array([1.0]),
+                "nx": np.array([1.0]),
+                "ny": np.array([0.0]),
+                "nz": np.array([0.0]),
+            },
+            np.array([0]),
+        ),
+    )
+    monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
+
+    def fake_contributions(**kwargs: object) -> tuple[float, ...]:
+        del kwargs
+        return (
+            vector_potential_x,
+            0.0,
+            0.0,
+            scalar_potential_momentum,
+            vector_potential_x,
+            0.0,
+            0.0,
+            scalar_potential,
+        )
+
+    monkeypatch.setattr(
+        equations, "compute_vectorized_contributions", fake_contributions
+    )
+
+    result = equations.retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=[state],
+        trajectory_ext=[source],
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        self_consistency=SelfConsistencyConfig(
+            enabled=True,
+            max_iterations=2,
+            mass_shell_relaxation=1.0,
+            mass_shell_tolerance=1e-12,
+        ),
+    )
+
+    assert result["Px"][0] == pytest.approx(vector_potential_x)
+    assert result["Pt"][0] == pytest.approx(C_MMNS + scalar_potential_momentum)
     assert result["gamma"][0] == pytest.approx(1.0)
 
 
@@ -926,14 +1022,20 @@ def test_retarded_equations_of_motion_can_cancel_during_sc_iteration() -> None:
 @pytest.mark.parametrize(
     ("method", "extra_kwargs", "expected_gamma"),
     [
+        # USE_VELOCITY: Px=0 so mass-shell is violated (Pt=2mc but P=0 implies
+        # gamma=1). Post-loop projection resets gamma to 1.0.
         (GammaReconciliationMethod.USE_VELOCITY, {}, 1.0),
+        # USE_ENERGY: Px=sqrt(3)*mc, gamma=2 satisfies mass shell. gamma=2.0.
         (GammaReconciliationMethod.USE_ENERGY, {}, 2.0),
+        # FIXED_WEIGHTED / ADAPTIVE_WEIGHTED: reconciliation now only seeds the
+        # next SC iteration, not the stored result.  Mass shell is satisfied
+        # (Px=sqrt(3)*mc, gamma=2), so gamma stays at 2.0.
         (
             GammaReconciliationMethod.FIXED_WEIGHTED,
             {"gamma_reconciliation_fixed_weight": 0.25},
-            1.25,
+            2.0,
         ),
-        (GammaReconciliationMethod.ADAPTIVE_WEIGHTED, {}, 1.8),
+        (GammaReconciliationMethod.ADAPTIVE_WEIGHTED, {}, 2.0),
     ],
 )
 def test_retarded_equations_of_motion_reconciles_gamma_modes(
@@ -967,6 +1069,44 @@ def test_retarded_equations_of_motion_reconciles_gamma_modes(
     assert result["Pt"][0] == pytest.approx(expected_gamma * C_MMNS)
 
 
+def test_gamma_reconciliation_refreshes_kinematics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _make_state(gamma=[2.0], charge=[0.0])
+    state["Px"][0] = np.sqrt(3.0) * C_MMNS
+    monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
+    config = SelfConsistencyConfig(
+        enabled=True,
+        max_iterations=1,
+        gamma_reconciliation_method=GammaReconciliationMethod.FIXED_WEIGHTED,
+        gamma_reconciliation_fixed_weight=0.25,
+    )
+
+    result = equations.retarded_equations_of_motion(
+        h=1e-3,
+        trajectory=[state],
+        trajectory_ext=[state],
+        index_traj=0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.CONDUCTING_WALL,
+        self_consistency=config,
+    )
+
+    # Reconciliation no longer modifies the stored result — it only seeds the
+    # working state for subsequent SC iterations.  With Px=sqrt(3)*mc and
+    # gamma=2 the mass shell is satisfied (no post-loop projection), so the
+    # final kinematics are derived from the energy-based gamma (2.0) and the
+    # spatial momentum, not from the blended reconciliation value.
+    expected_gamma = 2.0
+    expected_beta_x = np.sqrt(expected_gamma**2 - 1.0) / expected_gamma
+    assert result["gamma"][0] == pytest.approx(expected_gamma)
+    assert result["t"][0] == pytest.approx(1e-3 * expected_gamma)
+    assert result["bx"][0] == pytest.approx(expected_beta_x)
+    assert result["x"][0] == pytest.approx(
+        1e-3 * C_MMNS * np.sqrt(expected_gamma**2 - 1.0)
+    )
+
+
 def test_gamma_reconciliation_preserves_potential_bookkeeping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -988,11 +1128,25 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
     )
     monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
 
+    scalar_potential = 5.0
+    scalar_potential_momentum = equations._scalar_potential_momentum_contribution(
+        equations.effective_observer_charge(float(state["q"][0])), scalar_potential
+    )
+
     def fake_contributions(**kwargs: object) -> tuple[float, ...]:
         del kwargs
         # Canonical Px=17 with vector-potential field Ax=7 means mechanical Px=10.
-        # Delta Pt equals qPhi, so gamma_energy remains the state's initial gamma=2.
-        return (17.0, 0.0, 0.0, 5.0, 7.0, 0.0, 0.0, 5.0)
+        # Delta Pt equals qPhi/c, so gamma_energy remains the state's initial gamma=2.
+        return (
+            17.0,
+            0.0,
+            0.0,
+            scalar_potential_momentum,
+            7.0,
+            0.0,
+            0.0,
+            scalar_potential,
+        )
 
     monkeypatch.setattr(
         equations,
@@ -1018,11 +1172,25 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
         self_consistency=config,
     )
 
-    expected_gamma = 1.25
-    expected_mechanical_px = C_MMNS * np.sqrt(expected_gamma**2 - 1.0)
-    assert result["gamma"][0] == pytest.approx(expected_gamma)
-    assert result["Pt"][0] == pytest.approx(expected_gamma * C_MMNS + 5.0)
-    assert result["Px"][0] == pytest.approx(expected_mechanical_px + 7.0)
+    # Reconciliation now only seeds the working state; it does not write back
+    # to result["gamma"]/result["Pt"]/result["Px"].
+    #
+    # After the force step: canonical Px=17, accumulated_field_x=7, so
+    # mechanical Px=10.  gamma_from_energy=2 (since dPt = scalar_potential_momentum
+    # exactly cancels phi contribution).  The mass-shell check sees
+    # Pt_kinetic=2mc vs P_mech=10 → large error, so the post-loop projection
+    # fires and resets gamma to sqrt(1+(10/mc)^2) and Pt accordingly.
+    expected_mechanical_px = 10.0
+    expected_gamma = float(
+        np.sqrt(1.0 + (expected_mechanical_px / C_MMNS) ** 2)
+    )
+    expected_pt = float(
+        np.sqrt(expected_mechanical_px**2 + C_MMNS**2) + scalar_potential_momentum
+    )
+    assert result["gamma"][0] == pytest.approx(expected_gamma, rel=1e-9)
+    assert result["Pt"][0] == pytest.approx(expected_pt, rel=1e-9)
+    # Canonical Px is unchanged by the post-loop projection
+    assert result["Px"][0] == pytest.approx(17.0)
 
 
 def test_retarded_equations_of_motion_variable_geometry_uses_updated_observer_state(
