@@ -21,7 +21,7 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 import numpy as np
 
 from core.constants import C_MMNS, ELECTRON_MASS_AMU
-from core.integration_runner import retarded_integrator
+from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.types import (
     ChronoMatchingMode,
     DriverTrainConfig,
@@ -80,6 +80,7 @@ DEFAULT_RIDER: Dict[str, Any] = {
     "transverse_momentum": 0.0,
     "transverse_spread": 0.0,
     "transverse_geometry": "square",
+    "longitudinal_spread": 0.0,
 }
 
 DEFAULT_PARTICLE_LOSS: Dict[str, Any] = {
@@ -134,6 +135,22 @@ DEFAULT_DRIVER_TRAIN: Dict[str, Any] = {
     "preserve_prehistory_in_output": False,
 }
 
+DEFAULT_ADAPTIVE_TIMESTEP: Dict[str, Any] = {
+    "enabled": False,
+    "energy_jump_threshold": 0.10,
+    "timestep_reduction_factor": 3,
+    "min_timestep_factor": 1e-4,
+    "cooldown_steps": 10,
+    "probe_threshold": 0.01,
+    "max_probe_steps": 3,
+    "debug": False,
+    "bunch_proximity_enabled": False,
+    "bunch_proximity_sigma_mm": 5.0,
+    "bunch_proximity_n_sigma": 5.0,
+    "bunch_proximity_reduction_factor": 10.0,
+    "bunch_proximity_transition_n_sigma": 2.0,
+}
+
 SIMULATION_TYPE_ALIASES: Mapping[str, SimulationType] = {
     "conducting-wall": SimulationType.CONDUCTING_WALL,
     "conducting_wall": SimulationType.CONDUCTING_WALL,
@@ -171,6 +188,7 @@ class SimulationRequest:
     driver: Optional[ParticleState]
     external_field: Optional[ExternalFieldConfig] = None
     space_charge: Optional[SpaceChargeConfig] = None
+    adaptive_timestep: Optional[AdaptiveTimestepConfig] = None
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
     auto_duration_post_factor: float = 2.0
@@ -256,6 +274,74 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Disable adaptive timestep debug output.",
     )
     parser.set_defaults(adaptive_debug=None)
+    parser.add_argument(
+        "--adaptive-timestep",
+        dest="adaptive_timestep_enabled",
+        action="store_true",
+        help="Enable adaptive timestep refinement.",
+    )
+    parser.add_argument(
+        "--no-adaptive-timestep",
+        dest="adaptive_timestep_enabled",
+        action="store_false",
+        help="Disable adaptive timestep refinement.",
+    )
+    parser.set_defaults(adaptive_timestep_enabled=None)
+    parser.add_argument(
+        "--adaptive-timestep-threshold",
+        type=float,
+        dest="adaptive_timestep_threshold",
+        help="Fractional energy jump threshold for adaptive timestep refinement.",
+    )
+    parser.add_argument(
+        "--adaptive-timestep-reduction-factor",
+        type=int,
+        dest="adaptive_timestep_reduction_factor",
+        help="Timestep divisor used after an adaptive refinement trigger.",
+    )
+    parser.add_argument(
+        "--adaptive-timestep-min-factor",
+        type=float,
+        dest="adaptive_timestep_min_factor",
+        help="Minimum timestep as a fraction of the base timestep.",
+    )
+    parser.add_argument(
+        "--adaptive-bunch-proximity",
+        dest="adaptive_timestep_bunch_proximity_enabled",
+        action="store_true",
+        help="Enable BUNCH_TO_BUNCH timestep refinement as bunch centroids approach.",
+    )
+    parser.add_argument(
+        "--no-adaptive-bunch-proximity",
+        dest="adaptive_timestep_bunch_proximity_enabled",
+        action="store_false",
+        help="Disable BUNCH_TO_BUNCH bunch-proximity timestep refinement.",
+    )
+    parser.set_defaults(adaptive_timestep_bunch_proximity_enabled=None)
+    parser.add_argument(
+        "--adaptive-bunch-proximity-sigma-mm",
+        type=float,
+        dest="adaptive_timestep_bunch_proximity_sigma_mm",
+        help="Characteristic bunch length sigma in mm for proximity refinement.",
+    )
+    parser.add_argument(
+        "--adaptive-bunch-proximity-n-sigma",
+        type=float,
+        dest="adaptive_timestep_bunch_proximity_n_sigma",
+        help="Start proximity refinement below this centroid separation in sigma.",
+    )
+    parser.add_argument(
+        "--adaptive-bunch-proximity-reduction-factor",
+        type=float,
+        dest="adaptive_timestep_bunch_proximity_reduction_factor",
+        help="Maximum timestep divisor for bunch-proximity refinement.",
+    )
+    parser.add_argument(
+        "--adaptive-bunch-proximity-transition-n-sigma",
+        type=float,
+        dest="adaptive_timestep_bunch_proximity_transition_n_sigma",
+        help="Ramp-in width in sigma for bunch-proximity refinement.",
+    )
     parser.add_argument(
         "--space-charge",
         action="store_true",
@@ -749,6 +835,7 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
         simulation_payload.get("external_field")
     )
     space_charge = _build_space_charge_config(simulation_payload)
+    adaptive_timestep = _build_adaptive_timestep_config(simulation_payload)
     rider_state = _build_particle_state(rider_payload)
 
     driver_state: Optional[ParticleState] = None
@@ -791,6 +878,7 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
         driver=driver_state,
         external_field=external_field,
         space_charge=space_charge,
+        adaptive_timestep=adaptive_timestep,
         auto_duration_enabled=auto_duration_enabled,
         auto_duration_crossing_steps=auto_duration_crossing_steps,
         auto_duration_post_factor=auto_duration_post_factor,
@@ -830,6 +918,7 @@ def _merge_simulation_payload(
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
     result["driver_train"] = dict(DEFAULT_DRIVER_TRAIN)
     result["macroparticle_smearing"] = dict(DEFAULT_MACROPARTICLE_SMEARING)
+    result["adaptive_timestep"] = dict(DEFAULT_ADAPTIVE_TIMESTEP)
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
@@ -850,6 +939,9 @@ def _merge_simulation_payload(
     file_smearing = file_payload.get("macroparticle_smearing")
     if isinstance(file_smearing, Mapping):
         result["macroparticle_smearing"].update(file_smearing)
+    file_adaptive_timestep = file_payload.get("adaptive_timestep")
+    if isinstance(file_adaptive_timestep, Mapping):
+        result["adaptive_timestep"].update(file_adaptive_timestep)
     if "external_field" in file_payload:
         result["external_field"] = file_payload["external_field"]
 
@@ -866,6 +958,24 @@ def _merge_simulation_payload(
     for key in passthrough_keys:
         if key in file_payload:
             result[key] = file_payload[key]
+    legacy_adaptive_keys = {
+        "adaptive_timestep_enabled": "enabled",
+        "adaptive_timestep_threshold": "energy_jump_threshold",
+        "adaptive_timestep_reduction_factor": "timestep_reduction_factor",
+        "adaptive_timestep_min_factor": "min_timestep_factor",
+        "adaptive_timestep_cooldown_steps": "cooldown_steps",
+        "adaptive_timestep_probe_threshold": "probe_threshold",
+        "adaptive_timestep_max_probe_steps": "max_probe_steps",
+        "adaptive_timestep_debug": "debug",
+        "adaptive_timestep_bunch_proximity_enabled": "bunch_proximity_enabled",
+        "adaptive_timestep_bunch_proximity_sigma_mm": "bunch_proximity_sigma_mm",
+        "adaptive_timestep_bunch_proximity_n_sigma": "bunch_proximity_n_sigma",
+        "adaptive_timestep_bunch_proximity_reduction_factor": "bunch_proximity_reduction_factor",
+        "adaptive_timestep_bunch_proximity_transition_n_sigma": "bunch_proximity_transition_n_sigma",
+    }
+    for source_key, target_key in legacy_adaptive_keys.items():
+        if source_key in file_payload:
+            result["adaptive_timestep"][target_key] = file_payload[source_key]
 
     override_keys = (
         "steps",
@@ -1030,6 +1140,33 @@ def _merge_simulation_payload(
         value = getattr(args, arg_name, None)
         if value is not None:
             driver_train[key] = value
+
+    adaptive_timestep = result["adaptive_timestep"]
+    adaptive_timestep_override_keys = (
+        "enabled",
+        "threshold",
+        "reduction_factor",
+        "min_factor",
+        "bunch_proximity_enabled",
+        "bunch_proximity_sigma_mm",
+        "bunch_proximity_n_sigma",
+        "bunch_proximity_reduction_factor",
+        "bunch_proximity_transition_n_sigma",
+    )
+    adaptive_key_map = {
+        "threshold": "energy_jump_threshold",
+        "reduction_factor": "timestep_reduction_factor",
+        "min_factor": "min_timestep_factor",
+    }
+    for key in adaptive_timestep_override_keys:
+        arg_name = f"adaptive_timestep_{key}"
+        value = getattr(args, arg_name, None)
+        if value is not None:
+            adaptive_timestep[adaptive_key_map.get(key, key)] = value
+            if key == "bunch_proximity_enabled" and value:
+                adaptive_timestep["enabled"] = True
+    if getattr(args, "adaptive_debug", None) is not None:
+        adaptive_timestep["debug"] = args.adaptive_debug
 
     return result
 
@@ -1537,6 +1674,91 @@ def _build_space_charge_config(
     )
 
 
+def _build_adaptive_timestep_config(
+    payload: Mapping[str, Any],
+) -> Optional[AdaptiveTimestepConfig]:
+    adaptive_payload = payload.get("adaptive_timestep")
+    if adaptive_payload is None:
+        return None
+    if not isinstance(adaptive_payload, Mapping):
+        raise SimulationConfigError("adaptive_timestep must be a JSON object")
+    if not bool(adaptive_payload.get("enabled", DEFAULT_ADAPTIVE_TIMESTEP["enabled"])):
+        return None
+
+    try:
+        return AdaptiveTimestepConfig(
+            enabled=True,
+            energy_jump_threshold=float(
+                adaptive_payload.get(
+                    "energy_jump_threshold",
+                    DEFAULT_ADAPTIVE_TIMESTEP["energy_jump_threshold"],
+                )
+            ),
+            timestep_reduction_factor=int(
+                adaptive_payload.get(
+                    "timestep_reduction_factor",
+                    DEFAULT_ADAPTIVE_TIMESTEP["timestep_reduction_factor"],
+                )
+            ),
+            min_timestep_factor=float(
+                adaptive_payload.get(
+                    "min_timestep_factor",
+                    DEFAULT_ADAPTIVE_TIMESTEP["min_timestep_factor"],
+                )
+            ),
+            cooldown_steps=int(
+                adaptive_payload.get(
+                    "cooldown_steps", DEFAULT_ADAPTIVE_TIMESTEP["cooldown_steps"]
+                )
+            ),
+            probe_threshold=float(
+                adaptive_payload.get(
+                    "probe_threshold", DEFAULT_ADAPTIVE_TIMESTEP["probe_threshold"]
+                )
+            ),
+            max_probe_steps=int(
+                adaptive_payload.get(
+                    "max_probe_steps", DEFAULT_ADAPTIVE_TIMESTEP["max_probe_steps"]
+                )
+            ),
+            bunch_proximity_enabled=bool(
+                adaptive_payload.get(
+                    "bunch_proximity_enabled",
+                    DEFAULT_ADAPTIVE_TIMESTEP["bunch_proximity_enabled"],
+                )
+            ),
+            bunch_proximity_sigma_mm=float(
+                adaptive_payload.get(
+                    "bunch_proximity_sigma_mm",
+                    DEFAULT_ADAPTIVE_TIMESTEP["bunch_proximity_sigma_mm"],
+                )
+            ),
+            bunch_proximity_n_sigma=float(
+                adaptive_payload.get(
+                    "bunch_proximity_n_sigma",
+                    DEFAULT_ADAPTIVE_TIMESTEP["bunch_proximity_n_sigma"],
+                )
+            ),
+            bunch_proximity_reduction_factor=float(
+                adaptive_payload.get(
+                    "bunch_proximity_reduction_factor",
+                    DEFAULT_ADAPTIVE_TIMESTEP["bunch_proximity_reduction_factor"],
+                )
+            ),
+            bunch_proximity_transition_n_sigma=float(
+                adaptive_payload.get(
+                    "bunch_proximity_transition_n_sigma",
+                    DEFAULT_ADAPTIVE_TIMESTEP[
+                        "bunch_proximity_transition_n_sigma"
+                    ],
+                )
+            ),
+            debug=bool(adaptive_payload.get("debug", DEFAULT_ADAPTIVE_TIMESTEP["debug"])),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(str(exc)) from exc
+
+
 def _build_external_field_config(payload: Any) -> Optional[ExternalFieldConfig]:
     if payload is None:
         return None
@@ -1662,6 +1884,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         image_subcharge_count=request.config.image_subcharge_count,
         use_conducting_image_weighting=request.config.use_image_weighting,
         radiation_reaction_mode=request.config.radiation_reaction_mode,
+        adaptive_timestep=request.adaptive_timestep,
         space_charge=request.space_charge,
         external_field=request.external_field,
         pseudo_grid=request.config.pseudo_grid,

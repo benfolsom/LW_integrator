@@ -417,6 +417,27 @@ class IntegratorGUIConfigMixin:
             options.adaptive_timestep_max_probe_steps
         )
         self.adaptive_timestep_debug_var.set(options.adaptive_timestep_debug)
+        self.adaptive_timestep_bunch_proximity_enabled_var.set(
+            getattr(options, "adaptive_timestep_bunch_proximity_enabled", False)
+        )
+        self.adaptive_timestep_bunch_proximity_sigma_mm_var.set(
+            getattr(options, "adaptive_timestep_bunch_proximity_sigma_mm", 5.0)
+        )
+        self.adaptive_timestep_bunch_proximity_n_sigma_var.set(
+            getattr(options, "adaptive_timestep_bunch_proximity_n_sigma", 5.0)
+        )
+        self.adaptive_timestep_bunch_proximity_reduction_factor_var.set(
+            getattr(
+                options, "adaptive_timestep_bunch_proximity_reduction_factor", 10.0
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_transition_n_sigma_var.set(
+            getattr(
+                options,
+                "adaptive_timestep_bunch_proximity_transition_n_sigma",
+                2.0,
+            )
+        )
         self._update_max_substeps_display()
         self.radiation_reaction_mode_var.set(
             getattr(options, "radiation_reaction_mode", "medina_lad")
@@ -797,6 +818,21 @@ class IntegratorGUIConfigMixin:
                 self.adaptive_timestep_max_probe_steps_var.get()
             ),
             adaptive_timestep_debug=bool(self.adaptive_timestep_debug_var.get()),
+            adaptive_timestep_bunch_proximity_enabled=bool(
+                self.adaptive_timestep_bunch_proximity_enabled_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_sigma_mm=float(
+                self.adaptive_timestep_bunch_proximity_sigma_mm_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_n_sigma=float(
+                self.adaptive_timestep_bunch_proximity_n_sigma_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_reduction_factor=float(
+                self.adaptive_timestep_bunch_proximity_reduction_factor_var.get()
+            ),
+            adaptive_timestep_bunch_proximity_transition_n_sigma=float(
+                self.adaptive_timestep_bunch_proximity_transition_n_sigma_var.get()
+            ),
             space_charge_enabled=bool(self.space_charge_enabled_var.get()),
             space_charge_retarded=bool(self.space_charge_retarded_var.get()),
             space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),

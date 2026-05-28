@@ -4,6 +4,13 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Bunch Longitudinal Spread And B2B Proximity Refinement (May 2026)
+
+- Added longitudinal bunch spread (`long_dist` / `longitudinal_spread`) plumbing for rider and driver bunch initialization, single-run configs, sweep/optimization configs, and saved GUI configs.
+- Added BUNCH_TO_BUNCH bunch-proximity adaptive timestep refinement and exposed it through the single-run CLI, main GUI Stability tab, sweep/optimization config persistence, and run-parameter resolution.
+- Treat intentional `distance_reached` halts as successful cutoff completion in sweep and optimization result handling, so metrics are computed normally for those runs.
+- Tests: added CLI coverage for the new proximity-refinement flags and ran the full suite.
+
 ### Self-Space-Charge Energy Conservation (May 2026)
 
 - Restructured gamma reconciliation to be seed-only: the reconciled gamma (blend of velocity- and energy-based) now updates only the working state seed for the next SC iteration, not the stored `result["gamma"]` or `result["Pt"]`. The final stored gamma is always derived from the post-loop mass-shell projection, ensuring it is mechanically consistent with the spatial momenta.

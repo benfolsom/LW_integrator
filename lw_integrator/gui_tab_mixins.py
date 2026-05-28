@@ -2066,9 +2066,80 @@ class IntegratorGUITabMixin:
             row=9, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
         )
 
+        self.adaptive_bunch_proximity_check = ttk.Checkbutton(
+            at_frame,
+            text="Refine near BUNCH_TO_BUNCH encounter",
+            variable=self.adaptive_timestep_bunch_proximity_enabled_var,
+        )
+        self.adaptive_bunch_proximity_check.grid(
+            row=10, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+
+        self.adaptive_bunch_proximity_sigma_label = ttk.Label(
+            at_frame, text="Bunch proximity sigma (mm):"
+        )
+        self.adaptive_bunch_proximity_sigma_label.grid(
+            row=11, column=0, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.adaptive_bunch_proximity_sigma_entry = ttk.Entry(
+            at_frame,
+            textvariable=self.adaptive_timestep_bunch_proximity_sigma_mm_var,
+            width=16,
+        )
+        self.adaptive_bunch_proximity_sigma_entry.grid(
+            row=11, column=1, sticky="ew", pady=2
+        )
+
+        self.adaptive_bunch_proximity_n_sigma_label = ttk.Label(
+            at_frame, text="Engage below n sigma:"
+        )
+        self.adaptive_bunch_proximity_n_sigma_label.grid(
+            row=12, column=0, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.adaptive_bunch_proximity_n_sigma_entry = ttk.Entry(
+            at_frame,
+            textvariable=self.adaptive_timestep_bunch_proximity_n_sigma_var,
+            width=16,
+        )
+        self.adaptive_bunch_proximity_n_sigma_entry.grid(
+            row=12, column=1, sticky="ew", pady=2
+        )
+
+        self.adaptive_bunch_proximity_reduction_label = ttk.Label(
+            at_frame, text="Bunch proximity reduction factor:"
+        )
+        self.adaptive_bunch_proximity_reduction_label.grid(
+            row=13, column=0, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.adaptive_bunch_proximity_reduction_entry = ttk.Entry(
+            at_frame,
+            textvariable=self.adaptive_timestep_bunch_proximity_reduction_factor_var,
+            width=16,
+        )
+        self.adaptive_bunch_proximity_reduction_entry.grid(
+            row=13, column=1, sticky="ew", pady=2
+        )
+
+        self.adaptive_bunch_proximity_transition_label = ttk.Label(
+            at_frame, text="Transition width (sigma):"
+        )
+        self.adaptive_bunch_proximity_transition_label.grid(
+            row=14, column=0, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.adaptive_bunch_proximity_transition_entry = ttk.Entry(
+            at_frame,
+            textvariable=(
+                self.adaptive_timestep_bunch_proximity_transition_n_sigma_var
+            ),
+            width=16,
+        )
+        self.adaptive_bunch_proximity_transition_entry.grid(
+            row=14, column=1, sticky="ew", pady=2
+        )
+
         # Max sub-steps limit
         max_substeps_frame = ttk.Frame(at_frame)
-        max_substeps_frame.grid(row=10, column=0, sticky="w", pady=2, padx=(20, 0))
+        max_substeps_frame.grid(row=15, column=0, sticky="w", pady=2, padx=(20, 0))
         self.adaptive_max_substeps_label = ttk.Label(
             max_substeps_frame, text="Max sub-steps (calculated):"
         )
@@ -2108,7 +2179,7 @@ class IntegratorGUITabMixin:
             font=("TkDefaultFont", 9, "italic"),
         )
         self.adaptive_max_substeps_display.grid(
-            row=10, column=1, sticky="w", pady=2, padx=(10, 0)
+            row=15, column=1, sticky="w", pady=2, padx=(10, 0)
         )
 
     def _build_radiation_reaction_section(self, stability_frame: ttk.Frame) -> None:

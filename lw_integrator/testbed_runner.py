@@ -78,6 +78,7 @@ PARAM_LABELS: Dict[str, str] = {
     "transv_offset_y": "Transverse offset y (mm)",
     "pcount": "Particle count (bunch size)",
     "charge_sign": "Charge sign",
+    "long_dist": "Longitudinal spread/sigma (mm)",
 }
 
 CORE_PARAM_LABELS: Dict[str, str] = {
@@ -363,6 +364,13 @@ class SimulationOptions:
     # Note: max_substeps_per_step is now auto-calculated in AdaptiveTimestepConfig
     # from min_timestep_factor to prevent time discontinuities
 
+    # Bunch-separation proximity refinement (BUNCH_TO_BUNCH mode only)
+    adaptive_timestep_bunch_proximity_enabled: bool = False
+    adaptive_timestep_bunch_proximity_sigma_mm: float = 5.0
+    adaptive_timestep_bunch_proximity_n_sigma: float = 5.0
+    adaptive_timestep_bunch_proximity_reduction_factor: float = 10.0
+    adaptive_timestep_bunch_proximity_transition_n_sigma: float = 2.0
+
     # Intra-bunch space-charge options
     space_charge_enabled: bool = False
     space_charge_retarded: bool = True
@@ -514,6 +522,11 @@ class SimulationOptions:
             "adaptive_timestep_probe_threshold": self.adaptive_timestep_probe_threshold,
             "adaptive_timestep_max_probe_steps": self.adaptive_timestep_max_probe_steps,
             "adaptive_timestep_debug": self.adaptive_timestep_debug,
+            "adaptive_timestep_bunch_proximity_enabled": self.adaptive_timestep_bunch_proximity_enabled,
+            "adaptive_timestep_bunch_proximity_sigma_mm": self.adaptive_timestep_bunch_proximity_sigma_mm,
+            "adaptive_timestep_bunch_proximity_n_sigma": self.adaptive_timestep_bunch_proximity_n_sigma,
+            "adaptive_timestep_bunch_proximity_reduction_factor": self.adaptive_timestep_bunch_proximity_reduction_factor,
+            "adaptive_timestep_bunch_proximity_transition_n_sigma": self.adaptive_timestep_bunch_proximity_transition_n_sigma,
             # max_substeps no longer stored - auto-calculated from min_timestep_factor
             "space_charge_enabled": self.space_charge_enabled,
             "space_charge_retarded": self.space_charge_retarded,
@@ -946,6 +959,11 @@ class SimulationOptions:
                 "adaptive_timestep_max_probe_steps", 3
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
+            adaptive_timestep_bunch_proximity_enabled=_bool("adaptive_timestep_bunch_proximity_enabled", False),
+            adaptive_timestep_bunch_proximity_sigma_mm=_float("adaptive_timestep_bunch_proximity_sigma_mm", 5.0),
+            adaptive_timestep_bunch_proximity_n_sigma=_float("adaptive_timestep_bunch_proximity_n_sigma", 5.0),
+            adaptive_timestep_bunch_proximity_reduction_factor=_float("adaptive_timestep_bunch_proximity_reduction_factor", 10.0),
+            adaptive_timestep_bunch_proximity_transition_n_sigma=_float("adaptive_timestep_bunch_proximity_transition_n_sigma", 2.0),
             # max_substeps no longer loaded - auto-calculated from min_timestep_factor
             space_charge_enabled=_bool("space_charge_enabled", False),
             space_charge_retarded=_bool("space_charge_retarded", True),
@@ -1638,6 +1656,11 @@ def build_adaptive_timestep_config(options: SimulationOptions) -> Optional[objec
         probe_threshold=options.adaptive_timestep_probe_threshold,
         max_probe_steps=options.adaptive_timestep_max_probe_steps,
         # max_substeps_per_step is now a calculated property, not passed as parameter
+        bunch_proximity_enabled=options.adaptive_timestep_bunch_proximity_enabled,
+        bunch_proximity_sigma_mm=options.adaptive_timestep_bunch_proximity_sigma_mm,
+        bunch_proximity_n_sigma=options.adaptive_timestep_bunch_proximity_n_sigma,
+        bunch_proximity_reduction_factor=options.adaptive_timestep_bunch_proximity_reduction_factor,
+        bunch_proximity_transition_n_sigma=options.adaptive_timestep_bunch_proximity_transition_n_sigma,
         debug=options.adaptive_timestep_debug,
     )
 

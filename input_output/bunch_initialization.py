@@ -140,6 +140,7 @@ def create_bunch_from_energy(
     transverse_offset_y: float = 0.0,
     transverse_spread: float = 0.0,
     transverse_geometry: str = "square",
+    longitudinal_spread: float = 0.0,
 ) -> Tuple[ParticleState, float]:
     """Generate a particle state dictionary from kinetic energy inputs.
 
@@ -170,6 +171,9 @@ def create_bunch_from_energy(
     transverse_geometry : str, optional
         Transverse layout: "square"/"uniform_square", "point", "gaussian", or
         "ring"/"circle" (default: "square").
+    longitudinal_spread : float, optional
+        Longitudinal Gaussian sigma in mm around position_z. The default 0.0
+        keeps all particles at position_z.
 
     Returns
     -------
@@ -235,7 +239,11 @@ def create_bunch_from_energy(
     state: ParticleState = {
         "x": x,
         "y": y,
-        "z": np.full(count, position_z, dtype=float),
+        "z": (
+            np.random.normal(position_z, longitudinal_spread, count)
+            if longitudinal_spread > 0.0
+            else np.full(count, position_z, dtype=float)
+        ),
         "t": zeros.copy(),
         "Px": Px,
         "Py": Py,
@@ -265,6 +273,7 @@ def create_bunch_from_params(
     stripped_ions: float,
     m_particle: float,
     transv_dist: float = 0.0,
+    long_dist: float = 0.0,
     transv_offset_x: float = 0.0,
     transv_offset_y: float = 0.0,
     pcount: int = 1,
@@ -348,8 +357,11 @@ def create_bunch_from_params(
         transverse_geometry=transverse_geometry,
     )
 
-    # Longitudinal position with small spread
-    z = np.random.uniform(starting_distance - 1e-6, starting_distance + 1e-6, pcount)
+    # Longitudinal position spread
+    if long_dist > 0.0:
+        z = np.random.normal(starting_distance, long_dist, pcount)
+    else:
+        z = np.random.uniform(starting_distance - 1e-6, starting_distance + 1e-6, pcount)
     t = np.zeros(pcount, dtype=float)
 
     state: ParticleState = {

@@ -21,6 +21,7 @@ PARTICLE_PARAM_FIELDS: Tuple[str, ...] = (
     "stripped_ions",
     "m_particle",
     "transv_dist",
+    "long_dist",
     "transverse_geometry",
     "transv_offset_x",
     "transv_offset_y",
@@ -37,6 +38,7 @@ DEFAULT_RIDER_PARAMS: Dict[str, float | int | str] = {
     "stripped_ions": 1.0,  # Charge state (1 for electrons)
     "m_particle": 1.007319468,  # Particle mass in amu (~proton-mass default)
     "transv_dist": 2.0e-4,  # Transverse distribution size in mm
+    "long_dist": 0.0,  # Longitudinal distribution sigma in mm (0 = point)
     "transverse_geometry": "square",  # point, square, gaussian, or ring
     "transv_offset_x": 0.0,  # Transverse offset x in mm
     "transv_offset_y": 0.0,  # Transverse offset y in mm
@@ -53,6 +55,7 @@ DEFAULT_DRIVER_PARAMS: Dict[str, float | int | str] = {
     "stripped_ions": 54.0,  # Charge state (e.g., Xe54+)
     "m_particle": 207.2,  # Particle mass in amu (typical ion)
     "transv_dist": 2.0e-4 - 8.0e-2,  # Transverse distribution size in mm
+    "long_dist": 0.0,  # Longitudinal distribution sigma in mm (0 = point)
     "transverse_geometry": "square",  # point, square, gaussian, or ring
     "transv_offset_x": 0.0,  # Transverse offset x in mm
     "transv_offset_y": 0.0,  # Transverse offset y in mm

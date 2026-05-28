@@ -25,6 +25,15 @@ def _make_args(**overrides) -> argparse.Namespace:
         "log_verbosity": None,
         "sc_verbosity": None,
         "adaptive_debug": None,
+        "adaptive_timestep_enabled": None,
+        "adaptive_timestep_threshold": None,
+        "adaptive_timestep_reduction_factor": None,
+        "adaptive_timestep_min_factor": None,
+        "adaptive_timestep_bunch_proximity_enabled": None,
+        "adaptive_timestep_bunch_proximity_sigma_mm": None,
+        "adaptive_timestep_bunch_proximity_n_sigma": None,
+        "adaptive_timestep_bunch_proximity_reduction_factor": None,
+        "adaptive_timestep_bunch_proximity_transition_n_sigma": None,
         "space_charge": False,
         "space_charge_softening_mm": 0.0,
         "space_charge_bunch_sigma_mm": None,
@@ -239,6 +248,31 @@ class TestCliConfigParsing:
         assert args.driver_train_z_offsets_mm == [0.0, 100.0, 250.0]
         assert args.driver_train_prehistory_steps == 12
         assert args.driver_train_preserve_prehistory_in_output is True
+
+    def test_parse_args_accepts_bunch_proximity_timestep_options(self):
+        args = cli.parse_args(
+            [
+                "--adaptive-bunch-proximity",
+                "--adaptive-bunch-proximity-sigma-mm",
+                "2.5",
+                "--adaptive-bunch-proximity-n-sigma",
+                "4",
+                "--adaptive-bunch-proximity-reduction-factor",
+                "8",
+                "--adaptive-bunch-proximity-transition-n-sigma",
+                "1.5",
+            ]
+        )
+
+        assert args.adaptive_timestep_bunch_proximity_enabled is True
+        assert args.adaptive_timestep_bunch_proximity_sigma_mm == pytest.approx(2.5)
+        assert args.adaptive_timestep_bunch_proximity_n_sigma == pytest.approx(4.0)
+        assert args.adaptive_timestep_bunch_proximity_reduction_factor == pytest.approx(
+            8.0
+        )
+        assert args.adaptive_timestep_bunch_proximity_transition_n_sigma == pytest.approx(
+            1.5
+        )
 
     def test_parse_args_allows_disabling_boolean_flags(self):
         args = cli.parse_args(
@@ -539,6 +573,27 @@ class TestCliBuildRequest:
         assert payload["driver_train"]["z_offsets_mm"] == [0.0, 10.0, 20.0, 30.0]
         assert payload["driver_train"]["prehistory_steps"] == 16
         assert payload["driver_train"]["preserve_prehistory_in_output"] is True
+
+    def test_merge_simulation_payload_applies_adaptive_bunch_proximity_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {"adaptive_timestep": {"enabled": False}},
+            _make_args(
+                adaptive_timestep_enabled=True,
+                adaptive_timestep_bunch_proximity_enabled=True,
+                adaptive_timestep_bunch_proximity_sigma_mm=3.0,
+                adaptive_timestep_bunch_proximity_n_sigma=6.0,
+                adaptive_timestep_bunch_proximity_reduction_factor=12.0,
+                adaptive_timestep_bunch_proximity_transition_n_sigma=2.5,
+            ),
+        )
+
+        adaptive = payload["adaptive_timestep"]
+        assert adaptive["enabled"] is True
+        assert adaptive["bunch_proximity_enabled"] is True
+        assert adaptive["bunch_proximity_sigma_mm"] == pytest.approx(3.0)
+        assert adaptive["bunch_proximity_n_sigma"] == pytest.approx(6.0)
+        assert adaptive["bunch_proximity_reduction_factor"] == pytest.approx(12.0)
+        assert adaptive["bunch_proximity_transition_n_sigma"] == pytest.approx(2.5)
 
     def test_build_request_defaults_to_medina_lad_rr(self):
         request = cli.build_request(_make_args())

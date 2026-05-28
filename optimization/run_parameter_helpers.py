@@ -50,6 +50,7 @@ class OptimizationRunParameters:
     macroparticle_sigma_multiplier: float
     driver_params: dict[str, Any] | None
     wall_z: float
+    rider_long_dist: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -267,6 +268,8 @@ def resolve_optimization_run_parameters(
     timestep = config.timestep
     steps = config.steps
     rider_transv_dist = config.transv_dist
+    rider_long_dist = getattr(config, "long_dist", 0.0)
+    driver_long_dist = getattr(config, "driver_long_dist", 0.0)
     macroparticle_charge_multiplier = config.macroparticle_charge_multiplier
     macroparticle_sigma_multiplier = config.macroparticle_sigma_multiplier
     wall_z = config.wall_z
@@ -326,6 +329,10 @@ def resolve_optimization_run_parameters(
             driver_transv_mom = value
         elif param_name == "driver_transv_dist":
             driver_transv_dist = value
+        elif param_name == "rider_long_dist":
+            rider_long_dist = value
+        elif param_name == "driver_long_dist":
+            driver_long_dist = value
         elif param_name == "driver_starting_distance":
             driver_starting_distance = value
         elif param_name == "driver_energy_gev":
@@ -357,6 +364,8 @@ def resolve_optimization_run_parameters(
             "transv_offset_x": config.driver_transv_offset_x,
             "transv_offset_y": config.driver_transv_offset_y,
         }
+        if driver_long_dist:
+            driver_params["long_dist"] = driver_long_dist
 
     if config.timestep_strategy == "auto_distance":
         driver_start_z = 1000.0
@@ -384,6 +393,7 @@ def resolve_optimization_run_parameters(
         rider_pcount=int(rider_pcount),
         rider_transv_mom=rider_transv_mom,
         rider_transv_dist=rider_transv_dist,
+        rider_long_dist=rider_long_dist,
         rider_stripped_ions=rider_stripped_ions,
         macroparticle_charge_multiplier=macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,

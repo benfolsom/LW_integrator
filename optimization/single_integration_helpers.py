@@ -29,6 +29,7 @@ class SingleIntegrationSetup:
     wall_z: float
     macroparticle_charge_multiplier: float
     macroparticle_sigma_multiplier: float
+    rider_long_dist: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ def build_single_integration_setup(
     rider_pcount: int | None = None,
     rider_transv_mom: float | None = None,
     rider_transv_dist: float | None = None,
+    rider_long_dist: float | None = None,
     rider_stripped_ions: float | None = None,
     macroparticle_charge_multiplier: float | None = None,
     macroparticle_sigma_multiplier: float | None = None,
@@ -93,6 +95,14 @@ def build_single_integration_setup(
     )
     rider_transv_dist = cast(
         float, _override_or_config(rider_transv_dist, config, "transv_dist")
+    )
+    rider_long_dist = cast(
+        float,
+        (
+            rider_long_dist
+            if rider_long_dist is not None
+            else getattr(config, "long_dist", 0.0)
+        ),
     )
     rider_stripped_ions = cast(
         float, _override_or_config(rider_stripped_ions, config, "stripped_ions")
@@ -119,6 +129,7 @@ def build_single_integration_setup(
         "starting_distance": start_z,
         "transv_mom": rider_transv_mom,
         "transv_dist": rider_transv_dist,
+        "long_dist": rider_long_dist,
         "transverse_geometry": getattr(config, "transverse_geometry", "square"),
         "transv_offset_x": transv_offset,
         "transv_offset_y": 0.0,
@@ -431,6 +442,7 @@ def build_single_integration_setup(
         rider_pcount=rider_pcount,
         rider_transv_mom=rider_transv_mom,
         rider_transv_dist=rider_transv_dist,
+        rider_long_dist=rider_long_dist,
         rider_stripped_ions=rider_stripped_ions,
         wall_z=wall_z,
         macroparticle_charge_multiplier=macroparticle_charge_multiplier,

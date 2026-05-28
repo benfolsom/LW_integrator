@@ -196,6 +196,7 @@ def _resolve_cli_driver_setup(
     d_pcount = int(sweep_overrides.get("driver_pcount", config.driver_pcount))
     d_transv_mom = sweep_overrides.get("driver_transv_mom", config.driver_transv_mom)
     d_transv_dist = sweep_overrides.get("driver_transv_dist", config.driver_transv_dist)
+    d_long_dist = sweep_overrides.get("driver_long_dist", getattr(config, "driver_long_dist", 0.0))
     d_start_dist = sweep_overrides.get(
         "driver_starting_distance", config.driver_starting_distance
     )
@@ -213,6 +214,7 @@ def _resolve_cli_driver_setup(
         "starting_distance": d_start_dist,
         "transv_mom": d_transv_mom,
         "transv_dist": d_transv_dist,
+        "long_dist": d_long_dist,
         "transverse_geometry": getattr(config, "driver_transverse_geometry", "square"),
         "transv_offset_x": getattr(config, "driver_transv_offset_x", 0.0),
         "transv_offset_y": getattr(config, "driver_transv_offset_y", 0.0),
@@ -860,7 +862,13 @@ class SweepRunner:
                 )
 
         # ── Check for halted run ──
-        if result.halted_early:
+        # distance_reached means the relative z-cutoff fired as intended; treat as success.
+        _distance_reached = (
+            result.halted_early
+            and isinstance(result.halt_reason, str)
+            and result.halt_reason.startswith("distance_reached")
+        )
+        if result.halted_early and not _distance_reached:
             if emit_run_summary:
                 self._log_line(
                     "[OPTIMIZATION]   [WARNING] "
@@ -1506,6 +1514,7 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         "rider_pcount": "pcount",
         "rider_transv_mom": "transv_mom",
         "rider_transv_dist": "transv_dist",
+        "rider_long_dist": "long_dist",
         "rider_stripped_ions": "stripped_ions",
         "macroparticle_charge_multiplier": "macroparticle_charge_multiplier",
         "macroparticle_sigma_multiplier": "macroparticle_sigma_multiplier",
@@ -1516,6 +1525,7 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         "driver_pcount": "driver_pcount",
         "driver_transv_mom": "driver_transv_mom",
         "driver_transv_dist": "driver_transv_dist",
+        "driver_long_dist": "driver_long_dist",
         "driver_transverse_geometry": "driver_transverse_geometry",
         "driver_starting_distance": "driver_starting_distance",
         "driver_energy_gev": "driver_energy_gev",

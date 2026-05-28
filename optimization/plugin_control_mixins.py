@@ -245,6 +245,31 @@ class OptimizationPluginControlMixin:
             "adaptive_timestep_debug": setting(
                 "adaptive_timestep_debug_var", "adaptive_timestep_debug", False
             ),
+            "adaptive_timestep_bunch_proximity_enabled": setting(
+                "adaptive_timestep_bunch_proximity_enabled_var",
+                "adaptive_timestep_bunch_proximity_enabled",
+                False,
+            ),
+            "adaptive_timestep_bunch_proximity_sigma_mm": setting(
+                "adaptive_timestep_bunch_proximity_sigma_mm_var",
+                "adaptive_timestep_bunch_proximity_sigma_mm",
+                5.0,
+            ),
+            "adaptive_timestep_bunch_proximity_n_sigma": setting(
+                "adaptive_timestep_bunch_proximity_n_sigma_var",
+                "adaptive_timestep_bunch_proximity_n_sigma",
+                5.0,
+            ),
+            "adaptive_timestep_bunch_proximity_reduction_factor": setting(
+                "adaptive_timestep_bunch_proximity_reduction_factor_var",
+                "adaptive_timestep_bunch_proximity_reduction_factor",
+                10.0,
+            ),
+            "adaptive_timestep_bunch_proximity_transition_n_sigma": setting(
+                "adaptive_timestep_bunch_proximity_transition_n_sigma_var",
+                "adaptive_timestep_bunch_proximity_transition_n_sigma",
+                2.0,
+            ),
         }
 
     def _gather_gamma_reconciliation_kwargs(

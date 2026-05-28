@@ -646,6 +646,35 @@ class IntegratorGUI(
         self.adaptive_timestep_debug_var = tk.BooleanVar(
             value=self.options.adaptive_timestep_debug
         )
+        self.adaptive_timestep_bunch_proximity_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "adaptive_timestep_bunch_proximity_enabled", False
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_sigma_mm_var = tk.DoubleVar(
+            value=getattr(
+                self.options, "adaptive_timestep_bunch_proximity_sigma_mm", 5.0
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_n_sigma_var = tk.DoubleVar(
+            value=getattr(
+                self.options, "adaptive_timestep_bunch_proximity_n_sigma", 5.0
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_reduction_factor_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "adaptive_timestep_bunch_proximity_reduction_factor",
+                10.0,
+            )
+        )
+        self.adaptive_timestep_bunch_proximity_transition_n_sigma_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "adaptive_timestep_bunch_proximity_transition_n_sigma",
+                2.0,
+            )
+        )
         # max_substeps is now calculated from min_timestep_factor (read-only display)
         self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 

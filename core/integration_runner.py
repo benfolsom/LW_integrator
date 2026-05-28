@@ -201,6 +201,13 @@ class AdaptiveTimestepConfig:
     proximity_reduction_factor: int = 5  # Timestep reduction factor in proximity region
     proximity_transition_zone: float = 2.0  # Smooth transition zone (in aperture radii)
 
+    # Bunch-separation proximity refinement (BUNCH_TO_BUNCH mode only)
+    bunch_proximity_enabled: bool = False
+    bunch_proximity_sigma_mm: float = 5.0    # characteristic bunch length scale (mm)
+    bunch_proximity_n_sigma: float = 5.0     # engage when separation < n_sigma * sigma_mm
+    bunch_proximity_reduction_factor: float = 10.0  # divisor at full engagement
+    bunch_proximity_transition_n_sigma: float = 2.0  # ramp-in width (sigma units)
+
     debug: bool = False  # Print adaptive timestep actions
 
 
@@ -757,6 +764,8 @@ def _run_adaptive_step(
     temp_trajectory: Trajectory = []
     temp_driver: Trajectory = []
 
+    bunch_proximity_reduction_active = False
+    bunch_proximity_factor = 1.0
     proximity_reduction_active = False
     proximity_factor = 1.0
     if (
@@ -795,6 +804,46 @@ def _run_adaptive_step(
                     f"Distance to wall: {distance_to_wall:.6e} mm "
                     f"({distance_to_wall / aperture_radius:.1f} aperture radii). "
                     f"Reduction factor: {proximity_factor:.4f}x"
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+
+    if (
+        adaptive_timestep is not None
+        and adaptive_timestep.bunch_proximity_enabled
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+        and len(trajectory_drv) >= i
+    ):
+        sigma_mm = adaptive_timestep.bunch_proximity_sigma_mm
+        n_sigma = adaptive_timestep.bunch_proximity_n_sigma
+        transition_n_sigma = adaptive_timestep.bunch_proximity_transition_n_sigma
+        engage_dist = n_sigma * sigma_mm
+        full_dist = max(0.0, (n_sigma - transition_n_sigma) * sigma_mm)
+
+        rider_z = float(np.mean(trajectory[i - 1]["z"]))
+        driver_z = float(np.mean(trajectory_drv[i - 1]["z"]))
+        separation = abs(driver_z - rider_z)
+
+        if separation <= engage_dist:
+            bunch_proximity_reduction_active = True
+            if separation <= full_dist:
+                bunch_proximity_factor = adaptive_timestep.bunch_proximity_reduction_factor
+                zone_name = "full reduction"
+            else:
+                transition_width = engage_dist - full_dist
+                ramp = (engage_dist - separation) / transition_width
+                bunch_proximity_factor = (
+                    1.0 + (adaptive_timestep.bunch_proximity_reduction_factor - 1.0) * ramp
+                )
+                zone_name = "transition"
+
+            if adaptive_timestep.debug:
+                msg = (
+                    f"Step {i}: Bunch proximity refinement active ({zone_name} zone). "
+                    f"Separation: {separation:.4f} mm ({separation / sigma_mm:.2f} sigma). "
+                    f"Reduction factor: {bunch_proximity_factor:.4f}x"
                 )
                 if logger:
                     logger(msg)
@@ -861,11 +910,21 @@ def _run_adaptive_step(
                     print(msg)
     else:
         current_h_step = h_step
-        if proximity_reduction_active and adaptive_timestep is not None:
-            current_h_step = h_step / proximity_factor
+        combined_factor = max(
+            proximity_factor if proximity_reduction_active else 1.0,
+            bunch_proximity_factor if bunch_proximity_reduction_active else 1.0,
+        )
+        if combined_factor > 1.0 and adaptive_timestep is not None:
+            current_h_step = h_step / combined_factor
             if adaptive_timestep.debug:
+                active_parts = []
+                if proximity_reduction_active:
+                    active_parts.append(f"wall({proximity_factor:.2f}x)")
+                if bunch_proximity_reduction_active:
+                    active_parts.append(f"bunch({bunch_proximity_factor:.2f}x)")
                 msg = (
-                    f"Step {i}: Applying proximity refinement: "
+                    f"Step {i}: Applying proximity refinement "
+                    f"[{', '.join(active_parts)}]: "
                     f"{h_step:.6e} \u2192 {current_h_step:.6e} ns"
                 )
                 if logger:

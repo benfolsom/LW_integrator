@@ -161,6 +161,8 @@ class OptimizationConfig:
     # Fixed particle parameters (not swept)
     transv_mom: float = 1.2e-05  # amu·mm/ns
     transv_dist: float = 2e-06  # mm - transverse spread/radius
+    long_dist: float = 0.0  # mm - longitudinal Gaussian sigma for rider bunch (0 = point slice)
+    driver_long_dist: float = 0.0  # mm - longitudinal Gaussian sigma for driver bunch
     transverse_geometry: str = "square"  # point, square, gaussian, or ring
     transv_offset_x: float = 0.0  # mm - rider x-offset of bunch center from axis
     transv_offset_y: float = 0.0  # mm - rider y-offset of bunch center from axis
@@ -291,6 +293,13 @@ class OptimizationConfig:
     adaptive_timestep_probe_threshold: float = 0.01
     adaptive_timestep_max_probe_steps: int = 3
     adaptive_timestep_debug: bool = False
+
+    # Bunch-separation proximity refinement (BUNCH_TO_BUNCH mode only)
+    adaptive_timestep_bunch_proximity_enabled: bool = False
+    adaptive_timestep_bunch_proximity_sigma_mm: float = 5.0
+    adaptive_timestep_bunch_proximity_n_sigma: float = 5.0
+    adaptive_timestep_bunch_proximity_reduction_factor: float = 10.0
+    adaptive_timestep_bunch_proximity_transition_n_sigma: float = 2.0
 
     # Intra-bunch space-charge options
     space_charge_enabled: bool = False
@@ -509,6 +518,23 @@ class OptimizationConfig:
             adaptive_timestep_probe_threshold=options.adaptive_timestep_probe_threshold,
             adaptive_timestep_max_probe_steps=options.adaptive_timestep_max_probe_steps,
             adaptive_timestep_debug=options.adaptive_timestep_debug,
+            adaptive_timestep_bunch_proximity_enabled=getattr(
+                options, "adaptive_timestep_bunch_proximity_enabled", False
+            ),
+            adaptive_timestep_bunch_proximity_sigma_mm=getattr(
+                options, "adaptive_timestep_bunch_proximity_sigma_mm", 5.0
+            ),
+            adaptive_timestep_bunch_proximity_n_sigma=getattr(
+                options, "adaptive_timestep_bunch_proximity_n_sigma", 5.0
+            ),
+            adaptive_timestep_bunch_proximity_reduction_factor=getattr(
+                options, "adaptive_timestep_bunch_proximity_reduction_factor", 10.0
+            ),
+            adaptive_timestep_bunch_proximity_transition_n_sigma=getattr(
+                options,
+                "adaptive_timestep_bunch_proximity_transition_n_sigma",
+                2.0,
+            ),
             space_charge_enabled=getattr(options, "space_charge_enabled", False),
             space_charge_retarded=getattr(options, "space_charge_retarded", True),
             space_charge_softening_mm=getattr(
