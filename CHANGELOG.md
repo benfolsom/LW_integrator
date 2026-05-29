@@ -4,6 +4,10 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Sweep Heatmap Gain Metric Selection (May 2026)
+
+- Added a `--gain-metric` option to `lw-generate-sweep-heatmap` (threaded through `generate_heatmap` and `extract_data`). The plotted gain defaults to `percent_delta_e` (final percent energy gain) as before, but any per-run metrics key can now be selected, e.g. `rider_max_percent_energy_gain` to produce a maximum-gain map from the same sweep results.
+
 ### Bunch Longitudinal Spread And B2B Proximity Refinement (May 2026)
 
 - Added longitudinal bunch spread (`long_dist` / `longitudinal_spread`) plumbing for rider and driver bunch initialization, single-run configs, sweep/optimization configs, and saved GUI configs.

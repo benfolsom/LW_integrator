@@ -182,6 +182,7 @@ def extract_data(
     gain_min=None,
     gain_max=None,
     separate_sign=False,
+    gain_metric="percent_delta_e",
 ):
     """Extract parameter values and gains from sweep results.
 
@@ -254,7 +255,7 @@ def extract_data(
         else:
             continue  # Skip if parameter not found
 
-        gain = metrics.get("percent_delta_e", 0)
+        gain = metrics.get(gain_metric, 0)
 
         # Apply filters
         if param1_min is not None and param1 < param1_min:
@@ -1060,6 +1061,7 @@ def generate_heatmap(
     gain_filter="positive",
     gain_min=None,
     gain_max=None,
+    gain_metric="percent_delta_e",
     output_name="sweep_heatmap_smooth.png",
     log_param1=True,
     log_param2=False,
@@ -1147,6 +1149,7 @@ def generate_heatmap(
             gain_min=gain_min,
             gain_max=gain_max,
             separate_sign=True,
+            gain_metric=gain_metric,
         )
         # Unpack 6-element tuple
         assert len(result_tuple) == 6
@@ -1194,6 +1197,7 @@ def generate_heatmap(
             gain_min=gain_min,
             gain_max=gain_max,
             separate_sign=False,
+            gain_metric=gain_metric,
         )
         # Unpack 3-element tuple
         assert len(result_tuple) == 3
@@ -1378,6 +1382,15 @@ def _build_parser():
         help="Maximum gain threshold (%%)",
     )
     parser.add_argument(
+        "--gain-metric",
+        default="percent_delta_e",
+        help=(
+            "Metrics key used as the plotted gain (default: percent_delta_e, "
+            "the final percent energy gain). Use e.g. "
+            "rider_max_percent_energy_gain for the maximum-gain map."
+        ),
+    )
+    parser.add_argument(
         "--color-min",
         type=float,
         default=None,
@@ -1541,6 +1554,7 @@ def _generate_heatmap_from_args(args):
         gain_filter=args.gain_filter,
         gain_min=args.gain_min,
         gain_max=args.gain_max,
+        gain_metric=args.gain_metric,
         output_name=args.output,
         log_param1=args.log_param1,
         log_param2=args.log_param2,
