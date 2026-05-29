@@ -4,6 +4,10 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Beam-Current Macroparticle-Weight Helpers (May 2026)
+
+- Added `input_output.beam_current` with `physical_population_per_bunch`, `macro_weight_per_particle`, and `current_from_macro_weight`, centralizing the bunched-beam `I / (e * f_RF) / pcount` charge-weight (`stripped_ions`) conversion that downstream config-generation tools previously reimplemented by hand. Added `tests/unit/test_beam_current.py`.
+
 ### Sweep Heatmap Gain Metric Selection (May 2026)
 
 - Added a `--gain-metric` option to `lw-generate-sweep-heatmap` (threaded through `generate_heatmap` and `extract_data`). The plotted gain defaults to `percent_delta_e` (final percent energy gain) as before, but any per-run metrics key can now be selected, e.g. `rider_max_percent_energy_gain` to produce a maximum-gain map from the same sweep results.
