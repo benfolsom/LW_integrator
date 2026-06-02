@@ -49,6 +49,9 @@ def _make_args(**overrides) -> argparse.Namespace:
         "bunch_mean": None,
         "cavity_spacing": None,
         "z_cutoff": None,
+        "z_cutoff_mode": None,
+        "cavity_exit_enabled": None,
+        "cavity_exit_length_mm": None,
         "chrono_mode": None,
         "startup_mode": None,
         "radiation_reaction_mode": None,
@@ -390,6 +393,8 @@ class TestCliConfigParsing:
                 "startup_mode": "approximate-back-history",
                 "image_subcharge_count": "16",
                 "use_image_weighting": "no",
+                "z_cutoff_mode": "relative",
+                "cavity_exit": {"enabled": True, "cavity_length_mm": 42.0},
                 "pseudo_grid": {
                     "enabled": True,
                     "active_rider_count": 6,
@@ -417,6 +422,9 @@ class TestCliConfigParsing:
         assert config.startup_mode == StartupMode.APPROXIMATE_BACK_HISTORY
         assert config.image_subcharge_count == 16
         assert config.use_image_weighting is False
+        assert config.z_cutoff_mode == "relative"
+        assert config.cavity_exit.enabled is True
+        assert config.cavity_exit.cavity_length_mm == pytest.approx(42.0)
         assert config.pseudo_grid.enabled is True
         assert config.pseudo_grid.active_rider_count == 6
         assert config.pseudo_grid.active_driver_count == 7
@@ -1243,6 +1251,8 @@ class TestCliRuntimeHelpers:
         assert captured["external_field"] is request.external_field
         assert captured["pseudo_grid"] is request.config.pseudo_grid
         assert captured["driver_train"] is request.config.driver_train
+        assert captured["z_cutoff_mode"] == request.config.z_cutoff_mode
+        assert captured["cavity_exit"] is request.config.cavity_exit
         assert (
             captured["macroparticle_smearing"] is request.config.macroparticle_smearing
         )

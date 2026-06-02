@@ -705,6 +705,17 @@ class IntegratorGUI(
             for bound in ("min", "max")
         }
 
+        self.cavity_exit_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "cavity_exit_enabled", False)
+        )
+        self.cavity_exit_length_mm_var = tk.StringVar(
+            value=(
+                ""
+                if getattr(self.options, "cavity_exit_length_mm", None) is None
+                else str(getattr(self.options, "cavity_exit_length_mm"))
+            )
+        )
+
         self.auto_duration_enabled_var = tk.BooleanVar(value=False)
         self.auto_duration_crossing_steps_var = tk.IntVar(value=200)
         self.auto_duration_post_factor_var = tk.DoubleVar(value=2.0)
@@ -735,6 +746,9 @@ class IntegratorGUI(
 
         self.driver_train_enabled_var.trace_add(
             "write", lambda *_: self._toggle_driver_train_controls()
+        )
+        self.cavity_exit_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_cavity_exit_controls()
         )
         self.sim_type_var.trace_add("write", lambda *_: self._on_sim_type_change())
 

@@ -293,6 +293,12 @@ def _resolve_cli_timestep_setup(
             wall_z=config.wall_z,
             driver_start_z=driver_start_z,
             m_particle_amu=rider_m_particle,
+            driver_energy_gev=sweep_overrides.get(
+                "driver_energy_gev", getattr(config, "driver_energy_gev", None)
+            ),
+            driver_m_particle_amu=sweep_overrides.get(
+                "driver_m_particle", getattr(config, "driver_m_particle", None)
+            ),
         )
     finally:
         config.steps = original_steps
@@ -862,13 +868,13 @@ class SweepRunner:
                 )
 
         # ── Check for halted run ──
-        # distance_reached means the relative z-cutoff fired as intended; treat as success.
-        _distance_reached = (
+        # Planned cutoff reasons mean the integration reached its requested endpoint.
+        _planned_halt = (
             result.halted_early
             and isinstance(result.halt_reason, str)
-            and result.halt_reason.startswith("distance_reached")
+            and result.halt_reason.startswith(("distance_reached", "cavity_exit_reached"))
         )
-        if result.halted_early and not _distance_reached:
+        if result.halted_early and not _planned_halt:
             if emit_run_summary:
                 self._log_line(
                     "[OPTIMIZATION]   [WARNING] "

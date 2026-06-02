@@ -66,6 +66,7 @@ def _config(**overrides):
         wall_z,
         start_z,
         driver_start_z,
+        **_kwargs,
     ):
         assert energy_gev > 0
         assert m_particle_amu > 0

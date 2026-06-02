@@ -16,7 +16,7 @@ from core.integration_runner import (
     retarded_integrator,
     run_integrator,
 )
-from core.types import PseudoGridConfig, SimulationType, SpaceChargeConfig
+from core.types import CavityExitConfig, PseudoGridConfig, SimulationType, SpaceChargeConfig
 
 
 def _make_particle_state(
@@ -346,10 +346,10 @@ def test_retarded_integrator_logs_proximity_transition_zone(
     assert any("Reduction factor: 2.5000x" in message for message in messages)
 
 
-def test_adaptive_step_passes_local_driver_soa_history(
+def test_adaptive_b2b_step_passes_full_driver_soa_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    observed_driver_x: list[tuple[float, float]] = []
+    observed_driver_x: list[tuple[int, float, float]] = []
 
     def fake_step(
         step_function: object,
@@ -368,11 +368,12 @@ def test_adaptive_step_passes_local_driver_soa_history(
         traj_ext_soa: object = None,
         **kwargs: object,
     ) -> dict[str, object]:
-        if step_idx == 2 and len(trajectory_ext) == 1 and traj_ext_soa is not None:
+        if step_idx == 2 and traj_ext_soa is not None:
             observed_driver_x.append(
                 (
-                    float(trajectory_ext[0]["x"][0]),
-                    float(traj_ext_soa.x[0, 0]),
+                    len(trajectory_ext),
+                    float(trajectory_ext[index_traj]["x"][0]),
+                    float(traj_ext_soa.x[index_traj, 0]),
                 )
             )
 
@@ -399,7 +400,7 @@ def test_adaptive_step_passes_local_driver_soa_history(
         use_numba=False,
     )
 
-    assert observed_driver_x == [(10.0, 10.0)]
+    assert observed_driver_x[0] == (2, 10.0, 10.0)
 
 
 def test_retarded_integrator_logs_when_numba_is_unavailable(
@@ -1922,6 +1923,107 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
     assert "distance_reached" in trajectory[-1]["_halt_reason"]
 
 
+
+def test_retarded_integrator_halts_when_rider_reaches_cavity_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        source_state = _clone_state(trajectory[index_traj])
+        z_value = float(source_state["z"][0])
+        source_state["z"] = np.array([z_value + (3.0 if z_value < 5.0 else -1.0)])
+        source_state["t"] = np.array([float(source_state["t"][0]) + h_step])
+        return source_state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    trajectory, driver, *_soa_out = retarded_integrator(
+        steps=5,
+        h_step=1.0,
+        wall_z=0.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_particle_state(z=0.0),
+        init_driver=_make_particle_state(z=5.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        cavity_exit=CavityExitConfig(enabled=True),
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 3
+    assert len(driver) == 3
+    assert trajectory[-1]["_halted_early"] is True
+    assert trajectory[-1]["_termination_reason"] == "cavity_exit_reached"
+    assert trajectory[-1]["_exit_species"] == "rider"
+    assert trajectory[-1]["_cavity_length_mm"] == pytest.approx(5.0)
+    assert "cavity_exit_reached species=rider" in trajectory[-1]["_halt_reason"]
+
+
+def test_retarded_integrator_halts_when_driver_reaches_cavity_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        source_state = _clone_state(trajectory[index_traj])
+        z_value = float(source_state["z"][0])
+        other_initial_z = float(trajectory_ext[0]["z"][0])
+        is_rider_update = other_initial_z > z_value
+        source_state["z"] = np.array([z_value + (1.0 if is_rider_update else -3.0)])
+        source_state["t"] = np.array([float(source_state["t"][0]) + h_step])
+        return source_state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    trajectory, driver, *_soa_out = retarded_integrator(
+        steps=5,
+        h_step=1.0,
+        wall_z=0.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_particle_state(z=0.0),
+        init_driver=_make_particle_state(z=5.0),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        cavity_exit=CavityExitConfig(enabled=True),
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 3
+    assert len(driver) == 3
+    assert trajectory[-1]["_termination_reason"] == "cavity_exit_reached"
+    assert trajectory[-1]["_exit_species"] == "driver"
+    assert trajectory[-1]["_driver_exit_z"] == pytest.approx(0.0)
+
+
 def test_retarded_integrator_logs_relative_cutoff_debug_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2301,6 +2403,7 @@ def test_run_integrator_forwards_config_fields(
             passive_neighbor_count=2,
             pair_reuse_window=5,
         ),
+        cavity_exit=CavityExitConfig(enabled=True, cavity_length_mm=12.0),
     )
 
     result = run_integrator(
@@ -2326,3 +2429,4 @@ def test_run_integrator_forwards_config_fields(
     assert captured["bunch_transv_dist"] == pytest.approx(0.2)
     assert captured["bunch_transv_mom"] == pytest.approx(0.3)
     assert captured["pseudo_grid"] == config.pseudo_grid
+    assert captured["cavity_exit"] == config.cavity_exit

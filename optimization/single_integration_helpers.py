@@ -417,6 +417,14 @@ def build_single_integration_setup(
             "pseudo_grid_causal_history_safety_margin_steps",
             2,
         ),
+        cavity_exit_enabled=getattr(config, "cavity_exit_enabled", False),
+        cavity_exit_length_mm=getattr(config, "cavity_exit_length_mm", None),
+        cavity_exit_residual_tail_factor=getattr(
+            config, "cavity_exit_residual_tail_factor", 0.0
+        ),
+        cavity_exit_max_residual_tail_steps=getattr(
+            config, "cavity_exit_max_residual_tail_steps", 0
+        ),
         driver_train_enabled=getattr(config, "driver_train_enabled", False),
         driver_train_bunch_count=getattr(config, "driver_train_bunch_count", 1),
         driver_train_z_spacing_mm=getattr(config, "driver_train_z_spacing_mm", 0.0),

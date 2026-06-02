@@ -484,6 +484,15 @@ class IntegratorGUIConfigMixin:
                 self.external_field_window_vars[key].set(
                     _format_gui_optional_float(getattr(options, option_name, None))
                 )
+        if hasattr(self, "cavity_exit_enabled_var"):
+            self.cavity_exit_enabled_var.set(
+                getattr(options, "cavity_exit_enabled", False)
+            )
+            cavity_length = getattr(options, "cavity_exit_length_mm", None)
+            self.cavity_exit_length_mm_var.set(
+                "" if cavity_length is None else _format_gui_float(cavity_length)
+            )
+            self._toggle_cavity_exit_controls()
         self.auto_duration_enabled_var.set(
             getattr(options, "auto_duration_enabled", False)
         )
@@ -864,6 +873,10 @@ class IntegratorGUIConfigMixin:
                     "radiation_reaction_mode",
                     "medina_lad",
                 )
+            ),
+            cavity_exit_enabled=bool(self.cavity_exit_enabled_var.get()),
+            cavity_exit_length_mm=_parse_gui_optional_float_lenient(
+                self.cavity_exit_length_mm_var.get()
             ),
             auto_duration_enabled=bool(self.auto_duration_enabled_var.get()),
             auto_duration_crossing_steps=int(

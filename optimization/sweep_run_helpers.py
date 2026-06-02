@@ -125,6 +125,14 @@ def resolve_sweep_timestep(
             wall_z=current_wall_z,
             start_z=run_params.start_z,
             driver_start_z=driver_start_z,
+            driver_energy_gev=params_dict.get(
+                "driver_energy_gev", getattr(config, "driver_energy_gev", None)
+            ),
+            driver_m_particle_amu=(
+                run_params.driver_params.get("m_particle")
+                if run_params.driver_params is not None
+                else None
+            ),
         )
         steps = config.steps
         expected_distance = _expected_distance(

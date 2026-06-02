@@ -24,6 +24,7 @@ from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.types import (
     ChronoMatchingMode,
+    CavityExitConfig,
     DriverTrainConfig,
     ExternalFieldConfig,
     IntegratorConfig,
@@ -56,6 +57,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "bunch_mean": 1000.0,
     "cavity_spacing": 0.0,
     "z_cutoff": 0.0,
+    "z_cutoff_mode": "absolute",
     "chrono_mode": "fast",
     "startup_mode": "cold-start",
     "image_subcharge_count": 12,
@@ -104,6 +106,14 @@ DEFAULT_PSEUDO_GRID: Dict[str, Any] = {
     "loss_tracking_enabled": True,
     "causal_history_pruning_enabled": False,
     "causal_history_safety_margin_steps": 2,
+}
+
+DEFAULT_CAVITY_EXIT: Dict[str, Any] = {
+    "enabled": False,
+    "mode": "first_exit",
+    "cavity_length_mm": None,
+    "residual_tail_factor": 0.0,
+    "max_residual_tail_steps": 0,
 }
 
 DEFAULT_MACROPARTICLE_SMEARING: Dict[str, Any] = {
@@ -460,6 +470,31 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         type=float,
         dest="z_cutoff",
         help="Longitudinal cutoff for switching-wall simulations.",
+    )
+    parser.add_argument(
+        "--z-cutoff-mode",
+        choices=("absolute", "relative"),
+        dest="z_cutoff_mode",
+        help="Interpret z-cutoff as an absolute z position or relative rider distance.",
+    )
+    parser.add_argument(
+        "--cavity-exit",
+        dest="cavity_exit_enabled",
+        action="store_true",
+        help="Enable BUNCH_TO_BUNCH cutoff when either bunch reaches the opposite cavity exit.",
+    )
+    parser.add_argument(
+        "--no-cavity-exit",
+        dest="cavity_exit_enabled",
+        action="store_false",
+        default=None,
+        help="Disable cavity-exit cutoff explicitly.",
+    )
+    parser.add_argument(
+        "--cavity-exit-length-mm",
+        type=float,
+        dest="cavity_exit_length_mm",
+        help="Optional absolute cavity length; default uses initial rider-driver separation.",
     )
     parser.add_argument(
         "--chrono-mode",
@@ -986,6 +1021,7 @@ def _merge_simulation_payload(
         "bunch_mean",
         "cavity_spacing",
         "z_cutoff",
+        "z_cutoff_mode",
         "chrono_mode",
         "startup_mode",
         "radiation_reaction_mode",
@@ -996,6 +1032,16 @@ def _merge_simulation_payload(
     for key in override_keys:
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
+
+
+    cavity_exit = result.get("cavity_exit")
+    if not isinstance(cavity_exit, MutableMapping):
+        cavity_exit = {}
+        result["cavity_exit"] = cavity_exit
+    if getattr(args, "cavity_exit_enabled", None) is not None:
+        cavity_exit["enabled"] = bool(args.cavity_exit_enabled)
+    if getattr(args, "cavity_exit_length_mm", None) is not None:
+        cavity_exit["cavity_length_mm"] = args.cavity_exit_length_mm
 
     if getattr(args, "space_charge", False):
         result["space_charge_enabled"] = True
@@ -1221,6 +1267,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     particle_loss = _build_particle_loss_config(payload.get("particle_loss"))
     pseudo_grid = _build_pseudo_grid_config(payload.get("pseudo_grid"))
     driver_train = _build_driver_train_config(payload.get("driver_train"))
+    cavity_exit = _build_cavity_exit_config(payload.get("cavity_exit"))
     macroparticle_smearing = _build_macroparticle_smearing_config(
         payload.get("macroparticle_smearing")
     )
@@ -1238,6 +1285,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             payload.get("cavity_spacing", DEFAULT_SIMULATION["cavity_spacing"])
         ),
         z_cutoff=float(payload.get("z_cutoff", DEFAULT_SIMULATION["z_cutoff"])),
+        z_cutoff_mode=str(payload.get("z_cutoff_mode", DEFAULT_SIMULATION["z_cutoff_mode"])),
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
         radiation_reaction_mode=str(
@@ -1249,6 +1297,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         pseudo_grid=pseudo_grid,
         macroparticle_smearing=macroparticle_smearing,
         driver_train=driver_train,
+        cavity_exit=cavity_exit,
         particle_loss=particle_loss,
     )
 
@@ -1441,6 +1490,26 @@ def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
         )
     except ValueError as exc:
         raise SimulationConfigError(str(exc)) from exc
+
+
+def _build_cavity_exit_config(payload: Any) -> CavityExitConfig:
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("'cavity_exit' must be an object")
+    merged = dict(DEFAULT_CAVITY_EXIT)
+    merged.update(payload)
+    return CavityExitConfig(
+        enabled=bool(merged.get("enabled", False)),
+        mode=str(merged.get("mode", "first_exit")),
+        cavity_length_mm=(
+            None
+            if merged.get("cavity_length_mm") is None
+            else float(merged["cavity_length_mm"])
+        ),
+        residual_tail_factor=float(merged.get("residual_tail_factor", 0.0)),
+        max_residual_tail_steps=int(merged.get("max_residual_tail_steps", 0)),
+    )
 
 
 def _build_macroparticle_smearing_config(payload: Any) -> MacroparticleSmearingConfig:
@@ -1879,6 +1948,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         mean=request.config.bunch_mean,
         cav_spacing=request.config.cavity_spacing,
         z_cutoff=request.config.z_cutoff,
+        z_cutoff_mode=request.config.z_cutoff_mode,
         chrono_mode=request.config.chrono_mode,
         startup_mode=request.config.startup_mode,
         image_subcharge_count=request.config.image_subcharge_count,
@@ -1889,6 +1959,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         external_field=request.external_field,
         pseudo_grid=request.config.pseudo_grid,
         driver_train=request.config.driver_train,
+        cavity_exit=request.config.cavity_exit,
         particle_loss=request.config.particle_loss,
         macroparticle_smearing=request.config.macroparticle_smearing,
     )

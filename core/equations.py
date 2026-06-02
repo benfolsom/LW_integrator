@@ -708,16 +708,24 @@ def _compute_gating_threshold(
 
 def _should_apply_external_forces(
     startup_mode: StartupMode,
+    sim_type: SimulationType,
     nhat: dict,
     current_state: ParticleState,
     particle_idx: int,
 ) -> bool:
     """Determine whether external forces should be applied to this particle.
 
-    In COLD_START mode, forces are suppressed until the particle has traveled
-    far enough from its origin for retardation effects to be meaningful.
+    In COLD_START mode, wall/image-style startup still suppresses forces until
+    the observer has traveled far enough from its origin for retardation
+    effects to be meaningful. Explicit BUNCH_TO_BUNCH sources are exempt from
+    this gate because suppressing them based only on observer travel produces
+    an unphysical rider/driver asymmetry: a fast source can couple strongly to
+    the opposite bunch long before the slower observer has moved enough to
+    satisfy the legacy threshold.
     """
     if startup_mode is not StartupMode.COLD_START or nhat["R"].size == 0:
+        return True
+    if sim_type == SimulationType.BUNCH_TO_BUNCH:
         return True
 
     origin_position = (
@@ -1501,7 +1509,10 @@ def retarded_equations_of_motion(
             # For COLD_START, check if we should skip force computation entirely
             # This avoids expensive retarded distance calculations during startup phase
             skip_external_forces = False
-            if startup_mode is StartupMode.COLD_START:
+            if (
+                startup_mode is StartupMode.COLD_START
+                and sim_type != SimulationType.BUNCH_TO_BUNCH
+            ):
                 # Check if particle has traveled far enough from origin
                 # This is the same check done in _should_apply_external_forces
                 # but done here to avoid computing retarded distances needlessly
@@ -1674,7 +1685,7 @@ def retarded_equations_of_motion(
             elif nhat is not None:
                 # Do full gating check with actual retarded distances
                 apply_forces = _should_apply_external_forces(
-                    startup_mode, nhat, current_state, particle_idx
+                    startup_mode, sim_type, nhat, current_state, particle_idx
                 )
             else:
                 # No nhat computed, no forces to apply

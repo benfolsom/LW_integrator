@@ -2364,12 +2364,56 @@ class IntegratorGUITabMixin:
         """Build auto-duration crossing mode controls."""
         from .gui import Tooltip
 
+        cavity_frame = ttk.LabelFrame(
+            stability_frame,
+            text="Cavity Exit Cutoff (BUNCH_TO_BUNCH)",
+            padding=8,
+        )
+        cavity_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        cavity_frame.columnconfigure(1, weight=1)
+
+        self.cavity_exit_enable_check = ttk.Checkbutton(
+            cavity_frame,
+            text="Stop when rider or driver reaches the opposite cavity exit",
+            variable=self.cavity_exit_enabled_var,
+            command=self._toggle_cavity_exit_controls,
+        )
+        self.cavity_exit_enable_check.grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=2
+        )
+
+        self.cavity_exit_length_label = ttk.Label(
+            cavity_frame, text="Cavity length override (mm):"
+        )
+        self.cavity_exit_length_label.grid(
+            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.cavity_exit_length_entry = ttk.Entry(
+            cavity_frame, textvariable=self.cavity_exit_length_mm_var, width=12
+        )
+        self.cavity_exit_length_entry.grid(row=1, column=1, sticky="ew", pady=2)
+
+        cavity_help = ttk.Label(
+            cavity_frame,
+            text="Blank length uses abs(initial driver z - rider z).",
+            foreground="gray",
+            font=("TkDefaultFont", 8),
+        )
+        cavity_help.grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(0, 5), padx=(20, 0)
+        )
+        self._cavity_exit_sub_widgets = [
+            self.cavity_exit_length_label,
+            self.cavity_exit_length_entry,
+            cavity_help,
+        ]
+
         ad_frame = ttk.LabelFrame(
             stability_frame,
             text="Auto-Duration Crossing (BUNCH_TO_BUNCH)",
             padding=8,
         )
-        ad_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ad_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         ad_frame.columnconfigure(1, weight=1)
 
         enable_frame = ttk.Frame(ad_frame)

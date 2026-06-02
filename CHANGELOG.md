@@ -4,6 +4,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+
+### B2B Cavity-Exit Cutoff (June 2026)
+
+- Added `CavityExitConfig` for `BUNCH_TO_BUNCH` runs. The initial `first_exit` mode halts when either rider or driver centroid reaches the opposite cavity exit plane, using either an explicit `cavity_length_mm` or the initial rider-driver centroid separation.
+- Exposed cavity-exit cutoff through core integrator config, single-run CLI JSON/flags, `SimulationOptions`, GUI stability controls, and sweep success handling. Planned `cavity_exit_reached` halts are treated like intentional `distance_reached` cutoffs.
+- Added halt metadata for exit species, exit step/time, cavity length, exit planes, and zero residual-tail placeholders. Residual-tail source masking remains a follow-up feature.
+- Fixed direct CLI forwarding of `z_cutoff_mode` while threading the new cutoff config.
+- Tests: added core rider-first/driver-first cavity-exit coverage plus CLI and `SimulationOptions` plumbing checks.
+
 ### Beam-Current Macroparticle-Weight Helpers (May 2026)
 
 - Added `input_output.beam_current` with `physical_population_per_bunch`, `macro_weight_per_particle`, and `current_from_macro_weight`, centralizing the bunched-beam `I / (e * f_RF) / pcount` charge-weight (`stripped_ions`) conversion that downstream config-generation tools previously reimplemented by hand. Added `tests/unit/test_beam_current.py`.
@@ -11,6 +20,14 @@ All notable changes and updates to the LW Integrator project are documented in t
 ### Sweep Heatmap Gain Metric Selection (May 2026)
 
 - Added a `--gain-metric` option to `lw-generate-sweep-heatmap` (threaded through `generate_heatmap` and `extract_data`). The plotted gain defaults to `percent_delta_e` (final percent energy gain) as before, but any per-run metrics key can now be selected, e.g. `rider_max_percent_energy_gain` to produce a maximum-gain map from the same sweep results.
+
+### B2B Auto-distance Timestep Fix (May 2026)
+
+- Fixed BUNCH_TO_BUNCH auto_distance timestep sizing to use the shared solver closing scale from rider and driver gamma-beta, instead of sizing the proper-time-like step from rider motion alone. High-gamma counterbeam drivers now remain inside the causal interaction window instead of crossing between oversized steps.
+- Fixed adaptive BUNCH_TO_BUNCH rider steps to retain full source/observer history under `COLD_START`, matching the driver-side path and preventing asymmetric zero driver-to-rider coupling when adaptive timestep is enabled.
+- Fixed `COLD_START` external-force gating for explicit `BUNCH_TO_BUNCH` sources so rider/driver coupling is no longer suppressed based solely on observer travel distance. This removes the remaining zero rider-response path seen in high-gamma counterbeam probes while preserving startup gating for wall/image-style interactions.
+- Threaded swept driver energy and mass into CLI, sweep, and optimization timestep resolution.
+- Tests: updated auto-distance, sweep timestep helper, adaptive B2B control-flow, and B2B `COLD_START` gating coverage.
 
 ### Bunch Longitudinal Spread And B2B Proximity Refinement (May 2026)
 

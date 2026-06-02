@@ -84,6 +84,10 @@ def _config(**overrides):
         "target_distance_mm": 25.0,
         "cavity_spacing": 321.0,
         "z_cutoff_mode": "absolute",
+        "cavity_exit_enabled": True,
+        "cavity_exit_length_mm": 77.0,
+        "cavity_exit_residual_tail_factor": 1.5,
+        "cavity_exit_max_residual_tail_steps": 12,
         "startup_mode": "FAST",
         "seed": 123,
         "trajectory_stride": 2,
@@ -193,6 +197,10 @@ def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
     assert setup.options.rider_params["starting_Pz"] > 0.0
     assert setup.options.core_params["cav_spacing"] == 321.0
     assert setup.options.core_params["z_cutoff"] == 25.0
+    assert setup.options.cavity_exit_enabled is True
+    assert setup.options.cavity_exit_length_mm == pytest.approx(77.0)
+    assert setup.options.cavity_exit_residual_tail_factor == pytest.approx(1.5)
+    assert setup.options.cavity_exit_max_residual_tail_steps == 12
     assert setup.options.self_consistency_convergence_mode == "variable_geometry"
     assert setup.options.self_consistency_target_ms_tolerance == pytest.approx(3e-7)
     assert setup.options.self_consistency_chrono_interpolate is True

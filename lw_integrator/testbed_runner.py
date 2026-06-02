@@ -45,7 +45,7 @@ from core.particle_status import (
     get_particle_failure_summary,
 )
 from core.self_consistency import canonicalize_self_consistency_mode
-from core.types import SimulationType
+from core.types import CavityExitConfig, SimulationType
 from input_output.bunch_initialization import create_bunch_from_params
 
 from .trajectory_metrics import compute_delta_energy_components, normalize_state
@@ -402,6 +402,13 @@ class SimulationOptions:
     particle_loss_initial_radial_multiplier: float = 1.0
     particle_loss_initial_radial_margin_mm: float = 0.0
 
+    # Cavity-exit cutoff options (BUNCH_TO_BUNCH only)
+    cavity_exit_enabled: bool = False
+    cavity_exit_mode: str = "first_exit"
+    cavity_exit_length_mm: Optional[float] = None
+    cavity_exit_residual_tail_factor: float = 0.0
+    cavity_exit_max_residual_tail_steps: int = 0
+
     # Auto-duration crossing mode (BUNCH_TO_BUNCH only)
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
@@ -558,6 +565,13 @@ class SimulationOptions:
                 "initial_radial_multiplier": self.particle_loss_initial_radial_multiplier,
                 "initial_radial_margin_mm": self.particle_loss_initial_radial_margin_mm,
             },
+            "cavity_exit": {
+                "enabled": self.cavity_exit_enabled,
+                "mode": self.cavity_exit_mode,
+                "cavity_length_mm": self.cavity_exit_length_mm,
+                "residual_tail_factor": self.cavity_exit_residual_tail_factor,
+                "max_residual_tail_steps": self.cavity_exit_max_residual_tail_steps,
+            },
             "auto_duration_enabled": self.auto_duration_enabled,
             "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
             "auto_duration_post_factor": self.auto_duration_post_factor,
@@ -674,6 +688,49 @@ class SimulationOptions:
                 return None
             try:
                 return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        cavity_exit_payload_raw = payload.get("cavity_exit")
+        cavity_exit_payload = (
+            cavity_exit_payload_raw
+            if isinstance(cavity_exit_payload_raw, dict)
+            else {}
+        )
+
+        def _cavity_exit_value(name: str, default: object) -> object:
+            flat_name = f"cavity_exit_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return cavity_exit_payload.get(name, default)
+
+        def _cavity_exit_bool(name: str, default: bool) -> bool:
+            return bool(_cavity_exit_value(name, default))
+
+        def _cavity_exit_str(name: str, default: str) -> str:
+            value = _cavity_exit_value(name, default)
+            return str(value) if value is not None else default
+
+        def _cavity_exit_float(name: str, default: float) -> float:
+            value = _cavity_exit_value(name, default)
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        def _cavity_exit_optional_float(name: str) -> Optional[float]:
+            value = _cavity_exit_value(name, None)
+            if value in (None, ""):
+                return None
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
+        def _cavity_exit_int(name: str, default: int) -> int:
+            value = _cavity_exit_value(name, default)
+            try:
+                return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
             except (TypeError, ValueError):
                 return default
 
@@ -1009,6 +1066,11 @@ class SimulationOptions:
                 "initial_radial_margin_mm",
                 0.0,
             ),
+            cavity_exit_enabled=_cavity_exit_bool("enabled", False),
+            cavity_exit_mode=_cavity_exit_str("mode", "first_exit"),
+            cavity_exit_length_mm=_cavity_exit_optional_float("cavity_length_mm"),
+            cavity_exit_residual_tail_factor=_cavity_exit_float("residual_tail_factor", 0.0),
+            cavity_exit_max_residual_tail_steps=_cavity_exit_int("max_residual_tail_steps", 0),
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
@@ -2064,6 +2126,14 @@ def run_testbed(
                     f"h_step={_actual_h_step:.3e} ns, steps={_actual_steps}"
                 )
 
+        cavity_exit_config = CavityExitConfig(
+            enabled=bool(options.cavity_exit_enabled),
+            mode=str(options.cavity_exit_mode),
+            cavity_length_mm=options.cavity_exit_length_mm,
+            residual_tail_factor=float(options.cavity_exit_residual_tail_factor),
+            max_residual_tail_steps=int(options.cavity_exit_max_residual_tail_steps),
+        )
+
         # Run core integrator directly
         core_traj_rider, core_traj_driver, *_soa_out = retarded_integrator(
             steps=_actual_steps,
@@ -2110,6 +2180,7 @@ def run_testbed(
             radiation_reaction_mode=options.radiation_reaction_mode,
             pseudo_grid=pseudo_grid_config,
             driver_train=driver_train_config,
+            cavity_exit=cavity_exit_config,
             particle_loss=particle_loss_config,
             macroparticle_smearing=macroparticle_smearing_config,
         )

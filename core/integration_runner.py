@@ -39,6 +39,7 @@ from .pseudo_grid import (
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import (
     ChronoMatchingMode,
+    CavityExitConfig,
     DriverTrainConfig,
     IndexedTrajectoryArrays,
     IntegratorConfig,
@@ -342,6 +343,23 @@ def _copy_particle_state(state: ParticleState) -> ParticleState:
         key: (value.copy() if isinstance(value, (dict, np.ndarray)) else value)
         for key, value in state.items()
     }
+
+
+def _centroid_z(state: ParticleState) -> float:
+    return float(np.mean(np.asarray(state["z"], dtype=float)))
+
+
+def _crossed_exit(previous_z: float, current_z: float, exit_z: float) -> bool:
+    if previous_z == exit_z or current_z == exit_z:
+        return True
+    return (previous_z - exit_z) * (current_z - exit_z) < 0.0
+
+
+def _latest_populated_state(trajectory: Trajectory, before_index: int) -> ParticleState:
+    for state in reversed(trajectory[:before_index]):
+        if state:
+            return state
+    raise ValueError("trajectory has no populated state before cavity-exit check")
 
 
 def _build_driver_train_initial_state(
@@ -1555,6 +1573,7 @@ def retarded_integrator(
     radiation_reaction_mode: str = "off",
     pseudo_grid: Optional[PseudoGridConfig] = None,
     driver_train: Optional[DriverTrainConfig] = None,
+    cavity_exit: Optional[CavityExitConfig] = None,
     particle_loss: Optional[ParticleLossConfig] = None,
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
 ) -> Tuple[
@@ -1690,6 +1709,7 @@ def retarded_integrator(
 
     pseudo_grid = pseudo_grid or PseudoGridConfig()
     driver_train = driver_train or DriverTrainConfig()
+    cavity_exit = cavity_exit or CavityExitConfig()
     particle_loss = particle_loss or ParticleLossConfig()
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     driver_train_enabled = bool(driver_train.enabled)
@@ -1711,6 +1731,15 @@ def retarded_integrator(
                 "Driver-train mode is not yet compatible with pseudo-grid reduction."
             )
         init_driver = _build_driver_train_initial_state(init_driver, driver_train)
+
+    cavity_exit_enabled = bool(cavity_exit.enabled)
+    if cavity_exit_enabled:
+        if sim_type != SimulationType.BUNCH_TO_BUNCH:
+            raise NotImplementedError(
+                "Cavity-exit cutoff is implemented only for SimulationType.BUNCH_TO_BUNCH."
+            )
+        if init_driver is None:
+            raise ValueError("Cavity-exit cutoff requires init_driver state")
 
     active_start = int(driver_train.prehistory_steps) if driver_train_enabled else 0
     requested_steps = int(steps)
@@ -1829,11 +1858,37 @@ def retarded_integrator(
     # Store initial z position for relative cutoff mode
     z_initial: Optional[float] = None
     if z_cutoff_mode == "relative" and sim_type == SimulationType.BUNCH_TO_BUNCH:
-        z_initial = float(np.mean(init_rider["z"]))
+        z_initial = _centroid_z(init_rider)
         if adaptive_timestep is not None and adaptive_timestep.debug:
             msg = (
                 f"BUNCH_TO_BUNCH relative cutoff mode: z_initial = {z_initial:.6f} mm, "
                 f"will stop after traveling {z_cutoff:.2f} mm"
+            )
+            if logger:
+                logger(msg)
+            else:
+                print(msg)
+
+    cavity_rider_exit_z: Optional[float] = None
+    cavity_driver_exit_z: Optional[float] = None
+    cavity_length_mm: Optional[float] = None
+    if cavity_exit_enabled and init_driver is not None:
+        rider_z0 = _centroid_z(init_rider)
+        driver_z0 = _centroid_z(init_driver)
+        axis_sign = 1.0 if driver_z0 >= rider_z0 else -1.0
+        cavity_length_mm = (
+            float(cavity_exit.cavity_length_mm)
+            if cavity_exit.cavity_length_mm is not None
+            else abs(driver_z0 - rider_z0)
+        )
+        cavity_rider_exit_z = rider_z0 + axis_sign * cavity_length_mm
+        cavity_driver_exit_z = driver_z0 - axis_sign * cavity_length_mm
+        if adaptive_timestep is not None and adaptive_timestep.debug:
+            msg = (
+                "BUNCH_TO_BUNCH cavity-exit cutoff: "
+                f"length={cavity_length_mm:.6f} mm, "
+                f"rider_exit_z={cavity_rider_exit_z:.6f} mm, "
+                f"driver_exit_z={cavity_driver_exit_z:.6f} mm"
             )
             if logger:
                 logger(msg)
@@ -1992,7 +2047,9 @@ def retarded_integrator(
                     if _traj_drv_builder is not None
                     else None
                 ),
-                use_full_history=driver_train_enabled,
+                use_full_history=(
+                    driver_train_enabled or sim_type == SimulationType.BUNCH_TO_BUNCH
+                ),
                 macroparticle_smearing=macroparticle_smearing,
             )
             _ensure_startup_metadata(trajectory[i])
@@ -2299,6 +2356,77 @@ def retarded_integrator(
                         > previous_driver_cleared_until
                     )
 
+        # Check for early termination when either bunch reaches a cavity exit.
+        if (
+            cavity_exit_enabled
+            and sim_type == SimulationType.BUNCH_TO_BUNCH
+            and i > active_start
+            and init_driver is not None
+            and cavity_rider_exit_z is not None
+            and cavity_driver_exit_z is not None
+            and cavity_length_mm is not None
+        ):
+            rider_previous_z = _centroid_z(_latest_populated_state(trajectory, i))
+            rider_current_z = _centroid_z(trajectory[i])
+            driver_previous_z = _centroid_z(_latest_populated_state(trajectory_drv, i))
+            driver_current_z = _centroid_z(trajectory_drv[i])
+            rider_exited = _crossed_exit(rider_previous_z, rider_current_z, cavity_rider_exit_z)
+            driver_exited = _crossed_exit(driver_previous_z, driver_current_z, cavity_driver_exit_z)
+            if rider_exited or driver_exited:
+                if rider_exited and driver_exited:
+                    rider_overshoot = abs(rider_current_z - cavity_rider_exit_z)
+                    driver_overshoot = abs(driver_current_z - cavity_driver_exit_z)
+                    exit_species = "rider" if rider_overshoot <= driver_overshoot else "driver"
+                else:
+                    exit_species = "rider" if rider_exited else "driver"
+                exit_z = cavity_rider_exit_z if exit_species == "rider" else cavity_driver_exit_z
+                exit_time_ns = float(np.mean(np.asarray(trajectory[i]["t"], dtype=float)))
+                active_halt_step = max(0, i - active_start)
+                reason = (
+                    f"cavity_exit_reached species={exit_species} "
+                    f"exit_z={exit_z:.6f} mm length={cavity_length_mm:.6f} mm "
+                    f"at step {active_halt_step}/{requested_steps}"
+                )
+                trajectory_truncated = trajectory[: i + 1]
+                trajectory_drv_truncated = trajectory_drv[: i + 1]
+                _traj_builder.set_halt_metadata(
+                    step=i,
+                    reason=reason,
+                    halt_step=active_halt_step,
+                    requested_steps=requested_steps,
+                )
+                _traj_soa = _traj_builder.build()
+                _traj_drv_soa = (
+                    _traj_drv_builder.build() if _traj_drv_builder is not None else None
+                )
+                if _legacy_history_compacted:
+                    trajectory_truncated = _traj_soa.to_legacy()[: i + 1]
+                    trajectory_drv_truncated = (
+                        _traj_drv_soa.to_legacy()[: i + 1]
+                        if _traj_drv_soa is not None
+                        else []
+                    )
+                last_state = trajectory_truncated[-1]
+                last_state["_halted_early"] = True
+                last_state["_halt_reason"] = reason
+                last_state["_halt_step"] = active_halt_step
+                last_state["_requested_steps"] = requested_steps
+                last_state["_termination_reason"] = "cavity_exit_reached"
+                last_state["_exit_species"] = exit_species
+                last_state["_exit_step"] = active_halt_step
+                last_state["_exit_time_ns"] = exit_time_ns
+                last_state["_cavity_length_mm"] = cavity_length_mm
+                last_state["_rider_exit_z"] = cavity_rider_exit_z
+                last_state["_driver_exit_z"] = cavity_driver_exit_z
+                last_state["_residual_tail_steps"] = 0
+                last_state["_residual_tail_time_ns"] = 0.0
+                return _to_public_return(
+                    trajectory_truncated,
+                    trajectory_drv_truncated,
+                    _traj_soa,
+                    _traj_drv_soa,
+                )
+
         # Check for early termination in BUNCH_TO_BUNCH relative mode
         if (
             z_cutoff_mode == "relative"
@@ -2471,6 +2599,7 @@ def run_integrator(
         cancel_callback=cancel_callback,
         pseudo_grid=config.pseudo_grid,
         driver_train=config.driver_train,
+        cavity_exit=config.cavity_exit,
         particle_loss=config.particle_loss,
         macroparticle_smearing=config.macroparticle_smearing,
     )

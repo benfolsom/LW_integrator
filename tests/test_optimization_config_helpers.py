@@ -67,7 +67,13 @@ def test_calculate_timestep_for_energy_auto_distance_uses_driver_distance_for_b2
     rest_energy_mev = 1.0 * 931.494
     gamma = (5.0 * 1e3) / rest_energy_mev + 1.0
     beta = (1.0 - 1.0 / gamma**2) ** 0.5
-    expected = (abs(210.0 - 10.0) + 25.0) / (400 * beta * 299.792458 * gamma)
+    rider_gamma_beta = gamma * beta
+    driver_rest_energy_mev = config.driver_m_particle * 931.494
+    driver_gamma = (config.driver_energy_gev * 1e3) / driver_rest_energy_mev + 1.0
+    driver_beta = (1.0 - 1.0 / driver_gamma**2) ** 0.5
+    expected = (abs(210.0 - 10.0) + 25.0) / (
+        400 * 299.792458 * (rider_gamma_beta + driver_gamma * driver_beta)
+    )
     assert timestep == pytest.approx(expected)
 
 
@@ -125,6 +131,10 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         external_field_t_min=1.0e-6,
         external_field_t_max=2.0e-6,
         radiation_reaction_mode="medina_lad",
+        cavity_exit_enabled=True,
+        cavity_exit_length_mm=88.0,
+        cavity_exit_residual_tail_factor=2.0,
+        cavity_exit_max_residual_tail_steps=20,
     )
 
     config = OptimizationConfig.from_simulation_options(options)
@@ -168,6 +178,10 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.space_charge_softening_mm == pytest.approx(0.123)
     assert config.space_charge_bunch_sigma_mm == pytest.approx(0.045)
     assert config.space_charge_min_retarded_steps == 9
+    assert config.cavity_exit_enabled is True
+    assert config.cavity_exit_length_mm == pytest.approx(88.0)
+    assert config.cavity_exit_residual_tail_factor == pytest.approx(2.0)
+    assert config.cavity_exit_max_residual_tail_steps == 20
     assert config.external_field_enabled is True
     assert config.external_electric_field_native == pytest.approx((1.0, 2.0, 3.0))
     assert config.external_electric_field_v_per_m == pytest.approx((4.0, 5.0, 6.0))

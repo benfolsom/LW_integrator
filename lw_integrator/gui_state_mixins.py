@@ -358,6 +358,20 @@ class IntegratorGUIStateMixin:
                 fg_color = "black" if adaptive_enabled else "gray"
                 control.configure(foreground=fg_color)
 
+    def _toggle_cavity_exit_controls(self) -> None:
+        if not hasattr(self, "cavity_exit_enable_check"):
+            return
+        enabled = bool(self.cavity_exit_enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        for widget in getattr(self, "_cavity_exit_sub_widgets", []):
+            try:
+                if isinstance(widget, ttk.Label):
+                    widget.configure(foreground="black" if enabled else "gray")
+                else:
+                    widget.configure(state=state)
+            except Exception:
+                pass
+
     def _toggle_auto_duration_controls(self) -> None:
         if not hasattr(self, "auto_duration_enable_check"):
             return

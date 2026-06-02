@@ -286,6 +286,7 @@ def resolve_optimization_run_parameters(
     driver_transv_dist = config.driver_transv_dist
     driver_starting_distance = config.driver_starting_distance
     driver_starting_pz = config.driver_starting_Pz
+    driver_energy_gev = getattr(config, "driver_energy_gev", None)
 
     for index, param_name in enumerate(param_names):
         value = values[index]
@@ -336,6 +337,7 @@ def resolve_optimization_run_parameters(
         elif param_name == "driver_starting_distance":
             driver_starting_distance = value
         elif param_name == "driver_energy_gev":
+            driver_energy_gev = value
             driver_negative = getattr(config, "driver_direction", "-z") == "-z"
             driver_starting_pz = calculate_starting_pz_from_energy(
                 value, driver_m_particle, negative=driver_negative
@@ -378,6 +380,8 @@ def resolve_optimization_run_parameters(
             wall_z=wall_z,
             start_z=start_z,
             driver_start_z=driver_start_z,
+            driver_energy_gev=driver_energy_gev,
+            driver_m_particle_amu=driver_m_particle,
         )
         steps = config.steps
 

@@ -156,6 +156,10 @@ class OptimizationConfig:
     energy_scale_exponent: float = 1.0  # For energy_scaled: h ∝ γ^-α
     target_distance_mm: float = 100.0  # For auto_distance: distance to reach
     z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
+    cavity_exit_enabled: bool = False  # Stop BUNCH_TO_BUNCH runs at first cavity exit
+    cavity_exit_length_mm: Optional[float] = None  # None uses initial rider-driver separation
+    cavity_exit_residual_tail_factor: float = 0.0  # Reserved for residual-field tail handling
+    cavity_exit_max_residual_tail_steps: int = 0  # Reserved for residual-field tail handling
     startup_mode: str = "COLD_START"  # "COLD_START" or "APPROXIMATE_BACK_HISTORY"
 
     # Fixed particle parameters (not swept)
@@ -388,6 +392,8 @@ class OptimizationConfig:
         wall_z: float = None,
         start_z: float = 0.0,
         driver_start_z: float = 1000.0,
+        driver_energy_gev: float | None = None,
+        driver_m_particle_amu: float | None = None,
     ) -> float:
         """Calculate appropriate timestep for given energy based on strategy.
 
@@ -423,6 +429,7 @@ class OptimizationConfig:
             gamma = (energy_gev * 1e3) / rest_energy_mev
 
         beta = np.sqrt(1.0 - 1.0 / gamma**2)
+        rider_gamma_beta = gamma * beta
 
         if self.timestep_strategy == "energy_scaled":
             # Scale timestep inversely with gamma
@@ -434,15 +441,44 @@ class OptimizationConfig:
 
             # Calculate target distance based on simulation type
             if is_bunch_to_bunch(self.simulation_type):
-                # For BUNCH_TO_BUNCH: rider travels to driver_start + target_distance
-                # This ensures rider reaches interaction region with driver
+                driver_mass = (
+                    self.driver_m_particle
+                    if driver_m_particle_amu is None
+                    else driver_m_particle_amu
+                )
+                driver_energy = abs(
+                    self.driver_energy_gev
+                    if driver_energy_gev is None
+                    else driver_energy_gev
+                )
+                driver_rest_mev = driver_mass * 931.494
+                driver_gamma = (driver_energy * 1e3) / driver_rest_mev + 1.0
+                driver_beta = (
+                    np.sqrt(1.0 - 1.0 / driver_gamma**2)
+                    if driver_gamma > 1.0
+                    else 0.0
+                )
+                driver_gamma_beta = driver_gamma * driver_beta
+                if getattr(self, "driver_direction", "-z") == "-z":
+                    solver_closing_scale = rider_gamma_beta + driver_gamma_beta
+                else:
+                    solver_closing_scale = abs(rider_gamma_beta - driver_gamma_beta)
+                if solver_closing_scale <= 0.0:
+                    solver_closing_scale = max(rider_gamma_beta, 1e-12)
+
+                # For BUNCH_TO_BUNCH the shared step is proper-time-like: each
+                # bunch advances by gamma*beta*c*h. Size h from the solver
+                # closing distance, not from the rider distance alone.
                 total_distance = abs(driver_start_z - start_z) + self.target_distance_mm
             else:
                 # For CONDUCTING_WALL/SWITCHING_WALL: travel to wall + target_distance
                 total_distance = abs(wall_z - start_z) + self.target_distance_mm
+                solver_closing_scale = rider_gamma_beta
 
             c_mmns = 299.792458  # mm/ns
-            h_calculated = total_distance / (self.steps * beta * c_mmns * gamma)
+            h_calculated = total_distance / (
+                self.steps * c_mmns * solver_closing_scale
+            )
             return h_calculated
 
         raise ValueError(f"Unknown timestep_strategy: {self.timestep_strategy}")
@@ -653,6 +689,14 @@ class OptimizationConfig:
                 options,
                 "pseudo_grid_causal_history_safety_margin_steps",
                 2,
+            ),
+            cavity_exit_enabled=getattr(options, "cavity_exit_enabled", False),
+            cavity_exit_length_mm=getattr(options, "cavity_exit_length_mm", None),
+            cavity_exit_residual_tail_factor=getattr(
+                options, "cavity_exit_residual_tail_factor", 0.0
+            ),
+            cavity_exit_max_residual_tail_steps=getattr(
+                options, "cavity_exit_max_residual_tail_steps", 0
             ),
             driver_train_enabled=getattr(options, "driver_train_enabled", False),
             driver_train_bunch_count=getattr(options, "driver_train_bunch_count", 1),

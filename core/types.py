@@ -259,6 +259,33 @@ class DriverTrainConfig:
 
 
 @dataclass
+class CavityExitConfig:
+    """Configuration for BUNCH_TO_BUNCH cavity-exit early termination."""
+
+    enabled: bool = False
+    mode: str = "first_exit"
+    cavity_length_mm: float | None = None
+    residual_tail_factor: float = 0.0
+    max_residual_tail_steps: int = 0
+
+    def __post_init__(self) -> None:
+        self.enabled = bool(self.enabled)
+        self.mode = str(self.mode)
+        if self.mode not in {"first_exit"}:
+            raise ValueError("cavity_exit mode must be 'first_exit'")
+        if self.cavity_length_mm is not None:
+            self.cavity_length_mm = float(self.cavity_length_mm)
+            if self.cavity_length_mm <= 0:
+                raise ValueError("cavity_exit cavity_length_mm must be positive")
+        self.residual_tail_factor = float(self.residual_tail_factor)
+        self.max_residual_tail_steps = int(self.max_residual_tail_steps)
+        if self.residual_tail_factor < 0:
+            raise ValueError("cavity_exit residual_tail_factor must be non-negative")
+        if self.max_residual_tail_steps < 0:
+            raise ValueError("cavity_exit max_residual_tail_steps must be non-negative")
+
+
+@dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
@@ -357,6 +384,7 @@ class IntegratorConfig:
         default_factory=MacroparticleSmearingConfig
     )
     driver_train: DriverTrainConfig = field(default_factory=DriverTrainConfig)
+    cavity_exit: CavityExitConfig = field(default_factory=CavityExitConfig)
     particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
 
 
@@ -881,6 +909,7 @@ __all__ = [
     "StartupMode",
     "IntegratorConfig",
     "DriverTrainConfig",
+    "CavityExitConfig",
     "SpaceChargeConfig",
     "ExternalFieldConfig",
     "C_MMNS",

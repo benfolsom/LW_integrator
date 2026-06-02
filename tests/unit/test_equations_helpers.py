@@ -247,6 +247,105 @@ def test_compute_full_retarded_distance_handles_interpolation_payload(
     assert nhat["R"].tolist() == pytest.approx([2.0])
 
 
+def test_b2b_cold_start_applies_external_force_without_observer_travel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(
+            x=[0.0],
+            z=[0.0],
+            t=[0.0],
+            gamma=[2.0],
+            charge=[1.0],
+            mass=[1.0],
+            pt=[2.0 * C_MMNS],
+        ),
+        _make_state(
+            x=[0.0],
+            z=[0.0],
+            t=[0.0],
+            gamma=[2.0],
+            charge=[1.0],
+            mass=[1.0],
+            pt=[2.0 * C_MMNS],
+        ),
+    ]
+    driver = [
+        _make_state(
+            x=[0.0],
+            z=[10.0],
+            t=[0.0],
+            gamma=[2.0],
+            charge=[-1.0],
+            mass=[1.0],
+            pt=[2.0 * C_MMNS],
+        ),
+        _make_state(
+            x=[0.0],
+            z=[9.5],
+            t=[0.1],
+            gamma=[2.0],
+            charge=[-1.0],
+            mass=[1.0],
+            pt=[2.0 * C_MMNS],
+        ),
+    ]
+
+    monkeypatch.setattr(
+        equations,
+        "_compute_full_retarded_distance",
+        lambda *args, **kwargs: (
+            {
+                "R": np.array([10.0]),
+                "nx": np.array([0.0]),
+                "ny": np.array([0.0]),
+                "nz": np.array([-1.0]),
+            },
+            np.array([0], dtype=int),
+            None,
+        ),
+    )
+
+    monkeypatch.setattr(
+        equations,
+        "gather_external_samples",
+        lambda *args, **kwargs: SimpleNamespace(
+            x=np.array([0.0]),
+            y=np.array([0.0]),
+            z=np.array([10.0]),
+            bx=np.array([0.0]),
+            by=np.array([0.0]),
+            bz=np.array([-0.5]),
+            bdotx=np.array([0.0]),
+            bdoty=np.array([0.0]),
+            bdotz=np.array([0.0]),
+            q=np.array([-1.0]),
+            m=np.array([1.0]),
+            char_time=np.array([1.0e-3]),
+        ),
+    )
+
+    monkeypatch.setattr(
+        equations,
+        "compute_vectorized_contributions",
+        lambda **kwargs: (0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    )
+
+    updated = equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=False),
+    )
+
+    assert updated["Pz"][0] > trajectory[1]["Pz"][0]
+
+
 def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -514,6 +613,7 @@ def test_gating_threshold_and_force_application_follow_travel_distance() -> None
     assert (
         equations._should_apply_external_forces(
             StartupMode.COLD_START,
+            SimulationType.CONDUCTING_WALL,
             nhat,
             current_state,
             0,
@@ -525,6 +625,28 @@ def test_gating_threshold_and_force_application_follow_travel_distance() -> None
     assert (
         equations._should_apply_external_forces(
             StartupMode.COLD_START,
+            SimulationType.CONDUCTING_WALL,
+            nhat,
+            current_state,
+            0,
+        )
+        is True
+    )
+
+
+def test_b2b_cold_start_force_gate_does_not_wait_for_observer_travel() -> None:
+    nhat = {
+        "R": np.array([10.0]),
+        "nx": np.array([1.0]),
+        "ny": np.array([0.0]),
+        "nz": np.array([0.0]),
+    }
+    current_state = _make_state(x=[0.0], bx=[0.5], by=[0.0], bz=[0.0])
+
+    assert (
+        equations._should_apply_external_forces(
+            StartupMode.COLD_START,
+            SimulationType.BUNCH_TO_BUNCH,
             nhat,
             current_state,
             0,
