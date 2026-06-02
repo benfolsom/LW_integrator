@@ -2024,6 +2024,72 @@ def test_retarded_integrator_halts_when_driver_reaches_cavity_exit(
     assert trajectory[-1]["_driver_exit_z"] == pytest.approx(0.0)
 
 
+def test_retarded_integrator_runs_residual_tail_after_driver_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_step(
+        step_function: object,
+        h_step: float,
+        trajectory: list[dict[str, object]],
+        trajectory_ext: list[dict[str, object]],
+        index_traj: int,
+        aperture_radius: float,
+        sim_type: object,
+        config: object,
+        chrono_mode: object,
+        startup_mode: object,
+        step_idx: int | None = None,
+        cancel_callback: object = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        source_state = _clone_state(trajectory[index_traj])
+        z_value = float(source_state["z"][0])
+        other_initial_z = float(trajectory_ext[0]["z"][0])
+        is_rider_update = other_initial_z > z_value
+        source_state["z"] = np.array([z_value + (1.0 if is_rider_update else -3.0)])
+        source_state["t"] = np.array([float(source_state["t"][0]) + h_step])
+        return source_state
+
+    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+
+    rider = _make_particle_state(z=0.0)
+    rider["bz"] = np.array([0.2], dtype=float)
+    rider["gamma"] = np.array([1.0], dtype=float)
+    driver = _make_particle_state(z=5.0)
+    driver["bz"] = np.array([-0.5], dtype=float)
+    driver["gamma"] = np.array([1.0], dtype=float)
+
+    trajectory, driver_traj, *_soa_out = retarded_integrator(
+        steps=5,
+        h_step=1.0,
+        wall_z=0.0,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=rider,
+        init_driver=driver,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        cavity_exit=CavityExitConfig(
+            enabled=True,
+            residual_tail_factor=200.0,
+            max_residual_tail_steps=2,
+        ),
+        use_numba=False,
+    )
+
+    assert len(trajectory) == 5
+    assert len(driver_traj) == 5
+    assert trajectory[-1]["_termination_reason"] == "cavity_exit_reached"
+    assert trajectory[-1]["_exit_species"] == "driver"
+    assert trajectory[-1]["_halt_step"] == 4
+    assert trajectory[-1]["_residual_tail_steps"] == 2
+    assert trajectory[-1]["_residual_tail_steps_planned"] == 2
+    assert trajectory[-1]["_residual_tail_time_ns"] > 0.0
+    assert driver_traj[-1]["_cavity_exit_tail_mode"] == "coasted"
+    assert driver_traj[-1]["z"][0] < driver_traj[-2]["z"][0]
+
+
 def test_retarded_integrator_logs_relative_cutoff_debug_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
