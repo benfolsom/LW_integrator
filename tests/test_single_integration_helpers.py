@@ -342,6 +342,53 @@ def test_build_integration_metrics_records_final_and_peak_rider_gain():
     assert outcome.metrics["rider_max_energy_gain_step"] == 1
 
 
+def test_build_integration_metrics_records_effective_passes_for_driver_trains():
+    outcome = build_integration_metrics(
+        _result(
+            rider_gamma_initial=2.0,
+            rider_gamma_final=2.5,
+            driver_gamma_initial=1000.0,
+            rider_trajectory={"gamma": [2.0, 2.5], "t": [0.0, 0.25]},
+            driver_trajectory={"gamma": [1000.0, 1000.0], "t": [0.0, 12.0]},
+        ),
+        rider_m_particle=1.0,
+        run_num=7,
+        run_parameters={
+            "mode": "multi_pass",
+            "driver_train_enabled": True,
+            "driver_train_bunch_count": 5,
+            "driver_train_spacing_mm": 1000.0,
+            "cavity_length_mm": 1000.0,
+        },
+    )
+
+    assert outcome.metrics["effective_passes"] == 3
+    assert any("effective_passes: 3" in line for line in outcome.log_lines)
+
+
+def test_build_integration_metrics_counts_one_pass_when_driver_reaches_residual_cutoff():
+    outcome = build_integration_metrics(
+        _result(
+            rider_gamma_initial=2.0,
+            rider_gamma_final=2.1,
+            driver_gamma_initial=1000.0,
+            rider_trajectory={"gamma": [2.0, 2.1], "t": [0.0, 0.05]},
+            driver_trajectory={"gamma": [1000.0, 1000.0], "t": [0.0, 5.0]},
+        ),
+        rider_m_particle=1.0,
+        run_num=8,
+        run_parameters={
+            "mode": "multi_pass",
+            "driver_train_enabled": True,
+            "driver_train_bunch_count": 5,
+            "driver_train_spacing_mm": 1000.0,
+            "cavity_length_mm": 1000.0,
+        },
+    )
+
+    assert outcome.metrics["effective_passes"] == 1
+
+
 def test_build_integration_metrics_reports_missing_gamma():
     outcome = build_integration_metrics(
         _result(rider_trajectory=None),

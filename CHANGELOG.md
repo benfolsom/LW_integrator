@@ -10,6 +10,10 @@ All notable changes and updates to the LW Integrator project are documented in t
 - Added `CavityExitConfig` for `BUNCH_TO_BUNCH` runs. The initial `first_exit` mode halts when either rider or driver centroid reaches the opposite cavity exit plane, using either an explicit `cavity_length_mm` or the initial rider-driver centroid separation.
 - Exposed cavity-exit cutoff through core integrator config, single-run CLI JSON/flags, `SimulationOptions`, GUI stability controls, and sweep success handling. Planned `cavity_exit_reached` halts are treated like intentional `distance_reached` cutoffs.
 - Added halt metadata for exit species, exit step/time, cavity length, exit planes, and bounded residual-tail continuation after driver exit by coasting the source through a configurable step budget. Residual-tail source muting/pruning remains a follow-up feature.
+- Refined cavity-exit detection to use the directional leading edge of each bunch or train instead of the centroid, so long driver trains terminate on the correct cavity exit plane.
+- Added `effective_passes` to sweep metrics so multi-pass outputs record the actual driver-pass count inferred from the halt time, while preserving the configured train length separately as `driver_train_bunch_count`.
+- Refined `effective_passes` to use the driver exit time rather than the rider exit time, so counterpropagating runs that carry the driver through the cavity and residual cutoff still record one effective pass even when the rider exits earlier than the first driver arrival.
+- Removed the GUI-side validation that blocked driver-train plus pseudo-grid combinations; the integrator now accepts the combination and falls back to canonical full-history stepping when the reduced path is not applicable.
 - Fixed direct CLI forwarding of `z_cutoff_mode` while threading the new cutoff config.
 - Tests: added core rider-first/driver-first cavity-exit coverage plus CLI and `SimulationOptions` plumbing checks.
 
