@@ -835,6 +835,51 @@ def test_pseudo_grid_settings_round_trip_through_gui_options():
         root.destroy()
 
 
+def test_driver_train_and_pseudo_grid_settings_round_trip_through_gui_options():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        app._apply_options_to_ui(
+            SimulationOptions(
+                simulation_type=SimulationType.BUNCH_TO_BUNCH,
+                pseudo_grid_enabled=True,
+                pseudo_grid_active_rider_count=6,
+                pseudo_grid_active_driver_count=7,
+                pseudo_grid_passive_neighbor_count=3,
+                driver_train_enabled=True,
+                driver_train_bunch_count=3,
+                driver_train_z_spacing_mm=2997.92458,
+                driver_train_z_offsets_mm=(0.0, 100.0, 250.0),
+                driver_train_prehistory_steps=12,
+                driver_train_preserve_prehistory_in_output=True,
+            ),
+            preserve_directories=True,
+        )
+
+        assert app.pseudo_grid_enabled_var.get() is True
+        assert app.driver_train_enabled_var.get() is True
+        assert app.driver_train_bunch_count_var.get() == 3
+
+        rebuilt = app._build_options_from_ui()
+
+        assert rebuilt.pseudo_grid_enabled is True
+        assert rebuilt.driver_train_enabled is True
+        assert rebuilt.driver_train_bunch_count == 3
+        assert rebuilt.driver_train_z_spacing_mm == pytest.approx(2997.92458)
+        assert rebuilt.driver_train_z_offsets_mm == pytest.approx(
+            (0.0, 100.0, 250.0)
+        )
+        assert rebuilt.driver_train_prehistory_steps == 12
+        assert rebuilt.driver_train_preserve_prehistory_in_output is True
+    finally:
+        root.destroy()
+
+
 def test_update_macroparticle_state_forces_disabled_outside_conducting_wall():
     check_calls = []
     entry_calls = []

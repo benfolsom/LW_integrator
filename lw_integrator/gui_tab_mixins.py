@@ -676,7 +676,8 @@ class IntegratorGUITabMixin:
             particle_frame,
             text=(
                 "Expands the configured driver bunch into longitudinal copies and can seed inertial back-history.\n"
-                "Leave explicit offsets blank to use count × spacing; pseudo-grid reduction is disabled for this mode."
+                "Leave explicit offsets blank to use count × spacing; pseudo-grid can still be enabled, "
+                "with full-history fallback when the reduced schedule is not suitable."
             ),
             font=("TkDefaultFont", 8),
             foreground="gray40",

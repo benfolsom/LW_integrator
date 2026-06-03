@@ -349,6 +349,39 @@ def _centroid_z(state: ParticleState) -> float:
     return float(np.mean(np.asarray(state["z"], dtype=float)))
 
 
+def _motion_direction_sign(state: ParticleState) -> float:
+    beta_z = np.asarray(state.get("bz", []), dtype=float)
+    if beta_z.size:
+        mean_beta_z = float(np.mean(beta_z))
+        if mean_beta_z > 0.0:
+            return 1.0
+        if mean_beta_z < 0.0:
+            return -1.0
+
+    pz = np.asarray(state.get("Pz", []), dtype=float)
+    if pz.size:
+        mean_pz = float(np.mean(pz))
+        if mean_pz > 0.0:
+            return 1.0
+        if mean_pz < 0.0:
+            return -1.0
+
+    return 0.0
+
+
+def _leading_edge_z(state: ParticleState) -> float:
+    z_values = np.asarray(state["z"], dtype=float)
+    if z_values.size == 0:
+        return 0.0
+
+    direction = _motion_direction_sign(state)
+    if direction < 0.0:
+        return float(np.min(z_values))
+    if direction > 0.0:
+        return float(np.max(z_values))
+    return _centroid_z(state)
+
+
 def _crossed_exit(previous_z: float, current_z: float, exit_z: float) -> bool:
     if previous_z == exit_z or current_z == exit_z:
         return True
@@ -1736,10 +1769,6 @@ def retarded_integrator(
             )
         if init_driver is None:
             raise ValueError("Driver-train mode requires init_driver state")
-        if pseudo_grid.enabled:
-            raise NotImplementedError(
-                "Driver-train mode is not yet compatible with pseudo-grid reduction."
-            )
         init_driver = _build_driver_train_initial_state(init_driver, driver_train)
 
     cavity_exit_enabled = bool(cavity_exit.enabled)
@@ -1892,8 +1921,8 @@ def retarded_integrator(
     cavity_exit_tail_time_ns = 0.0
     cavity_exit_tail_stop_index: int | None = None
     if cavity_exit_enabled and init_driver is not None:
-        rider_z0 = _centroid_z(init_rider)
-        driver_z0 = _centroid_z(init_driver)
+        rider_z0 = _leading_edge_z(init_rider)
+        driver_z0 = _leading_edge_z(init_driver)
         axis_sign = 1.0 if driver_z0 >= rider_z0 else -1.0
         cavity_length_mm = (
             float(cavity_exit.cavity_length_mm)
@@ -2485,10 +2514,12 @@ def retarded_integrator(
             and cavity_driver_exit_z is not None
             and cavity_length_mm is not None
         ):
-            rider_previous_z = _centroid_z(_latest_populated_state(trajectory, i))
-            rider_current_z = _centroid_z(trajectory[i])
-            driver_previous_z = _centroid_z(_latest_populated_state(trajectory_drv, i))
-            driver_current_z = _centroid_z(trajectory_drv[i])
+            rider_previous_z = _leading_edge_z(_latest_populated_state(trajectory, i))
+            rider_current_z = _leading_edge_z(trajectory[i])
+            driver_previous_z = _leading_edge_z(
+                _latest_populated_state(trajectory_drv, i)
+            )
+            driver_current_z = _leading_edge_z(trajectory_drv[i])
             rider_exited = _crossed_exit(
                 rider_previous_z, rider_current_z, cavity_rider_exit_z
             )

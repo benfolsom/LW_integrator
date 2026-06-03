@@ -626,10 +626,6 @@ class IntegratorGUIConfigMixin:
             raise ValueError(
                 "Driver-train explicit z offsets must match the driver bunch count."
             )
-        if driver_train_enabled and pseudo_grid_enabled:
-            raise ValueError(
-                "Driver-train mode is not yet compatible with pseudo-grid mode."
-            )
 
         if external_field_enabled:
             external_electric_native = tuple(

@@ -81,6 +81,7 @@ from optimization.sweep_result_helpers import (
     build_interrupted_sweep_results_payload,
     build_successful_sweep_run_log,
     build_sweep_results_payload,
+    build_sweep_run_metadata,
 )
 from optimization.sweep_run_helpers import (
     build_full_debug_parameter_log_lines,
@@ -605,6 +606,9 @@ def _worker_run_combo(payload: dict) -> dict:
     if result.get("parameters") is None:
         result["parameters"] = {}
     result["parameters"].update(params_dict)
+    result["parameters"].update(build_sweep_run_metadata(config))
+    result["parameters"]["rider_energy_gev"] = energy_gev
+    result["parameters"].setdefault("driver_energy_gev", config.driver_energy_gev)
     result["_params_dict"] = params_dict
     return result
 
@@ -900,10 +904,12 @@ class SweepRunner:
             self._log_line(
                 f"[OPTIMIZATION]   [DEBUG] Extracting metrics for Run {run_num}..."
             )
+        sweep_metadata = build_sweep_run_metadata(self.config)
         metrics_outcome = build_integration_metrics(
             result,
             rider_m_particle=rider.m_particle,
             run_num=run_num,
+            run_parameters=sweep_metadata,
         )
         metrics = metrics_outcome.metrics
         if emit_run_diagnostics:
@@ -1108,6 +1114,13 @@ class SweepRunner:
                     rider_transv_dist = run_params.rider_transv_dist
 
                     self.results.append(result)
+                    if result.get("parameters") is None:
+                        result["parameters"] = {}
+                    result["parameters"].update(build_sweep_run_metadata(self.config))
+                    result["parameters"]["rider_energy_gev"] = energy
+                    result["parameters"].setdefault(
+                        "driver_energy_gev", self.config.driver_energy_gev
+                    )
 
                     if not result.get("success"):
                         failed_count += 1
@@ -1203,6 +1216,11 @@ class SweepRunner:
                         if result.get("parameters") is None:
                             result["parameters"] = {}
                         result["parameters"].update(params_dict)
+                        result["parameters"].update(build_sweep_run_metadata(self.config))
+                        result["parameters"]["rider_energy_gev"] = energy
+                        result["parameters"].setdefault(
+                            "driver_energy_gev", self.config.driver_energy_gev
+                        )
                         self.results.append(result)
 
                         if not result["success"]:
@@ -1229,6 +1247,13 @@ class SweepRunner:
                                 error_detail=error_detail,
                                 params_dict=params_dict,
                             )
+                        )
+                        self.results[-1]["parameters"].update(
+                            build_sweep_run_metadata(self.config)
+                        )
+                        self.results[-1]["parameters"]["rider_energy_gev"] = energy
+                        self.results[-1]["parameters"].setdefault(
+                            "driver_energy_gev", self.config.driver_energy_gev
                         )
                         result = self.results[-1]
 
