@@ -259,20 +259,49 @@ def build_single_integration_setup(
             config, "self_consistency_mass_shell_relaxation", 0.7
         ),
         self_consistency_verbosity=config.self_consistency_verbosity,
-        self_consistency_chrono_interpolate=getattr(
-            config, "self_consistency_chrono_interpolate", False
+        chrono_interpolate=bool(
+            getattr(config, "chrono_interpolate", False)
+            or getattr(config, "self_consistency_chrono_interpolate", False)
         ),
-        self_consistency_chrono_tolerance=getattr(
-            config, "self_consistency_chrono_tolerance", 1e-3
+        chrono_tolerance=(
+            getattr(config, "chrono_tolerance", 1e-3)
+            if getattr(config, "chrono_tolerance", 1e-3) != 1e-3
+            else getattr(config, "self_consistency_chrono_tolerance", 1e-3)
         ),
-        self_consistency_chrono_matching_mode=getattr(
-            config, "self_consistency_chrono_matching_mode", "FAST"
+        chrono_matching_mode=(
+            getattr(config, "chrono_matching_mode", "FAST")
+            if getattr(config, "chrono_matching_mode", "FAST") != "FAST"
+            else getattr(config, "self_consistency_chrono_matching_mode", "FAST")
         ),
-        self_consistency_chrono_high_precision=getattr(
-            config, "self_consistency_chrono_high_precision", False
+        chrono_high_precision=bool(
+            getattr(config, "chrono_high_precision", False)
+            or getattr(config, "self_consistency_chrono_high_precision", False)
         ),
-        self_consistency_chrono_adaptive_tolerance=getattr(
-            config, "self_consistency_chrono_adaptive_tolerance", False
+        chrono_adaptive_tolerance=bool(
+            getattr(config, "chrono_adaptive_tolerance", False)
+            or getattr(config, "self_consistency_chrono_adaptive_tolerance", False)
+        ),
+        self_consistency_chrono_interpolate=bool(
+            getattr(config, "chrono_interpolate", False)
+            or getattr(config, "self_consistency_chrono_interpolate", False)
+        ),
+        self_consistency_chrono_tolerance=(
+            getattr(config, "chrono_tolerance", 1e-3)
+            if getattr(config, "chrono_tolerance", 1e-3) != 1e-3
+            else getattr(config, "self_consistency_chrono_tolerance", 1e-3)
+        ),
+        self_consistency_chrono_matching_mode=(
+            getattr(config, "chrono_matching_mode", "FAST")
+            if getattr(config, "chrono_matching_mode", "FAST") != "FAST"
+            else getattr(config, "self_consistency_chrono_matching_mode", "FAST")
+        ),
+        self_consistency_chrono_high_precision=bool(
+            getattr(config, "chrono_high_precision", False)
+            or getattr(config, "self_consistency_chrono_high_precision", False)
+        ),
+        self_consistency_chrono_adaptive_tolerance=bool(
+            getattr(config, "chrono_adaptive_tolerance", False)
+            or getattr(config, "self_consistency_chrono_adaptive_tolerance", False)
         ),
         self_consistency_gamma_reconciliation_method=getattr(
             config, "self_consistency_gamma_reconciliation_method", "DISABLED"
@@ -589,7 +618,9 @@ def _compute_effective_passes(
 
     driver_gamma_initial = getattr(result, "driver_gamma_initial", None)
     if driver_gamma_initial is None:
-        driver_gamma_initial = _trajectory_first_finite_scalar(driver_trajectory, "gamma")
+        driver_gamma_initial = _trajectory_first_finite_scalar(
+            driver_trajectory, "gamma"
+        )
     driver_beta = _gamma_to_beta(driver_gamma_initial)
     if driver_beta is None:
         return None

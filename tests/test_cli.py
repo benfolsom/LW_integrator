@@ -53,6 +53,10 @@ def _make_args(**overrides) -> argparse.Namespace:
         "cavity_exit_enabled": None,
         "cavity_exit_length_mm": None,
         "chrono_mode": None,
+        "chrono_interpolate": None,
+        "chrono_tolerance": None,
+        "chrono_high_precision": None,
+        "chrono_adaptive_tolerance": None,
         "startup_mode": None,
         "radiation_reaction_mode": None,
         "image_subcharge_count": None,
@@ -122,6 +126,22 @@ class TestCliConfigParsing:
 
         assert args.results_file == Path("results/sweep_results.json")
 
+    def test_parse_args_accepts_chrono_sampling_flags(self):
+        args = cli.parse_args(
+            [
+                "--chrono-interpolate",
+                "--chrono-tolerance",
+                "5e-4",
+                "--chrono-high-precision",
+                "--chrono-adaptive-tolerance",
+            ]
+        )
+
+        assert args.chrono_interpolate is True
+        assert args.chrono_tolerance == pytest.approx(5e-4)
+        assert args.chrono_high_precision is True
+        assert args.chrono_adaptive_tolerance is True
+
     def test_package_exports_only_maintained_entry_points(self):
         assert lw_integrator.__all__ == ["__version__", "VERSION"]
         for name in [
@@ -152,6 +172,21 @@ class TestCliConfigParsing:
         ]:
             with pytest.raises(AttributeError):
                 getattr(core, name)
+
+    def test_build_request_carries_chrono_options_without_sc_iterations(self):
+        request = cli.build_request(
+            _make_args(
+                chrono_interpolate=True,
+                chrono_tolerance=5e-4,
+                chrono_high_precision=True,
+            )
+        )
+
+        assert request.self_consistency is not None
+        assert request.self_consistency.enabled is False
+        assert request.self_consistency.chrono_interpolate is True
+        assert request.self_consistency.chrono_tolerance == pytest.approx(5e-4)
+        assert request.self_consistency.chrono_high_precision is True
 
     def test_parse_args_applies_boolean_flags(self):
         args = cli.parse_args(
@@ -273,8 +308,9 @@ class TestCliConfigParsing:
         assert args.adaptive_timestep_bunch_proximity_reduction_factor == pytest.approx(
             8.0
         )
-        assert args.adaptive_timestep_bunch_proximity_transition_n_sigma == pytest.approx(
-            1.5
+        assert (
+            args.adaptive_timestep_bunch_proximity_transition_n_sigma
+            == pytest.approx(1.5)
         )
 
     def test_parse_args_allows_disabling_boolean_flags(self):

@@ -302,21 +302,21 @@ class SimulationOptions:
     self_consistency_verbosity: int = (
         2  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
     )
-    self_consistency_chrono_interpolate: bool = (
-        False  # Enable chrono-match interpolation for retarded fields
-    )
-    self_consistency_chrono_tolerance: float = (
-        1e-3  # Time residual tolerance for chrono-matching (ns)
-    )
-    self_consistency_chrono_matching_mode: str = (
-        "FAST"  # Chrono-matching mode: "FAST" (default) or "AVERAGED" (internal only)
-    )
-    self_consistency_chrono_high_precision: bool = (
-        False  # Enable cubic interpolation + position interpolation
-    )
-    self_consistency_chrono_adaptive_tolerance: bool = (
-        False  # Auto-set tolerance = 0.1 × timestep
-    )
+
+    # Chrono-matching options for retarded-time sampling. These are conceptually
+    # independent from self-consistency; the self_consistency_chrono_* fields below
+    # are legacy aliases kept for config compatibility.
+    chrono_interpolate: bool = False
+    chrono_tolerance: float = 1e-3
+    chrono_matching_mode: str = "FAST"
+    chrono_high_precision: bool = False
+    chrono_adaptive_tolerance: bool = False
+
+    self_consistency_chrono_interpolate: bool = False
+    self_consistency_chrono_tolerance: float = 1e-3
+    self_consistency_chrono_matching_mode: str = "FAST"
+    self_consistency_chrono_high_precision: bool = False
+    self_consistency_chrono_adaptive_tolerance: bool = False
     # Gamma reconciliation options
     self_consistency_gamma_reconciliation_method: str = (
         "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
@@ -439,6 +439,33 @@ class SimulationOptions:
     save_log_file: bool = False
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
 
+    def __post_init__(self) -> None:
+        self.chrono_interpolate = bool(
+            self.chrono_interpolate or self.self_consistency_chrono_interpolate
+        )
+        self.self_consistency_chrono_interpolate = self.chrono_interpolate
+        if (
+            self.chrono_tolerance == 1e-3
+            and self.self_consistency_chrono_tolerance != 1e-3
+        ):
+            self.chrono_tolerance = self.self_consistency_chrono_tolerance
+        self.self_consistency_chrono_tolerance = self.chrono_tolerance
+        if (
+            self.chrono_matching_mode == "FAST"
+            and self.self_consistency_chrono_matching_mode != "FAST"
+        ):
+            self.chrono_matching_mode = self.self_consistency_chrono_matching_mode
+        self.self_consistency_chrono_matching_mode = self.chrono_matching_mode
+        self.chrono_high_precision = bool(
+            self.chrono_high_precision or self.self_consistency_chrono_high_precision
+        )
+        self.self_consistency_chrono_high_precision = self.chrono_high_precision
+        self.chrono_adaptive_tolerance = bool(
+            self.chrono_adaptive_tolerance
+            or self.self_consistency_chrono_adaptive_tolerance
+        )
+        self.self_consistency_chrono_adaptive_tolerance = self.chrono_adaptive_tolerance
+
     def to_dict(self) -> Dict[str, object]:
         payload: Dict[str, object] = {
             "steps": self.steps,
@@ -503,11 +530,16 @@ class SimulationOptions:
             "self_consistency_mass_shell_tolerance": self.self_consistency_mass_shell_tolerance,
             "self_consistency_mass_shell_relaxation": self.self_consistency_mass_shell_relaxation,
             "self_consistency_verbosity": self.self_consistency_verbosity,
-            "self_consistency_chrono_interpolate": self.self_consistency_chrono_interpolate,
-            "self_consistency_chrono_tolerance": self.self_consistency_chrono_tolerance,
-            "self_consistency_chrono_matching_mode": self.self_consistency_chrono_matching_mode,
-            "self_consistency_chrono_high_precision": self.self_consistency_chrono_high_precision,
-            "self_consistency_chrono_adaptive_tolerance": self.self_consistency_chrono_adaptive_tolerance,
+            "chrono_interpolate": self.chrono_interpolate,
+            "chrono_tolerance": self.chrono_tolerance,
+            "chrono_matching_mode": self.chrono_matching_mode,
+            "chrono_high_precision": self.chrono_high_precision,
+            "chrono_adaptive_tolerance": self.chrono_adaptive_tolerance,
+            "self_consistency_chrono_interpolate": self.chrono_interpolate,
+            "self_consistency_chrono_tolerance": self.chrono_tolerance,
+            "self_consistency_chrono_matching_mode": self.chrono_matching_mode,
+            "self_consistency_chrono_high_precision": self.chrono_high_precision,
+            "self_consistency_chrono_adaptive_tolerance": self.chrono_adaptive_tolerance,
             "self_consistency_gamma_reconciliation_method": self.self_consistency_gamma_reconciliation_method,
             "self_consistency_gamma_reconciliation_low_beta_threshold": self.self_consistency_gamma_reconciliation_low_beta_threshold,
             "self_consistency_gamma_reconciliation_high_beta_threshold": self.self_consistency_gamma_reconciliation_high_beta_threshold,
@@ -693,9 +725,7 @@ class SimulationOptions:
 
         cavity_exit_payload_raw = payload.get("cavity_exit")
         cavity_exit_payload = (
-            cavity_exit_payload_raw
-            if isinstance(cavity_exit_payload_raw, dict)
-            else {}
+            cavity_exit_payload_raw if isinstance(cavity_exit_payload_raw, dict) else {}
         )
 
         def _cavity_exit_value(name: str, default: object) -> object:
@@ -979,20 +1009,45 @@ class SimulationOptions:
                 "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
+            chrono_interpolate=_bool(
+                "chrono_interpolate",
+                _bool("self_consistency_chrono_interpolate", False),
+            ),
+            chrono_tolerance=_float(
+                "chrono_tolerance",
+                _float("self_consistency_chrono_tolerance", 1e-3),
+            ),
+            chrono_matching_mode=_str(
+                "chrono_matching_mode",
+                _str("self_consistency_chrono_matching_mode", "FAST"),
+            ),
+            chrono_high_precision=_bool(
+                "chrono_high_precision",
+                _bool("self_consistency_chrono_high_precision", False),
+            ),
+            chrono_adaptive_tolerance=_bool(
+                "chrono_adaptive_tolerance",
+                _bool("self_consistency_chrono_adaptive_tolerance", False),
+            ),
             self_consistency_chrono_interpolate=_bool(
-                "self_consistency_chrono_interpolate", False
+                "chrono_interpolate",
+                _bool("self_consistency_chrono_interpolate", False),
             ),
             self_consistency_chrono_tolerance=_float(
-                "self_consistency_chrono_tolerance", 1e-3
+                "chrono_tolerance",
+                _float("self_consistency_chrono_tolerance", 1e-3),
             ),
             self_consistency_chrono_matching_mode=_str(
-                "self_consistency_chrono_matching_mode", "FAST"
+                "chrono_matching_mode",
+                _str("self_consistency_chrono_matching_mode", "FAST"),
             ),
             self_consistency_chrono_high_precision=_bool(
-                "self_consistency_chrono_high_precision", False
+                "chrono_high_precision",
+                _bool("self_consistency_chrono_high_precision", False),
             ),
             self_consistency_chrono_adaptive_tolerance=_bool(
-                "self_consistency_chrono_adaptive_tolerance", False
+                "chrono_adaptive_tolerance",
+                _bool("self_consistency_chrono_adaptive_tolerance", False),
             ),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
             energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
@@ -1016,11 +1071,21 @@ class SimulationOptions:
                 "adaptive_timestep_max_probe_steps", 3
             ),
             adaptive_timestep_debug=_bool("adaptive_timestep_debug", False),
-            adaptive_timestep_bunch_proximity_enabled=_bool("adaptive_timestep_bunch_proximity_enabled", False),
-            adaptive_timestep_bunch_proximity_sigma_mm=_float("adaptive_timestep_bunch_proximity_sigma_mm", 5.0),
-            adaptive_timestep_bunch_proximity_n_sigma=_float("adaptive_timestep_bunch_proximity_n_sigma", 5.0),
-            adaptive_timestep_bunch_proximity_reduction_factor=_float("adaptive_timestep_bunch_proximity_reduction_factor", 10.0),
-            adaptive_timestep_bunch_proximity_transition_n_sigma=_float("adaptive_timestep_bunch_proximity_transition_n_sigma", 2.0),
+            adaptive_timestep_bunch_proximity_enabled=_bool(
+                "adaptive_timestep_bunch_proximity_enabled", False
+            ),
+            adaptive_timestep_bunch_proximity_sigma_mm=_float(
+                "adaptive_timestep_bunch_proximity_sigma_mm", 5.0
+            ),
+            adaptive_timestep_bunch_proximity_n_sigma=_float(
+                "adaptive_timestep_bunch_proximity_n_sigma", 5.0
+            ),
+            adaptive_timestep_bunch_proximity_reduction_factor=_float(
+                "adaptive_timestep_bunch_proximity_reduction_factor", 10.0
+            ),
+            adaptive_timestep_bunch_proximity_transition_n_sigma=_float(
+                "adaptive_timestep_bunch_proximity_transition_n_sigma", 2.0
+            ),
             # max_substeps no longer loaded - auto-calculated from min_timestep_factor
             space_charge_enabled=_bool("space_charge_enabled", False),
             space_charge_retarded=_bool("space_charge_retarded", True),
@@ -1069,8 +1134,12 @@ class SimulationOptions:
             cavity_exit_enabled=_cavity_exit_bool("enabled", False),
             cavity_exit_mode=_cavity_exit_str("mode", "first_exit"),
             cavity_exit_length_mm=_cavity_exit_optional_float("cavity_length_mm"),
-            cavity_exit_residual_tail_factor=_cavity_exit_float("residual_tail_factor", 0.0),
-            cavity_exit_max_residual_tail_steps=_cavity_exit_int("max_residual_tail_steps", 0),
+            cavity_exit_residual_tail_factor=_cavity_exit_float(
+                "residual_tail_factor", 0.0
+            ),
+            cavity_exit_max_residual_tail_steps=_cavity_exit_int(
+                "max_residual_tail_steps", 0
+            ),
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
@@ -1640,9 +1709,17 @@ def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
 def build_self_consistency_config(options: SimulationOptions) -> Optional[object]:
     """Build SelfConsistencyConfig from SimulationOptions.
 
-    Returns None if self_consistency is disabled.
+    Chrono-matching options are carried through this config object for now even
+    when self-consistency iterations are disabled.
     """
-    if not options.self_consistency_enabled:
+    chrono_interpolate = bool(getattr(options, "chrono_interpolate", False))
+    chrono_high_precision = bool(getattr(options, "chrono_high_precision", False))
+    chrono_adaptive_tolerance = bool(
+        getattr(options, "chrono_adaptive_tolerance", False)
+    )
+    if not options.self_consistency_enabled and not (
+        chrono_interpolate or chrono_high_precision or chrono_adaptive_tolerance
+    ):
         return None
 
     from core.self_consistency import SelfConsistencyConfig
@@ -1657,18 +1734,18 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         gamma_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
 
     return SelfConsistencyConfig(
-        enabled=True,
+        enabled=bool(options.self_consistency_enabled),
         convergence_mode=options.self_consistency_convergence_mode,
         target_ms_tolerance=options.self_consistency_target_ms_tolerance,
         max_iterations=options.self_consistency_max_iterations,
         mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
         mass_shell_relaxation=options.self_consistency_mass_shell_relaxation,
         verbosity=options.self_consistency_verbosity,
-        chrono_interpolate=options.self_consistency_chrono_interpolate,
-        chrono_tolerance=options.self_consistency_chrono_tolerance,
-        chrono_matching_mode=options.self_consistency_chrono_matching_mode,
-        chrono_high_precision=options.self_consistency_chrono_high_precision,
-        chrono_adaptive_tolerance=options.self_consistency_chrono_adaptive_tolerance,
+        chrono_interpolate=chrono_interpolate,
+        chrono_tolerance=float(getattr(options, "chrono_tolerance", 1e-3)),
+        chrono_matching_mode=str(getattr(options, "chrono_matching_mode", "FAST")),
+        chrono_high_precision=chrono_high_precision,
+        chrono_adaptive_tolerance=chrono_adaptive_tolerance,
         gamma_reconciliation_method=gamma_method,
         gamma_reconciliation_low_beta_threshold=options.self_consistency_gamma_reconciliation_low_beta_threshold,
         gamma_reconciliation_high_beta_threshold=options.self_consistency_gamma_reconciliation_high_beta_threshold,
@@ -2018,6 +2095,11 @@ def run_testbed(
         f"relaxation={options.self_consistency_mass_shell_relaxation:.1f})"
     )
     _log(
+        f"  Chrono matching: interpolate={options.chrono_interpolate}, "
+        f"tol={options.chrono_tolerance:.1e} ns, mode={options.chrono_matching_mode}, "
+        f"high_precision={options.chrono_high_precision}, adaptive_tol={options.chrono_adaptive_tolerance}"
+    )
+    _log(
         f"  Energy monitoring: {options.energy_monitor_enabled} (threshold={options.energy_monitor_threshold * 100:.0f}%, halt={options.energy_monitor_halt_on_jump})"
     )
     _log(
@@ -2054,9 +2136,7 @@ def run_testbed(
     driver_train_config = build_driver_train_config(options)
     space_charge_config = build_space_charge_config(options)
     external_field_config = build_external_field_config(options)
-    chrono_mode_enum = build_chrono_mode_enum(
-        options.self_consistency_chrono_matching_mode
-    )
+    chrono_mode_enum = build_chrono_mode_enum(options.chrono_matching_mode)
     startup_mode_enum = build_startup_mode_enum(
         core_params.get("startup_mode", "COLD_START")
     )

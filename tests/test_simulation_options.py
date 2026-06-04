@@ -16,6 +16,7 @@ from lw_integrator.testbed_runner import (
     build_driver_train_config,
     build_external_field_config,
     build_pseudo_grid_config,
+    build_self_consistency_config,
 )
 
 
@@ -169,6 +170,45 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.driver_train_prehistory_steps == 12
     assert loaded.driver_train_preserve_prehistory_in_output is True
     assert loaded.log_file_path == "custom.log"
+
+
+def test_chrono_options_roundtrip_as_independent_fields():
+    options = SimulationOptions(
+        self_consistency_enabled=False,
+        chrono_interpolate=True,
+        chrono_tolerance=5e-4,
+        chrono_matching_mode="FAST",
+        chrono_high_precision=True,
+        chrono_adaptive_tolerance=True,
+    )
+
+    payload = options.to_dict()
+    loaded = SimulationOptions.from_dict(payload)
+    config = build_self_consistency_config(loaded)
+
+    assert payload["chrono_interpolate"] is True
+    assert payload["self_consistency_chrono_interpolate"] is True
+    assert loaded.chrono_tolerance == pytest.approx(5e-4)
+    assert loaded.self_consistency_chrono_tolerance == pytest.approx(5e-4)
+    assert config is not None
+    assert config.enabled is False
+    assert config.chrono_interpolate is True
+    assert config.chrono_high_precision is True
+
+
+def test_legacy_self_consistency_chrono_keys_populate_new_fields():
+    loaded = SimulationOptions.from_dict(
+        {
+            "self_consistency_enabled": False,
+            "self_consistency_chrono_interpolate": True,
+            "self_consistency_chrono_tolerance": 2e-4,
+            "self_consistency_chrono_high_precision": True,
+        }
+    )
+
+    assert loaded.chrono_interpolate is True
+    assert loaded.chrono_tolerance == pytest.approx(2e-4)
+    assert loaded.chrono_high_precision is True
 
 
 def test_build_external_field_config_converts_si_electric_field():

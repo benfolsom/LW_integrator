@@ -14,6 +14,11 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_mass_shell_tolerance": 1e-2,
     "self_consistency_mass_shell_relaxation": 0.7,
     "self_consistency_verbosity": 0,
+    "chrono_interpolate": False,
+    "chrono_tolerance": 1e-3,
+    "chrono_matching_mode": "FAST",
+    "chrono_high_precision": False,
+    "chrono_adaptive_tolerance": False,
     "self_consistency_chrono_interpolate": False,
     "self_consistency_chrono_tolerance": 1e-3,
     "self_consistency_chrono_matching_mode": "FAST",
@@ -201,17 +206,16 @@ def build_saved_config_payload(
         "self_consistency_mass_shell_tolerance": config.self_consistency_mass_shell_tolerance,
         "self_consistency_mass_shell_relaxation": config.self_consistency_mass_shell_relaxation,
         "self_consistency_verbosity": config.self_consistency_verbosity,
-        "self_consistency_chrono_interpolate": (
-            config.self_consistency_chrono_interpolate
-        ),
-        "self_consistency_chrono_tolerance": config.self_consistency_chrono_tolerance,
-        "self_consistency_chrono_matching_mode": config.self_consistency_chrono_matching_mode,
-        "self_consistency_chrono_high_precision": (
-            config.self_consistency_chrono_high_precision
-        ),
-        "self_consistency_chrono_adaptive_tolerance": (
-            config.self_consistency_chrono_adaptive_tolerance
-        ),
+        "chrono_interpolate": config.chrono_interpolate,
+        "chrono_tolerance": config.chrono_tolerance,
+        "chrono_matching_mode": config.chrono_matching_mode,
+        "chrono_high_precision": config.chrono_high_precision,
+        "chrono_adaptive_tolerance": config.chrono_adaptive_tolerance,
+        "self_consistency_chrono_interpolate": config.chrono_interpolate,
+        "self_consistency_chrono_tolerance": config.chrono_tolerance,
+        "self_consistency_chrono_matching_mode": config.chrono_matching_mode,
+        "self_consistency_chrono_high_precision": config.chrono_high_precision,
+        "self_consistency_chrono_adaptive_tolerance": config.chrono_adaptive_tolerance,
         "self_consistency_gamma_reconciliation_method": (
             config.self_consistency_gamma_reconciliation_method
         ),

@@ -4,6 +4,11 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Self-Consistency And Chrono Defaults Audit (June 2026)
+
+- Audited self-consistency against Medina/LAD radiation reaction, same-bunch space charge, and representative plotted B2B sweep samples. Medina/LAD does not eliminate the need for self-consistency: no-SC runs still drift or fail in representative cases, while `fixed_geometry` with 2 iterations matched the stable audited behavior.
+- Updated recommended defaults to keep self-consistency enabled with `self_consistency_max_iterations=2`, gamma reconciliation `DISABLED`, and chrono interpolation disabled unless a retarded-time sampling study explicitly needs it.
+- Separated chrono-matching controls from self-consistency in `SimulationOptions`, sweep/optimization config plumbing, the CLI, and the GUI. Legacy `self_consistency_chrono_*` keys remain accepted and round-trip as aliases for the new `chrono_*` fields.
 
 ### B2B Cavity-Exit Cutoff (June 2026)
 
