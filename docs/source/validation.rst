@@ -44,7 +44,9 @@ For signed B2B energy-gain maps, the clearest reference style is:
 
 For bunch-to-bunch examples, interpret the maps as screening cases: the driver
 bunch proceeds through a virtual exit aperture shortly after the interaction
-point, which blocks direct line of sight to the rider downstream.
+point, which blocks direct line of sight to the rider downstream. The maintained
+example sweeps use proton-mass, opposite-charge beams (proton/H- in the current
+configs).
 
 Reference Notebooks
 -------------------

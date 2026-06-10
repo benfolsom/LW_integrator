@@ -457,20 +457,20 @@ Simple example configs live under `configs/`. Load them via the GUI
 
 | File                                                       | Description                                                                                                                                                                                                                           |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `example_b2b_counter_propagating_proton_bunches.json`      | Two counter-propagating proton bunches (5+5 particles, 300 M stripped ions each), cold start. Demonstrates bunch-to-bunch energy exchange at non-relativistic energies.                                                               |
+| `example_b2b_counter_propagating_proton_bunches.json`      | Two counter-propagating proton-mass bunches with opposite charge signs (proton/H- in the current config; 5+5 particles, 300 M stripped ions each), cold start. Demonstrates bunch-to-bunch energy exchange at non-relativistic energies. |
 | `example_b2b_relativistic_proton_stationary_lead_ion.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary lead ion driver (1 T stripped ions, m = 207.2 amu). Uses `APPROXIMATE_BACK_HISTORY` startup for accurate retarded-field initialisation. |
 
 ### Sweep examples (`configs/sweep_configs/`)
 
-**`example_b2b_linked_energy_vs_driver_distance.json`** — 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton bunches with linked rider/driver energy. Rider and driver each have 1 µm transverse spot size.
+**`example_b2b_linked_energy_vs_driver_distance.json`** — 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton-mass, opposite-charge bunches with linked rider/driver energy. Rider and driver each have 1 µm transverse spot size.
 
-![B2B 1 µm spot size](docs/assets/proton_proton_1micron.png)
+![B2B proton/H- 1 µm spot size](docs/assets/proton_proton_1micron.png)
 
 ---
 
-**`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** — Same sweep geometry but with an asymmetric spot size: rider 35 µm, driver 0.1 µm. The larger rider spot reduces near-collision blowups.
+**`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** — Same sweep geometry but with an asymmetric spot size: rider 35 µm, driver 0.1 µm. The larger rider spot reduces near-collision blowups for the proton/H- style counter-propagating pair.
 
-![B2B 35 µm rider spot size](docs/assets/proton_proton_35micron.png)
+![B2B proton/H- 35 µm rider spot size](docs/assets/proton_proton_35micron.png)
 
 The bunch-to-bunch examples illustrate a screening regime: after the interaction
 point, the driver bunch is treated as proceeding through a virtual exit aperture
