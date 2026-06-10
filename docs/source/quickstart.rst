@@ -113,7 +113,8 @@ simulation, and confirm that the regression tooling works on your machine.
    a point that exceeds the timeout is saved as a failed timed-out run and the
    sweep continues to the next grid point.
 
-   Bunch-to-bunch sweep examples model the driver bunch passing through a
+   Bunch-to-bunch sweep examples model proton-mass, opposite-charge beams
+   (proton/H- in the current configs) with the driver bunch passing through a
    virtual exit aperture shortly after the interaction point. This screens the
    rider from direct line of sight downstream, so the heatmaps show residual
    post-screening fields rather than indefinitely visible bunch-bunch coupling.

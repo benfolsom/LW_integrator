@@ -22,11 +22,13 @@ import numpy as np
 
 from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
+from core.self_consistency import SelfConsistencyConfig
 from core.types import (
     ChronoMatchingMode,
     CavityExitConfig,
     DriverTrainConfig,
     ExternalFieldConfig,
+    GammaReconciliationMethod,
     IntegratorConfig,
     MacroparticleSmearingConfig,
     ParticleLossConfig,
@@ -199,6 +201,7 @@ class SimulationRequest:
     external_field: Optional[ExternalFieldConfig] = None
     space_charge: Optional[SpaceChargeConfig] = None
     adaptive_timestep: Optional[AdaptiveTimestepConfig] = None
+    self_consistency: Optional[SelfConsistencyConfig] = None
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
     auto_duration_post_factor: float = 2.0
@@ -504,6 +507,51 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "'averaged' is retained for diagnostics with approximate back-history."
         ),
     )
+    parser.add_argument(
+        "--chrono-interpolate",
+        dest="chrono_interpolate",
+        action="store_true",
+        help="Enable retarded-time source-state interpolation independent of SC iterations.",
+    )
+    parser.add_argument(
+        "--no-chrono-interpolate",
+        dest="chrono_interpolate",
+        action="store_false",
+        help="Disable retarded-time source-state interpolation.",
+    )
+    parser.set_defaults(chrono_interpolate=None)
+    parser.add_argument(
+        "--chrono-tolerance",
+        type=float,
+        dest="chrono_tolerance",
+        help="Chrono-match time residual tolerance in ns for interpolation/warnings.",
+    )
+    parser.add_argument(
+        "--chrono-high-precision",
+        dest="chrono_high_precision",
+        action="store_true",
+        help="Use cubic interpolation and interpolate source positions when chrono interpolation is active.",
+    )
+    parser.add_argument(
+        "--no-chrono-high-precision",
+        dest="chrono_high_precision",
+        action="store_false",
+        help="Disable high-precision chrono interpolation.",
+    )
+    parser.set_defaults(chrono_high_precision=None)
+    parser.add_argument(
+        "--chrono-adaptive-tolerance",
+        dest="chrono_adaptive_tolerance",
+        action="store_true",
+        help="Scale chrono tolerance automatically with the integration timestep.",
+    )
+    parser.add_argument(
+        "--no-chrono-adaptive-tolerance",
+        dest="chrono_adaptive_tolerance",
+        action="store_false",
+        help="Use the fixed chrono tolerance instead of timestep-scaled tolerance.",
+    )
+    parser.set_defaults(chrono_adaptive_tolerance=None)
     parser.add_argument(
         "--startup-mode",
         choices=("cold-start", "approximate-back-history"),
@@ -871,6 +919,7 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
     )
     space_charge = _build_space_charge_config(simulation_payload)
     adaptive_timestep = _build_adaptive_timestep_config(simulation_payload)
+    self_consistency = _build_self_consistency_config(simulation_payload)
     rider_state = _build_particle_state(rider_payload)
 
     driver_state: Optional[ParticleState] = None
@@ -914,6 +963,7 @@ def build_request(args: argparse.Namespace) -> SimulationRequest:
         external_field=external_field,
         space_charge=space_charge,
         adaptive_timestep=adaptive_timestep,
+        self_consistency=self_consistency,
         auto_duration_enabled=auto_duration_enabled,
         auto_duration_crossing_steps=auto_duration_crossing_steps,
         auto_duration_post_factor=auto_duration_post_factor,
@@ -989,6 +1039,24 @@ def _merge_simulation_payload(
         "auto_duration_enabled",
         "auto_duration_crossing_steps",
         "auto_duration_post_factor",
+        "self_consistency_enabled",
+        "self_consistency_convergence_mode",
+        "self_consistency_target_ms_tolerance",
+        "self_consistency_max_iterations",
+        "self_consistency_mass_shell_tolerance",
+        "self_consistency_mass_shell_relaxation",
+        "self_consistency_verbosity",
+        "self_consistency_gamma_reconciliation_method",
+        "self_consistency_gamma_reconciliation_fixed_weight",
+        "chrono_interpolate",
+        "chrono_tolerance",
+        "chrono_high_precision",
+        "chrono_adaptive_tolerance",
+        "self_consistency_chrono_interpolate",
+        "self_consistency_chrono_tolerance",
+        "self_consistency_chrono_high_precision",
+        "self_consistency_chrono_adaptive_tolerance",
+        "self_consistency_chrono_matching_mode",
     )
     for key in passthrough_keys:
         if key in file_payload:
@@ -1033,6 +1101,18 @@ def _merge_simulation_payload(
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
 
+    for key in (
+        "chrono_interpolate",
+        "chrono_tolerance",
+        "chrono_high_precision",
+        "chrono_adaptive_tolerance",
+    ):
+        if getattr(args, key, None) is not None:
+            result[key] = getattr(args, key)
+    if "chrono_matching_mode" not in result and "chrono_mode" in result:
+        result["chrono_matching_mode"] = (
+            str(result["chrono_mode"]).replace("-", "_").upper()
+        )
 
     cavity_exit = result.get("cavity_exit")
     if not isinstance(cavity_exit, MutableMapping):
@@ -1214,6 +1294,9 @@ def _merge_simulation_payload(
     if getattr(args, "adaptive_debug", None) is not None:
         adaptive_timestep["debug"] = args.adaptive_debug
 
+    if getattr(args, "sc_verbosity", None) is not None:
+        result["self_consistency_verbosity"] = args.sc_verbosity
+
     return result
 
 
@@ -1285,7 +1368,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
             payload.get("cavity_spacing", DEFAULT_SIMULATION["cavity_spacing"])
         ),
         z_cutoff=float(payload.get("z_cutoff", DEFAULT_SIMULATION["z_cutoff"])),
-        z_cutoff_mode=str(payload.get("z_cutoff_mode", DEFAULT_SIMULATION["z_cutoff_mode"])),
+        z_cutoff_mode=str(
+            payload.get("z_cutoff_mode", DEFAULT_SIMULATION["z_cutoff_mode"])
+        ),
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
         radiation_reaction_mode=str(
@@ -1743,6 +1828,86 @@ def _build_space_charge_config(
     )
 
 
+def _build_self_consistency_config(
+    payload: Mapping[str, Any],
+) -> Optional[SelfConsistencyConfig]:
+    chrono_interpolate = bool(
+        payload.get(
+            "chrono_interpolate",
+            payload.get("self_consistency_chrono_interpolate", False),
+        )
+    )
+    chrono_high_precision = bool(
+        payload.get(
+            "chrono_high_precision",
+            payload.get("self_consistency_chrono_high_precision", False),
+        )
+    )
+    chrono_adaptive_tolerance = bool(
+        payload.get(
+            "chrono_adaptive_tolerance",
+            payload.get("self_consistency_chrono_adaptive_tolerance", False),
+        )
+    )
+    sc_enabled = bool(payload.get("self_consistency_enabled", False))
+    if not sc_enabled and not (
+        chrono_interpolate or chrono_high_precision or chrono_adaptive_tolerance
+    ):
+        return None
+
+    method_name = str(
+        payload.get("self_consistency_gamma_reconciliation_method", "DISABLED")
+    ).upper()
+    try:
+        gamma_method = GammaReconciliationMethod[method_name]
+    except KeyError:
+        raise SimulationConfigError(
+            f"Unknown gamma reconciliation method: {method_name!r}"
+        ) from None
+
+    try:
+        return SelfConsistencyConfig(
+            enabled=sc_enabled,
+            convergence_mode=str(
+                payload.get("self_consistency_convergence_mode", "fixed_geometry")
+            ),
+            target_ms_tolerance=float(
+                payload.get("self_consistency_target_ms_tolerance", 1e-6)
+            ),
+            mass_shell_tolerance=float(
+                payload.get("self_consistency_mass_shell_tolerance", 1e-2)
+            ),
+            mass_shell_relaxation=float(
+                payload.get("self_consistency_mass_shell_relaxation", 0.7)
+            ),
+            max_iterations=int(payload.get("self_consistency_max_iterations", 2)),
+            verbosity=int(payload.get("self_consistency_verbosity", 0)),
+            chrono_interpolate=chrono_interpolate,
+            chrono_tolerance=float(
+                payload.get(
+                    "chrono_tolerance",
+                    payload.get("self_consistency_chrono_tolerance", 1e-3),
+                )
+            ),
+            chrono_matching_mode=str(
+                payload.get(
+                    "chrono_matching_mode",
+                    payload.get("self_consistency_chrono_matching_mode", "FAST"),
+                )
+            ),
+            chrono_high_precision=chrono_high_precision,
+            chrono_adaptive_tolerance=chrono_adaptive_tolerance,
+            gamma_reconciliation_method=gamma_method,
+            gamma_reconciliation_fixed_weight=float(
+                payload.get("self_consistency_gamma_reconciliation_fixed_weight", 0.5)
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            "Invalid self-consistency or chrono-matching option"
+        ) from exc
+
+
 def _build_adaptive_timestep_config(
     payload: Mapping[str, Any],
 ) -> Optional[AdaptiveTimestepConfig]:
@@ -1817,12 +1982,12 @@ def _build_adaptive_timestep_config(
             bunch_proximity_transition_n_sigma=float(
                 adaptive_payload.get(
                     "bunch_proximity_transition_n_sigma",
-                    DEFAULT_ADAPTIVE_TIMESTEP[
-                        "bunch_proximity_transition_n_sigma"
-                    ],
+                    DEFAULT_ADAPTIVE_TIMESTEP["bunch_proximity_transition_n_sigma"],
                 )
             ),
-            debug=bool(adaptive_payload.get("debug", DEFAULT_ADAPTIVE_TIMESTEP["debug"])),
+            debug=bool(
+                adaptive_payload.get("debug", DEFAULT_ADAPTIVE_TIMESTEP["debug"])
+            ),
         )
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(str(exc)) from exc
@@ -1955,6 +2120,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         use_conducting_image_weighting=request.config.use_image_weighting,
         radiation_reaction_mode=request.config.radiation_reaction_mode,
         adaptive_timestep=request.adaptive_timestep,
+        self_consistency=request.self_consistency,
         space_charge=request.space_charge,
         external_field=request.external_field,
         pseudo_grid=request.config.pseudo_grid,
@@ -2192,6 +2358,15 @@ def _build_sweep_verbosity_overrides(
         overrides["self_consistency_verbosity"] = args.sc_verbosity
     if getattr(args, "adaptive_debug", None) is not None:
         overrides["adaptive_timestep_debug"] = args.adaptive_debug
+    for key in (
+        "chrono_interpolate",
+        "chrono_tolerance",
+        "chrono_high_precision",
+        "chrono_adaptive_tolerance",
+    ):
+        value = getattr(args, key, None)
+        if value is not None:
+            overrides[key] = value
     return overrides
 
 

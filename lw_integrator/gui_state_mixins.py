@@ -120,11 +120,6 @@ class IntegratorGUIStateMixin:
             self.sc_relaxation_entry,
             self.sc_verbosity_label,
             self.sc_verbosity_entry,
-            self.sc_chrono_interpolate_check,
-            self.sc_chrono_tolerance_label,
-            self.sc_chrono_tolerance_entry,
-            self.sc_chrono_high_precision_check,
-            self.sc_chrono_adaptive_check,
             self.sc_gamma_reconciliation_method_combo,
             self.sc_gamma_low_beta_threshold_entry,
             self.sc_gamma_high_beta_threshold_entry,
@@ -145,15 +140,14 @@ class IntegratorGUIStateMixin:
 
         if enabled:
             self._on_sc_mode_changed()
-            self._toggle_chrono_controls()
+        self._toggle_chrono_controls()
 
     def _toggle_chrono_controls(self) -> None:
         if not hasattr(self, "sc_chrono_tolerance_label"):
             return
 
-        sc_enabled = self.self_consistency_enabled_var.get()
-        chrono_enabled = self.self_consistency_chrono_interpolate_var.get()
-        enable_chrono_options = sc_enabled and chrono_enabled
+        chrono_enabled = self.chrono_interpolate_var.get()
+        enable_chrono_options = chrono_enabled
 
         param_state = "normal" if enable_chrono_options else "disabled"
         label_color = "black" if enable_chrono_options else "gray"

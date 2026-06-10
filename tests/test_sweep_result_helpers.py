@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from core.types import SimulationType
 import optimization.sweep_result_helpers as sweep_result_helpers
@@ -18,6 +19,7 @@ from optimization.sweep_result_helpers import (
     build_interrupted_sweep_results_payload,
     build_sweep_completion_log_lines,
     build_sweep_results_payload,
+    build_sweep_run_metadata,
     build_successful_sweep_run_log,
     build_sweep_run_data,
     build_timeout_sweep_run_record,
@@ -40,6 +42,7 @@ def test_module_exposes_only_maintained_public_helpers():
         "build_full_debug_sweep_result_log_lines",
         "build_interrupted_sweep_results_payload",
         "build_sweep_completion_log_lines",
+        "build_sweep_run_metadata",
         "build_sweep_results_payload",
         "build_successful_sweep_run_log",
         "build_sweep_run_data",
@@ -88,6 +91,36 @@ def test_build_sweep_run_data_serializes_string_mode_and_driver_params():
     assert record["parameters"]["driver_starting_distance"] == 1000.0
     assert record["parameters"]["driver_pcount"] == 5
     assert record["metrics"] == {"max_percent_energy_gain": 1.5}
+
+
+def test_build_sweep_run_metadata_includes_phase1g_surface_fields():
+    metadata = build_sweep_run_metadata(
+        SimpleNamespace(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            driver_train_enabled=True,
+            driver_train_bunch_count=9,
+            driver_train_z_spacing_mm=1332.4,
+            driver_train_prehistory_steps=4,
+            cavity_exit_length_mm=1200.0,
+            m_particle=1.007276466812,
+            charge_sign=1.0,
+            driver_m_particle=0.00054857990907,
+            driver_charge_sign=-1.0,
+            transv_dist=0.7,
+            driver_transv_dist=0.01,
+            driver_long_dist=5.0,
+            long_dist=5.0,
+        )
+    )
+
+    assert metadata["mode"] == "multi_pass"
+    assert metadata["pairing"] == "electron+proton"
+    assert metadata["cavity_length_mm"] == pytest.approx(1200.0)
+    assert metadata["rider_size_mm"] == pytest.approx(0.7)
+    assert metadata["driver_size_mm"] == pytest.approx(0.01)
+    assert metadata["driver_train_enabled"] is True
+    assert metadata["driver_train_bunch_count"] == 9
+    assert metadata["driver_train_spacing_mm"] == pytest.approx(1332.4)
 
 
 def test_build_sweep_results_payload_serializes_completed_sweep_summary():

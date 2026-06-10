@@ -157,15 +157,23 @@ class OptimizationConfig:
     target_distance_mm: float = 100.0  # For auto_distance: distance to reach
     z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
     cavity_exit_enabled: bool = False  # Stop BUNCH_TO_BUNCH runs at first cavity exit
-    cavity_exit_length_mm: Optional[float] = None  # None uses initial rider-driver separation
-    cavity_exit_residual_tail_factor: float = 0.0  # Reserved for residual-field tail handling
-    cavity_exit_max_residual_tail_steps: int = 0  # Reserved for residual-field tail handling
+    cavity_exit_length_mm: Optional[float] = (
+        None  # None uses initial rider-driver separation
+    )
+    cavity_exit_residual_tail_factor: float = (
+        0.0  # Reserved for residual-field tail handling
+    )
+    cavity_exit_max_residual_tail_steps: int = (
+        0  # Reserved for residual-field tail handling
+    )
     startup_mode: str = "COLD_START"  # "COLD_START" or "APPROXIMATE_BACK_HISTORY"
 
     # Fixed particle parameters (not swept)
     transv_mom: float = 1.2e-05  # amu·mm/ns
     transv_dist: float = 2e-06  # mm - transverse spread/radius
-    long_dist: float = 0.0  # mm - longitudinal Gaussian sigma for rider bunch (0 = point slice)
+    long_dist: float = (
+        0.0  # mm - longitudinal Gaussian sigma for rider bunch (0 = point slice)
+    )
     driver_long_dist: float = 0.0  # mm - longitudinal Gaussian sigma for driver bunch
     transverse_geometry: str = "square"  # point, square, gaussian, or ring
     transv_offset_x: float = 0.0  # mm - rider x-offset of bunch center from axis
@@ -267,6 +275,14 @@ class OptimizationConfig:
     self_consistency_mass_shell_tolerance: float = 1e-2
     self_consistency_mass_shell_relaxation: float = 0.7
     self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
+
+    # Chrono-matching options for retarded-time sampling. The legacy
+    # self_consistency_chrono_* fields are retained below for compatibility.
+    chrono_interpolate: bool = False
+    chrono_tolerance: float = 1e-3  # ns
+    chrono_matching_mode: str = "FAST"
+    chrono_high_precision: bool = False
+    chrono_adaptive_tolerance: bool = False
     self_consistency_chrono_interpolate: bool = False
     self_consistency_chrono_tolerance: float = 1e-3  # ns
     self_consistency_chrono_matching_mode: str = "FAST"
@@ -385,6 +401,32 @@ class OptimizationConfig:
         if self.objective_weights is None:
             self.objective_weights = {}
 
+        self.chrono_interpolate = bool(
+            self.chrono_interpolate or self.self_consistency_chrono_interpolate
+        )
+        self.self_consistency_chrono_interpolate = self.chrono_interpolate
+        if (
+            self.chrono_tolerance == 1e-3
+            and self.self_consistency_chrono_tolerance != 1e-3
+        ):
+            self.chrono_tolerance = self.self_consistency_chrono_tolerance
+        self.self_consistency_chrono_tolerance = self.chrono_tolerance
+        if (
+            self.chrono_matching_mode == "FAST"
+            and self.self_consistency_chrono_matching_mode != "FAST"
+        ):
+            self.chrono_matching_mode = self.self_consistency_chrono_matching_mode
+        self.self_consistency_chrono_matching_mode = self.chrono_matching_mode
+        self.chrono_high_precision = bool(
+            self.chrono_high_precision or self.self_consistency_chrono_high_precision
+        )
+        self.self_consistency_chrono_high_precision = self.chrono_high_precision
+        self.chrono_adaptive_tolerance = bool(
+            self.chrono_adaptive_tolerance
+            or self.self_consistency_chrono_adaptive_tolerance
+        )
+        self.self_consistency_chrono_adaptive_tolerance = self.chrono_adaptive_tolerance
+
     def calculate_timestep_for_energy(
         self,
         energy_gev: float,
@@ -454,9 +496,7 @@ class OptimizationConfig:
                 driver_rest_mev = driver_mass * 931.494
                 driver_gamma = (driver_energy * 1e3) / driver_rest_mev + 1.0
                 driver_beta = (
-                    np.sqrt(1.0 - 1.0 / driver_gamma**2)
-                    if driver_gamma > 1.0
-                    else 0.0
+                    np.sqrt(1.0 - 1.0 / driver_gamma**2) if driver_gamma > 1.0 else 0.0
                 )
                 driver_gamma_beta = driver_gamma * driver_beta
                 if getattr(self, "driver_direction", "-z") == "-z":
@@ -476,9 +516,7 @@ class OptimizationConfig:
                 solver_closing_scale = rider_gamma_beta
 
             c_mmns = 299.792458  # mm/ns
-            h_calculated = total_distance / (
-                self.steps * c_mmns * solver_closing_scale
-            )
+            h_calculated = total_distance / (self.steps * c_mmns * solver_closing_scale)
             return h_calculated
 
         raise ValueError(f"Unknown timestep_strategy: {self.timestep_strategy}")
@@ -526,20 +564,27 @@ class OptimizationConfig:
                 options, "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=options.self_consistency_verbosity,
+            chrono_interpolate=getattr(options, "chrono_interpolate", False),
+            chrono_tolerance=getattr(options, "chrono_tolerance", 1e-3),
+            chrono_matching_mode=getattr(options, "chrono_matching_mode", "FAST"),
+            chrono_high_precision=getattr(options, "chrono_high_precision", False),
+            chrono_adaptive_tolerance=getattr(
+                options, "chrono_adaptive_tolerance", False
+            ),
             self_consistency_chrono_interpolate=getattr(
-                options, "self_consistency_chrono_interpolate", False
+                options, "chrono_interpolate", False
             ),
             self_consistency_chrono_tolerance=getattr(
-                options, "self_consistency_chrono_tolerance", 1e-3
+                options, "chrono_tolerance", 1e-3
             ),
             self_consistency_chrono_matching_mode=getattr(
-                options, "self_consistency_chrono_matching_mode", "FAST"
+                options, "chrono_matching_mode", "FAST"
             ),
             self_consistency_chrono_high_precision=getattr(
-                options, "self_consistency_chrono_high_precision", False
+                options, "chrono_high_precision", False
             ),
             self_consistency_chrono_adaptive_tolerance=getattr(
-                options, "self_consistency_chrono_adaptive_tolerance", False
+                options, "chrono_adaptive_tolerance", False
             ),
             energy_monitor_enabled=False,  # Removed - integrated into adaptive timestep
             energy_monitor_threshold=2.0,

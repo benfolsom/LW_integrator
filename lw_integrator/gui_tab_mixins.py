@@ -676,7 +676,8 @@ class IntegratorGUITabMixin:
             particle_frame,
             text=(
                 "Expands the configured driver bunch into longitudinal copies and can seed inertial back-history.\n"
-                "Leave explicit offsets blank to use count × spacing; pseudo-grid reduction is disabled for this mode."
+                "Leave explicit offsets blank to use count × spacing; pseudo-grid can still be enabled, "
+                "with full-history fallback when the reduced schedule is not suitable."
             ),
             font=("TkDefaultFont", 8),
             foreground="gray40",
@@ -1295,6 +1296,7 @@ class IntegratorGUITabMixin:
         stability_notice_label.pack(anchor="w")
 
         self._build_self_consistency_section(stability_frame)
+        self._build_chrono_matching_section(stability_frame)
         self._build_adaptive_timestep_section(stability_frame)
         self._build_radiation_reaction_section(stability_frame)
         self._build_space_charge_section(stability_frame)
@@ -1523,138 +1525,6 @@ class IntegratorGUITabMixin:
         )
         self.sc_verbosity_entry.grid(row=7, column=1, sticky="w", pady=2)
 
-        # Chrono-match interpolation with help icon
-        chrono_interp_frame = ttk.Frame(sc_frame)
-        chrono_interp_frame.grid(
-            row=8, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
-        )
-        self.sc_chrono_interpolate_check = ttk.Checkbutton(
-            chrono_interp_frame,
-            text="Enable chrono-match interpolation",
-            variable=self.self_consistency_chrono_interpolate_var,
-            command=self._toggle_chrono_controls,
-        )
-        self.sc_chrono_interpolate_check.pack(side="left")
-        chrono_interp_help = ttk.Label(
-            chrono_interp_frame, text="ⓘ", foreground="blue", cursor="hand2"
-        )
-        chrono_interp_help.pack(side="left", padx=(3, 0))
-        Tooltip(
-            chrono_interp_help,
-            "Interpolate source particle state when retarded-time residual exceeds tolerance.\n\n"
-            "When computing Liénard-Wiechert fields, the code searches backward through\n"
-            "the source particle trajectory to find t_ret = t_obs - R/c. With coarse\n"
-            "timesteps, the 'nearest' match may have significant time residual.\n\n"
-            "When enabled:\n"
-            "  • Computes time residual |t_matched - t_target|\n"
-            "  • If residual > tolerance, linearly interpolates source quantities\n"
-            "    (velocity, acceleration, gamma) between bracketing trajectory points\n"
-            "  • Provides sub-timestep accuracy for retarded fields\n\n"
-            "When to enable:\n"
-            "  • Large timesteps relative to 1/γ characteristic time\n"
-            "  • Ultra-relativistic simulations (γ > 100)\n"
-            "  • Self-consistency failures related to field discontinuities\n"
-            "  • Image-charge singularities\n\n"
-            "Performance impact: ~1-2% overhead (minimal)\n\n"
-            "Default: OFF",
-        )
-
-        # Chrono tolerance with help icon
-        chrono_tol_frame = ttk.Frame(sc_frame)
-        chrono_tol_frame.grid(row=9, column=0, sticky="w", pady=2, padx=(40, 0))
-        self.sc_chrono_tolerance_label = ttk.Label(
-            chrono_tol_frame, text="Chrono tolerance (ns):"
-        )
-        self.sc_chrono_tolerance_label.pack(side="left")
-        chrono_tol_help = ttk.Label(
-            chrono_tol_frame, text="ⓘ", foreground="blue", cursor="hand2"
-        )
-        chrono_tol_help.pack(side="left", padx=(3, 0))
-        Tooltip(
-            chrono_tol_help,
-            "Time residual tolerance for chrono-matching (nanoseconds).\n\n"
-            "If |t_matched - t_target| > chrono_tolerance, interpolation is applied\n"
-            "(if chrono_interpolate is enabled) or a warning is issued (if verbosity >= 2).\n\n"
-            "Typical values:\n"
-            "  • 1e-3 ns (1 ps): Default, good for most simulations\n"
-            "  • 5e-4 ns (0.5 ps): Tighter tolerance for high-precision work\n"
-            "  • 1e-4 ns (0.1 ps): Very tight, for ultra-relativistic particles\n\n"
-            "Rule of thumb: Set to ~0.1 × average_timestep\n\n"
-            "Default: 1e-3 ns (1 picosecond)",
-        )
-        self.sc_chrono_tolerance_entry = ttk.Entry(
-            sc_frame,
-            textvariable=self.self_consistency_chrono_tolerance_var,
-            width=16,
-        )
-        self.sc_chrono_tolerance_entry.grid(row=9, column=1, sticky="w", pady=2)
-
-        # Advanced chrono options (high-precision mode)
-        chrono_highprec_frame = ttk.Frame(sc_frame)
-        chrono_highprec_frame.grid(
-            row=10, column=0, columnspan=2, sticky="w", pady=2, padx=(40, 0)
-        )
-        self.sc_chrono_high_precision_check = ttk.Checkbutton(
-            chrono_highprec_frame,
-            text="High-precision mode (cubic + position interpolation)",
-            variable=self.self_consistency_chrono_high_precision_var,
-        )
-        self.sc_chrono_high_precision_check.pack(side="left")
-        chrono_highprec_help = ttk.Label(
-            chrono_highprec_frame, text="ⓘ", foreground="blue", cursor="hand2"
-        )
-        chrono_highprec_help.pack(side="left", padx=(3, 0))
-        Tooltip(
-            chrono_highprec_help,
-            "Enable high-precision chrono-matching features.\n\n"
-            "When enabled:\n"
-            "  • Uses cubic (Catmull-Rom) interpolation instead of linear\n"
-            "  • Interpolates particle positions (x/y/z) in addition to velocities\n"
-            "  • Provides smoother derivatives for acceleration terms\n"
-            "  • Better accuracy for ultra-relativistic particles (γ > 1000)\n\n"
-            "Performance impact:\n"
-            "  • ~3-5% overhead vs linear interpolation\n"
-            "  • Requires at least 4 trajectory points for cubic fit\n\n"
-            "When to enable:\n"
-            "  • γ > 1000 with coarse timesteps\n"
-            "  • Need smooth βdot derivatives\n"
-            "  • Critical accuracy requirements\n\n"
-            "Default: OFF (linear interpolation is usually sufficient)",
-        )
-
-        # Adaptive tolerance
-        chrono_adaptive_frame = ttk.Frame(sc_frame)
-        chrono_adaptive_frame.grid(
-            row=11, column=0, columnspan=2, sticky="w", pady=2, padx=(40, 0)
-        )
-        self.sc_chrono_adaptive_check = ttk.Checkbutton(
-            chrono_adaptive_frame,
-            text="Adaptive tolerance (auto-scale with timestep)",
-            variable=self.self_consistency_chrono_adaptive_tolerance_var,
-        )
-        self.sc_chrono_adaptive_check.pack(side="left")
-        chrono_adaptive_help = ttk.Label(
-            chrono_adaptive_frame, text="ⓘ", foreground="blue", cursor="hand2"
-        )
-        chrono_adaptive_help.pack(side="left", padx=(3, 0))
-        Tooltip(
-            chrono_adaptive_help,
-            "Automatically set chrono tolerance based on timestep.\n\n"
-            "Formula: tolerance = 0.1 × timestep_h\n\n"
-            "When enabled:\n"
-            "  • Overrides manual chrono_tolerance setting\n"
-            "  • Scales tolerance with integration timestep\n"
-            "  • Useful for variable-timestep simulations\n\n"
-            "Example:\n"
-            "  • h = 1e-3 ns → tolerance = 1e-4 ns\n"
-            "  • h = 5e-4 ns → tolerance = 5e-5 ns\n\n"
-            "Default: OFF (use fixed tolerance)",
-        )
-
-        # Note: chrono_matching_mode removed from GUI
-        # Always uses FAST mode for the maintained GUI path.
-        # AVERAGED mode reserved for future APPROXIMATE_BACK_HISTORY implementation
-
         # Gamma reconciliation
         gamma_recon_frame = ttk.LabelFrame(
             sc_frame, text="Gamma Reconciliation", padding=8
@@ -1830,6 +1700,147 @@ class IntegratorGUITabMixin:
         )
         self._toggle_gamma_reconciliation_params()
 
+    def _build_chrono_matching_section(self, stability_frame: ttk.Frame) -> None:
+        """Build retarded-time chrono-matching controls."""
+        from .gui import Tooltip
+
+        chrono_frame = ttk.LabelFrame(
+            stability_frame, text="Chrono Matching (Retarded-Time Sampling)", padding=8
+        )
+        chrono_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        chrono_frame.columnconfigure(1, weight=1)
+
+        chrono_interp_frame = ttk.Frame(chrono_frame)
+        chrono_interp_frame.grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.sc_chrono_interpolate_check = ttk.Checkbutton(
+            chrono_interp_frame,
+            text="Enable chrono-match interpolation",
+            variable=self.self_consistency_chrono_interpolate_var,
+            command=self._toggle_chrono_controls,
+        )
+        self.sc_chrono_interpolate_check.pack(side="left")
+        chrono_interp_help = ttk.Label(
+            chrono_interp_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_interp_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_interp_help,
+            "Interpolate source particle state when retarded-time residual exceeds tolerance.\n\n"
+            "When computing Liénard-Wiechert fields, the code searches backward through\n"
+            "the source particle trajectory to find t_ret = t_obs - R/c. With coarse\n"
+            "timesteps, the 'nearest' match may have significant time residual.\n\n"
+            "When enabled:\n"
+            "  • Computes time residual |t_matched - t_target|\n"
+            "  • If residual > tolerance, linearly interpolates source quantities\n"
+            "    (velocity, acceleration, gamma) between bracketing trajectory points\n"
+            "  • Provides sub-timestep accuracy for retarded fields\n\n"
+            "When to enable:\n"
+            "  • Large timesteps relative to 1/γ characteristic time\n"
+            "  • Ultra-relativistic simulations (γ > 100)\n"
+            "  • Self-consistency failures related to field discontinuities\n"
+            "  • Image-charge singularities\n\n"
+            "Performance impact: ~1-2% overhead (minimal)\n\n"
+            "Default: OFF",
+        )
+
+        # Chrono tolerance with help icon
+        chrono_tol_frame = ttk.Frame(chrono_frame)
+        chrono_tol_frame.grid(row=1, column=0, sticky="w", pady=2, padx=(40, 0))
+        self.sc_chrono_tolerance_label = ttk.Label(
+            chrono_tol_frame, text="Chrono tolerance (ns):"
+        )
+        self.sc_chrono_tolerance_label.pack(side="left")
+        chrono_tol_help = ttk.Label(
+            chrono_tol_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_tol_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_tol_help,
+            "Time residual tolerance for chrono-matching (nanoseconds).\n\n"
+            "If |t_matched - t_target| > chrono_tolerance, interpolation is applied\n"
+            "(if chrono_interpolate is enabled) or a warning is issued (if verbosity >= 2).\n\n"
+            "Typical values:\n"
+            "  • 1e-3 ns (1 ps): Default, good for most simulations\n"
+            "  • 5e-4 ns (0.5 ps): Tighter tolerance for high-precision work\n"
+            "  • 1e-4 ns (0.1 ps): Very tight, for ultra-relativistic particles\n\n"
+            "Rule of thumb: Set to ~0.1 × average_timestep\n\n"
+            "Default: 1e-3 ns (1 picosecond)",
+        )
+        self.sc_chrono_tolerance_entry = ttk.Entry(
+            chrono_frame,
+            textvariable=self.chrono_tolerance_var,
+            width=16,
+        )
+        self.sc_chrono_tolerance_entry.grid(row=1, column=1, sticky="w", pady=2)
+
+        # Advanced chrono options (high-precision mode)
+        chrono_highprec_frame = ttk.Frame(chrono_frame)
+        chrono_highprec_frame.grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.sc_chrono_high_precision_check = ttk.Checkbutton(
+            chrono_highprec_frame,
+            text="High-precision mode (cubic + position interpolation)",
+            variable=self.self_consistency_chrono_high_precision_var,
+        )
+        self.sc_chrono_high_precision_check.pack(side="left")
+        chrono_highprec_help = ttk.Label(
+            chrono_highprec_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_highprec_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_highprec_help,
+            "Enable high-precision chrono-matching features.\n\n"
+            "When enabled:\n"
+            "  • Uses cubic (Catmull-Rom) interpolation instead of linear\n"
+            "  • Interpolates particle positions (x/y/z) in addition to velocities\n"
+            "  • Provides smoother derivatives for acceleration terms\n"
+            "  • Better accuracy for ultra-relativistic particles (γ > 1000)\n\n"
+            "Performance impact:\n"
+            "  • ~3-5% overhead vs linear interpolation\n"
+            "  • Requires at least 4 trajectory points for cubic fit\n\n"
+            "When to enable:\n"
+            "  • γ > 1000 with coarse timesteps\n"
+            "  • Need smooth βdot derivatives\n"
+            "  • Critical accuracy requirements\n\n"
+            "Default: OFF (linear interpolation is usually sufficient)",
+        )
+
+        # Adaptive tolerance
+        chrono_adaptive_frame = ttk.Frame(chrono_frame)
+        chrono_adaptive_frame.grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=2, padx=(40, 0)
+        )
+        self.sc_chrono_adaptive_check = ttk.Checkbutton(
+            chrono_adaptive_frame,
+            text="Adaptive tolerance (auto-scale with timestep)",
+            variable=self.self_consistency_chrono_adaptive_tolerance_var,
+        )
+        self.sc_chrono_adaptive_check.pack(side="left")
+        chrono_adaptive_help = ttk.Label(
+            chrono_adaptive_frame, text="ⓘ", foreground="blue", cursor="hand2"
+        )
+        chrono_adaptive_help.pack(side="left", padx=(3, 0))
+        Tooltip(
+            chrono_adaptive_help,
+            "Automatically set chrono tolerance based on timestep.\n\n"
+            "Formula: tolerance = 0.1 × timestep_h\n\n"
+            "When enabled:\n"
+            "  • Overrides manual chrono_tolerance setting\n"
+            "  • Scales tolerance with integration timestep\n"
+            "  • Useful for variable-timestep simulations\n\n"
+            "Example:\n"
+            "  • h = 1e-3 ns → tolerance = 1e-4 ns\n"
+            "  • h = 5e-4 ns → tolerance = 5e-5 ns\n\n"
+            "Default: OFF (use fixed tolerance)",
+        )
+
+        # Note: chrono_matching_mode removed from GUI
+        # Always uses FAST mode for the maintained GUI path.
+        # AVERAGED mode reserved for future APPROXIMATE_BACK_HISTORY implementation
+
     def _build_adaptive_timestep_section(self, stability_frame: ttk.Frame) -> None:
         """Build adaptive timestep refinement controls."""
         from .gui import Tooltip
@@ -1838,7 +1849,7 @@ class IntegratorGUITabMixin:
         at_frame = ttk.LabelFrame(
             stability_frame, text="Adaptive Timestep Refinement", padding=8
         )
-        at_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        at_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         at_frame.columnconfigure(1, weight=1)
 
         self.adaptive_enable_check = ttk.Checkbutton(
@@ -2187,7 +2198,7 @@ class IntegratorGUITabMixin:
         from .gui import Tooltip
 
         rr_frame = ttk.LabelFrame(stability_frame, text="Radiation Reaction", padding=8)
-        rr_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        rr_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         rr_frame.columnconfigure(1, weight=1)
 
         mode_frame = ttk.Frame(rr_frame)
@@ -2234,7 +2245,7 @@ class IntegratorGUITabMixin:
         sc_frame = ttk.LabelFrame(
             stability_frame, text="Intra-Bunch Space Charge", padding=8
         )
-        sc_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        sc_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         sc_frame.columnconfigure(1, weight=1)
 
         self.space_charge_enable_check = ttk.Checkbutton(
@@ -2369,7 +2380,7 @@ class IntegratorGUITabMixin:
             text="Cavity Exit Cutoff (BUNCH_TO_BUNCH)",
             padding=8,
         )
-        cavity_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        cavity_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         cavity_frame.columnconfigure(1, weight=1)
 
         self.cavity_exit_enable_check = ttk.Checkbutton(

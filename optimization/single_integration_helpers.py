@@ -259,20 +259,49 @@ def build_single_integration_setup(
             config, "self_consistency_mass_shell_relaxation", 0.7
         ),
         self_consistency_verbosity=config.self_consistency_verbosity,
-        self_consistency_chrono_interpolate=getattr(
-            config, "self_consistency_chrono_interpolate", False
+        chrono_interpolate=bool(
+            getattr(config, "chrono_interpolate", False)
+            or getattr(config, "self_consistency_chrono_interpolate", False)
         ),
-        self_consistency_chrono_tolerance=getattr(
-            config, "self_consistency_chrono_tolerance", 1e-3
+        chrono_tolerance=(
+            getattr(config, "chrono_tolerance", 1e-3)
+            if getattr(config, "chrono_tolerance", 1e-3) != 1e-3
+            else getattr(config, "self_consistency_chrono_tolerance", 1e-3)
         ),
-        self_consistency_chrono_matching_mode=getattr(
-            config, "self_consistency_chrono_matching_mode", "FAST"
+        chrono_matching_mode=(
+            getattr(config, "chrono_matching_mode", "FAST")
+            if getattr(config, "chrono_matching_mode", "FAST") != "FAST"
+            else getattr(config, "self_consistency_chrono_matching_mode", "FAST")
         ),
-        self_consistency_chrono_high_precision=getattr(
-            config, "self_consistency_chrono_high_precision", False
+        chrono_high_precision=bool(
+            getattr(config, "chrono_high_precision", False)
+            or getattr(config, "self_consistency_chrono_high_precision", False)
         ),
-        self_consistency_chrono_adaptive_tolerance=getattr(
-            config, "self_consistency_chrono_adaptive_tolerance", False
+        chrono_adaptive_tolerance=bool(
+            getattr(config, "chrono_adaptive_tolerance", False)
+            or getattr(config, "self_consistency_chrono_adaptive_tolerance", False)
+        ),
+        self_consistency_chrono_interpolate=bool(
+            getattr(config, "chrono_interpolate", False)
+            or getattr(config, "self_consistency_chrono_interpolate", False)
+        ),
+        self_consistency_chrono_tolerance=(
+            getattr(config, "chrono_tolerance", 1e-3)
+            if getattr(config, "chrono_tolerance", 1e-3) != 1e-3
+            else getattr(config, "self_consistency_chrono_tolerance", 1e-3)
+        ),
+        self_consistency_chrono_matching_mode=(
+            getattr(config, "chrono_matching_mode", "FAST")
+            if getattr(config, "chrono_matching_mode", "FAST") != "FAST"
+            else getattr(config, "self_consistency_chrono_matching_mode", "FAST")
+        ),
+        self_consistency_chrono_high_precision=bool(
+            getattr(config, "chrono_high_precision", False)
+            or getattr(config, "self_consistency_chrono_high_precision", False)
+        ),
+        self_consistency_chrono_adaptive_tolerance=bool(
+            getattr(config, "chrono_adaptive_tolerance", False)
+            or getattr(config, "self_consistency_chrono_adaptive_tolerance", False)
         ),
         self_consistency_gamma_reconciliation_method=getattr(
             config, "self_consistency_gamma_reconciliation_method", "DISABLED"
@@ -493,11 +522,138 @@ def calculate_rider_starting_pz(
     return C_MMNS * np.sqrt(gamma * gamma - 1.0)
 
 
+def _trajectory_last_finite_scalar(
+    trajectory: Mapping[str, Any] | None,
+    key: str,
+) -> float | None:
+    """Return the last finite scalar from a trajectory series, if present."""
+    if trajectory is None:
+        return None
+
+    values = trajectory.get(key)
+    if values is None:
+        return None
+
+    array = np.asarray(values, dtype=float).reshape(-1)
+    if array.size == 0:
+        return None
+
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+        return None
+    return float(finite[-1])
+
+
+def _trajectory_first_finite_scalar(
+    trajectory: Mapping[str, Any] | None,
+    key: str,
+) -> float | None:
+    """Return the first finite scalar from a trajectory series, if present."""
+    if trajectory is None:
+        return None
+
+    values = trajectory.get(key)
+    if values is None:
+        return None
+
+    array = np.asarray(values, dtype=float).reshape(-1)
+    if array.size == 0:
+        return None
+
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+        return None
+    return float(finite[0])
+
+
+def _gamma_to_beta(gamma: float | None) -> float | None:
+    """Convert a Lorentz gamma value into beta."""
+    if gamma is None or gamma <= 1.0:
+        return None
+    beta_sq = max(0.0, 1.0 - 1.0 / (gamma * gamma))
+    return float(np.sqrt(beta_sq))
+
+
+def _compute_effective_passes(
+    result: Any,
+    run_parameters: Mapping[str, Any] | None,
+) -> int | None:
+    """Estimate how many driver bunches actually fit before the run halted."""
+    if run_parameters is None:
+        return None
+
+    driver_train_enabled = run_parameters.get("driver_train_enabled")
+    if driver_train_enabled is None:
+        mode = run_parameters.get("mode")
+        if mode == "multi_pass":
+            driver_train_enabled = True
+        elif mode == "single_pass":
+            driver_train_enabled = False
+        else:
+            return None
+    driver_train_enabled = bool(driver_train_enabled)
+
+    if not driver_train_enabled:
+        return 1
+
+    driver_trajectory = getattr(result, "driver_trajectory", None)
+
+    bunch_count = run_parameters.get("driver_train_bunch_count")
+    if bunch_count is None:
+        return None
+
+    spacing_mm = run_parameters.get("driver_train_spacing_mm")
+    if spacing_mm is None:
+        spacing_mm = run_parameters.get("driver_train_z_spacing_mm")
+    if spacing_mm is None or float(spacing_mm) <= 0.0:
+        return None
+
+    cavity_length_mm = run_parameters.get("cavity_length_mm")
+    if cavity_length_mm is None:
+        cavity_length_mm = run_parameters.get("driver_starting_distance")
+    if cavity_length_mm is None:
+        cavity_length_mm = run_parameters.get("cavity_exit_length_mm")
+    if cavity_length_mm is None or float(cavity_length_mm) <= 0.0:
+        return None
+
+    driver_gamma_initial = getattr(result, "driver_gamma_initial", None)
+    if driver_gamma_initial is None:
+        driver_gamma_initial = _trajectory_first_finite_scalar(
+            driver_trajectory, "gamma"
+        )
+    driver_beta = _gamma_to_beta(driver_gamma_initial)
+    if driver_beta is None:
+        return None
+
+    driver_exit_time_ns = _trajectory_last_finite_scalar(driver_trajectory, "t")
+    if driver_exit_time_ns is None:
+        return None
+
+    driver_speed_mm_ns = driver_beta * C_MMNS
+    if driver_speed_mm_ns <= 0.0:
+        return None
+
+    first_arrival_ns = float(cavity_length_mm) / driver_speed_mm_ns
+    bunch_interval_ns = float(spacing_mm) / driver_speed_mm_ns
+    if bunch_interval_ns <= 0.0:
+        return None
+
+    if driver_exit_time_ns < first_arrival_ns:
+        effective_passes = 0
+    else:
+        effective_passes = 1 + int(
+            np.floor((driver_exit_time_ns - first_arrival_ns) / bunch_interval_ns)
+        )
+
+    return max(0, min(int(bunch_count), effective_passes))
+
+
 def build_integration_metrics(
     result: Any,
     *,
     rider_m_particle: float,
     run_num: int,
+    run_parameters: Mapping[str, Any] | None = None,
     optimization_mode: bool = False,
 ) -> IntegrationMetricsOutcome:
     """Build rider metrics from a single integration result."""
@@ -556,6 +712,11 @@ def build_integration_metrics(
         )
 
     _add_beam_optics_metrics(result, metrics)
+
+    effective_passes = _compute_effective_passes(result, run_parameters)
+    if effective_passes is not None:
+        metrics["effective_passes"] = effective_passes
+        log_lines.append(f"    effective_passes: {effective_passes}")
 
     metrics["num_particles_dead"] = result.num_particles_dead
     if result.halted_early:

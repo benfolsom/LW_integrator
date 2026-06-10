@@ -350,17 +350,33 @@ class IntegratorGUIConfigMixin:
             options.self_consistency_mass_shell_tolerance
         )
         self.self_consistency_verbosity_var.set(options.self_consistency_verbosity)
-        self.self_consistency_chrono_interpolate_var.set(
-            getattr(options, "self_consistency_chrono_interpolate", False)
+        self.chrono_interpolate_var.set(
+            getattr(
+                options,
+                "chrono_interpolate",
+                getattr(options, "self_consistency_chrono_interpolate", False),
+            )
         )
-        self.self_consistency_chrono_tolerance_var.set(
-            getattr(options, "self_consistency_chrono_tolerance", 1e-3)
+        self.chrono_tolerance_var.set(
+            getattr(
+                options,
+                "chrono_tolerance",
+                getattr(options, "self_consistency_chrono_tolerance", 1e-3),
+            )
         )
-        self.self_consistency_chrono_high_precision_var.set(
-            getattr(options, "self_consistency_chrono_high_precision", False)
+        self.chrono_high_precision_var.set(
+            getattr(
+                options,
+                "chrono_high_precision",
+                getattr(options, "self_consistency_chrono_high_precision", False),
+            )
         )
-        self.self_consistency_chrono_adaptive_tolerance_var.set(
-            getattr(options, "self_consistency_chrono_adaptive_tolerance", False)
+        self.chrono_adaptive_tolerance_var.set(
+            getattr(
+                options,
+                "chrono_adaptive_tolerance",
+                getattr(options, "self_consistency_chrono_adaptive_tolerance", False),
+            )
         )
         self.self_consistency_gamma_reconciliation_method_var.set(
             getattr(
@@ -427,9 +443,7 @@ class IntegratorGUIConfigMixin:
             getattr(options, "adaptive_timestep_bunch_proximity_n_sigma", 5.0)
         )
         self.adaptive_timestep_bunch_proximity_reduction_factor_var.set(
-            getattr(
-                options, "adaptive_timestep_bunch_proximity_reduction_factor", 10.0
-            )
+            getattr(options, "adaptive_timestep_bunch_proximity_reduction_factor", 10.0)
         )
         self.adaptive_timestep_bunch_proximity_transition_n_sigma_var.set(
             getattr(
@@ -626,10 +640,6 @@ class IntegratorGUIConfigMixin:
             raise ValueError(
                 "Driver-train explicit z offsets must match the driver bunch count."
             )
-        if driver_train_enabled and pseudo_grid_enabled:
-            raise ValueError(
-                "Driver-train mode is not yet compatible with pseudo-grid mode."
-            )
 
         if external_field_enabled:
             external_electric_native = tuple(
@@ -768,17 +778,17 @@ class IntegratorGUIConfigMixin:
                 self.self_consistency_mass_shell_tolerance_var.get()
             ),
             self_consistency_verbosity=int(self.self_consistency_verbosity_var.get()),
-            self_consistency_chrono_interpolate=bool(
-                self.self_consistency_chrono_interpolate_var.get()
-            ),
-            self_consistency_chrono_tolerance=float(
-                self.self_consistency_chrono_tolerance_var.get()
-            ),
+            chrono_interpolate=bool(self.chrono_interpolate_var.get()),
+            chrono_tolerance=float(self.chrono_tolerance_var.get()),
+            chrono_high_precision=bool(self.chrono_high_precision_var.get()),
+            chrono_adaptive_tolerance=bool(self.chrono_adaptive_tolerance_var.get()),
+            self_consistency_chrono_interpolate=bool(self.chrono_interpolate_var.get()),
+            self_consistency_chrono_tolerance=float(self.chrono_tolerance_var.get()),
             self_consistency_chrono_high_precision=bool(
-                self.self_consistency_chrono_high_precision_var.get()
+                self.chrono_high_precision_var.get()
             ),
             self_consistency_chrono_adaptive_tolerance=bool(
-                self.self_consistency_chrono_adaptive_tolerance_var.get()
+                self.chrono_adaptive_tolerance_var.get()
             ),
             self_consistency_gamma_reconciliation_method=self.self_consistency_gamma_reconciliation_method_var.get(),
             self_consistency_gamma_reconciliation_low_beta_threshold=float(
@@ -799,6 +809,7 @@ class IntegratorGUIConfigMixin:
             self_consistency_gamma_reconciliation_fixed_weight=float(
                 self.self_consistency_gamma_reconciliation_fixed_weight_var.get()
             ),
+            chrono_matching_mode="FAST",
             self_consistency_chrono_matching_mode="FAST",
             energy_monitor_enabled=False,
             energy_monitor_threshold=2.0,

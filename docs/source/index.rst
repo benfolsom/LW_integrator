@@ -10,7 +10,8 @@ The LW (Liénard–Wiechert) Integrator is a first-principles electromagnetic pa
 * **Conducting-wall boundary conditions** – Method-of-images for flat conducting surfaces perpendicular to the beam axis, with optional macroparticle simulation including charge scaling and stochastic emittance effects
 * **Bunch-to-bunch dynamics** – Trailing particles experiencing reflected wakes
   from leading particles near aperture exits. The maintained B2B example sweeps
-  illustrate screening after the driver bunch passes through a virtual exit
+  use proton-mass, opposite-charge beams (proton/H- in the current configs)
+  and illustrate screening after the driver bunch passes through a virtual exit
   aperture, which blocks direct line of sight shortly downstream of the
   interaction point.
 

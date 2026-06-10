@@ -537,19 +537,41 @@ class IntegratorGUI(
         self.self_consistency_verbosity_var = tk.IntVar(
             value=getattr(self.options, "self_consistency_verbosity", 2)
         )
-        self.self_consistency_chrono_interpolate_var = tk.BooleanVar(
-            value=getattr(self.options, "self_consistency_chrono_interpolate", False)
-        )
-        self.self_consistency_chrono_tolerance_var = tk.DoubleVar(
-            value=getattr(self.options, "self_consistency_chrono_tolerance", 1e-3)
-        )
-        self.self_consistency_chrono_high_precision_var = tk.BooleanVar(
-            value=getattr(self.options, "self_consistency_chrono_high_precision", False)
-        )
-        self.self_consistency_chrono_adaptive_tolerance_var = tk.BooleanVar(
+        self.chrono_interpolate_var = tk.BooleanVar(
             value=getattr(
-                self.options, "self_consistency_chrono_adaptive_tolerance", False
+                self.options,
+                "chrono_interpolate",
+                getattr(self.options, "self_consistency_chrono_interpolate", False),
             )
+        )
+        self.chrono_tolerance_var = tk.DoubleVar(
+            value=getattr(
+                self.options,
+                "chrono_tolerance",
+                getattr(self.options, "self_consistency_chrono_tolerance", 1e-3),
+            )
+        )
+        self.chrono_high_precision_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "chrono_high_precision",
+                getattr(self.options, "self_consistency_chrono_high_precision", False),
+            )
+        )
+        self.chrono_adaptive_tolerance_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "chrono_adaptive_tolerance",
+                getattr(
+                    self.options, "self_consistency_chrono_adaptive_tolerance", False
+                ),
+            )
+        )
+        self.self_consistency_chrono_interpolate_var = self.chrono_interpolate_var
+        self.self_consistency_chrono_tolerance_var = self.chrono_tolerance_var
+        self.self_consistency_chrono_high_precision_var = self.chrono_high_precision_var
+        self.self_consistency_chrono_adaptive_tolerance_var = (
+            self.chrono_adaptive_tolerance_var
         )
         # Gamma reconciliation options
         self.self_consistency_gamma_reconciliation_method_var = tk.StringVar(
@@ -611,7 +633,7 @@ class IntegratorGUI(
         self.self_consistency_enabled_var.trace_add(
             "write", lambda *_: self._toggle_self_consistency_controls()
         )
-        self.self_consistency_chrono_interpolate_var.trace_add(
+        self.chrono_interpolate_var.trace_add(
             "write", lambda *_: self._toggle_chrono_controls()
         )
 

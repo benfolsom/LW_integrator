@@ -51,6 +51,7 @@ from optimization.sweep_result_helpers import (
     build_full_debug_sweep_result_log_lines,
     build_sweep_completion_log_lines,
     build_sweep_run_data,
+    build_sweep_run_metadata,
     build_timeout_sweep_run_record,
     build_truncated_sweep_log_params,
     classify_sweep_attempt_result,
@@ -695,6 +696,7 @@ class OptimizationRunMixin:
             use_no_logging = logging_policy.suppress_run_logs
             use_truncated_logging = logging_policy.use_truncated_run_logs
             use_full_debug = logging_policy.use_full_run_logs
+            sweep_metadata = build_sweep_run_metadata(self.config)
 
             self._log_result(
                 f"Starting BLIND SWEEP (Grid Search): {total_runs} total runs"
@@ -1013,6 +1015,12 @@ class OptimizationRunMixin:
                             metrics=result.get("metrics", {}),
                             driver_params=driver_params_dict,
                         )
+                        run_data["parameters"].update(sweep_metadata)
+                        run_data["parameters"]["rider_energy_gev"] = energy
+                        run_data["parameters"].setdefault(
+                            "driver_energy_gev",
+                            params_dict.get("driver_energy_gev", self.config.driver_energy_gev),
+                        )
 
                         # Log based on verbosity mode
                         if use_no_logging:
@@ -1087,6 +1095,12 @@ class OptimizationRunMixin:
                                 error_details=error_details,
                             )
                         )
+                        failed_runs[-1]["parameters"].update(sweep_metadata)
+                        failed_runs[-1]["parameters"]["rider_energy_gev"] = energy
+                        failed_runs[-1]["parameters"].setdefault(
+                            "driver_energy_gev",
+                            params_dict.get("driver_energy_gev", self.config.driver_energy_gev),
+                        )
                     else:
                         # Don't skip - re-raise and stop sweep
                         self._log_result(f"[ERROR] Run {run_num} failed: {e}")
@@ -1111,6 +1125,12 @@ class OptimizationRunMixin:
                                 steps=steps,
                                 timeout_seconds=self.config.per_run_timeout,
                             )
+                        )
+                        failed_runs[-1]["parameters"].update(sweep_metadata)
+                        failed_runs[-1]["parameters"]["rider_energy_gev"] = energy
+                        failed_runs[-1]["parameters"].setdefault(
+                            "driver_energy_gev",
+                            params_dict.get("driver_energy_gev", self.config.driver_energy_gev),
                         )
                     else:
                         self._log_result(
@@ -1332,14 +1352,16 @@ class OptimizationRunMixin:
                     except Exception as e:
                         self._log_result(f"    Error closing figure {fig_name}: {e}")
 
-            # distance_reached means the relative z-cutoff fired intentionally; compute metrics normally.
-            _distance_reached = (
+            # Planned cutoffs mean the integration reached its requested endpoint; compute metrics normally.
+            _planned_halt = (
                 result.halted_early
                 and isinstance(result.halt_reason, str)
-                and result.halt_reason.startswith("distance_reached")
+                and result.halt_reason.startswith(
+                    ("distance_reached", "cavity_exit_reached")
+                )
             )
             # Check if run was halted early - if so, skip metrics calculation
-            if result.halted_early and not _distance_reached:
+            if result.halted_early and not _planned_halt:
                 halted = build_halted_integration_output(
                     result,
                     run_num=run_num,
@@ -1359,6 +1381,7 @@ class OptimizationRunMixin:
                 result,
                 rider_m_particle=rider_m_particle,
                 run_num=run_num,
+                run_parameters=options.__dict__,
                 optimization_mode=getattr(self.config, "mode", None) == "optimization",
             )
             for line in metrics_outcome.log_lines:

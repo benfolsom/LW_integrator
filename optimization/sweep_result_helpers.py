@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from core.constants import ELECTRON_MASS_AMU
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 
 
@@ -42,6 +43,58 @@ class SuccessfulSweepRunLog:
 def simulation_type_name(simulation_type: Any) -> str:
     """Return a stable serialized name for enum-backed or string-backed modes."""
     return str(getattr(simulation_type, "name", simulation_type))
+
+
+def _particle_species_name(m_particle: Any, charge_sign: Any) -> str:
+    try:
+        mass = float(m_particle)
+    except (TypeError, ValueError):
+        mass = 0.0
+    try:
+        charge = float(charge_sign)
+    except (TypeError, ValueError):
+        charge = 0.0
+
+    if abs(mass - ELECTRON_MASS_AMU) < 1e-6:
+        return "electron" if charge < 0.0 else "positron"
+    if charge < 0.0:
+        return "hminus"
+    return "proton"
+
+
+def build_sweep_run_metadata(config: Any) -> dict[str, Any]:
+    """Return fixed per-run metadata that should ride along with sweep rows."""
+    metadata: dict[str, Any] = {
+        "mode": "multi_pass" if getattr(config, "driver_train_enabled", False) else "single_pass",
+        "driver_train_enabled": bool(getattr(config, "driver_train_enabled", False)),
+        "driver_train_bunch_count": int(getattr(config, "driver_train_bunch_count", 1)),
+        "driver_train_spacing_mm": float(getattr(config, "driver_train_z_spacing_mm", 0.0)),
+        "driver_train_prehistory_steps": int(getattr(config, "driver_train_prehistory_steps", 0)),
+        "driver_species": _particle_species_name(
+            getattr(config, "driver_m_particle", None),
+            getattr(config, "driver_charge_sign", None),
+        ),
+        "rider_species": _particle_species_name(
+            getattr(config, "m_particle", None),
+            getattr(config, "charge_sign", None),
+        ),
+        "driver_size_mm": float(getattr(config, "driver_transv_dist", 0.0)),
+        "rider_size_mm": float(getattr(config, "transv_dist", 0.0)),
+        "driver_long_dist": float(getattr(config, "driver_long_dist", 0.0)),
+        "rider_long_dist": float(getattr(config, "long_dist", 0.0)),
+    }
+
+    cavity_length_mm = getattr(config, "cavity_exit_length_mm", None)
+    if cavity_length_mm is None:
+        cavity_length_mm = getattr(config, "driver_starting_distance", None)
+    if cavity_length_mm is not None:
+        metadata["cavity_length_mm"] = float(cavity_length_mm)
+
+    if is_bunch_to_bunch(getattr(config, "simulation_type", None)):
+        if metadata["driver_species"] != "unknown" and metadata["rider_species"] != "unknown":
+            metadata["pairing"] = f"{metadata['driver_species']}+{metadata['rider_species']}"
+
+    return metadata
 
 
 def build_sweep_run_data(
@@ -550,6 +603,7 @@ __all__ = [
     "build_full_debug_sweep_result_log_lines",
     "build_interrupted_sweep_results_payload",
     "build_sweep_completion_log_lines",
+    "build_sweep_run_metadata",
     "build_sweep_results_payload",
     "build_successful_sweep_run_log",
     "build_sweep_run_data",

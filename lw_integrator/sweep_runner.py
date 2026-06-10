@@ -81,6 +81,7 @@ from optimization.sweep_result_helpers import (
     build_interrupted_sweep_results_payload,
     build_successful_sweep_run_log,
     build_sweep_results_payload,
+    build_sweep_run_metadata,
 )
 from optimization.sweep_run_helpers import (
     build_full_debug_parameter_log_lines,
@@ -196,7 +197,9 @@ def _resolve_cli_driver_setup(
     d_pcount = int(sweep_overrides.get("driver_pcount", config.driver_pcount))
     d_transv_mom = sweep_overrides.get("driver_transv_mom", config.driver_transv_mom)
     d_transv_dist = sweep_overrides.get("driver_transv_dist", config.driver_transv_dist)
-    d_long_dist = sweep_overrides.get("driver_long_dist", getattr(config, "driver_long_dist", 0.0))
+    d_long_dist = sweep_overrides.get(
+        "driver_long_dist", getattr(config, "driver_long_dist", 0.0)
+    )
     d_start_dist = sweep_overrides.get(
         "driver_starting_distance", config.driver_starting_distance
     )
@@ -605,6 +608,9 @@ def _worker_run_combo(payload: dict) -> dict:
     if result.get("parameters") is None:
         result["parameters"] = {}
     result["parameters"].update(params_dict)
+    result["parameters"].update(build_sweep_run_metadata(config))
+    result["parameters"]["rider_energy_gev"] = energy_gev
+    result["parameters"].setdefault("driver_energy_gev", config.driver_energy_gev)
     result["_params_dict"] = params_dict
     return result
 
@@ -872,7 +878,9 @@ class SweepRunner:
         _planned_halt = (
             result.halted_early
             and isinstance(result.halt_reason, str)
-            and result.halt_reason.startswith(("distance_reached", "cavity_exit_reached"))
+            and result.halt_reason.startswith(
+                ("distance_reached", "cavity_exit_reached")
+            )
         )
         if result.halted_early and not _planned_halt:
             if emit_run_summary:
@@ -900,10 +908,12 @@ class SweepRunner:
             self._log_line(
                 f"[OPTIMIZATION]   [DEBUG] Extracting metrics for Run {run_num}..."
             )
+        sweep_metadata = build_sweep_run_metadata(self.config)
         metrics_outcome = build_integration_metrics(
             result,
             rider_m_particle=rider.m_particle,
             run_num=run_num,
+            run_parameters=sweep_metadata,
         )
         metrics = metrics_outcome.metrics
         if emit_run_diagnostics:
@@ -1108,6 +1118,13 @@ class SweepRunner:
                     rider_transv_dist = run_params.rider_transv_dist
 
                     self.results.append(result)
+                    if result.get("parameters") is None:
+                        result["parameters"] = {}
+                    result["parameters"].update(build_sweep_run_metadata(self.config))
+                    result["parameters"]["rider_energy_gev"] = energy
+                    result["parameters"].setdefault(
+                        "driver_energy_gev", self.config.driver_energy_gev
+                    )
 
                     if not result.get("success"):
                         failed_count += 1
@@ -1203,6 +1220,13 @@ class SweepRunner:
                         if result.get("parameters") is None:
                             result["parameters"] = {}
                         result["parameters"].update(params_dict)
+                        result["parameters"].update(
+                            build_sweep_run_metadata(self.config)
+                        )
+                        result["parameters"]["rider_energy_gev"] = energy
+                        result["parameters"].setdefault(
+                            "driver_energy_gev", self.config.driver_energy_gev
+                        )
                         self.results.append(result)
 
                         if not result["success"]:
@@ -1229,6 +1253,13 @@ class SweepRunner:
                                 error_detail=error_detail,
                                 params_dict=params_dict,
                             )
+                        )
+                        self.results[-1]["parameters"].update(
+                            build_sweep_run_metadata(self.config)
+                        )
+                        self.results[-1]["parameters"]["rider_energy_gev"] = energy
+                        self.results[-1]["parameters"].setdefault(
+                            "driver_energy_gev", self.config.driver_energy_gev
                         )
                         result = self.results[-1]
 
@@ -1510,6 +1541,17 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         for source_key, target_key in _driver_train_field_map.items():
             if source_key in driver_train_payload:
                 converted[target_key] = driver_train_payload[source_key]
+
+    _chrono_legacy_map = {
+        "self_consistency_chrono_interpolate": "chrono_interpolate",
+        "self_consistency_chrono_tolerance": "chrono_tolerance",
+        "self_consistency_chrono_matching_mode": "chrono_matching_mode",
+        "self_consistency_chrono_high_precision": "chrono_high_precision",
+        "self_consistency_chrono_adaptive_tolerance": "chrono_adaptive_tolerance",
+    }
+    for legacy_key, chrono_key in _chrono_legacy_map.items():
+        if chrono_key not in converted and legacy_key in converted:
+            converted[chrono_key] = converted[legacy_key]
 
     # Convert sweep_parameters to appropriate ranges and fixed values
     sweep_params = converted.get("sweep_parameters", {})
