@@ -77,6 +77,7 @@ def _optimization_run_params() -> OptimizationRunParameters:
         rider_pcount=2,
         rider_transv_mom=0.0,
         rider_transv_dist=0.0,
+        rider_long_dist=5.0,
         rider_stripped_ions=1.0,
         macroparticle_charge_multiplier=1.0,
         macroparticle_sigma_multiplier=1.0,
@@ -570,6 +571,7 @@ class TestOptimizationPluginIntegration:
         assert captured["kwargs"]["cancel_flag"] is None
         assert captured["kwargs"]["aperture"] == 0.25
         assert captured["kwargs"]["rider_pcount"] == 2
+        assert captured["kwargs"]["rider_long_dist"] == 5.0
 
     def test_run_optimization_evaluation_integration_signals_timeout(self):
         logs = []

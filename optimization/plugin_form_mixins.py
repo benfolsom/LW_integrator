@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 from optimization.sweep_helpers import calculate_starting_pz_from_energy
 
 
@@ -217,12 +218,15 @@ class OptimizationPluginFormMixin:
             ):
                 energy_min = float(self.energy_min_var.get())
                 energy_max = float(self.energy_max_var.get())
-                pz_min = calculate_starting_pz_from_energy(
-                    energy_min, mass_amu, negative=negative
+                pz_min = calculate_rider_starting_pz(
+                    energy_min, mass_amu, "BUNCH_TO_BUNCH"
                 )
-                pz_max = calculate_starting_pz_from_energy(
-                    energy_max, mass_amu, negative=negative
+                pz_max = calculate_rider_starting_pz(
+                    energy_max, mass_amu, "BUNCH_TO_BUNCH"
                 )
+                if negative:
+                    pz_min = -pz_min
+                    pz_max = -pz_max
                 self.driver_pz_helper_var.set(
                     f"→ [LINKED] Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu·mm/ns ({sign_label})"
                 )
@@ -233,12 +237,15 @@ class OptimizationPluginFormMixin:
                 energy_max = abs(
                     float(self.sweep_params["driver_energy_gev"]["max_var"].get())
                 )
-                pz_min = calculate_starting_pz_from_energy(
-                    energy_min, mass_amu, negative=negative
+                pz_min = calculate_rider_starting_pz(
+                    energy_min, mass_amu, "BUNCH_TO_BUNCH"
                 )
-                pz_max = calculate_starting_pz_from_energy(
-                    energy_max, mass_amu, negative=negative
+                pz_max = calculate_rider_starting_pz(
+                    energy_max, mass_amu, "BUNCH_TO_BUNCH"
                 )
+                if negative:
+                    pz_min = -pz_min
+                    pz_max = -pz_max
                 self.driver_pz_helper_var.set(
                     f"→ Pz range: [{pz_min:.2f}, {pz_max:.2f}] amu·mm/ns ({sign_label})"
                 )
@@ -246,9 +253,11 @@ class OptimizationPluginFormMixin:
                 energy_gev = abs(
                     float(self.sweep_params["driver_energy_gev"]["fixed_var"].get())
                 )
-                pz = calculate_starting_pz_from_energy(
-                    energy_gev, mass_amu, negative=negative
+                pz = calculate_rider_starting_pz(
+                    energy_gev, mass_amu, "BUNCH_TO_BUNCH"
                 )
+                if negative:
+                    pz = -pz
                 self.driver_pz_helper_var.set(
                     f"→ Pz = {pz:.2f} amu·mm/ns ({sign_label})"
                 )

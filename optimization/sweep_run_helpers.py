@@ -10,8 +10,9 @@ import numpy as np
 from core.constants import C_MMNS
 from optimization.config import calculate_auto_steps, calculate_auto_timestep
 from optimization.run_parameter_helpers import calculate_transverse_offset
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 from optimization.simulation_type_helpers import is_bunch_to_bunch
-from optimization.sweep_helpers import AMU_TO_MEV, calculate_starting_pz_from_energy
+from optimization.sweep_helpers import AMU_TO_MEV
 
 
 @dataclass(frozen=True)
@@ -279,11 +280,13 @@ def _resolve_driver_params(
     driver_m = params_dict.get("driver_m_particle", config.driver_m_particle)
     driver_neg = getattr(config, "driver_direction", "-z") == "-z"
     if "driver_energy_gev" in params_dict:
-        driver_pz = calculate_starting_pz_from_energy(
+        driver_pz = calculate_rider_starting_pz(
             abs(params_dict["driver_energy_gev"]),
             driver_m,
-            negative=driver_neg,
+            config.simulation_type,
         )
+        if driver_neg:
+            driver_pz = -driver_pz
     else:
         driver_pz = params_dict.get("driver_starting_Pz", config.driver_starting_Pz)
 

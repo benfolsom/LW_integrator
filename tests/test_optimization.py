@@ -49,6 +49,7 @@ from optimization.optimizer import (
 )
 from optimization.parameter_sweep import ParameterGrid, create_energy_aperture_grid
 from optimization.results_mixins import OptimizationResultsMixin
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 from optimization.sweep_helpers import (
     build_parameter_grids,
     calculate_energy_from_pz,
@@ -996,7 +997,9 @@ class TestOptimizationResultsMixin:
             "transverse_geometry": "square",
             "starting_distance": 321.0,
             "starting_Pz": pytest.approx(
-                calculate_starting_pz_from_energy(12.0, 20.0, negative=True)
+                -calculate_rider_starting_pz(
+                    12.0, 20.0, SimulationType.BUNCH_TO_BUNCH
+                )
             ),
             "stripped_ions": 5.0,
             "transv_offset_x": 0.6,

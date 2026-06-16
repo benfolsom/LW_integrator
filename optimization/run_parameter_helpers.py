@@ -7,6 +7,7 @@ from typing import Any, List, Tuple
 
 import numpy as np
 
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 from optimization.sweep_helpers import calculate_starting_pz_from_energy
 
@@ -18,6 +19,7 @@ class OptimizationParameterDefinition:
     name: str
     range_attr: str
     points_attr: str
+    log_scale_attr: str | None = None
     log_when_added: bool = False
 
 
@@ -27,6 +29,7 @@ class OptimizationParameterSelection:
 
     names: List[str]
     bounds: List[Tuple[float, float]]
+    log_scales: List[bool]
     log_lines: List[str]
 
 
@@ -87,22 +90,39 @@ HALO_FRACTION_ENERGY_CONSTRAINED_OBJECTIVES = {
 
 OPTIMIZATION_PARAMETER_DEFINITIONS: tuple[OptimizationParameterDefinition, ...] = (
     OptimizationParameterDefinition(
-        "aperture_radius", "aperture_range", "aperture_points"
+        "aperture_radius", "aperture_range", "aperture_points", "aperture_log_scale"
     ),
     OptimizationParameterDefinition(
-        "initial_energy_gev", "energy_range", "energy_points", log_when_added=True
+        "initial_energy_gev",
+        "energy_range",
+        "energy_points",
+        "energy_log_scale",
+        log_when_added=True,
     ),
     OptimizationParameterDefinition(
         "transverse_momentum",
         "transverse_momentum_range",
         "transverse_momentum_points",
+        "transverse_momentum_log_scale",
         log_when_added=True,
     ),
-    OptimizationParameterDefinition("timestep", "timestep_range", "timestep_points"),
+    OptimizationParameterDefinition(
+        "timestep",
+        "timestep_range",
+        "timestep_points",
+    ),
     OptimizationParameterDefinition(
         "rider_transv_dist",
         "transverse_spread_range",
         "transverse_spread_points",
+        "transverse_spread_log_scale",
+        log_when_added=True,
+    ),
+    OptimizationParameterDefinition(
+        "rider_long_dist",
+        "long_dist_range",
+        "long_dist_points",
+        "long_dist_log_scale",
         log_when_added=True,
     ),
     OptimizationParameterDefinition(
@@ -160,21 +180,34 @@ OPTIMIZATION_PARAMETER_DEFINITIONS: tuple[OptimizationParameterDefinition, ...] 
         "driver_transv_mom",
         "driver_transv_mom_range",
         "driver_transv_mom_points",
+        "driver_transv_mom_log_scale",
         log_when_added=True,
     ),
     OptimizationParameterDefinition(
         "driver_transv_dist",
         "driver_transv_dist_range",
         "driver_transv_dist_points",
+        "driver_transv_dist_log_scale",
+        log_when_added=True,
+    ),
+    OptimizationParameterDefinition(
+        "driver_long_dist",
+        "driver_long_dist_range",
+        "driver_long_dist_points",
+        "driver_long_dist_log_scale",
         log_when_added=True,
     ),
     OptimizationParameterDefinition(
         "driver_starting_distance",
         "driver_starting_distance_range",
         "driver_starting_distance_points",
+        "driver_starting_distance_log_scale",
     ),
     OptimizationParameterDefinition(
-        "driver_energy_gev", "driver_energy_range", "driver_energy_points"
+        "driver_energy_gev",
+        "driver_energy_range",
+        "driver_energy_points",
+        "driver_energy_log_scale",
     ),
 )
 
@@ -185,6 +218,7 @@ def collect_optimization_parameter_selection(
     """Return enabled optimizer parameters in the historical declaration order."""
     names: List[str] = []
     bounds: List[Tuple[float, float]] = []
+    log_scales: List[bool] = []
     log_lines: List[str] = []
 
     for definition in OPTIMIZATION_PARAMETER_DEFINITIONS:
@@ -195,15 +229,50 @@ def collect_optimization_parameter_selection(
 
         names.append(definition.name)
         bounds.append(range_value)
+        log_scales.append(
+            bool(getattr(config, definition.log_scale_attr, False))
+            if definition.log_scale_attr is not None
+            else False
+        )
         if definition.log_when_added:
             log_lines.append(
                 f"    Added: {definition.name}, "
-                f"range={range_value}, points={point_count}"
+                f"range={range_value}, points={point_count}, "
+                f"log={log_scales[-1]}"
             )
 
     return OptimizationParameterSelection(
-        names=names, bounds=bounds, log_lines=log_lines
+        names=names, bounds=bounds, log_scales=log_scales, log_lines=log_lines
     )
+
+
+def encode_optimization_parameter_values(
+    values: List[float] | Tuple[float, ...] | np.ndarray,
+    log_scales: List[bool],
+) -> List[float]:
+    """Map physical parameter values into optimizer-space values."""
+    encoded: List[float] = []
+    for value, use_log in zip(values, log_scales):
+        numeric = float(value)
+        if use_log:
+            if numeric <= 0.0:
+                raise ValueError("Log-scaled optimization parameters must be positive")
+            encoded.append(float(np.log10(numeric)))
+        else:
+            encoded.append(numeric)
+    return encoded
+
+
+def decode_optimization_parameter_values(
+    values: List[float] | Tuple[float, ...] | np.ndarray,
+    log_scales: List[bool],
+) -> List[float]:
+    """Map optimizer-space values back into physical parameter values."""
+    decoded: List[float] = []
+    for value, use_log in zip(values, log_scales):
+        numeric = float(value)
+        decoded.append(float(10**numeric) if use_log else numeric)
+    return decoded
 
 
 def resolve_objective_metric(objective: str) -> tuple[str, bool]:
@@ -287,6 +356,7 @@ def resolve_optimization_run_parameters(
     driver_starting_distance = config.driver_starting_distance
     driver_starting_pz = config.driver_starting_Pz
     driver_energy_gev = getattr(config, "driver_energy_gev", None)
+    driver_starting_pz_explicit = False
 
     for index, param_name in enumerate(param_names):
         value = values[index]
@@ -339,15 +409,30 @@ def resolve_optimization_run_parameters(
         elif param_name == "driver_energy_gev":
             driver_energy_gev = value
             driver_negative = getattr(config, "driver_direction", "-z") == "-z"
-            driver_starting_pz = calculate_starting_pz_from_energy(
-                value, driver_m_particle, negative=driver_negative
+            driver_starting_pz = calculate_rider_starting_pz(
+                value, driver_m_particle, config.simulation_type
             )
+            if driver_negative:
+                driver_starting_pz = -driver_starting_pz
         elif param_name == "driver_starting_Pz":
             driver_starting_pz = value
+            driver_starting_pz_explicit = True
 
     transv_offset = calculate_transverse_offset(
         config.simulation_type, offset_value, aperture
     )
+
+    if (
+        is_bunch_to_bunch(config.simulation_type)
+        and driver_energy_gev is not None
+        and not driver_starting_pz_explicit
+    ):
+        driver_negative = getattr(config, "driver_direction", "-z") == "-z"
+        driver_starting_pz = calculate_rider_starting_pz(
+            driver_energy_gev, driver_m_particle, config.simulation_type
+        )
+        if driver_negative:
+            driver_starting_pz = -driver_starting_pz
 
     driver_params = None
     if is_bunch_to_bunch(config.simulation_type):
