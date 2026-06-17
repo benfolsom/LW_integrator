@@ -77,6 +77,70 @@ def compute_visibility_mask(
     return visible
 
 
+def compute_directional_visibility_mask(
+    source_positions: np.ndarray,
+    geometry: BeamlineGeometryConfig,
+    observer_direction: tuple[float, float, float],
+) -> np.ndarray:
+    """Direction-specific visibility: source must be inside the observer's pipe.
+
+    For each source particle, the relevant occluder is the one whose axis is
+    most aligned with the observer's propagation direction. The source is
+    visible only if it is inside that occluder's transverse aperture and axial
+    extent. This models the physical geometry: a driver particle inside the
+    electron pipe (z-axis) has line of sight down z to the rider; once it
+    exits the electron pipe (|y| > R), its fields can no longer propagate
+    along z to reach the rider.
+
+    Parameters
+    ----------
+    source_positions: shape (N, 3), retarded source positions.
+    geometry: beamline geometry config.
+    observer_direction: the observer bunch's propagation direction (e.g.
+        (0,0,1) for a +z rider). The occluder whose axis is most aligned
+        with this direction is selected as the line-of-sight pipe.
+
+    Returns
+    -------
+    Boolean mask of shape (N,). True = visible (source inside the
+    observer's pipe). If geometry is disabled or has no occluders, all
+    positions are visible.
+    """
+    if not geometry.enabled or not geometry.occluders:
+        return np.ones(source_positions.shape[0], dtype=bool)
+
+    positions = np.asarray(source_positions, dtype=float)
+    if positions.ndim == 1:
+        positions = positions.reshape(1, -1)
+
+    obs_dir = np.asarray(observer_direction, dtype=float)
+    obs_norm = float(np.linalg.norm(obs_dir))
+    if obs_norm < 1e-15:
+        return np.ones(positions.shape[0], dtype=bool)
+    obs_dir = obs_dir / obs_norm
+
+    # Select the occluder whose axis is most aligned with the observer direction.
+    best_occluder = None
+    best_alignment = -1.0
+    for occluder in geometry.occluders:
+        axis = np.asarray(occluder.axis, dtype=float)
+        alignment = abs(float(np.dot(axis, obs_dir)))
+        if alignment > best_alignment:
+            best_alignment = alignment
+            best_occluder = occluder
+
+    if best_occluder is None:
+        return np.ones(positions.shape[0], dtype=bool)
+
+    dist_sq = _occluder_transverse_distance_sq(positions, best_occluder)
+    axial = _occluder_axial_position(positions, best_occluder)
+    half_length = best_occluder.length_mm * 0.5
+    radius_sq = best_occluder.radius_mm * best_occluder.radius_mm
+    visible = (dist_sq < radius_sq) & (np.abs(axial) <= half_length)
+    return visible
+
+
 __all__ = [
     "compute_visibility_mask",
+    "compute_directional_visibility_mask",
 ]

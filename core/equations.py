@@ -85,7 +85,7 @@ from .distances import (
     compute_retarded_distance,
     compute_retarded_distance_soa,
 )
-from .beamline_geometry import compute_visibility_mask
+from .beamline_geometry import compute_directional_visibility_mask
 from .external_fields import compute_uniform_external_field_impulse
 from .macroparticle_smearing import effective_observer_charge, smear_source_samples
 from .self_consistency import (
@@ -1792,8 +1792,14 @@ def retarded_equations_of_motion(
                         ],
                         axis=-1,
                     )
-                    visibility = compute_visibility_mask(
-                        src_positions, beamline_geometry
+                    visibility = compute_directional_visibility_mask(
+                        src_positions,
+                        beamline_geometry,
+                        observer_direction=(
+                            float(working_beta_x),
+                            float(working_beta_y),
+                            float(working_beta_z),
+                        ),
                     )
                     external_samples.valid_mask = (
                         external_samples.valid_mask & visibility
