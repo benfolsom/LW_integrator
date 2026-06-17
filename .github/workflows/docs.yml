@@ -3,7 +3,7 @@ name: Docs
 on:
   push:
     branches:
-      - main
+      - master
       - development
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: Docs-${{ github.ref }}
+  group: ${{ github.ref == 'refs/heads/master' && 'pages' || format('Docs-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
@@ -38,13 +38,14 @@ jobs:
         run: sphinx-build -b html source build/html
 
       - name: Upload documentation artifact
+        if: github.ref == 'refs/heads/master'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/build/html
 
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/master'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
