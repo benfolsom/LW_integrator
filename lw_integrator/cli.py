@@ -2121,11 +2121,68 @@ def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
             "Particle configuration is missing required fields: " + ", ".join(missing)
         )
 
+    if "momentum_axis" in payload:
+        state = _build_particle_state_3d(payload)
+    else:
+        try:
+            state, _rest_energy = create_bunch_from_energy(**payload)
+        except TypeError as exc:
+            raise SimulationConfigError(
+                f"Particle configuration includes unsupported options: {exc}"
+            ) from exc
+
+    return state
+
+
+def _build_particle_state_3d(payload: Mapping[str, Any]) -> ParticleState:
+    """Build a 3D-oriented bunch when ``momentum_axis`` is present."""
+    from core.particle_initialization import create_particle_state_3d
+
     try:
-        state, _rest_energy = create_bunch_from_energy(**payload)
-    except TypeError as exc:
+        axis = tuple(float(v) for v in payload["momentum_axis"])
+    except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
-            f"Particle configuration includes unsupported options: {exc}"
+            f"momentum_axis must be a list of 3 numbers: {exc}"
+        ) from exc
+
+    starting_position = payload.get(
+        "starting_position_mm", [0.0, 0.0, 0.0]
+    )
+    try:
+        starting_position = tuple(float(v) for v in starting_position)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"starting_position_mm must be a list of 3 numbers: {exc}"
+        ) from exc
+
+    transverse_axes = payload.get("transverse_axes")
+    if transverse_axes is not None:
+        try:
+            transverse_axes = tuple(
+                tuple(float(v) for v in ax) for ax in transverse_axes
+            )
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"transverse_axes must be a list of axis lists: {exc}"
+            ) from exc
+
+    try:
+        state, _rest_energy = create_particle_state_3d(
+            starting_position_mm=starting_position,
+            momentum_axis=axis,
+            kinetic_energy_mev=float(payload["kinetic_energy_mev"]),
+            stripped_ions=float(payload.get("stripped_ions", 1.0)),
+            particle_mass_amu=float(payload["mass_amu"]),
+            particle_count=int(payload.get("particle_count", 1)),
+            charge_sign=float(payload["charge_sign"]),
+            transverse_distance_mm=float(payload.get("transverse_distance_mm", 0.0)),
+            transverse_momentum=float(payload.get("transverse_momentum", 0.0)),
+            longitudinal_span_mm=float(payload.get("longitudinal_span_mm", 0.0)),
+            transverse_axes=transverse_axes,
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"3D particle configuration error: {exc}"
         ) from exc
 
     return state

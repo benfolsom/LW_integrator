@@ -952,6 +952,10 @@ class IntegratorGUIConfigMixin:
                 self.driver_train_preserve_prehistory_var.get()
             ),
             save_log_file=bool(self.save_log_file_var.get()),
+            beamline_geometry_enabled=bool(
+                self.beamline_geometry_enabled_var.get()
+            ),
+            beamline_geometry_occluders=self._collect_beamline_geometry_occluders(),
         )
 
     def _save_config(self) -> None:

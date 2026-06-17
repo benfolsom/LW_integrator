@@ -2653,3 +2653,20 @@ class IntegratorGUITabMixin:
         block = dict(parsed)
         block["enabled"] = bool(self.beamline_geometry_enabled_var.get())
         return block
+
+    def _collect_beamline_geometry_occluders(self) -> list:
+        """Return the occluders list from the geometry tab as plain dicts.
+
+        Used by ``_build_options_from_ui`` to populate
+        ``SimulationOptions.beamline_geometry_occluders``.
+        """
+        payload = self._collect_beamline_geometry_payload()
+        occluders = payload.get("occluders", [])
+        if not isinstance(occluders, list):
+            return []
+        result = []
+        for item in occluders:
+            if not isinstance(item, dict):
+                continue
+            result.append(item)
+        return result
