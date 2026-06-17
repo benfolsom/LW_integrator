@@ -632,10 +632,22 @@ def save_top_n_optimization_trajectories(
                 f"Generating top {n_available} trajectories from population..."
             )
 
+            from optimization.run_parameter_helpers import (
+                collect_optimization_parameter_selection,
+                decode_optimization_parameter_values,
+            )
+
+            selection = collect_optimization_parameter_selection(plugin.config)
+            param_log_scales = selection.log_scales
+
             for i in range(n_available):
                 idx = sorted_indices[i]
                 params_array = result.final_population[idx]
-                params_dict = dict(zip(param_names, params_array))
+                params_values = decode_optimization_parameter_values(
+                    params_array,
+                    param_log_scales,
+                )
+                params_dict = dict(zip(param_names, params_values))
                 fitness = fitness_array[idx]
                 top_params_list.append(
                     {"params": params_dict, "fitness": fitness, "rank": i + 1}

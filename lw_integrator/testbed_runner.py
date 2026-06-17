@@ -1351,6 +1351,133 @@ def _mean_alive_gamma_series(states: list[Dict[str, Any]]) -> np.ndarray:
     return _alive_average_series(states, "gamma", default=1.0)
 
 
+def _slice_particle_state(
+    state: Dict[str, Any], start: int, stop: int
+) -> Dict[str, Any]:
+    particle_count = len(np.asarray(state.get("x", [])))
+    sliced: Dict[str, Any] = {}
+    for key, value in state.items():
+        if key.startswith("_"):
+            if isinstance(value, np.ndarray) and value.shape[:1] == (particle_count,):
+                sliced[key] = np.asarray(value)[start:stop].copy()
+            elif isinstance(value, dict):
+                sliced[key] = dict(value)
+            else:
+                sliced[key] = value
+            continue
+
+        if isinstance(value, np.ndarray) and value.shape[:1] == (particle_count,):
+            sliced[key] = value[start:stop].copy()
+        elif isinstance(value, np.ndarray):
+            sliced[key] = np.copy(value)
+        elif isinstance(value, dict):
+            sliced[key] = dict(value)
+        else:
+            sliced[key] = value
+    return sliced
+
+
+def _compute_energy_ledger_series(
+    states: list[Dict[str, Any]],
+    initial_state: Dict[str, Any],
+    rest_energy_mev: float,
+) -> Dict[str, np.ndarray | float]:
+    gamma_initial = compute_alive_particle_average(initial_state, "gamma") or 1.0
+    bz_initial = compute_alive_particle_average(initial_state, "bz") or 0.0
+
+    gamma_series = _alive_average_series(states, "gamma", default=gamma_initial)
+    bz_series = _alive_average_series(states, "bz", default=bz_initial)
+
+    kinetic_energy_mev = np.maximum((gamma_series - 1.0) * rest_energy_mev, 0.0)
+    initial_kinetic_energy_mev = max((gamma_initial - 1.0) * rest_energy_mev, 0.0)
+    delta_kinetic_energy_mev = kinetic_energy_mev - initial_kinetic_energy_mev
+
+    longitudinal_kinetic_energy_mev = gamma_series * bz_series * rest_energy_mev
+    initial_longitudinal_kinetic_energy_mev = gamma_initial * bz_initial * rest_energy_mev
+    delta_kinetic_energy_z_mev = (
+        longitudinal_kinetic_energy_mev - initial_longitudinal_kinetic_energy_mev
+    )
+
+    return {
+        "kinetic_energy_mev": kinetic_energy_mev,
+        "delta_kinetic_energy_mev": delta_kinetic_energy_mev,
+        "longitudinal_kinetic_energy_mev": longitudinal_kinetic_energy_mev,
+        "delta_kinetic_energy_z_mev": delta_kinetic_energy_z_mev,
+        "initial_gamma": float(gamma_initial),
+        "initial_bz": float(bz_initial),
+        "initial_kinetic_energy_mev": float(initial_kinetic_energy_mev),
+        "initial_longitudinal_kinetic_energy_mev": float(
+            initial_longitudinal_kinetic_energy_mev
+        ),
+    }
+
+
+def _ledger_scalar_metrics(
+    prefix: str,
+    ledger: Dict[str, np.ndarray | float],
+) -> Dict[str, float]:
+    kinetic_energy_mev = np.asarray(ledger["kinetic_energy_mev"], dtype=float)
+    delta_kinetic_energy_mev = np.asarray(ledger["delta_kinetic_energy_mev"], dtype=float)
+    delta_kinetic_energy_z_mev = np.asarray(
+        ledger["delta_kinetic_energy_z_mev"], dtype=float
+    )
+
+    metrics = {
+        f"{prefix}_initial_mean_kinetic_energy_mev": float(
+            ledger["initial_kinetic_energy_mev"]
+        ),
+        f"{prefix}_final_mean_kinetic_energy_mev": float(kinetic_energy_mev[-1]),
+        f"{prefix}_max_mean_kinetic_energy_mev": float(np.max(kinetic_energy_mev)),
+        f"{prefix}_final_delta_kinetic_energy_mev": float(
+            delta_kinetic_energy_mev[-1]
+        ),
+        f"{prefix}_max_delta_kinetic_energy_mev": float(
+            np.max(delta_kinetic_energy_mev)
+        ),
+        f"{prefix}_final_delta_kinetic_energy_z_mev": float(
+            delta_kinetic_energy_z_mev[-1]
+        ),
+        f"{prefix}_max_delta_kinetic_energy_z_mev": float(
+            np.max(delta_kinetic_energy_z_mev)
+        ),
+        f"{prefix}_min_delta_kinetic_energy_z_mev": float(
+            np.min(delta_kinetic_energy_z_mev)
+        ),
+    }
+    return metrics
+
+
+def _compute_driver_bunch_energy_ledgers(
+    states: list[Dict[str, Any]],
+    initial_state: Dict[str, Any],
+    rest_energy_mev: float,
+    *,
+    bunch_count: int,
+) -> list[Dict[str, np.ndarray | float]]:
+    if bunch_count <= 1:
+        return []
+
+    particle_count = len(np.asarray(initial_state.get("x", [])))
+    if particle_count <= 0 or particle_count % bunch_count != 0:
+        return []
+
+    particles_per_bunch = particle_count // bunch_count
+    ledgers: list[Dict[str, np.ndarray | float]] = []
+    for bunch_index in range(bunch_count):
+        start = bunch_index * particles_per_bunch
+        stop = start + particles_per_bunch
+        bunch_states = [_slice_particle_state(state, start, stop) for state in states]
+        bunch_initial_state = _slice_particle_state(initial_state, start, stop)
+        ledgers.append(
+            _compute_energy_ledger_series(
+                bunch_states,
+                bunch_initial_state,
+                rest_energy_mev,
+            )
+        )
+    return ledgers
+
+
 def _compute_alive_particle_radial_summary(
     state: Dict[str, Any],
     *,
@@ -1468,7 +1595,7 @@ class RunResult:
     duration_s: float
     filename_base: str
     debug_log_path: Optional[Path] = None
-    # Additional computed values for optimization
+    # Additional computed values for optimization and study ledgers
     rider_delta_e: Optional[float] = None  # Final energy change in MeV
     rider_gamma_initial: Optional[float] = None
     rider_gamma_final: Optional[float] = None
@@ -1476,6 +1603,7 @@ class RunResult:
     driver_gamma_initial: Optional[float] = None
     driver_gamma_final: Optional[float] = None
     driver_trajectory: Optional[Dict[str, Any]] = None
+    energy_ledger_metrics: Optional[Dict[str, Any]] = None
     # Beam optics parameters (initial)
     rider_emittance_x_mm_mrad: Optional[float] = None
     rider_emittance_y_mm_mrad: Optional[float] = None
@@ -2319,6 +2447,10 @@ def run_testbed(
     driver_gamma_initial = None
     driver_gamma_final = None
     driver_trajectory_data = None
+    energy_ledger_metrics = None
+    rider_energy_ledger = None
+    driver_energy_ledger = None
+    driver_bunch_ledgers: list[Dict[str, np.ndarray | float]] = []
     rider_emittance_x = None
     rider_emittance_y = None
     rider_norm_emittance_x = None
@@ -2411,7 +2543,13 @@ def run_testbed(
                 )
             )
             rider_delta_e = rider_delta_e_total  # For backward compatibility
-            rider_z_rel = rider_z  # Use absolute z-positions for plotting
+            rider_delta_e = rider_delta_e_total  # backward-compatible scalar series
+            rider_z_rel = rider_z  # use absolute z-position for plotting
+            rider_energy_ledger = _compute_energy_ledger_series(
+                rider_states,
+                rider_initial,
+                rider_rest_mev,
+            )
 
             # Compute transverse energy components (use alive particles only)
             rider_gamma_series = _mean_alive_gamma_series(rider_states)
@@ -2541,6 +2679,21 @@ def run_testbed(
                     "x": x_arr,
                     "y": y_arr,
                     "r": r_arr,
+                    "kinetic_energy_mev": np.asarray(
+                        rider_energy_ledger["kinetic_energy_mev"], dtype=float
+                    ),
+                    "delta_kinetic_energy_mev": np.asarray(
+                        rider_energy_ledger["delta_kinetic_energy_mev"],
+                        dtype=float,
+                    ),
+                    "longitudinal_kinetic_energy_mev": np.asarray(
+                        rider_energy_ledger["longitudinal_kinetic_energy_mev"],
+                        dtype=float,
+                    ),
+                    "delta_kinetic_energy_z_mev": np.asarray(
+                        rider_energy_ledger["delta_kinetic_energy_z_mev"],
+                        dtype=float,
+                    ),
                     "r_mean_particle": r_mean_particle_arr,
                     "r_rms_particle": r_rms_particle_arr,
                     "r_p50_particle": _summary_series(
@@ -2658,6 +2811,22 @@ def run_testbed(
                 )
                 driver_delta_e = driver_delta_e_total  # For backward compatibility
                 driver_z_rel = driver_z  # Use absolute z-positions for plotting
+                driver_energy_ledger = _compute_energy_ledger_series(
+                    driver_states,
+                    driver_initial,
+                    driver_rest_mev,
+                )
+                driver_train_bunch_count = (
+                    int(options.driver_train_bunch_count)
+                    if options.driver_train_enabled
+                    else 1
+                )
+                driver_bunch_ledgers = _compute_driver_bunch_energy_ledgers(
+                    driver_states,
+                    driver_initial,
+                    driver_rest_mev,
+                    bunch_count=driver_train_bunch_count,
+                )
 
                 # Compute transverse energy components
                 driver_gamma_series = _mean_alive_gamma_series(driver_states)
@@ -2776,6 +2945,21 @@ def run_testbed(
                         "x": x_arr,
                         "y": y_arr,
                         "r": r_arr,
+                        "kinetic_energy_mev": np.asarray(
+                            driver_energy_ledger["kinetic_energy_mev"], dtype=float
+                        ),
+                        "delta_kinetic_energy_mev": np.asarray(
+                            driver_energy_ledger["delta_kinetic_energy_mev"],
+                            dtype=float,
+                        ),
+                        "longitudinal_kinetic_energy_mev": np.asarray(
+                            driver_energy_ledger["longitudinal_kinetic_energy_mev"],
+                            dtype=float,
+                        ),
+                        "delta_kinetic_energy_z_mev": np.asarray(
+                            driver_energy_ledger["delta_kinetic_energy_z_mev"],
+                            dtype=float,
+                        ),
                         "r_mean_particle": r_mean_particle_arr,
                         "r_rms_particle": r_rms_particle_arr,
                         "r_p50_particle": _summary_series(
@@ -2858,6 +3042,82 @@ def run_testbed(
         else:
             driver_delta_e = None
             driver_z_rel = None
+
+        if rider_energy_ledger is not None:
+            energy_ledger_metrics = _ledger_scalar_metrics("rider", rider_energy_ledger)
+            if rider_trajectory_data is not None:
+                rider_trajectory_data["net_delta_kinetic_energy_z_mev"] = np.asarray(
+                    rider_energy_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                )
+
+            if driver_energy_ledger is not None:
+                energy_ledger_metrics.update(
+                    _ledger_scalar_metrics("driver", driver_energy_ledger)
+                )
+                rider_net_z = np.asarray(
+                    rider_energy_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                ) + np.asarray(
+                    driver_energy_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                )
+                energy_ledger_metrics["net_final_delta_kinetic_energy_z_mev"] = float(
+                    rider_net_z[-1]
+                )
+                energy_ledger_metrics["net_max_delta_kinetic_energy_z_mev"] = float(
+                    np.max(rider_net_z)
+                )
+                energy_ledger_metrics["net_min_delta_kinetic_energy_z_mev"] = float(
+                    np.min(rider_net_z)
+                )
+
+                if rider_trajectory_data is not None:
+                    rider_trajectory_data["driver_delta_kinetic_energy_mev"] = np.asarray(
+                        driver_energy_ledger["delta_kinetic_energy_mev"], dtype=float
+                    )
+                    rider_trajectory_data[
+                        "driver_delta_kinetic_energy_z_mev"
+                    ] = np.asarray(
+                        driver_energy_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                    )
+                    rider_trajectory_data["net_delta_kinetic_energy_z_mev"] = (
+                        rider_net_z
+                    )
+
+                if driver_trajectory_data is not None:
+                    driver_trajectory_data["net_delta_kinetic_energy_z_mev"] = (
+                        rider_net_z
+                    )
+
+                if driver_bunch_ledgers:
+                    energy_ledger_metrics["driver_bunch_count"] = len(
+                        driver_bunch_ledgers
+                    )
+                    for bunch_idx, bunch_ledger in enumerate(driver_bunch_ledgers, start=1):
+                        bunch_prefix = f"driver_bunch_{bunch_idx:02d}"
+                        energy_ledger_metrics.update(
+                            _ledger_scalar_metrics(bunch_prefix, bunch_ledger)
+                        )
+                        if rider_trajectory_data is not None:
+                            rider_trajectory_data[
+                                f"{bunch_prefix}_delta_kinetic_energy_mev"
+                            ] = np.asarray(
+                                bunch_ledger["delta_kinetic_energy_mev"], dtype=float
+                            )
+                            rider_trajectory_data[
+                                f"{bunch_prefix}_delta_kinetic_energy_z_mev"
+                            ] = np.asarray(
+                                bunch_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                            )
+                        if driver_trajectory_data is not None:
+                            driver_trajectory_data[
+                                f"{bunch_prefix}_delta_kinetic_energy_mev"
+                            ] = np.asarray(
+                                bunch_ledger["delta_kinetic_energy_mev"], dtype=float
+                            )
+                            driver_trajectory_data[
+                                f"{bunch_prefix}_delta_kinetic_energy_z_mev"
+                            ] = np.asarray(
+                                bunch_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                            )
 
         if (
             (energy_save or energy_display)
@@ -3882,6 +4142,7 @@ def run_testbed(
         driver_gamma_initial=driver_gamma_initial,
         driver_gamma_final=driver_gamma_final,
         driver_trajectory=driver_trajectory_data,
+        energy_ledger_metrics=energy_ledger_metrics,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,
         rider_norm_emittance_x_mm_mrad=rider_norm_emittance_x,
