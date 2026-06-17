@@ -500,6 +500,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Optional absolute cavity length; default uses initial rider-driver separation.",
     )
     parser.add_argument(
+        "--cavity-exit-mode",
+        choices=("first_exit", "rider_exit_with_driver_tail"),
+        dest="cavity_exit_mode",
+        help=(
+            "Cavity-exit behavior. 'first_exit' stops on the first rider/driver "
+            "exit; 'rider_exit_with_driver_tail' stops on rider exit while "
+            "muting driver-train bunches after their exit-tail window."
+        ),
+    )
+    parser.add_argument(
         "--chrono-mode",
         choices=("averaged", "fast"),
         help=(
@@ -1120,6 +1130,8 @@ def _merge_simulation_payload(
         result["cavity_exit"] = cavity_exit
     if getattr(args, "cavity_exit_enabled", None) is not None:
         cavity_exit["enabled"] = bool(args.cavity_exit_enabled)
+    if getattr(args, "cavity_exit_mode", None) is not None:
+        cavity_exit["mode"] = args.cavity_exit_mode
     if getattr(args, "cavity_exit_length_mm", None) is not None:
         cavity_exit["cavity_length_mm"] = args.cavity_exit_length_mm
 

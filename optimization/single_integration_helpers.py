@@ -447,6 +447,7 @@ def build_single_integration_setup(
             2,
         ),
         cavity_exit_enabled=getattr(config, "cavity_exit_enabled", False),
+        cavity_exit_mode=getattr(config, "cavity_exit_mode", "first_exit"),
         cavity_exit_length_mm=getattr(config, "cavity_exit_length_mm", None),
         cavity_exit_residual_tail_factor=getattr(
             config, "cavity_exit_residual_tail_factor", 0.0
@@ -539,6 +540,21 @@ def _trajectory_last_finite_scalar(
     if finite.size == 0:
         return None
     return float(finite[-1])
+
+
+def _trajectory_last_scalar(
+    trajectory: Mapping[str, Any] | None,
+    key: str,
+) -> Any | None:
+    if trajectory is None:
+        return None
+    values = trajectory.get(key)
+    if values is None:
+        return None
+    array = np.asarray(values).reshape(-1)
+    if array.size == 0:
+        return None
+    return array[-1].item() if hasattr(array[-1], "item") else array[-1]
 
 
 def _trajectory_first_finite_scalar(

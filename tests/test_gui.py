@@ -857,6 +857,8 @@ def test_driver_train_and_pseudo_grid_settings_round_trip_through_gui_options():
                 driver_train_z_offsets_mm=(0.0, 100.0, 250.0),
                 driver_train_prehistory_steps=12,
                 driver_train_preserve_prehistory_in_output=True,
+                cavity_exit_enabled=True,
+                cavity_exit_mode="rider_exit_with_driver_tail",
             ),
             preserve_directories=True,
         )
@@ -864,6 +866,8 @@ def test_driver_train_and_pseudo_grid_settings_round_trip_through_gui_options():
         assert app.pseudo_grid_enabled_var.get() is True
         assert app.driver_train_enabled_var.get() is True
         assert app.driver_train_bunch_count_var.get() == 3
+        assert app.cavity_exit_enabled_var.get() is True
+        assert app.cavity_exit_mode_var.get() == "rider_exit_with_driver_tail"
 
         rebuilt = app._build_options_from_ui()
 
@@ -871,11 +875,11 @@ def test_driver_train_and_pseudo_grid_settings_round_trip_through_gui_options():
         assert rebuilt.driver_train_enabled is True
         assert rebuilt.driver_train_bunch_count == 3
         assert rebuilt.driver_train_z_spacing_mm == pytest.approx(2997.92458)
-        assert rebuilt.driver_train_z_offsets_mm == pytest.approx(
-            (0.0, 100.0, 250.0)
-        )
+        assert rebuilt.driver_train_z_offsets_mm == pytest.approx((0.0, 100.0, 250.0))
         assert rebuilt.driver_train_prehistory_steps == 12
         assert rebuilt.driver_train_preserve_prehistory_in_output is True
+        assert rebuilt.cavity_exit_enabled is True
+        assert rebuilt.cavity_exit_mode == "rider_exit_with_driver_tail"
     finally:
         root.destroy()
 

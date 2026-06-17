@@ -271,8 +271,12 @@ class CavityExitConfig:
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
         self.mode = str(self.mode)
-        if self.mode not in {"first_exit"}:
-            raise ValueError("cavity_exit mode must be 'first_exit'")
+        allowed_modes = {"first_exit", "rider_exit_with_driver_tail"}
+        if self.mode not in allowed_modes:
+            raise ValueError(
+                "cavity_exit mode must be 'first_exit' or "
+                "'rider_exit_with_driver_tail'"
+            )
         if self.cavity_length_mm is not None:
             self.cavity_length_mm = float(self.cavity_length_mm)
             if self.cavity_length_mm <= 0:

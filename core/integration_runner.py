@@ -204,8 +204,8 @@ class AdaptiveTimestepConfig:
 
     # Bunch-separation proximity refinement (BUNCH_TO_BUNCH mode only)
     bunch_proximity_enabled: bool = False
-    bunch_proximity_sigma_mm: float = 5.0    # characteristic bunch length scale (mm)
-    bunch_proximity_n_sigma: float = 5.0     # engage when separation < n_sigma * sigma_mm
+    bunch_proximity_sigma_mm: float = 5.0  # characteristic bunch length scale (mm)
+    bunch_proximity_n_sigma: float = 5.0  # engage when separation < n_sigma * sigma_mm
     bunch_proximity_reduction_factor: float = 10.0  # divisor at full engagement
     bunch_proximity_transition_n_sigma: float = 2.0  # ramp-in width (sigma units)
 
@@ -370,16 +370,35 @@ def _motion_direction_sign(state: ParticleState) -> float:
 
 
 def _leading_edge_z(state: ParticleState) -> float:
-    z_values = np.asarray(state["z"], dtype=float)
+    return _leading_edge_z_for_slice(state, slice(None))
+
+
+def _leading_edge_z_for_slice(state: ParticleState, particle_slice: slice) -> float:
+    z_values = np.asarray(state["z"], dtype=float)[particle_slice]
     if z_values.size == 0:
         return 0.0
 
-    direction = _motion_direction_sign(state)
-    if direction < 0.0:
-        return float(np.min(z_values))
-    if direction > 0.0:
-        return float(np.max(z_values))
-    return _centroid_z(state)
+    beta_z = np.asarray(state.get("bz", []), dtype=float)
+    if beta_z.size:
+        beta_z = beta_z[particle_slice]
+        if beta_z.size:
+            mean_beta_z = float(np.mean(beta_z))
+            if mean_beta_z < 0.0:
+                return float(np.min(z_values))
+            if mean_beta_z > 0.0:
+                return float(np.max(z_values))
+
+    pz = np.asarray(state.get("Pz", []), dtype=float)
+    if pz.size:
+        pz = pz[particle_slice]
+        if pz.size:
+            mean_pz = float(np.mean(pz))
+            if mean_pz < 0.0:
+                return float(np.min(z_values))
+            if mean_pz > 0.0:
+                return float(np.max(z_values))
+
+    return float(np.mean(z_values))
 
 
 def _crossed_exit(previous_z: float, current_z: float, exit_z: float) -> bool:
@@ -403,6 +422,18 @@ def _state_mean(state: ParticleState, key: str, default: float = 0.0) -> float:
     if array.size == 0:
         return default
     return float(np.mean(array))
+
+
+def _driver_train_bunch_slices(
+    driver_train: DriverTrainConfig,
+    particles_per_bunch: int,
+) -> tuple[slice, ...]:
+    if not driver_train.enabled:
+        return ()
+    return tuple(
+        slice(index * particles_per_bunch, (index + 1) * particles_per_bunch)
+        for index in range(driver_train.bunch_count)
+    )
 
 
 def _build_driver_train_initial_state(
@@ -890,13 +921,16 @@ def _run_adaptive_step(
         if separation <= engage_dist:
             bunch_proximity_reduction_active = True
             if separation <= full_dist:
-                bunch_proximity_factor = adaptive_timestep.bunch_proximity_reduction_factor
+                bunch_proximity_factor = (
+                    adaptive_timestep.bunch_proximity_reduction_factor
+                )
                 zone_name = "full reduction"
             else:
                 transition_width = engage_dist - full_dist
                 ramp = (engage_dist - separation) / transition_width
                 bunch_proximity_factor = (
-                    1.0 + (adaptive_timestep.bunch_proximity_reduction_factor - 1.0) * ramp
+                    1.0
+                    + (adaptive_timestep.bunch_proximity_reduction_factor - 1.0) * ramp
                 )
                 zone_name = "transition"
 
@@ -1756,6 +1790,12 @@ def retarded_integrator(
     particle_loss = particle_loss or ParticleLossConfig()
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     driver_train_enabled = bool(driver_train.enabled)
+    driver_train_bunch_ranges: tuple[slice, ...] = ()
+    if driver_train_enabled and init_driver is not None:
+        driver_train_bunch_ranges = _driver_train_bunch_slices(
+            driver_train,
+            len(np.asarray(init_driver["x"])),
+        )
     if pseudo_grid.enabled and sim_type != SimulationType.BUNCH_TO_BUNCH:
         raise NotImplementedError(
             "Pseudo-grid schedule mode is currently implemented only for "
@@ -1912,6 +1952,8 @@ def retarded_integrator(
     cavity_driver_exit_z: Optional[float] = None
     cavity_length_mm: Optional[float] = None
     cavity_exit_triggered = False
+    cavity_exit_mode = str(cavity_exit.mode)
+    rider_exit_controls_global_halt = cavity_exit_mode == "rider_exit_with_driver_tail"
     cavity_exit_exit_index: int | None = None
     cavity_exit_exit_species: str | None = None
     cavity_exit_exit_z: float | None = None
@@ -1920,6 +1962,11 @@ def retarded_integrator(
     cavity_exit_tail_steps_executed = 0
     cavity_exit_tail_time_ns = 0.0
     cavity_exit_tail_stop_index: int | None = None
+    driver_bunch_exit_steps: list[int | None] = [
+        None for _ in driver_train_bunch_ranges
+    ]
+    driver_bunch_tail_steps_planned: list[int] = [0 for _ in driver_train_bunch_ranges]
+    driver_bunch_muted: list[bool] = [False for _ in driver_train_bunch_ranges]
     if cavity_exit_enabled and init_driver is not None:
         rider_z0 = _leading_edge_z(init_rider)
         driver_z0 = _leading_edge_z(init_driver)
@@ -1952,7 +1999,9 @@ def retarded_integrator(
         tail_steps_planned: int,
         tail_steps_executed: int,
         tail_time_ns: float,
-    ) -> tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None]:
+    ) -> tuple[
+        Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None
+    ]:
         active_halt_step = max(0, step_index - active_start)
         reason_parts = [
             f"cavity_exit_reached species={exit_species}",
@@ -2001,6 +2050,12 @@ def retarded_integrator(
         last_state["_residual_tail_steps"] = tail_steps_executed
         last_state["_residual_tail_steps_planned"] = tail_steps_planned
         last_state["_residual_tail_time_ns"] = tail_time_ns
+        if driver_train_bunch_ranges:
+            last_state["_driver_train_bunch_count"] = len(driver_train_bunch_ranges)
+            last_state["_driver_train_muted_bunch_count"] = int(sum(driver_bunch_muted))
+            last_state["_driver_train_active_bunch_count"] = int(
+                len(driver_train_bunch_ranges) - sum(driver_bunch_muted)
+            )
 
         if trajectory_drv_truncated:
             drv_last = trajectory_drv_truncated[-1]
@@ -2018,6 +2073,14 @@ def retarded_integrator(
             drv_last["_residual_tail_steps"] = tail_steps_executed
             drv_last["_residual_tail_steps_planned"] = tail_steps_planned
             drv_last["_residual_tail_time_ns"] = tail_time_ns
+            if driver_train_bunch_ranges:
+                drv_last["_driver_train_bunch_count"] = len(driver_train_bunch_ranges)
+                drv_last["_driver_train_muted_bunch_count"] = int(
+                    sum(driver_bunch_muted)
+                )
+                drv_last["_driver_train_active_bunch_count"] = int(
+                    len(driver_train_bunch_ranges) - sum(driver_bunch_muted)
+                )
             drv_last["_cavity_exit_tail_mode"] = (
                 "coasted" if tail_steps_planned > 0 else "none"
             )
@@ -2028,6 +2091,100 @@ def retarded_integrator(
             _traj_soa,
             _traj_drv_soa,
         )
+
+    def _estimate_driver_residual_tail_steps(rider_state: ParticleState) -> int:
+        if (
+            cavity_exit.residual_tail_factor <= 0.0
+            or cavity_exit.max_residual_tail_steps <= 0
+            or cavity_length_mm is None
+        ):
+            return 0
+        rider_gamma = max(1.0, _state_mean(rider_state, "gamma", 1.0))
+        rider_beta = min(0.999999, abs(_state_mean(rider_state, "bz", 0.0)))
+        tail_time_ns = (
+            float(cavity_exit.residual_tail_factor)
+            * float(cavity_length_mm)
+            / C_MMNS
+            / max(1e-6, 1.0 - rider_beta)
+        )
+        tail_step_estimate = int(
+            np.ceil(tail_time_ns / max(1e-12, rider_gamma * h_step))
+        )
+        return max(
+            1,
+            min(int(cavity_exit.max_residual_tail_steps), tail_step_estimate),
+        )
+
+    def _apply_driver_bunch_tail_cutoff(step_index: int) -> bool:
+        if (
+            not rider_exit_controls_global_halt
+            or not driver_train_bunch_ranges
+            or cavity_driver_exit_z is None
+            or step_index <= active_start
+        ):
+            return False
+
+        previous_driver_state = _latest_populated_state(trajectory_drv, step_index)
+        current_driver_state = trajectory_drv[step_index]
+        current_rider_state = trajectory[step_index]
+        changed = False
+        for bunch_index, bunch_slice in enumerate(driver_train_bunch_ranges):
+            if driver_bunch_muted[bunch_index]:
+                continue
+            if driver_bunch_exit_steps[bunch_index] is None:
+                previous_z = _leading_edge_z_for_slice(
+                    previous_driver_state,
+                    bunch_slice,
+                )
+                current_z = _leading_edge_z_for_slice(current_driver_state, bunch_slice)
+                if _crossed_exit(previous_z, current_z, cavity_driver_exit_z):
+                    driver_bunch_exit_steps[bunch_index] = step_index
+                    driver_bunch_tail_steps_planned[bunch_index] = (
+                        _estimate_driver_residual_tail_steps(current_rider_state)
+                    )
+            exit_step = driver_bunch_exit_steps[bunch_index]
+            if exit_step is None:
+                continue
+            if step_index - exit_step < driver_bunch_tail_steps_planned[bunch_index]:
+                continue
+
+            particle_indices = range(
+                int(bunch_slice.start or 0),
+                int(bunch_slice.stop or 0),
+            )
+            if "_dead_particles" not in current_driver_state:
+                current_driver_state["_dead_particles"] = np.zeros(
+                    len(current_driver_state.get("gamma", [])),
+                    dtype=bool,
+                )
+            dead_mask = current_driver_state["_dead_particles"]
+            for particle_idx in particle_indices:
+                dead_mask[particle_idx] = True
+            if "q" in current_driver_state:
+                current_driver_state["q"][bunch_slice] = 0.0
+            elif "stripped_ions" in current_driver_state:
+                current_driver_state["stripped_ions"][bunch_slice] = 0.0
+            current_driver_state["_driver_train_muted_bunch_count"] = int(
+                sum(driver_bunch_muted) + 1
+            )
+            current_driver_state["_driver_train_bunch_count"] = len(
+                driver_train_bunch_ranges
+            )
+            current_driver_state["_driver_train_last_muted_bunch_index"] = bunch_index
+            current_driver_state["_driver_train_last_muted_exit_step"] = int(exit_step)
+            current_driver_state["_driver_train_last_muted_tail_steps"] = int(
+                driver_bunch_tail_steps_planned[bunch_index]
+            )
+            driver_bunch_muted[bunch_index] = True
+            changed = True
+        if changed:
+            current_driver_state["_driver_train_muted_bunch_count"] = int(
+                sum(driver_bunch_muted)
+            )
+            current_driver_state["_driver_train_active_bunch_count"] = int(
+                len(driver_train_bunch_ranges) - sum(driver_bunch_muted)
+            )
+        return changed
 
     if progress_callback is not None:
         progress_callback(0, requested_steps)
@@ -2309,11 +2466,11 @@ def retarded_integrator(
                         1,
                     )
                     trajectory_drv[i]["_cavity_exit_tail_mode"] = "coasted"
-                    trajectory_drv[i]["_cavity_exit_tail_steps_planned"] = (
-                        cavity_exit_tail_steps_planned
-                    )
-                    trajectory_drv[i]["_cavity_exit_tail_step"] = (
-                        i - int(cavity_exit_exit_index or i)
+                    trajectory_drv[i][
+                        "_cavity_exit_tail_steps_planned"
+                    ] = cavity_exit_tail_steps_planned
+                    trajectory_drv[i]["_cavity_exit_tail_step"] = i - int(
+                        cavity_exit_exit_index or i
                     )
                 elif (
                     pseudo_grid_force_reduction_enabled
@@ -2503,7 +2660,10 @@ def retarded_integrator(
                         > previous_driver_cleared_until
                     )
 
-        # Check for early termination when either bunch reaches a cavity exit.
+            if _apply_driver_bunch_tail_cutoff(i) and _traj_drv_builder is not None:
+                _traj_drv_builder.set_step(i, trajectory_drv[i])
+
+        # Check for early termination when a configured cavity exit is reached.
         if (
             cavity_exit_enabled
             and not cavity_exit_triggered
@@ -2526,8 +2686,10 @@ def retarded_integrator(
             driver_exited = _crossed_exit(
                 driver_previous_z, driver_current_z, cavity_driver_exit_z
             )
-            if rider_exited or driver_exited:
-                if rider_exited and driver_exited:
+            if rider_exited or (driver_exited and not rider_exit_controls_global_halt):
+                if rider_exit_controls_global_halt:
+                    exit_species = "rider"
+                elif rider_exited and driver_exited:
                     rider_overshoot = abs(rider_current_z - cavity_rider_exit_z)
                     driver_overshoot = abs(driver_current_z - cavity_driver_exit_z)
                     exit_species = (
@@ -2536,7 +2698,9 @@ def retarded_integrator(
                 else:
                     exit_species = "rider" if rider_exited else "driver"
                 exit_z = (
-                    cavity_rider_exit_z if exit_species == "rider" else cavity_driver_exit_z
+                    cavity_rider_exit_z
+                    if exit_species == "rider"
+                    else cavity_driver_exit_z
                 )
                 exit_time_ns = _state_mean(trajectory[i], "t")
                 active_halt_step = max(0, i - active_start)
@@ -2546,25 +2710,17 @@ def retarded_integrator(
                     and cavity_exit.max_residual_tail_steps > 0
                     and cavity_length_mm is not None
                 ):
-                    rider_gamma = max(1.0, _state_mean(trajectory[i], "gamma", 1.0))
-                    rider_beta = min(0.999999, abs(_state_mean(trajectory[i], "bz", 0.0)))
+                    cavity_exit_tail_steps_planned = (
+                        _estimate_driver_residual_tail_steps(trajectory[i])
+                    )
+                    rider_beta = min(
+                        0.999999, abs(_state_mean(trajectory[i], "bz", 0.0))
+                    )
                     cavity_exit_tail_time_ns = (
                         float(cavity_exit.residual_tail_factor)
                         * float(cavity_length_mm)
                         / C_MMNS
                         / max(1e-6, 1.0 - rider_beta)
-                    )
-                    tail_step_estimate = int(
-                        np.ceil(
-                            cavity_exit_tail_time_ns / max(1e-12, rider_gamma * h_step)
-                        )
-                    )
-                    cavity_exit_tail_steps_planned = max(
-                        1,
-                        min(
-                            int(cavity_exit.max_residual_tail_steps),
-                            tail_step_estimate,
-                        ),
                     )
                     cavity_exit_triggered = True
                     cavity_exit_exit_index = i
@@ -2573,13 +2729,13 @@ def retarded_integrator(
                     cavity_exit_exit_time_ns = exit_time_ns
                     cavity_exit_tail_stop_index = i + cavity_exit_tail_steps_planned
                     trajectory[i]["_cavity_exit_tail_mode"] = "coasted"
-                    trajectory[i]["_cavity_exit_tail_steps_planned"] = (
-                        cavity_exit_tail_steps_planned
-                    )
+                    trajectory[i][
+                        "_cavity_exit_tail_steps_planned"
+                    ] = cavity_exit_tail_steps_planned
                     trajectory_drv[i]["_cavity_exit_tail_mode"] = "coasted"
-                    trajectory_drv[i]["_cavity_exit_tail_steps_planned"] = (
-                        cavity_exit_tail_steps_planned
-                    )
+                    trajectory_drv[i][
+                        "_cavity_exit_tail_steps_planned"
+                    ] = cavity_exit_tail_steps_planned
                 else:
                     return _finalize_cavity_exit_halt(
                         step_index=i,

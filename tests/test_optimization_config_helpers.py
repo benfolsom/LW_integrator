@@ -132,6 +132,7 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
         external_field_t_max=2.0e-6,
         radiation_reaction_mode="medina_lad",
         cavity_exit_enabled=True,
+        cavity_exit_mode="rider_exit_with_driver_tail",
         cavity_exit_length_mm=88.0,
         cavity_exit_residual_tail_factor=2.0,
         cavity_exit_max_residual_tail_steps=20,
@@ -179,6 +180,7 @@ def test_from_simulation_options_preserves_stability_and_output_layout(tmp_path:
     assert config.space_charge_bunch_sigma_mm == pytest.approx(0.045)
     assert config.space_charge_min_retarded_steps == 9
     assert config.cavity_exit_enabled is True
+    assert config.cavity_exit_mode == "rider_exit_with_driver_tail"
     assert config.cavity_exit_length_mm == pytest.approx(88.0)
     assert config.cavity_exit_residual_tail_factor == pytest.approx(2.0)
     assert config.cavity_exit_max_residual_tail_steps == 20

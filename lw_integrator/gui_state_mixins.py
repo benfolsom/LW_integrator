@@ -361,6 +361,8 @@ class IntegratorGUIStateMixin:
             try:
                 if isinstance(widget, ttk.Label):
                     widget.configure(foreground="black" if enabled else "gray")
+                elif isinstance(widget, ttk.Combobox):
+                    widget.configure(state="readonly" if enabled else "disabled")
                 else:
                     widget.configure(state=state)
             except Exception:

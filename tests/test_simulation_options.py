@@ -65,6 +65,7 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         pseudo_grid_causal_history_pruning_enabled=True,
         pseudo_grid_causal_history_safety_margin_steps=5,
         cavity_exit_enabled=True,
+        cavity_exit_mode="rider_exit_with_driver_tail",
         cavity_exit_length_mm=123.0,
         driver_train_enabled=True,
         driver_train_bunch_count=3,
@@ -152,8 +153,10 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.pseudo_grid_causal_history_pruning_enabled is True
     assert loaded.pseudo_grid_causal_history_safety_margin_steps == 5
     assert payload["cavity_exit"]["enabled"] is True
+    assert payload["cavity_exit"]["mode"] == "rider_exit_with_driver_tail"
     assert payload["cavity_exit"]["cavity_length_mm"] == pytest.approx(123.0)
     assert loaded.cavity_exit_enabled is True
+    assert loaded.cavity_exit_mode == "rider_exit_with_driver_tail"
     assert loaded.cavity_exit_length_mm == pytest.approx(123.0)
     assert payload["driver_train"] == {
         "enabled": True,

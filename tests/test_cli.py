@@ -51,6 +51,7 @@ def _make_args(**overrides) -> argparse.Namespace:
         "z_cutoff": None,
         "z_cutoff_mode": None,
         "cavity_exit_enabled": None,
+        "cavity_exit_mode": None,
         "cavity_exit_length_mm": None,
         "chrono_mode": None,
         "chrono_interpolate": None,
@@ -262,6 +263,21 @@ class TestCliConfigParsing:
         assert args.pseudo_grid_causal_history_pruning_enabled is True
         assert args.pseudo_grid_causal_history_safety_margin_steps == 5
 
+    def test_parse_args_accepts_cavity_exit_mode(self):
+        args = cli.parse_args(
+            [
+                "--cavity-exit",
+                "--cavity-exit-mode",
+                "rider_exit_with_driver_tail",
+                "--cavity-exit-length-mm",
+                "42",
+            ]
+        )
+
+        assert args.cavity_exit_enabled is True
+        assert args.cavity_exit_mode == "rider_exit_with_driver_tail"
+        assert args.cavity_exit_length_mm == pytest.approx(42.0)
+
     def test_parse_args_accepts_driver_train_options(self):
         args = cli.parse_args(
             [
@@ -430,7 +446,11 @@ class TestCliConfigParsing:
                 "image_subcharge_count": "16",
                 "use_image_weighting": "no",
                 "z_cutoff_mode": "relative",
-                "cavity_exit": {"enabled": True, "cavity_length_mm": 42.0},
+                "cavity_exit": {
+                    "enabled": True,
+                    "mode": "rider_exit_with_driver_tail",
+                    "cavity_length_mm": 42.0,
+                },
                 "pseudo_grid": {
                     "enabled": True,
                     "active_rider_count": 6,
@@ -460,6 +480,7 @@ class TestCliConfigParsing:
         assert config.use_image_weighting is False
         assert config.z_cutoff_mode == "relative"
         assert config.cavity_exit.enabled is True
+        assert config.cavity_exit.mode == "rider_exit_with_driver_tail"
         assert config.cavity_exit.cavity_length_mm == pytest.approx(42.0)
         assert config.pseudo_grid.enabled is True
         assert config.pseudo_grid.active_rider_count == 6
@@ -597,6 +618,20 @@ class TestCliBuildRequest:
         assert smearing["sigma_multiplier"] == pytest.approx(0.5)
         assert smearing["position_sigma_mm"] == pytest.approx(0.1)
         assert smearing["refresh_policy"] == "per_step"
+
+    def test_merge_simulation_payload_applies_cavity_exit_mode_override(self):
+        payload = cli._merge_simulation_payload(
+            {"cavity_exit": {"enabled": False, "mode": "first_exit"}},
+            _make_args(
+                cavity_exit_enabled=True,
+                cavity_exit_mode="rider_exit_with_driver_tail",
+                cavity_exit_length_mm=42.0,
+            ),
+        )
+
+        assert payload["cavity_exit"]["enabled"] is True
+        assert payload["cavity_exit"]["mode"] == "rider_exit_with_driver_tail"
+        assert payload["cavity_exit"]["cavity_length_mm"] == pytest.approx(42.0)
 
     def test_merge_simulation_payload_applies_driver_train_overrides(self):
         payload = cli._merge_simulation_payload(

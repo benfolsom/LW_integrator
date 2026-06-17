@@ -2385,7 +2385,7 @@ class IntegratorGUITabMixin:
 
         self.cavity_exit_enable_check = ttk.Checkbutton(
             cavity_frame,
-            text="Stop when rider or driver reaches the opposite cavity exit",
+            text="Stop at configured BUNCH_TO_BUNCH cavity exit",
             variable=self.cavity_exit_enabled_var,
             command=self._toggle_cavity_exit_controls,
         )
@@ -2393,16 +2393,29 @@ class IntegratorGUITabMixin:
             row=0, column=0, columnspan=2, sticky="w", pady=2
         )
 
+        self.cavity_exit_mode_label = ttk.Label(cavity_frame, text="Exit mode:")
+        self.cavity_exit_mode_label.grid(
+            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.cavity_exit_mode_combo = ttk.Combobox(
+            cavity_frame,
+            textvariable=self.cavity_exit_mode_var,
+            values=("first_exit", "rider_exit_with_driver_tail"),
+            state="readonly",
+            width=28,
+        )
+        self.cavity_exit_mode_combo.grid(row=1, column=1, sticky="ew", pady=2)
+
         self.cavity_exit_length_label = ttk.Label(
             cavity_frame, text="Cavity length override (mm):"
         )
         self.cavity_exit_length_label.grid(
-            row=1, column=0, sticky="w", pady=2, padx=(20, 0)
+            row=2, column=0, sticky="w", pady=2, padx=(20, 0)
         )
         self.cavity_exit_length_entry = ttk.Entry(
             cavity_frame, textvariable=self.cavity_exit_length_mm_var, width=12
         )
-        self.cavity_exit_length_entry.grid(row=1, column=1, sticky="ew", pady=2)
+        self.cavity_exit_length_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
         cavity_help = ttk.Label(
             cavity_frame,
@@ -2411,9 +2424,11 @@ class IntegratorGUITabMixin:
             font=("TkDefaultFont", 8),
         )
         cavity_help.grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(0, 5), padx=(20, 0)
+            row=3, column=0, columnspan=2, sticky="w", pady=(0, 5), padx=(20, 0)
         )
         self._cavity_exit_sub_widgets = [
+            self.cavity_exit_mode_label,
+            self.cavity_exit_mode_combo,
             self.cavity_exit_length_label,
             self.cavity_exit_length_entry,
             cavity_help,
