@@ -80,6 +80,21 @@ def _make_state(
     }
 
 
+def _patch_mass_shell_convergence_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+    sequence: list[tuple[bool, float]],
+) -> None:
+    calls = {"count": 0}
+
+    def fake(*args: object, **kwargs: object) -> tuple[bool, float]:
+        del args, kwargs
+        idx = min(calls["count"], len(sequence) - 1)
+        calls["count"] += 1
+        return sequence[idx]
+
+    monkeypatch.setattr(equations, "_check_mass_shell_convergence", fake)
+
+
 def test_initialize_result_state_copies_charge_arrays_before_death_marking() -> None:
     state = _make_state(charge=[1.0, 2.0])
 
@@ -344,6 +359,34 @@ def test_b2b_cold_start_applies_external_force_without_observer_travel(
     )
 
     assert updated["Pz"][0] > trajectory[1]["Pz"][0]
+
+
+def test_self_consistency_nonconvergence_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    trajectory = [
+        _make_state(x=[0.0], z=[0.0], t=[0.0], gamma=[2.0], charge=[1.0], mass=[1.0]),
+        _make_state(x=[0.0], z=[0.5], t=[0.1], gamma=[2.0], charge=[1.0], mass=[1.0]),
+    ]
+    driver = [
+        _make_state(x=[0.0], z=[1.0], t=[0.0], gamma=[2.0], charge=[-1.0], mass=[1.0]),
+        _make_state(x=[0.0], z=[1.1], t=[0.1], gamma=[2.0], charge=[-1.0], mass=[1.0]),
+    ]
+
+    with pytest.raises(equations.SelfConsistencyNonConvergenceError):
+        equations.retarded_equations_of_motion(
+            0.1,
+            trajectory,
+            driver,
+            1,
+            aperture_radius=1.0,
+            sim_type=SimulationType.BUNCH_TO_BUNCH,
+            chrono_mode=ChronoMatchingMode.FAST,
+            startup_mode=StartupMode.COLD_START,
+            self_consistency=SelfConsistencyConfig(
+                enabled=True,
+                max_iterations=1,
+                verbosity=0,
+            ),
+        )
 
 
 def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
@@ -634,7 +677,7 @@ def test_gating_threshold_and_force_application_follow_travel_distance() -> None
     )
 
 
-def test_b2b_cold_start_force_gate_does_not_wait_for_observer_travel() -> None:
+def test_b2b_cold_start_force_gate_waits_for_observer_travel() -> None:
     nhat = {
         "R": np.array([10.0]),
         "nx": np.array([1.0]),
@@ -651,8 +694,71 @@ def test_b2b_cold_start_force_gate_does_not_wait_for_observer_travel() -> None:
             current_state,
             0,
         )
+        is False
+    )
+
+    current_state["x"][0] = 10.0
+    assert (
+        equations._should_apply_external_forces(
+            StartupMode.COLD_START,
+            SimulationType.BUNCH_TO_BUNCH,
+            nhat,
+            current_state,
+            0,
+        )
         is True
     )
+
+
+def test_b2b_cold_start_early_skip_avoids_retarded_work_before_travel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trajectory = [
+        _make_state(x=[0.0], y=[0.0], z=[0.0], bx=[0.5], by=[0.0], bz=[0.0], t=[0.0]),
+        _make_state(x=[0.0], y=[0.0], z=[0.0], bx=[0.5], by=[0.0], bz=[0.0], t=[1.0]),
+    ]
+    driver = [
+        _make_state(
+            x=[10.0],
+            y=[0.0],
+            z=[0.0],
+            bx=[-0.5],
+            by=[0.0],
+            bz=[0.0],
+            t=[0.0],
+        ),
+        _make_state(
+            x=[10.0],
+            y=[0.0],
+            z=[0.0],
+            bx=[-0.5],
+            by=[0.0],
+            bz=[0.0],
+            t=[1.0],
+        ),
+    ]
+
+    chrono_calls = {"count": 0}
+
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        chrono_calls["count"] += 1
+        raise AssertionError("retarded distance machinery should be skipped")
+
+    monkeypatch.setattr(equations, "_compute_full_retarded_distance", fail_if_called)
+    result = equations.retarded_equations_of_motion(
+        0.1,
+        trajectory,
+        driver,
+        1,
+        aperture_radius=1.0,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=False),
+    )
+
+    assert chrono_calls["count"] == 0
+    assert result["Px"][0] == pytest.approx(trajectory[1]["Px"][0])
 
 
 def test_gating_threshold_handles_receding_case_with_large_threshold() -> None:
@@ -969,8 +1075,14 @@ def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs() -> None:
         )
 
 
-def test_retarded_equations_of_motion_applies_final_mass_shell_projection() -> None:
+def test_retarded_equations_of_motion_applies_final_mass_shell_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     state = _make_state(gamma=[1.0], pt=[10.0], charge=[0.0])
+    _patch_mass_shell_convergence_sequence(
+        monkeypatch,
+        [(True, 0.0), (False, 0.69)],
+    )
 
     result = equations.retarded_equations_of_motion(
         h=1e-3,
@@ -981,7 +1093,7 @@ def test_retarded_equations_of_motion_applies_final_mass_shell_projection() -> N
         sim_type=SimulationType.CONDUCTING_WALL,
         self_consistency=SelfConsistencyConfig(
             enabled=True,
-            max_iterations=1,
+            max_iterations=2,
             mass_shell_tolerance=1e-9,
         ),
     )
@@ -1035,6 +1147,10 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
         "compute_vectorized_contributions",
         fake_contributions,
     )
+    _patch_mass_shell_convergence_sequence(
+        monkeypatch,
+        [(True, 0.0), (False, 0.69)],
+    )
 
     result = equations.retarded_equations_of_motion(
         h=1e-3,
@@ -1046,7 +1162,7 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
         startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
         self_consistency=SelfConsistencyConfig(
             enabled=True,
-            max_iterations=1,
+            max_iterations=2,
             mass_shell_tolerance=1e-12,
         ),
     )
@@ -1170,9 +1286,13 @@ def test_retarded_equations_of_motion_reconciles_gamma_modes(
     if method is not GammaReconciliationMethod.USE_VELOCITY:
         state["Px"][0] = np.sqrt(3.0) * C_MMNS
     monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
+    _patch_mass_shell_convergence_sequence(
+        monkeypatch,
+        [(True, 0.0), (False, 0.69)],
+    )
     config = SelfConsistencyConfig(
         enabled=True,
-        max_iterations=1,
+        max_iterations=2,
         gamma_reconciliation_method=method,
         **extra_kwargs,
     )
@@ -1197,9 +1317,13 @@ def test_gamma_reconciliation_refreshes_kinematics(
     state = _make_state(gamma=[2.0], charge=[0.0])
     state["Px"][0] = np.sqrt(3.0) * C_MMNS
     monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
+    _patch_mass_shell_convergence_sequence(
+        monkeypatch,
+        [(True, 0.0), (True, 0.0)],
+    )
     config = SelfConsistencyConfig(
         enabled=True,
-        max_iterations=1,
+        max_iterations=2,
         gamma_reconciliation_method=GammaReconciliationMethod.FIXED_WEIGHTED,
         gamma_reconciliation_fixed_weight=0.25,
     )
@@ -1276,9 +1400,13 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
         fake_contributions,
     )
     monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
+    _patch_mass_shell_convergence_sequence(
+        monkeypatch,
+        [(True, 0.0), (False, 0.69)],
+    )
     config = SelfConsistencyConfig(
         enabled=True,
-        max_iterations=1,
+        max_iterations=2,
         gamma_reconciliation_method=GammaReconciliationMethod.FIXED_WEIGHTED,
         gamma_reconciliation_fixed_weight=0.25,
     )
@@ -1344,6 +1472,10 @@ def test_retarded_equations_of_motion_variable_geometry_uses_updated_observer_st
         )
 
     monkeypatch.setattr(equations, "_compute_full_retarded_distance", fake_compute)
+    _patch_mass_shell_convergence_sequence(
+        monkeypatch,
+        [(True, 0.0), (True, 0.0)],
+    )
 
     equations.retarded_equations_of_motion(
         h=1e-3,

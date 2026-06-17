@@ -151,6 +151,27 @@ class GammaBlowupError(Exception):
         )
 
 
+class SelfConsistencyNonConvergenceError(RuntimeError):
+    """Raised when a particle step exhausts self-consistency iterations."""
+
+    def __init__(
+        self,
+        step_idx: int,
+        particle_idx: int,
+        max_iterations: int,
+        mass_shell_error: float,
+    ) -> None:
+        self.step_idx = step_idx
+        self.particle_idx = particle_idx
+        self.max_iterations = max_iterations
+        self.mass_shell_error = mass_shell_error
+        super().__init__(
+            "Self-consistency failed to converge at step "
+            f"{step_idx}, particle {particle_idx} after {max_iterations} iterations "
+            f"(mass-shell error={mass_shell_error:.3e})"
+        )
+
+
 def _ensure_startup_metadata(state: ParticleState) -> None:
     """Initialize origin positions and beta averaging metadata if not present."""
     if "origin_x" not in state:
@@ -715,17 +736,14 @@ def _should_apply_external_forces(
 ) -> bool:
     """Determine whether external forces should be applied to this particle.
 
-    In COLD_START mode, wall/image-style startup still suppresses forces until
-    the observer has traveled far enough from its origin for retardation
-    effects to be meaningful. Explicit BUNCH_TO_BUNCH sources are exempt from
-    this gate because suppressing them based only on observer travel produces
-    an unphysical rider/driver asymmetry: a fast source can couple strongly to
-    the opposite bunch long before the slower observer has moved enough to
-    satisfy the legacy threshold.
+    In COLD_START mode, wall/image-style startup suppresses external source
+    forces until the observer has traveled far enough from its origin for
+    retardation effects to be meaningful. BUNCH_TO_BUNCH cross-bunch sources
+    are gated by the same startup rule; intra-bunch space-charge calculations
+    are handled separately in the dedicated space-charge block below and are
+    not affected by this helper.
     """
     if startup_mode is not StartupMode.COLD_START or nhat["R"].size == 0:
-        return True
-    if sim_type == SimulationType.BUNCH_TO_BUNCH:
         return True
 
     origin_position = (
@@ -1447,6 +1465,8 @@ def retarded_equations_of_motion(
         accumulated_scalar_potential: float = 0.0
 
         # Self-consistency loop: iterate until gamma converges
+        converged = False
+        last_mass_shell_error = float("inf")
         for sc_iteration in range(sc_max_iterations):
             # Check for cancellation during self-consistency iterations
             if cancel_callback is not None and cancel_callback():
@@ -1509,10 +1529,7 @@ def retarded_equations_of_motion(
             # For COLD_START, check if we should skip force computation entirely
             # This avoids expensive retarded distance calculations during startup phase
             skip_external_forces = False
-            if (
-                startup_mode is StartupMode.COLD_START
-                and sim_type != SimulationType.BUNCH_TO_BUNCH
-            ):
+            if startup_mode is StartupMode.COLD_START:
                 # Check if particle has traveled far enough from origin
                 # This is the same check done in _should_apply_external_forces
                 # but done here to avoid computing retarded distances needlessly
@@ -2704,6 +2721,7 @@ def retarded_equations_of_motion(
                 gamma_consistency_error = 0.0
 
                 if converged:
+                    last_mass_shell_error = mass_shell_error_rel
                     if sc_verbosity > 0:
                         _print_convergence_info(
                             particle_idx,
@@ -2724,9 +2742,10 @@ def retarded_equations_of_motion(
                                 result["z"][particle_idx],
                             ),
                             particle_time=result["t"][particle_idx],
-                        )
+                    )
                     break
                 elif sc_iteration == sc_max_iterations - 1:
+                    last_mass_shell_error = mass_shell_error_rel
                     if sc_verbosity > 0:
                         _print_convergence_info(
                             particle_idx,
@@ -2798,6 +2817,14 @@ def retarded_equations_of_motion(
                         sc_iteration,
                         is_hard_blowup=is_hard,
                     )
+
+        if sc_enabled and not converged:
+            raise SelfConsistencyNonConvergenceError(
+                step_idx if step_idx is not None else -1,
+                particle_idx,
+                sc_max_iterations,
+                last_mass_shell_error,
+            )
 
         # ================================================================
         # AFTER self-consistency loop: Apply mass-shell projection if needed
