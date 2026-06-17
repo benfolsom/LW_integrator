@@ -49,6 +49,7 @@ def _result(**overrides):
         "driver_gamma_initial": None,
         "driver_gamma_final": None,
         "driver_trajectory": None,
+        "energy_ledger_metrics": None,
         "rider_emittance_x_mm_mrad": None,
         "rider_emittance_y_mm_mrad": None,
         "rider_norm_emittance_x_mm_mrad": None,
@@ -170,6 +171,38 @@ def test_calculate_rider_starting_pz_uses_kinetic_energy_for_all_modes():
     b2b_pz = calculate_rider_starting_pz(5.0, 1.0, "BUNCH_TO_BUNCH")
 
     assert wall_pz == pytest.approx(b2b_pz)
+
+
+def test_build_integration_metrics_merges_energy_ledger_metrics():
+    result = _result(
+        rider_gamma_initial=2.0,
+        rider_gamma_final=2.2,
+        energy_ledger_metrics={
+            "rider_final_delta_kinetic_energy_z_mev": 1.25,
+            "driver_final_delta_kinetic_energy_z_mev": -0.75,
+            "net_final_delta_kinetic_energy_z_mev": 0.5,
+            "driver_bunch_count": 3,
+            "driver_bunch_01_final_delta_kinetic_energy_z_mev": -0.1,
+            "driver_bunch_02_final_delta_kinetic_energy_z_mev": -0.2,
+            "driver_bunch_03_final_delta_kinetic_energy_z_mev": -0.45,
+        },
+    )
+
+    outcome = build_integration_metrics(result, rider_m_particle=1.0, run_num=4)
+
+    assert outcome.metrics["rider_final_delta_kinetic_energy_z_mev"] == pytest.approx(
+        1.25
+    )
+    assert outcome.metrics["driver_final_delta_kinetic_energy_z_mev"] == pytest.approx(
+        -0.75
+    )
+    assert outcome.metrics["net_final_delta_kinetic_energy_z_mev"] == pytest.approx(
+        0.5
+    )
+    assert outcome.metrics["driver_bunch_count"] == 3
+    assert outcome.metrics["driver_bunch_03_final_delta_kinetic_energy_z_mev"] == pytest.approx(
+        -0.45
+    )
 
 
 def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):

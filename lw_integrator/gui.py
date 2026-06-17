@@ -730,6 +730,9 @@ class IntegratorGUI(
         self.cavity_exit_enabled_var = tk.BooleanVar(
             value=getattr(self.options, "cavity_exit_enabled", False)
         )
+        self.cavity_exit_mode_var = tk.StringVar(
+            value=getattr(self.options, "cavity_exit_mode", "first_exit")
+        )
         self.cavity_exit_length_mm_var = tk.StringVar(
             value=(
                 ""

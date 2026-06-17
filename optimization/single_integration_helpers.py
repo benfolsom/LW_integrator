@@ -447,6 +447,7 @@ def build_single_integration_setup(
             2,
         ),
         cavity_exit_enabled=getattr(config, "cavity_exit_enabled", False),
+        cavity_exit_mode=getattr(config, "cavity_exit_mode", "first_exit"),
         cavity_exit_length_mm=getattr(config, "cavity_exit_length_mm", None),
         cavity_exit_residual_tail_factor=getattr(
             config, "cavity_exit_residual_tail_factor", 0.0
@@ -539,6 +540,21 @@ def _trajectory_last_finite_scalar(
     if finite.size == 0:
         return None
     return float(finite[-1])
+
+
+def _trajectory_last_scalar(
+    trajectory: Mapping[str, Any] | None,
+    key: str,
+) -> Any | None:
+    if trajectory is None:
+        return None
+    values = trajectory.get(key)
+    if values is None:
+        return None
+    array = np.asarray(values).reshape(-1)
+    if array.size == 0:
+        return None
+    return array[-1].item() if hasattr(array[-1], "item") else array[-1]
 
 
 def _trajectory_first_finite_scalar(
@@ -677,6 +693,16 @@ def build_integration_metrics(
     if driver_gamma_final is not None:
         metrics["driver_gamma_final"] = driver_gamma_final
 
+    driver_trajectory = getattr(result, "driver_trajectory", None)
+    for metric_key in (
+        "_driver_train_bunch_count",
+        "_driver_train_muted_bunch_count",
+        "_driver_train_active_bunch_count",
+    ):
+        value = _trajectory_last_scalar(driver_trajectory, metric_key)
+        if value is not None:
+            metrics[metric_key.removeprefix("_")] = int(value)
+
     gamma_initial = result.rider_gamma_initial
     gamma_final = result.rider_gamma_final
     if gamma_initial is not None and gamma_final is not None and gamma_initial > 0:
@@ -709,6 +735,18 @@ def build_integration_metrics(
         )
 
     _add_beam_optics_metrics(result, metrics)
+
+    energy_ledger_metrics = getattr(result, "energy_ledger_metrics", None)
+    if isinstance(energy_ledger_metrics, Mapping):
+        metrics.update(energy_ledger_metrics)
+        for key in (
+            "rider_final_delta_kinetic_energy_z_mev",
+            "driver_final_delta_kinetic_energy_z_mev",
+            "net_final_delta_kinetic_energy_z_mev",
+            "driver_bunch_count",
+        ):
+            if key in energy_ledger_metrics:
+                log_lines.append(f"    {key}: {energy_ledger_metrics[key]}")
 
     effective_passes = _compute_effective_passes(result, run_parameters)
     if effective_passes is not None:
@@ -906,6 +944,11 @@ def build_integration_trajectory_output(
                     f"  [REJECT] Run {run_num} rejected due to numerical instability"
                 )
                 metrics["max_percent_energy_gain"] = np.nan
+                metrics["max_energy_gain_gev"] = np.nan
+                metrics["rider_max_energy_gain_gev"] = np.nan
+                metrics["rider_max_energy_gain_mev"] = np.nan
+                metrics["rider_final_energy_gain_gev"] = np.nan
+                metrics["rider_final_energy_gain_mev"] = np.nan
                 output_updates["stability_rejected"] = True
         else:
             log_lines.append(
@@ -924,6 +967,12 @@ def build_integration_trajectory_output(
                 traj,
                 trajectory_stride,
             )
+            if isinstance(traj, list) and (
+                not traj or all(isinstance(state, dict) for state in traj)
+            ):
+                output_updates["trajectory_snapshots"] = serialize_trajectory_snapshots(
+                    traj
+                )
         except Exception as exc:
             log_lines.append(f"    [WARNING] Failed to save trajectory arrays: {exc}")
 
@@ -933,6 +982,13 @@ def build_integration_trajectory_output(
                     driver_traj,
                     trajectory_stride,
                 )
+                if isinstance(driver_traj, list) and (
+                    not driver_traj
+                    or all(isinstance(state, dict) for state in driver_traj)
+                ):
+                    output_updates["driver_trajectory_snapshots"] = (
+                        serialize_trajectory_snapshots(driver_traj)
+                    )
             except Exception as exc:
                 log_lines.append(
                     f"    [WARNING] Failed to save driver trajectory arrays: {exc}"
@@ -976,6 +1032,28 @@ def sample_trajectory_arrays(
             continue
         sampled[key] = array[sample_indices].tolist()
     return sampled
+
+
+def serialize_trajectory_snapshots(
+    trajectory: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert a full internal trajectory history into JSON-safe snapshots.
+
+    Each element in ``trajectory`` is preserved as a step snapshot with array
+    fields converted to plain Python lists. Metadata keys prefixed with ``_``
+    are kept intact.
+    """
+    serialized: list[dict[str, Any]] = []
+    for state in trajectory:
+        snapshot: dict[str, Any] = {}
+        for key, value in state.items():
+            if key.startswith("_"):
+                snapshot[key] = value
+                continue
+            array = np.asarray(value)
+            snapshot[key] = array.tolist() if array.ndim > 0 else float(array)
+        serialized.append(snapshot)
+    return serialized
 
 
 def distance_info_from_trajectory(

@@ -76,6 +76,9 @@ class OptimizationConfig:
     transverse_spread_range: Optional[Tuple[float, float]] = None  # mm (transv_dist)
     transverse_spread_points: int = 1
     transverse_spread_log_scale: bool = False
+    long_dist_range: Optional[Tuple[float, float]] = None  # mm (rider long_dist)
+    long_dist_points: int = 1
+    long_dist_log_scale: bool = False
     timestep_range: Optional[Tuple[float, float]] = None  # ns (proper time)
     timestep_points: int = 1
     starting_z_range: Optional[Tuple[float, float]] = None  # mm
@@ -118,6 +121,11 @@ class OptimizationConfig:
     )
     driver_transv_dist_points: int = 1
     driver_transv_dist_log_scale: bool = False
+    driver_long_dist_range: Optional[Tuple[float, float]] = (
+        None  # mm (BUNCH_TO_BUNCH)
+    )
+    driver_long_dist_points: int = 1
+    driver_long_dist_log_scale: bool = False
     driver_starting_distance_range: Optional[Tuple[float, float]] = (
         None  # mm (BUNCH_TO_BUNCH)
     )
@@ -156,7 +164,8 @@ class OptimizationConfig:
     energy_scale_exponent: float = 1.0  # For energy_scaled: h ∝ γ^-α
     target_distance_mm: float = 100.0  # For auto_distance: distance to reach
     z_cutoff_mode: str = "absolute"  # "absolute" or "relative" (for BUNCH_TO_BUNCH)
-    cavity_exit_enabled: bool = False  # Stop BUNCH_TO_BUNCH runs at first cavity exit
+    cavity_exit_enabled: bool = False  # Stop BUNCH_TO_BUNCH runs at a cavity exit
+    cavity_exit_mode: str = "first_exit"
     cavity_exit_length_mm: Optional[float] = (
         None  # None uses initial rider-driver separation
     )
@@ -736,6 +745,7 @@ class OptimizationConfig:
                 2,
             ),
             cavity_exit_enabled=getattr(options, "cavity_exit_enabled", False),
+            cavity_exit_mode=getattr(options, "cavity_exit_mode", "first_exit"),
             cavity_exit_length_mm=getattr(options, "cavity_exit_length_mm", None),
             cavity_exit_residual_tail_factor=getattr(
                 options, "cavity_exit_residual_tail_factor", 0.0

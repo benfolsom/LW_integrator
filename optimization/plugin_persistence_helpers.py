@@ -100,6 +100,7 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "timestep_strategy": "auto_distance",
     "z_cutoff_mode": "absolute",
     "cavity_exit_enabled": False,
+    "cavity_exit_mode": "first_exit",
     "cavity_exit_length_mm": None,
     "cavity_exit_residual_tail_factor": 0.0,
     "cavity_exit_max_residual_tail_steps": 0,
@@ -344,6 +345,7 @@ def build_saved_config_payload(
         "energy_scale_exponent": config.energy_scale_exponent,
         "z_cutoff_mode": config.z_cutoff_mode,
         "cavity_exit_enabled": config.cavity_exit_enabled,
+        "cavity_exit_mode": config.cavity_exit_mode,
         "cavity_exit_length_mm": config.cavity_exit_length_mm,
         "cavity_exit_residual_tail_factor": config.cavity_exit_residual_tail_factor,
         "cavity_exit_max_residual_tail_steps": (

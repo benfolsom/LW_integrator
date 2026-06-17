@@ -502,6 +502,9 @@ class IntegratorGUIConfigMixin:
             self.cavity_exit_enabled_var.set(
                 getattr(options, "cavity_exit_enabled", False)
             )
+            self.cavity_exit_mode_var.set(
+                getattr(options, "cavity_exit_mode", "first_exit")
+            )
             cavity_length = getattr(options, "cavity_exit_length_mm", None)
             self.cavity_exit_length_mm_var.set(
                 "" if cavity_length is None else _format_gui_float(cavity_length)
@@ -886,6 +889,7 @@ class IntegratorGUIConfigMixin:
                 )
             ),
             cavity_exit_enabled=bool(self.cavity_exit_enabled_var.get()),
+            cavity_exit_mode=str(self.cavity_exit_mode_var.get()),
             cavity_exit_length_mm=_parse_gui_optional_float_lenient(
                 self.cavity_exit_length_mm_var.get()
             ),

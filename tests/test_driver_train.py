@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from core.constants import C_MMNS
 from core.distances import _locate_retarded_index, _locate_retarded_index_soa
 from core.integration_runner import (
     _build_coasting_history,
@@ -13,6 +14,7 @@ from core.integration_runner import (
 )
 from core.types import (
     ChronoMatchingMode,
+    CavityExitConfig,
     DriverTrainConfig,
     SimulationType,
     StartupMode,
@@ -121,3 +123,53 @@ def test_driver_train_zero_charge_smoke_returns_trimmed_active_window():
     assert driver_traj[0]["z"].shape == (2,)
     assert driver_traj[0]["z"] == pytest.approx([100.0, 150.0])
     assert rider_traj[0]["t"] == pytest.approx([0.0])
+
+
+def test_rider_exit_mode_mutes_driver_train_bunches_before_rider_halt():
+    rider = _single_particle_state()
+    driver = _single_particle_state()
+    rider["z"] = np.array([0.0])
+    rider["bz"] = np.array([0.2])
+    rider["gamma"] = np.array([1.0 / np.sqrt(1.0 - 0.2 * 0.2)])
+    rider["Pz"] = rider["gamma"] * rider["bz"] * C_MMNS
+    rider["q"] = np.zeros_like(rider["q"])
+
+    driver["z"] = np.array([0.3])
+    driver["bz"] = np.array([-0.8])
+    driver["gamma"] = np.array([1.0 / np.sqrt(1.0 - 0.8 * 0.8)])
+    driver["Pz"] = driver["gamma"] * driver["bz"] * C_MMNS
+    driver["q"] = np.zeros_like(driver["q"])
+
+    rider_traj, driver_traj, *_ = retarded_integrator(
+        steps=12,
+        h_step=1e-3,
+        wall_z=0.0,
+        aperture_radius=1e6,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=rider,
+        init_driver=driver,
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=0.0,
+        chrono_mode=ChronoMatchingMode.FAST,
+        startup_mode=StartupMode.COLD_START,
+        radiation_reaction_mode="off",
+        driver_train=DriverTrainConfig(
+            enabled=True,
+            bunch_count=2,
+            z_spacing_mm=0.1,
+        ),
+        cavity_exit=CavityExitConfig(
+            enabled=True,
+            mode="rider_exit_with_driver_tail",
+            cavity_length_mm=0.3,
+            residual_tail_factor=1.0,
+            max_residual_tail_steps=1,
+        ),
+    )
+
+    assert rider_traj[-1]["_exit_species"] == "rider"
+    assert rider_traj[-1]["_driver_train_bunch_count"] == 2
+    assert rider_traj[-1]["_driver_train_muted_bunch_count"] >= 1
+    assert driver_traj[-1]["_driver_train_muted_bunch_count"] >= 1
+    assert np.any(driver_traj[-1]["_dead_particles"])

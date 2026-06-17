@@ -65,11 +65,20 @@ def _particle_species_name(m_particle: Any, charge_sign: Any) -> str:
 def build_sweep_run_metadata(config: Any) -> dict[str, Any]:
     """Return fixed per-run metadata that should ride along with sweep rows."""
     metadata: dict[str, Any] = {
-        "mode": "multi_pass" if getattr(config, "driver_train_enabled", False) else "single_pass",
+        "mode": (
+            "multi_pass"
+            if getattr(config, "driver_train_enabled", False)
+            else "single_pass"
+        ),
         "driver_train_enabled": bool(getattr(config, "driver_train_enabled", False)),
         "driver_train_bunch_count": int(getattr(config, "driver_train_bunch_count", 1)),
-        "driver_train_spacing_mm": float(getattr(config, "driver_train_z_spacing_mm", 0.0)),
-        "driver_train_prehistory_steps": int(getattr(config, "driver_train_prehistory_steps", 0)),
+        "driver_train_spacing_mm": float(
+            getattr(config, "driver_train_z_spacing_mm", 0.0)
+        ),
+        "driver_train_prehistory_steps": int(
+            getattr(config, "driver_train_prehistory_steps", 0)
+        ),
+        "cavity_exit_mode": str(getattr(config, "cavity_exit_mode", "first_exit")),
         "driver_species": _particle_species_name(
             getattr(config, "driver_m_particle", None),
             getattr(config, "driver_charge_sign", None),
@@ -91,8 +100,13 @@ def build_sweep_run_metadata(config: Any) -> dict[str, Any]:
         metadata["cavity_length_mm"] = float(cavity_length_mm)
 
     if is_bunch_to_bunch(getattr(config, "simulation_type", None)):
-        if metadata["driver_species"] != "unknown" and metadata["rider_species"] != "unknown":
-            metadata["pairing"] = f"{metadata['driver_species']}+{metadata['rider_species']}"
+        if (
+            metadata["driver_species"] != "unknown"
+            and metadata["rider_species"] != "unknown"
+        ):
+            metadata["pairing"] = (
+                f"{metadata['driver_species']}+{metadata['rider_species']}"
+            )
 
     return metadata
 
