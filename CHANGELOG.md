@@ -4,6 +4,16 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Conducting-Wall Kinetic-Energy Pz Convention (June 2026)
+
+- Changed conducting-wall rider energy conversion to use the same kinetic-energy
+  `starting_Pz` convention as bunch-to-bunch mode. Conducting-wall sweeps,
+  CLI runs, and optimization-generated runs now interpret energy inputs as
+  kinetic energy when deriving the rider longitudinal momentum.
+- Updated conducting-wall convention tests to lock the new shared behavior.
+- Added README notes to mark older conducting-wall example results as using the
+  outdated pre-migration `starting_Pz` formalism.
+
 ### Optimization B2B Driver-Energy Parity Fix (June 2026)
 
 - Fixed optimization-mode `BUNCH_TO_BUNCH` setup so fixed driver kinetic-energy

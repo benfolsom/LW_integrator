@@ -649,10 +649,10 @@ class TestCliGuiOptionsParity:
                     "Delta E seems to use electron mass (ratio should be ~1836)"
                 )
 
-    def test_cli_conducting_wall_uses_shared_total_energy_pz(
+    def test_cli_conducting_wall_uses_shared_kinetic_energy_pz(
         self, tmp_output_dir, monkeypatch
     ):
-        """CW CLI options should use the same total-energy Pz convention as GUI."""
+        """CW CLI options should use the shared kinetic-energy Pz convention."""
         captured: Dict[str, SimulationOptions] = {}
 
         def fake_run_testbed(options, **_kwargs):
@@ -710,12 +710,11 @@ class TestCliGuiOptionsParity:
         expected = calculate_rider_starting_pz(
             1.0, 1.0, SimulationType.CONDUCTING_WALL
         )
-        kinetic_convention = calculate_rider_starting_pz(
-            1.0, 1.0, SimulationType.BUNCH_TO_BUNCH
-        )
         actual = captured["options"].rider_params["starting_Pz"]
         assert actual == pytest.approx(expected)
-        assert actual != pytest.approx(kinetic_convention)
+        assert actual == pytest.approx(
+            calculate_rider_starting_pz(1.0, 1.0, SimulationType.BUNCH_TO_BUNCH)
+        )
 
 
 # =========================================================================

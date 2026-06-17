@@ -482,12 +482,12 @@ unbounded, permanently visible counter-propagating bunch interaction.
 
 ---
 
-**`example_conducting_wall_electron_aperture_sweep.json`** — 50×50 log-spaced sweep of initial energy (1–500 GeV) vs aperture radius (15–75 µm) for a single electron rider approaching a conducting wall. Rider transverse spot size 1 µm. Macroparticle mode enabled (charge multiplier ×1000, sigma multiplier ×2).
+**`example_conducting_wall_electron_aperture_sweep.json`** — 50×50 log-spaced sweep of initial energy (1–500 GeV) vs aperture radius (15–75 µm) for a single electron rider approaching a conducting wall. Rider transverse spot size 1 µm. Macroparticle mode enabled (charge multiplier ×1000, sigma multiplier ×2). (Historical note: results produced before the 2026-06-17 conducting-wall kinetic-energy `starting_Pz` migration commit used an outdated conducting-wall `starting_Pz` formalism.)
 
 ![Conducting wall electron sweep, 1 µm spot size](docs/assets/electron_aperture_0.001micron_spotsize.png)
 
 ---
 
-**`example_conducting_wall_electron_aperture_sweep_10um_spotsize.json`** — 100×100 log-spaced sweep of initial energy (1.8–90 GeV) vs aperture radius (40–550 µm) for a single electron rider with 10 µm transverse spot size approaching a conducting wall. Macroparticle mode enabled.
+**`example_conducting_wall_electron_aperture_sweep_10um_spotsize.json`** — 100×100 log-spaced sweep of initial energy (1.8–90 GeV) vs aperture radius (40–550 µm) for a single electron rider with 10 µm transverse spot size approaching a conducting wall. Macroparticle mode enabled. (Historical note: results produced before the 2026-06-17 conducting-wall kinetic-energy `starting_Pz` migration commit used an outdated conducting-wall `starting_Pz` formalism.)
 
 ![Conducting wall electron sweep, 10 µm spot size](docs/assets/electron_aperture_0.01micron_spotsize.png)

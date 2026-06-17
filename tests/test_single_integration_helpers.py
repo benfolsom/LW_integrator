@@ -165,11 +165,11 @@ def _config(**overrides):
     return SimpleNamespace(**defaults)
 
 
-def test_calculate_rider_starting_pz_uses_b2b_kinetic_energy():
+def test_calculate_rider_starting_pz_uses_kinetic_energy_for_all_modes():
     wall_pz = calculate_rider_starting_pz(5.0, 1.0, SimulationType.CONDUCTING_WALL)
     b2b_pz = calculate_rider_starting_pz(5.0, 1.0, "BUNCH_TO_BUNCH")
 
-    assert b2b_pz > wall_pz
+    assert wall_pz == pytest.approx(b2b_pz)
 
 
 def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
