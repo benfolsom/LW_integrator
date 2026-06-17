@@ -1861,6 +1861,7 @@ def _create_bunch_3d(
     transverse_momentum: float = 0.0,
     longitudinal_span_mm: float = 0.0,
     transverse_axes: list | tuple | None = None,
+    charge_multiplier: float = 1.0,
     seed: int | None = None,
     **_extra: Any,
 ) -> Tuple[Dict[str, np.ndarray], float]:
@@ -1892,6 +1893,7 @@ def _create_bunch_3d(
         transverse_momentum=float(transverse_momentum),
         longitudinal_span_mm=float(longitudinal_span_mm),
         transverse_axes=axes_tuple,
+        charge_multiplier=float(charge_multiplier),
     )
 
 

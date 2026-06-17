@@ -2179,6 +2179,7 @@ def _build_particle_state_3d(payload: Mapping[str, Any]) -> ParticleState:
             transverse_momentum=float(payload.get("transverse_momentum", 0.0)),
             longitudinal_span_mm=float(payload.get("longitudinal_span_mm", 0.0)),
             transverse_axes=transverse_axes,
+            charge_multiplier=float(payload.get("charge_multiplier", 1.0)),
         )
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
