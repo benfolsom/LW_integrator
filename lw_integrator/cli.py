@@ -24,6 +24,7 @@ from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
 from core.types import (
+    BeamlineGeometryConfig,
     ChronoMatchingMode,
     CavityExitConfig,
     DriverTrainConfig,
@@ -31,6 +32,7 @@ from core.types import (
     GammaReconciliationMethod,
     IntegratorConfig,
     MacroparticleSmearingConfig,
+    Occluder,
     ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
@@ -116,6 +118,11 @@ DEFAULT_CAVITY_EXIT: Dict[str, Any] = {
     "cavity_length_mm": None,
     "residual_tail_factor": 0.0,
     "max_residual_tail_steps": 0,
+}
+
+DEFAULT_BEAMLINE_GEOMETRY: Dict[str, Any] = {
+    "enabled": False,
+    "occluders": [],
 }
 
 DEFAULT_MACROPARTICLE_SMEARING: Dict[str, Any] = {
@@ -508,6 +515,25 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "exit; 'rider_exit_with_driver_tail' stops on rider exit while "
             "muting driver-train bunches after their exit-tail window."
         ),
+    )
+    parser.add_argument(
+        "--beamline-geometry-enabled",
+        dest="beamline_geometry_enabled",
+        action="store_true",
+        help="Enable beamline-geometry line-of-sight screening between bunches.",
+    )
+    parser.add_argument(
+        "--no-beamline-geometry",
+        dest="beamline_geometry_enabled",
+        action="store_false",
+        default=None,
+        help="Disable beamline-geometry screening explicitly.",
+    )
+    parser.add_argument(
+        "--beamline-geometry-file",
+        type=str,
+        dest="beamline_geometry_file",
+        help="Path to a JSON file defining the beamline_geometry block (occluders list).",
     )
     parser.add_argument(
         "--chrono-mode",
@@ -1135,6 +1161,18 @@ def _merge_simulation_payload(
     if getattr(args, "cavity_exit_length_mm", None) is not None:
         cavity_exit["cavity_length_mm"] = args.cavity_exit_length_mm
 
+    beamline_geometry = result.get("beamline_geometry")
+    if not isinstance(beamline_geometry, MutableMapping):
+        beamline_geometry = {}
+        result["beamline_geometry"] = beamline_geometry
+    if getattr(args, "beamline_geometry_enabled", None) is not None:
+        beamline_geometry["enabled"] = bool(args.beamline_geometry_enabled)
+    if getattr(args, "beamline_geometry_file", None):
+        with open(args.beamline_geometry_file) as f:
+            file_block = json.load(f)
+        if isinstance(file_block, dict):
+            beamline_geometry.update(file_block)
+
     if getattr(args, "space_charge", False):
         result["space_charge_enabled"] = True
     if getattr(args, "space_charge_softening_mm", 0.0) != 0.0:
@@ -1363,6 +1401,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     pseudo_grid = _build_pseudo_grid_config(payload.get("pseudo_grid"))
     driver_train = _build_driver_train_config(payload.get("driver_train"))
     cavity_exit = _build_cavity_exit_config(payload.get("cavity_exit"))
+    beamline_geometry = _build_beamline_geometry_config(payload.get("beamline_geometry"))
     macroparticle_smearing = _build_macroparticle_smearing_config(
         payload.get("macroparticle_smearing")
     )
@@ -1396,6 +1435,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         driver_train=driver_train,
         cavity_exit=cavity_exit,
         particle_loss=particle_loss,
+        beamline_geometry=beamline_geometry,
     )
 
 
@@ -1606,6 +1646,33 @@ def _build_cavity_exit_config(payload: Any) -> CavityExitConfig:
         ),
         residual_tail_factor=float(merged.get("residual_tail_factor", 0.0)),
         max_residual_tail_steps=int(merged.get("max_residual_tail_steps", 0)),
+    )
+
+
+def _build_beamline_geometry_config(payload: Any) -> BeamlineGeometryConfig:
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("'beamline_geometry' must be an object")
+    merged = dict(DEFAULT_BEAMLINE_GEOMETRY)
+    merged.update(payload)
+    occluders_payload = merged.get("occluders", [])
+    occluders = []
+    for item in occluders_payload:
+        if not isinstance(item, Mapping):
+            raise SimulationConfigError("each occluder must be an object")
+        occluders.append(
+            Occluder(
+                axis=tuple(item.get("axis", (0.0, 0.0, 1.0))),
+                center_mm=tuple(item.get("center_mm", (0.0, 0.0, 0.0))),
+                radius_mm=float(item.get("radius_mm", 1.0)),
+                length_mm=float(item.get("length_mm", 1.0)),
+                label=str(item.get("label", "")),
+            )
+        )
+    return BeamlineGeometryConfig(
+        enabled=bool(merged.get("enabled", False)),
+        occluders=occluders,
     )
 
 
@@ -2140,6 +2207,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         cavity_exit=request.config.cavity_exit,
         particle_loss=request.config.particle_loss,
         macroparticle_smearing=request.config.macroparticle_smearing,
+        beamline_geometry=request.config.beamline_geometry,
     )
 
 

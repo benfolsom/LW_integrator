@@ -139,6 +139,192 @@ def create_particle_state(
     return particle_state, rest_energy_mev
 
 
+def _orthonormal_transverse_axes(
+    axis: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return two unit vectors orthonormal to ``axis`` and to each other.
+
+    Uses a stable Gram-Schmidt: pick the coordinate axis least aligned with
+    ``axis`` to avoid degeneracy, then cross-product twice.
+    """
+    n = axis / np.linalg.norm(axis)
+    candidates = np.eye(3)
+    # Coordinate axis least aligned with n (smallest |dot|).
+    dots = np.abs(candidates @ n)
+    ref = candidates[int(np.argmin(dots))]
+    u = ref - n * np.dot(ref, n)
+    u = u / np.linalg.norm(u)
+    v = np.cross(n, u)
+    v = v / np.linalg.norm(v)
+    return u, v
+
+
+def create_particle_state_3d(
+    starting_position_mm: tuple[float, float, float],
+    momentum_axis: tuple[float, float, float],
+    kinetic_energy_mev: float,
+    stripped_ions: float,
+    particle_mass_amu: float,
+    particle_count: int,
+    charge_sign: float,
+    transverse_distance_mm: float = 0.0,
+    transverse_momentum: float = 0.0,
+    longitudinal_span_mm: float = 0.0,
+    transverse_axes: (
+        tuple[tuple[float, float, float], tuple[float, float, float]] | None
+    ) = None,
+    charge_multiplier: float = 1.0,
+) -> Tuple[Dict[str, Any], float]:
+    """
+    Create a particle state with arbitrary 3D bunch orientation and position.
+
+    The bunch's longitudinal (momentum) direction is along ``momentum_axis``.
+    All particles share the same longitudinal momentum magnitude, derived from
+    ``kinetic_energy_mev`` via the relativistic energy-momentum relation.
+
+    The returned state dict has the same keys and shapes as
+    :func:`create_particle_state`, making it drop-in compatible with the
+    integrator.
+
+    Parameters:
+    -----------
+    starting_position_mm : tuple[float, float, float]
+        Bunch centroid position in mm.
+    momentum_axis : tuple[float, float, float]
+        Direction of the bunch's longitudinal momentum (need not be unit).
+    kinetic_energy_mev : float
+        Kinetic energy per particle in MeV.
+    stripped_ions : float
+        Number of stripped electrons (ionization state).
+    particle_mass_amu : float
+        Particle mass in atomic mass units.
+    particle_count : int
+        Number of particles in the bunch.
+    charge_sign : float
+        Charge sign (+1 or -1).
+    transverse_distance_mm : float
+        Transverse offset of each particle from the axis, applied along the
+        first transverse axis. Default 0.0.
+    transverse_momentum : float
+        Transverse momentum component applied along the first transverse axis.
+        Default 0.0.
+    longitudinal_span_mm : float
+        Spread of particles along the momentum axis, centered on
+        ``starting_position_mm``. Particles are distributed evenly across this
+        span. Default 0.0.
+    transverse_axes : tuple[tuple[float,float,float], tuple[float,float,float]] | None
+        Pair of orthonormal axes perpendicular to ``momentum_axis`` along which
+        transverse spread is applied. If ``None``, auto-computed via stable
+        Gram-Schmidt.
+    charge_multiplier : float
+        Multiplier for particle charge (macroparticle simulations). Default 1.0.
+
+    Returns:
+    --------
+    Tuple[Dict[str, Any], float]
+        Particle state dictionary and rest energy in MeV.
+    """
+    amu_to_mev = 931.494
+    rest_energy_mev = particle_mass_amu * amu_to_mev
+
+    n = np.asarray(momentum_axis, dtype=float)
+    n = n / np.linalg.norm(n)
+
+    if transverse_axes is None:
+        u, v = _orthonormal_transverse_axes(n)
+    else:
+        u = np.asarray(transverse_axes[0], dtype=float)
+        u = u / np.linalg.norm(u)
+        v = np.asarray(transverse_axes[1], dtype=float)
+        v = v / np.linalg.norm(v)
+
+    centroid = np.asarray(starting_position_mm, dtype=float)
+
+    # Relativistic momentum magnitude from kinetic energy.
+    gamma = 1.0 + kinetic_energy_mev / rest_energy_mev
+    beta = np.sqrt(max(0.0, 1.0 - 1.0 / gamma**2))
+    p_long = gamma * particle_mass_amu * beta * C_MMNS
+
+    # Per-particle longitudinal offsets (even spread across span, centered).
+    if particle_count > 1 and longitudinal_span_mm != 0.0:
+        fracs = np.linspace(-0.5, 0.5, particle_count)
+        long_offsets = fracs * longitudinal_span_mm
+    else:
+        long_offsets = np.zeros(particle_count)
+
+    # Per-particle positions: centroid + longitudinal offset along n +
+    # transverse offset along u.
+    positions = (
+        centroid[None, :]
+        + long_offsets[:, None] * n[None, :]
+        + transverse_distance_mm * u[None, :]
+    )
+    positions_x = positions[:, 0].copy()
+    positions_y = positions[:, 1].copy()
+    positions_z = positions[:, 2].copy()
+
+    # Per-particle momenta: longitudinal along n + transverse along u.
+    # All particles share the same momentum (no per-particle momentum spread
+    # in this initializer).
+    momenta_vec = p_long * n + transverse_momentum * u
+    momenta_x = np.full(particle_count, momenta_vec[0])
+    momenta_y = np.full(particle_count, momenta_vec[1])
+    momenta_z = np.full(particle_count, momenta_vec[2])
+
+    # Charge and mass (same convention as create_particle_state).
+    q_value = charge_sign * ELEMENTARY_CHARGE * stripped_ions * charge_multiplier
+    charges = np.full(particle_count, q_value)
+    masses = np.full(particle_count, particle_mass_amu)
+
+    times = np.zeros(particle_count)
+
+    char_time_value = (2.0 / 3.0) * q_value**2 / (particle_mass_amu * C_MMNS**3)
+    char_times = np.full(particle_count, char_time_value)
+
+    Px = momenta_x.copy()
+    Py = momenta_y.copy()
+    Pz = momenta_z.copy()
+    Pt = np.sqrt(Px**2 + Py**2 + Pz**2 + (particle_mass_amu * C_MMNS) ** 2)
+
+    gammas = Pt / (particle_mass_amu * C_MMNS)
+
+    bx = Px / (gammas * particle_mass_amu * C_MMNS)
+    by = Py / (gammas * particle_mass_amu * C_MMNS)
+    bz = Pz / (gammas * particle_mass_amu * C_MMNS)
+
+    bdotx = np.zeros(particle_count)
+    bdoty = np.zeros(particle_count)
+    bdotz = np.zeros(particle_count)
+
+    particle_state = {
+        "x": positions_x,
+        "y": positions_y,
+        "z": positions_z,
+        "t": times,
+        "px": momenta_x,
+        "py": momenta_y,
+        "pz": momenta_z,
+        "Px": Px,
+        "Py": Py,
+        "Pz": Pz,
+        "Pt": Pt,
+        "bx": bx,
+        "by": by,
+        "bz": bz,
+        "bdotx": bdotx,
+        "bdoty": bdoty,
+        "bdotz": bdotz,
+        "gamma": gammas,
+        "q": charges,
+        "m": masses,
+        "char_time": char_times,
+        "count": particle_count,
+        "rest_energy_mev": rest_energy_mev,
+    }
+
+    return particle_state, rest_energy_mev
+
+
 def _as_float(value: Scalar) -> float:
     return float(value)
 

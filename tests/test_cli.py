@@ -53,6 +53,8 @@ def _make_args(**overrides) -> argparse.Namespace:
         "cavity_exit_enabled": None,
         "cavity_exit_mode": None,
         "cavity_exit_length_mm": None,
+        "beamline_geometry_enabled": None,
+        "beamline_geometry_file": None,
         "chrono_mode": None,
         "chrono_interpolate": None,
         "chrono_tolerance": None,
@@ -1404,3 +1406,131 @@ class TestCliRuntimeHelpers:
         assert "Steps Completed: 5" in output
         assert "Traveled Distance Mm: 12.3457" in output
         assert "Delta Gamma Mean: 1.23457" in output
+
+
+class TestCliBeamlineGeometry:
+    def test_parse_args_accepts_beamline_geometry_flags(self):
+        args = cli.parse_args(
+            ["--beamline-geometry-enabled", "--beamline-geometry-file", "geom.json"]
+        )
+        assert args.beamline_geometry_enabled is True
+        assert args.beamline_geometry_file == "geom.json"
+
+    def test_parse_args_no_beamline_geometry_flag(self):
+        args = cli.parse_args(["--no-beamline-geometry"])
+        assert args.beamline_geometry_enabled is False
+
+    def test_merge_simulation_payload_applies_beamline_geometry_enabled(self):
+        payload = cli._merge_simulation_payload(
+            {"beamline_geometry": {"enabled": False, "occluders": []}},
+            _make_args(beamline_geometry_enabled=True),
+        )
+        assert payload["beamline_geometry"]["enabled"] is True
+
+    def test_merge_simulation_payload_loads_beamline_geometry_file(self, tmp_path):
+        geom_file = tmp_path / "geom.json"
+        geom_file.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "occluders": [
+                        {
+                            "axis": [0.0, 0.0, 1.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 15.0,
+                            "length_mm": 2000.0,
+                            "label": "electron_pipe",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload = cli._merge_simulation_payload(
+            {},
+            _make_args(beamline_geometry_file=str(geom_file)),
+        )
+        block = payload["beamline_geometry"]
+        assert block["enabled"] is True
+        assert len(block["occluders"]) == 1
+        assert block["occluders"][0]["label"] == "electron_pipe"
+
+    def test_build_beamline_geometry_config_disabled_default(self):
+        config = cli._build_beamline_geometry_config(None)
+        assert config.enabled is False
+        assert config.occluders == []
+
+    def test_build_beamline_geometry_config_two_occluders(self):
+        config = cli._build_beamline_geometry_config(
+            {
+                "enabled": True,
+                "occluders": [
+                    {
+                        "axis": [0.0, 0.0, 2.0],
+                        "center_mm": [1.0, 2.0, 3.0],
+                        "radius_mm": 15.0,
+                        "length_mm": 2000.0,
+                        "label": "pipe_a",
+                    },
+                    {
+                        "axis": [1.0, 0.0, 0.0],
+                        "center_mm": [-1.0, -2.0, -3.0],
+                        "radius_mm": 7.5,
+                        "length_mm": 500.0,
+                        "label": "pipe_b",
+                    },
+                ],
+            }
+        )
+        assert config.enabled is True
+        assert len(config.occluders) == 2
+        first, second = config.occluders
+        assert first.label == "pipe_a"
+        assert first.radius_mm == pytest.approx(15.0)
+        assert first.length_mm == pytest.approx(2000.0)
+        assert first.center_mm == (1.0, 2.0, 3.0)
+        # axis is normalized in Occluder.__post_init__
+        assert first.axis == pytest.approx((0.0, 0.0, 1.0))
+        assert second.label == "pipe_b"
+        assert second.axis == pytest.approx((1.0, 0.0, 0.0))
+
+    def test_build_integrator_config_carries_beamline_geometry(self):
+        config = cli._build_integrator_config(
+            {
+                "steps": "12",
+                "time_step": "0.25",
+                "wall_position": "1.5",
+                "aperture_radius": "0.002",
+                "simulation_type": "switching-wall",
+                "chrono_mode": "fast",
+                "startup_mode": "approximate-back-history",
+                "image_subcharge_count": "16",
+                "use_image_weighting": "no",
+                "z_cutoff_mode": "relative",
+                "beamline_geometry": {
+                    "enabled": True,
+                    "occluders": [
+                        {
+                            "axis": [0.0, 0.0, 1.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 12.0,
+                            "length_mm": 800.0,
+                            "label": "pipe",
+                        }
+                    ],
+                },
+            }
+        )
+        assert config.beamline_geometry.enabled is True
+        assert len(config.beamline_geometry.occluders) == 1
+        assert config.beamline_geometry.occluders[0].label == "pipe"
+
+    def test_build_beamline_geometry_config_rejects_non_object(self):
+        with pytest.raises(cli.SimulationConfigError, match="must be an object"):
+            cli._build_beamline_geometry_config([1, 2, 3])
+
+    def test_build_beamline_geometry_config_rejects_non_object_occluder(self):
+        with pytest.raises(cli.SimulationConfigError, match="each occluder"):
+            cli._build_beamline_geometry_config(
+                {"enabled": True, "occluders": ["not_an_object"]}
+            )

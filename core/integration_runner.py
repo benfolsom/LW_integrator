@@ -38,6 +38,7 @@ from .pseudo_grid import (
 )
 from .self_consistency import SelfConsistencyConfig, self_consistent_step
 from .types import (
+    BeamlineGeometryConfig,
     ChronoMatchingMode,
     CavityExitConfig,
     DriverTrainConfig,
@@ -637,6 +638,7 @@ def _run_pseudo_grid_reduced_step(
     source_soa: TrajectoryArrays | None = None,
     raise_gamma_blowup: bool = False,
     macroparticle_smearing: MacroparticleSmearingConfig | None = None,
+    beamline_geometry: BeamlineGeometryConfig | None = None,
 ) -> ParticleState:
     """Advance one pseudo-grid half-step via active-only observer/source solves."""
     if not observer_history:
@@ -722,6 +724,7 @@ def _run_pseudo_grid_reduced_step(
                 pseudo_grid_space_charge_source_charges
             ),
             macroparticle_smearing=macroparticle_smearing,
+            beamline_geometry=beamline_geometry,
             traj_soa=observer_active_soa,
             traj_ext_soa=source_active_soa,
             **(
@@ -836,6 +839,7 @@ def _run_adaptive_step(
     pseudo_grid_source_soa: TrajectoryArrays | None = None,
     use_full_history: bool = False,
     macroparticle_smearing: MacroparticleSmearingConfig | None = None,
+    beamline_geometry: BeamlineGeometryConfig | None = None,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -1059,6 +1063,7 @@ def _run_adaptive_step(
             observer_soa=pseudo_grid_observer_soa,
             source_soa=pseudo_grid_source_soa,
             macroparticle_smearing=macroparticle_smearing,
+            beamline_geometry=beamline_geometry,
         )
         adaptive_state.reduced_timestep_mode = reduced_timestep_mode
         adaptive_state.reduced_h_step = reduced_h_step
@@ -1207,6 +1212,7 @@ def _run_adaptive_step(
                             adaptive_timestep
                         ),
                         macroparticle_smearing=macroparticle_smearing,
+                        beamline_geometry=beamline_geometry,
                     )
                 else:
                     trial_state = self_consistent_step(
@@ -1257,6 +1263,7 @@ def _run_adaptive_step(
                             else {}
                         ),
                         macroparticle_smearing=macroparticle_smearing,
+                        beamline_geometry=beamline_geometry,
                     )
             except GammaBlowupError as e:
                 if adaptive_timestep is None or not adaptive_timestep.enabled:
@@ -1653,6 +1660,7 @@ def retarded_integrator(
     cavity_exit: Optional[CavityExitConfig] = None,
     particle_loss: Optional[ParticleLossConfig] = None,
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
+    beamline_geometry: Optional[BeamlineGeometryConfig] = None,
 ) -> Tuple[
     Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
 ]:
@@ -2342,6 +2350,7 @@ def retarded_integrator(
                     driver_train_enabled or sim_type == SimulationType.BUNCH_TO_BUNCH
                 ),
                 macroparticle_smearing=macroparticle_smearing,
+                beamline_geometry=beamline_geometry,
             )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(
@@ -2525,6 +2534,7 @@ def retarded_integrator(
                         ),
                         source_soa=_traj_builder.build_partial(i),
                         macroparticle_smearing=macroparticle_smearing,
+                        beamline_geometry=beamline_geometry,
                     )
                 else:
                     _b2b_scs_accepts_soa = _call_accepts_kw(
@@ -2575,6 +2585,7 @@ def retarded_integrator(
                             else {}
                         ),
                         macroparticle_smearing=macroparticle_smearing,
+                        beamline_geometry=beamline_geometry,
                     )
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
@@ -2956,6 +2967,7 @@ def run_integrator(
         cavity_exit=config.cavity_exit,
         particle_loss=config.particle_loss,
         macroparticle_smearing=config.macroparticle_smearing,
+        beamline_geometry=config.beamline_geometry,
     )
 
 

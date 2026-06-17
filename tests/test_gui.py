@@ -1076,3 +1076,37 @@ def test_trigger_sweep_delegates_to_optimization_tab(monkeypatch):
     gui.IntegratorGUI._trigger_sweep(harness)
 
     assert run_calls == ["run"]
+
+
+def test_gui_inherits_beamline_geometry_tab_builder():
+    assert gui.IntegratorGUI._build_beamline_geometry_tab is (
+        IntegratorGUITabMixin._build_beamline_geometry_tab
+    )
+    assert gui.IntegratorGUI._collect_beamline_geometry_payload is (
+        IntegratorGUITabMixin._collect_beamline_geometry_payload
+    )
+
+
+def test_beamline_geometry_tab_is_created_in_notebook():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        root.update_idletasks()
+        tab_names = [
+            app.notebook.tab(tab_id, "text") for tab_id in app.notebook.tabs()
+        ]
+        assert "Beamline/Geometry" in tab_names
+        assert hasattr(app, "beamline_geometry_text")
+        assert hasattr(app, "beamline_geometry_enabled_var")
+        assert hasattr(app, "beamline_geometry_enable_check")
+        # Template JSON is pre-filled and parseable.
+        payload = app._collect_beamline_geometry_payload()
+        assert isinstance(payload, dict)
+        assert "occluders" in payload
+    finally:
+        root.destroy()

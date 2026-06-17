@@ -329,6 +329,7 @@ def self_consistent_step(
     external_field: Optional[Any] = None,
     pseudo_grid_space_charge_source_charges: Optional[Any] = None,
     macroparticle_smearing: Optional[Any] = None,
+    beamline_geometry: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -432,6 +433,12 @@ def self_consistent_step(
             {"macroparticle_smearing": macroparticle_smearing}
             if macroparticle_smearing is not None
             and ("macroparticle_smearing" in _sig_params or _accepts_var_kwargs)
+            else {}
+        ),
+        **(
+            {"beamline_geometry": beamline_geometry}
+            if beamline_geometry is not None
+            and ("beamline_geometry" in _sig_params or _accepts_var_kwargs)
             else {}
         ),
     )

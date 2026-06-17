@@ -290,6 +290,59 @@ class CavityExitConfig:
 
 
 @dataclass
+class Occluder:
+    """A single beam-pipe-like line-of-sight occluder.
+
+    The occluder is a finite cylinder of radius ``radius_mm`` centered at
+    ``center_mm`` with its axis along ``axis`` (a unit vector). A source
+    particle is "inside" (has line of sight down the axis) when its
+    transverse distance from the axis is less than ``radius_mm`` and it is
+    within the cylinder's axial extent. The cylinder is open at both ends.
+    """
+
+    axis: tuple[float, float, float]
+    center_mm: tuple[float, float, float]
+    radius_mm: float
+    length_mm: float
+    label: str = ""
+
+    def __post_init__(self) -> None:
+        axis_arr = np.asarray(self.axis, dtype=float)
+        norm = float(np.linalg.norm(axis_arr))
+        if norm < 1e-15:
+            raise ValueError("Occluder axis must be non-zero")
+        self.axis = tuple(axis_arr / norm)
+        self.center_mm = tuple(float(v) for v in self.center_mm)
+        if self.radius_mm <= 0:
+            raise ValueError("Occluder radius_mm must be positive")
+        if self.length_mm <= 0:
+            raise ValueError("Occluder length_mm must be positive")
+        self.label = str(self.label)
+
+
+@dataclass
+class BeamlineGeometryConfig:
+    """Configuration for geometry-based line-of-sight screening.
+
+    When enabled, retarded field contributions between bunch particles are
+    zeroed when the source particle (at its retarded position) is outside
+    all occluders that bound line of sight to the other bunch.
+
+    Each occluder represents an open pipe. A source particle inside an
+    occluder's transverse aperture has line of sight down that pipe's axis.
+    The occlusion test is applied at the retarded source position so that
+    residual fields (emitted earlier while inside) still arrive after the
+    source exits.
+    """
+
+    enabled: bool = False
+    occluders: list[Occluder] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.enabled = bool(self.enabled)
+
+
+@dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
@@ -390,6 +443,7 @@ class IntegratorConfig:
     driver_train: DriverTrainConfig = field(default_factory=DriverTrainConfig)
     cavity_exit: CavityExitConfig = field(default_factory=CavityExitConfig)
     particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
+    beamline_geometry: BeamlineGeometryConfig = field(default_factory=BeamlineGeometryConfig)
 
 
 @dataclass
@@ -920,4 +974,6 @@ __all__ = [
     "TrajectoryArrays",
     "IndexedTrajectoryArrays",
     "TrajectoryBuilder",
+    "Occluder",
+    "BeamlineGeometryConfig",
 ]

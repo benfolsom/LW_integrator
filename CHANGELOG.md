@@ -4,6 +4,35 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Beamline Geometry Line-of-Sight Screening (June 2026)
+
+- Added `BeamlineGeometryConfig` and `Occluder` types in `core/types.py` for
+  geometry-based line-of-sight screening of retarded field contributions.
+- Added `core/beamline_geometry.py` with `compute_visibility_mask` that tests
+  whether a source particle (at its retarded position) is inside an occluder's
+  transverse aperture. Residual fields arrive naturally via retarded time.
+- Wired `beamline_geometry` through `retarded_equations_of_motion`, `self_consistent_step`,
+  `retarded_integrator`, `IntegratorConfig`, `SimulationOptions`, and `run_testbed`.
+  Occlusion applies to external (bunch-to-bunch) samples only, not self-space-charge.
+- Added CLI flags `--beamline-geometry-enabled` / `--no-beamline-geometry` and
+  `--beamline-geometry-file` (loads a JSON file defining the occluders list).
+- Added a "Beamline/Geometry" GUI tab with a plaintext JSON editor and validate button.
+
+### General 3D Particle Initialization (June 2026)
+
+- Added `create_particle_state_3d` to `core/particle_initialization.py` supporting
+  arbitrary bunch orientation (`momentum_axis`), starting position
+  (`starting_position_mm`), auto-computed or explicit transverse axes, and
+  longitudinal span. Drop-in compatible with the existing `create_particle_state`
+  state-dict structure. Backward-compatible; existing initializers unchanged.
+
+### Energy Ledger Per-Direction and Percent Gains (June 2026)
+
+- Extended `_compute_energy_ledger_series` and `_ledger_scalar_metrics` in
+  `testbed_runner.py` with per-direction kinetic energy series (x, y, z) and
+  `final_percent_energy_gain` / `max_percent_energy_gain` scalar metrics for
+  both rider and driver. All existing metrics preserved for backward compat.
+
 ### Conducting-Wall Kinetic-Energy Pz Convention (June 2026)
 
 - Changed conducting-wall rider energy conversion to use the same kinetic-energy
