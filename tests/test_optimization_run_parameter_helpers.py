@@ -8,11 +8,13 @@ from optimization.run_parameter_helpers import (
     build_optimization_evaluation_outcome,
     calculate_transverse_offset,
     collect_optimization_parameter_selection,
+    decode_optimization_parameter_values,
+    encode_optimization_parameter_values,
     is_bunch_to_bunch,
     resolve_optimization_run_parameters,
     resolve_objective_metric,
 )
-from optimization.sweep_helpers import calculate_starting_pz_from_energy
+from optimization.single_integration_helpers import calculate_rider_starting_pz
 
 
 def test_collect_optimization_parameter_selection_preserves_existing_order():
@@ -20,14 +22,18 @@ def test_collect_optimization_parameter_selection_preserves_existing_order():
         simulation_type=SimulationType.BUNCH_TO_BUNCH,
         aperture_points=2,
         energy_points=3,
+        energy_log_scale=True,
         transverse_momentum_range=(0.1, 0.2),
         transverse_momentum_points=2,
+        transverse_momentum_log_scale=True,
         timestep_range=(1e-7, 2e-7),
         timestep_points=2,
         transverse_spread_range=(1e-6, 2e-6),
         transverse_spread_points=2,
+        transverse_spread_log_scale=True,
         driver_energy_range=(0.5, 0.8),
         driver_energy_points=2,
+        driver_energy_log_scale=False,
     )
 
     selection = collect_optimization_parameter_selection(config)
@@ -48,15 +54,19 @@ def test_collect_optimization_parameter_selection_preserves_existing_order():
         config.transverse_spread_range,
         config.driver_energy_range,
     ]
+    assert selection.log_scales == [True, True, True, False, True, False]
     assert selection.log_lines == [
-        f"    Added: initial_energy_gev, range={config.energy_range}, points=3",
+        (
+            "    Added: initial_energy_gev, "
+            f"range={config.energy_range}, points=3, log=True"
+        ),
         (
             "    Added: transverse_momentum, "
-            f"range={config.transverse_momentum_range}, points=2"
+            f"range={config.transverse_momentum_range}, points=2, log=True"
         ),
         (
             "    Added: rider_transv_dist, "
-            f"range={config.transverse_spread_range}, points=2"
+            f"range={config.transverse_spread_range}, points=2, log=True"
         ),
     ]
 
@@ -75,7 +85,19 @@ def test_collect_optimization_parameter_selection_skips_disabled_parameters():
 
     assert selection.names == []
     assert selection.bounds == []
+    assert selection.log_scales == []
     assert selection.log_lines == []
+
+
+def test_encode_and_decode_optimization_parameter_values_roundtrip():
+    physical = [1.0e-3, 2.5, 4.0e1]
+    log_scales = [True, False, True]
+
+    encoded = encode_optimization_parameter_values(physical, log_scales)
+    decoded = decode_optimization_parameter_values(encoded, log_scales)
+
+    assert np.allclose(encoded, [-3.0, 2.5, np.log10(40.0)])
+    assert np.allclose(decoded, physical)
 
 
 def test_resolve_objective_metric_keeps_historical_defaults():
@@ -203,7 +225,9 @@ def test_resolve_optimization_run_parameters_builds_bunch_driver_params_for_enum
         "transv_dist": -0.04,
         "transverse_geometry": "square",
         "starting_distance": 800.0,
-        "starting_Pz": calculate_starting_pz_from_energy(0.6, 207.2, negative=False),
+        "starting_Pz": calculate_rider_starting_pz(
+            0.6, 207.2, SimulationType.BUNCH_TO_BUNCH
+        ),
         "stripped_ions": 54.0,
         "transv_offset_x": 0.01,
         "transv_offset_y": -0.02,
@@ -222,6 +246,25 @@ def test_resolve_optimization_run_parameters_accepts_string_bunch_mode():
 
     assert resolved.transv_offset == 0.25
     assert resolved.driver_params is not None
+
+
+def test_resolve_optimization_run_parameters_recomputes_driver_pz_from_fixed_energy():
+    config = OptimizationConfig(
+        simulation_type=SimulationType.BUNCH_TO_BUNCH,
+        driver_m_particle=0.00054857990907,
+        driver_direction="-z",
+        driver_energy_gev=0.022699345303073465,
+        driver_starting_Pz=-4925.0,
+    )
+
+    resolved = resolve_optimization_run_parameters(config, [], [])
+
+    assert resolved.driver_params is not None
+    assert resolved.driver_params["starting_Pz"] == -calculate_rider_starting_pz(
+        config.driver_energy_gev,
+        config.driver_m_particle,
+        SimulationType.BUNCH_TO_BUNCH,
+    )
 
 
 def test_build_optimization_evaluation_outcome_records_missing_metrics():
@@ -279,6 +322,28 @@ def test_build_optimization_evaluation_outcome_records_invalid_metrics():
     assert outcome.record["metrics"]["other"] == 1.0
     assert any("returned NaN" in line for line in outcome.log_lines)
     assert any("other: 1.0" in line for line in outcome.log_lines)
+
+
+def test_build_optimization_evaluation_outcome_rejects_invalid_energy_gain_metric():
+    outcome = build_optimization_evaluation_outcome(
+        {
+            "metrics": {
+                "max_energy_gain_gev": np.nan,
+                "delta_e_mev": 1.0,
+            },
+            "stability_rejected": True,
+        },
+        eval_num=13,
+        param_names=["energy"],
+        values=[5.0],
+        metric_name="max_energy_gain_gev",
+        maximize=True,
+    )
+
+    assert outcome.fitness == np.inf
+    assert outcome.record["failed"] is True
+    assert np.isnan(outcome.record["metrics"]["max_energy_gain_gev"])
+    assert any("returned NaN" in line for line in outcome.log_lines)
 
 
 def test_build_optimization_evaluation_outcome_applies_penalty_and_saves_trajectory():

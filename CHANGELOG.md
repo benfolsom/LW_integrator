@@ -4,6 +4,90 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Conducting-Wall Kinetic-Energy Pz Convention (June 2026)
+
+- Changed conducting-wall rider energy conversion to use the same kinetic-energy
+  `starting_Pz` convention as bunch-to-bunch mode. Conducting-wall sweeps,
+  CLI runs, and optimization-generated runs now interpret energy inputs as
+  kinetic energy when deriving the rider longitudinal momentum.
+- Updated conducting-wall convention tests to lock the new shared behavior.
+- Added README notes to mark older conducting-wall example results as using the
+  outdated pre-migration `starting_Pz` formalism.
+
+### Optimization B2B Driver-Energy Parity Fix (June 2026)
+
+- Fixed optimization-mode `BUNCH_TO_BUNCH` setup so fixed driver kinetic-energy
+  configs now build the same driver longitudinal momentum as direct sweep runs.
+  Optimization evaluations now recompute `driver_starting_Pz` from
+  `driver_energy_gev` with the same B2B energy-to-momentum convention used by
+  the sweep path, instead of silently reusing stale stored `driver_starting_Pz`
+  values from saved configs.
+- Added regression coverage for fixed-energy B2B optimization parameter
+  resolution, including the case where a config carries both
+  `driver_energy_gev` and an out-of-date `driver_starting_Pz`.
+
+### Optimization Longitudinal-Size Sweep Plumbing (June 2026)
+
+- Added rider and driver longitudinal bunch-size sweep support to the
+  headless optimization/sweep JSON conversion path, so `rider_long_dist` and
+  `driver_long_dist` can now be optimized from saved configs in the same way
+  as transverse sizes and energies.
+- Added log-scale optimization parameter support in the headless optimization
+  runner, so parameters marked with `*_log_scale` are searched in transformed
+  optimizer space and decoded back to physical values for evaluation and
+  persisted results.
+- Fixed stability-rejected optimization evaluations so all primary energy-gain
+  objectives are invalidated, and decoded GA final-population members before
+  rerunning top-trajectory exports.
+
+### Longitudinal Energy Ledger Metrics (June 2026)
+
+- Added shared rider/driver kinetic-energy ledger metrics for single runs, sweeps,
+  and optimization exports, including final/max mean kinetic energy and
+  longitudinal `z`-axis energy-change summaries.
+- Added aggregate `net_*delta_kinetic_energy_z_mev` outputs so screening studies
+  can track the running and final summed longitudinal energy change across rider
+  and driver bunches.
+- Added per-driver-bunch longitudinal energy-change metrics and trajectory series
+  for driver-train runs when the train is partitionable into equal bunch blocks.
+- Threaded the new ledger metrics through `RunResult` and the shared
+  `build_integration_metrics()` path so future CLI/GUI and optimization work can
+  reuse the same outputs.
+
+### Phase 1g Targeted 1000 mm Failure-Map Probes (June 2026)
+
+- Added a new Phase 1g single-pass targeted failure-map family at `1000 mm`
+  that sweeps a sparse but wide rider/driver energy grid under the stable,
+  balanced, and relaxed self-consistency bundles, so failure regions can be
+  identified quickly without pulling multipass back into the calibration loop.
+- The targeted failure map selected `balanced` as the next default: stable was
+  clean but not meaningfully faster, balanced was nearly as reliable with
+  comparable runtime, and relaxed exposed the clearest failure region.
+- The new probe keeps the low active-count pseudo-grid settings, `0.04 mm`
+  driver width, and full trajectory saving with a short stride so the same
+  batch can be used for both runtime triage and later trajectory inspection.
+- Updated the Phase 1g planning notes to treat the targeted 1000 mm
+  single-pass map as the next study step after the self-consistency
+  regression/stability checks.
+
+### Phase 1g Self-Consistency Tuning Probe (June 2026)
+
+- Added a dedicated Phase 1g self-consistency tuning probe family at a representative pseudo-production point so strict, balanced, and relaxed bundles can be compared directly on the same geometry before launching broader sweeps.
+- Refactored the Phase 1g config generator to accept per-run self-consistency overrides, keeping the audited strict bundle available while allowing controlled relaxation in probe configs.
+- The tuning probe is intended to identify a balanced self-consistency setting that improves wall time without introducing the fast-failure behavior seen in the most relaxed pseudo-production bundle.
+- Added a matching stability-regression probe at the earlier single-pass trajectory-diagnostic energy point so the same ladder can be checked against a previously stable geometry and the config changes can be isolated from the harder pseudo-production point.
+- Follow-on exploratory reruns now default to the balanced bundle after the targeted 1000 mm failure map showed relaxed failures across both H- and proton rows.
+- The relaxed exploratory bundle now carries `self_consistency_mass_shell_tolerance=8e-3` to loosen the post-loop safety net when testing production-ladder rows.
+- The production-ladder probe now restarts from the balanced bundle instead of relaxed after the relaxed rows continued to fail on the H- multi-pass branch of the production-shaped geometry.
+- Added a sparse production-ladder probe family using the balanced bundle by default so we can test the real production cavity-length ladder at a few representative energy points before committing to the full 20x20 sweep.
+
+### Pseudo-Production Self-Consistency Runtime Clamp (June 2026)
+
+- Reverted the Phase 1g pseudo-production bundle back to the stricter self-consistency settings: `fixed_geometry`, `self_consistency_max_iterations=6`, fixed-weight gamma reconciliation, chrono interpolation enabled, and verbosity `2`.
+- Kept the hard failure for non-converging self-consistency steps so pathological rows stop the run instead of recursing through repeated substeps indefinitely.
+- Regenerated the Phase 1g pseudo-production config family with the stricter bundle.
+- Added regression coverage for the new self-consistency failure path and preserved compatibility with the existing trajectory-summary helpers.
+
 ### Self-Consistency And Chrono Defaults Audit (June 2026)
 
 - Audited self-consistency against Medina/LAD radiation reaction, same-bunch space charge, and representative plotted B2B sweep samples. Medina/LAD does not eliminate the need for self-consistency: no-SC runs still drift or fail in representative cases, while `fixed_geometry` with 2 iterations matched the stable audited behavior.
@@ -21,6 +105,8 @@ All notable changes and updates to the LW Integrator project are documented in t
 - Removed the GUI-side validation that blocked driver-train plus pseudo-grid combinations; the integrator now accepts the combination and falls back to canonical full-history stepping when the reduced path is not applicable.
 - Fixed direct CLI forwarding of `z_cutoff_mode` while threading the new cutoff config.
 - Tests: added core rider-first/driver-first cavity-exit coverage plus CLI and `SimulationOptions` plumbing checks.
+- Added `rider_exit_with_driver_tail` mode for driver-train studies: rider exit now controls the global halt while individual driver bunches are muted after crossing their exit plane plus the configured residual-tail step window.
+- Threaded the new mode through CLI/GUI and sweep config plumbing, and added final muted/active driver-bunch counts to multipass metrics when available.
 
 ### Beam-Current Macroparticle-Weight Helpers (May 2026)
 

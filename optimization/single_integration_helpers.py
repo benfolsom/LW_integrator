@@ -515,10 +515,7 @@ def calculate_rider_starting_pz(
 ) -> float:
     """Convert rider energy to the specific starting Pz expected by init_bunch."""
     rest_energy_mev = rider_m_particle * AMU_TO_MEV
-    if is_bunch_to_bunch(simulation_type):
-        gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
-    else:
-        gamma = (energy_gev * 1e3) / rest_energy_mev
+    gamma = (energy_gev * 1e3) / rest_energy_mev + 1.0
     return C_MMNS * np.sqrt(gamma * gamma - 1.0)
 
 

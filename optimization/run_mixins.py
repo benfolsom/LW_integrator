@@ -23,6 +23,8 @@ from optimization.penalties import compute_soft_penalty
 from optimization.run_parameter_helpers import (
     build_optimization_evaluation_outcome,
     collect_optimization_parameter_selection,
+    decode_optimization_parameter_values,
+    encode_optimization_parameter_values,
     resolve_optimization_run_parameters,
     resolve_objective_metric,
 )
@@ -101,7 +103,12 @@ class OptimizationRunMixin:
 
             selection = collect_optimization_parameter_selection(self.config)
             param_names = selection.names
-            param_bounds = selection.bounds
+            physical_param_bounds = selection.bounds
+            param_log_scales = selection.log_scales
+            param_bounds = [
+                tuple(encode_optimization_parameter_values(list(bound), [use_log, use_log]))
+                for bound, use_log in zip(physical_param_bounds, param_log_scales)
+            ]
             for line in selection.log_lines:
                 self._log_result(line)
 
@@ -116,7 +123,7 @@ class OptimizationRunMixin:
                 f"[DEBUG] Total parameters to optimize: {len(param_names)}"
             )
             self._log_result(f"Optimizing parameters: {param_names}")
-            self._log_result(f"Parameter bounds: {param_bounds}")
+            self._log_result(f"Parameter bounds: {physical_param_bounds}")
             self._log_result(f"Objective: {self.config.objective}")
             self._log_result("")
 
@@ -152,10 +159,11 @@ class OptimizationRunMixin:
                 """Evaluate parameter vector and return value to minimize."""
                 eval_num = eval_counter[0]
                 eval_counter[0] += 1
+                physical_x = decode_optimization_parameter_values(x, param_log_scales)
 
                 # Log evaluation start
                 param_str = ", ".join(
-                    [f"{name}={val:.4g}" for name, val in zip(param_names, x)]
+                    [f"{name}={val:.4g}" for name, val in zip(param_names, physical_x)]
                 )
                 self._log_result(f"[OPTIMIZATION] Evaluation {eval_num}: {param_str}")
 
@@ -173,7 +181,7 @@ class OptimizationRunMixin:
 
                 try:
                     run_params = resolve_optimization_run_parameters(
-                        self.config, param_names, x
+                        self.config, param_names, physical_x
                     )
                     aperture = run_params.aperture
                     energy = run_params.energy_gev
@@ -197,7 +205,7 @@ class OptimizationRunMixin:
                         result,
                         eval_num=eval_num,
                         param_names=param_names,
-                        values=x,
+                        values=physical_x,
                         metric_name=metric_name,
                         maximize=maximize,
                         penalty=penalty,
@@ -213,7 +221,7 @@ class OptimizationRunMixin:
                     import traceback
 
                     self._log_result(
-                        f"[ERROR] Evaluation {eval_num} failed for params {x}"
+                        f"[ERROR] Evaluation {eval_num} failed for params {physical_x}"
                     )
                     self._log_result(f"[ERROR] Exception: {type(e).__name__}: {e}")
                     self._log_result("[ERROR] Traceback:")
@@ -223,7 +231,7 @@ class OptimizationRunMixin:
                     # Store failed evaluation
                     eval_record = {
                         "evaluation": eval_num,
-                        "parameters": dict(zip(param_names, x)),
+                        "parameters": dict(zip(param_names, physical_x)),
                         "failed": True,
                         "error": str(e),
                         "objective_value": float("inf"),
@@ -336,6 +344,14 @@ class OptimizationRunMixin:
                 self._log_result(f"[ERROR] Unknown optimization method: {method}")
                 self.running = False
                 return
+
+            if hasattr(result, "x"):
+                decoded_best_params = decode_optimization_parameter_values(
+                    result.x,
+                    param_log_scales,
+                )
+                result.x = np.asarray(decoded_best_params, dtype=float)
+                result.best_params_dict = dict(zip(param_names, decoded_best_params))
 
             # Cache all evaluations for saving with results
             self._all_evaluations_cache = all_evaluations
@@ -454,6 +470,7 @@ class OptimizationRunMixin:
             "rider_pcount": int(run_params.rider_pcount),
             "rider_transv_mom": run_params.rider_transv_mom,
             "rider_transv_dist": run_params.rider_transv_dist,
+            "rider_long_dist": run_params.rider_long_dist,
             "rider_stripped_ions": run_params.rider_stripped_ions,
             "macroparticle_charge_multiplier": (
                 run_params.macroparticle_charge_multiplier
@@ -529,6 +546,7 @@ class OptimizationRunMixin:
                 rider_pcount=int(run_params.rider_pcount),
                 rider_transv_mom=run_params.rider_transv_mom,
                 rider_transv_dist=run_params.rider_transv_dist,
+                rider_long_dist=run_params.rider_long_dist,
                 rider_stripped_ions=run_params.rider_stripped_ions,
                 macroparticle_charge_multiplier=(
                     run_params.macroparticle_charge_multiplier
@@ -1189,6 +1207,7 @@ class OptimizationRunMixin:
         rider_pcount: int = None,
         rider_transv_mom: float = None,
         rider_transv_dist: float = None,
+        rider_long_dist: float = None,
         rider_stripped_ions: float = None,
         macroparticle_charge_multiplier: float = None,
         macroparticle_sigma_multiplier: float = None,
@@ -1232,6 +1251,7 @@ class OptimizationRunMixin:
             rider_pcount=rider_pcount,
             rider_transv_mom=rider_transv_mom,
             rider_transv_dist=rider_transv_dist,
+            rider_long_dist=rider_long_dist,
             rider_stripped_ions=rider_stripped_ions,
             macroparticle_charge_multiplier=macroparticle_charge_multiplier,
             macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
