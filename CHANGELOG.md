@@ -11,12 +11,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 - Added `core/beamline_geometry.py` with `compute_visibility_mask` that tests
   whether a source particle (at its retarded position) is inside an occluder's
   transverse aperture. Residual fields arrive naturally via retarded time.
-- Wired `beamline_geometry` through `retarded_equations_of_motion`, `self_consistent_step`,
-  `retarded_integrator`, `IntegratorConfig`, `SimulationOptions`, and `run_testbed`.
-  Occlusion applies to external (bunch-to-bunch) samples only, not self-space-charge.
+- Wired `beamline_geometry` through `retarded_equations_of_motion`,
+  `self_consistent_step`, `retarded_integrator`, `IntegratorConfig`,
+  `SimulationOptions`, and `run_testbed`. Occlusion applies to external
+  (bunch-to-bunch) samples only, not self-space-charge.
 - Added CLI flags `--beamline-geometry-enabled` / `--no-beamline-geometry` and
   `--beamline-geometry-file` (loads a JSON file defining the occluders list).
-- Added a "Beamline/Geometry" GUI tab with a plaintext JSON editor and validate button.
+- Added a "Beamline/Geometry" GUI tab with a plaintext JSON editor and validate
+  button. The tab feeds occluders into `SimulationOptions` via
+  `_build_options_from_ui`.
 
 ### General 3D Particle Initialization (June 2026)
 
@@ -25,6 +28,9 @@ All notable changes and updates to the LW Integrator project are documented in t
   (`starting_position_mm`), auto-computed or explicit transverse axes, and
   longitudinal span. Drop-in compatible with the existing `create_particle_state`
   state-dict structure. Backward-compatible; existing initializers unchanged.
+- Wired into the testbed path (`prepare_particle_bunches`) and the CLI single-run
+  path (`_build_particle_state`): when `momentum_axis` is present in rider/driver
+  params, the 3D initializer is used instead of the legacy z-axis initializer.
 
 ### Energy Ledger Per-Direction and Percent Gains (June 2026)
 

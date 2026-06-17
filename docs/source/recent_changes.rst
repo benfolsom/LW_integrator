@@ -12,6 +12,46 @@ corrections.
 June 2026 Updates
 -----------------
 
+Beamline Geometry Line-of-Sight Screening (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Beam-pipe-like occluders can now block direct retarded field contributions
+between bunches when the source particle (at its retarded position) exits a
+pipe's transverse aperture. Residual fields arrive naturally via retarded
+time because the occlusion test is applied at the retarded source position.
+
+* ``core.types.BeamlineGeometryConfig`` and ``core.types.Occluder`` define the
+  geometry as a list of finite open cylinders (axis, center, radius, length).
+* ``core/beamline_geometry.py`` provides ``compute_visibility_mask`` for the
+  per-particle aperture test.
+* Occlusion is wired through ``retarded_equations_of_motion``,
+  ``self_consistent_step``, ``retarded_integrator``, ``IntegratorConfig``,
+  ``SimulationOptions``, and ``run_testbed``. It applies to external
+  (bunch-to-bunch) samples only, not self-space-charge.
+* CLI flags: ``--beamline-geometry-enabled``, ``--no-beamline-geometry``,
+  ``--beamline-geometry-file``.
+* GUI: a new "Beamline/Geometry" tab with a plaintext JSON editor and validate
+  button feeds occluders into ``SimulationOptions``.
+
+General 3D Particle Initialization (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``create_particle_state_3d`` in ``core/particle_initialization.py`` supports
+arbitrary bunch orientation (``momentum_axis``), starting position
+(``starting_position_mm``), auto-computed or explicit transverse axes, and
+longitudinal span. When ``momentum_axis`` is present in rider/driver config
+params, the 3D initializer is used automatically in both the testbed
+(``prepare_particle_bunches``) and CLI single-run (``_build_particle_state``)
+paths. Backward-compatible with existing z-axis configs.
+
+Energy Ledger Per-Direction and Percent Gains (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The energy ledger now records per-direction kinetic energy (x, y, z) and
+``final_percent_energy_gain`` / ``max_percent_energy_gain`` for both rider and
+driver, in addition to the existing total and longitudinal-z metrics. All
+existing metrics are preserved for backward compatibility.
+
 Sweep Metrics For Compact Spallation Studies (May 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
