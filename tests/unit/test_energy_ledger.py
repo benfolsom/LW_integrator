@@ -131,12 +131,12 @@ def test_compute_energy_ledger_series_includes_xy_and_alias_fields():
         ledger["kinetic_energy_z_mev"], ledger["longitudinal_kinetic_energy_mev"]
     )
 
-    # Spot-check x series value at final step: gamma * bx * rest_energy
-    expected_final_x = 2.2 * 0.14 * rest_energy_mev
+    # Spot-check x series value at final step: gamma^2 * bx^2 / (gamma+1) * rest_energy
+    expected_final_x = 2.2**2 * 0.14**2 / (2.2 + 1.0) * rest_energy_mev
     assert ledger["kinetic_energy_x_mev"][-1] == pytest.approx(expected_final_x)
 
     # delta_x at final step
-    expected_initial_x = 2.0 * 0.1 * rest_energy_mev
+    expected_initial_x = 2.0**2 * 0.1**2 / (2.0 + 1.0) * rest_energy_mev
     assert ledger["delta_kinetic_energy_x_mev"][-1] == pytest.approx(
         expected_final_x - expected_initial_x
     )
@@ -144,7 +144,7 @@ def test_compute_energy_ledger_series_includes_xy_and_alias_fields():
     # initial scalar fields
     assert ledger["initial_kinetic_energy_x_mev"] == pytest.approx(expected_initial_x)
     assert ledger["initial_kinetic_energy_y_mev"] == pytest.approx(
-        2.0 * 0.2 * rest_energy_mev
+        2.0**2 * 0.2**2 / (2.0 + 1.0) * rest_energy_mev
     )
     assert ledger["initial_bx"] == pytest.approx(0.1)
     assert ledger["initial_by"] == pytest.approx(0.2)

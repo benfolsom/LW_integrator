@@ -1449,18 +1449,37 @@ def _compute_energy_ledger_series(
     initial_kinetic_energy_mev = max((gamma_initial - 1.0) * rest_energy_mev, 0.0)
     delta_kinetic_energy_mev = kinetic_energy_mev - initial_kinetic_energy_mev
 
-    longitudinal_kinetic_energy_mev = gamma_series * bz_series * rest_energy_mev
-    initial_longitudinal_kinetic_energy_mev = gamma_initial * bz_initial * rest_energy_mev
+    # Per-direction kinetic energy decomposition using the relativistic identity:
+    #   KE_total = p^2 / ((gamma + 1) * m)
+    #   KE_i = p_i^2 / ((gamma + 1) * m)
+    # This correctly decomposes KE by momentum component, unlike the
+    # previous gamma*beta_i*rest_energy which was a momentum proxy.
+    # We compute p_i from gamma, m, beta_i: p_i = gamma * m * beta_i * c.
+    # Then KE_i = p_i^2 / ((gamma+1)*m) and convert to MeV via rest_energy/m*c^2.
+    # Simplifying: KE_i = gamma^2 * beta_i^2 * m * c^2 / (gamma + 1)
+    #              = gamma^2 * beta_i^2 / (gamma + 1) * rest_energy_mev
+    # (since rest_energy_mev = m * c^2 in the AMU/MeV convention).
+    gamma_sq = gamma_series ** 2
+    gamma_plus_1 = gamma_series + 1.0
+
+    longitudinal_kinetic_energy_mev = gamma_sq * bz_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_longitudinal_kinetic_energy_mev = (
+        gamma_initial**2 * bz_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
     delta_kinetic_energy_z_mev = (
         longitudinal_kinetic_energy_mev - initial_longitudinal_kinetic_energy_mev
     )
 
-    kinetic_energy_x_mev = gamma_series * bx_series * rest_energy_mev
-    initial_kinetic_energy_x_mev = gamma_initial * bx_initial * rest_energy_mev
+    kinetic_energy_x_mev = gamma_sq * bx_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_kinetic_energy_x_mev = (
+        gamma_initial**2 * bx_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
     delta_kinetic_energy_x_mev = kinetic_energy_x_mev - initial_kinetic_energy_x_mev
 
-    kinetic_energy_y_mev = gamma_series * by_series * rest_energy_mev
-    initial_kinetic_energy_y_mev = gamma_initial * by_initial * rest_energy_mev
+    kinetic_energy_y_mev = gamma_sq * by_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_kinetic_energy_y_mev = (
+        gamma_initial**2 * by_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
     delta_kinetic_energy_y_mev = kinetic_energy_y_mev - initial_kinetic_energy_y_mev
 
     return {
