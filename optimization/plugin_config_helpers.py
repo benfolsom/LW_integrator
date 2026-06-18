@@ -228,15 +228,14 @@ def apply_sweep_parameter_overrides(
             energy_min, energy_max = energy_max, energy_min
 
         driver_mass = float(sweep_params["driver_m_particle"]["fixed_var"].get())
-        pz_min = calculate_rider_starting_pz(
-            energy_min, driver_mass, config.simulation_type
+        pz_min = -abs(
+            calculate_rider_starting_pz(energy_min, driver_mass, config.simulation_type)
         )
-        pz_max = calculate_rider_starting_pz(
-            energy_max, driver_mass, config.simulation_type
+        pz_max = -abs(
+            calculate_rider_starting_pz(energy_max, driver_mass, config.simulation_type)
         )
-        if driver_negative:
-            pz_min = -pz_min
-            pz_max = -pz_max
+        if pz_min > pz_max:
+            pz_min, pz_max = pz_max, pz_min
 
         config.driver_starting_Pz_range = (pz_min, pz_max)
         config.driver_starting_Pz_points = int(energy_controls["points_var"].get())
@@ -252,13 +251,13 @@ def apply_sweep_parameter_overrides(
     else:
         energy_gev = abs(float(energy_controls["fixed_var"].get()))
         driver_mass = float(sweep_params["driver_m_particle"]["fixed_var"].get())
-        config.driver_starting_Pz = calculate_rider_starting_pz(
-            energy_gev,
-            driver_mass,
-            config.simulation_type,
+        config.driver_starting_Pz = -abs(
+            calculate_rider_starting_pz(
+                energy_gev,
+                driver_mass,
+                config.simulation_type,
+            )
         )
-        if driver_negative:
-            config.driver_starting_Pz = -config.driver_starting_Pz
         config.driver_energy_gev = energy_gev
 
     log("[DEBUG] _gather_config: Config building complete")
