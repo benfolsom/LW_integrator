@@ -281,6 +281,26 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "bdoty": _float_copy("bdoty"),
         "bdotz": _float_copy("bdotz"),
         "q": np.array(current_state["q"], dtype=float, copy=True),
+        "q_species": np.array(
+            current_state.get("q_species", current_state["q"]),
+            dtype=float,
+            copy=True,
+        ),
+        "q_observer": np.array(
+            current_state.get("q_observer", current_state["q"]),
+            dtype=float,
+            copy=True,
+        ),
+        "q_source": np.array(
+            current_state.get("q_source", current_state["q"]),
+            dtype=float,
+            copy=True,
+        ),
+        "macro_population": np.array(
+            current_state.get("macro_population", np.ones_like(current_state["x"])),
+            dtype=float,
+            copy=True,
+        ),
         "char_time": np.array(
             current_state.get("char_time", np.zeros_like(current_state["x"])),
             dtype=float,
@@ -288,6 +308,11 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         ),
         "m": np.array(
             current_state.get("m", np.ones_like(current_state["x"])),
+            dtype=float,
+            copy=True,
+        ),
+        "m_species": np.array(
+            current_state.get("m_species", current_state.get("m", np.ones_like(current_state["x"]))),
             dtype=float,
             copy=True,
         ),
@@ -317,20 +342,32 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
     return result
 
 
-def _get_particle_charge(state: ParticleState, particle_idx: int):
-    """Extract charge for a single particle, handling scalar or array charge."""
-    charge = state["q"]
-    if hasattr(charge, "__getitem__"):
-        return charge[particle_idx]
-    return charge
+def _get_state_scalar(
+    state: ParticleState, key: str, particle_idx: int, fallback_key: str | None = None
+):
+    values = state.get(key)
+    if values is None and fallback_key is not None:
+        values = state[fallback_key]
+    if values is None:
+        raise KeyError(key)
+    if hasattr(values, "__getitem__"):
+        return values[particle_idx]
+    return values
+
+
+def _get_particle_source_charge(state: ParticleState, particle_idx: int):
+    """Extract source charge for a single particle."""
+    return _get_state_scalar(state, "q_source", particle_idx, "q")
+
+
+def _get_particle_observer_charge(state: ParticleState, particle_idx: int):
+    """Extract observer charge for a single particle."""
+    return _get_state_scalar(state, "q_observer", particle_idx, "q")
 
 
 def _get_particle_mass(state: ParticleState, particle_idx: int):
-    """Extract mass for a single particle, handling scalar or array mass."""
-    mass = state["m"]
-    if hasattr(mass, "__getitem__"):
-        return mass[particle_idx]
-    return mass
+    """Extract observer/species mass for a single particle."""
+    return _get_state_scalar(state, "m_species", particle_idx, "m")
 
 
 def _scalar_potential_momentum_contribution(
@@ -1457,10 +1494,9 @@ def retarded_equations_of_motion(
         working_y = current_state["y"][particle_idx]
         working_z = current_state["z"][particle_idx]
 
-        particle_charge: float = float(
-            _get_particle_charge(current_state, particle_idx)
+        force_particle_charge: float = float(
+            _get_particle_observer_charge(current_state, particle_idx)
         )
-        force_particle_charge: float = float(effective_observer_charge(particle_charge))
         particle_mass: float = float(_get_particle_mass(current_state, particle_idx))
         accumulated_field_x: float = 0.0
         accumulated_field_y: float = 0.0

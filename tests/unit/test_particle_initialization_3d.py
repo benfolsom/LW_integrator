@@ -65,8 +65,17 @@ def test_z_axis_parity_matches_create_particle_state():
     np.testing.assert_allclose(state["pz"], legacy["pz"], rtol=1e-6, atol=1e-12)
     np.testing.assert_allclose(state["Pt"], legacy["Pt"], rtol=1e-6, atol=1e-12)
     np.testing.assert_allclose(state["gamma"], legacy["gamma"], rtol=1e-6, atol=1e-12)
-    np.testing.assert_allclose(state["q"], legacy["q"], rtol=1e-6, atol=1e-12)
-    np.testing.assert_allclose(state["m"], legacy["m"], rtol=1e-6, atol=1e-12)
+    for key in (
+        "q",
+        "q_species",
+        "q_observer",
+        "q_source",
+        "macro_population",
+        "m",
+        "m_species",
+        "char_time",
+    ):
+        np.testing.assert_allclose(state[key], legacy[key], rtol=1e-6, atol=1e-12)
 
     # |beta| should match (beta magnitude is invariant under transverse rotation).
     legacy_beta_mag = np.sqrt(legacy["bx"] ** 2 + legacy["by"] ** 2 + legacy["bz"] ** 2)
@@ -213,7 +222,12 @@ def test_state_dict_structure_matches_legacy_keys_and_shapes():
         "bdotz",
         "gamma",
         "q",
+        "q_species",
+        "q_observer",
+        "q_source",
+        "macro_population",
         "m",
+        "m_species",
         "char_time",
     ]
     for key in per_particle_keys:

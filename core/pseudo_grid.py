@@ -409,7 +409,7 @@ def accumulate_effective_source_charges(
 ) -> np.ndarray:
     """Aggregate passive charge onto the active representatives."""
     active = np.asarray(active_indices, dtype=int)
-    charges = np.asarray(state["q"], dtype=float)
+    charges = np.asarray(state.get("q_source", state["q"]), dtype=float)
     effective = charges[active].astype(float).copy()
     if neighbor_map.is_empty:
         return effective
@@ -460,7 +460,7 @@ def build_self_excluded_space_charge_source_charges(
     if active_count == 0:
         return charge_matrix
 
-    charges = np.asarray(state["q"], dtype=float)
+    charges = np.asarray(state.get("q_source", state["q"]), dtype=float)
     active_charges = charges[active].astype(float)
     for observer_local_idx in range(active_count):
         charge_matrix[observer_local_idx] = active_charges
@@ -632,6 +632,8 @@ def slice_particle_state(
         if q_array.shape != subset["q"].shape:
             raise ValueError("q_override must match the sliced particle-count shape")
         subset["q"] = q_array.copy()
+        if "q_source" in subset:
+            subset["q_source"] = q_array.copy()
 
     return subset
 

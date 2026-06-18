@@ -538,7 +538,12 @@ def _slice_trajectory_arrays(
         beta_samples=arrays.beta_samples[start:stop],
         dead=arrays.dead[start:stop],
         q=arrays.q,
+        q_species=arrays.q_species,
+        q_observer=arrays.q_observer,
+        q_source=arrays.q_source,
+        macro_population=arrays.macro_population,
         m=arrays.m,
+        m_species=arrays.m_species,
         char_time=arrays.char_time,
         halted_early=arrays.halted_early[start:stop],
         halt_step=arrays.halt_step[start:stop],
@@ -2170,6 +2175,8 @@ def retarded_integrator(
                 dead_mask[particle_idx] = True
             if "q" in current_driver_state:
                 current_driver_state["q"][bunch_slice] = 0.0
+                if "q_source" in current_driver_state:
+                    current_driver_state["q_source"][bunch_slice] = 0.0
             elif "stripped_ions" in current_driver_state:
                 current_driver_state["stripped_ions"][bunch_slice] = 0.0
             current_driver_state["_driver_train_muted_bunch_count"] = int(
