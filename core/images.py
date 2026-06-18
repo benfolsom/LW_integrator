@@ -43,10 +43,17 @@ def _zeros_like_state(vector: ParticleState) -> ParticleState:
         "q": np.copy(vector["q"]),
     }
 
-    if "m" in vector:
-        result["m"] = np.copy(vector["m"])
-    if "char_time" in vector:
-        result["char_time"] = np.copy(vector["char_time"])
+    for key in (
+        "q_species",
+        "q_observer",
+        "q_source",
+        "macro_population",
+        "m",
+        "m_species",
+        "char_time",
+    ):
+        if key in vector:
+            result[key] = np.copy(vector[key])
 
     return result
 
@@ -186,10 +193,17 @@ def generate_conducting_image(
         "q": _alloc_like("q"),
     }
 
-    if "m" in vector:
-        result["m"] = np.repeat(np.asarray(vector["m"]), count)
-    if "char_time" in vector:
-        result["char_time"] = np.repeat(np.asarray(vector["char_time"]), count)
+    for key in (
+        "q_species",
+        "q_observer",
+        "q_source",
+        "macro_population",
+        "m",
+        "m_species",
+        "char_time",
+    ):
+        if key in vector:
+            result[key] = np.repeat(np.asarray(vector[key]), count)
 
     charges_suppressed = False
 
@@ -330,14 +344,17 @@ def generate_conducting_image(
         result["bdotz"][start:end] = -vector["bdotz"][i]
 
         result["q"][start:end] = charge_values
+        if "q_source" in result:
+            result["q_source"][start:end] = charge_values
 
-        if "m" in result:
-            result["m"][start:end] = vector["m"][i]
-        if "char_time" in result:
-            result["char_time"][start:end] = vector["char_time"][i]
+        for key in ("q_species", "q_observer", "macro_population", "m", "m_species", "char_time"):
+            if key in result:
+                result[key][start:end] = vector[key][i]
 
     if charges_suppressed:
         result["q"].fill(0.0)
+        if "q_source" in result:
+            result["q_source"].fill(0.0)
 
     return result
 
@@ -354,10 +371,14 @@ def generate_switching_image(
 
     result = _zeros_like_state(vector)
     result["q"] = -np.copy(vector["q"])
+    if "q_source" in result:
+        result["q_source"] = -np.copy(vector.get("q_source", vector["q"]))
 
     for i in range(len(vector["x"])):
         if vector["z"][i] >= cut_z:
             result["q"].fill(0.0)
+            if "q_source" in result:
+                result["q_source"].fill(0.0)
         else:
             result["x"][i] = vector["x"][i]
             result["y"][i] = vector["y"][i]

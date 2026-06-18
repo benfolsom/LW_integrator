@@ -14,7 +14,7 @@ from core.constants import (
     ELEMENTARY_CHARGE_STATC,
 )
 
-AMU_TO_MEV = 931.49410242  # Atomic mass unit → MeV/c^2 conversion
+AMU_TO_MEV = 931.49410242
 ELEMENTARY_CHARGE_GU = ELEMENTARY_CHARGE_STATC
 """Elementary charge in statcoulombs, retained for cgs analysis compatibility.
 
@@ -127,6 +127,31 @@ def _compute_gamma(kinetic_energy_mev: float, mass_amu: float) -> float:
     return kinetic_energy_mev / rest_energy + 1.0
 
 
+def _build_charge_state(
+    *,
+    charge_sign: float,
+    stripped_ions: float,
+    particle_mass_amu: float,
+    particle_count: int,
+    macro_population: float = 1.0,
+) -> dict[str, np.ndarray]:
+    q_species = float(charge_sign) * ELEMENTARY_CHARGE * float(stripped_ions)
+    q_observer = q_species
+    q_source = q_species * float(macro_population)
+    m_species = float(particle_mass_amu)
+    char_time = (2.0 / 3.0) * q_observer**2 / (m_species * C_MMNS**3)
+    return {
+        "q_species": np.full(particle_count, q_species, dtype=float),
+        "q_observer": np.full(particle_count, q_observer, dtype=float),
+        "q_source": np.full(particle_count, q_source, dtype=float),
+        "macro_population": np.full(particle_count, macro_population, dtype=float),
+        "m_species": np.full(particle_count, m_species, dtype=float),
+        "q": np.full(particle_count, q_source, dtype=float),
+        "m": np.full(particle_count, m_species, dtype=float),
+        "char_time": np.full(particle_count, char_time, dtype=float),
+    }
+
+
 def create_bunch_from_energy(
     *,
     kinetic_energy_mev: float,
@@ -142,60 +167,18 @@ def create_bunch_from_energy(
     transverse_geometry: str = "square",
     longitudinal_spread: float = 0.0,
 ) -> Tuple[ParticleState, float]:
-    """Generate a particle state dictionary from kinetic energy inputs.
-
-    Parameters
-    ----------
-    kinetic_energy_mev : float
-        Kinetic energy in MeV
-    mass_amu : float
-        Particle mass in atomic mass units
-    charge_sign : float
-        Charge sign (+1 or -1)
-    position_z : float, optional
-        Starting z position in mm (default: 0.0)
-    particle_count : int, optional
-        Number of particles in bunch (default: 1)
-    transverse_radius : float, optional
-        DEPRECATED: Use transverse_offset_x/y instead. Single transverse offset in mm (default: 0.0)
-    transverse_momentum : float, optional
-        Transverse momentum spread (uniform ±transverse_momentum) in amu*mm/ns (default: 0.0)
-    transverse_offset_x : float, optional
-        Center x-position of bunch in mm (default: 0.0, on-axis)
-    transverse_offset_y : float, optional
-        Center y-position of bunch in mm (default: 0.0, on-axis)
-    transverse_spread : float, optional
-        Size parameter for the selected transverse geometry in mm (default: 0.0).
-        For square geometry this is the uniform half-width, for gaussian geometry
-        this is sigma, and for ring geometry this is radius.
-    transverse_geometry : str, optional
-        Transverse layout: "square"/"uniform_square", "point", "gaussian", or
-        "ring"/"circle" (default: "square").
-    longitudinal_spread : float, optional
-        Longitudinal Gaussian sigma in mm around position_z. The default 0.0
-        keeps all particles at position_z.
-
-    Returns
-    -------
-    state : ParticleState
-        Dictionary with particle state arrays
-    rest_energy_mev : float
-        Rest energy in MeV
-
-    Notes
-    -----
-    - If transverse_spread > 0, particles are uniformly distributed in a square:
-      x ∈ [transverse_offset_x - transverse_spread, transverse_offset_x + transverse_spread]
-      y ∈ [transverse_offset_y - transverse_spread, transverse_offset_y + transverse_spread]
-    - If transverse_spread = 0, all particles are placed at (transverse_offset_x, transverse_offset_y)
-    - transverse_radius is deprecated but maintained for backward compatibility
-    """
+    """Generate a particle state dictionary from kinetic energy inputs."""
 
     gamma = _compute_gamma(kinetic_energy_mev, mass_amu)
     beta = math.sqrt(1.0 - 1.0 / (gamma**2)) if gamma > 1.0 else 0.0
     particle_mass = mass_amu
-    macro_charge = charge_sign * ELEMENTARY_CHARGE
-    char_time = 2.0 / 3.0 * macro_charge**2 / (particle_mass * C_MMNS**3)
+    charge_state = _build_charge_state(
+        charge_sign=charge_sign,
+        stripped_ions=1.0,
+        particle_mass_amu=particle_mass,
+        particle_count=particle_count,
+        macro_population=1.0,
+    )
 
     count = particle_count
     zeros = np.zeros(count, dtype=float)
@@ -209,7 +192,6 @@ def create_bunch_from_energy(
         legacy_transverse_radius=transverse_radius,
     )
 
-    # Handle transverse momentum with spread
     if transverse_momentum > 0.0:
         Px = (
             np.random.uniform(-transverse_momentum, transverse_momentum, count)
@@ -223,15 +205,11 @@ def create_bunch_from_energy(
         Px = zeros.copy()
         Py = zeros.copy()
 
-    # Longitudinal momentum
     Pz = np.full(count, gamma * particle_mass * C_MMNS * beta, dtype=float)
-
-    # Total momentum and gamma (recompute for accuracy when Px, Py non-zero)
     P_total = np.sqrt(Px**2 + Py**2 + Pz**2)
     Pt = np.sqrt(P_total**2 + (particle_mass * C_MMNS) ** 2)
     gamma_arr = Pt / (particle_mass * C_MMNS)
 
-    # Velocity components
     bx = Px / (gamma_arr * particle_mass * C_MMNS)
     by = Py / (gamma_arr * particle_mass * C_MMNS)
     bz = Pz / (gamma_arr * particle_mass * C_MMNS)
@@ -256,10 +234,8 @@ def create_bunch_from_energy(
         "bdotx": zeros.copy(),
         "bdoty": zeros.copy(),
         "bdotz": zeros.copy(),
-        "q": np.full(count, macro_charge, dtype=float),
-        "m": np.full(count, particle_mass, dtype=float),
-        "char_time": np.full(count, char_time, dtype=float),
     }
+    state.update(charge_state)
 
     rest_energy_mev = mass_amu * AMU_TO_MEV
     return state, rest_energy_mev
@@ -281,55 +257,18 @@ def create_bunch_from_params(
     seed: int | None = None,
     transverse_geometry: str = "square",
 ) -> Tuple[ParticleState, float]:
-    """Generate particle state from historical parameter names.
-
-    This function is the maintained particle-bunch initializer for configs that
-    still use the original parameter naming scheme, with support for transverse
-    offset.
-
-    Parameters
-    ----------
-    starting_distance : float
-        Starting z-position in mm
-    transv_mom : float
-        Transverse momentum spread (uniform ±transv_mom) in amu*mm/ns
-    starting_Pz : float
-        Initial longitudinal momentum per unit mass (specific momentum) in mm/ns
-    stripped_ions : float
-        Number of elementary charges
-    m_particle : float
-        Particle mass in amu
-    transv_dist : float, optional
-        Half-width of transverse distribution in mm (default: 0.0)
-    transv_offset_x : float, optional
-        Center x-position of bunch in mm (default: 0.0)
-    transv_offset_y : float, optional
-        Center y-position of bunch in mm (default: 0.0)
-    pcount : int, optional
-        Number of particles (default: 1)
-    charge_sign : float, optional
-        Charge sign (+1 or -1, default: 1.0)
-    seed : int, optional
-        Random seed for reproducibility (default: None)
-    transverse_geometry : str, optional
-        Transverse layout: "square"/"uniform_square", "point", "gaussian", or
-        "ring"/"circle" (default: "square"). For ring layout, transv_dist is
-        interpreted as ring radius.
-
-    Returns
-    -------
-    state : ParticleState
-        Particle state dictionary
-    rest_energy_mev : float
-        Rest energy in MeV
-    """
+    """Generate particle state from historical parameter names."""
     if seed is not None:
         np.random.seed(seed)
 
-    macro_charge = charge_sign * stripped_ions * ELEMENTARY_CHARGE
-    char_time = 2.0 / 3.0 * macro_charge**2 / (m_particle * C_MMNS**3)
+    charge_state = _build_charge_state(
+        charge_sign=charge_sign,
+        stripped_ions=stripped_ions,
+        particle_mass_amu=m_particle,
+        particle_count=pcount,
+        macro_population=1.0,
+    )
 
-    # Generate transverse momentum with spread
     if transv_mom > 0.0:
         Px = np.random.uniform(-transv_mom, transv_mom, pcount) * m_particle
         Py = np.random.uniform(-transv_mom, transv_mom, pcount) * m_particle
@@ -337,14 +276,10 @@ def create_bunch_from_params(
         Px = np.zeros(pcount, dtype=float)
         Py = np.zeros(pcount, dtype=float)
 
-    # Longitudinal momentum with small spread
     Pz = np.random.uniform(starting_Pz, starting_Pz + 0.1, pcount) * m_particle
-
-    # Total momentum and energy
     Pt = np.sqrt(Px**2 + Py**2 + Pz**2 + (m_particle * C_MMNS) ** 2)
     gamma = Pt / (m_particle * C_MMNS)
 
-    # Velocity components
     bx = Px / (gamma * m_particle * C_MMNS)
     by = Py / (gamma * m_particle * C_MMNS)
     bz = Pz / (gamma * m_particle * C_MMNS)
@@ -357,7 +292,6 @@ def create_bunch_from_params(
         transverse_geometry=transverse_geometry,
     )
 
-    # Longitudinal position spread
     if long_dist > 0.0:
         z = np.random.normal(starting_distance, long_dist, pcount)
     else:
@@ -380,10 +314,8 @@ def create_bunch_from_params(
         "bdotx": np.zeros(pcount, dtype=float),
         "bdoty": np.zeros(pcount, dtype=float),
         "bdotz": np.zeros(pcount, dtype=float),
-        "q": np.full(pcount, macro_charge, dtype=float),
-        "m": np.full(pcount, m_particle, dtype=float),
-        "char_time": np.full(pcount, char_time, dtype=float),
     }
+    state.update(charge_state)
 
     rest_energy_mev = m_particle * AMU_TO_MEV
     return state, rest_energy_mev

@@ -2279,13 +2279,22 @@ def run_testbed(
             )
         )
 
-        # Apply macroparticle charge multiplier if enabled
+        # Apply macroparticle source-charge multiplier if enabled
         if options.macroparticle_enabled and sim_type == SimulationType.CONDUCTING_WALL:
             charge_mult = float(options.macroparticle_charge_multiplier)
             if charge_mult != 1.0:
-                rider_state["q"] = rider_state["q"] * charge_mult
-                if driver_state is not None:
-                    driver_state["q"] = driver_state["q"] * charge_mult
+                for state in (rider_state, driver_state):
+                    if state is None:
+                        continue
+                    if "q_source" in state:
+                        state["q_source"] = state["q_source"] * charge_mult
+                        state["q"] = state["q_source"].copy()
+                        if "macro_population" in state:
+                            state["macro_population"] = (
+                                state["macro_population"] * charge_mult
+                            )
+                    else:
+                        state["q"] = state["q"] * charge_mult
 
         rider_initial = normalize_state(copy.deepcopy(rider_state))
         driver_initial = (

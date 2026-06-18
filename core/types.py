@@ -499,7 +499,8 @@ class TrajectoryArrays:
     """Struct-of-arrays trajectory representation.
 
     All kinematic fields have shape ``[n_steps, n_particles]``.
-    Particle-constant fields (``q``, ``m``, ``char_time``) have shape
+    Particle-constant fields (``q``, ``q_source``, ``q_observer``, ``q_species``,
+    ``macro_population``, ``m``, ``m_species``, ``char_time``) have shape
     ``[n_particles]``.  Per-step scalar metadata has shape ``[n_steps]``.
     """
 
@@ -535,7 +536,12 @@ class TrajectoryArrays:
 
     # Particle constants — [n_particles]
     q: np.ndarray
+    q_species: np.ndarray
+    q_observer: np.ndarray
+    q_source: np.ndarray
+    macro_population: np.ndarray
     m: np.ndarray
+    m_species: np.ndarray
     char_time: np.ndarray
 
     # Per-step scalars — [n_steps]
@@ -577,7 +583,12 @@ class TrajectoryArrays:
             "radiation_energy": self.radiation_energy[step],
             "radiation_energy_applied": self.radiation_energy_applied[step],
             "q": self.q,
+            "q_species": self.q_species,
+            "q_observer": self.q_observer,
+            "q_source": self.q_source,
+            "macro_population": self.macro_population,
             "m": self.m,
+            "m_species": self.m_species,
             "char_time": self.char_time,
             "origin_x": self.origin_x[step],
             "origin_y": self.origin_y[step],
@@ -675,7 +686,7 @@ class IndexedTrajectoryArrays:
         ]
 
     def constant(self, field_name: str) -> np.ndarray:
-        if field_name == "q" and self.q_override is not None:
+        if field_name in {"q", "q_source"} and self.q_override is not None:
             return np.asarray(self.q_override, dtype=float)
         return np.asarray(getattr(self.base, field_name))[self.particle_indices]
 
@@ -701,7 +712,12 @@ class IndexedTrajectoryArrays:
             "radiation_energy": self.row("radiation_energy", step),
             "radiation_energy_applied": self.row("radiation_energy_applied", step),
             "q": self.constant("q"),
+            "q_species": self.constant("q_species"),
+            "q_observer": self.constant("q_observer"),
+            "q_source": self.constant("q_source"),
+            "macro_population": self.constant("macro_population"),
             "m": self.constant("m"),
+            "m_species": self.constant("m_species"),
             "char_time": self.constant("char_time"),
             "origin_x": self.row("origin_x", step),
             "origin_y": self.row("origin_y", step),
@@ -763,7 +779,16 @@ class TrajectoryBuilder:
         "beta_avg_z",
         "beta_samples",
     )
-    _PARTICLE_CONST_FIELDS: tuple = ("q", "m", "char_time")
+    _PARTICLE_CONST_FIELDS: tuple = (
+        "q",
+        "q_species",
+        "q_observer",
+        "q_source",
+        "macro_population",
+        "m",
+        "m_species",
+        "char_time",
+    )
 
     def __init__(self, n_steps: int, n_particles: int) -> None:
         self._n_steps = n_steps
@@ -801,6 +826,16 @@ class TrajectoryBuilder:
             for field_name in self._PARTICLE_CONST_FIELDS:
                 if field_name in state:
                     self._arrays[field_name][:] = state[field_name]
+            if "q_species" not in state:
+                self._arrays["q_species"][:] = state["q"]
+            if "q_observer" not in state:
+                self._arrays["q_observer"][:] = state["q"]
+            if "q_source" not in state:
+                self._arrays["q_source"][:] = state["q"]
+            if "macro_population" not in state:
+                self._arrays["macro_population"][:] = 1.0
+            if "m_species" not in state:
+                self._arrays["m_species"][:] = state.get("m", 1.0)
 
     def set_halt_metadata(
         self,
@@ -855,7 +890,12 @@ class TrajectoryBuilder:
             beta_samples=self._arrays["beta_samples"][:s],
             dead=self._arrays["dead"][:s],
             q=self._arrays["q"],
+            q_species=self._arrays["q_species"],
+            q_observer=self._arrays["q_observer"],
+            q_source=self._arrays["q_source"],
+            macro_population=self._arrays["macro_population"],
             m=self._arrays["m"],
+            m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
             halted_early=self._halted_early[:s],
             halt_step=self._halt_step_arr[:s],
@@ -894,7 +934,12 @@ class TrajectoryBuilder:
             beta_samples=self._arrays["beta_samples"],
             dead=self._arrays["dead"],
             q=self._arrays["q"],
+            q_species=self._arrays["q_species"],
+            q_observer=self._arrays["q_observer"],
+            q_source=self._arrays["q_source"],
+            macro_population=self._arrays["macro_population"],
             m=self._arrays["m"],
+            m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
             halted_early=self._halted_early,
             halt_step=self._halt_step_arr,

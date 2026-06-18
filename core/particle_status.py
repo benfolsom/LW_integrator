@@ -77,6 +77,8 @@ def mark_particle_dead(
         # Zero out the particle's charge to neutralize it
         if "q" in state:
             state["q"][particle_idx] = 0.0
+            if "q_source" in state:
+                state["q_source"][particle_idx] = 0.0
         elif "stripped_ions" in state:
             state["stripped_ions"][particle_idx] = 0.0
         else:
@@ -122,6 +124,8 @@ def propagate_dead_particle_status(
         dead_mask = current_state["_dead_particles"]
         if "q" in current_state:
             current_state["q"][dead_mask] = 0.0
+            if "q_source" in current_state:
+                current_state["q_source"][dead_mask] = 0.0
         elif "stripped_ions" in current_state:
             current_state["stripped_ions"][dead_mask] = 0.0
 

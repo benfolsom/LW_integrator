@@ -4,6 +4,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Explicit Observer/Source Charge Split (June 2026)
+
+- Split particle charge bookkeeping into explicit `q_species`, `q_observer`,
+  `q_source`, `macro_population`, and `m_species` fields while keeping `q` as a
+  backward-compatible alias for `q_source`.
+- Fixed multiply charged macroparticle handling so observer-side forces,
+  radiation-reaction `char_time`, and sampled-source metadata preserve the true
+  species charge state instead of inferring it from the total source charge.
+- Added regression coverage for multiply charged ions, including the `Au54+`
+  with `charge_multiplier=100` case where `q_observer=54e` and `q_source=5400e`.
+
 ### Conducting-Wall Kinetic-Energy Pz Convention (June 2026)
 
 - Changed conducting-wall rider energy conversion to use the same kinetic-energy

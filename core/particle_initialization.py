@@ -16,6 +16,31 @@ Scalar = Union[float, int]
 ParticleParams = Mapping[str, Scalar]
 
 
+def _build_charge_state(
+    *,
+    charge_sign: float,
+    stripped_ions: float,
+    particle_mass_amu: float,
+    particle_count: int,
+    macro_population: float = 1.0,
+) -> dict[str, np.ndarray]:
+    q_species = float(charge_sign) * ELEMENTARY_CHARGE * float(stripped_ions)
+    q_observer = q_species
+    q_source = q_species * float(macro_population)
+    m_species = float(particle_mass_amu)
+    char_time_value = (2.0 / 3.0) * q_observer**2 / (m_species * C_MMNS**3)
+    return {
+        "q_species": np.full(particle_count, q_species, dtype=float),
+        "q_observer": np.full(particle_count, q_observer, dtype=float),
+        "q_source": np.full(particle_count, q_source, dtype=float),
+        "macro_population": np.full(particle_count, macro_population, dtype=float),
+        "m_species": np.full(particle_count, m_species, dtype=float),
+        "q": np.full(particle_count, q_source, dtype=float),
+        "m": np.full(particle_count, m_species, dtype=float),
+        "char_time": np.full(particle_count, char_time_value, dtype=float),
+    }
+
+
 def create_particle_state(
     starting_distance: float,
     transv_momentum: float,
@@ -50,7 +75,7 @@ def create_particle_state(
     charge_sign : float
         Charge sign (+1 or -1)
     charge_multiplier : float
-        Multiplier for particle charge (for macroparticle simulations). Default 1.0.
+        Source macro-population multiplier for macroparticle simulations.
 
     Returns:
     --------
@@ -58,13 +83,9 @@ def create_particle_state(
         Particle state dictionary and rest energy in MeV
     """
 
-    # Physical constants matching the archived reference values exactly.
-    amu_to_mev = 931.494  # Conversion factor
-
-    # Calculate rest energy
+    amu_to_mev = 931.494
     rest_energy_mev = particle_mass_amu * amu_to_mev
 
-    # Initialize particle arrays
     positions_x = np.zeros(particle_count)
     positions_y = np.full(particle_count, transv_distance)
     positions_z = np.full(particle_count, starting_distance)
@@ -73,43 +94,31 @@ def create_particle_state(
     momenta_y = np.zeros(particle_count)
     momenta_z = np.full(particle_count, starting_pz)
 
-    # Convert charge to amu-mm-ns units (must match the reference values exactly).
-    charges = np.full(
-        particle_count,
-        charge_sign * ELEMENTARY_CHARGE * stripped_ions * charge_multiplier,
+    charge_state = _build_charge_state(
+        charge_sign=charge_sign,
+        stripped_ions=stripped_ions,
+        particle_mass_amu=particle_mass_amu,
+        particle_count=particle_count,
+        macro_population=charge_multiplier,
     )
-    masses = np.full(particle_count, particle_mass_amu)
 
-    # Initialize all required integrator fields
     times = np.zeros(particle_count)
 
-    # Calculate characteristic time for radiation reaction
-    # char_time = (2/3) * q^2 / (m * c^3)
-    q_value = charge_sign * ELEMENTARY_CHARGE * stripped_ions * charge_multiplier
-    char_time_value = (2.0 / 3.0) * q_value**2 / (particle_mass_amu * C_MMNS**3)
-    char_times = np.full(particle_count, char_time_value)
-
-    # Calculate initial gamma and momenta from input momentum
-    # Match the archived reference initialization: Pt = sqrt(Px^2 + Py^2 + Pz^2 + (mc)^2)
     Px = momenta_x.copy()
     Py = momenta_y.copy()
     Pz = momenta_z.copy()
     Pt = np.sqrt(Px**2 + Py**2 + Pz**2 + (particle_mass_amu * C_MMNS) ** 2)
 
-    # Calculate gamma from relativistic energy-momentum relation
     gammas = Pt / (particle_mass_amu * C_MMNS)
 
-    # Calculate beta (velocity) from momentum and gamma
     bx = Px / (gammas * particle_mass_amu * C_MMNS)
     by = Py / (gammas * particle_mass_amu * C_MMNS)
     bz = Pz / (gammas * particle_mass_amu * C_MMNS)
 
-    # Initialize accelerations
     bdotx = np.zeros(particle_count)
     bdoty = np.zeros(particle_count)
     bdotz = np.zeros(particle_count)
 
-    # Create particle state dictionary (compatible with both integrators)
     particle_state = {
         "x": positions_x,
         "y": positions_y,
@@ -129,12 +138,10 @@ def create_particle_state(
         "bdoty": bdoty,
         "bdotz": bdotz,
         "gamma": gammas,
-        "q": charges,
-        "m": masses,
-        "char_time": char_times,
         "count": particle_count,
         "rest_energy_mev": rest_energy_mev,
     }
+    particle_state.update(charge_state)
 
     return particle_state, rest_energy_mev
 
@@ -162,7 +169,7 @@ def initialize_particle_bunches(
     driver_params : Dict[str, float]
         Driver particle parameters
     charge_multiplier : float
-        Multiplier for particle charges (for macroparticle simulations). Default 1.0.
+        Source macro-population multiplier for macroparticle simulations.
 
     Returns:
     --------
@@ -188,7 +195,7 @@ def initialize_particle_bunches(
         _as_float(driver_params["starting_pz"]),
         _as_float(driver_params["stripped_ions"]),
         _as_float(driver_params["particle_mass_amu"]),
-        -_as_float(rider_params["transv_distance"]),  # Opposite transverse position
+        -_as_float(rider_params["transv_distance"]),
         _as_int(driver_params["particle_count"]),
         _as_float(driver_params["charge_sign"]),
         charge_multiplier=charge_multiplier,
