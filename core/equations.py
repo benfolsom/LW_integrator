@@ -86,7 +86,7 @@ from .distances import (
     compute_retarded_distance_soa,
 )
 from .external_fields import compute_uniform_external_field_impulse
-from .macroparticle_smearing import effective_observer_charge, smear_source_samples
+from .macroparticle_smearing import smear_source_samples
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
@@ -363,9 +363,25 @@ def _get_particle_observer_charge(state: ParticleState, particle_idx: int):
     return _get_state_scalar(state, "q_observer", particle_idx, "q")
 
 
+def _get_particle_charge(state: ParticleState, particle_idx: int):
+    """Backward-compatible alias for observer charge extraction."""
+    return _get_particle_observer_charge(state, particle_idx)
+
+
 def _get_particle_mass(state: ParticleState, particle_idx: int):
     """Extract observer/species mass for a single particle."""
     return _get_state_scalar(state, "m_species", particle_idx, "m")
+
+
+def effective_observer_charge(charge_native: float) -> float:
+    """Backward-compatible helper retained for legacy tests/imports.
+
+    Production force paths now read explicit ``q_observer`` metadata directly.
+    This shim preserves the historical equations-module contract for synthetic
+    tests that pass plain scalar charges rather than native-unit macroparticle
+    source charges.
+    """
+    return float(charge_native)
 
 
 def _scalar_potential_momentum_contribution(

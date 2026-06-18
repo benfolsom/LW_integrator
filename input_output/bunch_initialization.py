@@ -256,6 +256,7 @@ def create_bunch_from_params(
     charge_sign: float = 1.0,
     seed: int | None = None,
     transverse_geometry: str = "square",
+    charge_multiplier: float = 1.0,
 ) -> Tuple[ParticleState, float]:
     """Generate particle state from historical parameter names."""
     if seed is not None:
@@ -266,7 +267,7 @@ def create_bunch_from_params(
         stripped_ions=stripped_ions,
         particle_mass_amu=m_particle,
         particle_count=pcount,
-        macro_population=1.0,
+        macro_population=charge_multiplier,
     )
 
     if transv_mom > 0.0:

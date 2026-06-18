@@ -546,7 +546,7 @@ class OptimizationRunMixin:
                 rider_pcount=int(run_params.rider_pcount),
                 rider_transv_mom=run_params.rider_transv_mom,
                 rider_transv_dist=run_params.rider_transv_dist,
-                rider_long_dist=run_params.rider_long_dist,
+                rider_long_dist=getattr(run_params, "rider_long_dist", 0.0),
                 rider_stripped_ions=run_params.rider_stripped_ions,
                 macroparticle_charge_multiplier=(
                     run_params.macroparticle_charge_multiplier

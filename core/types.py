@@ -826,12 +826,14 @@ class TrajectoryBuilder:
             for field_name in self._PARTICLE_CONST_FIELDS:
                 if field_name in state:
                     self._arrays[field_name][:] = state[field_name]
-            if "q_species" not in state:
-                self._arrays["q_species"][:] = state["q"]
-            if "q_observer" not in state:
-                self._arrays["q_observer"][:] = state["q"]
-            if "q_source" not in state:
-                self._arrays["q_source"][:] = state["q"]
+            q_values = state.get("q")
+            if q_values is not None:
+                if "q_species" not in state:
+                    self._arrays["q_species"][:] = q_values
+                if "q_observer" not in state:
+                    self._arrays["q_observer"][:] = q_values
+                if "q_source" not in state:
+                    self._arrays["q_source"][:] = q_values
             if "macro_population" not in state:
                 self._arrays["macro_population"][:] = 1.0
             if "m_species" not in state:
