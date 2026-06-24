@@ -288,6 +288,34 @@ def test_build_passive_neighbor_map_nearest_mode_assigns_full_weight_to_first_ne
     np.testing.assert_allclose(neighbor_map.weights, np.array([[1.0, 0.0]]))
 
 
+def test_build_passive_neighbor_map_allows_passive_intermediates_before_collapsing():
+    state = _make_state(x=[0.0, 1.0, 2.0, 3.0, 10.0], q=[1.0] * 5)
+    active = np.array([0, 4], dtype=int)
+
+    neighbor_map = build_passive_neighbor_map(
+        state,
+        np.array([0, 1, 2, 3, 4], dtype=int),
+        active,
+        neighbor_count=2,
+        weighting_mode="inverse_distance",
+    )
+
+    np.testing.assert_array_equal(
+        neighbor_map.passive_indices,
+        np.array([1, 2, 3], dtype=int),
+    )
+    np.testing.assert_array_equal(
+        neighbor_map.neighbor_particle_indices,
+        np.array([[0, 4], [0, 4], [0, 4]], dtype=int),
+    )
+    np.testing.assert_allclose(np.sum(neighbor_map.weights, axis=1), np.ones(3))
+    assert neighbor_map.weights[1, 0] > 0.95
+    assert neighbor_map.weights[1, 1] < 0.05
+
+    effective = accumulate_effective_source_charges(state, active, neighbor_map)
+    assert np.sum(effective) == pytest.approx(5.0)
+
+
 def test_accumulate_effective_source_charges_adds_passive_charge_to_active_set():
     state = _make_state(x=[0.0, 10.0, 20.0], q=[1.0, 1.0, 1.0])
     neighbor_map = build_passive_neighbor_map(

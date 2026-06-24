@@ -4,6 +4,16 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Pseudo-Grid Passive Neighbor Collapse (June 2026)
+
+- Changed `core/pseudo_grid.py` so passive particles sample nearest neighbors
+  from the full alive set instead of only the active subset.
+- Collapsed passive-to-passive neighbor chains back onto the active
+  representatives before reduced-solver reconstruction and effective charge
+  aggregation, preserving the existing active-only downstream contract.
+- Added unit coverage for a passive-intermediate neighbor case and kept the
+  existing pseudo-grid feasibility tests passing.
+
 ### Explicit Observer/Source Charge Split (June 2026)
 
 - Split particle charge bookkeeping into explicit `q_species`, `q_observer`,
