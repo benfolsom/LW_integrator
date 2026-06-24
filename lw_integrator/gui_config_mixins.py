@@ -510,6 +510,20 @@ class IntegratorGUIConfigMixin:
                 "" if cavity_length is None else _format_gui_float(cavity_length)
             )
             self._toggle_cavity_exit_controls()
+        if hasattr(self, "beamline_geometry_enabled_var"):
+            self.beamline_geometry_enabled_var.set(
+                bool(getattr(options, "beamline_geometry_enabled", False))
+            )
+            if hasattr(self, "beamline_geometry_text"):
+                geom_payload = getattr(options, "beamline_geometry", None)
+                if isinstance(geom_payload, dict) and geom_payload:
+                    import json as _json
+
+                    self.beamline_geometry_text.delete("1.0", "end")
+                    self.beamline_geometry_text.insert(
+                        "1.0", _json.dumps(geom_payload, indent=2)
+                    )
+            self._toggle_beamline_geometry_controls()
         self.auto_duration_enabled_var.set(
             getattr(options, "auto_duration_enabled", False)
         )
@@ -938,6 +952,10 @@ class IntegratorGUIConfigMixin:
                 self.driver_train_preserve_prehistory_var.get()
             ),
             save_log_file=bool(self.save_log_file_var.get()),
+            beamline_geometry_enabled=bool(
+                self.beamline_geometry_enabled_var.get()
+            ),
+            beamline_geometry_occluders=self._collect_beamline_geometry_occluders(),
         )
 
     def _save_config(self) -> None:

@@ -85,6 +85,7 @@ from .distances import (
     compute_retarded_distance,
     compute_retarded_distance_soa,
 )
+from .beamline_geometry import compute_directional_visibility_mask
 from .external_fields import compute_uniform_external_field_impulse
 from .macroparticle_smearing import smear_source_samples
 from .self_consistency import (
@@ -92,6 +93,7 @@ from .self_consistency import (
     canonicalize_self_consistency_mode,
 )
 from .types import (
+    BeamlineGeometryConfig,
     ChronoMatchingMode,
     GammaReconciliationMethod,
     MacroparticleSmearingConfig,
@@ -1370,6 +1372,7 @@ def retarded_equations_of_motion(
     external_field: Optional[Any] = None,
     pseudo_grid_space_charge_source_charges: Optional[np.ndarray] = None,
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
+    beamline_geometry: Optional[BeamlineGeometryConfig] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1770,6 +1773,15 @@ def retarded_equations_of_motion(
             # ================================================================
             if apply_forces and nhat["R"].size > 0:
                 # Gather external particle data at retarded times (with interpolation if enabled)
+                _external_include_positions = bool(
+                    (macroparticle_smearing
+                     and macroparticle_smearing.enabled
+                     and (
+                         macroparticle_smearing.apply_to_active_sources
+                         or macroparticle_smearing.apply_to_passive_sources
+                     ))
+                    or (beamline_geometry is not None and beamline_geometry.enabled)
+                )
                 if traj_ext_soa is not None and chrono_result is not None:
                     external_samples = gather_external_samples_soa(
                         traj_ext_soa,
@@ -1777,14 +1789,7 @@ def retarded_equations_of_motion(
                         indices_next=chrono_result.indices_next,
                         weights=chrono_result.weights,
                         needs_interpolation=chrono_result.needs_interpolation,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
                 elif chrono_result is not None:
                     # Use interpolation (with cubic and position interpolation if high-precision)
@@ -1797,41 +1802,20 @@ def retarded_equations_of_motion(
                         indices_next2=chrono_result.indices_next2,
                         use_cubic=chrono_result.use_cubic,
                         interpolate_positions=chrono_high_precision,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
                 elif traj_ext_soa is not None:
                     external_samples = gather_external_samples_soa(
                         traj_ext_soa,
                         indices_bounded,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
                 else:
                     # Legacy path: no interpolation
                     external_samples = gather_external_samples(
                         trajectory_ext,
                         indices_bounded,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
 
                 external_samples, smeared_nhat = smear_source_samples(
@@ -1846,6 +1830,32 @@ def retarded_equations_of_motion(
                 )
                 if smeared_nhat:
                     nhat = smeared_nhat
+
+                if (
+                    beamline_geometry is not None
+                    and beamline_geometry.enabled
+                    and external_samples.x is not None
+                ):
+                    src_positions = np.stack(
+                        [
+                            np.asarray(external_samples.x, dtype=float),
+                            np.asarray(external_samples.y, dtype=float),
+                            np.asarray(external_samples.z, dtype=float),
+                        ],
+                        axis=-1,
+                    )
+                    visibility = compute_directional_visibility_mask(
+                        src_positions,
+                        beamline_geometry,
+                        observer_direction=(
+                            float(working_beta_x),
+                            float(working_beta_y),
+                            float(working_beta_z),
+                        ),
+                    )
+                    external_samples.valid_mask = (
+                        external_samples.valid_mask & visibility
+                    )
 
                 # Compute electromagnetic force contributions
                 (

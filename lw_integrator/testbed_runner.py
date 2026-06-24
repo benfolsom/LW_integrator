@@ -45,7 +45,7 @@ from core.particle_status import (
     get_particle_failure_summary,
 )
 from core.self_consistency import canonicalize_self_consistency_mode
-from core.types import CavityExitConfig, SimulationType
+from core.types import BeamlineGeometryConfig, CavityExitConfig, Occluder, SimulationType
 from input_output.bunch_initialization import create_bunch_from_params
 
 from .trajectory_metrics import compute_delta_energy_components, normalize_state
@@ -409,6 +409,10 @@ class SimulationOptions:
     cavity_exit_residual_tail_factor: float = 0.0
     cavity_exit_max_residual_tail_steps: int = 0
 
+    # Beamline geometry line-of-sight screening (any sim type)
+    beamline_geometry_enabled: bool = False
+    beamline_geometry_occluders: list = field(default_factory=list)
+
     # Auto-duration crossing mode (BUNCH_TO_BUNCH only)
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
@@ -604,6 +608,10 @@ class SimulationOptions:
                 "residual_tail_factor": self.cavity_exit_residual_tail_factor,
                 "max_residual_tail_steps": self.cavity_exit_max_residual_tail_steps,
             },
+            "beamline_geometry": {
+                "enabled": self.beamline_geometry_enabled,
+                "occluders": self.beamline_geometry_occluders,
+            },
             "auto_duration_enabled": self.auto_duration_enabled,
             "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
             "auto_duration_post_factor": self.auto_duration_post_factor,
@@ -763,6 +771,46 @@ class SimulationOptions:
                 return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
             except (TypeError, ValueError):
                 return default
+
+        beamline_geometry_payload_raw = payload.get("beamline_geometry")
+        beamline_geometry_payload = (
+            beamline_geometry_payload_raw
+            if isinstance(beamline_geometry_payload_raw, dict)
+            else {}
+        )
+
+        def _beamline_geometry_value(name: str, default: object) -> object:
+            flat_name = f"beamline_geometry_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return beamline_geometry_payload.get(name, default)
+
+        def _beamline_geometry_bool(name: str, default: bool) -> bool:
+            return bool(_beamline_geometry_value(name, default))
+
+        def _beamline_geometry_occluders() -> list:
+            raw = _beamline_geometry_value("occluders", [])
+            if not isinstance(raw, list):
+                return []
+            occluders = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                axis = item.get("axis", [0.0, 0.0, 1.0])
+                center = item.get("center_mm", [0.0, 0.0, 0.0])
+                try:
+                    occluders.append(
+                        {
+                            "axis": list(float(v) for v in axis),
+                            "center_mm": list(float(v) for v in center),
+                            "radius_mm": float(item.get("radius_mm", 1.0)),
+                            "length_mm": float(item.get("length_mm", 1.0)),
+                            "label": str(item.get("label", "")),
+                        }
+                    )
+                except (TypeError, ValueError):
+                    continue
+            return occluders
 
         pseudo_grid_payload_raw = payload.get("pseudo_grid")
         pseudo_grid_payload = (
@@ -1140,6 +1188,9 @@ class SimulationOptions:
             cavity_exit_max_residual_tail_steps=_cavity_exit_int(
                 "max_residual_tail_steps", 0
             ),
+            beamline_geometry_enabled=_bool("beamline_geometry_enabled", False)
+            or _beamline_geometry_bool("enabled", False),
+            beamline_geometry_occluders=_beamline_geometry_occluders(),
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
@@ -1273,8 +1324,10 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     Pz = state["Pz"]
     # For small-angle approximation: x' ≈ tan(θ) ≈ Px/Pz
     # This is exact for the divergence angle in the paraxial limit
-    xp = Px / Pz  # dimensionless (mm/ns / mm/ns)
-    yp = Py / Pz  # dimensionless
+    # Guard against Pz=0 (e.g. transverse-crossing driver with momentum along y)
+    pz_safe = np.where(np.abs(Pz) < 1e-30, 1e-30, Pz)
+    xp = Px / pz_safe  # dimensionless (mm/ns / mm/ns)
+    yp = Py / pz_safe  # dimensionless
 
     # Calculate RMS quantities
     x_rms = np.sqrt(np.mean(x**2))  # mm
@@ -1384,31 +1437,71 @@ def _compute_energy_ledger_series(
 ) -> Dict[str, np.ndarray | float]:
     gamma_initial = compute_alive_particle_average(initial_state, "gamma") or 1.0
     bz_initial = compute_alive_particle_average(initial_state, "bz") or 0.0
+    bx_initial = compute_alive_particle_average(initial_state, "bx") or 0.0
+    by_initial = compute_alive_particle_average(initial_state, "by") or 0.0
 
     gamma_series = _alive_average_series(states, "gamma", default=gamma_initial)
     bz_series = _alive_average_series(states, "bz", default=bz_initial)
+    bx_series = _alive_average_series(states, "bx", default=bx_initial)
+    by_series = _alive_average_series(states, "by", default=by_initial)
 
     kinetic_energy_mev = np.maximum((gamma_series - 1.0) * rest_energy_mev, 0.0)
     initial_kinetic_energy_mev = max((gamma_initial - 1.0) * rest_energy_mev, 0.0)
     delta_kinetic_energy_mev = kinetic_energy_mev - initial_kinetic_energy_mev
 
-    longitudinal_kinetic_energy_mev = gamma_series * bz_series * rest_energy_mev
-    initial_longitudinal_kinetic_energy_mev = gamma_initial * bz_initial * rest_energy_mev
+    # Per-direction kinetic energy decomposition using the relativistic identity:
+    #   KE_total = p^2 / ((gamma + 1) * m)
+    #   KE_i = p_i^2 / ((gamma + 1) * m)
+    # This correctly decomposes KE by momentum component, unlike the
+    # previous gamma*beta_i*rest_energy which was a momentum proxy.
+    # We compute p_i from gamma, m, beta_i: p_i = gamma * m * beta_i * c.
+    # Then KE_i = p_i^2 / ((gamma+1)*m) and convert to MeV via rest_energy/m*c^2.
+    # Simplifying: KE_i = gamma^2 * beta_i^2 * m * c^2 / (gamma + 1)
+    #              = gamma^2 * beta_i^2 / (gamma + 1) * rest_energy_mev
+    # (since rest_energy_mev = m * c^2 in the AMU/MeV convention).
+    gamma_sq = gamma_series ** 2
+    gamma_plus_1 = gamma_series + 1.0
+
+    longitudinal_kinetic_energy_mev = gamma_sq * bz_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_longitudinal_kinetic_energy_mev = (
+        gamma_initial**2 * bz_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
     delta_kinetic_energy_z_mev = (
         longitudinal_kinetic_energy_mev - initial_longitudinal_kinetic_energy_mev
     )
+
+    kinetic_energy_x_mev = gamma_sq * bx_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_kinetic_energy_x_mev = (
+        gamma_initial**2 * bx_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
+    delta_kinetic_energy_x_mev = kinetic_energy_x_mev - initial_kinetic_energy_x_mev
+
+    kinetic_energy_y_mev = gamma_sq * by_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_kinetic_energy_y_mev = (
+        gamma_initial**2 * by_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
+    delta_kinetic_energy_y_mev = kinetic_energy_y_mev - initial_kinetic_energy_y_mev
 
     return {
         "kinetic_energy_mev": kinetic_energy_mev,
         "delta_kinetic_energy_mev": delta_kinetic_energy_mev,
         "longitudinal_kinetic_energy_mev": longitudinal_kinetic_energy_mev,
+        "kinetic_energy_z_mev": longitudinal_kinetic_energy_mev,
         "delta_kinetic_energy_z_mev": delta_kinetic_energy_z_mev,
+        "kinetic_energy_x_mev": kinetic_energy_x_mev,
+        "delta_kinetic_energy_x_mev": delta_kinetic_energy_x_mev,
+        "kinetic_energy_y_mev": kinetic_energy_y_mev,
+        "delta_kinetic_energy_y_mev": delta_kinetic_energy_y_mev,
         "initial_gamma": float(gamma_initial),
         "initial_bz": float(bz_initial),
+        "initial_bx": float(bx_initial),
+        "initial_by": float(by_initial),
         "initial_kinetic_energy_mev": float(initial_kinetic_energy_mev),
         "initial_longitudinal_kinetic_energy_mev": float(
             initial_longitudinal_kinetic_energy_mev
         ),
+        "initial_kinetic_energy_x_mev": float(initial_kinetic_energy_x_mev),
+        "initial_kinetic_energy_y_mev": float(initial_kinetic_energy_y_mev),
     }
 
 
@@ -1421,19 +1514,34 @@ def _ledger_scalar_metrics(
     delta_kinetic_energy_z_mev = np.asarray(
         ledger["delta_kinetic_energy_z_mev"], dtype=float
     )
+    delta_kinetic_energy_x_mev = np.asarray(
+        ledger["delta_kinetic_energy_x_mev"], dtype=float
+    )
+    delta_kinetic_energy_y_mev = np.asarray(
+        ledger["delta_kinetic_energy_y_mev"], dtype=float
+    )
+
+    initial_kinetic_energy_mev = float(ledger["initial_kinetic_energy_mev"])
+    final_delta_kinetic_energy_mev = float(delta_kinetic_energy_mev[-1])
+    max_delta_kinetic_energy_mev = float(np.max(delta_kinetic_energy_mev))
+
+    if initial_kinetic_energy_mev != 0.0:
+        final_percent_energy_gain = (
+            100.0 * final_delta_kinetic_energy_mev / initial_kinetic_energy_mev
+        )
+        max_percent_energy_gain = (
+            100.0 * max_delta_kinetic_energy_mev / initial_kinetic_energy_mev
+        )
+    else:
+        final_percent_energy_gain = 0.0
+        max_percent_energy_gain = 0.0
 
     metrics = {
-        f"{prefix}_initial_mean_kinetic_energy_mev": float(
-            ledger["initial_kinetic_energy_mev"]
-        ),
+        f"{prefix}_initial_mean_kinetic_energy_mev": initial_kinetic_energy_mev,
         f"{prefix}_final_mean_kinetic_energy_mev": float(kinetic_energy_mev[-1]),
         f"{prefix}_max_mean_kinetic_energy_mev": float(np.max(kinetic_energy_mev)),
-        f"{prefix}_final_delta_kinetic_energy_mev": float(
-            delta_kinetic_energy_mev[-1]
-        ),
-        f"{prefix}_max_delta_kinetic_energy_mev": float(
-            np.max(delta_kinetic_energy_mev)
-        ),
+        f"{prefix}_final_delta_kinetic_energy_mev": final_delta_kinetic_energy_mev,
+        f"{prefix}_max_delta_kinetic_energy_mev": max_delta_kinetic_energy_mev,
         f"{prefix}_final_delta_kinetic_energy_z_mev": float(
             delta_kinetic_energy_z_mev[-1]
         ),
@@ -1443,6 +1551,26 @@ def _ledger_scalar_metrics(
         f"{prefix}_min_delta_kinetic_energy_z_mev": float(
             np.min(delta_kinetic_energy_z_mev)
         ),
+        f"{prefix}_final_delta_kinetic_energy_x_mev": float(
+            delta_kinetic_energy_x_mev[-1]
+        ),
+        f"{prefix}_max_delta_kinetic_energy_x_mev": float(
+            np.max(delta_kinetic_energy_x_mev)
+        ),
+        f"{prefix}_min_delta_kinetic_energy_x_mev": float(
+            np.min(delta_kinetic_energy_x_mev)
+        ),
+        f"{prefix}_final_delta_kinetic_energy_y_mev": float(
+            delta_kinetic_energy_y_mev[-1]
+        ),
+        f"{prefix}_max_delta_kinetic_energy_y_mev": float(
+            np.max(delta_kinetic_energy_y_mev)
+        ),
+        f"{prefix}_min_delta_kinetic_energy_y_mev": float(
+            np.min(delta_kinetic_energy_y_mev)
+        ),
+        f"{prefix}_final_percent_energy_gain": final_percent_energy_gain,
+        f"{prefix}_max_percent_energy_gain": max_percent_energy_gain,
     }
     return metrics
 
@@ -1698,7 +1826,9 @@ def prepare_particle_bunches(
     seed : int
         Random seed for reproducibility
     rider_params : dict
-        Rider particle parameters
+        Rider particle parameters. If ``momentum_axis`` is present, uses
+        :func:`create_particle_state_3d` for arbitrary 3D orientation;
+        otherwise uses the legacy z-axis :func:`create_bunch_from_params`.
     driver_params : dict, optional
         Driver particle parameters (None for single-bunch modes)
     Returns
@@ -1712,21 +1842,78 @@ def prepare_particle_bunches(
     driver_rest_mev : float or None
         Driver rest energy in MeV (None if not provided)
     """
-    rider_state, rider_rest_mev = create_bunch_from_params(
-        seed=seed,
-        **rider_params,
-    )
+    if "momentum_axis" in rider_params:
+        rider_state, rider_rest_mev = _create_bunch_3d(seed=seed, **rider_params)
+    else:
+        rider_state, rider_rest_mev = create_bunch_from_params(
+            seed=seed,
+            **rider_params,
+        )
 
     if driver_params is not None:
-        driver_state, driver_rest_mev = create_bunch_from_params(
-            seed=seed + 1,  # Different seed for driver
-            **driver_params,
-        )
+        if "momentum_axis" in driver_params:
+            driver_state, driver_rest_mev = _create_bunch_3d(
+                seed=seed + 1, **driver_params
+            )
+        else:
+            driver_state, driver_rest_mev = create_bunch_from_params(
+                seed=seed + 1,  # Different seed for driver
+                **driver_params,
+            )
     else:
         driver_state = None
         driver_rest_mev = None
 
     return rider_state, driver_state, rider_rest_mev, driver_rest_mev
+
+
+def _create_bunch_3d(
+    *,
+    kinetic_energy_mev: float,
+    mass_amu: float,
+    charge_sign: float,
+    stripped_ions: float,
+    momentum_axis: list | tuple,
+    starting_position_mm: list | tuple = (0.0, 0.0, 0.0),
+    particle_count: int = 1,
+    transverse_distance_mm: float = 0.0,
+    transverse_momentum: float = 0.0,
+    longitudinal_span_mm: float = 0.0,
+    transverse_axes: list | tuple | None = None,
+    charge_multiplier: float = 1.0,
+    seed: int | None = None,
+    **_extra: Any,
+) -> Tuple[Dict[str, np.ndarray], float]:
+    """Create a 3D-oriented bunch from config params.
+
+    Wraps :func:`create_particle_state_3d` with the config-level parameter
+    names used by ``rider_params`` / ``driver_params``. Ignores legacy
+    z-axis-only keys (``starting_distance``, ``starting_Pz``, etc.) passed
+    in the same dict.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    from core.particle_initialization import create_particle_state_3d
+
+    axes_tuple = None
+    if transverse_axes is not None:
+        axes_tuple = tuple(tuple(float(v) for v in ax) for ax in transverse_axes)
+
+    return create_particle_state_3d(
+        starting_position_mm=tuple(float(v) for v in starting_position_mm),
+        momentum_axis=tuple(float(v) for v in momentum_axis),
+        kinetic_energy_mev=float(kinetic_energy_mev),
+        stripped_ions=float(stripped_ions),
+        particle_mass_amu=float(mass_amu),
+        particle_count=int(particle_count),
+        charge_sign=float(charge_sign),
+        transverse_distance_mm=float(transverse_distance_mm),
+        transverse_momentum=float(transverse_momentum),
+        longitudinal_span_mm=float(longitudinal_span_mm),
+        transverse_axes=axes_tuple,
+        charge_multiplier=float(charge_multiplier),
+    )
 
 
 def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
@@ -2004,6 +2191,32 @@ def build_macroparticle_smearing_config(options: SimulationOptions) -> object:
         refresh_policy=str(options.macroparticle_smearing_refresh_policy).replace(
             "-", "_"
         ),
+    )
+
+
+def build_beamline_geometry_config(options: SimulationOptions) -> BeamlineGeometryConfig:
+    """Build BeamlineGeometryConfig from SimulationOptions."""
+    occluders = []
+    for item in options.beamline_geometry_occluders:
+        if not isinstance(item, dict):
+            continue
+        try:
+            occluders.append(
+                Occluder(
+                    axis=tuple(float(v) for v in item.get("axis", [0.0, 0.0, 1.0])),
+                    center_mm=tuple(
+                        float(v) for v in item.get("center_mm", [0.0, 0.0, 0.0])
+                    ),
+                    radius_mm=float(item.get("radius_mm", 1.0)),
+                    length_mm=float(item.get("length_mm", 1.0)),
+                    label=str(item.get("label", "")),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return BeamlineGeometryConfig(
+        enabled=bool(options.beamline_geometry_enabled),
+        occluders=occluders,
     )
 
 
@@ -2351,6 +2564,8 @@ def run_testbed(
             max_residual_tail_steps=int(options.cavity_exit_max_residual_tail_steps),
         )
 
+        beamline_geometry_config = build_beamline_geometry_config(options)
+
         # Run core integrator directly
         core_traj_rider, core_traj_driver, *_soa_out = retarded_integrator(
             steps=_actual_steps,
@@ -2400,6 +2615,7 @@ def run_testbed(
             cavity_exit=cavity_exit_config,
             particle_loss=particle_loss_config,
             macroparticle_smearing=macroparticle_smearing_config,
+            beamline_geometry=beamline_geometry_config,
         )
 
         # Build a normalized payload shared by the GUI and CLI surfaces.

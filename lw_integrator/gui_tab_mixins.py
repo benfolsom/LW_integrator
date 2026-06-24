@@ -2498,3 +2498,175 @@ class IntegratorGUITabMixin:
     def _toggle_auto_duration_controls(self) -> None:
         # Implemented in gui_state_mixins.IntegratorGUIStateMixin
         pass
+
+    def _build_beamline_geometry_tab(self) -> None:
+        """Build the beamline-geometry line-of-sight screening tab."""
+        import json
+
+        from .gui import Tooltip, _show_error_dialog, _show_warning_dialog
+
+        frame = self._create_scrollable_tab(
+            self.notebook, "Beamline/Geometry", padding=12
+        )
+        frame.columnconfigure(0, weight=1)
+
+        notice_label = ttk.Label(
+            frame,
+            text=(
+                "Paste a beamline_geometry JSON block (occluders list) below. "
+                "When enabled, retarded fields between bunches are zeroed when "
+                "the source particle (at its retarded position) is outside all "
+                "occluders."
+            ),
+            justify="left",
+            foreground="blue",
+        )
+        notice_label.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
+        self.beamline_geometry_enable_check = ttk.Checkbutton(
+            frame,
+            text="Enable beamline-geometry line-of-sight screening",
+            variable=self.beamline_geometry_enabled_var,
+            command=self._toggle_beamline_geometry_controls,
+        )
+        self.beamline_geometry_enable_check.grid(
+            row=1, column=0, sticky="w", pady=(0, 6)
+        )
+
+        template = (
+            '{\n'
+            '  "enabled": true,\n'
+            '  "occluders": [\n'
+            '    {\n'
+            '      "type": "cylinder",\n'
+            '      "axis": [0.0, 0.0, 1.0],\n'
+            '      "center_mm": [0.0, 0.0, 0.0],\n'
+            '      "radius_mm": 15.0,\n'
+            '      "length_mm": 2000.0,\n'
+            '      "label": "electron_pipe"\n'
+            '    }\n'
+            '  ]\n'
+            '}'
+        )
+
+        text_frame = ttk.LabelFrame(
+            frame, text="beamline_geometry JSON", padding=6
+        )
+        text_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        self.beamline_geometry_text = tk.Text(text_frame, width=80, height=20)
+        self.beamline_geometry_text.grid(row=0, column=0, sticky="nsew")
+        self.beamline_geometry_text.insert("1.0", template)
+
+        text_scroll = ttk.Scrollbar(
+            text_frame, orient="vertical", command=self.beamline_geometry_text.yview
+        )
+        text_scroll.grid(row=0, column=1, sticky="ns")
+        self.beamline_geometry_text.configure(yscrollcommand=text_scroll.set)
+
+        self._beamline_geometry_sub_widgets = [
+            notice_label,
+            self.beamline_geometry_text,
+            text_scroll,
+        ]
+
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+
+        def _validate_json() -> None:
+            raw = self.beamline_geometry_text.get("1.0", "end-1c")
+            if not raw.strip():
+                _show_warning_dialog(
+                    self.root,
+                    "Beamline geometry",
+                    "No JSON content to validate.",
+                )
+                return
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                _show_error_dialog(
+                    self.root,
+                    "Invalid beamline_geometry JSON",
+                    f"JSON parse error: {exc}",
+                )
+                return
+            if not isinstance(parsed, dict):
+                _show_error_dialog(
+                    self.root,
+                    "Invalid beamline_geometry JSON",
+                    "Top-level JSON must be an object.",
+                )
+                return
+            occluders = parsed.get("occluders", [])
+            if not isinstance(occluders, list):
+                _show_error_dialog(
+                    self.root,
+                    "Invalid beamline_geometry JSON",
+                    "'occluders' must be a list.",
+                )
+                return
+            _show_warning_dialog(
+                self.root,
+                "Beamline geometry",
+                f"JSON is valid. {len(occluders)} occluder(s) found.",
+            )
+
+        self.beamline_geometry_validate_button = ttk.Button(
+            button_row, text="Validate JSON", command=_validate_json
+        )
+        self.beamline_geometry_validate_button.pack(side="left")
+        self._beamline_geometry_sub_widgets.append(
+            self.beamline_geometry_validate_button
+        )
+
+        Tooltip(
+            self.beamline_geometry_enable_check,
+            "When enabled, the beamline_geometry block below is passed to the "
+            "integrator and used to screen retarded fields between bunches.",
+        )
+
+        self._toggle_beamline_geometry_controls()
+
+    def _collect_beamline_geometry_payload(self) -> dict:
+        """Extract and parse the beamline_geometry JSON from the tab text.
+
+        Returns an empty dict when the text is blank or parsing fails. Callers
+        that need strict validation should call the Validate JSON button first.
+        """
+        import json
+
+        if not hasattr(self, "beamline_geometry_text"):
+            return {}
+        raw = self.beamline_geometry_text.get("1.0", "end-1c")
+        if not raw.strip():
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        block = dict(parsed)
+        block["enabled"] = bool(self.beamline_geometry_enabled_var.get())
+        return block
+
+    def _collect_beamline_geometry_occluders(self) -> list:
+        """Return the occluders list from the geometry tab as plain dicts.
+
+        Used by ``_build_options_from_ui`` to populate
+        ``SimulationOptions.beamline_geometry_occluders``.
+        """
+        payload = self._collect_beamline_geometry_payload()
+        occluders = payload.get("occluders", [])
+        if not isinstance(occluders, list):
+            return []
+        result = []
+        for item in occluders:
+            if not isinstance(item, dict):
+                continue
+            result.append(item)
+        return result

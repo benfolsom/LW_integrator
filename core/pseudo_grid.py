@@ -339,7 +339,13 @@ def build_passive_neighbor_map(
     neighbor_count: int,
     weighting_mode: str = "inverse_distance",
 ) -> PassiveNeighborMap:
-    """Assign passive particles to their nearest active anchors."""
+    """Assign passive particles using full-bunch neighbors collapsed to actives.
+
+    Passive particles first sample nearest neighbours from the full alive set
+    (active and passive alike, excluding themselves). Any passive-to-passive
+    links are then algebraically collapsed onto the active representatives so
+    downstream reduced-solver code can keep consuming active-only anchors.
+    """
     if neighbor_count <= 0:
         raise ValueError("neighbor_count must be positive")
 
@@ -355,50 +361,94 @@ def build_passive_neighbor_map(
     if passive.size == 0:
         return _empty_neighbor_map()
 
-    x = np.asarray(state["x"], dtype=float)
-    y = np.asarray(state["y"], dtype=float)
-    z = np.asarray(state["z"], dtype=float)
-    alive_coords = np.column_stack((x[alive], y[alive], z[alive]))
-    centers = np.mean(alive_coords, axis=0)
-    spans = np.ptp(alive_coords, axis=0)
-    spans = np.where(spans > 0.0, spans, 1.0)
+    if alive.size <= 1:
+        raise ValueError("alive_indices must contain at least one non-self neighbor")
 
-    active_coords = (
-        np.column_stack((x[active], y[active], z[active])) - centers
-    ) / spans
-    passive_coords = (
-        np.column_stack((x[passive], y[passive], z[passive])) - centers
-    ) / spans
+    alive_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=alive,
+    )
+    passive_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=passive,
+    )
+    active_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=active,
+    )
 
-    tree = KDTree(active_coords)
-    k = min(int(neighbor_count), active.size)
-    distances, neighbor_positions = tree.query(passive_coords, k=k)
+    k = min(int(neighbor_count), alive.size - 1)
+    query_k = min(alive.size, k + 1)
+    alive_tree = KDTree(alive_coords)
+    distances, neighbor_positions = alive_tree.query(passive_coords, k=query_k)
     distances = np.asarray(distances, dtype=float)
     neighbor_positions = np.asarray(neighbor_positions, dtype=int)
-    if k == 1:
+    if query_k == 1:
         distances = distances[:, np.newaxis]
         neighbor_positions = neighbor_positions[:, np.newaxis]
 
-    neighbor_particle_indices = active[neighbor_positions]
-    if k > 1:
-        tied_rows = np.flatnonzero(
-            np.any(np.diff(distances, axis=1) <= 1.0e-12, axis=1)
-        )
-        for row_idx in tied_rows:
-            row_order = np.lexsort(
-                (neighbor_particle_indices[row_idx], distances[row_idx])
+    raw_neighbor_particle_indices = np.empty((passive.size, k), dtype=int)
+    raw_distances = np.empty((passive.size, k), dtype=float)
+    for row_idx, passive_particle_idx in enumerate(passive):
+        row_positions = np.asarray(neighbor_positions[row_idx], dtype=int).ravel()
+        row_distances = np.asarray(distances[row_idx], dtype=float).ravel()
+        row_particle_indices = alive[row_positions]
+        non_self_mask = row_particle_indices != int(passive_particle_idx)
+        filtered_particles = row_particle_indices[non_self_mask]
+        filtered_distances = row_distances[non_self_mask]
+        if filtered_particles.size < k:
+            raise ValueError(
+                "unable to construct passive neighbour list without self matches"
             )
-            neighbor_particle_indices[row_idx] = neighbor_particle_indices[
-                row_idx,
-                row_order,
-            ]
-            distances[row_idx] = distances[row_idx, row_order]
+        raw_neighbor_particle_indices[row_idx] = filtered_particles[:k]
+        raw_distances[row_idx] = filtered_distances[:k]
 
-    weights = _compute_neighbor_weights(distances, weighting_mode)
+    nearest_active_distances, nearest_active_positions = KDTree(active_coords).query(
+        passive_coords,
+        k=1,
+    )
+    nearest_active_distances = np.asarray(nearest_active_distances, dtype=float).ravel()
+    nearest_active_positions = np.asarray(nearest_active_positions, dtype=int).ravel()
+
+    for row_idx in range(passive.size):
+        row_active_mask = active_members[raw_neighbor_particle_indices[row_idx]]
+        if np.any(row_active_mask):
+            continue
+        replacement_col = int(np.argmax(raw_distances[row_idx]))
+        raw_neighbor_particle_indices[row_idx, replacement_col] = active[
+            nearest_active_positions[row_idx]
+        ]
+        raw_distances[row_idx, replacement_col] = nearest_active_distances[row_idx]
+
+        row_order = np.lexsort(
+            (
+                raw_neighbor_particle_indices[row_idx],
+                raw_distances[row_idx],
+            )
+        )
+        raw_neighbor_particle_indices[row_idx] = raw_neighbor_particle_indices[
+            row_idx,
+            row_order,
+        ]
+        raw_distances[row_idx] = raw_distances[row_idx, row_order]
+
+    raw_weights = _compute_neighbor_weights(raw_distances, weighting_mode)
+    active_weights = _collapse_passive_neighbor_weights_to_active(
+        passive,
+        active,
+        raw_neighbor_particle_indices,
+        raw_weights,
+    )
     return PassiveNeighborMap(
         passive_indices=passive,
-        neighbor_particle_indices=neighbor_particle_indices,
-        weights=weights,
+        neighbor_particle_indices=np.broadcast_to(
+            active[np.newaxis, :],
+            (passive.size, active.size),
+        ).copy(),
+        weights=active_weights,
     )
 
 
@@ -1140,6 +1190,67 @@ def _argmax_with_tiebreak(scores: np.ndarray, particle_indices: np.ndarray) -> i
         return int(candidates[0])
     candidate_particles = np.asarray(particle_indices, dtype=int)[candidates]
     return int(candidates[int(np.argmin(candidate_particles))])
+
+
+def _collapse_passive_neighbor_weights_to_active(
+    passive_indices: np.ndarray,
+    active_indices: np.ndarray,
+    raw_neighbor_particle_indices: np.ndarray,
+    raw_weights: np.ndarray,
+) -> np.ndarray:
+    passive = np.asarray(passive_indices, dtype=int)
+    active = np.asarray(active_indices, dtype=int)
+    raw_neighbors = np.asarray(raw_neighbor_particle_indices, dtype=int)
+    weights = np.asarray(raw_weights, dtype=float)
+    if passive.size == 0:
+        return np.zeros((0, active.size), dtype=float)
+
+    max_index = int(max(np.max(passive), np.max(active), np.max(raw_neighbors)))
+    active_lookup = np.full(max_index + 1, -1, dtype=int)
+    passive_lookup = np.full(max_index + 1, -1, dtype=int)
+    active_lookup[active] = np.arange(active.size, dtype=int)
+    passive_lookup[passive] = np.arange(passive.size, dtype=int)
+
+    passive_to_active = np.zeros((passive.size, active.size), dtype=float)
+    passive_to_passive = np.zeros((passive.size, passive.size), dtype=float)
+
+    row_indices = np.repeat(np.arange(passive.size, dtype=int), raw_neighbors.shape[1])
+    flat_neighbors = raw_neighbors.ravel()
+    flat_weights = weights.ravel()
+
+    active_cols = active_lookup[flat_neighbors]
+    active_mask = active_cols >= 0
+    if np.any(active_mask):
+        np.add.at(
+            passive_to_active,
+            (row_indices[active_mask], active_cols[active_mask]),
+            flat_weights[active_mask],
+        )
+
+    passive_cols = passive_lookup[flat_neighbors]
+    passive_mask = passive_cols >= 0
+    if np.any(passive_mask):
+        np.add.at(
+            passive_to_passive,
+            (row_indices[passive_mask], passive_cols[passive_mask]),
+            flat_weights[passive_mask],
+        )
+
+    try:
+        active_weights = np.linalg.solve(
+            np.eye(passive.size, dtype=float) - passive_to_passive,
+            passive_to_active,
+        )
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            "passive neighbour graph could not be collapsed onto active anchors"
+        ) from exc
+
+    active_weights = np.where(active_weights > 1.0e-12, active_weights, 0.0)
+    row_sums = np.sum(active_weights, axis=1, keepdims=True)
+    valid_rows = row_sums[:, 0] > 0.0
+    active_weights[valid_rows] /= row_sums[valid_rows]
+    return active_weights
 
 
 def _compute_neighbor_weights(
