@@ -44,7 +44,9 @@ simulation, and confirm that the regression tooling works on your machine.
 
    * **Single Run Mode** (Main tab): Configure and execute individual simulations
      with real-time progress tracking, trajectory visualization, and interactive
-     energy/position analysis. Export results in CSV, JSON, or NPZ formats.
+     energy/position analysis. Export results in CSV, JSON, or NPZ formats. For
+     new particle setups, prefer the ``Manual Particle Config`` tab so full 3D
+     rider/driver JSON can be entered directly.
 
    * **Blind Sweep Mode** (Sweep/Optimization tab): Parameter sweeps over aperture
      radius, particle energy, transverse offset, and starting positions with
@@ -91,7 +93,11 @@ simulation, and confirm that the regression tooling works on your machine.
           "kinetic_energy_mev": 5.0,
           "mass_amu": 1.0,
           "charge_sign": 1.0,
-          "position_z": 0.0
+          "particle_count": 5,
+          "starting_position_mm": [0.05, 0.0, 0.0],
+          "momentum_axis": [0.0, 0.0, 1.0],
+          "transverse_distance_mm": 0.01,
+          "longitudinal_span_mm": 0.02
         }
       }
 
@@ -184,30 +190,30 @@ simulation, and confirm that the regression tooling works on your machine.
    This example demonstrates beam emittance modeling with stochastic errors
    applied to image subcharges before charge attenuation calculations.
 
-10. Run an off-axis beam simulation with transverse offset:
+10. Run a full 3D off-axis beam simulation:
 
    .. code-block:: python
 
       from lw_integrator.testbed_runner import SimulationOptions, run_testbed
       from core.types import SimulationType
 
-      # Create an off-axis beam at 50 μm from center with ±10 μm spread
       rider_params = {
-          'starting_distance': 0.0,
-          'transv_mom': 0.0,
-          'starting_Pz': 1e6,
-          'stripped_ions': 1.0,
-          'm_particle': 0.000548579909,  # electron mass
-          'transv_dist': 1e-5,           # ±10 μm beam spread
-          'transv_offset_x': 5e-5,       # 50 μm off-axis in x
-          'transv_offset_y': 0.0,        # on-axis in y
-          'pcount': 5,
+          'kinetic_energy_mev': 35.0,
+          'mass_amu': 0.000548579909,
           'charge_sign': -1.0,
+          'stripped_ions': 1.0,
+          'particle_count': 5,
+          'starting_position_mm': [5e-5, 0.0, 0.0],
+          'momentum_axis': [0.0, 0.0, 1.0],
+          'transverse_distance_mm': 1e-5,
+          'transverse_momentum': 0.0,
+          'longitudinal_span_mm': 2e-5,
       }
 
       options = SimulationOptions(
           simulation_type=SimulationType.CONDUCTING_WALL,
           steps=1000,
+          manual_particle_config_enabled=True,
           rider_params=rider_params,
           core_params={
               'time_step': 1e-7,
@@ -218,9 +224,10 @@ simulation, and confirm that the regression tooling works on your machine.
 
       result = run_testbed(options)
 
-   This demonstrates off-axis beam positioning, useful for aperture tolerance
-   studies and beam halo analysis. Particles are distributed uniformly in
-   x ∈ [40, 60] μm and y ∈ [-10, 10] μm.
+   This demonstrates the preferred maintained path for off-axis beam
+   positioning. The bunch centroid starts 50 μm off-axis in ``x`` with a full
+   3D spread: transverse disk radius 10 μm and longitudinal span 20 μm along
+   the propagation axis.
 
 Next steps
 ----------

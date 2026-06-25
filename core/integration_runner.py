@@ -14,11 +14,16 @@ from typing import Any, Callable, Optional, Tuple, cast
 import numpy as np
 
 from .constants import C_MMNS
-from .equations import GammaBlowupError, retarded_equations_of_motion
+from .equations import (
+    GammaBlowupError,
+    SelfConsistencyNonConvergenceError,
+    retarded_equations_of_motion,
+)
 from .images import generate_conducting_image, generate_switching_image
 from .particle_status import (
     all_particles_dead,
     format_failure_summary,
+    get_alive_particle_indices,
     get_particle_failure_summary,
     mark_particle_dead,
     propagate_dead_particle_status,
@@ -26,10 +31,11 @@ from .particle_status import (
 from .particle_loss import build_particle_loss_context, mark_particle_losses
 from .pseudo_grid import (
     ActiveTrajectoryView,
+    PassiveNeighborMap,
     PseudoGridPlannerState,
     PseudoGridStepSchedule,
+    build_hybrid_space_charge_sources,
     build_pseudo_grid_step_schedule,
-    build_self_excluded_space_charge_source_charges,
     commit_pseudo_grid_step_schedule,
     initialize_pseudo_grid_planner_state,
     reconstruct_full_state_from_active_result,
@@ -58,6 +64,55 @@ from .types import (
 
 class IntegrationCancelled(RuntimeError):
     """Raised when an integration is cancelled by an external caller."""
+
+
+def _charge_localization_stats(
+    field_source_charges: np.ndarray | None,
+) -> dict[str, float] | None:
+    """Return max-anchor fraction and Gini of field-rep source charges.
+
+    A max-anchor fraction near 1.0 means almost all source charge was deposited
+    onto a single field representative (the old passive-collapse failure mode).
+    A Gini near 0.0 means charges are spread evenly across field reps.
+    Returns ``None`` when no field reps are present.
+    """
+    if field_source_charges is None:
+        return None
+    arr = np.asarray(field_source_charges, dtype=float)
+    if arr.size == 0:
+        return None
+    magnitudes = np.abs(arr)
+    total = float(np.sum(magnitudes))
+    if total <= 0.0:
+        return None
+    max_frac = float(np.max(magnitudes)) / total
+    sorted_arr = np.sort(magnitudes)
+    n = sorted_arr.size
+    cum = np.cumsum(sorted_arr)
+    gini = float((n + 1 - 2 * np.sum(cum) / total) / n) if n > 0 else 0.0
+    return {"max_anchor_fraction": max_frac, "gini": gini}
+
+
+def _within_numerical_failure_loss_budget(
+    state: ParticleState,
+    tolerance_fraction: float,
+    *,
+    additional_losses: int = 1,
+) -> bool:
+    """Return whether additional numerical losses stay within budget."""
+    particle_count = len(np.asarray(state.get("x", [])))
+    if particle_count <= 0:
+        return False
+    tolerance = float(tolerance_fraction)
+    if tolerance <= 0.0:
+        return False
+    max_losses = max(1, int(np.ceil(tolerance * particle_count)))
+    dead_mask = np.asarray(
+        state.get("_dead_particles", np.zeros(particle_count, dtype=bool)),
+        dtype=bool,
+    )
+    current_losses = int(np.count_nonzero(dead_mask))
+    return current_losses + int(additional_losses) <= max_losses
 
 
 def _build_partial_soa(
@@ -624,6 +679,8 @@ def _run_pseudo_grid_reduced_step(
     source_effective_charges: np.ndarray,
     source_history_start_index: int | None,
     passive_map: Any,
+    observer_field_indices: np.ndarray,
+    observer_field_source_charges: np.ndarray,
     aperture_radius: float,
     sim_type: SimulationType,
     self_consistency: Optional[SelfConsistencyConfig],
@@ -637,6 +694,10 @@ def _run_pseudo_grid_reduced_step(
     space_charge: Optional[Any],
     pseudo_grid_weighting_mode: str,
     loss_tracking_enabled: bool,
+    numerical_failure_tolerance_fraction: float,
+    field_deposition_neighbor_count: int,
+    space_charge_near_neighbor_count: int,
+    passive_update_mode: str = "weighted_delta",
     source_history_base_index: int = 0,
     observer_history_base_index: int = 0,
     observer_soa: TrajectoryArrays | None = None,
@@ -654,6 +715,26 @@ def _run_pseudo_grid_reduced_step(
 
     observer_active = np.asarray(observer_active_indices, dtype=int)
     source_active = np.asarray(source_active_indices, dtype=int)
+    observer_field = np.asarray(observer_field_indices, dtype=int)
+    sc_source_indices = observer_field.copy()
+    pseudo_grid_space_charge_source_charges = None
+    pseudo_grid_space_charge_source_radii = None
+    if _space_charge_enabled(space_charge):
+        observer_alive = get_alive_particle_indices(observer_history[-1])
+        (
+            sc_source_indices,
+            pseudo_grid_space_charge_source_charges,
+            pseudo_grid_space_charge_source_radii,
+        ) = build_hybrid_space_charge_sources(
+            observer_history[-1],
+            observer_alive,
+            observer_active,
+            observer_field,
+            observer_field_source_charges,
+            field_deposition_neighbor_count=field_deposition_neighbor_count,
+            near_neighbor_count=space_charge_near_neighbor_count,
+            weighting_mode=pseudo_grid_weighting_mode,
+        )
     source_local_start = _resolve_history_start_index(
         source_history,
         source_history_start_index,
@@ -674,9 +755,24 @@ def _run_pseudo_grid_reduced_step(
         q_override=source_effective_charges,
     )
 
-    if observer_active_soa is not None and source_active_soa is not None:
+    observer_sc_source_soa = _indexed_active_history(
+        observer_soa,
+        sc_source_indices,
+        start_step=observer_global_start,
+    )
+
+    if (
+        observer_active_soa is not None
+        and source_active_soa is not None
+        and observer_sc_source_soa is not None
+    ):
         observer_active_history = ActiveTrajectoryView(observer_active_soa)
         source_active_history = ActiveTrajectoryView(source_active_soa)
+        observer_sc_source_history = (
+            ActiveTrajectoryView(observer_sc_source_soa)
+            if observer_sc_source_soa is not None
+            else None
+        )
     else:
         observer_active_history = slice_trajectory_particle_history(
             observer_history,
@@ -688,6 +784,10 @@ def _run_pseudo_grid_reduced_step(
             start_index=source_local_start,
             q_override=source_effective_charges,
         )
+        observer_sc_source_history = slice_trajectory_particle_history(
+            observer_history,
+            sc_source_indices,
+        )
         observer_active_soa = _build_partial_soa(
             observer_active_history,
             len(observer_active_history),
@@ -696,18 +796,12 @@ def _run_pseudo_grid_reduced_step(
             source_active_history,
             len(source_active_history),
         )
+        observer_sc_source_soa = _build_partial_soa(
+            observer_sc_source_history,
+            len(observer_sc_source_history),
+        )
 
     local_index = len(observer_active_history) - 1
-    pseudo_grid_space_charge_source_charges = None
-    if _space_charge_enabled(space_charge):
-        pseudo_grid_space_charge_source_charges = (
-            build_self_excluded_space_charge_source_charges(
-                observer_history[-1],
-                observer_active_indices,
-                passive_map,
-                weighting_mode=pseudo_grid_weighting_mode,
-            )
-        )
 
     try:
         active_result_state = self_consistent_step(
@@ -728,6 +822,11 @@ def _run_pseudo_grid_reduced_step(
             pseudo_grid_space_charge_source_charges=(
                 pseudo_grid_space_charge_source_charges
             ),
+            pseudo_grid_space_charge_source_trajectory=observer_sc_source_history,
+            pseudo_grid_space_charge_source_soa=observer_sc_source_soa,
+            pseudo_grid_space_charge_source_radii_mm=(
+                pseudo_grid_space_charge_source_radii
+            ),
             macroparticle_smearing=macroparticle_smearing,
             beamline_geometry=beamline_geometry,
             traj_soa=observer_active_soa,
@@ -747,7 +846,10 @@ def _run_pseudo_grid_reduced_step(
         else:
             global_particle_idx = local_particle_idx
 
-        if raise_gamma_blowup:
+        if raise_gamma_blowup or not _within_numerical_failure_loss_budget(
+            observer_history[-1],
+            numerical_failure_tolerance_fraction,
+        ):
             raise GammaBlowupError(
                 step_idx=exc.step_idx,
                 particle_idx=global_particle_idx,
@@ -780,12 +882,123 @@ def _run_pseudo_grid_reduced_step(
             gamma_value=exc.gamma_value,
             iteration=exc.iteration,
         )
+    except SelfConsistencyNonConvergenceError as exc:
+        local_particle_idx = int(exc.particle_idx)
+        if (
+            0
+            <= local_particle_idx
+            < np.asarray(observer_active_indices, dtype=int).size
+        ):
+            global_particle_idx = int(observer_active_indices[local_particle_idx])
+        else:
+            global_particle_idx = local_particle_idx
 
-    return reconstruct_full_state_from_active_result(
+        if not _within_numerical_failure_loss_budget(
+            observer_history[-1],
+            numerical_failure_tolerance_fraction,
+        ):
+            raise SelfConsistencyNonConvergenceError(
+                step_idx=exc.step_idx,
+                particle_idx=global_particle_idx,
+                max_iterations=exc.max_iterations,
+                mass_shell_error=exc.mass_shell_error,
+            ) from exc
+
+        message = (
+            f"    [CRITICAL] Step {step_idx}, Particle {global_particle_idx}: "
+            "Self-consistency nonconvergence during pseudo-grid active solve "
+            f"(mass-shell error={exc.mass_shell_error:.3e}). "
+            "Marking particle as dead."
+        )
+        if logger:
+            if callable(logger):
+                logger(message)
+            else:
+                logger.warning(message)
+        else:
+            print(message)
+
+        active_result_state = _copy_particle_state(
+            cast(ParticleState, observer_active_history[-1])
+        )
+        mark_particle_dead(
+            active_result_state,
+            local_particle_idx,
+            step_idx,
+            "self_consistency_nonconvergence",
+            details={
+                "mass_shell_error": exc.mass_shell_error,
+                "max_iterations": exc.max_iterations,
+            },
+        )
+
+    active_reconstructed = reconstruct_full_state_from_active_result(
         observer_history[-1],
         observer_active_indices,
         active_result_state,
         passive_map,
+        loss_tracking_enabled=loss_tracking_enabled,
+        passive_update_mode=(
+            "frozen"
+            if passive_update_mode == "external_interbunch"
+            else passive_update_mode
+        ),
+        h_step=h_step,
+    )
+
+    passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
+    if passive_update_mode != "external_interbunch" or passive_indices.size == 0:
+        return active_reconstructed
+
+    observer_passive_soa = _indexed_active_history(
+        observer_soa,
+        passive_indices,
+        start_step=observer_global_start,
+    )
+    if observer_passive_soa is not None:
+        observer_passive_history = ActiveTrajectoryView(observer_passive_soa)
+    else:
+        observer_passive_history = slice_trajectory_particle_history(
+            observer_history,
+            passive_indices,
+        )
+        observer_passive_soa = _build_partial_soa(
+            observer_passive_history,
+            len(observer_passive_history),
+        )
+
+    passive_result_state = self_consistent_step(
+        retarded_equations_of_motion,
+        h_step,
+        cast(Trajectory, observer_passive_history),
+        cast(Trajectory, source_active_history),
+        len(observer_passive_history) - 1,
+        aperture_radius,
+        sim_type,
+        self_consistency,
+        chrono_mode,
+        startup_mode,
+        step_idx=step_idx,
+        cancel_callback=cancel_callback,
+        space_charge=None,
+        radiation_reaction_mode=radiation_reaction_mode,
+        macroparticle_smearing=macroparticle_smearing,
+        beamline_geometry=beamline_geometry,
+        traj_soa=observer_passive_soa,
+        traj_ext_soa=source_active_soa,
+        **({"external_field": external_field} if external_field is not None else {}),
+    )
+
+    empty_passive_map = PassiveNeighborMap(
+        passive_indices=np.zeros(0, dtype=int),
+        neighbor_particle_indices=np.zeros((0, 0), dtype=int),
+        weights=np.zeros((0, 0), dtype=float),
+    )
+    return reconstruct_full_state_from_active_result(
+        active_reconstructed,
+        passive_indices,
+        passive_result_state,
+        empty_passive_map,
         loss_tracking_enabled=loss_tracking_enabled,
     )
 
@@ -836,6 +1049,10 @@ def _run_adaptive_step(
     pseudo_grid_force_reduction_enabled: bool = False,
     pseudo_grid_weighting_mode: str = "inverse_distance",
     pseudo_grid_loss_tracking_enabled: bool = True,
+    pseudo_grid_numerical_failure_tolerance_fraction: float = 0.001,
+    pseudo_grid_field_deposition_neighbor_count: int = 4,
+    pseudo_grid_space_charge_near_neighbor_count: int = 8,
+    pseudo_grid_passive_update_mode: str = "weighted_delta",
     pseudo_grid_observer_history: Trajectory | None = None,
     pseudo_grid_source_history: Trajectory | None = None,
     pseudo_grid_observer_history_base_index: int = 0,
@@ -1046,10 +1263,12 @@ def _run_adaptive_step(
             observer_history=pseudo_grid_observer_history or trajectory[:i],
             source_history=pseudo_grid_source_history or trajectory_drv[:i],
             observer_active_indices=pseudo_grid_schedule.rider_active_indices,
-            source_active_indices=pseudo_grid_schedule.driver_active_indices,
-            source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+            source_active_indices=pseudo_grid_schedule.driver_field_indices,
+            source_effective_charges=pseudo_grid_schedule.driver_field_source_charges,
             source_history_start_index=pseudo_grid_schedule.driver_history_start_index,
             passive_map=pseudo_grid_schedule.rider_passive_map,
+            observer_field_indices=pseudo_grid_schedule.rider_field_indices,
+            observer_field_source_charges=pseudo_grid_schedule.rider_field_source_charges,
             aperture_radius=aperture_radius,
             sim_type=sim_type,
             self_consistency=self_consistency,
@@ -1063,6 +1282,14 @@ def _run_adaptive_step(
             space_charge=space_charge,
             pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
             loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
+            numerical_failure_tolerance_fraction=(
+                pseudo_grid_numerical_failure_tolerance_fraction
+            ),
+            field_deposition_neighbor_count=pseudo_grid_field_deposition_neighbor_count,
+            space_charge_near_neighbor_count=(
+                pseudo_grid_space_charge_near_neighbor_count
+            ),
+            passive_update_mode=pseudo_grid_passive_update_mode,
             source_history_base_index=pseudo_grid_source_history_base_index,
             observer_history_base_index=pseudo_grid_observer_history_base_index,
             observer_soa=pseudo_grid_observer_soa,
@@ -1190,12 +1417,16 @@ def _run_adaptive_step(
                         observer_history=temp_trajectory,
                         source_history=temp_driver,
                         observer_active_indices=pseudo_grid_schedule.rider_active_indices,
-                        source_active_indices=pseudo_grid_schedule.driver_active_indices,
-                        source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+                        source_active_indices=pseudo_grid_schedule.driver_field_indices,
+                        source_effective_charges=pseudo_grid_schedule.driver_field_source_charges,
                         source_history_start_index=(
                             pseudo_grid_schedule.driver_history_start_index
                         ),
                         passive_map=pseudo_grid_schedule.rider_passive_map,
+                        observer_field_indices=pseudo_grid_schedule.rider_field_indices,
+                        observer_field_source_charges=(
+                            pseudo_grid_schedule.rider_field_source_charges
+                        ),
                         aperture_radius=aperture_radius,
                         sim_type=sim_type,
                         self_consistency=self_consistency,
@@ -1209,6 +1440,16 @@ def _run_adaptive_step(
                         space_charge=space_charge,
                         pseudo_grid_weighting_mode=pseudo_grid_weighting_mode,
                         loss_tracking_enabled=pseudo_grid_loss_tracking_enabled,
+                        numerical_failure_tolerance_fraction=(
+                            pseudo_grid_numerical_failure_tolerance_fraction
+                        ),
+                        field_deposition_neighbor_count=(
+                            pseudo_grid_field_deposition_neighbor_count
+                        ),
+                        space_charge_near_neighbor_count=(
+                            pseudo_grid_space_charge_near_neighbor_count
+                        ),
+                        passive_update_mode=pseudo_grid_passive_update_mode,
                         source_history_base_index=i - 1,
                         observer_history_base_index=i - 1,
                         observer_soa=None,
@@ -1667,7 +1908,11 @@ def retarded_integrator(
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
 ) -> Tuple[
-    Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
+    Trajectory,
+    Trajectory,
+    "TrajectoryArrays | None",
+    "TrajectoryArrays | None",
+    list[dict[str, float]],
 ]:
     """Run the retarded-field integrator for rider and driver trajectories.
 
@@ -1926,6 +2171,9 @@ def retarded_integrator(
     _traj_builder = TrajectoryBuilder(total_steps, _n_particles_rider)
     _traj_drv_builder: TrajectoryBuilder | None = None
     _pseudo_grid_planner_state: PseudoGridPlannerState | None = None
+    # Per-step charge-localization stats for field representatives, accumulated
+    # across the run and surfaced on RunResult for convergence diagnostics.
+    _pseudo_grid_charge_localization: list[dict[str, float]] = []
     _pseudo_grid_retention_active = _history_retention_enabled(
         pseudo_grid,
         force_reduction_enabled=pseudo_grid_force_reduction_enabled,
@@ -2013,7 +2261,11 @@ def retarded_integrator(
         tail_steps_executed: int,
         tail_time_ns: float,
     ) -> tuple[
-        Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None
+        Trajectory,
+        Trajectory,
+        TrajectoryArrays | None,
+        TrajectoryArrays | None,
+        list[dict[str, float]],
     ]:
         active_halt_step = max(0, step_index - active_start)
         reason_parts = [
@@ -2210,10 +2462,15 @@ def retarded_integrator(
         rider_soa: TrajectoryArrays | None,
         driver_soa: TrajectoryArrays | None,
     ) -> Tuple[
-        Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None
+        Trajectory,
+        Trajectory,
+        TrajectoryArrays | None,
+        TrajectoryArrays | None,
+        list[dict[str, float]],
     ]:
+        loc = list(_pseudo_grid_charge_localization)
         if not driver_train_enabled or driver_train.preserve_prehistory_in_output:
-            return rider_traj, driver_traj, rider_soa, driver_soa
+            return rider_traj, driver_traj, rider_soa, driver_soa, loc
         start = min(active_start, len(rider_traj))
         stop = len(rider_traj)
         return (
@@ -2221,6 +2478,7 @@ def retarded_integrator(
             driver_traj[start:stop],
             _slice_trajectory_arrays(rider_soa, start, stop),
             _slice_trajectory_arrays(driver_soa, start, stop),
+            loc,
         )
 
     _adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
@@ -2298,6 +2556,41 @@ def retarded_integrator(
                     config=pseudo_grid,
                     planner_state=_pseudo_grid_planner_state,
                 )
+                # Record charge-localization stats for this step's field reps.
+                # Uses the driver field charges (the cross-bunch source seen by
+                # the rider observer); rider field charges are symmetric.
+                _rider_loc = _charge_localization_stats(
+                    _current_pseudo_grid_schedule.rider_field_source_charges
+                )
+                _driver_loc = _charge_localization_stats(
+                    _current_pseudo_grid_schedule.driver_field_source_charges
+                )
+                if _rider_loc is not None or _driver_loc is not None:
+                    _pseudo_grid_charge_localization.append(
+                        {
+                            "step": float(i),
+                            "rider_max_anchor_fraction": (
+                                _rider_loc["max_anchor_fraction"]
+                                if _rider_loc is not None
+                                else float("nan")
+                            ),
+                            "rider_gini": (
+                                _rider_loc["gini"]
+                                if _rider_loc is not None
+                                else float("nan")
+                            ),
+                            "driver_max_anchor_fraction": (
+                                _driver_loc["max_anchor_fraction"]
+                                if _driver_loc is not None
+                                else float("nan")
+                            ),
+                            "driver_gini": (
+                                _driver_loc["gini"]
+                                if _driver_loc is not None
+                                else float("nan")
+                            ),
+                        }
+                    )
 
             trajectory[i] = _run_adaptive_step(
                 i=i,
@@ -2331,6 +2624,16 @@ def retarded_integrator(
                 pseudo_grid_force_reduction_enabled=pseudo_grid_force_reduction_enabled,
                 pseudo_grid_weighting_mode=pseudo_grid.source_weighting_mode,
                 pseudo_grid_loss_tracking_enabled=pseudo_grid.loss_tracking_enabled,
+                pseudo_grid_numerical_failure_tolerance_fraction=(
+                    pseudo_grid.numerical_failure_tolerance_fraction
+                ),
+                pseudo_grid_field_deposition_neighbor_count=(
+                    pseudo_grid.field_deposition_neighbor_count
+                ),
+                pseudo_grid_space_charge_near_neighbor_count=(
+                    pseudo_grid.space_charge_near_neighbor_count
+                ),
+                pseudo_grid_passive_update_mode=pseudo_grid.passive_update_mode,
                 pseudo_grid_observer_history=(
                     _rider_retained_history if _pseudo_grid_retention_active else None
                 ),
@@ -2505,12 +2808,18 @@ def retarded_integrator(
                             else trajectory[:i]
                         ),
                         observer_active_indices=_current_pseudo_grid_schedule.driver_active_indices,
-                        source_active_indices=_current_pseudo_grid_schedule.rider_active_indices,
-                        source_effective_charges=_current_pseudo_grid_schedule.rider_effective_source_charges,
+                        source_active_indices=_current_pseudo_grid_schedule.rider_field_indices,
+                        source_effective_charges=_current_pseudo_grid_schedule.rider_field_source_charges,
                         source_history_start_index=(
                             _current_pseudo_grid_schedule.rider_history_start_index
                         ),
                         passive_map=_current_pseudo_grid_schedule.driver_passive_map,
+                        observer_field_indices=(
+                            _current_pseudo_grid_schedule.driver_field_indices
+                        ),
+                        observer_field_source_charges=(
+                            _current_pseudo_grid_schedule.driver_field_source_charges
+                        ),
                         aperture_radius=aperture_radius,
                         sim_type=sim_type,
                         self_consistency=self_consistency,
@@ -2524,6 +2833,16 @@ def retarded_integrator(
                         space_charge=space_charge,
                         pseudo_grid_weighting_mode=pseudo_grid.source_weighting_mode,
                         loss_tracking_enabled=pseudo_grid.loss_tracking_enabled,
+                        numerical_failure_tolerance_fraction=(
+                            pseudo_grid.numerical_failure_tolerance_fraction
+                        ),
+                        field_deposition_neighbor_count=(
+                            pseudo_grid.field_deposition_neighbor_count
+                        ),
+                        space_charge_near_neighbor_count=(
+                            pseudo_grid.space_charge_near_neighbor_count
+                        ),
+                        passive_update_mode=pseudo_grid.passive_update_mode,
                         source_history_base_index=(
                             _rider_retained_history_start_index
                             if _pseudo_grid_retention_active
@@ -2908,7 +3227,11 @@ def run_integrator(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     cancel_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[
-    Trajectory, Trajectory, "TrajectoryArrays | None", "TrajectoryArrays | None"
+    Trajectory,
+    Trajectory,
+    "TrajectoryArrays | None",
+    "TrajectoryArrays | None",
+    list[dict[str, float]],
 ]:
     """Convenience wrapper using :class:`IntegratorConfig`.
 
@@ -2936,8 +3259,10 @@ def run_integrator(
 
     Returns
     -------
-    Tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None]
-        Rider and driver trajectories plus optional SOA views.
+    Tuple[Trajectory, Trajectory, TrajectoryArrays | None, TrajectoryArrays | None, list[dict[str, float]]]
+        Rider and driver trajectories plus optional SOA views, and a list of
+        per-step pseudo-grid charge-localization stats (empty when pseudo-grid
+        field representatives are not used).
     """
 
     return retarded_integrator(

@@ -8,6 +8,10 @@ from core.pseudo_grid import (
     PairReuseTracker,
     PassiveNeighborMap,
     accumulate_effective_source_charges,
+    accumulate_field_representative_charges,
+    accumulate_field_representative_charges_and_radii,
+    build_field_representative_space_charge_source_charges,
+    build_hybrid_space_charge_sources,
     build_passive_neighbor_map,
     build_pseudo_grid_step_schedule,
     build_self_excluded_space_charge_source_charges,
@@ -17,6 +21,7 @@ from core.pseudo_grid import (
     record_pseudo_grid_history_times,
     reconstruct_full_state_from_active_result,
     select_active_indices,
+    select_field_representative_indices,
     slice_particle_state,
     slice_trajectory_particle_history,
     update_activation_history,
@@ -234,6 +239,129 @@ def test_select_active_indices_prefers_stale_particles_when_count_is_one():
     )
 
     np.testing.assert_array_equal(active, np.array([2], dtype=int))
+
+
+def test_select_field_representatives_include_active_and_add_medoids():
+    state = _make_state(x=[0.0, 1.0, 5.0, 9.0, 10.0])
+    alive = np.array([0, 1, 2, 3, 4], dtype=int)
+    active = np.array([1, 3], dtype=int)
+
+    field = select_field_representative_indices(
+        state,
+        alive,
+        active,
+        field_count=4,
+    )
+
+    np.testing.assert_array_equal(field[:2], active)
+    assert field.size == 4
+    assert set(field.tolist()).issubset(set(alive.tolist()))
+    assert len(set(field.tolist())) == field.size
+
+
+def test_accumulate_field_representative_charges_conserves_total_charge():
+    state = _make_state(x=[0.0, 1.0, 5.0, 9.0, 10.0], q=[1.0, 2.0, 3.0, 4.0, 5.0])
+    alive = np.array([0, 1, 2, 3, 4], dtype=int)
+    field = np.array([0, 2, 4], dtype=int)
+
+    effective = accumulate_field_representative_charges(
+        state,
+        alive,
+        field,
+        neighbor_count=2,
+    )
+
+    assert effective.shape == (3,)
+    assert np.sum(effective) == pytest.approx(np.sum(state["q"]))
+    assert effective[1] >= state["q"][2]
+
+
+def test_field_representative_sc_excludes_observer_rep_and_redistributes_deposit():
+    state = _make_state(x=[0.0, 1.0, 2.0, 3.0], q=[1.0, 2.0, 3.0, 4.0])
+    active = np.array([0, 2], dtype=int)
+    field = np.array([0, 1, 2], dtype=int)
+    field_source_charges = np.array([5.0, 2.0, 3.5], dtype=float)
+
+    charge_matrix = build_field_representative_space_charge_source_charges(
+        state,
+        active,
+        field,
+        field_source_charges,
+    )
+
+    np.testing.assert_allclose(
+        charge_matrix,
+        np.array(
+            [
+                [0.0, 2.0 + 4.0 * 2.0 / 3.0, 3.5 + 4.0 / 3.0],
+                [5.0 + 0.5 / 3.0, 2.0 + 0.5 * 2.0 / 3.0, 0.0],
+            ]
+        ),
+    )
+
+
+def test_field_representative_sc_allows_active_not_in_field_set():
+    state = _make_state(x=[0.0, 1.0, 2.0], q=[1.0, 2.0, 3.0])
+
+    charge_matrix = build_field_representative_space_charge_source_charges(
+        state,
+        np.array([0], dtype=int),
+        np.array([1, 2], dtype=int),
+        np.array([2.0, 3.0], dtype=float),
+    )
+
+    np.testing.assert_allclose(charge_matrix, np.array([[2.0, 3.0]]))
+
+
+def test_hybrid_space_charge_sources_add_exact_neighbors_without_double_counting():
+    state = _make_state(x=[0.0, 1.0, 10.0], q=[1.0, 1.0, 1.0])
+    alive = np.array([0, 1, 2], dtype=int)
+    active = np.array([0, 2], dtype=int)
+    field = np.array([0, 2], dtype=int)
+    field_charges = np.array([1.5, 1.5], dtype=float)
+
+    source_indices, charge_matrix, source_radii = build_hybrid_space_charge_sources(
+        state,
+        alive,
+        active,
+        field,
+        field_charges,
+        field_deposition_neighbor_count=2,
+        near_neighbor_count=1,
+    )
+
+    np.testing.assert_array_equal(source_indices, np.array([0, 2, 1], dtype=int))
+    np.testing.assert_allclose(
+        charge_matrix,
+        np.array(
+            [
+                [0.0, 1.0, 1.0],
+                [1.0, 0.0, 1.0],
+            ]
+        ),
+    )
+    np.testing.assert_allclose(np.sum(charge_matrix, axis=1), np.array([2.0, 2.0]))
+    assert source_radii.shape == (3,)
+    assert source_radii[0] > 0.0
+    assert source_radii[1] > 0.0
+    assert source_radii[2] == 0.0
+
+
+def test_field_representative_charge_radii_preserve_field_order():
+    state = _make_state(x=[0.0, 10.0, 1.0], q=[1.0, 10.0, 3.0])
+    alive = np.array([0, 1, 2], dtype=int)
+    field = np.array([1, 0], dtype=int)
+
+    charges, radii = accumulate_field_representative_charges_and_radii(
+        state,
+        alive,
+        field,
+        neighbor_count=1,
+        weighting_mode="nearest",
+    )
+
+    np.testing.assert_allclose(charges, np.array([10.0, 4.0]))
+    np.testing.assert_allclose(radii, np.array([0.0, np.sqrt(0.75)]))
 
 
 def test_update_activation_history_updates_last_seen_and_counts_in_place():
@@ -539,6 +667,77 @@ def test_reconstruct_full_state_from_active_result_applies_weighted_deltas_and_u
     assert reconstructed["beta_avg_x"][1] == pytest.approx((0.2 * 2.0 + 0.375) / 3.0)
 
 
+def test_reconstruct_full_state_from_active_result_can_leave_passives_frozen():
+    previous_full_state = _make_solver_state(
+        x=[0.0, 10.0, 20.0],
+        z=[0.0, 5.0, 10.0],
+        t=[0.0, 2.0, 4.0],
+        bx=[0.1, 0.2, 0.3],
+        bz=[0.0, 0.1, 0.0],
+    )
+    active_indices = np.array([0, 2], dtype=int)
+    active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["x"] = np.array([1.0, 22.0], dtype=float)
+    active_result_state["t"] = np.array([1.0, 5.0], dtype=float)
+    passive_map = PassiveNeighborMap(
+        passive_indices=np.array([1], dtype=int),
+        neighbor_particle_indices=np.array([[0, 2]], dtype=int),
+        weights=np.array([[0.25, 0.75]], dtype=float),
+    )
+
+    reconstructed = reconstruct_full_state_from_active_result(
+        previous_full_state,
+        active_indices,
+        active_result_state,
+        passive_map,
+        passive_update_mode="frozen",
+    )
+
+    np.testing.assert_allclose(reconstructed["x"], np.array([1.0, 10.0, 22.0]))
+    np.testing.assert_allclose(reconstructed["z"], np.array([0.0, 5.0, 10.0]))
+    np.testing.assert_allclose(reconstructed["t"], np.array([1.0, 2.0, 5.0]))
+
+
+def test_reconstruct_full_state_from_active_result_can_coast_passives_ballistically():
+    previous_full_state = _make_solver_state(
+        x=[0.0, 10.0, 20.0],
+        z=[0.0, 5.0, 10.0],
+        t=[0.0, 2.0, 4.0],
+        gamma=[1.0, 2.0, 3.0],
+        bx=[0.1, 0.2, 0.3],
+        bz=[0.0, 0.1, 0.0],
+    )
+    active_indices = np.array([0, 2], dtype=int)
+    active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["x"] = np.array([1.0, 22.0], dtype=float)
+    active_result_state["t"] = np.array([1.0, 5.0], dtype=float)
+    passive_map = PassiveNeighborMap(
+        passive_indices=np.array([1], dtype=int),
+        neighbor_particle_indices=np.array([[0, 2]], dtype=int),
+        weights=np.array([[0.25, 0.75]], dtype=float),
+    )
+
+    reconstructed = reconstruct_full_state_from_active_result(
+        previous_full_state,
+        active_indices,
+        active_result_state,
+        passive_map,
+        passive_update_mode="ballistic",
+        h_step=0.5,
+    )
+
+    passive_dt = 2.0 * 0.5
+    np.testing.assert_allclose(
+        reconstructed["x"],
+        np.array([1.0, 10.0 + 0.2 * C_MMNS * passive_dt, 22.0]),
+    )
+    np.testing.assert_allclose(
+        reconstructed["z"],
+        np.array([0.0, 5.0 + 0.1 * C_MMNS * passive_dt, 10.0]),
+    )
+    np.testing.assert_allclose(reconstructed["t"], np.array([1.0, 3.0, 5.0]))
+
+
 def test_reconstruct_full_state_from_active_result_ignores_dead_anchors_when_enabled():
     previous_full_state = _make_solver_state(
         x=[0.0, 10.0, 20.0],
@@ -630,10 +829,62 @@ def test_build_pseudo_grid_step_schedule_collects_active_passive_metadata():
     np.testing.assert_allclose(
         schedule.driver_effective_source_charges, np.array([3.0, 3.0])
     )
+    np.testing.assert_array_equal(
+        schedule.rider_field_indices, schedule.rider_active_indices
+    )
+    np.testing.assert_array_equal(
+        schedule.driver_field_indices, schedule.driver_active_indices
+    )
+    np.testing.assert_allclose(
+        schedule.rider_field_source_charges, np.array([1.5, 1.5])
+    )
+    np.testing.assert_allclose(
+        schedule.driver_field_source_charges, np.array([3.0, 3.0])
+    )
     np.testing.assert_allclose(schedule.pair_reuse_penalties, np.zeros((2, 2)))
     assert schedule.driver_history_start_index == 0
     assert schedule.rider_history_start_index == 0
     assert schedule.max_cross_bunch_separation_mm > 0.0
+
+
+def test_build_pseudo_grid_step_schedule_supports_extra_field_representatives():
+    rider_state = _make_state(x=[0.0, 1.0, 5.0, 9.0, 10.0], q=[1.0] * 5)
+    driver_state = _make_state(x=[0.0, 2.0, 4.0, 6.0, 8.0], q=[2.0] * 5)
+    planner_state = initialize_pseudo_grid_planner_state(
+        rider_particle_count=5,
+        driver_particle_count=5,
+        pair_reuse_window=4,
+    )
+    record_pseudo_grid_history_times(planner_state, rider_state, driver_state)
+
+    schedule = build_pseudo_grid_step_schedule(
+        rider_state,
+        driver_state,
+        step_index=1,
+        config=PseudoGridConfig(
+            enabled=True,
+            active_rider_count=2,
+            active_driver_count=2,
+            field_rider_count=4,
+            field_driver_count=4,
+            field_deposition_neighbor_count=2,
+            passive_neighbor_count=2,
+        ),
+        planner_state=planner_state,
+    )
+
+    assert schedule.rider_active_indices.size == 2
+    assert schedule.driver_active_indices.size == 2
+    assert schedule.rider_field_indices.size == 4
+    assert schedule.driver_field_indices.size == 4
+    assert set(schedule.rider_active_indices.tolist()).issubset(
+        set(schedule.rider_field_indices.tolist())
+    )
+    assert set(schedule.driver_active_indices.tolist()).issubset(
+        set(schedule.driver_field_indices.tolist())
+    )
+    assert np.sum(schedule.rider_field_source_charges) == pytest.approx(5.0)
+    assert np.sum(schedule.driver_field_source_charges) == pytest.approx(10.0)
 
 
 def test_build_pseudo_grid_step_schedule_advances_causal_history_start_indices():
@@ -714,3 +965,29 @@ def test_commit_pseudo_grid_step_schedule_updates_planner_state_and_pair_tracker
     assert planner_state.pair_reuse_tracker.penalty(
         0, 0, step_index=1
     ) == pytest.approx(1.0)
+
+
+def test_charge_localization_stats_detects_localization():
+    """The charge-localization helper flags catastrophic charge concentration."""
+    from core.integration_runner import _charge_localization_stats
+
+    # Even spread across 4 field reps -> low max fraction, low Gini.
+    even = _charge_localization_stats(np.array([1.0, 1.0, 1.0, 1.0]))
+    assert even is not None
+    assert even["max_anchor_fraction"] == pytest.approx(0.25)
+    assert even["gini"] == pytest.approx(0.0, abs=1e-9)
+
+    # Catastrophic localization: 97% of charge on one anchor.
+    localized = _charge_localization_stats(np.array([97.0, 1.0, 1.0, 1.0]))
+    assert localized is not None
+    assert localized["max_anchor_fraction"] == pytest.approx(0.97)
+    assert localized["gini"] > 0.7
+
+    signed = _charge_localization_stats(np.array([-2.0, -1.0, -1.0]))
+    assert signed is not None
+    assert signed["max_anchor_fraction"] == pytest.approx(0.5)
+
+    # Empty / zero-charge returns None.
+    assert _charge_localization_stats(np.array([])) is None
+    assert _charge_localization_stats(np.array([0.0, 0.0])) is None
+    assert _charge_localization_stats(None) is None

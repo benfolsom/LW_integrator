@@ -177,11 +177,11 @@ def test_external_field_runs_through_numba_kernel_mode_and_soa() -> None:
         use_numba=True,
     )
 
-    baseline, _, baseline_soa, _ = retarded_integrator(
+    baseline, _, baseline_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         external_field=no_field,
     )
-    accelerated, _, accelerated_soa, _ = retarded_integrator(
+    accelerated, _, accelerated_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         external_field=field,
     )
@@ -218,7 +218,7 @@ def test_longitudinal_electric_acceleration_medina_reaction_is_small() -> None:
         "power_matched_damping",
         "medina_lad",
     ):
-        traj, _, soa, _ = retarded_integrator(
+        traj, _, soa, _, *_ = retarded_integrator(
             **common_kwargs,
             init_rider=_single_particle_state(gamma=20.0),
             radiation_reaction_mode=mode,
@@ -269,22 +269,22 @@ def test_magnetic_bend_radiation_reaction_matches_applied_power_loss() -> None:
         external_field=field,
     )
 
-    off_traj, _, off_soa, _ = retarded_integrator(
+    off_traj, _, off_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         init_rider=_single_particle_state(gamma=200.0),
         radiation_reaction_mode="off",
     )
-    diagnostic_traj, _, diagnostic_soa, _ = retarded_integrator(
+    diagnostic_traj, _, diagnostic_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         init_rider=_single_particle_state(gamma=200.0),
         radiation_reaction_mode="diagnostic_only",
     )
-    damped_traj, _, damped_soa, _ = retarded_integrator(
+    damped_traj, _, damped_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         init_rider=_single_particle_state(gamma=200.0),
         radiation_reaction_mode="power_matched_damping",
     )
-    medina_traj, _, medina_soa, _ = retarded_integrator(
+    medina_traj, _, medina_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         init_rider=_single_particle_state(gamma=200.0),
         radiation_reaction_mode="medina_lad",
@@ -345,17 +345,17 @@ def test_long_transverse_bend_radiation_reaction_over_hundreds_of_mm() -> None:
         external_field=field,
     )
 
-    off_traj, _, off_soa, _ = retarded_integrator(
+    off_traj, _, off_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         init_rider=_single_particle_state(gamma=20.0),
         radiation_reaction_mode="off",
     )
-    damped_traj, _, damped_soa, _ = retarded_integrator(
+    damped_traj, _, damped_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         init_rider=_single_particle_state(gamma=20.0),
         radiation_reaction_mode="power_matched_damping",
     )
-    medina_traj, _, medina_soa, _ = retarded_integrator(
+    medina_traj, _, medina_soa, _, *_ = retarded_integrator(
         **common_kwargs,
         init_rider=_single_particle_state(gamma=20.0),
         radiation_reaction_mode="medina_lad",
@@ -409,7 +409,7 @@ def test_magnetic_bend_radiated_energy_converges_with_timestep_refinement() -> N
     )
 
     def radiated_energy(steps: int) -> float:
-        _, _, soa, _ = retarded_integrator(
+        _, _, soa, _, *_ = retarded_integrator(
             **common_kwargs,
             steps=steps,
             h_step=duration / steps,

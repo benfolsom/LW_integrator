@@ -5,8 +5,9 @@ helpers provide the bounded-memory pieces that the public configuration surface
 already refers to:
 
 - active-subset selection with coverage and recency bias;
+- field-representative selection for weighted retarded LW source sums;
 - passive-particle nearest-neighbour anchors and weights;
-- effective source-charge aggregation from passive to active particles;
+- effective source-charge aggregation from passive particles;
 - bounded recent-pair tracking without an ``O(N^2)`` history matrix;
 - conservative causal-history retention bounds.
 """
@@ -184,6 +185,10 @@ class PseudoGridStepSchedule:
     driver_active_indices: np.ndarray
     rider_passive_map: PassiveNeighborMap
     driver_passive_map: PassiveNeighborMap
+    rider_field_indices: np.ndarray
+    driver_field_indices: np.ndarray
+    rider_field_source_charges: np.ndarray
+    driver_field_source_charges: np.ndarray
     rider_effective_source_charges: np.ndarray
     driver_effective_source_charges: np.ndarray
     pair_reuse_penalties: np.ndarray
@@ -329,6 +334,241 @@ def select_active_indices(
         min_distances[chosen_local] = 0.0
 
     return alive[np.asarray(selected_local, dtype=int)]
+
+
+def select_field_representative_indices(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    active_indices: np.ndarray,
+    *,
+    field_count: int,
+) -> np.ndarray:
+    """Select weighted LW source representatives from live particles.
+
+    Active particles are always included so the dynamic observers remain valid
+    source samples. Additional representatives are chosen as medoids by
+    farthest-point coverage in normalized position space. ``field_count <= 0``
+    means "use active particles only" for backward compatibility.
+    """
+    alive = np.unique(np.asarray(alive_indices, dtype=int))
+    active = np.unique(np.asarray(active_indices, dtype=int))
+    if alive.size == 0:
+        return np.zeros(0, dtype=int)
+    active = active[np.isin(active, alive)]
+    if active.size == 0:
+        return np.zeros(0, dtype=int)
+
+    target_count = active.size if field_count <= 0 else int(field_count)
+    target_count = min(max(target_count, active.size), alive.size)
+    if target_count == active.size:
+        return active.copy()
+    if target_count == alive.size:
+        return alive.copy()
+
+    coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=alive,
+    )
+    alive_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(alive)}
+    selected_local = [alive_lookup[int(particle_idx)] for particle_idx in active]
+    selected_mask = np.zeros(alive.size, dtype=bool)
+    selected_mask[selected_local] = True
+
+    selected_coords = coords[np.asarray(selected_local, dtype=int)]
+    diff = coords[:, np.newaxis, :] - selected_coords[np.newaxis, :, :]
+    min_distances = np.min(np.linalg.norm(diff, axis=2), axis=1)
+    min_distances[selected_mask] = 0.0
+
+    while int(np.sum(selected_mask)) < target_count:
+        candidate_local = np.flatnonzero(~selected_mask)
+        chosen_local_idx = _argmax_with_tiebreak(
+            min_distances[candidate_local],
+            alive[candidate_local],
+        )
+        chosen_local = int(candidate_local[chosen_local_idx])
+        selected_mask[chosen_local] = True
+        distances_to_chosen = np.linalg.norm(coords - coords[chosen_local], axis=1)
+        min_distances = np.minimum(min_distances, distances_to_chosen)
+        min_distances[selected_mask] = 0.0
+
+    selected = alive[np.flatnonzero(selected_mask)]
+    active_set = set(int(v) for v in active.tolist())
+    active_first = [int(v) for v in active.tolist()]
+    extra = [int(v) for v in selected.tolist() if int(v) not in active_set]
+    return np.asarray(active_first + extra, dtype=int)
+
+
+def _field_deposition_weights_for_particles(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    particle_indices: np.ndarray,
+    field_indices: np.ndarray,
+    *,
+    neighbor_count: int,
+    weighting_mode: str = "inverse_distance",
+) -> np.ndarray:
+    """Return particle-to-field deposition weights.
+
+    Rows correspond to ``particle_indices`` and columns to ``field_indices``.
+    A particle that is itself a field representative deposits all of its own
+    charge to that representative, matching ``accumulate_field_representative_charges``.
+    """
+    if neighbor_count <= 0:
+        raise ValueError("neighbor_count must be positive")
+    particles = np.asarray(particle_indices, dtype=int)
+    field = np.asarray(field_indices, dtype=int)
+    weights = np.zeros((particles.size, field.size), dtype=float)
+    if particles.size == 0 or field.size == 0:
+        return weights
+
+    field_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(field)}
+    non_field_rows: list[int] = []
+    non_field_particles: list[int] = []
+    for row_idx, particle_idx in enumerate(particles.tolist()):
+        field_col = field_lookup.get(int(particle_idx))
+        if field_col is not None:
+            weights[row_idx, field_col] = 1.0
+        else:
+            non_field_rows.append(row_idx)
+            non_field_particles.append(int(particle_idx))
+
+    if not non_field_particles:
+        return weights
+
+    alive = np.unique(np.asarray(alive_indices, dtype=int))
+    field_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=field,
+    )
+    particle_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=np.asarray(non_field_particles, dtype=int),
+    )
+    k = min(int(neighbor_count), field.size)
+    distances, neighbor_positions = KDTree(field_coords).query(particle_coords, k=k)
+    distances = np.asarray(distances, dtype=float)
+    neighbor_positions = np.asarray(neighbor_positions, dtype=int)
+    if k == 1:
+        distances = distances[:, np.newaxis]
+        neighbor_positions = neighbor_positions[:, np.newaxis]
+    neighbor_weights = _compute_neighbor_weights(distances, weighting_mode)
+    row_array = np.asarray(non_field_rows, dtype=int)
+    np.add.at(
+        weights,
+        (np.repeat(row_array, k), neighbor_positions.ravel()),
+        neighbor_weights.ravel(),
+    )
+    return weights
+
+
+def accumulate_field_representative_charges_and_radii(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    field_indices: np.ndarray,
+    *,
+    neighbor_count: int,
+    weighting_mode: str = "inverse_distance",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Deposit live source charge and estimate field-rep cloud radii.
+
+    Each non-representative live particle deposits source charge directly to its
+    nearest field representatives. The returned radius is the charge-magnitude
+    weighted RMS physical distance from each field representative to the finite
+    cloud of particles represented by that source. It is intended for same-bunch
+    pseudo-grid space-charge softening, not for cross-bunch source weighting.
+    """
+    if neighbor_count <= 0:
+        raise ValueError("neighbor_count must be positive")
+    alive = np.unique(np.asarray(alive_indices, dtype=int))
+    field_input = np.asarray(field_indices, dtype=int)
+    if field_input.size == 0:
+        empty = np.zeros(0, dtype=float)
+        return empty, empty
+    alive_set = set(int(v) for v in alive.tolist())
+    seen: set[int] = set()
+    field = np.asarray(
+        [
+            int(v)
+            for v in field_input.tolist()
+            if int(v) in alive_set and not (int(v) in seen or seen.add(int(v)))
+        ],
+        dtype=int,
+    )
+    if field.size == 0:
+        empty = np.zeros(0, dtype=float)
+        return empty, empty
+    charges = np.asarray(state.get("q_source", state["q"]), dtype=float)
+    effective = charges[field].astype(float).copy()
+    radius_weight = np.abs(effective)
+    radius_moment = np.zeros(field.size, dtype=float)
+    non_field = alive[~np.isin(alive, field)]
+    if non_field.size == 0:
+        return effective, np.zeros(field.size, dtype=float)
+
+    weights = _field_deposition_weights_for_particles(
+        state,
+        alive,
+        non_field,
+        field,
+        neighbor_count=neighbor_count,
+        weighting_mode=weighting_mode,
+    )
+    contributions = charges[non_field][:, np.newaxis] * weights
+    np.add.at(
+        effective, np.tile(np.arange(field.size), non_field.size), contributions.ravel()
+    )
+
+    field_positions = np.column_stack(
+        (
+            np.asarray(state["x"], dtype=float)[field],
+            np.asarray(state["y"], dtype=float)[field],
+            np.asarray(state["z"], dtype=float)[field],
+        )
+    )
+    particle_positions = np.column_stack(
+        (
+            np.asarray(state["x"], dtype=float)[non_field],
+            np.asarray(state["y"], dtype=float)[non_field],
+            np.asarray(state["z"], dtype=float)[non_field],
+        )
+    )
+    distance_sq = np.sum(
+        (particle_positions[:, np.newaxis, :] - field_positions[np.newaxis, :, :]) ** 2,
+        axis=2,
+    )
+    abs_contributions = np.abs(charges[non_field])[:, np.newaxis] * weights
+    radius_weight += np.sum(abs_contributions, axis=0)
+    radius_moment += np.sum(abs_contributions * distance_sq, axis=0)
+    radii = np.zeros(field.size, dtype=float)
+    np.divide(
+        radius_moment,
+        radius_weight,
+        out=radii,
+        where=radius_weight > 0.0,
+    )
+    return effective, np.sqrt(np.maximum(radii, 0.0))
+
+
+def accumulate_field_representative_charges(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    field_indices: np.ndarray,
+    *,
+    neighbor_count: int,
+    weighting_mode: str = "inverse_distance",
+) -> np.ndarray:
+    """Deposit live source charge onto field representatives."""
+    charges, _ = accumulate_field_representative_charges_and_radii(
+        state,
+        alive_indices,
+        field_indices,
+        neighbor_count=neighbor_count,
+        weighting_mode=weighting_mode,
+    )
+    return charges
 
 
 def build_passive_neighbor_map(
@@ -484,6 +724,222 @@ def accumulate_effective_source_charges(
     )
     np.add.at(effective, neighbor_local_indices.ravel(), contributions.ravel())
     return effective
+
+
+def build_field_representative_space_charge_source_charges(
+    state: ParticleState,
+    active_indices: np.ndarray,
+    field_indices: np.ndarray,
+    field_source_charges: np.ndarray,
+    *,
+    weighting_mode: str = "inverse_distance",
+) -> np.ndarray:
+    """Build observer-specific same-bunch source charges on field reps.
+
+    The returned matrix has shape ``[n_active_observers, n_field_sources]``.
+    Each row starts from the weighted field-representative source charges. If an
+    active observer is also a field representative, its own physical source
+    charge is excluded and any additional charge deposited onto that same
+    representative is redistributed to other field reps for that observer. This
+    avoids placing source charge at zero separation from the active observer.
+    """
+    active = np.asarray(active_indices, dtype=int)
+    field = np.asarray(field_indices, dtype=int)
+    source_charges = np.asarray(field_source_charges, dtype=float)
+    if active.ndim != 1:
+        raise ValueError("active_indices must be a 1-D array")
+    if field.ndim != 1:
+        raise ValueError("field_indices must be a 1-D array")
+    if source_charges.shape != (field.size,):
+        raise ValueError("field_source_charges must match field_indices length")
+
+    charge_matrix = np.broadcast_to(
+        source_charges[np.newaxis, :],
+        (active.size, field.size),
+    ).astype(float, copy=True)
+    if active.size == 0 or field.size == 0:
+        return charge_matrix
+
+    charges = np.asarray(state.get("q_source", state["q"]), dtype=float)
+    field_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(field)}
+    reference_indices = np.unique(np.concatenate((active, field)))
+    field_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=reference_indices,
+        target_indices=field,
+    )
+    active_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=reference_indices,
+        target_indices=active,
+    )
+    for observer_local_idx, observer_particle_idx in enumerate(active):
+        field_local_idx = field_lookup.get(int(observer_particle_idx))
+        if field_local_idx is None:
+            continue
+        own_charge = float(charges[int(observer_particle_idx)])
+        deposited_charge = float(source_charges[field_local_idx]) - own_charge
+        charge_matrix[observer_local_idx, field_local_idx] = 0.0
+        if abs(deposited_charge) <= 1.0e-30:
+            continue
+        redistribution_weights = _fallback_self_excluded_neighbor_weights(
+            active_coords[observer_local_idx],
+            field_coords,
+            excluded_local_idx=int(field_local_idx),
+            weighting_mode=weighting_mode,
+        )
+        charge_matrix[observer_local_idx] += deposited_charge * redistribution_weights
+    return charge_matrix
+
+
+def build_hybrid_space_charge_sources(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    active_indices: np.ndarray,
+    field_indices: np.ndarray,
+    field_source_charges: np.ndarray,
+    *,
+    field_deposition_neighbor_count: int,
+    near_neighbor_count: int,
+    weighting_mode: str = "inverse_distance",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build hybrid same-bunch SC sources for pseudo-grid active observers.
+
+    The source set starts with field representatives. For each active observer,
+    up to ``near_neighbor_count`` nearest live non-self particles are evaluated as
+    exact sources. Exact-neighbor charge is subtracted from the field-rep
+    deposits for that observer so total source charge is conserved without
+    double counting. This keeps the singular local part of same-bunch space
+    charge from being represented by a few heavily weighted point reps.
+    """
+    alive = np.unique(np.asarray(alive_indices, dtype=int))
+    active = np.asarray(active_indices, dtype=int)
+    field = np.asarray(field_indices, dtype=int)
+    source_charges = np.asarray(field_source_charges, dtype=float)
+    if active.ndim != 1:
+        raise ValueError("active_indices must be a 1-D array")
+    if field.ndim != 1:
+        raise ValueError("field_indices must be a 1-D array")
+    if source_charges.shape != (field.size,):
+        raise ValueError("field_source_charges must match field_indices length")
+    if near_neighbor_count < 0:
+        raise ValueError("near_neighbor_count must be non-negative")
+    if active.size == 0 or field.size == 0:
+        return (
+            field.copy(),
+            np.zeros((active.size, field.size), dtype=float),
+            np.zeros(field.size, dtype=float),
+        )
+
+    charges = np.asarray(state.get("q_source", state["q"]), dtype=float)
+    _, field_source_radii = accumulate_field_representative_charges_and_radii(
+        state,
+        alive,
+        field,
+        neighbor_count=field_deposition_neighbor_count,
+        weighting_mode=weighting_mode,
+    )
+    field_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(field)}
+    near_by_observer: list[np.ndarray] = []
+    exact_candidates: list[int] = []
+    if near_neighbor_count > 0 and alive.size > 1:
+        alive_coords = _normalized_position_coordinates(
+            state,
+            reference_indices=alive,
+            target_indices=alive,
+        )
+        active_coords_for_query = _normalized_position_coordinates(
+            state,
+            reference_indices=alive,
+            target_indices=active,
+        )
+        k = min(int(near_neighbor_count), alive.size - 1)
+        query_k = min(alive.size, k + 1)
+        distances, neighbor_positions = KDTree(alive_coords).query(
+            active_coords_for_query,
+            k=query_k,
+        )
+        neighbor_positions = np.asarray(neighbor_positions, dtype=int)
+        if query_k == 1:
+            neighbor_positions = neighbor_positions[:, np.newaxis]
+        for observer_particle_idx, row_positions in zip(active, neighbor_positions):
+            row_particles = alive[np.asarray(row_positions, dtype=int).ravel()]
+            row_particles = row_particles[row_particles != int(observer_particle_idx)][
+                :k
+            ]
+            near_by_observer.append(row_particles.astype(int, copy=False))
+            exact_candidates.extend(int(v) for v in row_particles.tolist())
+    else:
+        near_by_observer = [np.zeros(0, dtype=int) for _ in active]
+
+    extra_exact = [
+        idx for idx in np.unique(exact_candidates) if idx not in field_lookup
+    ]
+    source_indices = np.asarray(
+        field.tolist() + [int(idx) for idx in extra_exact],
+        dtype=int,
+    )
+    source_lookup = {
+        int(particle_idx): idx for idx, particle_idx in enumerate(source_indices)
+    }
+    charge_matrix = np.zeros((active.size, source_indices.size), dtype=float)
+    charge_matrix[:, : field.size] = source_charges[np.newaxis, :]
+    source_radii = np.zeros(source_indices.size, dtype=float)
+    source_radii[: field.size] = field_source_radii
+
+    reference_indices = np.unique(np.concatenate((active, source_indices)))
+    field_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=reference_indices,
+        target_indices=field,
+    )
+    active_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=reference_indices,
+        target_indices=active,
+    )
+
+    for observer_local_idx, observer_particle_idx in enumerate(active):
+        exact_neighbors = near_by_observer[observer_local_idx]
+        if exact_neighbors.size > 0:
+            deposition_weights = _field_deposition_weights_for_particles(
+                state,
+                alive,
+                exact_neighbors,
+                field,
+                neighbor_count=field_deposition_neighbor_count,
+                weighting_mode=weighting_mode,
+            )
+            exact_charges = charges[exact_neighbors].astype(float)
+            charge_matrix[observer_local_idx, : field.size] -= np.sum(
+                exact_charges[:, np.newaxis] * deposition_weights,
+                axis=0,
+            )
+            for exact_idx, exact_charge in zip(exact_neighbors, exact_charges):
+                charge_matrix[
+                    observer_local_idx, source_lookup[int(exact_idx)]
+                ] += float(exact_charge)
+
+        field_local_idx = field_lookup.get(int(observer_particle_idx))
+        if field_local_idx is None:
+            continue
+        self_location_charge = float(charge_matrix[observer_local_idx, field_local_idx])
+        own_charge = float(charges[int(observer_particle_idx)])
+        deposited_nonself_charge = self_location_charge - own_charge
+        charge_matrix[observer_local_idx, field_local_idx] = 0.0
+        if abs(deposited_nonself_charge) <= 1.0e-30:
+            continue
+        redistribution_weights = _fallback_self_excluded_neighbor_weights(
+            active_coords[observer_local_idx],
+            field_coords,
+            excluded_local_idx=int(field_local_idx),
+            weighting_mode=weighting_mode,
+        )
+        charge_matrix[observer_local_idx, : field.size] += (
+            deposited_nonself_charge * redistribution_weights
+        )
+
+    return source_indices, charge_matrix, source_radii
 
 
 def build_self_excluded_space_charge_source_charges(
@@ -712,6 +1168,8 @@ def reconstruct_full_state_from_active_result(
     passive_map: PassiveNeighborMap,
     *,
     loss_tracking_enabled: bool = True,
+    passive_update_mode: str = "weighted_delta",
+    h_step: float | None = None,
 ) -> ParticleState:
     """Rebuild a full bunch state from an active-only solve result."""
     full_state = _copy_particle_state(previous_full_state)
@@ -774,6 +1232,20 @@ def reconstruct_full_state_from_active_result(
     passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
     if passive_indices.size == 0:
         return full_state
+    if passive_update_mode == "frozen":
+        return full_state
+    if passive_update_mode in {"ballistic", "external_interbunch"}:
+        if h_step is None:
+            raise ValueError(
+                f"h_step is required for {passive_update_mode} passive updates"
+            )
+        _coast_passive_indices(full_state, passive_indices, float(h_step))
+        return full_state
+    if passive_update_mode != "weighted_delta":
+        raise ValueError(
+            "passive_update_mode must be weighted_delta, ballistic, "
+            "external_interbunch, or frozen"
+        )
 
     full_dead_mask = np.asarray(
         full_state.get(
@@ -885,22 +1357,28 @@ def build_pseudo_grid_step_schedule(
     rider_alive = _alive_indices_for_schedule(rider_state)
     driver_alive = _alive_indices_for_schedule(driver_state)
 
-    rider_active = select_active_indices(
-        rider_state,
-        rider_alive,
-        active_count=config.active_rider_count,
-        step_index=step_index,
-        last_active_step=planner_state.rider_last_active_step,
-        activation_count=planner_state.rider_activation_count,
-    )
-    driver_active = select_active_indices(
-        driver_state,
-        driver_alive,
-        active_count=config.active_driver_count,
-        step_index=step_index,
-        last_active_step=planner_state.driver_last_active_step,
-        activation_count=planner_state.driver_activation_count,
-    )
+    if config.active_selection_mode == "fixed_prefix":
+        rider_active = rider_alive[: min(config.active_rider_count, rider_alive.size)]
+        driver_active = driver_alive[
+            : min(config.active_driver_count, driver_alive.size)
+        ]
+    else:
+        rider_active = select_active_indices(
+            rider_state,
+            rider_alive,
+            active_count=config.active_rider_count,
+            step_index=step_index,
+            last_active_step=planner_state.rider_last_active_step,
+            activation_count=planner_state.rider_activation_count,
+        )
+        driver_active = select_active_indices(
+            driver_state,
+            driver_alive,
+            active_count=config.active_driver_count,
+            step_index=step_index,
+            last_active_step=planner_state.driver_last_active_step,
+            activation_count=planner_state.driver_activation_count,
+        )
 
     rider_passive_map = _empty_neighbor_map()
     if rider_active.size > 0:
@@ -921,6 +1399,34 @@ def build_pseudo_grid_step_schedule(
             neighbor_count=config.passive_neighbor_count,
             weighting_mode=config.source_weighting_mode,
         )
+
+    rider_field = select_field_representative_indices(
+        rider_state,
+        rider_alive,
+        rider_active,
+        field_count=config.field_rider_count,
+    )
+    driver_field = select_field_representative_indices(
+        driver_state,
+        driver_alive,
+        driver_active,
+        field_count=config.field_driver_count,
+    )
+
+    rider_field_source_charges = accumulate_field_representative_charges(
+        rider_state,
+        rider_alive,
+        rider_field,
+        neighbor_count=config.field_deposition_neighbor_count,
+        weighting_mode=config.source_weighting_mode,
+    )
+    driver_field_source_charges = accumulate_field_representative_charges(
+        driver_state,
+        driver_alive,
+        driver_field,
+        neighbor_count=config.field_deposition_neighbor_count,
+        weighting_mode=config.source_weighting_mode,
+    )
 
     rider_effective_source_charges = accumulate_effective_source_charges(
         rider_state,
@@ -976,6 +1482,10 @@ def build_pseudo_grid_step_schedule(
         driver_active_indices=driver_active,
         rider_passive_map=rider_passive_map,
         driver_passive_map=driver_passive_map,
+        rider_field_indices=rider_field,
+        driver_field_indices=driver_field,
+        rider_field_source_charges=rider_field_source_charges,
+        driver_field_source_charges=driver_field_source_charges,
         rider_effective_source_charges=rider_effective_source_charges,
         driver_effective_source_charges=driver_effective_source_charges,
         pair_reuse_penalties=pair_reuse_penalties,
@@ -1017,6 +1527,26 @@ def _copy_particle_state(state: ParticleState) -> ParticleState:
         else:
             copied_state[key] = copy.deepcopy(value)
     return copied_state
+
+
+def _coast_passive_indices(
+    state: ParticleState,
+    passive_indices: np.ndarray,
+    h_step: float,
+) -> None:
+    passive = np.asarray(passive_indices, dtype=int)
+    if passive.size == 0:
+        return
+    if "gamma" not in state or "t" not in state:
+        raise KeyError("ballistic passive updates require 'gamma' and 't' fields")
+    gamma = np.asarray(state["gamma"], dtype=float)[passive]
+    dt_lab = gamma * float(h_step)
+    state["t"][passive] = np.asarray(state["t"], dtype=float)[passive] + dt_lab
+    for axis, beta_key in (("x", "bx"), ("y", "by"), ("z", "bz")):
+        if axis in state and beta_key in state:
+            state[axis][passive] = np.asarray(state[axis], dtype=float)[passive] + (
+                np.asarray(state[beta_key], dtype=float)[passive] * C_MMNS * dt_lab
+            )
 
 
 def _update_beta_running_average(
@@ -1309,6 +1839,10 @@ __all__ = [
     "PseudoGridPlannerState",
     "PseudoGridStepSchedule",
     "accumulate_effective_source_charges",
+    "accumulate_field_representative_charges",
+    "accumulate_field_representative_charges_and_radii",
+    "build_field_representative_space_charge_source_charges",
+    "build_hybrid_space_charge_sources",
     "build_self_excluded_space_charge_source_charges",
     "build_passive_neighbor_map",
     "build_pseudo_grid_step_schedule",
@@ -1318,6 +1852,7 @@ __all__ = [
     "record_pseudo_grid_history_times",
     "reconstruct_full_state_from_active_result",
     "select_active_indices",
+    "select_field_representative_indices",
     "slice_particle_state",
     "slice_trajectory_particle_history",
     "update_activation_history",

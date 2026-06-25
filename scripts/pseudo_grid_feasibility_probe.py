@@ -191,7 +191,7 @@ def _run_probe_case(
         )
 
     start = time.perf_counter()
-    rider_trajectory, driver_trajectory, rider_soa, driver_soa = retarded_integrator(
+    rider_trajectory, driver_trajectory, rider_soa, driver_soa, *_ = retarded_integrator(
         steps=steps,
         h_step=h_step,
         wall_z=0.0,
