@@ -5,8 +5,9 @@ helpers provide the bounded-memory pieces that the public configuration surface
 already refers to:
 
 - active-subset selection with coverage and recency bias;
+- field-representative selection for weighted retarded LW source sums;
 - passive-particle nearest-neighbour anchors and weights;
-- effective source-charge aggregation from passive to active particles;
+- effective source-charge aggregation from passive particles;
 - bounded recent-pair tracking without an ``O(N^2)`` history matrix;
 - conservative causal-history retention bounds.
 """
@@ -184,6 +185,10 @@ class PseudoGridStepSchedule:
     driver_active_indices: np.ndarray
     rider_passive_map: PassiveNeighborMap
     driver_passive_map: PassiveNeighborMap
+    rider_field_indices: np.ndarray
+    driver_field_indices: np.ndarray
+    rider_field_source_charges: np.ndarray
+    driver_field_source_charges: np.ndarray
     rider_effective_source_charges: np.ndarray
     driver_effective_source_charges: np.ndarray
     pair_reuse_penalties: np.ndarray
@@ -329,6 +334,121 @@ def select_active_indices(
         min_distances[chosen_local] = 0.0
 
     return alive[np.asarray(selected_local, dtype=int)]
+
+
+def select_field_representative_indices(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    active_indices: np.ndarray,
+    *,
+    field_count: int,
+) -> np.ndarray:
+    """Select weighted LW source representatives from live particles.
+
+    Active particles are always included so the dynamic observers remain valid
+    source samples. Additional representatives are chosen as medoids by
+    farthest-point coverage in normalized position space. ``field_count <= 0``
+    means "use active particles only" for backward compatibility.
+    """
+    alive = np.unique(np.asarray(alive_indices, dtype=int))
+    active = np.unique(np.asarray(active_indices, dtype=int))
+    if alive.size == 0:
+        return np.zeros(0, dtype=int)
+    active = active[np.isin(active, alive)]
+    if active.size == 0:
+        return np.zeros(0, dtype=int)
+
+    target_count = active.size if field_count <= 0 else int(field_count)
+    target_count = min(max(target_count, active.size), alive.size)
+    if target_count == active.size:
+        return active.copy()
+    if target_count == alive.size:
+        return alive.copy()
+
+    coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=alive,
+    )
+    alive_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(alive)}
+    selected_local = [alive_lookup[int(particle_idx)] for particle_idx in active]
+    selected_mask = np.zeros(alive.size, dtype=bool)
+    selected_mask[selected_local] = True
+
+    selected_coords = coords[np.asarray(selected_local, dtype=int)]
+    diff = coords[:, np.newaxis, :] - selected_coords[np.newaxis, :, :]
+    min_distances = np.min(np.linalg.norm(diff, axis=2), axis=1)
+    min_distances[selected_mask] = 0.0
+
+    while int(np.sum(selected_mask)) < target_count:
+        candidate_local = np.flatnonzero(~selected_mask)
+        chosen_local_idx = _argmax_with_tiebreak(
+            min_distances[candidate_local],
+            alive[candidate_local],
+        )
+        chosen_local = int(candidate_local[chosen_local_idx])
+        selected_mask[chosen_local] = True
+        distances_to_chosen = np.linalg.norm(coords - coords[chosen_local], axis=1)
+        min_distances = np.minimum(min_distances, distances_to_chosen)
+        min_distances[selected_mask] = 0.0
+
+    selected = alive[np.flatnonzero(selected_mask)]
+    active_set = set(int(v) for v in active.tolist())
+    active_first = [int(v) for v in active.tolist()]
+    extra = [int(v) for v in selected.tolist() if int(v) not in active_set]
+    return np.asarray(active_first + extra, dtype=int)
+
+
+def accumulate_field_representative_charges(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    field_indices: np.ndarray,
+    *,
+    neighbor_count: int,
+    weighting_mode: str = "inverse_distance",
+) -> np.ndarray:
+    """Deposit live source charge onto field representatives.
+
+    Each non-representative live particle deposits its source charge directly to
+    its nearest field representatives. Total source charge is conserved exactly
+    up to floating-point roundoff, and no passive-to-passive graph solve is used.
+    """
+    if neighbor_count <= 0:
+        raise ValueError("neighbor_count must be positive")
+    alive = np.unique(np.asarray(alive_indices, dtype=int))
+    field = np.unique(np.asarray(field_indices, dtype=int))
+    if field.size == 0:
+        return np.zeros(0, dtype=float)
+    field = field[np.isin(field, alive)]
+    if field.size == 0:
+        return np.zeros(0, dtype=float)
+    charges = np.asarray(state.get("q_source", state["q"]), dtype=float)
+    effective = charges[field].astype(float).copy()
+    non_field = alive[~np.isin(alive, field)]
+    if non_field.size == 0:
+        return effective
+
+    field_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=field,
+    )
+    non_field_coords = _normalized_position_coordinates(
+        state,
+        reference_indices=alive,
+        target_indices=non_field,
+    )
+    k = min(int(neighbor_count), field.size)
+    distances, neighbor_positions = KDTree(field_coords).query(non_field_coords, k=k)
+    distances = np.asarray(distances, dtype=float)
+    neighbor_positions = np.asarray(neighbor_positions, dtype=int)
+    if k == 1:
+        distances = distances[:, np.newaxis]
+        neighbor_positions = neighbor_positions[:, np.newaxis]
+    weights = _compute_neighbor_weights(distances, weighting_mode)
+    contributions = charges[non_field][:, np.newaxis] * weights
+    np.add.at(effective, neighbor_positions.ravel(), contributions.ravel())
+    return effective
 
 
 def build_passive_neighbor_map(
@@ -922,6 +1042,34 @@ def build_pseudo_grid_step_schedule(
             weighting_mode=config.source_weighting_mode,
         )
 
+    rider_field = select_field_representative_indices(
+        rider_state,
+        rider_alive,
+        rider_active,
+        field_count=config.field_rider_count,
+    )
+    driver_field = select_field_representative_indices(
+        driver_state,
+        driver_alive,
+        driver_active,
+        field_count=config.field_driver_count,
+    )
+
+    rider_field_source_charges = accumulate_field_representative_charges(
+        rider_state,
+        rider_alive,
+        rider_field,
+        neighbor_count=config.field_deposition_neighbor_count,
+        weighting_mode=config.source_weighting_mode,
+    )
+    driver_field_source_charges = accumulate_field_representative_charges(
+        driver_state,
+        driver_alive,
+        driver_field,
+        neighbor_count=config.field_deposition_neighbor_count,
+        weighting_mode=config.source_weighting_mode,
+    )
+
     rider_effective_source_charges = accumulate_effective_source_charges(
         rider_state,
         rider_active,
@@ -976,6 +1124,10 @@ def build_pseudo_grid_step_schedule(
         driver_active_indices=driver_active,
         rider_passive_map=rider_passive_map,
         driver_passive_map=driver_passive_map,
+        rider_field_indices=rider_field,
+        driver_field_indices=driver_field,
+        rider_field_source_charges=rider_field_source_charges,
+        driver_field_source_charges=driver_field_source_charges,
         rider_effective_source_charges=rider_effective_source_charges,
         driver_effective_source_charges=driver_effective_source_charges,
         pair_reuse_penalties=pair_reuse_penalties,
@@ -1309,6 +1461,7 @@ __all__ = [
     "PseudoGridPlannerState",
     "PseudoGridStepSchedule",
     "accumulate_effective_source_charges",
+    "accumulate_field_representative_charges",
     "build_self_excluded_space_charge_source_charges",
     "build_passive_neighbor_map",
     "build_pseudo_grid_step_schedule",
@@ -1318,6 +1471,7 @@ __all__ = [
     "record_pseudo_grid_history_times",
     "reconstruct_full_state_from_active_result",
     "select_active_indices",
+    "select_field_representative_indices",
     "slice_particle_state",
     "slice_trajectory_particle_history",
     "update_activation_history",

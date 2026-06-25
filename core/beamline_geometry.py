@@ -89,7 +89,7 @@ def compute_directional_visibility_mask(
     visible only if it is inside that occluder's transverse aperture and axial
     extent. This models the physical geometry: a driver particle inside the
     electron pipe (z-axis) has line of sight down z to the rider; once it
-    exits the electron pipe (|y| > R), its fields can no longer propagate
+    exits the electron pipe (``|y| > R``), its fields can no longer propagate
     along z to reach the rider.
 
     Parameters

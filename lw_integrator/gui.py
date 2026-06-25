@@ -447,6 +447,19 @@ class IntegratorGUI(
         self.pseudo_grid_active_driver_count_var = tk.IntVar(
             value=getattr(self.options, "pseudo_grid_active_driver_count", 4)
         )
+        self.pseudo_grid_field_rider_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_field_rider_count", 0)
+        )
+        self.pseudo_grid_field_driver_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_field_driver_count", 0)
+        )
+        self.pseudo_grid_field_deposition_neighbor_count_var = tk.IntVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_field_deposition_neighbor_count",
+                4,
+            )
+        )
         self.pseudo_grid_passive_neighbor_count_var = tk.IntVar(
             value=getattr(self.options, "pseudo_grid_passive_neighbor_count", 4)
         )
@@ -744,6 +757,9 @@ class IntegratorGUI(
         self.beamline_geometry_enabled_var = tk.BooleanVar(
             value=getattr(self.options, "beamline_geometry_enabled", False)
         )
+        self.manual_particle_config_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "manual_particle_config_enabled", False)
+        )
 
         self.auto_duration_enabled_var = tk.BooleanVar(value=False)
         self.auto_duration_crossing_steps_var = tk.IntVar(value=200)
@@ -781,6 +797,9 @@ class IntegratorGUI(
         )
         self.beamline_geometry_enabled_var.trace_add(
             "write", lambda *_: self._toggle_beamline_geometry_controls()
+        )
+        self.manual_particle_config_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_manual_particle_config_controls()
         )
         self.sim_type_var.trace_add("write", lambda *_: self._on_sim_type_change())
 
@@ -848,6 +867,8 @@ class IntegratorGUI(
         left_vertical_paned.add(bottom_container, weight=1)
 
         self._build_particle_tab()
+
+        self._build_manual_particle_config_tab()
 
         self._build_core_tab()
 

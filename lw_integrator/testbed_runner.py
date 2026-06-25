@@ -45,7 +45,12 @@ from core.particle_status import (
     get_particle_failure_summary,
 )
 from core.self_consistency import canonicalize_self_consistency_mode
-from core.types import BeamlineGeometryConfig, CavityExitConfig, Occluder, SimulationType
+from core.types import (
+    BeamlineGeometryConfig,
+    CavityExitConfig,
+    Occluder,
+    SimulationType,
+)
 from input_output.bunch_initialization import create_bunch_from_params
 
 from .trajectory_metrics import compute_delta_energy_components, normalize_state
@@ -244,10 +249,11 @@ class SimulationOptions:
     output_dir: Path = Path("test_outputs/testbed_runs")
     config_dir: Path = Path("configs/testbed_runs")
     config_name: str = "testbed_config.json"
-    rider_params: Dict[str, float | int | str] = field(
+    manual_particle_config_enabled: bool = False
+    rider_params: Dict[str, Any] = field(
         default_factory=lambda: dict(DEFAULT_RIDER_PARAMS)
     )
-    driver_params: Optional[Dict[str, float | int | str]] = field(
+    driver_params: Optional[Dict[str, Any]] = field(
         default_factory=lambda: dict(DEFAULT_DRIVER_PARAMS)
     )
     core_params: Dict[str, float | str] = field(
@@ -422,6 +428,9 @@ class SimulationOptions:
     pseudo_grid_enabled: bool = False
     pseudo_grid_active_rider_count: int = 4
     pseudo_grid_active_driver_count: int = 4
+    pseudo_grid_field_rider_count: int = 0
+    pseudo_grid_field_driver_count: int = 0
+    pseudo_grid_field_deposition_neighbor_count: int = 4
     pseudo_grid_passive_neighbor_count: int = 4
     pseudo_grid_coverage_strategy: str = "farthest_point_staleness"
     pseudo_grid_coverage_space: str = "position"
@@ -499,6 +508,7 @@ class SimulationOptions:
             "output_dir": str(self.output_dir),
             "config_dir": str(self.config_dir),
             "config_name": self.config_name,
+            "manual_particle_config_enabled": self.manual_particle_config_enabled,
             "rider_params": dict(self.rider_params),
             "driver_params": dict(self.driver_params) if self.driver_params else None,
             "core_params": dict(self.core_params),
@@ -619,6 +629,9 @@ class SimulationOptions:
                 "enabled": self.pseudo_grid_enabled,
                 "active_rider_count": self.pseudo_grid_active_rider_count,
                 "active_driver_count": self.pseudo_grid_active_driver_count,
+                "field_rider_count": self.pseudo_grid_field_rider_count,
+                "field_driver_count": self.pseudo_grid_field_driver_count,
+                "field_deposition_neighbor_count": self.pseudo_grid_field_deposition_neighbor_count,
                 "passive_neighbor_count": self.pseudo_grid_passive_neighbor_count,
                 "coverage_strategy": self.pseudo_grid_coverage_strategy,
                 "coverage_space": self.pseudo_grid_coverage_space,
@@ -930,7 +943,7 @@ class SimulationOptions:
         if isinstance(rider_payload, dict):
             rider_params.update(rider_payload)
 
-        driver_params: Optional[Dict[str, float | int | str]]
+        driver_params: Optional[Dict[str, Any]]
         driver_payload = payload.get("driver_params")
         if isinstance(driver_payload, dict):
             driver_params = dict(DEFAULT_DRIVER_PARAMS)
@@ -984,6 +997,9 @@ class SimulationOptions:
             ),
             config_dir=Path(str(payload.get("config_dir", "configs/testbed_runs"))),
             config_name=str(payload.get("config_name", "testbed_config.json")),
+            manual_particle_config_enabled=_bool(
+                "manual_particle_config_enabled", False
+            ),
             rider_params=rider_params,
             driver_params=driver_params,
             core_params=core_params,
@@ -1197,6 +1213,11 @@ class SimulationOptions:
             pseudo_grid_enabled=_pseudo_bool("enabled", False),
             pseudo_grid_active_rider_count=_pseudo_int("active_rider_count", 4),
             pseudo_grid_active_driver_count=_pseudo_int("active_driver_count", 4),
+            pseudo_grid_field_rider_count=_pseudo_int("field_rider_count", 0),
+            pseudo_grid_field_driver_count=_pseudo_int("field_driver_count", 0),
+            pseudo_grid_field_deposition_neighbor_count=_pseudo_int(
+                "field_deposition_neighbor_count", 4
+            ),
             pseudo_grid_passive_neighbor_count=_pseudo_int("passive_neighbor_count", 4),
             pseudo_grid_coverage_strategy=_pseudo_str(
                 "coverage_strategy", "farthest_point_staleness"
@@ -1459,10 +1480,12 @@ def _compute_energy_ledger_series(
     # Simplifying: KE_i = gamma^2 * beta_i^2 * m * c^2 / (gamma + 1)
     #              = gamma^2 * beta_i^2 / (gamma + 1) * rest_energy_mev
     # (since rest_energy_mev = m * c^2 in the AMU/MeV convention).
-    gamma_sq = gamma_series ** 2
+    gamma_sq = gamma_series**2
     gamma_plus_1 = gamma_series + 1.0
 
-    longitudinal_kinetic_energy_mev = gamma_sq * bz_series**2 / gamma_plus_1 * rest_energy_mev
+    longitudinal_kinetic_energy_mev = (
+        gamma_sq * bz_series**2 / gamma_plus_1 * rest_energy_mev
+    )
     initial_longitudinal_kinetic_energy_mev = (
         gamma_initial**2 * bz_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
     )
@@ -1510,7 +1533,9 @@ def _ledger_scalar_metrics(
     ledger: Dict[str, np.ndarray | float],
 ) -> Dict[str, float]:
     kinetic_energy_mev = np.asarray(ledger["kinetic_energy_mev"], dtype=float)
-    delta_kinetic_energy_mev = np.asarray(ledger["delta_kinetic_energy_mev"], dtype=float)
+    delta_kinetic_energy_mev = np.asarray(
+        ledger["delta_kinetic_energy_mev"], dtype=float
+    )
     delta_kinetic_energy_z_mev = np.asarray(
         ledger["delta_kinetic_energy_z_mev"], dtype=float
     )
@@ -2145,6 +2170,11 @@ def build_pseudo_grid_config(options: SimulationOptions) -> object:
         enabled=bool(options.pseudo_grid_enabled),
         active_rider_count=int(options.pseudo_grid_active_rider_count),
         active_driver_count=int(options.pseudo_grid_active_driver_count),
+        field_rider_count=int(options.pseudo_grid_field_rider_count),
+        field_driver_count=int(options.pseudo_grid_field_driver_count),
+        field_deposition_neighbor_count=int(
+            options.pseudo_grid_field_deposition_neighbor_count
+        ),
         passive_neighbor_count=int(options.pseudo_grid_passive_neighbor_count),
         coverage_strategy=str(options.pseudo_grid_coverage_strategy),
         coverage_space=str(options.pseudo_grid_coverage_space),
@@ -2194,7 +2224,9 @@ def build_macroparticle_smearing_config(options: SimulationOptions) -> object:
     )
 
 
-def build_beamline_geometry_config(options: SimulationOptions) -> BeamlineGeometryConfig:
+def build_beamline_geometry_config(
+    options: SimulationOptions,
+) -> BeamlineGeometryConfig:
     """Build BeamlineGeometryConfig from SimulationOptions."""
     occluders = []
     for item in options.beamline_geometry_occluders:
@@ -3295,13 +3327,17 @@ def run_testbed(
                 )
 
                 if rider_trajectory_data is not None:
-                    rider_trajectory_data["driver_delta_kinetic_energy_mev"] = np.asarray(
-                        driver_energy_ledger["delta_kinetic_energy_mev"], dtype=float
+                    rider_trajectory_data["driver_delta_kinetic_energy_mev"] = (
+                        np.asarray(
+                            driver_energy_ledger["delta_kinetic_energy_mev"],
+                            dtype=float,
+                        )
                     )
-                    rider_trajectory_data[
-                        "driver_delta_kinetic_energy_z_mev"
-                    ] = np.asarray(
-                        driver_energy_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                    rider_trajectory_data["driver_delta_kinetic_energy_z_mev"] = (
+                        np.asarray(
+                            driver_energy_ledger["delta_kinetic_energy_z_mev"],
+                            dtype=float,
+                        )
                     )
                     rider_trajectory_data["net_delta_kinetic_energy_z_mev"] = (
                         rider_net_z
@@ -3316,7 +3352,9 @@ def run_testbed(
                     energy_ledger_metrics["driver_bunch_count"] = len(
                         driver_bunch_ledgers
                     )
-                    for bunch_idx, bunch_ledger in enumerate(driver_bunch_ledgers, start=1):
+                    for bunch_idx, bunch_ledger in enumerate(
+                        driver_bunch_ledgers, start=1
+                    ):
                         bunch_prefix = f"driver_bunch_{bunch_idx:02d}"
                         energy_ledger_metrics.update(
                             _ledger_scalar_metrics(bunch_prefix, bunch_ledger)

@@ -1046,8 +1046,8 @@ def _run_adaptive_step(
             observer_history=pseudo_grid_observer_history or trajectory[:i],
             source_history=pseudo_grid_source_history or trajectory_drv[:i],
             observer_active_indices=pseudo_grid_schedule.rider_active_indices,
-            source_active_indices=pseudo_grid_schedule.driver_active_indices,
-            source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+            source_active_indices=pseudo_grid_schedule.driver_field_indices,
+            source_effective_charges=pseudo_grid_schedule.driver_field_source_charges,
             source_history_start_index=pseudo_grid_schedule.driver_history_start_index,
             passive_map=pseudo_grid_schedule.rider_passive_map,
             aperture_radius=aperture_radius,
@@ -1190,8 +1190,8 @@ def _run_adaptive_step(
                         observer_history=temp_trajectory,
                         source_history=temp_driver,
                         observer_active_indices=pseudo_grid_schedule.rider_active_indices,
-                        source_active_indices=pseudo_grid_schedule.driver_active_indices,
-                        source_effective_charges=pseudo_grid_schedule.driver_effective_source_charges,
+                        source_active_indices=pseudo_grid_schedule.driver_field_indices,
+                        source_effective_charges=pseudo_grid_schedule.driver_field_source_charges,
                         source_history_start_index=(
                             pseudo_grid_schedule.driver_history_start_index
                         ),
@@ -2505,8 +2505,8 @@ def retarded_integrator(
                             else trajectory[:i]
                         ),
                         observer_active_indices=_current_pseudo_grid_schedule.driver_active_indices,
-                        source_active_indices=_current_pseudo_grid_schedule.rider_active_indices,
-                        source_effective_charges=_current_pseudo_grid_schedule.rider_effective_source_charges,
+                        source_active_indices=_current_pseudo_grid_schedule.rider_field_indices,
+                        source_effective_charges=_current_pseudo_grid_schedule.rider_field_source_charges,
                         source_history_start_index=(
                             _current_pseudo_grid_schedule.rider_history_start_index
                         ),

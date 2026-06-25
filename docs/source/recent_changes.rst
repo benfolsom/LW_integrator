@@ -42,7 +42,13 @@ arbitrary bunch orientation (``momentum_axis``), starting position
 longitudinal span. When ``momentum_axis`` is present in rider/driver config
 params, the 3D initializer is used automatically in both the testbed
 (``prepare_particle_bunches``) and CLI single-run (``_build_particle_state``)
-paths. Backward-compatible with existing z-axis configs.
+paths. New configs/tests should prefer this full 3D surface; legacy z-axis
+configs remain supported for compatibility.
+
+The main single-run GUI now also includes a ``Manual Particle Config`` tab with
+rider/driver JSON editors and validation, so full 3D particle payloads can be
+entered and saved directly instead of being squeezed through the legacy
+z-axis-only particle form.
 
 Energy Ledger Per-Direction and Percent Gains (June 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -77,15 +83,17 @@ An experimental pseudo-grid reduced solver is now available for
   same pseudo-grid settings round-trip through ``SimulationOptions``, the
   single-run CLI, the main GUI ``Particles`` tab, and saved single-run configs.
 * ``core/pseudo_grid.py`` now provides deterministic active-subset selection,
-  passive-anchor maps, effective source-charge aggregation, bounded pair-reuse
-  tracking, passive reconstruction helpers, conservative causal-history cutoff
-  helpers, and observer-specific self-excluded source-charge matrices for
-  reduced same-bunch space charge.
+  field-representative selection, direct passive-to-field source-charge
+  deposition, passive-anchor maps, bounded pair-reuse tracking, passive
+  reconstruction helpers, conservative causal-history cutoff helpers, and
+  observer-specific self-excluded source-charge matrices for reduced same-bunch
+  space charge.
 * The integrator now builds per-step pseudo-grid schedules, stores them on the
   legacy and SoA trajectory paths, advances active observers against reduced
-  active-source histories with effective source charges, and reconstructs
-  passive particles from weighted active deltas while preserving full-state
-  outputs.
+  field-representative source histories with effective source charges, and
+  reconstructs passive particles from weighted active deltas while preserving
+  full-state outputs.  ``field_rider_count``, ``field_driver_count``, and
+  ``field_deposition_neighbor_count`` control the separate weighted source set.
 * When causal-history pruning is enabled for supported reduced B2B solves, live
   rider/driver histories are compacted after each completed step and schedule
   snapshots record retained-start indices plus dropped-sample counts.

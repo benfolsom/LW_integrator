@@ -205,6 +205,9 @@ class PseudoGridConfig:
     enabled: bool = False
     active_rider_count: int = 4
     active_driver_count: int = 4
+    field_rider_count: int = 0
+    field_driver_count: int = 0
+    field_deposition_neighbor_count: int = 4
     passive_neighbor_count: int = 4
     coverage_strategy: str = "farthest_point_staleness"
     coverage_space: str = "position"
@@ -219,6 +222,14 @@ class PseudoGridConfig:
             raise ValueError("pseudo-grid active_rider_count must be positive")
         if self.active_driver_count <= 0:
             raise ValueError("pseudo-grid active_driver_count must be positive")
+        if self.field_rider_count < 0:
+            raise ValueError("pseudo-grid field_rider_count must be non-negative")
+        if self.field_driver_count < 0:
+            raise ValueError("pseudo-grid field_driver_count must be non-negative")
+        if self.field_deposition_neighbor_count <= 0:
+            raise ValueError(
+                "pseudo-grid field_deposition_neighbor_count must be positive"
+            )
         if self.passive_neighbor_count <= 0:
             raise ValueError("pseudo-grid passive_neighbor_count must be positive")
         if self.pair_reuse_window < 0:

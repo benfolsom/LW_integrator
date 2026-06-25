@@ -67,6 +67,9 @@ def _make_args(**overrides) -> argparse.Namespace:
         "pseudo_grid_enabled": None,
         "pseudo_grid_active_rider_count": None,
         "pseudo_grid_active_driver_count": None,
+        "pseudo_grid_field_rider_count": None,
+        "pseudo_grid_field_driver_count": None,
+        "pseudo_grid_field_deposition_neighbor_count": None,
         "pseudo_grid_passive_neighbor_count": None,
         "pseudo_grid_coverage_strategy": None,
         "pseudo_grid_coverage_space": None,
@@ -236,6 +239,12 @@ class TestCliConfigParsing:
                 "6",
                 "--pseudo-grid-active-driver-count",
                 "8",
+                "--pseudo-grid-field-rider-count",
+                "24",
+                "--pseudo-grid-field-driver-count",
+                "26",
+                "--pseudo-grid-field-deposition-neighbor-count",
+                "5",
                 "--pseudo-grid-passive-neighbor-count",
                 "3",
                 "--pseudo-grid-coverage-strategy",
@@ -256,6 +265,9 @@ class TestCliConfigParsing:
         assert args.pseudo_grid_enabled is True
         assert args.pseudo_grid_active_rider_count == 6
         assert args.pseudo_grid_active_driver_count == 8
+        assert args.pseudo_grid_field_rider_count == 24
+        assert args.pseudo_grid_field_driver_count == 26
+        assert args.pseudo_grid_field_deposition_neighbor_count == 5
         assert args.pseudo_grid_passive_neighbor_count == 3
         assert args.pseudo_grid_coverage_strategy == "farthest_point"
         assert args.pseudo_grid_coverage_space == "phase_space"
@@ -457,6 +469,9 @@ class TestCliConfigParsing:
                     "enabled": True,
                     "active_rider_count": 6,
                     "active_driver_count": 7,
+                    "field_rider_count": 24,
+                    "field_driver_count": 25,
+                    "field_deposition_neighbor_count": 6,
                     "passive_neighbor_count": 3,
                     "pair_reuse_window": 20,
                     "causal_history_pruning_enabled": True,
@@ -487,6 +502,9 @@ class TestCliConfigParsing:
         assert config.pseudo_grid.enabled is True
         assert config.pseudo_grid.active_rider_count == 6
         assert config.pseudo_grid.active_driver_count == 7
+        assert config.pseudo_grid.field_rider_count == 24
+        assert config.pseudo_grid.field_driver_count == 25
+        assert config.pseudo_grid.field_deposition_neighbor_count == 6
         assert config.pseudo_grid.passive_neighbor_count == 3
         assert config.pseudo_grid.pair_reuse_window == 20
         assert config.pseudo_grid.causal_history_pruning_enabled is True
@@ -589,6 +607,9 @@ class TestCliBuildRequest:
                 pseudo_grid_enabled=True,
                 pseudo_grid_active_rider_count=7,
                 pseudo_grid_active_driver_count=9,
+                pseudo_grid_field_rider_count=31,
+                pseudo_grid_field_driver_count=33,
+                pseudo_grid_field_deposition_neighbor_count=5,
                 pseudo_grid_passive_neighbor_count=2,
                 pseudo_grid_pair_reuse_window=30,
                 pseudo_grid_causal_history_pruning_enabled=True,
@@ -598,6 +619,9 @@ class TestCliBuildRequest:
         assert payload["pseudo_grid"]["enabled"] is True
         assert payload["pseudo_grid"]["active_rider_count"] == 7
         assert payload["pseudo_grid"]["active_driver_count"] == 9
+        assert payload["pseudo_grid"]["field_rider_count"] == 31
+        assert payload["pseudo_grid"]["field_driver_count"] == 33
+        assert payload["pseudo_grid"]["field_deposition_neighbor_count"] == 5
         assert payload["pseudo_grid"]["passive_neighbor_count"] == 2
         assert payload["pseudo_grid"]["pair_reuse_window"] == 30
         assert payload["pseudo_grid"]["causal_history_pruning_enabled"] is True
@@ -818,6 +842,59 @@ class TestCliBuildRequest:
         assert request.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
         assert request.driver is not None
         assert float(request.driver["z"][0]) == pytest.approx(10.0)
+
+    def test_build_request_loads_3d_particle_configs_from_file(self, tmp_path: Path):
+        config_path = tmp_path / "b2b_3d.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "simulation_type": "bunch-to-bunch",
+                    "rider": {
+                        "kinetic_energy_mev": 12.0,
+                        "mass_amu": 1.007276466621,
+                        "charge_sign": -1.0,
+                        "particle_count": 3,
+                        "seed": 123,
+                        "starting_position_mm": [1.0, 2.0, 3.0],
+                        "momentum_axis": [1.0, 0.0, 0.0],
+                        "longitudinal_span_mm": 2.0,
+                        "transverse_distance_mm": 0.0,
+                    },
+                    "driver": {
+                        "kinetic_energy_mev": 18.0,
+                        "mass_amu": 1.007276466621,
+                        "charge_sign": 1.0,
+                        "particle_count": 3,
+                        "seed": 124,
+                        "starting_position_mm": [4.0, 5.0, 6.0],
+                        "momentum_axis": [0.0, -1.0, 0.0],
+                        "longitudinal_span_mm": 4.0,
+                        "transverse_distance_mm": 0.0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+        repeated = cli.build_request(_make_args(config=config_path))
+
+        assert request.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
+        assert request.driver is not None
+        assert repeated.driver is not None
+        assert request.rider["x"] == pytest.approx(repeated.rider["x"])
+        assert request.driver["y"] == pytest.approx(repeated.driver["y"])
+        assert request.rider["y"] == pytest.approx([2.0, 2.0, 2.0])
+        assert request.rider["z"] == pytest.approx([3.0, 3.0, 3.0])
+        assert request.rider["py"] == pytest.approx([0.0, 0.0, 0.0])
+        assert request.rider["pz"] == pytest.approx([0.0, 0.0, 0.0])
+        assert np.std(request.rider["x"]) > 0.0
+        assert request.driver["x"] == pytest.approx([4.0, 4.0, 4.0])
+        assert request.driver["z"] == pytest.approx([6.0, 6.0, 6.0])
+        assert request.driver["px"] == pytest.approx([0.0, 0.0, 0.0])
+        assert np.all(request.driver["py"] < 0.0)
+        assert request.driver["pz"] == pytest.approx([0.0, 0.0, 0.0])
+        assert np.std(request.driver["y"]) > 0.0
 
     def test_build_request_keeps_optional_driver_for_non_b2b(self, tmp_path: Path):
         config_path = tmp_path / "wall.json"
@@ -1341,6 +1418,7 @@ class TestCliRuntimeHelpers:
             )
         )
 
+        assert request.driver is not None
         request.driver["z"] = request.driver["z"] + 1000.0
 
         expected_steps, expected_h_step = cli._resolve_auto_duration(request)

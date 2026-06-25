@@ -25,6 +25,12 @@ from .testbed_runner import (
 _SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
 
 
+def _particle_params_require_manual_config(params: object) -> bool:
+    if not isinstance(params, dict):
+        return False
+    return any(key not in PARTICLE_PARAM_FIELDS for key in params)
+
+
 def _format_gui_float(value: object) -> str:
     return f"{float(value):.12g}"
 
@@ -266,6 +272,15 @@ class IntegratorGUIConfigMixin:
             )
             self.pseudo_grid_active_driver_count_var.set(
                 getattr(options, "pseudo_grid_active_driver_count", 4)
+            )
+            self.pseudo_grid_field_rider_count_var.set(
+                getattr(options, "pseudo_grid_field_rider_count", 0)
+            )
+            self.pseudo_grid_field_driver_count_var.set(
+                getattr(options, "pseudo_grid_field_driver_count", 0)
+            )
+            self.pseudo_grid_field_deposition_neighbor_count_var.set(
+                getattr(options, "pseudo_grid_field_deposition_neighbor_count", 4)
             )
             self.pseudo_grid_passive_neighbor_count_var.set(
                 getattr(options, "pseudo_grid_passive_neighbor_count", 4)
@@ -515,15 +530,44 @@ class IntegratorGUIConfigMixin:
                 bool(getattr(options, "beamline_geometry_enabled", False))
             )
             if hasattr(self, "beamline_geometry_text"):
-                geom_payload = getattr(options, "beamline_geometry", None)
-                if isinstance(geom_payload, dict) and geom_payload:
-                    import json as _json
-
-                    self.beamline_geometry_text.delete("1.0", "end")
-                    self.beamline_geometry_text.insert(
-                        "1.0", _json.dumps(geom_payload, indent=2)
-                    )
+                geom_payload = {
+                    "enabled": bool(
+                        getattr(options, "beamline_geometry_enabled", False)
+                    ),
+                    "occluders": list(
+                        getattr(options, "beamline_geometry_occluders", []) or []
+                    ),
+                }
+                self._set_text_widget_content(
+                    self.beamline_geometry_text,
+                    json.dumps(geom_payload, indent=2),
+                )
             self._toggle_beamline_geometry_controls()
+        manual_particle_config_enabled = bool(
+            getattr(options, "manual_particle_config_enabled", False)
+        ) or _particle_params_require_manual_config(options.rider_params)
+        if options.driver_params is not None:
+            manual_particle_config_enabled = manual_particle_config_enabled or (
+                _particle_params_require_manual_config(options.driver_params)
+            )
+        if hasattr(self, "manual_particle_config_enabled_var"):
+            self.manual_particle_config_enabled_var.set(manual_particle_config_enabled)
+            if hasattr(self, "manual_rider_config_text"):
+                self._set_text_widget_content(
+                    self.manual_rider_config_text,
+                    json.dumps(dict(options.rider_params), indent=2),
+                )
+            if hasattr(self, "manual_driver_config_text"):
+                driver_payload = (
+                    dict(options.driver_params)
+                    if options.driver_params is not None
+                    else dict(DEFAULT_DRIVER_PARAMS)
+                )
+                self._set_text_widget_content(
+                    self.manual_driver_config_text,
+                    json.dumps(driver_payload, indent=2),
+                )
+            self._toggle_manual_particle_config_controls()
         self.auto_duration_enabled_var.set(
             getattr(options, "auto_duration_enabled", False)
         )
@@ -608,15 +652,30 @@ class IntegratorGUIConfigMixin:
 
     def _build_options_from_ui(self) -> SimulationOptions:
         sim_type = SimulationType[self.sim_type_var.get()]
-        rider_params = {
-            name: self.rider_param_vars[name].get() for name in PARTICLE_PARAM_FIELDS
-        }
         driver_supported = supports_driver(sim_type)
-        driver_params = (
-            {name: self.driver_param_vars[name].get() for name in PARTICLE_PARAM_FIELDS}
-            if driver_supported
-            else None
+        manual_particle_config_enabled = bool(
+            self.manual_particle_config_enabled_var.get()
         )
+        if manual_particle_config_enabled:
+            rider_params = self._collect_manual_particle_payload("rider", strict=True)
+            driver_params = (
+                self._collect_manual_particle_payload("driver", strict=True)
+                if driver_supported
+                else None
+            )
+        else:
+            rider_params = {
+                name: self.rider_param_vars[name].get()
+                for name in PARTICLE_PARAM_FIELDS
+            }
+            driver_params = (
+                {
+                    name: self.driver_param_vars[name].get()
+                    for name in PARTICLE_PARAM_FIELDS
+                }
+                if driver_supported
+                else None
+            )
         core_params = {}
         for name in CORE_PARAM_DEFAULTS:
             value = self.core_param_vars[name].get()
@@ -741,6 +800,7 @@ class IntegratorGUIConfigMixin:
             output_dir=Path(self.output_dir_var.get()),
             config_dir=Path(self.config_dir_var.get()),
             config_name=config_name,
+            manual_particle_config_enabled=manual_particle_config_enabled,
             image_subcharge_count=int(self.image_subcharge_var.get()),
             use_image_weighting=bool(self.image_weighting_var.get()),
             macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
@@ -919,6 +979,15 @@ class IntegratorGUIConfigMixin:
             pseudo_grid_active_driver_count=int(
                 self.pseudo_grid_active_driver_count_var.get()
             ),
+            pseudo_grid_field_rider_count=int(
+                self.pseudo_grid_field_rider_count_var.get()
+            ),
+            pseudo_grid_field_driver_count=int(
+                self.pseudo_grid_field_driver_count_var.get()
+            ),
+            pseudo_grid_field_deposition_neighbor_count=int(
+                self.pseudo_grid_field_deposition_neighbor_count_var.get()
+            ),
             pseudo_grid_passive_neighbor_count=int(
                 self.pseudo_grid_passive_neighbor_count_var.get()
             ),
@@ -952,9 +1021,7 @@ class IntegratorGUIConfigMixin:
                 self.driver_train_preserve_prehistory_var.get()
             ),
             save_log_file=bool(self.save_log_file_var.get()),
-            beamline_geometry_enabled=bool(
-                self.beamline_geometry_enabled_var.get()
-            ),
+            beamline_geometry_enabled=bool(self.beamline_geometry_enabled_var.get()),
             beamline_geometry_occluders=self._collect_beamline_geometry_occluders(),
         )
 

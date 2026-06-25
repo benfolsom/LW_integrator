@@ -133,9 +133,10 @@ def test_auto_transverse_axes_orthonormal_and_offset_perpendicular_to_y():
 
     # All particles should be offset perpendicular to y: y stays at 0.
     np.testing.assert_allclose(state["y"], 0.0, atol=1e-15)
-    # The transverse offset must lie in the x-z plane with magnitude transv_dist.
-    radius = np.sqrt(state["x"] ** 2 + state["z"] ** 2)
-    np.testing.assert_allclose(radius, transv_dist, rtol=1e-12)
+    # With a 3D Gaussian spread, particles are distributed in the x-z plane
+    # (transverse to y). Check that there is spread in both x and z.
+    assert np.ptp(state["x"]) > 0.0
+    assert np.ptp(state["z"]) > 0.0
 
     # Re-derive the auto axes via the same helper to check orthonormality.
     from core.particle_initialization import _orthonormal_transverse_axes
@@ -147,6 +148,34 @@ def test_auto_transverse_axes_orthonormal_and_offset_perpendicular_to_y():
     np.testing.assert_allclose(np.dot(u, v), 0.0, atol=1e-15)
     np.testing.assert_allclose(np.linalg.norm(u), 1.0, atol=1e-15)
     np.testing.assert_allclose(np.linalg.norm(v), 1.0, atol=1e-15)
+
+
+def test_transverse_disk_spread_within_radius():
+    """Multi-particle bunches should be spread in 3D, not a 1D line."""
+    mass_amu = 197.0
+    radius = 0.5
+    span = 10.0
+    pcount = 8
+
+    state, _ = create_particle_state_3d(
+        starting_position_mm=(0.0, 0.0, 0.0),
+        momentum_axis=(0.0, 0.0, 1.0),
+        kinetic_energy_mev=0.5,
+        stripped_ions=1.0,
+        particle_mass_amu=mass_amu,
+        particle_count=pcount,
+        charge_sign=+1.0,
+        transverse_distance_mm=radius,
+        longitudinal_span_mm=span,
+    )
+
+    # Particles should have spread in all three dimensions.
+    assert np.ptp(state["x"]) > 0.0
+    assert np.ptp(state["y"]) > 0.0
+    assert np.ptp(state["z"]) > 0.0
+    # Not all at the same transverse radius (that would be a 1D line or ring).
+    transverse_radius = np.sqrt(state["x"] ** 2 + state["y"] ** 2)
+    assert len(np.unique(np.round(transverse_radius, 6))) > 1
 
 
 def test_longitudinal_span_even_distribution():
@@ -166,14 +195,37 @@ def test_longitudinal_span_even_distribution():
         longitudinal_span_mm=span,
     )
 
-    # Momentum axis is z, so longitudinal spread appears in z only.
-    expected_z = centroid[2] + np.linspace(-0.5, 0.5, pcount) * span
-    np.testing.assert_allclose(state["z"], expected_z, rtol=1e-12)
-    np.testing.assert_allclose(state["x"], centroid[0], atol=1e-15)
-    np.testing.assert_allclose(state["y"], centroid[1], atol=1e-15)
+    # With a 3D Gaussian distribution, longitudinal spread appears in z
+    # (momentum axis is z). The spread should be nonzero but not a regular
+    # grid — check that the z values are not evenly spaced.
+    assert np.ptp(state["z"]) > 0.0
+    z_diffs = np.diff(np.sort(state["z"]))
+    assert not np.allclose(z_diffs, z_diffs[0])
 
-    # Total range equals span.
-    assert state["z"].max() - state["z"].min() == pytest.approx(span, rel=1e-12)
+
+def test_gaussian_3d_distribution_respects_numpy_seed():
+    mass_amu = 197.0
+
+    def build_state():
+        np.random.seed(123)
+        state, _ = create_particle_state_3d(
+            starting_position_mm=(0.0, 0.0, 0.0),
+            momentum_axis=(0.0, 0.0, 1.0),
+            kinetic_energy_mev=0.5,
+            stripped_ions=1.0,
+            particle_mass_amu=mass_amu,
+            particle_count=16,
+            charge_sign=+1.0,
+            transverse_distance_mm=0.5,
+            longitudinal_span_mm=10.0,
+        )
+        return state
+
+    first = build_state()
+    second = build_state()
+
+    for key in ("x", "y", "z"):
+        np.testing.assert_allclose(first[key], second[key])
 
 
 def test_state_dict_structure_matches_legacy_keys_and_shapes():

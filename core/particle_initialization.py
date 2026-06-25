@@ -165,6 +165,33 @@ def _orthonormal_transverse_axes(
     return u, v
 
 
+def _bunch_3d_offsets(
+    particle_count: int,
+    transverse_radius: float,
+    longitudinal_span: float,
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Gaussian offsets filling a 3D ellipsoid.
+
+    Returns (long_offsets, u_offsets, v_offsets) in the local bunch basis
+    where ``n`` is the longitudinal (momentum) axis and ``u``, ``v`` are
+    the transverse axes. The sigmas are transverse_radius and
+    longitudinal_span/2. For particle_count == 1 the single particle sits
+    at the centroid (zero offset).
+    """
+    if particle_count <= 1:
+        return np.zeros(1), np.zeros(1), np.zeros(1)
+    if rng is None:
+        long_offsets = np.random.normal(0.0, longitudinal_span * 0.5, particle_count)
+        u_offsets = np.random.normal(0.0, transverse_radius, particle_count)
+        v_offsets = np.random.normal(0.0, transverse_radius, particle_count)
+    else:
+        long_offsets = rng.normal(0.0, longitudinal_span * 0.5, particle_count)
+        u_offsets = rng.normal(0.0, transverse_radius, particle_count)
+        v_offsets = rng.normal(0.0, transverse_radius, particle_count)
+    return long_offsets, u_offsets, v_offsets
+
+
 def create_particle_state_3d(
     starting_position_mm: tuple[float, float, float],
     momentum_axis: tuple[float, float, float],
@@ -212,16 +239,22 @@ def create_particle_state_3d(
     beta = np.sqrt(max(0.0, 1.0 - 1.0 / gamma**2))
     p_long = gamma * particle_mass_amu * beta * C_MMNS
 
-    if particle_count > 1 and longitudinal_span_mm != 0.0:
-        fracs = np.linspace(-0.5, 0.5, particle_count)
-        long_offsets = fracs * longitudinal_span_mm
+    if particle_count > 1:
+        long_offsets, u_offsets, v_offsets = _bunch_3d_offsets(
+            particle_count,
+            transverse_distance_mm,
+            longitudinal_span_mm,
+        )
     else:
-        long_offsets = np.zeros(particle_count)
+        long_offsets = np.zeros(1)
+        u_offsets = np.array([transverse_distance_mm])
+        v_offsets = np.zeros(1)
 
     positions = (
         centroid[None, :]
         + long_offsets[:, None] * n[None, :]
-        + transverse_distance_mm * u[None, :]
+        + u_offsets[:, None] * u[None, :]
+        + v_offsets[:, None] * v[None, :]
     )
     positions_x = positions[:, 0].copy()
     positions_y = positions[:, 1].copy()

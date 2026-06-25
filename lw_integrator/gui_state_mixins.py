@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tkinter as tk
 from tkinter import ttk
 
 from core.types import SimulationType
@@ -383,6 +384,22 @@ class IntegratorGUIStateMixin:
             try:
                 if isinstance(widget, ttk.Label):
                     widget.configure(foreground="black" if enabled else "gray")
+                else:
+                    widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _toggle_manual_particle_config_controls(self) -> None:
+        if not hasattr(self, "manual_particle_config_enable_check"):
+            return
+        enabled = bool(self.manual_particle_config_enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        for widget in getattr(self, "_manual_particle_config_sub_widgets", []):
+            try:
+                if isinstance(widget, ttk.Label):
+                    widget.configure(foreground="black" if enabled else "gray")
+                elif isinstance(widget, tk.Text):
+                    widget.configure(state=state)
                 else:
                     widget.configure(state=state)
             except Exception:

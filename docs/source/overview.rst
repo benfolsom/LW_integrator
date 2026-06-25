@@ -91,11 +91,27 @@ Pseudo-grid reduced solve sketch
 ---------------------------------
 
 In ``BUNCH_TO_BUNCH`` pseudo-grid mode, each bunch is still stored and exported
-as a full particle state, but only a selected active subset performs the full
-retarded Liénard--Wiechert solve on a given step.  Passive particles are tied to
-nearby active anchors in the 2D/3D bunch geometry; their charge is folded into
-active source charges, and their state update is reconstructed from weighted
-active-particle deltas.
+as a full particle state, but only a selected active subset is advanced as
+dynamic observers on a given step.  A separate field-representative set contains
+weighted live particles used as retarded Liénard--Wiechert sources.  Non-field
+live particles deposit source charge directly onto nearby field representatives,
+which improves source-distribution fidelity without requiring every represented
+particle to be solved as an observer.
+
+.. code-block:: text
+
+   Live particles
+       |-- select active particles --------> Dynamic observers
+       |                                      |
+       |-- select field representatives --> Weighted LW sources
+                                              |
+                         Retarded LW source sum
+                                              |
+                                Advance active trajectories
+                                              |
+                         Reconstruct or propagate passive states
+                                              |
+                                      Live particles
 
 .. only:: html
 
@@ -120,20 +136,22 @@ active-particle deltas.
 
    Cross-bunch reduced force solve
 
-      rider active observers      retarded LW fields      driver active sources
-             ● A_r0  <----------------------------------  ● A_d0 + q_eff(d0)
-             ● A_r1  <----------------------------------  ● A_d1 + q_eff(d1)
+      rider active observers      retarded LW fields      driver field reps
+             ● A_r0  <----------------------------------  ● F_d0 + q_eff(d0)
+             ● A_r1  <----------------------------------  ● F_d1 + q_eff(d1)
 
-   Legend: ● = active particle solved exactly this step; ○ = passive particle.
-           w = passive-to-active interpolation/aggregation weight.
-           q_eff = active charge plus weighted passive source charge.
+   Legend: ● = live particle selected for this role; ○ = passive live particle.
+           w = passive interpolation/deposition weight.
+           q_eff = representative charge plus deposited non-field source charge.
 
 After the active solve, each passive particle receives the weighted combination
 of its active anchors' changes in position, momentum, velocity, gamma, and
-radiation bookkeeping.  If a selected active particle is marked dead by the
-existing status machinery, pseudo-grid loss tracking removes it from later
-schedules and renormalizes passive-anchor weights onto surviving anchors when
-possible.
+radiation bookkeeping.  Cross-bunch field-source representation uses the
+separate field-representative deposition path; same-bunch pseudo-grid space
+charge still uses the active/passive map.  If a selected active particle is
+marked dead by the existing status machinery, pseudo-grid loss tracking removes
+it from later schedules and renormalizes passive-anchor weights onto surviving
+anchors when possible.
 
 Key ideas to keep in mind
 -------------------------
@@ -191,16 +209,15 @@ Key ideas to keep in mind
   ``macroparticle_charge_multiplier``, ``macroparticle_position_spread``, and
   ``macroparticle_momentum_spread`` parameters. Only active for CONDUCTING_WALL
   simulation type.
-* **Transverse offset for off-axis beams.**  Beam center position is now
-  separate from beam size. Use ``transv_offset_x`` and ``transv_offset_y`` to
-  position beam center in mm, and ``transv_dist`` for beam spread (half-width).
-  Particles are distributed uniformly in [offset ± spread] for both x and y.
-  Critical for aperture tolerance studies and beam halo analysis. The
-  optimization plugin's "Transverse Offset" fractions are converted to absolute
-  positions (offset = fraction × aperture_radius). Maintained GUI and CLI
-  workflows always use the modern core initialization path in
-  ``input_output.bunch_initialization.create_bunch_from_params``; archived
-  notebooks remain in the repository only as historical reference material.
+* **Full 3D bunch initialization is the preferred path for new work.**  Use
+  ``momentum_axis``, ``starting_position_mm``, ``transverse_distance_mm``, and
+  ``longitudinal_span_mm`` when defining new bunches. The CLI accepts these
+  fields directly in rider/driver JSON, and the main GUI now exposes them
+  through a ``Manual Particle Config`` tab with rider/driver JSON editors.
+  Legacy off-axis fields such as ``transv_offset_x``, ``transv_offset_y``, and
+  ``transv_dist`` remain available for compatibility and older studies,
+  including optimization-plugin offset fractions converted to absolute
+  positions (offset = fraction × aperture_radius).
 * **GUI application for all workflows.**  The Tkinter-based GUI (``python -m
   lw_integrator.gui``) supports single runs, parameter sweeps, and optimization
   with real-time progress tracking and trajectory visualization. It provides

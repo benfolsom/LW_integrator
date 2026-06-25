@@ -102,6 +102,9 @@ DEFAULT_PSEUDO_GRID: Dict[str, Any] = {
     "enabled": False,
     "active_rider_count": 4,
     "active_driver_count": 4,
+    "field_rider_count": 0,
+    "field_driver_count": 0,
+    "field_deposition_neighbor_count": 4,
     "passive_neighbor_count": 4,
     "coverage_strategy": "farthest_point_staleness",
     "coverage_space": "position",
@@ -699,6 +702,33 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Number of active driver particles to solve directly each step.",
     )
     parser.add_argument(
+        "--pseudo-grid-field-rider-count",
+        type=int,
+        dest="pseudo_grid_field_rider_count",
+        help=(
+            "Number of weighted live rider particles used as retarded LW "
+            "field representatives. Defaults to active rider particles only."
+        ),
+    )
+    parser.add_argument(
+        "--pseudo-grid-field-driver-count",
+        type=int,
+        dest="pseudo_grid_field_driver_count",
+        help=(
+            "Number of weighted live driver particles used as retarded LW "
+            "field representatives. Defaults to active driver particles only."
+        ),
+    )
+    parser.add_argument(
+        "--pseudo-grid-field-deposition-neighbor-count",
+        type=int,
+        dest="pseudo_grid_field_deposition_neighbor_count",
+        help=(
+            "Nearest field representatives used when depositing non-field "
+            "live source charge."
+        ),
+    )
+    parser.add_argument(
         "--pseudo-grid-passive-neighbor-count",
         type=int,
         dest="pseudo_grid_passive_neighbor_count",
@@ -1260,6 +1290,9 @@ def _merge_simulation_payload(
         "enabled",
         "active_rider_count",
         "active_driver_count",
+        "field_rider_count",
+        "field_driver_count",
+        "field_deposition_neighbor_count",
         "passive_neighbor_count",
         "coverage_strategy",
         "coverage_space",
@@ -1586,6 +1619,16 @@ def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
             ),
             active_driver_count=_as_int(
                 "active_driver_count", DEFAULT_PSEUDO_GRID["active_driver_count"]
+            ),
+            field_rider_count=_as_int(
+                "field_rider_count", DEFAULT_PSEUDO_GRID["field_rider_count"]
+            ),
+            field_driver_count=_as_int(
+                "field_driver_count", DEFAULT_PSEUDO_GRID["field_driver_count"]
+            ),
+            field_deposition_neighbor_count=_as_int(
+                "field_deposition_neighbor_count",
+                DEFAULT_PSEUDO_GRID["field_deposition_neighbor_count"],
             ),
             passive_neighbor_count=_as_int(
                 "passive_neighbor_count",
@@ -2154,6 +2197,13 @@ def _build_particle_state_3d(payload: Mapping[str, Any]) -> ParticleState:
         raise SimulationConfigError(
             f"starting_position_mm must be a list of 3 numbers: {exc}"
         ) from exc
+
+    seed = payload.get("seed")
+    if seed is not None:
+        try:
+            np.random.seed(int(seed))
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(f"seed must be an integer: {exc}") from exc
 
     transverse_axes = payload.get("transverse_axes")
     if transverse_axes is not None:

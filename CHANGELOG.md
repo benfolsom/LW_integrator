@@ -4,6 +4,21 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Pseudo-Grid Field Representatives (June 2026)
+
+- Added field representatives as a separate weighted retarded-LW source set in
+  pseudo-grid mode. Active particles remain the dynamic observers solved
+  self-consistently; field representatives are weighted live particles used for
+  cross-bunch retarded source sums.
+- Added direct passive-to-field source-charge deposition that conserves total
+  source charge and avoids passive-to-passive collapse for cross-bunch source
+  representation.
+- Threaded `field_rider_count`, `field_driver_count`, and
+  `field_deposition_neighbor_count` through `PseudoGridConfig`, the testbed
+  `SimulationOptions`, CLI flags, GUI controls, and saved config round-trips.
+- Same-bunch pseudo-grid space charge still uses the existing active/passive map
+  for this first implementation.
+
 ### Pseudo-Grid Passive Neighbor Collapse (June 2026)
 
 - Changed `core/pseudo_grid.py` so passive particles sample nearest neighbors
@@ -13,6 +28,22 @@ All notable changes and updates to the LW Integrator project are documented in t
   aggregation, preserving the existing active-only downstream contract.
 - Added unit coverage for a passive-intermediate neighbor case and kept the
   existing pseudo-grid feasibility tests passing.
+
+### 3D Gaussian Bunch Initialization (June 2026)
+
+- Added Gaussian 3D macroparticle offsets in `core/particle_initialization.py`
+  for arbitrary-axis bunches. For `particle_count > 1`, particles are now
+  sampled in both transverse directions and along the longitudinal axis instead
+  of being placed on a 1D line. This eliminates geometric aliasing that caused
+  catastrophic active-count sensitivity in the light/heavy transverse-crossing
+  study.
+- Fixed 3D Gaussian initialization to respect the existing `seed` path in
+  `prepare_particle_bunches`; repeated seeded runs now produce identical 3D
+  bunch coordinates.
+- Single-particle (`particle_count == 1`) behavior is unchanged: the particle
+  sits at the transverse offset as before.
+- Updated `tests/unit/test_particle_initialization_3d.py` with 3D spread and
+  seed-reproducibility coverage.
 
 ### Explicit Observer/Source Charge Split (June 2026)
 
@@ -52,6 +83,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 - Wired into the testbed path (`prepare_particle_bunches`) and the CLI single-run
   path (`_build_particle_state`): when `momentum_axis` is present in rider/driver
   params, the 3D initializer is used instead of the legacy z-axis initializer.
+- Added a new main-GUI `Manual Particle Config` tab with rider/driver JSON editors,
+  validation, and saved-config round-tripping so full 3D particle payloads can be
+  entered directly without going through the legacy z-axis form fields.
+- Updated maintained guidance and examples to treat full 3D bunch initialization as
+  the preferred default for new configs/tests while keeping legacy particle fields
+  as a compatibility path.
+- Added regression coverage for manual GUI particle-config overrides, 3D
+  `SimulationOptions` round-tripping, and CLI build-request loading of 3D
+  rider/driver JSON payloads.
 
 ### Energy Ledger Per-Direction and Percent Gains (June 2026)
 
