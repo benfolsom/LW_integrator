@@ -208,12 +208,14 @@ class PseudoGridConfig:
     field_rider_count: int = 0
     field_driver_count: int = 0
     field_deposition_neighbor_count: int = 4
+    space_charge_near_neighbor_count: int = 8
     passive_neighbor_count: int = 4
     coverage_strategy: str = "farthest_point_staleness"
     coverage_space: str = "position"
     pair_reuse_window: int = 16
     source_weighting_mode: str = "inverse_distance"
     loss_tracking_enabled: bool = True
+    numerical_failure_tolerance_fraction: float = 0.001
     causal_history_pruning_enabled: bool = False
     causal_history_safety_margin_steps: int = 2
 
@@ -230,10 +232,18 @@ class PseudoGridConfig:
             raise ValueError(
                 "pseudo-grid field_deposition_neighbor_count must be positive"
             )
+        if self.space_charge_near_neighbor_count < 0:
+            raise ValueError(
+                "pseudo-grid space_charge_near_neighbor_count must be non-negative"
+            )
         if self.passive_neighbor_count <= 0:
             raise ValueError("pseudo-grid passive_neighbor_count must be positive")
         if self.pair_reuse_window < 0:
             raise ValueError("pseudo-grid pair_reuse_window must be non-negative")
+        if not (0.0 <= self.numerical_failure_tolerance_fraction <= 1.0):
+            raise ValueError(
+                "pseudo-grid numerical_failure_tolerance_fraction must be in [0, 1]"
+            )
         if self.causal_history_safety_margin_steps < 0:
             raise ValueError(
                 "pseudo-grid causal_history_safety_margin_steps must be non-negative"
@@ -454,7 +464,9 @@ class IntegratorConfig:
     driver_train: DriverTrainConfig = field(default_factory=DriverTrainConfig)
     cavity_exit: CavityExitConfig = field(default_factory=CavityExitConfig)
     particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
-    beamline_geometry: BeamlineGeometryConfig = field(default_factory=BeamlineGeometryConfig)
+    beamline_geometry: BeamlineGeometryConfig = field(
+        default_factory=BeamlineGeometryConfig
+    )
 
 
 @dataclass

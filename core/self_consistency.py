@@ -328,6 +328,9 @@ def self_consistent_step(
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
     pseudo_grid_space_charge_source_charges: Optional[Any] = None,
+    pseudo_grid_space_charge_source_trajectory: Optional[Any] = None,
+    pseudo_grid_space_charge_source_soa: Optional[Any] = None,
+    pseudo_grid_space_charge_source_radii_mm: Optional[Any] = None,
     macroparticle_smearing: Optional[Any] = None,
     beamline_geometry: Optional[Any] = None,
 ) -> ParticleState:
@@ -408,6 +411,45 @@ def self_consistent_step(
             if pseudo_grid_space_charge_source_charges is not None
             and (
                 "pseudo_grid_space_charge_source_charges" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
+            {
+                "pseudo_grid_space_charge_source_trajectory": (
+                    pseudo_grid_space_charge_source_trajectory
+                )
+            }
+            if pseudo_grid_space_charge_source_trajectory is not None
+            and (
+                "pseudo_grid_space_charge_source_trajectory" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
+            {
+                "pseudo_grid_space_charge_source_soa": (
+                    pseudo_grid_space_charge_source_soa
+                )
+            }
+            if pseudo_grid_space_charge_source_soa is not None
+            and (
+                "pseudo_grid_space_charge_source_soa" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
+            {
+                "pseudo_grid_space_charge_source_radii_mm": (
+                    pseudo_grid_space_charge_source_radii_mm
+                )
+            }
+            if pseudo_grid_space_charge_source_radii_mm is not None
+            and (
+                "pseudo_grid_space_charge_source_radii_mm" in _sig_params
                 or _accepts_var_kwargs
             )
             else {}

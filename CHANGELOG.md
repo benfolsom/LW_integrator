@@ -9,15 +9,33 @@ All notable changes and updates to the LW Integrator project are documented in t
 - Added field representatives as a separate weighted retarded-LW source set in
   pseudo-grid mode. Active particles remain the dynamic observers solved
   self-consistently; field representatives are weighted live particles used for
-  cross-bunch retarded source sums.
+  cross-bunch retarded source sums and reduced same-bunch space charge.
 - Added direct passive-to-field source-charge deposition that conserves total
   source charge and avoids passive-to-passive collapse for cross-bunch source
   representation.
 - Threaded `field_rider_count`, `field_driver_count`, and
   `field_deposition_neighbor_count` through `PseudoGridConfig`, the testbed
   `SimulationOptions`, CLI flags, GUI controls, and saved config round-trips.
-- Same-bunch pseudo-grid space charge still uses the existing active/passive map
-  for this first implementation.
+- Same-bunch pseudo-grid space charge now uses a hybrid source set: active
+  observers evaluate their nearest live same-bunch neighbors as exact sources,
+  while field representatives carry the remaining farther charge. Exact-neighbor
+  charge is subtracted from the field-rep deposits for that observer to conserve
+  source charge without double counting.
+- Added `space_charge_near_neighbor_count` to pseudo-grid config for the hybrid
+  exact-neighbor same-bunch SC path.
+- Added source-specific deposition-radius softening for same-bunch pseudo-grid
+  space charge. Field representatives now carry a charge-magnitude-weighted RMS
+  cloud radius derived from the live particles deposited onto them, and the
+  solver combines that finite source size in quadrature with the existing global
+  space-charge softening. Exact near-neighbour sources remain point-like apart
+  from the global softening.
+- Fixed field-representative charge accumulation to preserve caller field-index
+  order instead of sorting with `np.unique`, keeping source charges aligned with
+  the scheduled field-representative histories.
+- Added `numerical_failure_tolerance_fraction` to pseudo-grid config so gamma
+  blowups and self-consistency nonconvergence in reduced active solves can mark
+  individual particles dead and continue until the configured loss budget is
+  exceeded. The default diagnostic continuation budget is 15%.
 
 ### Pseudo-Grid Passive Neighbor Collapse (June 2026)
 

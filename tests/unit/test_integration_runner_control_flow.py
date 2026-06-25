@@ -820,13 +820,13 @@ def test_retarded_integrator_uses_reduced_histories_and_self_excluded_space_char
     np.testing.assert_allclose(observed_calls[0]["source_q"], np.array([3.0, 3.0]))
     np.testing.assert_allclose(
         observed_calls[0]["space_charge_matrix"],
-        np.array([[0.0, 2.0], [2.0, 0.0]]),
+        np.array([[0.0, 1.0, 1.0], [1.0, 0.0, 1.0]]),
     )
     np.testing.assert_allclose(observed_calls[1]["observer_q"], np.array([2.0, 2.0]))
     np.testing.assert_allclose(observed_calls[1]["source_q"], np.array([1.5, 1.5]))
     np.testing.assert_allclose(
         observed_calls[1]["space_charge_matrix"],
-        np.array([[0.0, 4.0], [4.0, 0.0]]),
+        np.array([[0.0, 2.0, 2.0], [2.0, 0.0, 2.0]]),
     )
     np.testing.assert_allclose(pseudo_rider[-1]["z"], np.array([-0.75, -0.75, -0.75]))
     np.testing.assert_allclose(pseudo_driver[-1]["z"], np.array([1.25, 1.25, 1.25]))
@@ -924,8 +924,8 @@ def test_retarded_integrator_matches_full_solver_for_pseudo_grid_with_space_char
             use_numba=False,
         )
 
-    full_rider, full_driver, full_rider_soa, full_driver_soa = run_case(None)
-    pseudo_rider, pseudo_driver, pseudo_rider_soa, pseudo_driver_soa = run_case(
+    full_rider, full_driver, full_rider_soa, full_driver_soa, *_ = run_case(None)
+    pseudo_rider, pseudo_driver, pseudo_rider_soa, pseudo_driver_soa, *_ = run_case(
         PseudoGridConfig(
             enabled=True,
             active_rider_count=3,
@@ -984,8 +984,8 @@ def test_retarded_integrator_matches_full_solver_when_pseudo_grid_prunes_causall
             use_numba=False,
         )
 
-    full_rider, full_driver, full_rider_soa, full_driver_soa = run_case(None)
-    pseudo_rider, pseudo_driver, pseudo_rider_soa, pseudo_driver_soa = run_case(
+    full_rider, full_driver, full_rider_soa, full_driver_soa, *_ = run_case(None)
+    pseudo_rider, pseudo_driver, pseudo_rider_soa, pseudo_driver_soa, *_ = run_case(
         PseudoGridConfig(
             enabled=True,
             active_rider_count=3,
@@ -1040,8 +1040,8 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_for_as
             use_numba=False,
         )
 
-    full_rider, full_driver, full_rider_soa, full_driver_soa = run_case(None)
-    pseudo_rider, pseudo_driver, pseudo_rider_soa, pseudo_driver_soa = run_case(
+    full_rider, full_driver, full_rider_soa, full_driver_soa, *_ = run_case(None)
+    pseudo_rider, pseudo_driver, pseudo_rider_soa, pseudo_driver_soa, *_ = run_case(
         PseudoGridConfig(
             enabled=True,
             active_rider_count=3,
@@ -1105,8 +1105,8 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_with_a
             use_numba=False,
         )
 
-    _full_rider, _full_driver, full_rider_soa, full_driver_soa = run_case(None)
-    pseudo_rider, _pseudo_driver, pseudo_rider_soa, pseudo_driver_soa = run_case(
+    _full_rider, _full_driver, full_rider_soa, full_driver_soa, *_ = run_case(None)
+    pseudo_rider, _pseudo_driver, pseudo_rider_soa, pseudo_driver_soa, *_ = run_case(
         PseudoGridConfig(
             enabled=True,
             active_rider_count=3,
@@ -1168,8 +1168,8 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_with_s
             use_numba=False,
         )
 
-    _full_rider, _full_driver, full_rider_soa, full_driver_soa = run_case(None)
-    pseudo_rider, _pseudo_driver, pseudo_rider_soa, pseudo_driver_soa = run_case(
+    _full_rider, _full_driver, full_rider_soa, full_driver_soa, *_ = run_case(None)
+    pseudo_rider, _pseudo_driver, pseudo_rider_soa, pseudo_driver_soa, *_ = run_case(
         PseudoGridConfig(
             enabled=True,
             active_rider_count=3,
@@ -1929,7 +1929,6 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
     assert "distance_reached" in trajectory[-1]["_halt_reason"]
 
 
-
 def test_retarded_integrator_halts_when_rider_reaches_cavity_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2050,7 +2049,9 @@ def test_retarded_integrator_uses_driver_train_leading_edge_for_cavity_exit(
     ) -> dict[str, object]:
         source_state = _clone_state(trajectory[index_traj])
         z_value = np.asarray(source_state["z"], dtype=float)
-        other_initial_z = float(np.mean(np.asarray(trajectory_ext[0]["z"], dtype=float)))
+        other_initial_z = float(
+            np.mean(np.asarray(trajectory_ext[0]["z"], dtype=float))
+        )
         is_rider_update = other_initial_z > float(np.mean(z_value))
         source_state["z"] = z_value + (1.0 if is_rider_update else -3.0)
         source_state["t"] = np.asarray(source_state["t"], dtype=float) + h_step

@@ -92,7 +92,7 @@ def test_driver_train_zero_charge_smoke_returns_trimmed_active_window():
     rider["q"] = np.zeros_like(rider["q"])
     driver["q"] = np.zeros_like(driver["q"])
 
-    rider_traj, driver_traj, rider_soa, driver_soa = retarded_integrator(
+    rider_traj, driver_traj, rider_soa, driver_soa, *_ = retarded_integrator(
         steps=4,
         h_step=1e-4,
         wall_z=0.0,

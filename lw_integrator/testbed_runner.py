@@ -431,12 +431,14 @@ class SimulationOptions:
     pseudo_grid_field_rider_count: int = 0
     pseudo_grid_field_driver_count: int = 0
     pseudo_grid_field_deposition_neighbor_count: int = 4
+    pseudo_grid_space_charge_near_neighbor_count: int = 8
     pseudo_grid_passive_neighbor_count: int = 4
     pseudo_grid_coverage_strategy: str = "farthest_point_staleness"
     pseudo_grid_coverage_space: str = "position"
     pseudo_grid_pair_reuse_window: int = 16
     pseudo_grid_source_weighting_mode: str = "inverse_distance"
     pseudo_grid_loss_tracking_enabled: bool = True
+    pseudo_grid_numerical_failure_tolerance_fraction: float = 0.15
     pseudo_grid_causal_history_pruning_enabled: bool = False
     pseudo_grid_causal_history_safety_margin_steps: int = 2
 
@@ -632,12 +634,14 @@ class SimulationOptions:
                 "field_rider_count": self.pseudo_grid_field_rider_count,
                 "field_driver_count": self.pseudo_grid_field_driver_count,
                 "field_deposition_neighbor_count": self.pseudo_grid_field_deposition_neighbor_count,
+                "space_charge_near_neighbor_count": self.pseudo_grid_space_charge_near_neighbor_count,
                 "passive_neighbor_count": self.pseudo_grid_passive_neighbor_count,
                 "coverage_strategy": self.pseudo_grid_coverage_strategy,
                 "coverage_space": self.pseudo_grid_coverage_space,
                 "pair_reuse_window": self.pseudo_grid_pair_reuse_window,
                 "source_weighting_mode": self.pseudo_grid_source_weighting_mode,
                 "loss_tracking_enabled": self.pseudo_grid_loss_tracking_enabled,
+                "numerical_failure_tolerance_fraction": self.pseudo_grid_numerical_failure_tolerance_fraction,
                 "causal_history_pruning_enabled": self.pseudo_grid_causal_history_pruning_enabled,
                 "causal_history_safety_margin_steps": self.pseudo_grid_causal_history_safety_margin_steps,
             },
@@ -843,6 +847,13 @@ class SimulationOptions:
             value = _pseudo_value(name, default)
             try:
                 return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
+            except (TypeError, ValueError):
+                return default
+
+        def _pseudo_float(name: str, default: float) -> float:
+            value = _pseudo_value(name, default)
+            try:
+                return float(value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return default
 
@@ -1218,6 +1229,9 @@ class SimulationOptions:
             pseudo_grid_field_deposition_neighbor_count=_pseudo_int(
                 "field_deposition_neighbor_count", 4
             ),
+            pseudo_grid_space_charge_near_neighbor_count=_pseudo_int(
+                "space_charge_near_neighbor_count", 8
+            ),
             pseudo_grid_passive_neighbor_count=_pseudo_int("passive_neighbor_count", 4),
             pseudo_grid_coverage_strategy=_pseudo_str(
                 "coverage_strategy", "farthest_point_staleness"
@@ -1229,6 +1243,9 @@ class SimulationOptions:
             ),
             pseudo_grid_loss_tracking_enabled=_pseudo_bool(
                 "loss_tracking_enabled", True
+            ),
+            pseudo_grid_numerical_failure_tolerance_fraction=_pseudo_float(
+                "numerical_failure_tolerance_fraction", 0.15
             ),
             pseudo_grid_causal_history_pruning_enabled=_pseudo_bool(
                 "causal_history_pruning_enabled", False
@@ -1780,6 +1797,10 @@ class RunResult:
     particle_failure_info: Optional[Dict[int, Dict]] = (
         None  # Detailed failure info per particle
     )
+    # Pseudo-grid field-representative charge-localization diagnostics.
+    # Per-step list of dicts with max_anchor_fraction and gini for rider/driver
+    # field-rep source charges. Empty when field reps are not used.
+    pseudo_grid_charge_localization: Optional[List[Dict[str, float]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -2175,12 +2196,18 @@ def build_pseudo_grid_config(options: SimulationOptions) -> object:
         field_deposition_neighbor_count=int(
             options.pseudo_grid_field_deposition_neighbor_count
         ),
+        space_charge_near_neighbor_count=int(
+            options.pseudo_grid_space_charge_near_neighbor_count
+        ),
         passive_neighbor_count=int(options.pseudo_grid_passive_neighbor_count),
         coverage_strategy=str(options.pseudo_grid_coverage_strategy),
         coverage_space=str(options.pseudo_grid_coverage_space),
         pair_reuse_window=int(options.pseudo_grid_pair_reuse_window),
         source_weighting_mode=str(options.pseudo_grid_source_weighting_mode),
         loss_tracking_enabled=bool(options.pseudo_grid_loss_tracking_enabled),
+        numerical_failure_tolerance_fraction=float(
+            options.pseudo_grid_numerical_failure_tolerance_fraction
+        ),
         causal_history_pruning_enabled=bool(
             options.pseudo_grid_causal_history_pruning_enabled
         ),
@@ -2598,8 +2625,13 @@ def run_testbed(
 
         beamline_geometry_config = build_beamline_geometry_config(options)
 
-        # Run core integrator directly
-        core_traj_rider, core_traj_driver, *_soa_out = retarded_integrator(
+        # Default: no pseudo-grid charge-localization data; populated below when
+        # the integrator returns the per-step field-rep diagnostics.
+        _pseudo_grid_charge_localization: List[Dict[str, float]] = []
+
+        # Run core integrator directly. The 5th return element is the per-step
+        # pseudo-grid charge-localization list (empty when field reps are off).
+        _integrator_return = retarded_integrator(
             steps=_actual_steps,
             h_step=_actual_h_step,
             wall_z=filtered_core_params.get("wall_z", 1e5),
@@ -2648,6 +2680,12 @@ def run_testbed(
             particle_loss=particle_loss_config,
             macroparticle_smearing=macroparticle_smearing_config,
             beamline_geometry=beamline_geometry_config,
+        )
+        # Unpack: rider_traj, driver_traj, rider_soa, driver_soa, localization
+        core_traj_rider = _integrator_return[0]
+        core_traj_driver = _integrator_return[1]
+        _pseudo_grid_charge_localization = (
+            _integrator_return[4] if len(_integrator_return) > 4 else []
         )
 
         # Build a normalized payload shared by the GUI and CLI surfaces.
@@ -4406,6 +4444,7 @@ def run_testbed(
         driver_gamma_final=driver_gamma_final,
         driver_trajectory=driver_trajectory_data,
         energy_ledger_metrics=energy_ledger_metrics,
+        pseudo_grid_charge_localization=_pseudo_grid_charge_localization,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,
         rider_norm_emittance_x_mm_mrad=rider_norm_emittance_x,
