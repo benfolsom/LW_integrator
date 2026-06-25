@@ -667,6 +667,77 @@ def test_reconstruct_full_state_from_active_result_applies_weighted_deltas_and_u
     assert reconstructed["beta_avg_x"][1] == pytest.approx((0.2 * 2.0 + 0.375) / 3.0)
 
 
+def test_reconstruct_full_state_from_active_result_can_leave_passives_frozen():
+    previous_full_state = _make_solver_state(
+        x=[0.0, 10.0, 20.0],
+        z=[0.0, 5.0, 10.0],
+        t=[0.0, 2.0, 4.0],
+        bx=[0.1, 0.2, 0.3],
+        bz=[0.0, 0.1, 0.0],
+    )
+    active_indices = np.array([0, 2], dtype=int)
+    active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["x"] = np.array([1.0, 22.0], dtype=float)
+    active_result_state["t"] = np.array([1.0, 5.0], dtype=float)
+    passive_map = PassiveNeighborMap(
+        passive_indices=np.array([1], dtype=int),
+        neighbor_particle_indices=np.array([[0, 2]], dtype=int),
+        weights=np.array([[0.25, 0.75]], dtype=float),
+    )
+
+    reconstructed = reconstruct_full_state_from_active_result(
+        previous_full_state,
+        active_indices,
+        active_result_state,
+        passive_map,
+        passive_update_mode="frozen",
+    )
+
+    np.testing.assert_allclose(reconstructed["x"], np.array([1.0, 10.0, 22.0]))
+    np.testing.assert_allclose(reconstructed["z"], np.array([0.0, 5.0, 10.0]))
+    np.testing.assert_allclose(reconstructed["t"], np.array([1.0, 2.0, 5.0]))
+
+
+def test_reconstruct_full_state_from_active_result_can_coast_passives_ballistically():
+    previous_full_state = _make_solver_state(
+        x=[0.0, 10.0, 20.0],
+        z=[0.0, 5.0, 10.0],
+        t=[0.0, 2.0, 4.0],
+        gamma=[1.0, 2.0, 3.0],
+        bx=[0.1, 0.2, 0.3],
+        bz=[0.0, 0.1, 0.0],
+    )
+    active_indices = np.array([0, 2], dtype=int)
+    active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["x"] = np.array([1.0, 22.0], dtype=float)
+    active_result_state["t"] = np.array([1.0, 5.0], dtype=float)
+    passive_map = PassiveNeighborMap(
+        passive_indices=np.array([1], dtype=int),
+        neighbor_particle_indices=np.array([[0, 2]], dtype=int),
+        weights=np.array([[0.25, 0.75]], dtype=float),
+    )
+
+    reconstructed = reconstruct_full_state_from_active_result(
+        previous_full_state,
+        active_indices,
+        active_result_state,
+        passive_map,
+        passive_update_mode="ballistic",
+        h_step=0.5,
+    )
+
+    passive_dt = 2.0 * 0.5
+    np.testing.assert_allclose(
+        reconstructed["x"],
+        np.array([1.0, 10.0 + 0.2 * C_MMNS * passive_dt, 22.0]),
+    )
+    np.testing.assert_allclose(
+        reconstructed["z"],
+        np.array([0.0, 5.0 + 0.1 * C_MMNS * passive_dt, 10.0]),
+    )
+    np.testing.assert_allclose(reconstructed["t"], np.array([1.0, 3.0, 5.0]))
+
+
 def test_reconstruct_full_state_from_active_result_ignores_dead_anchors_when_enabled():
     previous_full_state = _make_solver_state(
         x=[0.0, 10.0, 20.0],

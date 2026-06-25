@@ -212,6 +212,8 @@ class PseudoGridConfig:
     passive_neighbor_count: int = 4
     coverage_strategy: str = "farthest_point_staleness"
     coverage_space: str = "position"
+    active_selection_mode: str = "rotating_live"
+    passive_update_mode: str = "weighted_delta"
     pair_reuse_window: int = 16
     source_weighting_mode: str = "inverse_distance"
     loss_tracking_enabled: bool = True
@@ -238,6 +240,20 @@ class PseudoGridConfig:
             )
         if self.passive_neighbor_count <= 0:
             raise ValueError("pseudo-grid passive_neighbor_count must be positive")
+        if self.active_selection_mode not in {"rotating_live", "fixed_prefix"}:
+            raise ValueError(
+                "pseudo-grid active_selection_mode must be rotating_live or fixed_prefix"
+            )
+        if self.passive_update_mode not in {
+            "weighted_delta",
+            "ballistic",
+            "external_interbunch",
+            "frozen",
+        }:
+            raise ValueError(
+                "pseudo-grid passive_update_mode must be weighted_delta, ballistic, "
+                "external_interbunch, or frozen"
+            )
         if self.pair_reuse_window < 0:
             raise ValueError("pseudo-grid pair_reuse_window must be non-negative")
         if not (0.0 <= self.numerical_failure_tolerance_fraction <= 1.0):

@@ -536,8 +536,7 @@ def accumulate_field_representative_charges_and_radii(
         )
     )
     distance_sq = np.sum(
-        (particle_positions[:, np.newaxis, :] - field_positions[np.newaxis, :, :])
-        ** 2,
+        (particle_positions[:, np.newaxis, :] - field_positions[np.newaxis, :, :]) ** 2,
         axis=2,
     )
     abs_contributions = np.abs(charges[non_field])[:, np.newaxis] * weights
@@ -1169,6 +1168,8 @@ def reconstruct_full_state_from_active_result(
     passive_map: PassiveNeighborMap,
     *,
     loss_tracking_enabled: bool = True,
+    passive_update_mode: str = "weighted_delta",
+    h_step: float | None = None,
 ) -> ParticleState:
     """Rebuild a full bunch state from an active-only solve result."""
     full_state = _copy_particle_state(previous_full_state)
@@ -1231,6 +1232,20 @@ def reconstruct_full_state_from_active_result(
     passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
     if passive_indices.size == 0:
         return full_state
+    if passive_update_mode == "frozen":
+        return full_state
+    if passive_update_mode in {"ballistic", "external_interbunch"}:
+        if h_step is None:
+            raise ValueError(
+                f"h_step is required for {passive_update_mode} passive updates"
+            )
+        _coast_passive_indices(full_state, passive_indices, float(h_step))
+        return full_state
+    if passive_update_mode != "weighted_delta":
+        raise ValueError(
+            "passive_update_mode must be weighted_delta, ballistic, "
+            "external_interbunch, or frozen"
+        )
 
     full_dead_mask = np.asarray(
         full_state.get(
@@ -1342,22 +1357,28 @@ def build_pseudo_grid_step_schedule(
     rider_alive = _alive_indices_for_schedule(rider_state)
     driver_alive = _alive_indices_for_schedule(driver_state)
 
-    rider_active = select_active_indices(
-        rider_state,
-        rider_alive,
-        active_count=config.active_rider_count,
-        step_index=step_index,
-        last_active_step=planner_state.rider_last_active_step,
-        activation_count=planner_state.rider_activation_count,
-    )
-    driver_active = select_active_indices(
-        driver_state,
-        driver_alive,
-        active_count=config.active_driver_count,
-        step_index=step_index,
-        last_active_step=planner_state.driver_last_active_step,
-        activation_count=planner_state.driver_activation_count,
-    )
+    if config.active_selection_mode == "fixed_prefix":
+        rider_active = rider_alive[: min(config.active_rider_count, rider_alive.size)]
+        driver_active = driver_alive[
+            : min(config.active_driver_count, driver_alive.size)
+        ]
+    else:
+        rider_active = select_active_indices(
+            rider_state,
+            rider_alive,
+            active_count=config.active_rider_count,
+            step_index=step_index,
+            last_active_step=planner_state.rider_last_active_step,
+            activation_count=planner_state.rider_activation_count,
+        )
+        driver_active = select_active_indices(
+            driver_state,
+            driver_alive,
+            active_count=config.active_driver_count,
+            step_index=step_index,
+            last_active_step=planner_state.driver_last_active_step,
+            activation_count=planner_state.driver_activation_count,
+        )
 
     rider_passive_map = _empty_neighbor_map()
     if rider_active.size > 0:
@@ -1506,6 +1527,26 @@ def _copy_particle_state(state: ParticleState) -> ParticleState:
         else:
             copied_state[key] = copy.deepcopy(value)
     return copied_state
+
+
+def _coast_passive_indices(
+    state: ParticleState,
+    passive_indices: np.ndarray,
+    h_step: float,
+) -> None:
+    passive = np.asarray(passive_indices, dtype=int)
+    if passive.size == 0:
+        return
+    if "gamma" not in state or "t" not in state:
+        raise KeyError("ballistic passive updates require 'gamma' and 't' fields")
+    gamma = np.asarray(state["gamma"], dtype=float)[passive]
+    dt_lab = gamma * float(h_step)
+    state["t"][passive] = np.asarray(state["t"], dtype=float)[passive] + dt_lab
+    for axis, beta_key in (("x", "bx"), ("y", "by"), ("z", "bz")):
+        if axis in state and beta_key in state:
+            state[axis][passive] = np.asarray(state[axis], dtype=float)[passive] + (
+                np.asarray(state[beta_key], dtype=float)[passive] * C_MMNS * dt_lab
+            )
 
 
 def _update_beta_running_average(

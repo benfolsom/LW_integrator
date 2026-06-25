@@ -31,6 +31,7 @@ from .particle_status import (
 from .particle_loss import build_particle_loss_context, mark_particle_losses
 from .pseudo_grid import (
     ActiveTrajectoryView,
+    PassiveNeighborMap,
     PseudoGridPlannerState,
     PseudoGridStepSchedule,
     build_hybrid_space_charge_sources,
@@ -696,6 +697,7 @@ def _run_pseudo_grid_reduced_step(
     numerical_failure_tolerance_fraction: float,
     field_deposition_neighbor_count: int,
     space_charge_near_neighbor_count: int,
+    passive_update_mode: str = "weighted_delta",
     source_history_base_index: int = 0,
     observer_history_base_index: int = 0,
     observer_soa: TrajectoryArrays | None = None,
@@ -930,11 +932,73 @@ def _run_pseudo_grid_reduced_step(
             },
         )
 
-    return reconstruct_full_state_from_active_result(
+    active_reconstructed = reconstruct_full_state_from_active_result(
         observer_history[-1],
         observer_active_indices,
         active_result_state,
         passive_map,
+        loss_tracking_enabled=loss_tracking_enabled,
+        passive_update_mode=(
+            "frozen"
+            if passive_update_mode == "external_interbunch"
+            else passive_update_mode
+        ),
+        h_step=h_step,
+    )
+
+    passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
+    if passive_update_mode != "external_interbunch" or passive_indices.size == 0:
+        return active_reconstructed
+
+    observer_passive_soa = _indexed_active_history(
+        observer_soa,
+        passive_indices,
+        start_step=observer_global_start,
+    )
+    if observer_passive_soa is not None:
+        observer_passive_history = ActiveTrajectoryView(observer_passive_soa)
+    else:
+        observer_passive_history = slice_trajectory_particle_history(
+            observer_history,
+            passive_indices,
+        )
+        observer_passive_soa = _build_partial_soa(
+            observer_passive_history,
+            len(observer_passive_history),
+        )
+
+    passive_result_state = self_consistent_step(
+        retarded_equations_of_motion,
+        h_step,
+        cast(Trajectory, observer_passive_history),
+        cast(Trajectory, source_active_history),
+        len(observer_passive_history) - 1,
+        aperture_radius,
+        sim_type,
+        self_consistency,
+        chrono_mode,
+        startup_mode,
+        step_idx=step_idx,
+        cancel_callback=cancel_callback,
+        space_charge=None,
+        radiation_reaction_mode=radiation_reaction_mode,
+        macroparticle_smearing=macroparticle_smearing,
+        beamline_geometry=beamline_geometry,
+        traj_soa=observer_passive_soa,
+        traj_ext_soa=source_active_soa,
+        **({"external_field": external_field} if external_field is not None else {}),
+    )
+
+    empty_passive_map = PassiveNeighborMap(
+        passive_indices=np.zeros(0, dtype=int),
+        neighbor_particle_indices=np.zeros((0, 0), dtype=int),
+        weights=np.zeros((0, 0), dtype=float),
+    )
+    return reconstruct_full_state_from_active_result(
+        active_reconstructed,
+        passive_indices,
+        passive_result_state,
+        empty_passive_map,
         loss_tracking_enabled=loss_tracking_enabled,
     )
 
@@ -988,6 +1052,7 @@ def _run_adaptive_step(
     pseudo_grid_numerical_failure_tolerance_fraction: float = 0.001,
     pseudo_grid_field_deposition_neighbor_count: int = 4,
     pseudo_grid_space_charge_near_neighbor_count: int = 8,
+    pseudo_grid_passive_update_mode: str = "weighted_delta",
     pseudo_grid_observer_history: Trajectory | None = None,
     pseudo_grid_source_history: Trajectory | None = None,
     pseudo_grid_observer_history_base_index: int = 0,
@@ -1224,6 +1289,7 @@ def _run_adaptive_step(
             space_charge_near_neighbor_count=(
                 pseudo_grid_space_charge_near_neighbor_count
             ),
+            passive_update_mode=pseudo_grid_passive_update_mode,
             source_history_base_index=pseudo_grid_source_history_base_index,
             observer_history_base_index=pseudo_grid_observer_history_base_index,
             observer_soa=pseudo_grid_observer_soa,
@@ -1383,6 +1449,7 @@ def _run_adaptive_step(
                         space_charge_near_neighbor_count=(
                             pseudo_grid_space_charge_near_neighbor_count
                         ),
+                        passive_update_mode=pseudo_grid_passive_update_mode,
                         source_history_base_index=i - 1,
                         observer_history_base_index=i - 1,
                         observer_soa=None,
@@ -2566,6 +2633,7 @@ def retarded_integrator(
                 pseudo_grid_space_charge_near_neighbor_count=(
                     pseudo_grid.space_charge_near_neighbor_count
                 ),
+                pseudo_grid_passive_update_mode=pseudo_grid.passive_update_mode,
                 pseudo_grid_observer_history=(
                     _rider_retained_history if _pseudo_grid_retention_active else None
                 ),
@@ -2774,6 +2842,7 @@ def retarded_integrator(
                         space_charge_near_neighbor_count=(
                             pseudo_grid.space_charge_near_neighbor_count
                         ),
+                        passive_update_mode=pseudo_grid.passive_update_mode,
                         source_history_base_index=(
                             _rider_retained_history_start_index
                             if _pseudo_grid_retention_active

@@ -53,6 +53,7 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         external_field_t_min=1.0e-6,
         external_field_t_max=2.0e-6,
         radiation_reaction_mode="power_matched_damping",
+        macroparticle_dynamics_mode="macro_inertia",
         pseudo_grid_enabled=True,
         pseudo_grid_active_rider_count=6,
         pseudo_grid_active_driver_count=7,
@@ -62,6 +63,7 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         pseudo_grid_passive_neighbor_count=3,
         pseudo_grid_coverage_strategy="farthest_point",
         pseudo_grid_coverage_space="phase_space",
+        pseudo_grid_passive_update_mode="external_interbunch",
         pseudo_grid_pair_reuse_window=25,
         pseudo_grid_source_weighting_mode="nearest",
         pseudo_grid_loss_tracking_enabled=False,
@@ -130,6 +132,8 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.external_field_t_min == pytest.approx(1.0e-6)
     assert loaded.external_field_t_max == pytest.approx(2.0e-6)
     assert payload["radiation_reaction_mode"] == "power_matched_damping"
+    assert payload["macroparticle_dynamics_mode"] == "macro_inertia"
+    assert loaded.macroparticle_dynamics_mode == "macro_inertia"
     assert payload["pseudo_grid"] == {
         "enabled": True,
         "active_rider_count": 6,
@@ -141,6 +145,8 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         "passive_neighbor_count": 3,
         "coverage_strategy": "farthest_point",
         "coverage_space": "phase_space",
+        "active_selection_mode": "rotating_live",
+        "passive_update_mode": "external_interbunch",
         "pair_reuse_window": 25,
         "source_weighting_mode": "nearest",
         "loss_tracking_enabled": False,
@@ -158,6 +164,8 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.pseudo_grid_passive_neighbor_count == 3
     assert loaded.pseudo_grid_coverage_strategy == "farthest_point"
     assert loaded.pseudo_grid_coverage_space == "phase_space"
+    assert loaded.pseudo_grid_active_selection_mode == "rotating_live"
+    assert loaded.pseudo_grid_passive_update_mode == "external_interbunch"
     assert loaded.pseudo_grid_pair_reuse_window == 25
     assert loaded.pseudo_grid_source_weighting_mode == "nearest"
     assert loaded.pseudo_grid_loss_tracking_enabled is False

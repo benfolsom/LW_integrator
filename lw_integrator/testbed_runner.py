@@ -262,6 +262,7 @@ class SimulationOptions:
             for k, v in CORE_PARAM_DEFAULTS.items()
         }
     )
+    macroparticle_dynamics_mode: str = "representative"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
 
@@ -435,6 +436,8 @@ class SimulationOptions:
     pseudo_grid_passive_neighbor_count: int = 4
     pseudo_grid_coverage_strategy: str = "farthest_point_staleness"
     pseudo_grid_coverage_space: str = "position"
+    pseudo_grid_active_selection_mode: str = "rotating_live"
+    pseudo_grid_passive_update_mode: str = "weighted_delta"
     pseudo_grid_pair_reuse_window: int = 16
     pseudo_grid_source_weighting_mode: str = "inverse_distance"
     pseudo_grid_loss_tracking_enabled: bool = True
@@ -514,6 +517,7 @@ class SimulationOptions:
             "rider_params": dict(self.rider_params),
             "driver_params": dict(self.driver_params) if self.driver_params else None,
             "core_params": dict(self.core_params),
+            "macroparticle_dynamics_mode": self.macroparticle_dynamics_mode,
             "image_subcharge_count": self.image_subcharge_count,
             "use_image_weighting": self.use_image_weighting,
             "macroparticle_enabled": self.macroparticle_enabled,
@@ -638,6 +642,8 @@ class SimulationOptions:
                 "passive_neighbor_count": self.pseudo_grid_passive_neighbor_count,
                 "coverage_strategy": self.pseudo_grid_coverage_strategy,
                 "coverage_space": self.pseudo_grid_coverage_space,
+                "active_selection_mode": self.pseudo_grid_active_selection_mode,
+                "passive_update_mode": self.pseudo_grid_passive_update_mode,
                 "pair_reuse_window": self.pseudo_grid_pair_reuse_window,
                 "source_weighting_mode": self.pseudo_grid_source_weighting_mode,
                 "loss_tracking_enabled": self.pseudo_grid_loss_tracking_enabled,
@@ -1014,6 +1020,9 @@ class SimulationOptions:
             rider_params=rider_params,
             driver_params=driver_params,
             core_params=core_params,
+            macroparticle_dynamics_mode=_str(
+                "macroparticle_dynamics_mode", "representative"
+            ),
             image_subcharge_count=_int("image_subcharge_count", 12),
             use_image_weighting=_bool("use_image_weighting", True),
             macroparticle_enabled=_bool("macroparticle_enabled", False),
@@ -1237,6 +1246,12 @@ class SimulationOptions:
                 "coverage_strategy", "farthest_point_staleness"
             ),
             pseudo_grid_coverage_space=_pseudo_str("coverage_space", "position"),
+            pseudo_grid_active_selection_mode=_pseudo_str(
+                "active_selection_mode", "rotating_live"
+            ),
+            pseudo_grid_passive_update_mode=_pseudo_str(
+                "passive_update_mode", "weighted_delta"
+            ),
             pseudo_grid_pair_reuse_window=_pseudo_int("pair_reuse_window", 16),
             pseudo_grid_source_weighting_mode=_pseudo_str(
                 "source_weighting_mode", "inverse_distance"
@@ -1859,6 +1874,43 @@ def _extract_vector_series(
     return np.stack(components, axis=-1)
 
 
+def _apply_macroparticle_dynamics_mode(
+    state: Dict[str, np.ndarray] | None,
+    mode: str,
+) -> None:
+    if state is None or mode == "representative":
+        return
+    if mode != "macro_inertia":
+        raise ValueError(
+            "macroparticle_dynamics_mode must be representative or macro_inertia"
+        )
+    if "macro_population" not in state:
+        return
+    macro_population = np.asarray(state["macro_population"], dtype=float)
+    if "q_species" in state:
+        state["q_observer"] = (
+            np.asarray(state["q_species"], dtype=float) * macro_population
+        )
+    elif "q_observer" in state:
+        state["q_observer"] = (
+            np.asarray(state["q_observer"], dtype=float) * macro_population
+        )
+    if "m_species" in state:
+        scaled_mass = np.asarray(state["m_species"], dtype=float) * macro_population
+        state["m_species"] = scaled_mass
+        state["m"] = scaled_mass.copy()
+    elif "m" in state:
+        state["m"] = np.asarray(state["m"], dtype=float) * macro_population
+    for momentum_field in ("Px", "Py", "Pz", "Pt"):
+        if momentum_field in state:
+            state[momentum_field] = (
+                np.asarray(state[momentum_field], dtype=float) * macro_population
+            )
+    observer_charge = np.asarray(state.get("q_observer", state["q"]), dtype=float)
+    inertia_mass = np.asarray(state.get("m", state.get("m_species")), dtype=float)
+    state["char_time"] = (2.0 / 3.0) * observer_charge**2 / (inertia_mass * C_MMNS**3)
+
+
 def prepare_particle_bunches(
     seed: int,
     *,
@@ -2202,6 +2254,8 @@ def build_pseudo_grid_config(options: SimulationOptions) -> object:
         passive_neighbor_count=int(options.pseudo_grid_passive_neighbor_count),
         coverage_strategy=str(options.pseudo_grid_coverage_strategy),
         coverage_space=str(options.pseudo_grid_coverage_space),
+        active_selection_mode=str(options.pseudo_grid_active_selection_mode),
+        passive_update_mode=str(options.pseudo_grid_passive_update_mode),
         pair_reuse_window=int(options.pseudo_grid_pair_reuse_window),
         source_weighting_mode=str(options.pseudo_grid_source_weighting_mode),
         loss_tracking_enabled=bool(options.pseudo_grid_loss_tracking_enabled),
@@ -2549,6 +2603,15 @@ def run_testbed(
                 rider_params=rider_params,
                 driver_params=driver_params,
             )
+        )
+
+        _apply_macroparticle_dynamics_mode(
+            rider_state,
+            str(options.macroparticle_dynamics_mode),
+        )
+        _apply_macroparticle_dynamics_mode(
+            driver_state,
+            str(options.macroparticle_dynamics_mode),
         )
 
         # Apply macroparticle source-charge multiplier if enabled

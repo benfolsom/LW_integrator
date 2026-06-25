@@ -32,6 +32,19 @@ All notable changes and updates to the LW Integrator project are documented in t
 - Fixed field-representative charge accumulation to preserve caller field-index
   order instead of sorting with `np.unique`, keeping source charges aligned with
   the scheduled field-representative histories.
+- Added experimental pseudo-grid modes for source-representation probes:
+  `active_selection_mode="fixed_prefix"` keeps a fixed dynamic observer pool,
+  `passive_update_mode="external_interbunch"` integrates non-active particles
+  against external fields and opposite-bunch field representatives while omitting
+  same-bunch space charge, `passive_update_mode="ballistic"` advances force-free
+  evaluation/source-deposition points, and `passive_update_mode="frozen"` keeps
+  static passives for diagnostics. Defaults preserve the existing rotating
+  live-particle behavior.
+- Added an experimental testbed-only `macroparticle_dynamics_mode` option.
+  The default `representative` mode keeps species observer charge/inertia with
+  macro-weighted source charge. `macro_inertia` scales observer charge, inertia,
+  momenta, and radiation characteristic time by `macro_population`, preserving
+  the same q/m trajectory when source charge is unchanged.
 - Added `numerical_failure_tolerance_fraction` to pseudo-grid config so gamma
   blowups and self-consistency nonconvergence in reduced active solves can mark
   individual particles dead and continue until the configured loss budget is
