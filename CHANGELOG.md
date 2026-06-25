@@ -39,7 +39,9 @@ All notable changes and updates to the LW Integrator project are documented in t
   same-bunch space charge, `passive_update_mode="ballistic"` advances force-free
   evaluation/source-deposition points, and `passive_update_mode="frozen"` keeps
   static passives for diagnostics. Defaults preserve the existing rotating
-  live-particle behavior.
+  live-particle behavior; high-passive convergence studies should prefer
+  `fixed_prefix` plus `external_interbunch` unless they intentionally need the
+  legacy rotating-live reconstruction path.
 - Added an experimental testbed-only `macroparticle_dynamics_mode` option.
   The default `representative` mode keeps species observer charge/inertia with
   macro-weighted source charge. `macro_inertia` scales observer charge, inertia,

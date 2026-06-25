@@ -90,11 +90,15 @@ An experimental pseudo-grid reduced solver is now available for
   same-bunch space charge.
 * The integrator now builds per-step pseudo-grid schedules, stores them on the
   legacy and SoA trajectory paths, advances active observers against reduced
-  field-representative source histories with effective source charges, uses the
-  same field-representative source set for reduced same-bunch space charge, and
-  reconstructs passive particles from weighted active deltas while preserving
-  full-state outputs.  ``field_rider_count``, ``field_driver_count``, and
-  ``field_deposition_neighbor_count`` control the separate weighted source set.
+  field-representative source histories with effective source charges, and uses
+  the same field-representative source set for reduced same-bunch space charge.
+  Passive updates are configurable: ``weighted_delta`` preserves the historical
+  active-anchor reconstruction, ``external_interbunch`` integrates passives
+  against external fields and opposite-bunch field representatives while omitting
+  same-bunch space charge, ``ballistic`` coasts force-free passives, and
+  ``frozen`` keeps static passives for diagnostics.  ``field_rider_count``,
+  ``field_driver_count``, and ``field_deposition_neighbor_count`` control the
+  separate weighted source set.
 * When causal-history pruning is enabled for supported reduced B2B solves, live
   rider/driver histories are compacted after each completed step and schedule
   snapshots record retained-start indices plus dropped-sample counts.
@@ -117,6 +121,12 @@ An experimental pseudo-grid reduced solver is now available for
   a diagnostic continuation budget. Gamma blowups and self-consistency
   nonconvergence in active solves mark individual particles dead until that
   fraction is exceeded; the default is 15%.
+* High-passive source-representation studies should prefer fixed active
+  observers (``active_selection_mode="fixed_prefix"``) with
+  ``passive_update_mode="external_interbunch"``. This keeps passives responsive
+  to bending/external fields and interbunch acceleration while avoiding the
+  same-bunch passive reconstruction pathway that produced transverse blowups in
+  light/heavy screening smoke tests.
 * ``scripts/pseudo_grid_feasibility_probe.py`` provides a lightweight sanity and
   scale probe covering zero-charge drift, weak-charge full-vs-reduced
   comparisons, optional instantaneous or retarded same-bunch space-charge

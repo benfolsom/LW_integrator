@@ -144,11 +144,19 @@ particle to be solved as an observer.
            w = passive interpolation/deposition weight.
            q_eff = representative charge plus deposited non-field source charge.
 
-After the active solve, each passive particle receives the weighted combination
-of its active anchors' changes in position, momentum, velocity, gamma, and
-radiation bookkeeping.  Cross-bunch field-source representation uses the
-separate field-representative deposition path; same-bunch pseudo-grid space
-charge still uses the active/passive map.  If a selected active particle is
+After the active solve, passive handling depends on ``passive_update_mode``.
+The historical ``weighted_delta`` mode reconstructs each passive from the
+weighted combination of its active anchors' changes in position, momentum,
+velocity, gamma, and radiation bookkeeping.  For high-passive source-resolution
+studies, ``external_interbunch`` is usually the safer reduced mode: passives are
+integrated as observers of external fields and opposite-bunch field
+representatives, but same-bunch/intrabunch space charge is omitted for those
+passive solves.  This keeps passive source/evaluation samples responsive to
+bending fields and interbunch acceleration without reintroducing the expensive
+and numerically fragile passive same-bunch space-charge solve.  ``ballistic``
+coasts passives force-free and ``frozen`` keeps static passives; both are best
+treated as diagnostics.  Cross-bunch field-source representation uses the
+separate field-representative deposition path.  If a selected active particle is
 marked dead by the existing status machinery, pseudo-grid loss tracking removes
 it from later schedules and renormalizes passive-anchor weights onto surviving
 anchors when possible.
@@ -180,10 +188,14 @@ Key ideas to keep in mind
   ``PseudoGridConfig`` exposes an opt-in reduced active/passive solve path for
   ``SimulationType.BUNCH_TO_BUNCH`` runs.  The reduced path supports adaptive
   timestep retries and reduced same-bunch space charge when each bunch keeps at
-  least two active particles.  Supported reduced B2B runs can compact live
-  causal histories while preserving full-state SoA/legacy outputs and retained-
-  history diagnostics.  Unsupported configurations fall back to the canonical
-  full solve.
+  least two active particles.  High-passive convergence studies should normally
+  use ``active_selection_mode="fixed_prefix"`` with
+  ``passive_update_mode="external_interbunch"`` so passives respond to external
+  and opposite-bunch fields while same-bunch space charge remains confined to
+  the reduced active/field-representative model.  Supported reduced B2B runs can
+  compact live causal histories while preserving full-state SoA/legacy outputs
+  and retained-history diagnostics.  Unsupported configurations fall back to the
+  canonical full solve.
 * **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
   (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
   same ``run_testbed()`` function with the same ``SimulationOptions`` dataclass.
