@@ -214,6 +214,11 @@ class PseudoGridConfig:
     coverage_space: str = "position"
     active_selection_mode: str = "rotating_live"
     passive_update_mode: str = "weighted_delta"
+    active_rotation_interval: int = 20
+    active_rotation_fraction: float = 0.25
+    passive_remap_mode: str = "none"
+    passive_remap_warning_sigma: float = 0.5
+    passive_remap_trigger_sigma: float = 1.0
     pair_reuse_window: int = 16
     source_weighting_mode: str = "inverse_distance"
     loss_tracking_enabled: bool = True
@@ -240,9 +245,14 @@ class PseudoGridConfig:
             )
         if self.passive_neighbor_count <= 0:
             raise ValueError("pseudo-grid passive_neighbor_count must be positive")
-        if self.active_selection_mode not in {"rotating_live", "fixed_prefix"}:
+        if self.active_selection_mode not in {
+            "rotating_live",
+            "slow_rotating_live",
+            "fixed_prefix",
+        }:
             raise ValueError(
-                "pseudo-grid active_selection_mode must be rotating_live or fixed_prefix"
+                "pseudo-grid active_selection_mode must be rotating_live, "
+                "slow_rotating_live, or fixed_prefix"
             )
         if self.passive_update_mode not in {
             "weighted_delta",
@@ -253,6 +263,22 @@ class PseudoGridConfig:
             raise ValueError(
                 "pseudo-grid passive_update_mode must be weighted_delta, ballistic, "
                 "external_interbunch, or frozen"
+            )
+        if self.active_rotation_interval <= 0:
+            raise ValueError("pseudo-grid active_rotation_interval must be positive")
+        if not (0.0 < self.active_rotation_fraction <= 1.0):
+            raise ValueError("pseudo-grid active_rotation_fraction must be in (0, 1]")
+        if self.passive_remap_mode != "none":
+            raise ValueError(
+                "pseudo-grid passive_remap_mode currently supports only none"
+            )
+        if self.passive_remap_warning_sigma < 0.0:
+            raise ValueError(
+                "pseudo-grid passive_remap_warning_sigma must be non-negative"
+            )
+        if self.passive_remap_trigger_sigma < self.passive_remap_warning_sigma:
+            raise ValueError(
+                "pseudo-grid passive_remap_trigger_sigma must be >= warning threshold"
             )
         if self.pair_reuse_window < 0:
             raise ValueError("pseudo-grid pair_reuse_window must be non-negative")

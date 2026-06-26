@@ -438,6 +438,11 @@ class SimulationOptions:
     pseudo_grid_coverage_space: str = "position"
     pseudo_grid_active_selection_mode: str = "rotating_live"
     pseudo_grid_passive_update_mode: str = "weighted_delta"
+    pseudo_grid_active_rotation_interval: int = 20
+    pseudo_grid_active_rotation_fraction: float = 0.25
+    pseudo_grid_passive_remap_mode: str = "none"
+    pseudo_grid_passive_remap_warning_sigma: float = 0.5
+    pseudo_grid_passive_remap_trigger_sigma: float = 1.0
     pseudo_grid_pair_reuse_window: int = 16
     pseudo_grid_source_weighting_mode: str = "inverse_distance"
     pseudo_grid_loss_tracking_enabled: bool = True
@@ -644,6 +649,11 @@ class SimulationOptions:
                 "coverage_space": self.pseudo_grid_coverage_space,
                 "active_selection_mode": self.pseudo_grid_active_selection_mode,
                 "passive_update_mode": self.pseudo_grid_passive_update_mode,
+                "active_rotation_interval": self.pseudo_grid_active_rotation_interval,
+                "active_rotation_fraction": self.pseudo_grid_active_rotation_fraction,
+                "passive_remap_mode": self.pseudo_grid_passive_remap_mode,
+                "passive_remap_warning_sigma": self.pseudo_grid_passive_remap_warning_sigma,
+                "passive_remap_trigger_sigma": self.pseudo_grid_passive_remap_trigger_sigma,
                 "pair_reuse_window": self.pseudo_grid_pair_reuse_window,
                 "source_weighting_mode": self.pseudo_grid_source_weighting_mode,
                 "loss_tracking_enabled": self.pseudo_grid_loss_tracking_enabled,
@@ -1251,6 +1261,19 @@ class SimulationOptions:
             ),
             pseudo_grid_passive_update_mode=_pseudo_str(
                 "passive_update_mode", "weighted_delta"
+            ),
+            pseudo_grid_active_rotation_interval=_pseudo_int(
+                "active_rotation_interval", 20
+            ),
+            pseudo_grid_active_rotation_fraction=_pseudo_float(
+                "active_rotation_fraction", 0.25
+            ),
+            pseudo_grid_passive_remap_mode=_pseudo_str("passive_remap_mode", "none"),
+            pseudo_grid_passive_remap_warning_sigma=_pseudo_float(
+                "passive_remap_warning_sigma", 0.5
+            ),
+            pseudo_grid_passive_remap_trigger_sigma=_pseudo_float(
+                "passive_remap_trigger_sigma", 1.0
             ),
             pseudo_grid_pair_reuse_window=_pseudo_int("pair_reuse_window", 16),
             pseudo_grid_source_weighting_mode=_pseudo_str(
@@ -2256,6 +2279,15 @@ def build_pseudo_grid_config(options: SimulationOptions) -> object:
         coverage_space=str(options.pseudo_grid_coverage_space),
         active_selection_mode=str(options.pseudo_grid_active_selection_mode),
         passive_update_mode=str(options.pseudo_grid_passive_update_mode),
+        active_rotation_interval=int(options.pseudo_grid_active_rotation_interval),
+        active_rotation_fraction=float(options.pseudo_grid_active_rotation_fraction),
+        passive_remap_mode=str(options.pseudo_grid_passive_remap_mode),
+        passive_remap_warning_sigma=float(
+            options.pseudo_grid_passive_remap_warning_sigma
+        ),
+        passive_remap_trigger_sigma=float(
+            options.pseudo_grid_passive_remap_trigger_sigma
+        ),
         pair_reuse_window=int(options.pseudo_grid_pair_reuse_window),
         source_weighting_mode=str(options.pseudo_grid_source_weighting_mode),
         loss_tracking_enabled=bool(options.pseudo_grid_loss_tracking_enabled),

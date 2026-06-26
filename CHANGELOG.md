@@ -40,8 +40,14 @@ All notable changes and updates to the LW Integrator project are documented in t
   evaluation/source-deposition points, and `passive_update_mode="frozen"` keeps
   static passives for diagnostics. Defaults preserve the existing rotating
   live-particle behavior; high-passive convergence studies should prefer
-  `fixed_prefix` plus `external_interbunch` unless they intentionally need the
-  legacy rotating-live reconstruction path.
+  rotating or slow-rotating active selection plus `external_interbunch`, with
+  `fixed_prefix` reserved for diagnostic controls.
+- Added `active_selection_mode="slow_rotating_live"` with configurable
+  `active_rotation_interval` and `active_rotation_fraction` so active observers
+  can change gradually instead of churning every step.
+- Added pseudo-grid role diagnostics for active/passive/field-representative
+  centroid offsets, active-duty spread, max time since active, and passive-remap
+  warning/trigger thresholds. Passive remapping remains disabled by default.
 - Added an experimental testbed-only `macroparticle_dynamics_mode` option.
   The default `representative` mode keeps species observer charge/inertia with
   macro-weighted source charge. `macro_inertia` scales observer charge, inertia,

@@ -108,6 +108,12 @@ class PseudoGridPlannerState:
     pair_reuse_tracker: PairReuseTracker
     rider_history_times_ns: list[float] = field(default_factory=list)
     driver_history_times_ns: list[float] = field(default_factory=list)
+    rider_current_active_indices: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=int)
+    )
+    driver_current_active_indices: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=int)
+    )
 
 
 class ActiveTrajectoryView:
@@ -199,6 +205,8 @@ class PseudoGridStepSchedule:
     rider_retained_history_start_index: int | None = None
     driver_dropped_history_samples: int = 0
     rider_dropped_history_samples: int = 0
+    rider_role_diagnostics: dict[str, float] = field(default_factory=dict)
+    driver_role_diagnostics: dict[str, float] = field(default_factory=dict)
 
 
 def initialize_pseudo_grid_planner_state(
@@ -1332,6 +1340,130 @@ def reconstruct_full_state_from_active_result(
     return full_state
 
 
+def _slow_rotating_active_indices(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    current_active_indices: np.ndarray,
+    *,
+    active_count: int,
+    step_index: int,
+    last_active_step: np.ndarray,
+    activation_count: np.ndarray,
+    rotation_interval: int,
+    rotation_fraction: float,
+) -> np.ndarray:
+    alive = np.asarray(alive_indices, dtype=int)
+    if alive.size == 0:
+        return np.zeros(0, dtype=int)
+    target_count = min(int(active_count), alive.size)
+    if target_count <= 0:
+        return np.zeros(0, dtype=int)
+
+    current = np.asarray(current_active_indices, dtype=int)
+    current = current[np.isin(current, alive)]
+    if current.size == 0 or current.size != target_count:
+        return select_active_indices(
+            state,
+            alive,
+            active_count=target_count,
+            step_index=step_index,
+            last_active_step=last_active_step,
+            activation_count=activation_count,
+        )
+
+    if (int(step_index) - 1) % int(rotation_interval) != 0:
+        return current.copy()
+
+    replace_count = max(1, int(np.ceil(target_count * float(rotation_fraction))))
+    replace_count = min(replace_count, target_count)
+    active_ages = np.asarray(last_active_step, dtype=int)[current]
+    active_counts = np.asarray(activation_count, dtype=int)[current]
+    remove_order = np.lexsort((current, -active_ages, -active_counts))
+    removed = current[remove_order[:replace_count]]
+    keep = current[remove_order[replace_count:]]
+
+    candidates = alive[~np.isin(alive, current)]
+    if candidates.size < target_count - keep.size:
+        candidates = np.unique(np.concatenate((candidates, removed)))
+    needed = target_count - keep.size
+    if needed <= 0:
+        return np.sort(keep)[:target_count]
+    selected_new = select_active_indices(
+        state,
+        candidates,
+        active_count=needed,
+        step_index=step_index,
+        last_active_step=last_active_step,
+        activation_count=activation_count,
+    )
+    return np.asarray([*keep.tolist(), *selected_new.tolist()], dtype=int)
+
+
+def _role_centroid_diagnostics(
+    state: ParticleState,
+    alive_indices: np.ndarray,
+    active_indices: np.ndarray,
+    field_indices: np.ndarray,
+    last_active_step: np.ndarray,
+    activation_count: np.ndarray,
+    *,
+    step_index: int,
+    remap_warning_sigma: float,
+    remap_trigger_sigma: float,
+) -> dict[str, float]:
+    alive = np.asarray(alive_indices, dtype=int)
+    if alive.size == 0:
+        return {}
+    active = np.asarray(active_indices, dtype=int)
+    field = np.asarray(field_indices, dtype=int)
+    passive = alive[~np.isin(alive, active)]
+
+    positions = np.column_stack(
+        (
+            np.asarray(state["x"], dtype=float),
+            np.asarray(state["y"], dtype=float),
+            np.asarray(state["z"], dtype=float),
+        )
+    )
+    alive_pos = positions[alive]
+    centroid = np.mean(alive_pos, axis=0)
+    rms = float(np.sqrt(np.mean(np.sum((alive_pos - centroid) ** 2, axis=1))))
+    sigma = max(rms, 1.0e-12)
+
+    def centroid_sigma(indices: np.ndarray) -> float:
+        if indices.size == 0:
+            return float("nan")
+        role_centroid = np.mean(positions[indices], axis=0)
+        return float(np.linalg.norm(role_centroid - centroid) / sigma)
+
+    passive_centroid_sigma = centroid_sigma(passive)
+    max_since_active = 0.0
+    if passive.size > 0:
+        last_steps = np.asarray(last_active_step, dtype=int)[passive]
+        ages = np.where(last_steps >= 0, int(step_index) - last_steps, int(step_index))
+        max_since_active = float(np.max(ages))
+    active_counts = np.asarray(activation_count, dtype=float)[alive]
+    activation_span = float(np.max(active_counts) - np.min(active_counts))
+    warn = float(
+        np.isfinite(passive_centroid_sigma)
+        and passive_centroid_sigma >= float(remap_warning_sigma)
+    )
+    trigger = float(
+        np.isfinite(passive_centroid_sigma)
+        and passive_centroid_sigma >= float(remap_trigger_sigma)
+    )
+    return {
+        "active_centroid_sigma": centroid_sigma(active),
+        "passive_centroid_sigma": passive_centroid_sigma,
+        "field_centroid_sigma": centroid_sigma(field),
+        "bunch_rms_mm": rms,
+        "max_steps_since_active": max_since_active,
+        "activation_count_span": activation_span,
+        "passive_remap_warning": warn,
+        "passive_remap_trigger": trigger,
+    }
+
+
 def build_pseudo_grid_step_schedule(
     rider_state: ParticleState,
     driver_state: ParticleState,
@@ -1362,6 +1494,29 @@ def build_pseudo_grid_step_schedule(
         driver_active = driver_alive[
             : min(config.active_driver_count, driver_alive.size)
         ]
+    elif config.active_selection_mode == "slow_rotating_live":
+        rider_active = _slow_rotating_active_indices(
+            rider_state,
+            rider_alive,
+            planner_state.rider_current_active_indices,
+            active_count=config.active_rider_count,
+            step_index=step_index,
+            last_active_step=planner_state.rider_last_active_step,
+            activation_count=planner_state.rider_activation_count,
+            rotation_interval=config.active_rotation_interval,
+            rotation_fraction=config.active_rotation_fraction,
+        )
+        driver_active = _slow_rotating_active_indices(
+            driver_state,
+            driver_alive,
+            planner_state.driver_current_active_indices,
+            active_count=config.active_driver_count,
+            step_index=step_index,
+            last_active_step=planner_state.driver_last_active_step,
+            activation_count=planner_state.driver_activation_count,
+            rotation_interval=config.active_rotation_interval,
+            rotation_fraction=config.active_rotation_fraction,
+        )
     else:
         rider_active = select_active_indices(
             rider_state,
@@ -1439,6 +1594,29 @@ def build_pseudo_grid_step_schedule(
         driver_passive_map,
     )
 
+    rider_role_diagnostics = _role_centroid_diagnostics(
+        rider_state,
+        rider_alive,
+        rider_active,
+        rider_field,
+        planner_state.rider_last_active_step,
+        planner_state.rider_activation_count,
+        step_index=step_index,
+        remap_warning_sigma=config.passive_remap_warning_sigma,
+        remap_trigger_sigma=config.passive_remap_trigger_sigma,
+    )
+    driver_role_diagnostics = _role_centroid_diagnostics(
+        driver_state,
+        driver_alive,
+        driver_active,
+        driver_field,
+        planner_state.driver_last_active_step,
+        planner_state.driver_activation_count,
+        step_index=step_index,
+        remap_warning_sigma=config.passive_remap_warning_sigma,
+        remap_trigger_sigma=config.passive_remap_trigger_sigma,
+    )
+
     planner_state.pair_reuse_tracker.prune(step_index)
     pair_reuse_penalties = _build_pair_reuse_penalty_matrix(
         planner_state.pair_reuse_tracker,
@@ -1492,6 +1670,8 @@ def build_pseudo_grid_step_schedule(
         max_cross_bunch_separation_mm=max_cross_bunch_separation_mm,
         driver_history_start_index=driver_history_start_index,
         rider_history_start_index=rider_history_start_index,
+        rider_role_diagnostics=rider_role_diagnostics,
+        driver_role_diagnostics=driver_role_diagnostics,
     )
 
 
@@ -1512,6 +1692,12 @@ def commit_pseudo_grid_step_schedule(
         schedule.driver_active_indices,
         step_index=schedule.step_index,
     )
+    planner_state.rider_current_active_indices = np.asarray(
+        schedule.rider_active_indices, dtype=int
+    ).copy()
+    planner_state.driver_current_active_indices = np.asarray(
+        schedule.driver_active_indices, dtype=int
+    ).copy()
     planner_state.pair_reuse_tracker.note_matches(
         schedule.rider_active_indices,
         schedule.driver_active_indices,

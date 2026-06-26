@@ -63,7 +63,13 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         pseudo_grid_passive_neighbor_count=3,
         pseudo_grid_coverage_strategy="farthest_point",
         pseudo_grid_coverage_space="phase_space",
+        pseudo_grid_active_selection_mode="slow_rotating_live",
         pseudo_grid_passive_update_mode="external_interbunch",
+        pseudo_grid_active_rotation_interval=12,
+        pseudo_grid_active_rotation_fraction=0.5,
+        pseudo_grid_passive_remap_mode="none",
+        pseudo_grid_passive_remap_warning_sigma=0.25,
+        pseudo_grid_passive_remap_trigger_sigma=0.75,
         pseudo_grid_pair_reuse_window=25,
         pseudo_grid_source_weighting_mode="nearest",
         pseudo_grid_loss_tracking_enabled=False,
@@ -145,8 +151,13 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         "passive_neighbor_count": 3,
         "coverage_strategy": "farthest_point",
         "coverage_space": "phase_space",
-        "active_selection_mode": "rotating_live",
+        "active_selection_mode": "slow_rotating_live",
         "passive_update_mode": "external_interbunch",
+        "active_rotation_interval": 12,
+        "active_rotation_fraction": 0.5,
+        "passive_remap_mode": "none",
+        "passive_remap_warning_sigma": 0.25,
+        "passive_remap_trigger_sigma": 0.75,
         "pair_reuse_window": 25,
         "source_weighting_mode": "nearest",
         "loss_tracking_enabled": False,
@@ -164,8 +175,13 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.pseudo_grid_passive_neighbor_count == 3
     assert loaded.pseudo_grid_coverage_strategy == "farthest_point"
     assert loaded.pseudo_grid_coverage_space == "phase_space"
-    assert loaded.pseudo_grid_active_selection_mode == "rotating_live"
+    assert loaded.pseudo_grid_active_selection_mode == "slow_rotating_live"
     assert loaded.pseudo_grid_passive_update_mode == "external_interbunch"
+    assert loaded.pseudo_grid_active_rotation_interval == 12
+    assert loaded.pseudo_grid_active_rotation_fraction == pytest.approx(0.5)
+    assert loaded.pseudo_grid_passive_remap_mode == "none"
+    assert loaded.pseudo_grid_passive_remap_warning_sigma == pytest.approx(0.25)
+    assert loaded.pseudo_grid_passive_remap_trigger_sigma == pytest.approx(0.75)
     assert loaded.pseudo_grid_pair_reuse_window == 25
     assert loaded.pseudo_grid_source_weighting_mode == "nearest"
     assert loaded.pseudo_grid_loss_tracking_enabled is False

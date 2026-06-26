@@ -121,12 +121,18 @@ An experimental pseudo-grid reduced solver is now available for
   a diagnostic continuation budget. Gamma blowups and self-consistency
   nonconvergence in active solves mark individual particles dead until that
   fraction is exceeded; the default is 15%.
-* High-passive source-representation studies should prefer fixed active
-  observers (``active_selection_mode="fixed_prefix"``) with
-  ``passive_update_mode="external_interbunch"``. This keeps passives responsive
-  to bending/external fields and interbunch acceleration while avoiding the
-  same-bunch passive reconstruction pathway that produced transverse blowups in
-  light/heavy screening smoke tests.
+* High-passive source-representation studies should prefer rotating or
+  slow-rotating active observers with
+  ``passive_update_mode="external_interbunch"``. ``slow_rotating_live`` changes
+  only a configurable fraction of the active set every
+  ``active_rotation_interval`` steps, reducing role churn while still sampling
+  live particles through active duty. ``fixed_prefix`` remains useful as a
+  diagnostic/control mode, not the preferred production interpretation.
+* Role diagnostics now report active/passive/field-representative centroid
+  offsets in bunch-RMS units, active-duty spread, maximum time since active, and
+  passive-remap warning/trigger flags. Passive remapping is disabled by default;
+  the warning and trigger thresholds are recorded so long/dynamic runs can be
+  flagged before any opt-in remapping strategy is trusted.
 * ``scripts/pseudo_grid_feasibility_probe.py`` provides a lightweight sanity and
   scale probe covering zero-charge drift, weak-charge full-vs-reduced
   comparisons, optional instantaneous or retarded same-bunch space-charge

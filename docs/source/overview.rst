@@ -189,10 +189,12 @@ Key ideas to keep in mind
   ``SimulationType.BUNCH_TO_BUNCH`` runs.  The reduced path supports adaptive
   timestep retries and reduced same-bunch space charge when each bunch keeps at
   least two active particles.  High-passive convergence studies should normally
-  use ``active_selection_mode="fixed_prefix"`` with
+  use rotating or slow-rotating active selection with
   ``passive_update_mode="external_interbunch"`` so passives respond to external
   and opposite-bunch fields while same-bunch space charge remains confined to
-  the reduced active/field-representative model.  Supported reduced B2B runs can
+  the reduced active/field-representative model.  ``slow_rotating_live`` replaces
+  only a configurable fraction of the active set at a configured interval;
+  ``fixed_prefix`` is best treated as a diagnostic control.  Supported reduced B2B runs can
   compact live causal histories while preserving full-state SoA/legacy outputs
   and retained-history diagnostics.  Unsupported configurations fall back to the
   canonical full solve.

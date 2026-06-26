@@ -2566,31 +2566,42 @@ def retarded_integrator(
                     _current_pseudo_grid_schedule.driver_field_source_charges
                 )
                 if _rider_loc is not None or _driver_loc is not None:
-                    _pseudo_grid_charge_localization.append(
-                        {
-                            "step": float(i),
-                            "rider_max_anchor_fraction": (
-                                _rider_loc["max_anchor_fraction"]
-                                if _rider_loc is not None
-                                else float("nan")
-                            ),
-                            "rider_gini": (
-                                _rider_loc["gini"]
-                                if _rider_loc is not None
-                                else float("nan")
-                            ),
-                            "driver_max_anchor_fraction": (
-                                _driver_loc["max_anchor_fraction"]
-                                if _driver_loc is not None
-                                else float("nan")
-                            ),
-                            "driver_gini": (
-                                _driver_loc["gini"]
-                                if _driver_loc is not None
-                                else float("nan")
-                            ),
-                        }
-                    )
+                    _diag_row = {
+                        "step": float(i),
+                        "rider_max_anchor_fraction": (
+                            _rider_loc["max_anchor_fraction"]
+                            if _rider_loc is not None
+                            else float("nan")
+                        ),
+                        "rider_gini": (
+                            _rider_loc["gini"]
+                            if _rider_loc is not None
+                            else float("nan")
+                        ),
+                        "driver_max_anchor_fraction": (
+                            _driver_loc["max_anchor_fraction"]
+                            if _driver_loc is not None
+                            else float("nan")
+                        ),
+                        "driver_gini": (
+                            _driver_loc["gini"]
+                            if _driver_loc is not None
+                            else float("nan")
+                        ),
+                    }
+                    for _prefix, _role_diag in (
+                        (
+                            "rider",
+                            _current_pseudo_grid_schedule.rider_role_diagnostics,
+                        ),
+                        (
+                            "driver",
+                            _current_pseudo_grid_schedule.driver_role_diagnostics,
+                        ),
+                    ):
+                        for _key, _value in _role_diag.items():
+                            _diag_row[f"{_prefix}_{_key}"] = float(_value)
+                    _pseudo_grid_charge_localization.append(_diag_row)
 
             trajectory[i] = _run_adaptive_step(
                 i=i,

@@ -772,6 +772,91 @@ def test_reconstruct_full_state_from_active_result_ignores_dead_anchors_when_ena
     assert reconstructed["q"][2] == pytest.approx(0.0)
 
 
+def test_build_pseudo_grid_step_schedule_slow_rotates_active_subset():
+    rider_state = _make_state(x=[0.0, 1.0, 2.0, 3.0, 4.0])
+    driver_state = _make_state(x=[10.0, 11.0, 12.0, 13.0, 14.0])
+    planner_state = initialize_pseudo_grid_planner_state(
+        rider_particle_count=5,
+        driver_particle_count=5,
+        pair_reuse_window=4,
+    )
+    record_pseudo_grid_history_times(planner_state, rider_state, driver_state)
+    config = PseudoGridConfig(
+        enabled=True,
+        active_rider_count=3,
+        active_driver_count=3,
+        active_selection_mode="slow_rotating_live",
+        active_rotation_interval=3,
+        active_rotation_fraction=1.0 / 3.0,
+    )
+
+    first = build_pseudo_grid_step_schedule(
+        rider_state,
+        driver_state,
+        step_index=1,
+        config=config,
+        planner_state=planner_state,
+    )
+    commit_pseudo_grid_step_schedule(planner_state, first)
+    second = build_pseudo_grid_step_schedule(
+        rider_state,
+        driver_state,
+        step_index=2,
+        config=config,
+        planner_state=planner_state,
+    )
+    commit_pseudo_grid_step_schedule(planner_state, second)
+    third = build_pseudo_grid_step_schedule(
+        rider_state,
+        driver_state,
+        step_index=4,
+        config=config,
+        planner_state=planner_state,
+    )
+
+    np.testing.assert_array_equal(
+        second.rider_active_indices, first.rider_active_indices
+    )
+    assert third.rider_active_indices.size == first.rider_active_indices.size
+    assert len(set(third.rider_active_indices) & set(first.rider_active_indices)) >= 2
+    assert len(set(third.rider_active_indices) - set(first.rider_active_indices)) == 1
+
+
+def test_build_pseudo_grid_step_schedule_reports_passive_remap_thresholds():
+    rider_state = _make_state(x=[0.0, 0.1, 10.0, 11.0], y=[0.0, 0.0, 0.0, 0.0])
+    driver_state = _make_state(x=[0.0, 0.1, 10.0, 11.0], y=[0.0, 0.0, 0.0, 0.0])
+    planner_state = initialize_pseudo_grid_planner_state(
+        rider_particle_count=4,
+        driver_particle_count=4,
+        pair_reuse_window=4,
+    )
+    record_pseudo_grid_history_times(planner_state, rider_state, driver_state)
+    config = PseudoGridConfig(
+        enabled=True,
+        active_rider_count=2,
+        active_driver_count=2,
+        active_selection_mode="fixed_prefix",
+        passive_remap_warning_sigma=0.1,
+        passive_remap_trigger_sigma=0.2,
+    )
+
+    schedule = build_pseudo_grid_step_schedule(
+        rider_state,
+        driver_state,
+        step_index=5,
+        config=config,
+        planner_state=planner_state,
+    )
+
+    assert schedule.rider_role_diagnostics["passive_remap_warning"] == pytest.approx(
+        1.0
+    )
+    assert schedule.rider_role_diagnostics["passive_remap_trigger"] == pytest.approx(
+        1.0
+    )
+    assert schedule.rider_role_diagnostics["passive_centroid_sigma"] > 0.2
+
+
 def test_build_pseudo_grid_step_schedule_collects_active_passive_metadata():
     rider_state = _make_state(
         x=[0.0, 10.0, 20.0],
