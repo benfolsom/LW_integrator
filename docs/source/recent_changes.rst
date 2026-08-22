@@ -3,11 +3,31 @@
 Recent Changes
 ==============
 
-*Last updated: June 2026*
+*Last updated: August 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+August 2026 Updates
+-------------------
+
+Testbed CLI and GUI Configuration Fidelity (August 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An explicit ``lw-simulate --testbed-config`` route now runs full GUI/testbed
+JSON configurations through ``load_config()`` and ``run_testbed()`` without a
+schema translation. The saved configuration remains authoritative, preserving
+3D particle initialization, beamline geometry, driver trains, source smearing,
+startup mode, self-consistency, and trajectory-output settings.
+
+* Native direct-CLI JSON now preserves ``beamline_geometry`` and its occluder
+  list when constructing ``IntegratorConfig``.
+* GUI config round trips preserve every source-smearing field, including
+  ``macroparticle_smearing_use_momentum_errors`` independently from the legacy
+  conducting-wall image-momentum-error option.
+* Focused regression tests cover the explicit testbed CLI route, native
+  beamline-geometry ingestion, and headless GUI smearing serialization.
 
 June 2026 Updates
 -----------------
