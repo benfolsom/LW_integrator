@@ -222,7 +222,7 @@ class IntegratorGUITabMixin:
 
         self.macroparticle_momentum_errors_check = ttk.Checkbutton(
             particle_frame,
-            text="Include momentum errors (cumulative)",
+            text="Include image momentum errors (cumulative)",
             variable=self.macroparticle_use_momentum_errors_var,
         )
         self.macroparticle_momentum_errors_check.grid(
@@ -236,7 +236,7 @@ class IntegratorGUITabMixin:
                 "Macroparticle mode scales particle charge and adds Gaussian errors to image subcharges.\n"
                 "Image errors are derived from bunch spread parameters (transv_dist, transv_mom) × sigma multiplier.\n"
                 "Position errors: constant σ from transv_dist. Momentum errors: cumulative from transv_mom.\n"
-                "Uncheck 'Include momentum errors' to apply only constant position errors (no cumulative growth).\n"
+                "Uncheck 'Include image momentum errors' to apply only constant position errors (no cumulative growth).\n"
                 "Only active for CONDUCTING_WALL simulations."
             ),
             font=("TkDefaultFont", 8),
@@ -324,6 +324,85 @@ class IntegratorGUITabMixin:
             setattr(self, entry_name, entry)
             self._macroparticle_smearing_widgets.extend([label, entry])
             next_row += 1
+
+        smearing_toggle_fields = [
+            (
+                "Use source position offsets",
+                "macroparticle_smearing_use_position_errors_var",
+                "macroparticle_smearing_position_errors_check",
+            ),
+            (
+                "Use source momentum offsets",
+                "macroparticle_smearing_use_momentum_errors_var",
+                "macroparticle_smearing_momentum_errors_check",
+            ),
+            (
+                "Use source centroid offsets",
+                "macroparticle_smearing_use_centroid_errors_var",
+                "macroparticle_smearing_centroid_errors_check",
+            ),
+            (
+                "Use internal subcharge cloud",
+                "macroparticle_smearing_use_internal_cloud_var",
+                "macroparticle_smearing_internal_cloud_check",
+            ),
+            (
+                "Apply to active observers",
+                "macroparticle_smearing_apply_to_active_observers_var",
+                "macroparticle_smearing_active_observers_check",
+            ),
+            (
+                "Apply to active sources",
+                "macroparticle_smearing_apply_to_active_sources_var",
+                "macroparticle_smearing_active_sources_check",
+            ),
+            (
+                "Apply to passive sources",
+                "macroparticle_smearing_apply_to_passive_sources_var",
+                "macroparticle_smearing_passive_sources_check",
+            ),
+        ]
+        for label_text, var_name, check_name in smearing_toggle_fields:
+            check = ttk.Checkbutton(
+                particle_frame,
+                text=label_text,
+                variable=getattr(self, var_name),
+            )
+            check.grid(
+                row=next_row,
+                column=0,
+                columnspan=2,
+                sticky="w",
+                pady=2,
+                padx=(20, 0),
+            )
+            setattr(self, check_name, check)
+            self._macroparticle_smearing_widgets.append(check)
+            next_row += 1
+
+        self.macroparticle_smearing_refresh_policy_label = ttk.Label(
+            particle_frame, text="Offset refresh policy:"
+        )
+        self.macroparticle_smearing_refresh_policy_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_smearing_refresh_policy_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.macroparticle_smearing_refresh_policy_var,
+            values=("fixed_per_particle", "per_step"),
+            state="readonly",
+            width=18,
+        )
+        self.macroparticle_smearing_refresh_policy_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        self._macroparticle_smearing_widgets.extend(
+            [
+                self.macroparticle_smearing_refresh_policy_label,
+                self.macroparticle_smearing_refresh_policy_combo,
+            ]
+        )
+        next_row += 1
 
         self.macroparticle_smearing_passive_updates_check = ttk.Checkbutton(
             particle_frame,

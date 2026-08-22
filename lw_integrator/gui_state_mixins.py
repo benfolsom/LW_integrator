@@ -220,7 +220,9 @@ class IntegratorGUIStateMixin:
         state = "normal" if enabled else "disabled"
         label_color = "black" if enabled else "gray"
         for widget in getattr(self, "_macroparticle_smearing_widgets", []):
-            if isinstance(widget, ttk.Entry):
+            if isinstance(widget, ttk.Combobox):
+                widget.configure(state="readonly" if enabled else "disabled")
+            elif isinstance(widget, ttk.Entry):
                 widget.configure(state=state)
             elif isinstance(widget, ttk.Checkbutton):
                 widget.configure(state=state)

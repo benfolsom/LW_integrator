@@ -428,6 +428,41 @@ class IntegratorGUI(
                 )
             )
         )
+        self.macroparticle_smearing_use_position_errors_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_position_errors", True
+            )
+        )
+        self.macroparticle_smearing_use_momentum_errors_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_momentum_errors", True
+            )
+        )
+        self.macroparticle_smearing_use_centroid_errors_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_centroid_errors", True
+            )
+        )
+        self.macroparticle_smearing_use_internal_cloud_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_internal_cloud", True
+            )
+        )
+        self.macroparticle_smearing_apply_to_active_observers_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_apply_to_active_observers", True
+            )
+        )
+        self.macroparticle_smearing_apply_to_active_sources_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_apply_to_active_sources", True
+            )
+        )
+        self.macroparticle_smearing_apply_to_passive_sources_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_apply_to_passive_sources", True
+            )
+        )
         self.macroparticle_smearing_apply_to_passive_updates_var = tk.BooleanVar(
             value=getattr(
                 self.options, "macroparticle_smearing_apply_to_passive_updates", False
@@ -435,6 +470,15 @@ class IntegratorGUI(
         )
         self.macroparticle_smearing_seed_var = tk.IntVar(
             value=getattr(self.options, "macroparticle_smearing_seed", 12345)
+        )
+        self.macroparticle_smearing_refresh_policy_var = tk.StringVar(
+            value=str(
+                getattr(
+                    self.options,
+                    "macroparticle_smearing_refresh_policy",
+                    "fixed_per_particle",
+                )
+            ).replace("-", "_")
         )
 
         # Experimental pseudo-grid options

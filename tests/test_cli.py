@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import argparse
-import core
 import json
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+import core
 import lw_integrator
 from core.external_fields import electric_field_v_per_m_to_native
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 from lw_integrator import cli
+from lw_integrator.testbed_runner import SimulationOptions
 
 
 def _make_args(**overrides) -> argparse.Namespace:
@@ -131,6 +133,11 @@ class TestCliConfigParsing:
         args = cli.parse_args(["--results-file", "results/sweep_results.json"])
 
         assert args.results_file == Path("results/sweep_results.json")
+
+    def test_parse_args_accepts_testbed_config(self):
+        args = cli.parse_args(["--testbed-config", "configs/study_run.json"])
+
+        assert args.testbed_config == Path("configs/study_run.json")
 
     def test_parse_args_accepts_chrono_sampling_flags(self):
         args = cli.parse_args(
@@ -1192,6 +1199,96 @@ class TestCliMain:
         assert result == 1
         assert captured["args"].sweep_config == Path("configs/example.json")
 
+    def test_main_runs_testbed_config_through_testbed_runner(
+        self, monkeypatch, tmp_path: Path
+    ):
+        config_path = tmp_path / "study_config.json"
+        output_path = tmp_path / "summary.json"
+        source_occluders = [
+            {
+                "axis": [0.0, 0.0, 1.0],
+                "center_mm": [0.0, 0.0, 0.0],
+                "radius_mm": 2.0,
+                "length_mm": 500.0,
+                "label": "study_pipe",
+            }
+        ]
+        testbed_options = SimulationOptions(
+            config_name=config_path.name,
+            config_dir=tmp_path,
+            output_dir=tmp_path / "artifacts",
+            macroparticle_smearing_enabled=True,
+            macroparticle_smearing_use_momentum_errors=False,
+            beamline_geometry_enabled=True,
+            beamline_geometry_occluders=source_occluders,
+        )
+        config_path.write_text(
+            json.dumps(testbed_options.to_dict()),
+            encoding="utf-8",
+        )
+        captured = {}
+        result = SimpleNamespace(
+            duration_s=1.25,
+            filename_base="study_config_20260822_120000",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.125,
+            rider_gamma_initial=2.0,
+            rider_gamma_final=2.25,
+            driver_gamma_initial=1.5,
+            driver_gamma_final=1.5,
+            energy_ledger_metrics={"rider_final_delta_kinetic_energy_mev": 0.125},
+            saved_paths={"trajectory_json": tmp_path / "trajectory.json"},
+        )
+
+        def fake_run_testbed(received_options):
+            captured["options"] = received_options
+            return result
+
+        monkeypatch.setattr(
+            "lw_integrator.testbed_runner.run_testbed", fake_run_testbed
+        )
+
+        exit_code = cli.main(
+            [
+                "--testbed-config",
+                str(config_path),
+                "--output",
+                str(output_path),
+                "--quiet",
+            ]
+        )
+
+        report = json.loads(output_path.read_text(encoding="utf-8"))
+        assert exit_code == 0
+        loaded_options = captured["options"]
+        assert loaded_options.config_name == config_path.name
+        assert loaded_options.macroparticle_smearing_use_momentum_errors is False
+        assert loaded_options.beamline_geometry_enabled is True
+        assert loaded_options.beamline_geometry_occluders == source_occluders
+        assert report["run_mode"] == "testbed_config"
+        assert report["config_path"] == str(config_path)
+        assert report["rider_delta_e_mev"] == pytest.approx(0.125)
+        assert report["saved_paths"] == {
+            "trajectory_json": str(tmp_path / "trajectory.json")
+        }
+
+    def test_main_rejects_testbed_config_mode_conflicts(self, tmp_path: Path, capsys):
+        config_path = tmp_path / "study_config.json"
+
+        exit_code = cli.main(
+            [
+                "--testbed-config",
+                str(config_path),
+                "--config",
+                str(tmp_path / "native_config.json"),
+            ]
+        )
+
+        assert exit_code == 2
+        assert "cannot be combined with --config" in capsys.readouterr().err
+
     def test_main_writes_output_json(self, monkeypatch, tmp_path: Path):
         output_path = tmp_path / "summary.json"
         fake_request = object()
@@ -1504,6 +1601,40 @@ class TestCliBeamlineGeometry:
             _make_args(beamline_geometry_enabled=True),
         )
         assert payload["beamline_geometry"]["enabled"] is True
+
+    def test_merge_simulation_payload_preserves_json_beamline_geometry(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "beamline_geometry": {
+                    "enabled": True,
+                    "occluders": [
+                        {
+                            "axis": [0.0, 0.0, 1.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 2.0,
+                            "length_mm": 500.0,
+                            "label": "proton_straight_pipe",
+                        },
+                        {
+                            "axis": [0.0, 1.0, 0.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 2.0,
+                            "length_mm": 500.0,
+                            "label": "source_channel_pipe",
+                        },
+                    ],
+                }
+            },
+            _make_args(),
+        )
+
+        config = cli._build_integrator_config(payload)
+
+        assert config.beamline_geometry.enabled is True
+        assert [occluder.label for occluder in config.beamline_geometry.occluders] == [
+            "proton_straight_pipe",
+            "source_channel_pipe",
+        ]
 
     def test_merge_simulation_payload_loads_beamline_geometry_file(self, tmp_path):
         geom_file = tmp_path / "geom.json"

@@ -6,7 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
-from tkinter import messagebox
+from typing import Any
 
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
@@ -20,7 +20,6 @@ from .testbed_runner import (
     save_config,
     supports_driver,
 )
-
 
 _SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
 
@@ -90,7 +89,134 @@ def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
 class IntegratorGUIConfigMixin:
     """Translate between GUI state and ``SimulationOptions`` configs."""
 
+    def _apply_macroparticle_smearing_options_to_ui(
+        self: Any, options: SimulationOptions
+    ) -> None:
+        self.macroparticle_smearing_enabled_var.set(
+            getattr(options, "macroparticle_smearing_enabled", False)
+        )
+        self.macroparticle_smearing_subcharge_count_var.set(
+            getattr(options, "macroparticle_smearing_subcharge_count", 8)
+        )
+        self.macroparticle_smearing_sigma_multiplier_var.set(
+            getattr(options, "macroparticle_smearing_sigma_multiplier", 1.0)
+        )
+        self.macroparticle_smearing_position_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_position_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_longitudinal_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_longitudinal_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_momentum_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(
+                    options,
+                    "macroparticle_smearing_momentum_sigma_amu_mm_ns",
+                    None,
+                )
+            )
+        )
+        self.macroparticle_smearing_use_position_errors_var.set(
+            getattr(options, "macroparticle_smearing_use_position_errors", True)
+        )
+        self.macroparticle_smearing_use_momentum_errors_var.set(
+            getattr(options, "macroparticle_smearing_use_momentum_errors", True)
+        )
+        self.macroparticle_smearing_use_centroid_errors_var.set(
+            getattr(options, "macroparticle_smearing_use_centroid_errors", True)
+        )
+        self.macroparticle_smearing_use_internal_cloud_var.set(
+            getattr(options, "macroparticle_smearing_use_internal_cloud", True)
+        )
+        self.macroparticle_smearing_apply_to_active_observers_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_active_observers", True)
+        )
+        self.macroparticle_smearing_apply_to_active_sources_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_active_sources", True)
+        )
+        self.macroparticle_smearing_apply_to_passive_sources_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_passive_sources", True)
+        )
+        self.macroparticle_smearing_apply_to_passive_updates_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_passive_updates", False)
+        )
+        self.macroparticle_smearing_seed_var.set(
+            getattr(options, "macroparticle_smearing_seed", 12345)
+        )
+        self.macroparticle_smearing_refresh_policy_var.set(
+            str(
+                getattr(
+                    options,
+                    "macroparticle_smearing_refresh_policy",
+                    "fixed_per_particle",
+                )
+            ).replace("-", "_")
+        )
+
+    def _build_macroparticle_smearing_options_from_ui(
+        self: Any,
+    ) -> dict[str, Any]:
+        return {
+            "macroparticle_smearing_enabled": bool(
+                self.macroparticle_smearing_enabled_var.get()
+            ),
+            "macroparticle_smearing_subcharge_count": int(
+                self.macroparticle_smearing_subcharge_count_var.get()
+            ),
+            "macroparticle_smearing_sigma_multiplier": float(
+                self.macroparticle_smearing_sigma_multiplier_var.get()
+            ),
+            "macroparticle_smearing_position_sigma_mm": _parse_gui_optional_float(
+                self.macroparticle_smearing_position_sigma_var.get(),
+                "Macroparticle smearing position sigma",
+            ),
+            "macroparticle_smearing_longitudinal_sigma_mm": _parse_gui_optional_float(
+                self.macroparticle_smearing_longitudinal_sigma_var.get(),
+                "Macroparticle smearing longitudinal sigma",
+            ),
+            "macroparticle_smearing_momentum_sigma_amu_mm_ns": _parse_gui_optional_float(
+                self.macroparticle_smearing_momentum_sigma_var.get(),
+                "Macroparticle smearing momentum sigma",
+            ),
+            "macroparticle_smearing_use_position_errors": bool(
+                self.macroparticle_smearing_use_position_errors_var.get()
+            ),
+            "macroparticle_smearing_use_momentum_errors": bool(
+                self.macroparticle_smearing_use_momentum_errors_var.get()
+            ),
+            "macroparticle_smearing_use_centroid_errors": bool(
+                self.macroparticle_smearing_use_centroid_errors_var.get()
+            ),
+            "macroparticle_smearing_use_internal_cloud": bool(
+                self.macroparticle_smearing_use_internal_cloud_var.get()
+            ),
+            "macroparticle_smearing_apply_to_active_observers": bool(
+                self.macroparticle_smearing_apply_to_active_observers_var.get()
+            ),
+            "macroparticle_smearing_apply_to_active_sources": bool(
+                self.macroparticle_smearing_apply_to_active_sources_var.get()
+            ),
+            "macroparticle_smearing_apply_to_passive_sources": bool(
+                self.macroparticle_smearing_apply_to_passive_sources_var.get()
+            ),
+            "macroparticle_smearing_apply_to_passive_updates": bool(
+                self.macroparticle_smearing_apply_to_passive_updates_var.get()
+            ),
+            "macroparticle_smearing_seed": int(
+                self.macroparticle_smearing_seed_var.get()
+            ),
+            "macroparticle_smearing_refresh_policy": str(
+                self.macroparticle_smearing_refresh_policy_var.get()
+            ).replace("-", "_"),
+        }
+
     def _load_config(self) -> None:
+        from tkinter import messagebox
+
         from .gui import _show_error_dialog
 
         filename = self._selected_config_filename()
@@ -229,40 +355,7 @@ class IntegratorGUIConfigMixin:
         self.macroparticle_use_momentum_errors_var.set(
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
-        self.macroparticle_smearing_enabled_var.set(
-            getattr(options, "macroparticle_smearing_enabled", False)
-        )
-        self.macroparticle_smearing_subcharge_count_var.set(
-            getattr(options, "macroparticle_smearing_subcharge_count", 8)
-        )
-        self.macroparticle_smearing_sigma_multiplier_var.set(
-            getattr(options, "macroparticle_smearing_sigma_multiplier", 1.0)
-        )
-        self.macroparticle_smearing_position_sigma_var.set(
-            _format_gui_optional_float(
-                getattr(options, "macroparticle_smearing_position_sigma_mm", None)
-            )
-        )
-        self.macroparticle_smearing_longitudinal_sigma_var.set(
-            _format_gui_optional_float(
-                getattr(options, "macroparticle_smearing_longitudinal_sigma_mm", None)
-            )
-        )
-        self.macroparticle_smearing_momentum_sigma_var.set(
-            _format_gui_optional_float(
-                getattr(
-                    options,
-                    "macroparticle_smearing_momentum_sigma_amu_mm_ns",
-                    None,
-                )
-            )
-        )
-        self.macroparticle_smearing_apply_to_passive_updates_var.set(
-            getattr(options, "macroparticle_smearing_apply_to_passive_updates", False)
-        )
-        self.macroparticle_smearing_seed_var.set(
-            getattr(options, "macroparticle_smearing_seed", 12345)
-        )
+        self._apply_macroparticle_smearing_options_to_ui(options)
         if hasattr(self, "pseudo_grid_enabled_var"):
             self.pseudo_grid_enabled_var.set(
                 getattr(options, "pseudo_grid_enabled", False)
@@ -769,6 +862,10 @@ class IntegratorGUIConfigMixin:
                 for bound in ("min", "max")
             }
 
+        macroparticle_smearing_options = (
+            self._build_macroparticle_smearing_options_from_ui()
+        )
+
         return SimulationOptions(
             simulation_type=sim_type,
             steps=int(self.steps_var.get()),
@@ -813,31 +910,7 @@ class IntegratorGUIConfigMixin:
             macroparticle_use_momentum_errors=bool(
                 self.macroparticle_use_momentum_errors_var.get()
             ),
-            macroparticle_smearing_enabled=bool(
-                self.macroparticle_smearing_enabled_var.get()
-            ),
-            macroparticle_smearing_subcharge_count=int(
-                self.macroparticle_smearing_subcharge_count_var.get()
-            ),
-            macroparticle_smearing_sigma_multiplier=float(
-                self.macroparticle_smearing_sigma_multiplier_var.get()
-            ),
-            macroparticle_smearing_position_sigma_mm=_parse_gui_optional_float(
-                self.macroparticle_smearing_position_sigma_var.get(),
-                "Macroparticle smearing position sigma",
-            ),
-            macroparticle_smearing_longitudinal_sigma_mm=_parse_gui_optional_float(
-                self.macroparticle_smearing_longitudinal_sigma_var.get(),
-                "Macroparticle smearing longitudinal sigma",
-            ),
-            macroparticle_smearing_momentum_sigma_amu_mm_ns=_parse_gui_optional_float(
-                self.macroparticle_smearing_momentum_sigma_var.get(),
-                "Macroparticle smearing momentum sigma",
-            ),
-            macroparticle_smearing_apply_to_passive_updates=bool(
-                self.macroparticle_smearing_apply_to_passive_updates_var.get()
-            ),
-            macroparticle_smearing_seed=int(self.macroparticle_smearing_seed_var.get()),
+            **macroparticle_smearing_options,
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
@@ -1026,6 +1099,8 @@ class IntegratorGUIConfigMixin:
         )
 
     def _save_config(self) -> None:
+        from tkinter import messagebox
+
         from .gui import _show_error_dialog
 
         try:

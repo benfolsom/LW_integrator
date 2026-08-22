@@ -1,9 +1,9 @@
 """Command-line interface for running LW Integrator simulations.
 
 The ``lw-simulate`` console script and ``python -m lw_integrator`` entry point
-both call :func:`main`.  Users can either rely on the built-in default scenario
-(a 35 MeV electron approaching a conducting aperture) or provide a JSON
-configuration that customises the simulation parameters and particle bunches.
+both call :func:`main`. Users can either rely on the built-in default scenario,
+provide a native direct-integrator JSON configuration, or run a full testbed/
+GUI JSON configuration through the explicit ``--testbed-config`` path.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
 from core.types import (
     BeamlineGeometryConfig,
-    ChronoMatchingMode,
     CavityExitConfig,
+    ChronoMatchingMode,
     DriverTrainConfig,
     ExternalFieldConfig,
     GammaReconciliationMethod,
@@ -249,7 +249,17 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        help="Path to a JSON file describing the simulation parameters and bunches.",
+        help="Path to a native direct-integrator JSON configuration.",
+    )
+    parser.add_argument(
+        "--testbed-config",
+        type=Path,
+        dest="testbed_config",
+        help=(
+            "Path to a testbed/GUI JSON configuration. Runs it unchanged "
+            "through load_config() and run_testbed(); direct-run flags do not "
+            "override it."
+        ),
     )
     parser.add_argument(
         "--sweep-config",
@@ -1082,6 +1092,98 @@ def _load_config(path: Path) -> Dict[str, Any]:
     return dict(payload)
 
 
+def _json_default(value: Any) -> Any:
+    """Serialize numerical and path values returned by the testbed runner."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Cannot JSON-serialize {type(value).__name__}")
+
+
+def _build_testbed_report(result: Any, config_path: Path) -> dict[str, Any]:
+    """Return a compact serializable report for a testbed-config run."""
+    return {
+        "run_mode": "testbed_config",
+        "config_path": str(config_path),
+        "duration_s": float(result.duration_s),
+        "filename_base": str(result.filename_base),
+        "halted_early": bool(result.halted_early),
+        "halt_reason": result.halt_reason,
+        "num_particles_dead": int(result.num_particles_dead),
+        "rider_delta_e_mev": result.rider_delta_e,
+        "rider_gamma_initial": result.rider_gamma_initial,
+        "rider_gamma_final": result.rider_gamma_final,
+        "driver_gamma_initial": result.driver_gamma_initial,
+        "driver_gamma_final": result.driver_gamma_final,
+        "energy_ledger_metrics": result.energy_ledger_metrics or {},
+        "saved_paths": {name: str(path) for name, path in result.saved_paths.items()},
+    }
+
+
+def _print_testbed_summary(report: Mapping[str, Any]) -> None:
+    """Print the compact result summary for an explicit testbed-config run."""
+    lines = ["LW Integrator testbed simulation summary:"]
+    for label, key in (
+        ("Config", "config_path"),
+        ("Duration S", "duration_s"),
+        ("Halted Early", "halted_early"),
+        ("Rider Delta E Mev", "rider_delta_e_mev"),
+        ("Rider Gamma Initial", "rider_gamma_initial"),
+        ("Rider Gamma Final", "rider_gamma_final"),
+    ):
+        value = report.get(key)
+        if value is not None:
+            lines.append(f"  {label}: {value}")
+    if report.get("halt_reason"):
+        lines.append(f"  Halt Reason: {report['halt_reason']}")
+    saved_paths = report.get("saved_paths")
+    if isinstance(saved_paths, Mapping) and saved_paths:
+        lines.append(f"  Saved Artifacts: {len(saved_paths)}")
+    print("\n".join(lines))
+
+
+def run_testbed_config(args: argparse.Namespace) -> int:
+    """Load and run an unmodified testbed/GUI JSON configuration."""
+    conflicting_options = (
+        ("--config", getattr(args, "config", None)),
+        ("--sweep-config", getattr(args, "sweep_config", None)),
+        ("--results-file", getattr(args, "results_file", None)),
+    )
+    conflicts = [name for name, value in conflicting_options if value is not None]
+    if conflicts:
+        print(
+            "Error: --testbed-config cannot be combined with "
+            f"{', '.join(conflicts)}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    config_path = args.testbed_config
+    try:
+        from .testbed_runner import load_config, run_testbed
+
+        options = load_config(config_path)
+        result = run_testbed(options)
+    # The runner can surface numerical and I/O failures through varied exception types.
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error running testbed config {config_path}: {exc}", file=sys.stderr)
+        return 2
+
+    report = _build_testbed_report(result, config_path)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(report, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+    if not args.quiet:
+        _print_testbed_summary(report)
+    return 0
+
+
 def _merge_simulation_payload(
     file_payload: Mapping[str, Any], args: argparse.Namespace
 ) -> Dict[str, Any]:
@@ -1089,6 +1191,7 @@ def _merge_simulation_payload(
     result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
     result["driver_train"] = dict(DEFAULT_DRIVER_TRAIN)
+    result["beamline_geometry"] = dict(DEFAULT_BEAMLINE_GEOMETRY)
     result["macroparticle_smearing"] = dict(DEFAULT_MACROPARTICLE_SMEARING)
     result["adaptive_timestep"] = dict(DEFAULT_ADAPTIVE_TIMESTEP)
     for key in DEFAULT_SIMULATION:
@@ -1108,6 +1211,11 @@ def _merge_simulation_payload(
     file_driver_train = file_payload.get("driver_train")
     if isinstance(file_driver_train, Mapping):
         result["driver_train"].update(file_driver_train)
+    if "beamline_geometry" in file_payload:
+        file_beamline_geometry = file_payload["beamline_geometry"]
+        if not isinstance(file_beamline_geometry, Mapping):
+            raise SimulationConfigError("'beamline_geometry' must be an object")
+        result["beamline_geometry"].update(file_beamline_geometry)
     file_smearing = file_payload.get("macroparticle_smearing")
     if isinstance(file_smearing, Mapping):
         result["macroparticle_smearing"].update(file_smearing)
@@ -2498,6 +2606,9 @@ def _print_results_report(report: Mapping[str, Any]) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.testbed_config is not None:
+        return run_testbed_config(args)
 
     if args.results_file is not None:
         try:

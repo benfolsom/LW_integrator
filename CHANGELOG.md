@@ -4,6 +4,19 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Testbed CLI and GUI Configuration Fidelity (August 2026)
+
+- Added `lw-simulate --testbed-config PATH` for executing full testbed/GUI JSON
+  configurations through `load_config()` and `run_testbed()` without translating
+  or silently overriding their schema.
+- Fixed native direct-CLI JSON ingestion of `beamline_geometry`, including its
+  occluder list, so geometry configured in a file reaches `IntegratorConfig`.
+- Fixed GUI source-smearing config round trips: all smearing settings now have
+  dedicated controls and preserve `use_momentum_errors` independently from the
+  legacy conducting-wall image-momentum-error setting.
+- Added focused regression coverage for the CLI testbed route, native geometry
+  merge, and headless GUI source-smearing serialization.
+
 ### Pseudo-Grid Field Representatives (June 2026)
 
 - Added field representatives as a separate weighted retarded-LW source set in
