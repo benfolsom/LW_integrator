@@ -73,13 +73,29 @@ simulation, and confirm that the regression tooling works on your machine.
 
       lw-simulate --steps 250 --time-step 5e-4 --aperture-radius 0.5 --output run.json
 
-   **Using a configuration file:**
+   **Using a native direct-integrator configuration file:**
 
    .. code-block:: bash
 
       lw-simulate --config my_scenario.json --output results.json
 
-   Example JSON configuration structure:
+   **Run an existing GUI/testbed configuration unchanged:**
+
+   .. code-block:: bash
+
+      lw-simulate --testbed-config configs/run_configs/study_config.json \
+        --output testbed_report.json
+
+   Use ``--testbed-config`` for the full GUI/testbed JSON schema
+   (``rider_params``, ``driver_params``, and ``core_params``). It loads the
+   configuration through ``SimulationOptions`` and executes ``run_testbed()``,
+   preserving the configured 3D particle setup, beamline geometry, source
+   smearing, driver train, startup mode, self-consistency, and output settings.
+   The JSON is authoritative; direct-run CLI overrides are not applied. Use
+   ``--config`` only for the separate native direct-integrator schema; accompany
+   ``--testbed-config`` only with ``--output`` or ``--quiet``.
+
+   Example native direct-integrator JSON configuration structure:
 
    .. code-block:: json
 

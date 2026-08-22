@@ -2,7 +2,7 @@
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
-## Unreleased
+## v0.8.5 — August 2026
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 

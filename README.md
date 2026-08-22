@@ -1,7 +1,8 @@
 # LW Integrator
 
-## Recent Updates (June 2026 + v0.6.0 highlights)
+## Recent Updates (August 2026)
 
+- **Explicit GUI/testbed CLI route** — `lw-simulate --testbed-config ...` loads and executes saved GUI/testbed configurations through `run_testbed()` without translating their schema, keeping configured 3D particles, beamline geometry, source smearing, self-consistency, and output settings authoritative.
 - **Beamline geometry line-of-sight screening** — beam-pipe-like occluders can now block direct retarded field contributions between bunches when the source particle (at its retarded position) exits a pipe's transverse aperture. Residual fields arrive naturally via retarded time. Configured via `beamline_geometry` in JSON configs, `--beamline-geometry-enabled` / `--beamline-geometry-file` CLI flags, or the new "Beamline/Geometry" GUI tab. See `core/beamline_geometry.py` and `BeamlineGeometryConfig` in `core/types.py`.
 - **General 3D particle initialization** — `create_particle_state_3d` supports arbitrary bunch orientation (`momentum_axis`), starting position, and longitudinal span. When `momentum_axis` is present in rider/driver config params, the 3D initializer is used automatically in both the testbed and CLI single-run paths. New work should prefer this full 3D surface; legacy z-axis configs remain supported for compatibility. The main GUI now also exposes a `Manual Particle Config` tab with rider/driver JSON editors for direct 3D setup.
 - **Energy ledger per-direction and percent gains** — the energy ledger now records per-direction kinetic energy (x, y, z) and `final_percent_energy_gain` / `max_percent_energy_gain` for both rider and driver, in addition to the existing total and longitudinal-z metrics.
@@ -339,11 +340,26 @@ lw-simulate --steps 250 --time-step 5e-4 --aperture-radius 0.5 --output run.json
 lw-simulate --radiation-reaction-mode off --quiet
 ```
 
-**Use a configuration file:**
+**Use a native direct-integrator configuration file:**
 
 ```bash
 lw-simulate --config my_scenario.json --output results.json
 ```
+
+**Run an existing GUI/testbed configuration unchanged:**
+
+```bash
+lw-simulate --testbed-config configs/run_configs/study_config.json \
+  --output testbed_report.json
+```
+
+`--testbed-config` is for the full GUI/testbed JSON schema (`rider_params`,
+`driver_params`, and `core_params`). It loads the configuration through the
+testbed loader and runs `run_testbed()` directly, preserving configured 3D
+particles, beamline geometry, driver trains, source smearing, cold-start and
+self-consistency settings, and trajectory output. The JSON is authoritative:
+use only `--output` or `--quiet` alongside it; direct-run CLI overrides are not
+applied. Use `--config` only for the separate native direct-integrator schema.
 
 **Run a parameter sweep from a sweep configuration:**
 
