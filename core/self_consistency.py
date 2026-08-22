@@ -328,7 +328,11 @@ def self_consistent_step(
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
     pseudo_grid_space_charge_source_charges: Optional[Any] = None,
+    pseudo_grid_space_charge_source_trajectory: Optional[Any] = None,
+    pseudo_grid_space_charge_source_soa: Optional[Any] = None,
+    pseudo_grid_space_charge_source_radii_mm: Optional[Any] = None,
     macroparticle_smearing: Optional[Any] = None,
+    beamline_geometry: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -412,6 +416,45 @@ def self_consistent_step(
             else {}
         ),
         **(
+            {
+                "pseudo_grid_space_charge_source_trajectory": (
+                    pseudo_grid_space_charge_source_trajectory
+                )
+            }
+            if pseudo_grid_space_charge_source_trajectory is not None
+            and (
+                "pseudo_grid_space_charge_source_trajectory" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
+            {
+                "pseudo_grid_space_charge_source_soa": (
+                    pseudo_grid_space_charge_source_soa
+                )
+            }
+            if pseudo_grid_space_charge_source_soa is not None
+            and (
+                "pseudo_grid_space_charge_source_soa" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
+            {
+                "pseudo_grid_space_charge_source_radii_mm": (
+                    pseudo_grid_space_charge_source_radii_mm
+                )
+            }
+            if pseudo_grid_space_charge_source_radii_mm is not None
+            and (
+                "pseudo_grid_space_charge_source_radii_mm" in _sig_params
+                or _accepts_var_kwargs
+            )
+            else {}
+        ),
+        **(
             {"external_field": external_field}
             if external_field is not None
             and ("external_field" in _sig_params or _accepts_var_kwargs)
@@ -432,6 +475,12 @@ def self_consistent_step(
             {"macroparticle_smearing": macroparticle_smearing}
             if macroparticle_smearing is not None
             and ("macroparticle_smearing" in _sig_params or _accepts_var_kwargs)
+            else {}
+        ),
+        **(
+            {"beamline_geometry": beamline_geometry}
+            if beamline_geometry is not None
+            and ("beamline_geometry" in _sig_params or _accepts_var_kwargs)
             else {}
         ),
     )

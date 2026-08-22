@@ -205,12 +205,24 @@ class PseudoGridConfig:
     enabled: bool = False
     active_rider_count: int = 4
     active_driver_count: int = 4
+    field_rider_count: int = 0
+    field_driver_count: int = 0
+    field_deposition_neighbor_count: int = 4
+    space_charge_near_neighbor_count: int = 8
     passive_neighbor_count: int = 4
     coverage_strategy: str = "farthest_point_staleness"
     coverage_space: str = "position"
+    active_selection_mode: str = "rotating_live"
+    passive_update_mode: str = "weighted_delta"
+    active_rotation_interval: int = 20
+    active_rotation_fraction: float = 0.25
+    passive_remap_mode: str = "none"
+    passive_remap_warning_sigma: float = 0.5
+    passive_remap_trigger_sigma: float = 1.0
     pair_reuse_window: int = 16
     source_weighting_mode: str = "inverse_distance"
     loss_tracking_enabled: bool = True
+    numerical_failure_tolerance_fraction: float = 0.001
     causal_history_pruning_enabled: bool = False
     causal_history_safety_margin_steps: int = 2
 
@@ -219,10 +231,61 @@ class PseudoGridConfig:
             raise ValueError("pseudo-grid active_rider_count must be positive")
         if self.active_driver_count <= 0:
             raise ValueError("pseudo-grid active_driver_count must be positive")
+        if self.field_rider_count < 0:
+            raise ValueError("pseudo-grid field_rider_count must be non-negative")
+        if self.field_driver_count < 0:
+            raise ValueError("pseudo-grid field_driver_count must be non-negative")
+        if self.field_deposition_neighbor_count <= 0:
+            raise ValueError(
+                "pseudo-grid field_deposition_neighbor_count must be positive"
+            )
+        if self.space_charge_near_neighbor_count < 0:
+            raise ValueError(
+                "pseudo-grid space_charge_near_neighbor_count must be non-negative"
+            )
         if self.passive_neighbor_count <= 0:
             raise ValueError("pseudo-grid passive_neighbor_count must be positive")
+        if self.active_selection_mode not in {
+            "rotating_live",
+            "slow_rotating_live",
+            "fixed_prefix",
+        }:
+            raise ValueError(
+                "pseudo-grid active_selection_mode must be rotating_live, "
+                "slow_rotating_live, or fixed_prefix"
+            )
+        if self.passive_update_mode not in {
+            "weighted_delta",
+            "ballistic",
+            "external_interbunch",
+            "frozen",
+        }:
+            raise ValueError(
+                "pseudo-grid passive_update_mode must be weighted_delta, ballistic, "
+                "external_interbunch, or frozen"
+            )
+        if self.active_rotation_interval <= 0:
+            raise ValueError("pseudo-grid active_rotation_interval must be positive")
+        if not (0.0 < self.active_rotation_fraction <= 1.0):
+            raise ValueError("pseudo-grid active_rotation_fraction must be in (0, 1]")
+        if self.passive_remap_mode != "none":
+            raise ValueError(
+                "pseudo-grid passive_remap_mode currently supports only none"
+            )
+        if self.passive_remap_warning_sigma < 0.0:
+            raise ValueError(
+                "pseudo-grid passive_remap_warning_sigma must be non-negative"
+            )
+        if self.passive_remap_trigger_sigma < self.passive_remap_warning_sigma:
+            raise ValueError(
+                "pseudo-grid passive_remap_trigger_sigma must be >= warning threshold"
+            )
         if self.pair_reuse_window < 0:
             raise ValueError("pseudo-grid pair_reuse_window must be non-negative")
+        if not (0.0 <= self.numerical_failure_tolerance_fraction <= 1.0):
+            raise ValueError(
+                "pseudo-grid numerical_failure_tolerance_fraction must be in [0, 1]"
+            )
         if self.causal_history_safety_margin_steps < 0:
             raise ValueError(
                 "pseudo-grid causal_history_safety_margin_steps must be non-negative"
@@ -287,6 +350,59 @@ class CavityExitConfig:
             raise ValueError("cavity_exit residual_tail_factor must be non-negative")
         if self.max_residual_tail_steps < 0:
             raise ValueError("cavity_exit max_residual_tail_steps must be non-negative")
+
+
+@dataclass
+class Occluder:
+    """A single beam-pipe-like line-of-sight occluder.
+
+    The occluder is a finite cylinder of radius ``radius_mm`` centered at
+    ``center_mm`` with its axis along ``axis`` (a unit vector). A source
+    particle is "inside" (has line of sight down the axis) when its
+    transverse distance from the axis is less than ``radius_mm`` and it is
+    within the cylinder's axial extent. The cylinder is open at both ends.
+    """
+
+    axis: tuple[float, float, float]
+    center_mm: tuple[float, float, float]
+    radius_mm: float
+    length_mm: float
+    label: str = ""
+
+    def __post_init__(self) -> None:
+        axis_arr = np.asarray(self.axis, dtype=float)
+        norm = float(np.linalg.norm(axis_arr))
+        if norm < 1e-15:
+            raise ValueError("Occluder axis must be non-zero")
+        self.axis = tuple(axis_arr / norm)
+        self.center_mm = tuple(float(v) for v in self.center_mm)
+        if self.radius_mm <= 0:
+            raise ValueError("Occluder radius_mm must be positive")
+        if self.length_mm <= 0:
+            raise ValueError("Occluder length_mm must be positive")
+        self.label = str(self.label)
+
+
+@dataclass
+class BeamlineGeometryConfig:
+    """Configuration for geometry-based line-of-sight screening.
+
+    When enabled, retarded field contributions between bunch particles are
+    zeroed when the source particle (at its retarded position) is outside
+    all occluders that bound line of sight to the other bunch.
+
+    Each occluder represents an open pipe. A source particle inside an
+    occluder's transverse aperture has line of sight down that pipe's axis.
+    The occlusion test is applied at the retarded source position so that
+    residual fields (emitted earlier while inside) still arrive after the
+    source exits.
+    """
+
+    enabled: bool = False
+    occluders: list[Occluder] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.enabled = bool(self.enabled)
 
 
 @dataclass
@@ -390,6 +506,9 @@ class IntegratorConfig:
     driver_train: DriverTrainConfig = field(default_factory=DriverTrainConfig)
     cavity_exit: CavityExitConfig = field(default_factory=CavityExitConfig)
     particle_loss: ParticleLossConfig = field(default_factory=ParticleLossConfig)
+    beamline_geometry: BeamlineGeometryConfig = field(
+        default_factory=BeamlineGeometryConfig
+    )
 
 
 @dataclass
@@ -499,7 +618,8 @@ class TrajectoryArrays:
     """Struct-of-arrays trajectory representation.
 
     All kinematic fields have shape ``[n_steps, n_particles]``.
-    Particle-constant fields (``q``, ``m``, ``char_time``) have shape
+    Particle-constant fields (``q``, ``q_source``, ``q_observer``, ``q_species``,
+    ``macro_population``, ``m``, ``m_species``, ``char_time``) have shape
     ``[n_particles]``.  Per-step scalar metadata has shape ``[n_steps]``.
     """
 
@@ -535,7 +655,12 @@ class TrajectoryArrays:
 
     # Particle constants — [n_particles]
     q: np.ndarray
+    q_species: np.ndarray
+    q_observer: np.ndarray
+    q_source: np.ndarray
+    macro_population: np.ndarray
     m: np.ndarray
+    m_species: np.ndarray
     char_time: np.ndarray
 
     # Per-step scalars — [n_steps]
@@ -577,7 +702,12 @@ class TrajectoryArrays:
             "radiation_energy": self.radiation_energy[step],
             "radiation_energy_applied": self.radiation_energy_applied[step],
             "q": self.q,
+            "q_species": self.q_species,
+            "q_observer": self.q_observer,
+            "q_source": self.q_source,
+            "macro_population": self.macro_population,
             "m": self.m,
+            "m_species": self.m_species,
             "char_time": self.char_time,
             "origin_x": self.origin_x[step],
             "origin_y": self.origin_y[step],
@@ -675,7 +805,7 @@ class IndexedTrajectoryArrays:
         ]
 
     def constant(self, field_name: str) -> np.ndarray:
-        if field_name == "q" and self.q_override is not None:
+        if field_name in {"q", "q_source"} and self.q_override is not None:
             return np.asarray(self.q_override, dtype=float)
         return np.asarray(getattr(self.base, field_name))[self.particle_indices]
 
@@ -701,7 +831,12 @@ class IndexedTrajectoryArrays:
             "radiation_energy": self.row("radiation_energy", step),
             "radiation_energy_applied": self.row("radiation_energy_applied", step),
             "q": self.constant("q"),
+            "q_species": self.constant("q_species"),
+            "q_observer": self.constant("q_observer"),
+            "q_source": self.constant("q_source"),
+            "macro_population": self.constant("macro_population"),
             "m": self.constant("m"),
+            "m_species": self.constant("m_species"),
             "char_time": self.constant("char_time"),
             "origin_x": self.row("origin_x", step),
             "origin_y": self.row("origin_y", step),
@@ -763,7 +898,16 @@ class TrajectoryBuilder:
         "beta_avg_z",
         "beta_samples",
     )
-    _PARTICLE_CONST_FIELDS: tuple = ("q", "m", "char_time")
+    _PARTICLE_CONST_FIELDS: tuple = (
+        "q",
+        "q_species",
+        "q_observer",
+        "q_source",
+        "macro_population",
+        "m",
+        "m_species",
+        "char_time",
+    )
 
     def __init__(self, n_steps: int, n_particles: int) -> None:
         self._n_steps = n_steps
@@ -801,6 +945,18 @@ class TrajectoryBuilder:
             for field_name in self._PARTICLE_CONST_FIELDS:
                 if field_name in state:
                     self._arrays[field_name][:] = state[field_name]
+            q_values = state.get("q")
+            if q_values is not None:
+                if "q_species" not in state:
+                    self._arrays["q_species"][:] = q_values
+                if "q_observer" not in state:
+                    self._arrays["q_observer"][:] = q_values
+                if "q_source" not in state:
+                    self._arrays["q_source"][:] = q_values
+            if "macro_population" not in state:
+                self._arrays["macro_population"][:] = 1.0
+            if "m_species" not in state:
+                self._arrays["m_species"][:] = state.get("m", 1.0)
 
     def set_halt_metadata(
         self,
@@ -855,7 +1011,12 @@ class TrajectoryBuilder:
             beta_samples=self._arrays["beta_samples"][:s],
             dead=self._arrays["dead"][:s],
             q=self._arrays["q"],
+            q_species=self._arrays["q_species"],
+            q_observer=self._arrays["q_observer"],
+            q_source=self._arrays["q_source"],
+            macro_population=self._arrays["macro_population"],
             m=self._arrays["m"],
+            m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
             halted_early=self._halted_early[:s],
             halt_step=self._halt_step_arr[:s],
@@ -894,7 +1055,12 @@ class TrajectoryBuilder:
             beta_samples=self._arrays["beta_samples"],
             dead=self._arrays["dead"],
             q=self._arrays["q"],
+            q_species=self._arrays["q_species"],
+            q_observer=self._arrays["q_observer"],
+            q_source=self._arrays["q_source"],
+            macro_population=self._arrays["macro_population"],
             m=self._arrays["m"],
+            m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
             halted_early=self._halted_early,
             halt_step=self._halt_step_arr,
@@ -920,4 +1086,6 @@ __all__ = [
     "TrajectoryArrays",
     "IndexedTrajectoryArrays",
     "TrajectoryBuilder",
+    "Occluder",
+    "BeamlineGeometryConfig",
 ]

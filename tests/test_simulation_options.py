@@ -53,12 +53,23 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
         external_field_t_min=1.0e-6,
         external_field_t_max=2.0e-6,
         radiation_reaction_mode="power_matched_damping",
+        macroparticle_dynamics_mode="macro_inertia",
         pseudo_grid_enabled=True,
         pseudo_grid_active_rider_count=6,
         pseudo_grid_active_driver_count=7,
+        pseudo_grid_field_rider_count=24,
+        pseudo_grid_field_driver_count=25,
+        pseudo_grid_field_deposition_neighbor_count=6,
         pseudo_grid_passive_neighbor_count=3,
         pseudo_grid_coverage_strategy="farthest_point",
         pseudo_grid_coverage_space="phase_space",
+        pseudo_grid_active_selection_mode="slow_rotating_live",
+        pseudo_grid_passive_update_mode="external_interbunch",
+        pseudo_grid_active_rotation_interval=12,
+        pseudo_grid_active_rotation_fraction=0.5,
+        pseudo_grid_passive_remap_mode="none",
+        pseudo_grid_passive_remap_warning_sigma=0.25,
+        pseudo_grid_passive_remap_trigger_sigma=0.75,
         pseudo_grid_pair_reuse_window=25,
         pseudo_grid_source_weighting_mode="nearest",
         pseudo_grid_loss_tracking_enabled=False,
@@ -127,16 +138,30 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.external_field_t_min == pytest.approx(1.0e-6)
     assert loaded.external_field_t_max == pytest.approx(2.0e-6)
     assert payload["radiation_reaction_mode"] == "power_matched_damping"
+    assert payload["macroparticle_dynamics_mode"] == "macro_inertia"
+    assert loaded.macroparticle_dynamics_mode == "macro_inertia"
     assert payload["pseudo_grid"] == {
         "enabled": True,
         "active_rider_count": 6,
         "active_driver_count": 7,
+        "field_rider_count": 24,
+        "field_driver_count": 25,
+        "field_deposition_neighbor_count": 6,
+        "space_charge_near_neighbor_count": 8,
         "passive_neighbor_count": 3,
         "coverage_strategy": "farthest_point",
         "coverage_space": "phase_space",
+        "active_selection_mode": "slow_rotating_live",
+        "passive_update_mode": "external_interbunch",
+        "active_rotation_interval": 12,
+        "active_rotation_fraction": 0.5,
+        "passive_remap_mode": "none",
+        "passive_remap_warning_sigma": 0.25,
+        "passive_remap_trigger_sigma": 0.75,
         "pair_reuse_window": 25,
         "source_weighting_mode": "nearest",
         "loss_tracking_enabled": False,
+        "numerical_failure_tolerance_fraction": 0.15,
         "causal_history_pruning_enabled": True,
         "causal_history_safety_margin_steps": 5,
     }
@@ -144,9 +169,19 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.pseudo_grid_enabled is True
     assert loaded.pseudo_grid_active_rider_count == 6
     assert loaded.pseudo_grid_active_driver_count == 7
+    assert loaded.pseudo_grid_field_rider_count == 24
+    assert loaded.pseudo_grid_field_driver_count == 25
+    assert loaded.pseudo_grid_field_deposition_neighbor_count == 6
     assert loaded.pseudo_grid_passive_neighbor_count == 3
     assert loaded.pseudo_grid_coverage_strategy == "farthest_point"
     assert loaded.pseudo_grid_coverage_space == "phase_space"
+    assert loaded.pseudo_grid_active_selection_mode == "slow_rotating_live"
+    assert loaded.pseudo_grid_passive_update_mode == "external_interbunch"
+    assert loaded.pseudo_grid_active_rotation_interval == 12
+    assert loaded.pseudo_grid_active_rotation_fraction == pytest.approx(0.5)
+    assert loaded.pseudo_grid_passive_remap_mode == "none"
+    assert loaded.pseudo_grid_passive_remap_warning_sigma == pytest.approx(0.25)
+    assert loaded.pseudo_grid_passive_remap_trigger_sigma == pytest.approx(0.75)
     assert loaded.pseudo_grid_pair_reuse_window == 25
     assert loaded.pseudo_grid_source_weighting_mode == "nearest"
     assert loaded.pseudo_grid_loss_tracking_enabled is False
@@ -173,6 +208,41 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.driver_train_prehistory_steps == 12
     assert loaded.driver_train_preserve_prehistory_in_output is True
     assert loaded.log_file_path == "custom.log"
+
+
+def test_simulation_options_roundtrip_preserves_manual_particle_config_and_3d_payloads():
+    options = SimulationOptions(
+        simulation_type=SimulationType.BUNCH_TO_BUNCH,
+        manual_particle_config_enabled=True,
+        rider_params={
+            "kinetic_energy_mev": 12.0,
+            "mass_amu": 1.007276466621,
+            "charge_sign": -1.0,
+            "particle_count": 3,
+            "starting_position_mm": [1.0, 2.0, 3.0],
+            "momentum_axis": [1.0, 0.0, 0.0],
+            "longitudinal_span_mm": 4.0,
+        },
+        driver_params={
+            "kinetic_energy_mev": 15.0,
+            "mass_amu": 1.007276466621,
+            "charge_sign": 1.0,
+            "particle_count": 3,
+            "starting_position_mm": [4.0, 5.0, 6.0],
+            "momentum_axis": [0.0, -1.0, 0.0],
+            "transverse_distance_mm": 0.1,
+        },
+    )
+
+    payload = options.to_dict()
+    loaded = SimulationOptions.from_dict(payload)
+
+    assert payload["manual_particle_config_enabled"] is True
+    assert loaded.manual_particle_config_enabled is True
+    assert loaded.rider_params["momentum_axis"] == [1.0, 0.0, 0.0]
+    assert loaded.rider_params["starting_position_mm"] == [1.0, 2.0, 3.0]
+    assert loaded.driver_params is not None
+    assert loaded.driver_params["momentum_axis"] == [0.0, -1.0, 0.0]
 
 
 def test_chrono_options_roundtrip_as_independent_fields():

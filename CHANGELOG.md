@@ -2,7 +2,155 @@
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
-## Unreleased
+## v0.8.5 — August 2026
+
+### Testbed CLI and GUI Configuration Fidelity (August 2026)
+
+- Added `lw-simulate --testbed-config PATH` for executing full testbed/GUI JSON
+  configurations through `load_config()` and `run_testbed()` without translating
+  or silently overriding their schema.
+- Fixed native direct-CLI JSON ingestion of `beamline_geometry`, including its
+  occluder list, so geometry configured in a file reaches `IntegratorConfig`.
+- Fixed GUI source-smearing config round trips: all smearing settings now have
+  dedicated controls and preserve `use_momentum_errors` independently from the
+  legacy conducting-wall image-momentum-error setting.
+- Added focused regression coverage for the CLI testbed route, native geometry
+  merge, and headless GUI source-smearing serialization.
+
+### Pseudo-Grid Field Representatives (June 2026)
+
+- Added field representatives as a separate weighted retarded-LW source set in
+  pseudo-grid mode. Active particles remain the dynamic observers solved
+  self-consistently; field representatives are weighted live particles used for
+  cross-bunch retarded source sums and reduced same-bunch space charge.
+- Added direct passive-to-field source-charge deposition that conserves total
+  source charge and avoids passive-to-passive collapse for cross-bunch source
+  representation.
+- Threaded `field_rider_count`, `field_driver_count`, and
+  `field_deposition_neighbor_count` through `PseudoGridConfig`, the testbed
+  `SimulationOptions`, CLI flags, GUI controls, and saved config round-trips.
+- Same-bunch pseudo-grid space charge now uses a hybrid source set: active
+  observers evaluate their nearest live same-bunch neighbors as exact sources,
+  while field representatives carry the remaining farther charge. Exact-neighbor
+  charge is subtracted from the field-rep deposits for that observer to conserve
+  source charge without double counting.
+- Added `space_charge_near_neighbor_count` to pseudo-grid config for the hybrid
+  exact-neighbor same-bunch SC path.
+- Added source-specific deposition-radius softening for same-bunch pseudo-grid
+  space charge. Field representatives now carry a charge-magnitude-weighted RMS
+  cloud radius derived from the live particles deposited onto them, and the
+  solver combines that finite source size in quadrature with the existing global
+  space-charge softening. Exact near-neighbour sources remain point-like apart
+  from the global softening.
+- Fixed field-representative charge accumulation to preserve caller field-index
+  order instead of sorting with `np.unique`, keeping source charges aligned with
+  the scheduled field-representative histories.
+- Added experimental pseudo-grid modes for source-representation probes:
+  `active_selection_mode="fixed_prefix"` keeps a fixed dynamic observer pool,
+  `passive_update_mode="external_interbunch"` integrates non-active particles
+  against external fields and opposite-bunch field representatives while omitting
+  same-bunch space charge, `passive_update_mode="ballistic"` advances force-free
+  evaluation/source-deposition points, and `passive_update_mode="frozen"` keeps
+  static passives for diagnostics. Defaults preserve the existing rotating
+  live-particle behavior; high-passive convergence studies should prefer
+  rotating or slow-rotating active selection plus `external_interbunch`, with
+  `fixed_prefix` reserved for diagnostic controls.
+- Added `active_selection_mode="slow_rotating_live"` with configurable
+  `active_rotation_interval` and `active_rotation_fraction` so active observers
+  can change gradually instead of churning every step.
+- Added pseudo-grid role diagnostics for active/passive/field-representative
+  centroid offsets, active-duty spread, max time since active, and passive-remap
+  warning/trigger thresholds. Passive remapping remains disabled by default.
+- Added an experimental testbed-only `macroparticle_dynamics_mode` option.
+  The default `representative` mode keeps species observer charge/inertia with
+  macro-weighted source charge. `macro_inertia` scales observer charge, inertia,
+  momenta, and radiation characteristic time by `macro_population`, preserving
+  the same q/m trajectory when source charge is unchanged.
+- Added `numerical_failure_tolerance_fraction` to pseudo-grid config so gamma
+  blowups and self-consistency nonconvergence in reduced active solves can mark
+  individual particles dead and continue until the configured loss budget is
+  exceeded. The default diagnostic continuation budget is 15%.
+
+### Pseudo-Grid Passive Neighbor Collapse (June 2026)
+
+- Changed `core/pseudo_grid.py` so passive particles sample nearest neighbors
+  from the full alive set instead of only the active subset.
+- Collapsed passive-to-passive neighbor chains back onto the active
+  representatives before reduced-solver reconstruction and effective charge
+  aggregation, preserving the existing active-only downstream contract.
+- Added unit coverage for a passive-intermediate neighbor case and kept the
+  existing pseudo-grid feasibility tests passing.
+
+### 3D Gaussian Bunch Initialization (June 2026)
+
+- Added Gaussian 3D macroparticle offsets in `core/particle_initialization.py`
+  for arbitrary-axis bunches. For `particle_count > 1`, particles are now
+  sampled in both transverse directions and along the longitudinal axis instead
+  of being placed on a 1D line. This eliminates geometric aliasing that caused
+  catastrophic active-count sensitivity in the light/heavy transverse-crossing
+  study.
+- Fixed 3D Gaussian initialization to respect the existing `seed` path in
+  `prepare_particle_bunches`; repeated seeded runs now produce identical 3D
+  bunch coordinates.
+- Single-particle (`particle_count == 1`) behavior is unchanged: the particle
+  sits at the transverse offset as before.
+- Updated `tests/unit/test_particle_initialization_3d.py` with 3D spread and
+  seed-reproducibility coverage.
+
+### Explicit Observer/Source Charge Split (June 2026)
+
+- Split particle charge bookkeeping into explicit `q_species`, `q_observer`,
+  `q_source`, `macro_population`, and `m_species` fields while keeping `q` as a
+  backward-compatible alias for `q_source`.
+- Fixed multiply charged macroparticle handling so observer-side forces,
+  radiation-reaction `char_time`, and sampled-source metadata preserve the true
+  species charge state instead of inferring it from the total source charge.
+- Added regression coverage for multiply charged ions, including the `Au54+`
+  with `charge_multiplier=100` case where `q_observer=54e` and `q_source=5400e`.
+
+### Beamline Geometry Line-of-Sight Screening (June 2026)
+
+- Added `BeamlineGeometryConfig` and `Occluder` types in `core/types.py` for
+  geometry-based line-of-sight screening of retarded field contributions.
+- Added `core/beamline_geometry.py` with `compute_visibility_mask` that tests
+  whether a source particle (at its retarded position) is inside an occluder's
+  transverse aperture. Residual fields arrive naturally via retarded time.
+- Wired `beamline_geometry` through `retarded_equations_of_motion`,
+  `self_consistent_step`, `retarded_integrator`, `IntegratorConfig`,
+  `SimulationOptions`, and `run_testbed`. Occlusion applies to external
+  (bunch-to-bunch) samples only, not self-space-charge.
+- Added CLI flags `--beamline-geometry-enabled` / `--no-beamline-geometry` and
+  `--beamline-geometry-file` (loads a JSON file defining the occluders list).
+- Added a "Beamline/Geometry" GUI tab with a plaintext JSON editor and validate
+  button. The tab feeds occluders into `SimulationOptions` via
+  `_build_options_from_ui`.
+
+### General 3D Particle Initialization (June 2026)
+
+- Added `create_particle_state_3d` to `core/particle_initialization.py` supporting
+  arbitrary bunch orientation (`momentum_axis`), starting position
+  (`starting_position_mm`), auto-computed or explicit transverse axes, and
+  longitudinal span. Drop-in compatible with the existing `create_particle_state`
+  state-dict structure. Backward-compatible; existing initializers unchanged.
+- Wired into the testbed path (`prepare_particle_bunches`) and the CLI single-run
+  path (`_build_particle_state`): when `momentum_axis` is present in rider/driver
+  params, the 3D initializer is used instead of the legacy z-axis initializer.
+- Added a new main-GUI `Manual Particle Config` tab with rider/driver JSON editors,
+  validation, and saved-config round-tripping so full 3D particle payloads can be
+  entered directly without going through the legacy z-axis form fields.
+- Updated maintained guidance and examples to treat full 3D bunch initialization as
+  the preferred default for new configs/tests while keeping legacy particle fields
+  as a compatibility path.
+- Added regression coverage for manual GUI particle-config overrides, 3D
+  `SimulationOptions` round-tripping, and CLI build-request loading of 3D
+  rider/driver JSON payloads.
+
+### Energy Ledger Per-Direction and Percent Gains (June 2026)
+
+- Extended `_compute_energy_ledger_series` and `_ledger_scalar_metrics` in
+  `testbed_runner.py` with per-direction kinetic energy series (x, y, z) and
+  `final_percent_energy_gain` / `max_percent_energy_gain` scalar metrics for
+  both rider and driver. All existing metrics preserved for backward compat.
 
 ### Conducting-Wall Kinetic-Energy Pz Convention (June 2026)
 

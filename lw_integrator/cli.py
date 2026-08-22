@@ -1,9 +1,9 @@
 """Command-line interface for running LW Integrator simulations.
 
 The ``lw-simulate`` console script and ``python -m lw_integrator`` entry point
-both call :func:`main`.  Users can either rely on the built-in default scenario
-(a 35 MeV electron approaching a conducting aperture) or provide a JSON
-configuration that customises the simulation parameters and particle bunches.
+both call :func:`main`. Users can either rely on the built-in default scenario,
+provide a native direct-integrator JSON configuration, or run a full testbed/
+GUI JSON configuration through the explicit ``--testbed-config`` path.
 """
 
 from __future__ import annotations
@@ -24,13 +24,15 @@ from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
 from core.types import (
-    ChronoMatchingMode,
+    BeamlineGeometryConfig,
     CavityExitConfig,
+    ChronoMatchingMode,
     DriverTrainConfig,
     ExternalFieldConfig,
     GammaReconciliationMethod,
     IntegratorConfig,
     MacroparticleSmearingConfig,
+    Occluder,
     ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
@@ -100,12 +102,17 @@ DEFAULT_PSEUDO_GRID: Dict[str, Any] = {
     "enabled": False,
     "active_rider_count": 4,
     "active_driver_count": 4,
+    "field_rider_count": 0,
+    "field_driver_count": 0,
+    "field_deposition_neighbor_count": 4,
+    "space_charge_near_neighbor_count": 8,
     "passive_neighbor_count": 4,
     "coverage_strategy": "farthest_point_staleness",
     "coverage_space": "position",
     "pair_reuse_window": 16,
     "source_weighting_mode": "inverse_distance",
     "loss_tracking_enabled": True,
+    "numerical_failure_tolerance_fraction": 0.15,
     "causal_history_pruning_enabled": False,
     "causal_history_safety_margin_steps": 2,
 }
@@ -116,6 +123,11 @@ DEFAULT_CAVITY_EXIT: Dict[str, Any] = {
     "cavity_length_mm": None,
     "residual_tail_factor": 0.0,
     "max_residual_tail_steps": 0,
+}
+
+DEFAULT_BEAMLINE_GEOMETRY: Dict[str, Any] = {
+    "enabled": False,
+    "occluders": [],
 }
 
 DEFAULT_MACROPARTICLE_SMEARING: Dict[str, Any] = {
@@ -237,7 +249,17 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        help="Path to a JSON file describing the simulation parameters and bunches.",
+        help="Path to a native direct-integrator JSON configuration.",
+    )
+    parser.add_argument(
+        "--testbed-config",
+        type=Path,
+        dest="testbed_config",
+        help=(
+            "Path to a testbed/GUI JSON configuration. Runs it unchanged "
+            "through load_config() and run_testbed(); direct-run flags do not "
+            "override it."
+        ),
     )
     parser.add_argument(
         "--sweep-config",
@@ -510,6 +532,25 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--beamline-geometry-enabled",
+        dest="beamline_geometry_enabled",
+        action="store_true",
+        help="Enable beamline-geometry line-of-sight screening between bunches.",
+    )
+    parser.add_argument(
+        "--no-beamline-geometry",
+        dest="beamline_geometry_enabled",
+        action="store_false",
+        default=None,
+        help="Disable beamline-geometry screening explicitly.",
+    )
+    parser.add_argument(
+        "--beamline-geometry-file",
+        type=str,
+        dest="beamline_geometry_file",
+        help="Path to a JSON file defining the beamline_geometry block (occluders list).",
+    )
+    parser.add_argument(
         "--chrono-mode",
         choices=("averaged", "fast"),
         help=(
@@ -673,10 +714,47 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Number of active driver particles to solve directly each step.",
     )
     parser.add_argument(
+        "--pseudo-grid-field-rider-count",
+        type=int,
+        dest="pseudo_grid_field_rider_count",
+        help=(
+            "Number of weighted live rider particles used as retarded LW "
+            "field representatives. Defaults to active rider particles only."
+        ),
+    )
+    parser.add_argument(
+        "--pseudo-grid-field-driver-count",
+        type=int,
+        dest="pseudo_grid_field_driver_count",
+        help=(
+            "Number of weighted live driver particles used as retarded LW "
+            "field representatives. Defaults to active driver particles only."
+        ),
+    )
+    parser.add_argument(
+        "--pseudo-grid-field-deposition-neighbor-count",
+        type=int,
+        dest="pseudo_grid_field_deposition_neighbor_count",
+        help=(
+            "Nearest field representatives used when depositing non-field "
+            "live source charge."
+        ),
+    )
+    parser.add_argument(
+        "--pseudo-grid-space-charge-near-neighbor-count",
+        type=int,
+        dest="pseudo_grid_space_charge_near_neighbor_count",
+        help=(
+            "Number of nearest live same-bunch particles evaluated exactly per "
+            "active observer before using field representatives for remaining "
+            "space charge."
+        ),
+    )
+    parser.add_argument(
         "--pseudo-grid-passive-neighbor-count",
         type=int,
         dest="pseudo_grid_passive_neighbor_count",
-        help="Nearest active neighbors used when advancing passive particles.",
+        help="Number of nearest active anchors used when reconstructing passive pseudo-grid particles.",
     )
     parser.add_argument(
         "--pseudo-grid-coverage-strategy",
@@ -715,6 +793,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Disable pseudo-grid particle-loss tracking.",
     )
     parser.set_defaults(pseudo_grid_loss_tracking_enabled=None)
+    parser.add_argument(
+        "--pseudo-grid-numerical-failure-tolerance-fraction",
+        type=float,
+        dest="pseudo_grid_numerical_failure_tolerance_fraction",
+        help=(
+            "Maximum fraction of pseudo-grid particles that may be marked dead "
+            "after numerical failures before the run fails."
+        ),
+    )
     parser.add_argument(
         "--pseudo-grid-causal-pruning",
         dest="pseudo_grid_causal_history_pruning_enabled",
@@ -1005,6 +1092,98 @@ def _load_config(path: Path) -> Dict[str, Any]:
     return dict(payload)
 
 
+def _json_default(value: Any) -> Any:
+    """Serialize numerical and path values returned by the testbed runner."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Cannot JSON-serialize {type(value).__name__}")
+
+
+def _build_testbed_report(result: Any, config_path: Path) -> dict[str, Any]:
+    """Return a compact serializable report for a testbed-config run."""
+    return {
+        "run_mode": "testbed_config",
+        "config_path": str(config_path),
+        "duration_s": float(result.duration_s),
+        "filename_base": str(result.filename_base),
+        "halted_early": bool(result.halted_early),
+        "halt_reason": result.halt_reason,
+        "num_particles_dead": int(result.num_particles_dead),
+        "rider_delta_e_mev": result.rider_delta_e,
+        "rider_gamma_initial": result.rider_gamma_initial,
+        "rider_gamma_final": result.rider_gamma_final,
+        "driver_gamma_initial": result.driver_gamma_initial,
+        "driver_gamma_final": result.driver_gamma_final,
+        "energy_ledger_metrics": result.energy_ledger_metrics or {},
+        "saved_paths": {name: str(path) for name, path in result.saved_paths.items()},
+    }
+
+
+def _print_testbed_summary(report: Mapping[str, Any]) -> None:
+    """Print the compact result summary for an explicit testbed-config run."""
+    lines = ["LW Integrator testbed simulation summary:"]
+    for label, key in (
+        ("Config", "config_path"),
+        ("Duration S", "duration_s"),
+        ("Halted Early", "halted_early"),
+        ("Rider Delta E Mev", "rider_delta_e_mev"),
+        ("Rider Gamma Initial", "rider_gamma_initial"),
+        ("Rider Gamma Final", "rider_gamma_final"),
+    ):
+        value = report.get(key)
+        if value is not None:
+            lines.append(f"  {label}: {value}")
+    if report.get("halt_reason"):
+        lines.append(f"  Halt Reason: {report['halt_reason']}")
+    saved_paths = report.get("saved_paths")
+    if isinstance(saved_paths, Mapping) and saved_paths:
+        lines.append(f"  Saved Artifacts: {len(saved_paths)}")
+    print("\n".join(lines))
+
+
+def run_testbed_config(args: argparse.Namespace) -> int:
+    """Load and run an unmodified testbed/GUI JSON configuration."""
+    conflicting_options = (
+        ("--config", getattr(args, "config", None)),
+        ("--sweep-config", getattr(args, "sweep_config", None)),
+        ("--results-file", getattr(args, "results_file", None)),
+    )
+    conflicts = [name for name, value in conflicting_options if value is not None]
+    if conflicts:
+        print(
+            "Error: --testbed-config cannot be combined with "
+            f"{', '.join(conflicts)}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    config_path = args.testbed_config
+    try:
+        from .testbed_runner import load_config, run_testbed
+
+        options = load_config(config_path)
+        result = run_testbed(options)
+    # The runner can surface numerical and I/O failures through varied exception types.
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error running testbed config {config_path}: {exc}", file=sys.stderr)
+        return 2
+
+    report = _build_testbed_report(result, config_path)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(report, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+    if not args.quiet:
+        _print_testbed_summary(report)
+    return 0
+
+
 def _merge_simulation_payload(
     file_payload: Mapping[str, Any], args: argparse.Namespace
 ) -> Dict[str, Any]:
@@ -1012,6 +1191,7 @@ def _merge_simulation_payload(
     result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
     result["driver_train"] = dict(DEFAULT_DRIVER_TRAIN)
+    result["beamline_geometry"] = dict(DEFAULT_BEAMLINE_GEOMETRY)
     result["macroparticle_smearing"] = dict(DEFAULT_MACROPARTICLE_SMEARING)
     result["adaptive_timestep"] = dict(DEFAULT_ADAPTIVE_TIMESTEP)
     for key in DEFAULT_SIMULATION:
@@ -1031,6 +1211,11 @@ def _merge_simulation_payload(
     file_driver_train = file_payload.get("driver_train")
     if isinstance(file_driver_train, Mapping):
         result["driver_train"].update(file_driver_train)
+    if "beamline_geometry" in file_payload:
+        file_beamline_geometry = file_payload["beamline_geometry"]
+        if not isinstance(file_beamline_geometry, Mapping):
+            raise SimulationConfigError("'beamline_geometry' must be an object")
+        result["beamline_geometry"].update(file_beamline_geometry)
     file_smearing = file_payload.get("macroparticle_smearing")
     if isinstance(file_smearing, Mapping):
         result["macroparticle_smearing"].update(file_smearing)
@@ -1135,6 +1320,18 @@ def _merge_simulation_payload(
     if getattr(args, "cavity_exit_length_mm", None) is not None:
         cavity_exit["cavity_length_mm"] = args.cavity_exit_length_mm
 
+    beamline_geometry = result.get("beamline_geometry")
+    if not isinstance(beamline_geometry, MutableMapping):
+        beamline_geometry = {}
+        result["beamline_geometry"] = beamline_geometry
+    if getattr(args, "beamline_geometry_enabled", None) is not None:
+        beamline_geometry["enabled"] = bool(args.beamline_geometry_enabled)
+    if getattr(args, "beamline_geometry_file", None):
+        with open(args.beamline_geometry_file) as f:
+            file_block = json.load(f)
+        if isinstance(file_block, dict):
+            beamline_geometry.update(file_block)
+
     if getattr(args, "space_charge", False):
         result["space_charge_enabled"] = True
     if getattr(args, "space_charge_softening_mm", 0.0) != 0.0:
@@ -1222,12 +1419,17 @@ def _merge_simulation_payload(
         "enabled",
         "active_rider_count",
         "active_driver_count",
+        "field_rider_count",
+        "field_driver_count",
+        "field_deposition_neighbor_count",
+        "space_charge_near_neighbor_count",
         "passive_neighbor_count",
         "coverage_strategy",
         "coverage_space",
         "pair_reuse_window",
         "source_weighting_mode",
         "loss_tracking_enabled",
+        "numerical_failure_tolerance_fraction",
         "causal_history_pruning_enabled",
         "causal_history_safety_margin_steps",
     )
@@ -1363,6 +1565,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     pseudo_grid = _build_pseudo_grid_config(payload.get("pseudo_grid"))
     driver_train = _build_driver_train_config(payload.get("driver_train"))
     cavity_exit = _build_cavity_exit_config(payload.get("cavity_exit"))
+    beamline_geometry = _build_beamline_geometry_config(
+        payload.get("beamline_geometry")
+    )
     macroparticle_smearing = _build_macroparticle_smearing_config(
         payload.get("macroparticle_smearing")
     )
@@ -1396,6 +1601,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         driver_train=driver_train,
         cavity_exit=cavity_exit,
         particle_loss=particle_loss,
+        beamline_geometry=beamline_geometry,
     )
 
 
@@ -1538,6 +1744,13 @@ def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
                 f"pseudo_grid.{name} must be an integer"
             ) from exc
 
+    def _as_float(name: str, default: float) -> float:
+        value = payload.get(name, default)
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(f"pseudo_grid.{name} must be a float") from exc
+
     try:
         return PseudoGridConfig(
             enabled=bool(payload.get("enabled", DEFAULT_PSEUDO_GRID["enabled"])),
@@ -1546,6 +1759,20 @@ def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
             ),
             active_driver_count=_as_int(
                 "active_driver_count", DEFAULT_PSEUDO_GRID["active_driver_count"]
+            ),
+            field_rider_count=_as_int(
+                "field_rider_count", DEFAULT_PSEUDO_GRID["field_rider_count"]
+            ),
+            field_driver_count=_as_int(
+                "field_driver_count", DEFAULT_PSEUDO_GRID["field_driver_count"]
+            ),
+            field_deposition_neighbor_count=_as_int(
+                "field_deposition_neighbor_count",
+                DEFAULT_PSEUDO_GRID["field_deposition_neighbor_count"],
+            ),
+            space_charge_near_neighbor_count=_as_int(
+                "space_charge_near_neighbor_count",
+                DEFAULT_PSEUDO_GRID["space_charge_near_neighbor_count"],
             ),
             passive_neighbor_count=_as_int(
                 "passive_neighbor_count",
@@ -1573,6 +1800,10 @@ def _build_pseudo_grid_config(payload: Any) -> PseudoGridConfig:
                     "loss_tracking_enabled",
                     DEFAULT_PSEUDO_GRID["loss_tracking_enabled"],
                 )
+            ),
+            numerical_failure_tolerance_fraction=_as_float(
+                "numerical_failure_tolerance_fraction",
+                DEFAULT_PSEUDO_GRID["numerical_failure_tolerance_fraction"],
             ),
             causal_history_pruning_enabled=bool(
                 payload.get(
@@ -1606,6 +1837,33 @@ def _build_cavity_exit_config(payload: Any) -> CavityExitConfig:
         ),
         residual_tail_factor=float(merged.get("residual_tail_factor", 0.0)),
         max_residual_tail_steps=int(merged.get("max_residual_tail_steps", 0)),
+    )
+
+
+def _build_beamline_geometry_config(payload: Any) -> BeamlineGeometryConfig:
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("'beamline_geometry' must be an object")
+    merged = dict(DEFAULT_BEAMLINE_GEOMETRY)
+    merged.update(payload)
+    occluders_payload = merged.get("occluders", [])
+    occluders = []
+    for item in occluders_payload:
+        if not isinstance(item, Mapping):
+            raise SimulationConfigError("each occluder must be an object")
+        occluders.append(
+            Occluder(
+                axis=tuple(item.get("axis", (0.0, 0.0, 1.0))),
+                center_mm=tuple(item.get("center_mm", (0.0, 0.0, 0.0))),
+                radius_mm=float(item.get("radius_mm", 1.0)),
+                length_mm=float(item.get("length_mm", 1.0)),
+                label=str(item.get("label", "")),
+            )
+        )
+    return BeamlineGeometryConfig(
+        enabled=bool(merged.get("enabled", False)),
+        occluders=occluders,
     )
 
 
@@ -2054,12 +2312,73 @@ def _build_particle_state(payload: Mapping[str, Any]) -> ParticleState:
             "Particle configuration is missing required fields: " + ", ".join(missing)
         )
 
+    if "momentum_axis" in payload:
+        state = _build_particle_state_3d(payload)
+    else:
+        try:
+            state, _rest_energy = create_bunch_from_energy(**payload)
+        except TypeError as exc:
+            raise SimulationConfigError(
+                f"Particle configuration includes unsupported options: {exc}"
+            ) from exc
+
+    return state
+
+
+def _build_particle_state_3d(payload: Mapping[str, Any]) -> ParticleState:
+    """Build a 3D-oriented bunch when ``momentum_axis`` is present."""
+    from core.particle_initialization import create_particle_state_3d
+
     try:
-        state, _rest_energy = create_bunch_from_energy(**payload)
-    except TypeError as exc:
+        axis = tuple(float(v) for v in payload["momentum_axis"])
+    except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
-            f"Particle configuration includes unsupported options: {exc}"
+            f"momentum_axis must be a list of 3 numbers: {exc}"
         ) from exc
+
+    starting_position = payload.get("starting_position_mm", [0.0, 0.0, 0.0])
+    try:
+        starting_position = tuple(float(v) for v in starting_position)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"starting_position_mm must be a list of 3 numbers: {exc}"
+        ) from exc
+
+    seed = payload.get("seed")
+    if seed is not None:
+        try:
+            np.random.seed(int(seed))
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(f"seed must be an integer: {exc}") from exc
+
+    transverse_axes = payload.get("transverse_axes")
+    if transverse_axes is not None:
+        try:
+            transverse_axes = tuple(
+                tuple(float(v) for v in ax) for ax in transverse_axes
+            )
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"transverse_axes must be a list of axis lists: {exc}"
+            ) from exc
+
+    try:
+        state, _rest_energy = create_particle_state_3d(
+            starting_position_mm=starting_position,
+            momentum_axis=axis,
+            kinetic_energy_mev=float(payload["kinetic_energy_mev"]),
+            stripped_ions=float(payload.get("stripped_ions", 1.0)),
+            particle_mass_amu=float(payload["mass_amu"]),
+            particle_count=int(payload.get("particle_count", 1)),
+            charge_sign=float(payload["charge_sign"]),
+            transverse_distance_mm=float(payload.get("transverse_distance_mm", 0.0)),
+            transverse_momentum=float(payload.get("transverse_momentum", 0.0)),
+            longitudinal_span_mm=float(payload.get("longitudinal_span_mm", 0.0)),
+            transverse_axes=transverse_axes,
+            charge_multiplier=float(payload.get("charge_multiplier", 1.0)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(f"3D particle configuration error: {exc}") from exc
 
     return state
 
@@ -2140,6 +2459,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         cavity_exit=request.config.cavity_exit,
         particle_loss=request.config.particle_loss,
         macroparticle_smearing=request.config.macroparticle_smearing,
+        beamline_geometry=request.config.beamline_geometry,
     )
 
 
@@ -2286,6 +2606,9 @@ def _print_results_report(report: Mapping[str, Any]) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.testbed_config is not None:
+        return run_testbed_config(args)
 
     if args.results_file is not None:
         try:

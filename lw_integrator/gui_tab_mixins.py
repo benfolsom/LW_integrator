@@ -222,7 +222,7 @@ class IntegratorGUITabMixin:
 
         self.macroparticle_momentum_errors_check = ttk.Checkbutton(
             particle_frame,
-            text="Include momentum errors (cumulative)",
+            text="Include image momentum errors (cumulative)",
             variable=self.macroparticle_use_momentum_errors_var,
         )
         self.macroparticle_momentum_errors_check.grid(
@@ -236,7 +236,7 @@ class IntegratorGUITabMixin:
                 "Macroparticle mode scales particle charge and adds Gaussian errors to image subcharges.\n"
                 "Image errors are derived from bunch spread parameters (transv_dist, transv_mom) × sigma multiplier.\n"
                 "Position errors: constant σ from transv_dist. Momentum errors: cumulative from transv_mom.\n"
-                "Uncheck 'Include momentum errors' to apply only constant position errors (no cumulative growth).\n"
+                "Uncheck 'Include image momentum errors' to apply only constant position errors (no cumulative growth).\n"
                 "Only active for CONDUCTING_WALL simulations."
             ),
             font=("TkDefaultFont", 8),
@@ -325,6 +325,85 @@ class IntegratorGUITabMixin:
             self._macroparticle_smearing_widgets.extend([label, entry])
             next_row += 1
 
+        smearing_toggle_fields = [
+            (
+                "Use source position offsets",
+                "macroparticle_smearing_use_position_errors_var",
+                "macroparticle_smearing_position_errors_check",
+            ),
+            (
+                "Use source momentum offsets",
+                "macroparticle_smearing_use_momentum_errors_var",
+                "macroparticle_smearing_momentum_errors_check",
+            ),
+            (
+                "Use source centroid offsets",
+                "macroparticle_smearing_use_centroid_errors_var",
+                "macroparticle_smearing_centroid_errors_check",
+            ),
+            (
+                "Use internal subcharge cloud",
+                "macroparticle_smearing_use_internal_cloud_var",
+                "macroparticle_smearing_internal_cloud_check",
+            ),
+            (
+                "Apply to active observers",
+                "macroparticle_smearing_apply_to_active_observers_var",
+                "macroparticle_smearing_active_observers_check",
+            ),
+            (
+                "Apply to active sources",
+                "macroparticle_smearing_apply_to_active_sources_var",
+                "macroparticle_smearing_active_sources_check",
+            ),
+            (
+                "Apply to passive sources",
+                "macroparticle_smearing_apply_to_passive_sources_var",
+                "macroparticle_smearing_passive_sources_check",
+            ),
+        ]
+        for label_text, var_name, check_name in smearing_toggle_fields:
+            check = ttk.Checkbutton(
+                particle_frame,
+                text=label_text,
+                variable=getattr(self, var_name),
+            )
+            check.grid(
+                row=next_row,
+                column=0,
+                columnspan=2,
+                sticky="w",
+                pady=2,
+                padx=(20, 0),
+            )
+            setattr(self, check_name, check)
+            self._macroparticle_smearing_widgets.append(check)
+            next_row += 1
+
+        self.macroparticle_smearing_refresh_policy_label = ttk.Label(
+            particle_frame, text="Offset refresh policy:"
+        )
+        self.macroparticle_smearing_refresh_policy_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.macroparticle_smearing_refresh_policy_combo = ttk.Combobox(
+            particle_frame,
+            textvariable=self.macroparticle_smearing_refresh_policy_var,
+            values=("fixed_per_particle", "per_step"),
+            state="readonly",
+            width=18,
+        )
+        self.macroparticle_smearing_refresh_policy_combo.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        self._macroparticle_smearing_widgets.extend(
+            [
+                self.macroparticle_smearing_refresh_policy_label,
+                self.macroparticle_smearing_refresh_policy_combo,
+            ]
+        )
+        next_row += 1
+
         self.macroparticle_smearing_passive_updates_check = ttk.Checkbutton(
             particle_frame,
             text="Apply to pseudo-grid passive updates (experimental)",
@@ -406,6 +485,54 @@ class IntegratorGUITabMixin:
             width=12,
         )
         self.pseudo_grid_active_driver_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_field_rider_label = ttk.Label(
+            particle_frame, text="Field rider reps:"
+        )
+        self.pseudo_grid_field_rider_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_field_rider_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_field_rider_count_var,
+            width=12,
+        )
+        self.pseudo_grid_field_rider_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_field_driver_label = ttk.Label(
+            particle_frame, text="Field driver reps:"
+        )
+        self.pseudo_grid_field_driver_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_field_driver_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_field_driver_count_var,
+            width=12,
+        )
+        self.pseudo_grid_field_driver_entry.grid(
+            row=next_row, column=1, sticky="ew", pady=2
+        )
+        next_row += 1
+
+        self.pseudo_grid_field_deposition_neighbor_label = ttk.Label(
+            particle_frame, text="Field deposition neighbors:"
+        )
+        self.pseudo_grid_field_deposition_neighbor_label.grid(
+            row=next_row, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.pseudo_grid_field_deposition_neighbor_entry = ttk.Entry(
+            particle_frame,
+            textvariable=self.pseudo_grid_field_deposition_neighbor_count_var,
+            width=12,
+        )
+        self.pseudo_grid_field_deposition_neighbor_entry.grid(
             row=next_row, column=1, sticky="ew", pady=2
         )
         next_row += 1
@@ -536,9 +663,9 @@ class IntegratorGUITabMixin:
         help_text_pseudo_grid = ttk.Label(
             particle_frame,
             text=(
-                "Pseudo-grid mode is currently an experimental configuration surface for BUNCH_TO_BUNCH runs.\n"
-                "Plumbing is present in the GUI, CLI, and saved configs while the reduced active/passive solver path is built incrementally.\n"
-                "Use the pair-reuse window to discourage repeated active matches, and causal-history pruning to prepare for bounded history retention."
+                "Pseudo-grid mode is an experimental reduced solver for BUNCH_TO_BUNCH runs.\n"
+                "Active particles are dynamic observers; field representatives are weighted live particles used as retarded LW sources.\n"
+                "Non-field live particles deposit source charge directly onto field representatives while passive updates use the passive-neighbor setting."
             ),
             font=("TkDefaultFont", 8),
             foreground="gray40",
@@ -553,6 +680,12 @@ class IntegratorGUITabMixin:
             self.pseudo_grid_active_rider_entry,
             self.pseudo_grid_active_driver_label,
             self.pseudo_grid_active_driver_entry,
+            self.pseudo_grid_field_rider_label,
+            self.pseudo_grid_field_rider_entry,
+            self.pseudo_grid_field_driver_label,
+            self.pseudo_grid_field_driver_entry,
+            self.pseudo_grid_field_deposition_neighbor_label,
+            self.pseudo_grid_field_deposition_neighbor_entry,
             self.pseudo_grid_passive_neighbor_label,
             self.pseudo_grid_passive_neighbor_entry,
             self.pseudo_grid_pair_reuse_label,
@@ -2498,3 +2631,375 @@ class IntegratorGUITabMixin:
     def _toggle_auto_duration_controls(self) -> None:
         # Implemented in gui_state_mixins.IntegratorGUIStateMixin
         pass
+
+    def _build_manual_particle_config_tab(self) -> None:
+        """Build a manual JSON editor for full rider/driver particle configs."""
+        import json
+
+        from .gui import Tooltip, _show_error_dialog, _show_warning_dialog
+
+        frame = self._create_scrollable_tab(
+            self.notebook, "Manual Particle Config", padding=12
+        )
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        notice_label = ttk.Label(
+            frame,
+            text=(
+                "Prefer this tab for new full-3D bunch setups. When enabled, the "
+                "JSON objects here override the legacy Particles form for single "
+                "runs and saved configs. Supported keys include momentum_axis, "
+                "starting_position_mm, transverse_distance_mm, "
+                "longitudinal_span_mm, and transverse_axes."
+            ),
+            justify="left",
+            foreground="blue",
+        )
+        notice_label.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+
+        self.manual_particle_config_enable_check = ttk.Checkbutton(
+            frame,
+            text="Enable manual rider/driver particle JSON override",
+            variable=self.manual_particle_config_enabled_var,
+            command=self._toggle_manual_particle_config_controls,
+        )
+        self.manual_particle_config_enable_check.grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(0, 6)
+        )
+
+        rider_template = {
+            "kinetic_energy_mev": 35.0,
+            "mass_amu": 0.00054857990907,
+            "charge_sign": -1.0,
+            "stripped_ions": 1.0,
+            "particle_count": 5,
+            "starting_position_mm": [0.0, 0.0, -300.0],
+            "momentum_axis": [0.0, 0.0, 1.0],
+            "transverse_distance_mm": 0.01,
+            "transverse_momentum": 0.0,
+            "longitudinal_span_mm": 0.02,
+        }
+        driver_template = {
+            "kinetic_energy_mev": 35.0,
+            "mass_amu": 1.007276466621,
+            "charge_sign": 1.0,
+            "stripped_ions": 1.0,
+            "particle_count": 5,
+            "starting_position_mm": [0.0, 0.0, 300.0],
+            "momentum_axis": [0.0, 0.0, -1.0],
+            "transverse_distance_mm": 0.01,
+            "transverse_momentum": 0.0,
+            "longitudinal_span_mm": 0.02,
+        }
+
+        def _build_editor(
+            column: int, title: str, widget_name: str, template: dict
+        ) -> None:
+            editor_frame = ttk.LabelFrame(frame, text=title, padding=6)
+            editor_frame.grid(
+                row=2,
+                column=column,
+                sticky="nsew",
+                padx=(0, 6) if column == 0 else (6, 0),
+            )
+            editor_frame.columnconfigure(0, weight=1)
+            editor_frame.rowconfigure(0, weight=1)
+
+            text_widget = tk.Text(editor_frame, width=56, height=22)
+            text_widget.grid(row=0, column=0, sticky="nsew")
+            text_widget.insert("1.0", json.dumps(template, indent=2))
+
+            text_scroll = ttk.Scrollbar(
+                editor_frame, orient="vertical", command=text_widget.yview
+            )
+            text_scroll.grid(row=0, column=1, sticky="ns")
+            text_widget.configure(yscrollcommand=text_scroll.set)
+
+            setattr(self, widget_name, text_widget)
+            self._manual_particle_config_sub_widgets.extend(
+                [editor_frame, text_widget, text_scroll]
+            )
+
+        self._manual_particle_config_sub_widgets: list[object] = [notice_label]
+        _build_editor(
+            0, "Rider particle JSON", "manual_rider_config_text", rider_template
+        )
+        _build_editor(
+            1, "Driver particle JSON", "manual_driver_config_text", driver_template
+        )
+
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+
+        def _validate_json() -> None:
+            messages = []
+            for side in ("rider", "driver"):
+                try:
+                    payload = self._collect_manual_particle_payload(side, strict=True)
+                except ValueError as exc:
+                    _show_error_dialog(
+                        self.root,
+                        "Invalid manual particle JSON",
+                        str(exc),
+                    )
+                    return
+                mode = "3D" if "momentum_axis" in payload else "legacy"
+                messages.append(
+                    f"{side.title()}: valid {mode} object with {len(payload)} key(s)."
+                )
+            _show_warning_dialog(
+                self.root,
+                "Manual particle config",
+                "\n".join(messages),
+            )
+
+        self.manual_particle_config_validate_button = ttk.Button(
+            button_row, text="Validate JSON", command=_validate_json
+        )
+        self.manual_particle_config_validate_button.pack(side="left")
+        self._manual_particle_config_sub_widgets.append(
+            self.manual_particle_config_validate_button
+        )
+
+        Tooltip(
+            self.manual_particle_config_enable_check,
+            "When enabled, the rider/driver JSON editors override the legacy "
+            "particle form fields for single-run GUI execution and saved run "
+            "configs.",
+        )
+
+        self._toggle_manual_particle_config_controls()
+
+    def _set_text_widget_content(self, widget: tk.Text, content: str) -> None:
+        """Replace a ``tk.Text`` widget's contents while preserving its state."""
+        try:
+            previous_state = str(widget.cget("state"))
+        except Exception:
+            previous_state = "normal"
+        try:
+            widget.configure(state="normal")
+        except Exception:
+            pass
+        widget.delete("1.0", "end")
+        widget.insert("1.0", content)
+        restored_state = "normal" if previous_state == "normal" else "disabled"
+        try:
+            widget.configure(state=restored_state)
+        except Exception:
+            pass
+
+    def _collect_manual_particle_payload(
+        self, side: str, *, strict: bool = False
+    ) -> dict:
+        """Extract rider/driver particle JSON from the manual-config tab."""
+        import json
+
+        widget_name = {
+            "rider": "manual_rider_config_text",
+            "driver": "manual_driver_config_text",
+        }.get(side)
+        if widget_name is None:
+            if strict:
+                raise ValueError(f"Unknown manual particle side: {side}")
+            return {}
+        widget = getattr(self, widget_name, None)
+        if widget is None:
+            if strict:
+                raise ValueError(f"Manual {side} particle editor is unavailable.")
+            return {}
+
+        raw = widget.get("1.0", "end-1c")
+        if not raw.strip():
+            if strict:
+                raise ValueError(f"Manual {side} particle JSON is blank.")
+            return {}
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            if strict:
+                raise ValueError(
+                    f"Manual {side} particle JSON parse error: {exc}"
+                ) from exc
+            return {}
+
+        if not isinstance(parsed, dict):
+            if strict:
+                raise ValueError(
+                    f"Manual {side} particle JSON must be a top-level object."
+                )
+            return {}
+
+        return dict(parsed)
+
+    def _build_beamline_geometry_tab(self) -> None:
+        """Build the beamline-geometry line-of-sight screening tab."""
+        import json
+
+        from .gui import Tooltip, _show_error_dialog, _show_warning_dialog
+
+        frame = self._create_scrollable_tab(
+            self.notebook, "Beamline/Geometry", padding=12
+        )
+        frame.columnconfigure(0, weight=1)
+
+        notice_label = ttk.Label(
+            frame,
+            text=(
+                "Paste a beamline_geometry JSON block (occluders list) below. "
+                "When enabled, retarded fields between bunches are zeroed when "
+                "the source particle (at its retarded position) is outside all "
+                "occluders."
+            ),
+            justify="left",
+            foreground="blue",
+        )
+        notice_label.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
+        self.beamline_geometry_enable_check = ttk.Checkbutton(
+            frame,
+            text="Enable beamline-geometry line-of-sight screening",
+            variable=self.beamline_geometry_enabled_var,
+            command=self._toggle_beamline_geometry_controls,
+        )
+        self.beamline_geometry_enable_check.grid(
+            row=1, column=0, sticky="w", pady=(0, 6)
+        )
+
+        template = (
+            "{\n"
+            '  "enabled": true,\n'
+            '  "occluders": [\n'
+            "    {\n"
+            '      "type": "cylinder",\n'
+            '      "axis": [0.0, 0.0, 1.0],\n'
+            '      "center_mm": [0.0, 0.0, 0.0],\n'
+            '      "radius_mm": 15.0,\n'
+            '      "length_mm": 2000.0,\n'
+            '      "label": "electron_pipe"\n'
+            "    }\n"
+            "  ]\n"
+            "}"
+        )
+
+        text_frame = ttk.LabelFrame(frame, text="beamline_geometry JSON", padding=6)
+        text_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        self.beamline_geometry_text = tk.Text(text_frame, width=80, height=20)
+        self.beamline_geometry_text.grid(row=0, column=0, sticky="nsew")
+        self.beamline_geometry_text.insert("1.0", template)
+
+        text_scroll = ttk.Scrollbar(
+            text_frame, orient="vertical", command=self.beamline_geometry_text.yview
+        )
+        text_scroll.grid(row=0, column=1, sticky="ns")
+        self.beamline_geometry_text.configure(yscrollcommand=text_scroll.set)
+
+        self._beamline_geometry_sub_widgets = [
+            notice_label,
+            self.beamline_geometry_text,
+            text_scroll,
+        ]
+
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+
+        def _validate_json() -> None:
+            raw = self.beamline_geometry_text.get("1.0", "end-1c")
+            if not raw.strip():
+                _show_warning_dialog(
+                    self.root,
+                    "Beamline geometry",
+                    "No JSON content to validate.",
+                )
+                return
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                _show_error_dialog(
+                    self.root,
+                    "Invalid beamline_geometry JSON",
+                    f"JSON parse error: {exc}",
+                )
+                return
+            if not isinstance(parsed, dict):
+                _show_error_dialog(
+                    self.root,
+                    "Invalid beamline_geometry JSON",
+                    "Top-level JSON must be an object.",
+                )
+                return
+            occluders = parsed.get("occluders", [])
+            if not isinstance(occluders, list):
+                _show_error_dialog(
+                    self.root,
+                    "Invalid beamline_geometry JSON",
+                    "'occluders' must be a list.",
+                )
+                return
+            _show_warning_dialog(
+                self.root,
+                "Beamline geometry",
+                f"JSON is valid. {len(occluders)} occluder(s) found.",
+            )
+
+        self.beamline_geometry_validate_button = ttk.Button(
+            button_row, text="Validate JSON", command=_validate_json
+        )
+        self.beamline_geometry_validate_button.pack(side="left")
+        self._beamline_geometry_sub_widgets.append(
+            self.beamline_geometry_validate_button
+        )
+
+        Tooltip(
+            self.beamline_geometry_enable_check,
+            "When enabled, the beamline_geometry block below is passed to the "
+            "integrator and used to screen retarded fields between bunches.",
+        )
+
+        self._toggle_beamline_geometry_controls()
+
+    def _collect_beamline_geometry_payload(self) -> dict:
+        """Extract and parse the beamline_geometry JSON from the tab text.
+
+        Returns an empty dict when the text is blank or parsing fails. Callers
+        that need strict validation should call the Validate JSON button first.
+        """
+        import json
+
+        if not hasattr(self, "beamline_geometry_text"):
+            return {}
+        raw = self.beamline_geometry_text.get("1.0", "end-1c")
+        if not raw.strip():
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        block = dict(parsed)
+        block["enabled"] = bool(self.beamline_geometry_enabled_var.get())
+        return block
+
+    def _collect_beamline_geometry_occluders(self) -> list:
+        """Return the occluders list from the geometry tab as plain dicts.
+
+        Used by ``_build_options_from_ui`` to populate
+        ``SimulationOptions.beamline_geometry_occluders``.
+        """
+        payload = self._collect_beamline_geometry_payload()
+        occluders = payload.get("occluders", [])
+        if not isinstance(occluders, list):
+            return []
+        result = []
+        for item in occluders:
+            if not isinstance(item, dict):
+                continue
+            result.append(item)
+        return result

@@ -428,6 +428,41 @@ class IntegratorGUI(
                 )
             )
         )
+        self.macroparticle_smearing_use_position_errors_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_position_errors", True
+            )
+        )
+        self.macroparticle_smearing_use_momentum_errors_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_momentum_errors", True
+            )
+        )
+        self.macroparticle_smearing_use_centroid_errors_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_centroid_errors", True
+            )
+        )
+        self.macroparticle_smearing_use_internal_cloud_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_use_internal_cloud", True
+            )
+        )
+        self.macroparticle_smearing_apply_to_active_observers_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_apply_to_active_observers", True
+            )
+        )
+        self.macroparticle_smearing_apply_to_active_sources_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_apply_to_active_sources", True
+            )
+        )
+        self.macroparticle_smearing_apply_to_passive_sources_var = tk.BooleanVar(
+            value=getattr(
+                self.options, "macroparticle_smearing_apply_to_passive_sources", True
+            )
+        )
         self.macroparticle_smearing_apply_to_passive_updates_var = tk.BooleanVar(
             value=getattr(
                 self.options, "macroparticle_smearing_apply_to_passive_updates", False
@@ -435,6 +470,15 @@ class IntegratorGUI(
         )
         self.macroparticle_smearing_seed_var = tk.IntVar(
             value=getattr(self.options, "macroparticle_smearing_seed", 12345)
+        )
+        self.macroparticle_smearing_refresh_policy_var = tk.StringVar(
+            value=str(
+                getattr(
+                    self.options,
+                    "macroparticle_smearing_refresh_policy",
+                    "fixed_per_particle",
+                )
+            ).replace("-", "_")
         )
 
         # Experimental pseudo-grid options
@@ -446,6 +490,19 @@ class IntegratorGUI(
         )
         self.pseudo_grid_active_driver_count_var = tk.IntVar(
             value=getattr(self.options, "pseudo_grid_active_driver_count", 4)
+        )
+        self.pseudo_grid_field_rider_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_field_rider_count", 0)
+        )
+        self.pseudo_grid_field_driver_count_var = tk.IntVar(
+            value=getattr(self.options, "pseudo_grid_field_driver_count", 0)
+        )
+        self.pseudo_grid_field_deposition_neighbor_count_var = tk.IntVar(
+            value=getattr(
+                self.options,
+                "pseudo_grid_field_deposition_neighbor_count",
+                4,
+            )
         )
         self.pseudo_grid_passive_neighbor_count_var = tk.IntVar(
             value=getattr(self.options, "pseudo_grid_passive_neighbor_count", 4)
@@ -741,6 +798,13 @@ class IntegratorGUI(
             )
         )
 
+        self.beamline_geometry_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "beamline_geometry_enabled", False)
+        )
+        self.manual_particle_config_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "manual_particle_config_enabled", False)
+        )
+
         self.auto_duration_enabled_var = tk.BooleanVar(value=False)
         self.auto_duration_crossing_steps_var = tk.IntVar(value=200)
         self.auto_duration_post_factor_var = tk.DoubleVar(value=2.0)
@@ -774,6 +838,12 @@ class IntegratorGUI(
         )
         self.cavity_exit_enabled_var.trace_add(
             "write", lambda *_: self._toggle_cavity_exit_controls()
+        )
+        self.beamline_geometry_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_beamline_geometry_controls()
+        )
+        self.manual_particle_config_enabled_var.trace_add(
+            "write", lambda *_: self._toggle_manual_particle_config_controls()
         )
         self.sim_type_var.trace_add("write", lambda *_: self._on_sim_type_change())
 
@@ -842,6 +912,8 @@ class IntegratorGUI(
 
         self._build_particle_tab()
 
+        self._build_manual_particle_config_tab()
+
         self._build_core_tab()
 
         self._build_output_tab()
@@ -849,6 +921,8 @@ class IntegratorGUI(
         self._build_external_fields_tab()
 
         self._build_stability_tab()
+
+        self._build_beamline_geometry_tab()
 
         # Optimization/Sweep tab ----------------------------------------
         self.optimization_tab = OptimizationPlugin(

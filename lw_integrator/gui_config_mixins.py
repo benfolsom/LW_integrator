@@ -6,7 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
-from tkinter import messagebox
+from typing import Any
 
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.types import SimulationType
@@ -21,8 +21,13 @@ from .testbed_runner import (
     supports_driver,
 )
 
-
 _SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
+
+
+def _particle_params_require_manual_config(params: object) -> bool:
+    if not isinstance(params, dict):
+        return False
+    return any(key not in PARTICLE_PARAM_FIELDS for key in params)
 
 
 def _format_gui_float(value: object) -> str:
@@ -84,7 +89,134 @@ def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
 class IntegratorGUIConfigMixin:
     """Translate between GUI state and ``SimulationOptions`` configs."""
 
+    def _apply_macroparticle_smearing_options_to_ui(
+        self: Any, options: SimulationOptions
+    ) -> None:
+        self.macroparticle_smearing_enabled_var.set(
+            getattr(options, "macroparticle_smearing_enabled", False)
+        )
+        self.macroparticle_smearing_subcharge_count_var.set(
+            getattr(options, "macroparticle_smearing_subcharge_count", 8)
+        )
+        self.macroparticle_smearing_sigma_multiplier_var.set(
+            getattr(options, "macroparticle_smearing_sigma_multiplier", 1.0)
+        )
+        self.macroparticle_smearing_position_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_position_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_longitudinal_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(options, "macroparticle_smearing_longitudinal_sigma_mm", None)
+            )
+        )
+        self.macroparticle_smearing_momentum_sigma_var.set(
+            _format_gui_optional_float(
+                getattr(
+                    options,
+                    "macroparticle_smearing_momentum_sigma_amu_mm_ns",
+                    None,
+                )
+            )
+        )
+        self.macroparticle_smearing_use_position_errors_var.set(
+            getattr(options, "macroparticle_smearing_use_position_errors", True)
+        )
+        self.macroparticle_smearing_use_momentum_errors_var.set(
+            getattr(options, "macroparticle_smearing_use_momentum_errors", True)
+        )
+        self.macroparticle_smearing_use_centroid_errors_var.set(
+            getattr(options, "macroparticle_smearing_use_centroid_errors", True)
+        )
+        self.macroparticle_smearing_use_internal_cloud_var.set(
+            getattr(options, "macroparticle_smearing_use_internal_cloud", True)
+        )
+        self.macroparticle_smearing_apply_to_active_observers_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_active_observers", True)
+        )
+        self.macroparticle_smearing_apply_to_active_sources_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_active_sources", True)
+        )
+        self.macroparticle_smearing_apply_to_passive_sources_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_passive_sources", True)
+        )
+        self.macroparticle_smearing_apply_to_passive_updates_var.set(
+            getattr(options, "macroparticle_smearing_apply_to_passive_updates", False)
+        )
+        self.macroparticle_smearing_seed_var.set(
+            getattr(options, "macroparticle_smearing_seed", 12345)
+        )
+        self.macroparticle_smearing_refresh_policy_var.set(
+            str(
+                getattr(
+                    options,
+                    "macroparticle_smearing_refresh_policy",
+                    "fixed_per_particle",
+                )
+            ).replace("-", "_")
+        )
+
+    def _build_macroparticle_smearing_options_from_ui(
+        self: Any,
+    ) -> dict[str, Any]:
+        return {
+            "macroparticle_smearing_enabled": bool(
+                self.macroparticle_smearing_enabled_var.get()
+            ),
+            "macroparticle_smearing_subcharge_count": int(
+                self.macroparticle_smearing_subcharge_count_var.get()
+            ),
+            "macroparticle_smearing_sigma_multiplier": float(
+                self.macroparticle_smearing_sigma_multiplier_var.get()
+            ),
+            "macroparticle_smearing_position_sigma_mm": _parse_gui_optional_float(
+                self.macroparticle_smearing_position_sigma_var.get(),
+                "Macroparticle smearing position sigma",
+            ),
+            "macroparticle_smearing_longitudinal_sigma_mm": _parse_gui_optional_float(
+                self.macroparticle_smearing_longitudinal_sigma_var.get(),
+                "Macroparticle smearing longitudinal sigma",
+            ),
+            "macroparticle_smearing_momentum_sigma_amu_mm_ns": _parse_gui_optional_float(
+                self.macroparticle_smearing_momentum_sigma_var.get(),
+                "Macroparticle smearing momentum sigma",
+            ),
+            "macroparticle_smearing_use_position_errors": bool(
+                self.macroparticle_smearing_use_position_errors_var.get()
+            ),
+            "macroparticle_smearing_use_momentum_errors": bool(
+                self.macroparticle_smearing_use_momentum_errors_var.get()
+            ),
+            "macroparticle_smearing_use_centroid_errors": bool(
+                self.macroparticle_smearing_use_centroid_errors_var.get()
+            ),
+            "macroparticle_smearing_use_internal_cloud": bool(
+                self.macroparticle_smearing_use_internal_cloud_var.get()
+            ),
+            "macroparticle_smearing_apply_to_active_observers": bool(
+                self.macroparticle_smearing_apply_to_active_observers_var.get()
+            ),
+            "macroparticle_smearing_apply_to_active_sources": bool(
+                self.macroparticle_smearing_apply_to_active_sources_var.get()
+            ),
+            "macroparticle_smearing_apply_to_passive_sources": bool(
+                self.macroparticle_smearing_apply_to_passive_sources_var.get()
+            ),
+            "macroparticle_smearing_apply_to_passive_updates": bool(
+                self.macroparticle_smearing_apply_to_passive_updates_var.get()
+            ),
+            "macroparticle_smearing_seed": int(
+                self.macroparticle_smearing_seed_var.get()
+            ),
+            "macroparticle_smearing_refresh_policy": str(
+                self.macroparticle_smearing_refresh_policy_var.get()
+            ).replace("-", "_"),
+        }
+
     def _load_config(self) -> None:
+        from tkinter import messagebox
+
         from .gui import _show_error_dialog
 
         filename = self._selected_config_filename()
@@ -223,40 +355,7 @@ class IntegratorGUIConfigMixin:
         self.macroparticle_use_momentum_errors_var.set(
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
-        self.macroparticle_smearing_enabled_var.set(
-            getattr(options, "macroparticle_smearing_enabled", False)
-        )
-        self.macroparticle_smearing_subcharge_count_var.set(
-            getattr(options, "macroparticle_smearing_subcharge_count", 8)
-        )
-        self.macroparticle_smearing_sigma_multiplier_var.set(
-            getattr(options, "macroparticle_smearing_sigma_multiplier", 1.0)
-        )
-        self.macroparticle_smearing_position_sigma_var.set(
-            _format_gui_optional_float(
-                getattr(options, "macroparticle_smearing_position_sigma_mm", None)
-            )
-        )
-        self.macroparticle_smearing_longitudinal_sigma_var.set(
-            _format_gui_optional_float(
-                getattr(options, "macroparticle_smearing_longitudinal_sigma_mm", None)
-            )
-        )
-        self.macroparticle_smearing_momentum_sigma_var.set(
-            _format_gui_optional_float(
-                getattr(
-                    options,
-                    "macroparticle_smearing_momentum_sigma_amu_mm_ns",
-                    None,
-                )
-            )
-        )
-        self.macroparticle_smearing_apply_to_passive_updates_var.set(
-            getattr(options, "macroparticle_smearing_apply_to_passive_updates", False)
-        )
-        self.macroparticle_smearing_seed_var.set(
-            getattr(options, "macroparticle_smearing_seed", 12345)
-        )
+        self._apply_macroparticle_smearing_options_to_ui(options)
         if hasattr(self, "pseudo_grid_enabled_var"):
             self.pseudo_grid_enabled_var.set(
                 getattr(options, "pseudo_grid_enabled", False)
@@ -266,6 +365,15 @@ class IntegratorGUIConfigMixin:
             )
             self.pseudo_grid_active_driver_count_var.set(
                 getattr(options, "pseudo_grid_active_driver_count", 4)
+            )
+            self.pseudo_grid_field_rider_count_var.set(
+                getattr(options, "pseudo_grid_field_rider_count", 0)
+            )
+            self.pseudo_grid_field_driver_count_var.set(
+                getattr(options, "pseudo_grid_field_driver_count", 0)
+            )
+            self.pseudo_grid_field_deposition_neighbor_count_var.set(
+                getattr(options, "pseudo_grid_field_deposition_neighbor_count", 4)
             )
             self.pseudo_grid_passive_neighbor_count_var.set(
                 getattr(options, "pseudo_grid_passive_neighbor_count", 4)
@@ -510,6 +618,49 @@ class IntegratorGUIConfigMixin:
                 "" if cavity_length is None else _format_gui_float(cavity_length)
             )
             self._toggle_cavity_exit_controls()
+        if hasattr(self, "beamline_geometry_enabled_var"):
+            self.beamline_geometry_enabled_var.set(
+                bool(getattr(options, "beamline_geometry_enabled", False))
+            )
+            if hasattr(self, "beamline_geometry_text"):
+                geom_payload = {
+                    "enabled": bool(
+                        getattr(options, "beamline_geometry_enabled", False)
+                    ),
+                    "occluders": list(
+                        getattr(options, "beamline_geometry_occluders", []) or []
+                    ),
+                }
+                self._set_text_widget_content(
+                    self.beamline_geometry_text,
+                    json.dumps(geom_payload, indent=2),
+                )
+            self._toggle_beamline_geometry_controls()
+        manual_particle_config_enabled = bool(
+            getattr(options, "manual_particle_config_enabled", False)
+        ) or _particle_params_require_manual_config(options.rider_params)
+        if options.driver_params is not None:
+            manual_particle_config_enabled = manual_particle_config_enabled or (
+                _particle_params_require_manual_config(options.driver_params)
+            )
+        if hasattr(self, "manual_particle_config_enabled_var"):
+            self.manual_particle_config_enabled_var.set(manual_particle_config_enabled)
+            if hasattr(self, "manual_rider_config_text"):
+                self._set_text_widget_content(
+                    self.manual_rider_config_text,
+                    json.dumps(dict(options.rider_params), indent=2),
+                )
+            if hasattr(self, "manual_driver_config_text"):
+                driver_payload = (
+                    dict(options.driver_params)
+                    if options.driver_params is not None
+                    else dict(DEFAULT_DRIVER_PARAMS)
+                )
+                self._set_text_widget_content(
+                    self.manual_driver_config_text,
+                    json.dumps(driver_payload, indent=2),
+                )
+            self._toggle_manual_particle_config_controls()
         self.auto_duration_enabled_var.set(
             getattr(options, "auto_duration_enabled", False)
         )
@@ -594,15 +745,30 @@ class IntegratorGUIConfigMixin:
 
     def _build_options_from_ui(self) -> SimulationOptions:
         sim_type = SimulationType[self.sim_type_var.get()]
-        rider_params = {
-            name: self.rider_param_vars[name].get() for name in PARTICLE_PARAM_FIELDS
-        }
         driver_supported = supports_driver(sim_type)
-        driver_params = (
-            {name: self.driver_param_vars[name].get() for name in PARTICLE_PARAM_FIELDS}
-            if driver_supported
-            else None
+        manual_particle_config_enabled = bool(
+            self.manual_particle_config_enabled_var.get()
         )
+        if manual_particle_config_enabled:
+            rider_params = self._collect_manual_particle_payload("rider", strict=True)
+            driver_params = (
+                self._collect_manual_particle_payload("driver", strict=True)
+                if driver_supported
+                else None
+            )
+        else:
+            rider_params = {
+                name: self.rider_param_vars[name].get()
+                for name in PARTICLE_PARAM_FIELDS
+            }
+            driver_params = (
+                {
+                    name: self.driver_param_vars[name].get()
+                    for name in PARTICLE_PARAM_FIELDS
+                }
+                if driver_supported
+                else None
+            )
         core_params = {}
         for name in CORE_PARAM_DEFAULTS:
             value = self.core_param_vars[name].get()
@@ -696,6 +862,10 @@ class IntegratorGUIConfigMixin:
                 for bound in ("min", "max")
             }
 
+        macroparticle_smearing_options = (
+            self._build_macroparticle_smearing_options_from_ui()
+        )
+
         return SimulationOptions(
             simulation_type=sim_type,
             steps=int(self.steps_var.get()),
@@ -727,6 +897,7 @@ class IntegratorGUIConfigMixin:
             output_dir=Path(self.output_dir_var.get()),
             config_dir=Path(self.config_dir_var.get()),
             config_name=config_name,
+            manual_particle_config_enabled=manual_particle_config_enabled,
             image_subcharge_count=int(self.image_subcharge_var.get()),
             use_image_weighting=bool(self.image_weighting_var.get()),
             macroparticle_enabled=bool(self.macroparticle_enabled_var.get()),
@@ -739,31 +910,7 @@ class IntegratorGUIConfigMixin:
             macroparticle_use_momentum_errors=bool(
                 self.macroparticle_use_momentum_errors_var.get()
             ),
-            macroparticle_smearing_enabled=bool(
-                self.macroparticle_smearing_enabled_var.get()
-            ),
-            macroparticle_smearing_subcharge_count=int(
-                self.macroparticle_smearing_subcharge_count_var.get()
-            ),
-            macroparticle_smearing_sigma_multiplier=float(
-                self.macroparticle_smearing_sigma_multiplier_var.get()
-            ),
-            macroparticle_smearing_position_sigma_mm=_parse_gui_optional_float(
-                self.macroparticle_smearing_position_sigma_var.get(),
-                "Macroparticle smearing position sigma",
-            ),
-            macroparticle_smearing_longitudinal_sigma_mm=_parse_gui_optional_float(
-                self.macroparticle_smearing_longitudinal_sigma_var.get(),
-                "Macroparticle smearing longitudinal sigma",
-            ),
-            macroparticle_smearing_momentum_sigma_amu_mm_ns=_parse_gui_optional_float(
-                self.macroparticle_smearing_momentum_sigma_var.get(),
-                "Macroparticle smearing momentum sigma",
-            ),
-            macroparticle_smearing_apply_to_passive_updates=bool(
-                self.macroparticle_smearing_apply_to_passive_updates_var.get()
-            ),
-            macroparticle_smearing_seed=int(self.macroparticle_smearing_seed_var.get()),
+            **macroparticle_smearing_options,
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
@@ -905,6 +1052,15 @@ class IntegratorGUIConfigMixin:
             pseudo_grid_active_driver_count=int(
                 self.pseudo_grid_active_driver_count_var.get()
             ),
+            pseudo_grid_field_rider_count=int(
+                self.pseudo_grid_field_rider_count_var.get()
+            ),
+            pseudo_grid_field_driver_count=int(
+                self.pseudo_grid_field_driver_count_var.get()
+            ),
+            pseudo_grid_field_deposition_neighbor_count=int(
+                self.pseudo_grid_field_deposition_neighbor_count_var.get()
+            ),
             pseudo_grid_passive_neighbor_count=int(
                 self.pseudo_grid_passive_neighbor_count_var.get()
             ),
@@ -938,9 +1094,13 @@ class IntegratorGUIConfigMixin:
                 self.driver_train_preserve_prehistory_var.get()
             ),
             save_log_file=bool(self.save_log_file_var.get()),
+            beamline_geometry_enabled=bool(self.beamline_geometry_enabled_var.get()),
+            beamline_geometry_occluders=self._collect_beamline_geometry_occluders(),
         )
 
     def _save_config(self) -> None:
+        from tkinter import messagebox
+
         from .gui import _show_error_dialog
 
         try:

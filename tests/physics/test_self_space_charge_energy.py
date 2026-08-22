@@ -44,13 +44,14 @@ def _make_bunch(*, pcount: int = 16, charge_scale: float = 1.0):
         starting_distance=0.0,
         transv_mom=0.0,
         starting_Pz=starting_pz,
-        stripped_ions=physical_population * charge_scale / pcount,
+        stripped_ions=1.0,
         m_particle=PROTON_MASS_AMU,
         transv_dist=transverse_mm,
         pcount=pcount,
         charge_sign=-1.0,
         seed=20260527,
         transverse_geometry="gaussian",
+        charge_multiplier=physical_population * charge_scale / pcount,
     )
     driver, _ = create_bunch_from_params(
         starting_distance=1350.0,

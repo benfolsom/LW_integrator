@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tkinter as tk
 from types import SimpleNamespace
@@ -131,6 +132,10 @@ def test_gui_inherits_state_helpers_from_state_mixin():
         gui.IntegratorGUI._update_pseudo_grid_state
         is IntegratorGUIStateMixin._update_pseudo_grid_state
     )
+    assert (
+        gui.IntegratorGUI._toggle_manual_particle_config_controls
+        is IntegratorGUIStateMixin._toggle_manual_particle_config_controls
+    )
 
 
 def test_gui_inherits_config_list_helpers_from_config_list_mixin():
@@ -193,6 +198,9 @@ def test_gui_inherits_tab_builders_from_tab_mixin():
     )
     assert gui.IntegratorGUI._build_external_fields_tab is (
         IntegratorGUITabMixin._build_external_fields_tab
+    )
+    assert gui.IntegratorGUI._build_manual_particle_config_tab is (
+        IntegratorGUITabMixin._build_manual_particle_config_tab
     )
     assert gui.IntegratorGUI._build_self_consistency_section is (
         IntegratorGUITabMixin._build_self_consistency_section
@@ -802,6 +810,9 @@ def test_pseudo_grid_settings_round_trip_through_gui_options():
                 pseudo_grid_enabled=True,
                 pseudo_grid_active_rider_count=6,
                 pseudo_grid_active_driver_count=7,
+                pseudo_grid_field_rider_count=24,
+                pseudo_grid_field_driver_count=25,
+                pseudo_grid_field_deposition_neighbor_count=6,
                 pseudo_grid_passive_neighbor_count=3,
                 pseudo_grid_coverage_strategy="farthest_point",
                 pseudo_grid_coverage_space="phase_space",
@@ -816,6 +827,9 @@ def test_pseudo_grid_settings_round_trip_through_gui_options():
 
         assert app.pseudo_grid_enabled_var.get() is True
         assert app.pseudo_grid_active_rider_count_var.get() == 6
+        assert app.pseudo_grid_field_rider_count_var.get() == 24
+        assert app.pseudo_grid_field_driver_count_var.get() == 25
+        assert app.pseudo_grid_field_deposition_neighbor_count_var.get() == 6
         assert app.pseudo_grid_causal_history_pruning_enabled_var.get() is True
 
         rebuilt = app._build_options_from_ui()
@@ -823,6 +837,9 @@ def test_pseudo_grid_settings_round_trip_through_gui_options():
         assert rebuilt.pseudo_grid_enabled is True
         assert rebuilt.pseudo_grid_active_rider_count == 6
         assert rebuilt.pseudo_grid_active_driver_count == 7
+        assert rebuilt.pseudo_grid_field_rider_count == 24
+        assert rebuilt.pseudo_grid_field_driver_count == 25
+        assert rebuilt.pseudo_grid_field_deposition_neighbor_count == 6
         assert rebuilt.pseudo_grid_passive_neighbor_count == 3
         assert rebuilt.pseudo_grid_coverage_strategy == "farthest_point"
         assert rebuilt.pseudo_grid_coverage_space == "phase_space"
@@ -850,6 +867,9 @@ def test_driver_train_and_pseudo_grid_settings_round_trip_through_gui_options():
                 pseudo_grid_enabled=True,
                 pseudo_grid_active_rider_count=6,
                 pseudo_grid_active_driver_count=7,
+                pseudo_grid_field_rider_count=24,
+                pseudo_grid_field_driver_count=25,
+                pseudo_grid_field_deposition_neighbor_count=6,
                 pseudo_grid_passive_neighbor_count=3,
                 driver_train_enabled=True,
                 driver_train_bunch_count=3,
@@ -1076,3 +1096,173 @@ def test_trigger_sweep_delegates_to_optimization_tab(monkeypatch):
     gui.IntegratorGUI._trigger_sweep(harness)
 
     assert run_calls == ["run"]
+
+
+def test_gui_inherits_manual_particle_config_tab_builder():
+    assert gui.IntegratorGUI._build_manual_particle_config_tab is (
+        IntegratorGUITabMixin._build_manual_particle_config_tab
+    )
+    assert gui.IntegratorGUI._collect_manual_particle_payload is (
+        IntegratorGUITabMixin._collect_manual_particle_payload
+    )
+
+
+def test_gui_inherits_beamline_geometry_tab_builder():
+    assert gui.IntegratorGUI._build_beamline_geometry_tab is (
+        IntegratorGUITabMixin._build_beamline_geometry_tab
+    )
+    assert gui.IntegratorGUI._collect_beamline_geometry_payload is (
+        IntegratorGUITabMixin._collect_beamline_geometry_payload
+    )
+
+
+def test_beamline_geometry_tab_is_created_in_notebook():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        root.update_idletasks()
+        tab_names = [app.notebook.tab(tab_id, "text") for tab_id in app.notebook.tabs()]
+        assert "Beamline/Geometry" in tab_names
+        assert hasattr(app, "beamline_geometry_text")
+        assert hasattr(app, "beamline_geometry_enabled_var")
+        assert hasattr(app, "beamline_geometry_enable_check")
+        # Template JSON is pre-filled and parseable.
+        payload = app._collect_beamline_geometry_payload()
+        assert isinstance(payload, dict)
+        assert "occluders" in payload
+    finally:
+        root.destroy()
+
+
+def test_manual_particle_config_tab_is_created_in_notebook():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        root.update_idletasks()
+        tab_names = [app.notebook.tab(tab_id, "text") for tab_id in app.notebook.tabs()]
+        assert "Manual Particle Config" in tab_names
+        assert hasattr(app, "manual_rider_config_text")
+        assert hasattr(app, "manual_driver_config_text")
+        assert hasattr(app, "manual_particle_config_enabled_var")
+        assert hasattr(app, "manual_particle_config_enable_check")
+    finally:
+        root.destroy()
+
+
+def test_build_options_from_ui_uses_manual_particle_json_override():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        rider_payload = {
+            "kinetic_energy_mev": 12.5,
+            "mass_amu": 1.007276466621,
+            "charge_sign": -1.0,
+            "stripped_ions": 1.0,
+            "particle_count": 3,
+            "starting_position_mm": [1.0, 2.0, 3.0],
+            "momentum_axis": [1.0, 0.0, 0.0],
+            "transverse_distance_mm": 0.25,
+            "longitudinal_span_mm": 4.0,
+        }
+        driver_payload = {
+            "kinetic_energy_mev": 18.0,
+            "mass_amu": 1.007276466621,
+            "charge_sign": 1.0,
+            "stripped_ions": 1.0,
+            "particle_count": 3,
+            "starting_position_mm": [4.0, 5.0, 6.0],
+            "momentum_axis": [0.0, -1.0, 0.0],
+            "transverse_distance_mm": 0.1,
+            "longitudinal_span_mm": 2.0,
+        }
+
+        app.sim_type_var.set("BUNCH_TO_BUNCH")
+        app.manual_particle_config_enabled_var.set(True)
+        app._set_text_widget_content(
+            app.manual_rider_config_text, json.dumps(rider_payload, indent=2)
+        )
+        app._set_text_widget_content(
+            app.manual_driver_config_text, json.dumps(driver_payload, indent=2)
+        )
+
+        options = app._build_options_from_ui()
+
+        assert options.manual_particle_config_enabled is True
+        assert options.rider_params == rider_payload
+        assert options.driver_params == driver_payload
+    finally:
+        root.destroy()
+
+
+def test_build_options_from_ui_rejects_invalid_manual_particle_json():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        app.manual_particle_config_enabled_var.set(True)
+        app._set_text_widget_content(app.manual_rider_config_text, "{not-json")
+
+        with pytest.raises(ValueError, match="Manual rider particle JSON parse error"):
+            app._build_options_from_ui()
+    finally:
+        root.destroy()
+
+
+def test_apply_options_to_ui_auto_enables_manual_mode_for_3d_payloads():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        options = SimulationOptions(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH,
+            manual_particle_config_enabled=False,
+            rider_params={
+                "kinetic_energy_mev": 10.0,
+                "mass_amu": 1.007276466621,
+                "charge_sign": -1.0,
+                "particle_count": 3,
+                "starting_position_mm": [0.0, 0.0, -5.0],
+                "momentum_axis": [0.0, 0.0, 1.0],
+            },
+            driver_params={
+                "kinetic_energy_mev": 10.0,
+                "mass_amu": 1.007276466621,
+                "charge_sign": 1.0,
+                "particle_count": 3,
+                "starting_position_mm": [0.0, 0.0, 5.0],
+                "momentum_axis": [0.0, 0.0, -1.0],
+            },
+        )
+
+        app._apply_options_to_ui(options, preserve_directories=True)
+
+        assert app.manual_particle_config_enabled_var.get() is True
+        rider_payload = app._collect_manual_particle_payload("rider", strict=True)
+        driver_payload = app._collect_manual_particle_payload("driver", strict=True)
+        assert rider_payload["momentum_axis"] == [0.0, 0.0, 1.0]
+        assert driver_payload["momentum_axis"] == [0.0, 0.0, -1.0]
+    finally:
+        root.destroy()

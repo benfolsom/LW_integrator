@@ -45,7 +45,12 @@ from core.particle_status import (
     get_particle_failure_summary,
 )
 from core.self_consistency import canonicalize_self_consistency_mode
-from core.types import CavityExitConfig, SimulationType
+from core.types import (
+    BeamlineGeometryConfig,
+    CavityExitConfig,
+    Occluder,
+    SimulationType,
+)
 from input_output.bunch_initialization import create_bunch_from_params
 
 from .trajectory_metrics import compute_delta_energy_components, normalize_state
@@ -244,10 +249,11 @@ class SimulationOptions:
     output_dir: Path = Path("test_outputs/testbed_runs")
     config_dir: Path = Path("configs/testbed_runs")
     config_name: str = "testbed_config.json"
-    rider_params: Dict[str, float | int | str] = field(
+    manual_particle_config_enabled: bool = False
+    rider_params: Dict[str, Any] = field(
         default_factory=lambda: dict(DEFAULT_RIDER_PARAMS)
     )
-    driver_params: Optional[Dict[str, float | int | str]] = field(
+    driver_params: Optional[Dict[str, Any]] = field(
         default_factory=lambda: dict(DEFAULT_DRIVER_PARAMS)
     )
     core_params: Dict[str, float | str] = field(
@@ -256,6 +262,7 @@ class SimulationOptions:
             for k, v in CORE_PARAM_DEFAULTS.items()
         }
     )
+    macroparticle_dynamics_mode: str = "representative"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
 
@@ -409,6 +416,10 @@ class SimulationOptions:
     cavity_exit_residual_tail_factor: float = 0.0
     cavity_exit_max_residual_tail_steps: int = 0
 
+    # Beamline geometry line-of-sight screening (any sim type)
+    beamline_geometry_enabled: bool = False
+    beamline_geometry_occluders: list = field(default_factory=list)
+
     # Auto-duration crossing mode (BUNCH_TO_BUNCH only)
     auto_duration_enabled: bool = False
     auto_duration_crossing_steps: int = 200
@@ -418,12 +429,24 @@ class SimulationOptions:
     pseudo_grid_enabled: bool = False
     pseudo_grid_active_rider_count: int = 4
     pseudo_grid_active_driver_count: int = 4
+    pseudo_grid_field_rider_count: int = 0
+    pseudo_grid_field_driver_count: int = 0
+    pseudo_grid_field_deposition_neighbor_count: int = 4
+    pseudo_grid_space_charge_near_neighbor_count: int = 8
     pseudo_grid_passive_neighbor_count: int = 4
     pseudo_grid_coverage_strategy: str = "farthest_point_staleness"
     pseudo_grid_coverage_space: str = "position"
+    pseudo_grid_active_selection_mode: str = "rotating_live"
+    pseudo_grid_passive_update_mode: str = "weighted_delta"
+    pseudo_grid_active_rotation_interval: int = 20
+    pseudo_grid_active_rotation_fraction: float = 0.25
+    pseudo_grid_passive_remap_mode: str = "none"
+    pseudo_grid_passive_remap_warning_sigma: float = 0.5
+    pseudo_grid_passive_remap_trigger_sigma: float = 1.0
     pseudo_grid_pair_reuse_window: int = 16
     pseudo_grid_source_weighting_mode: str = "inverse_distance"
     pseudo_grid_loss_tracking_enabled: bool = True
+    pseudo_grid_numerical_failure_tolerance_fraction: float = 0.15
     pseudo_grid_causal_history_pruning_enabled: bool = False
     pseudo_grid_causal_history_safety_margin_steps: int = 2
 
@@ -495,9 +518,11 @@ class SimulationOptions:
             "output_dir": str(self.output_dir),
             "config_dir": str(self.config_dir),
             "config_name": self.config_name,
+            "manual_particle_config_enabled": self.manual_particle_config_enabled,
             "rider_params": dict(self.rider_params),
             "driver_params": dict(self.driver_params) if self.driver_params else None,
             "core_params": dict(self.core_params),
+            "macroparticle_dynamics_mode": self.macroparticle_dynamics_mode,
             "image_subcharge_count": self.image_subcharge_count,
             "use_image_weighting": self.use_image_weighting,
             "macroparticle_enabled": self.macroparticle_enabled,
@@ -604,6 +629,10 @@ class SimulationOptions:
                 "residual_tail_factor": self.cavity_exit_residual_tail_factor,
                 "max_residual_tail_steps": self.cavity_exit_max_residual_tail_steps,
             },
+            "beamline_geometry": {
+                "enabled": self.beamline_geometry_enabled,
+                "occluders": self.beamline_geometry_occluders,
+            },
             "auto_duration_enabled": self.auto_duration_enabled,
             "auto_duration_crossing_steps": self.auto_duration_crossing_steps,
             "auto_duration_post_factor": self.auto_duration_post_factor,
@@ -611,12 +640,24 @@ class SimulationOptions:
                 "enabled": self.pseudo_grid_enabled,
                 "active_rider_count": self.pseudo_grid_active_rider_count,
                 "active_driver_count": self.pseudo_grid_active_driver_count,
+                "field_rider_count": self.pseudo_grid_field_rider_count,
+                "field_driver_count": self.pseudo_grid_field_driver_count,
+                "field_deposition_neighbor_count": self.pseudo_grid_field_deposition_neighbor_count,
+                "space_charge_near_neighbor_count": self.pseudo_grid_space_charge_near_neighbor_count,
                 "passive_neighbor_count": self.pseudo_grid_passive_neighbor_count,
                 "coverage_strategy": self.pseudo_grid_coverage_strategy,
                 "coverage_space": self.pseudo_grid_coverage_space,
+                "active_selection_mode": self.pseudo_grid_active_selection_mode,
+                "passive_update_mode": self.pseudo_grid_passive_update_mode,
+                "active_rotation_interval": self.pseudo_grid_active_rotation_interval,
+                "active_rotation_fraction": self.pseudo_grid_active_rotation_fraction,
+                "passive_remap_mode": self.pseudo_grid_passive_remap_mode,
+                "passive_remap_warning_sigma": self.pseudo_grid_passive_remap_warning_sigma,
+                "passive_remap_trigger_sigma": self.pseudo_grid_passive_remap_trigger_sigma,
                 "pair_reuse_window": self.pseudo_grid_pair_reuse_window,
                 "source_weighting_mode": self.pseudo_grid_source_weighting_mode,
                 "loss_tracking_enabled": self.pseudo_grid_loss_tracking_enabled,
+                "numerical_failure_tolerance_fraction": self.pseudo_grid_numerical_failure_tolerance_fraction,
                 "causal_history_pruning_enabled": self.pseudo_grid_causal_history_pruning_enabled,
                 "causal_history_safety_margin_steps": self.pseudo_grid_causal_history_safety_margin_steps,
             },
@@ -764,6 +805,46 @@ class SimulationOptions:
             except (TypeError, ValueError):
                 return default
 
+        beamline_geometry_payload_raw = payload.get("beamline_geometry")
+        beamline_geometry_payload = (
+            beamline_geometry_payload_raw
+            if isinstance(beamline_geometry_payload_raw, dict)
+            else {}
+        )
+
+        def _beamline_geometry_value(name: str, default: object) -> object:
+            flat_name = f"beamline_geometry_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return beamline_geometry_payload.get(name, default)
+
+        def _beamline_geometry_bool(name: str, default: bool) -> bool:
+            return bool(_beamline_geometry_value(name, default))
+
+        def _beamline_geometry_occluders() -> list:
+            raw = _beamline_geometry_value("occluders", [])
+            if not isinstance(raw, list):
+                return []
+            occluders = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                axis = item.get("axis", [0.0, 0.0, 1.0])
+                center = item.get("center_mm", [0.0, 0.0, 0.0])
+                try:
+                    occluders.append(
+                        {
+                            "axis": list(float(v) for v in axis),
+                            "center_mm": list(float(v) for v in center),
+                            "radius_mm": float(item.get("radius_mm", 1.0)),
+                            "length_mm": float(item.get("length_mm", 1.0)),
+                            "label": str(item.get("label", "")),
+                        }
+                    )
+                except (TypeError, ValueError):
+                    continue
+            return occluders
+
         pseudo_grid_payload_raw = payload.get("pseudo_grid")
         pseudo_grid_payload = (
             pseudo_grid_payload_raw if isinstance(pseudo_grid_payload_raw, dict) else {}
@@ -782,6 +863,13 @@ class SimulationOptions:
             value = _pseudo_value(name, default)
             try:
                 return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
+            except (TypeError, ValueError):
+                return default
+
+        def _pseudo_float(name: str, default: float) -> float:
+            value = _pseudo_value(name, default)
+            try:
+                return float(value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return default
 
@@ -882,7 +970,7 @@ class SimulationOptions:
         if isinstance(rider_payload, dict):
             rider_params.update(rider_payload)
 
-        driver_params: Optional[Dict[str, float | int | str]]
+        driver_params: Optional[Dict[str, Any]]
         driver_payload = payload.get("driver_params")
         if isinstance(driver_payload, dict):
             driver_params = dict(DEFAULT_DRIVER_PARAMS)
@@ -936,9 +1024,15 @@ class SimulationOptions:
             ),
             config_dir=Path(str(payload.get("config_dir", "configs/testbed_runs"))),
             config_name=str(payload.get("config_name", "testbed_config.json")),
+            manual_particle_config_enabled=_bool(
+                "manual_particle_config_enabled", False
+            ),
             rider_params=rider_params,
             driver_params=driver_params,
             core_params=core_params,
+            macroparticle_dynamics_mode=_str(
+                "macroparticle_dynamics_mode", "representative"
+            ),
             image_subcharge_count=_int("image_subcharge_count", 12),
             use_image_weighting=_bool("use_image_weighting", True),
             macroparticle_enabled=_bool("macroparticle_enabled", False),
@@ -1140,23 +1234,56 @@ class SimulationOptions:
             cavity_exit_max_residual_tail_steps=_cavity_exit_int(
                 "max_residual_tail_steps", 0
             ),
+            beamline_geometry_enabled=_bool("beamline_geometry_enabled", False)
+            or _beamline_geometry_bool("enabled", False),
+            beamline_geometry_occluders=_beamline_geometry_occluders(),
             auto_duration_enabled=_bool("auto_duration_enabled", False),
             auto_duration_crossing_steps=_int("auto_duration_crossing_steps", 200),
             auto_duration_post_factor=_float("auto_duration_post_factor", 2.0),
             pseudo_grid_enabled=_pseudo_bool("enabled", False),
             pseudo_grid_active_rider_count=_pseudo_int("active_rider_count", 4),
             pseudo_grid_active_driver_count=_pseudo_int("active_driver_count", 4),
+            pseudo_grid_field_rider_count=_pseudo_int("field_rider_count", 0),
+            pseudo_grid_field_driver_count=_pseudo_int("field_driver_count", 0),
+            pseudo_grid_field_deposition_neighbor_count=_pseudo_int(
+                "field_deposition_neighbor_count", 4
+            ),
+            pseudo_grid_space_charge_near_neighbor_count=_pseudo_int(
+                "space_charge_near_neighbor_count", 8
+            ),
             pseudo_grid_passive_neighbor_count=_pseudo_int("passive_neighbor_count", 4),
             pseudo_grid_coverage_strategy=_pseudo_str(
                 "coverage_strategy", "farthest_point_staleness"
             ),
             pseudo_grid_coverage_space=_pseudo_str("coverage_space", "position"),
+            pseudo_grid_active_selection_mode=_pseudo_str(
+                "active_selection_mode", "rotating_live"
+            ),
+            pseudo_grid_passive_update_mode=_pseudo_str(
+                "passive_update_mode", "weighted_delta"
+            ),
+            pseudo_grid_active_rotation_interval=_pseudo_int(
+                "active_rotation_interval", 20
+            ),
+            pseudo_grid_active_rotation_fraction=_pseudo_float(
+                "active_rotation_fraction", 0.25
+            ),
+            pseudo_grid_passive_remap_mode=_pseudo_str("passive_remap_mode", "none"),
+            pseudo_grid_passive_remap_warning_sigma=_pseudo_float(
+                "passive_remap_warning_sigma", 0.5
+            ),
+            pseudo_grid_passive_remap_trigger_sigma=_pseudo_float(
+                "passive_remap_trigger_sigma", 1.0
+            ),
             pseudo_grid_pair_reuse_window=_pseudo_int("pair_reuse_window", 16),
             pseudo_grid_source_weighting_mode=_pseudo_str(
                 "source_weighting_mode", "inverse_distance"
             ),
             pseudo_grid_loss_tracking_enabled=_pseudo_bool(
                 "loss_tracking_enabled", True
+            ),
+            pseudo_grid_numerical_failure_tolerance_fraction=_pseudo_float(
+                "numerical_failure_tolerance_fraction", 0.15
             ),
             pseudo_grid_causal_history_pruning_enabled=_pseudo_bool(
                 "causal_history_pruning_enabled", False
@@ -1273,8 +1400,10 @@ def compute_beam_optics(state: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     Pz = state["Pz"]
     # For small-angle approximation: x' ≈ tan(θ) ≈ Px/Pz
     # This is exact for the divergence angle in the paraxial limit
-    xp = Px / Pz  # dimensionless (mm/ns / mm/ns)
-    yp = Py / Pz  # dimensionless
+    # Guard against Pz=0 (e.g. transverse-crossing driver with momentum along y)
+    pz_safe = np.where(np.abs(Pz) < 1e-30, 1e-30, Pz)
+    xp = Px / pz_safe  # dimensionless (mm/ns / mm/ns)
+    yp = Py / pz_safe  # dimensionless
 
     # Calculate RMS quantities
     x_rms = np.sqrt(np.mean(x**2))  # mm
@@ -1384,31 +1513,73 @@ def _compute_energy_ledger_series(
 ) -> Dict[str, np.ndarray | float]:
     gamma_initial = compute_alive_particle_average(initial_state, "gamma") or 1.0
     bz_initial = compute_alive_particle_average(initial_state, "bz") or 0.0
+    bx_initial = compute_alive_particle_average(initial_state, "bx") or 0.0
+    by_initial = compute_alive_particle_average(initial_state, "by") or 0.0
 
     gamma_series = _alive_average_series(states, "gamma", default=gamma_initial)
     bz_series = _alive_average_series(states, "bz", default=bz_initial)
+    bx_series = _alive_average_series(states, "bx", default=bx_initial)
+    by_series = _alive_average_series(states, "by", default=by_initial)
 
     kinetic_energy_mev = np.maximum((gamma_series - 1.0) * rest_energy_mev, 0.0)
     initial_kinetic_energy_mev = max((gamma_initial - 1.0) * rest_energy_mev, 0.0)
     delta_kinetic_energy_mev = kinetic_energy_mev - initial_kinetic_energy_mev
 
-    longitudinal_kinetic_energy_mev = gamma_series * bz_series * rest_energy_mev
-    initial_longitudinal_kinetic_energy_mev = gamma_initial * bz_initial * rest_energy_mev
+    # Per-direction kinetic energy decomposition using the relativistic identity:
+    #   KE_total = p^2 / ((gamma + 1) * m)
+    #   KE_i = p_i^2 / ((gamma + 1) * m)
+    # This correctly decomposes KE by momentum component, unlike the
+    # previous gamma*beta_i*rest_energy which was a momentum proxy.
+    # We compute p_i from gamma, m, beta_i: p_i = gamma * m * beta_i * c.
+    # Then KE_i = p_i^2 / ((gamma+1)*m) and convert to MeV via rest_energy/m*c^2.
+    # Simplifying: KE_i = gamma^2 * beta_i^2 * m * c^2 / (gamma + 1)
+    #              = gamma^2 * beta_i^2 / (gamma + 1) * rest_energy_mev
+    # (since rest_energy_mev = m * c^2 in the AMU/MeV convention).
+    gamma_sq = gamma_series**2
+    gamma_plus_1 = gamma_series + 1.0
+
+    longitudinal_kinetic_energy_mev = (
+        gamma_sq * bz_series**2 / gamma_plus_1 * rest_energy_mev
+    )
+    initial_longitudinal_kinetic_energy_mev = (
+        gamma_initial**2 * bz_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
     delta_kinetic_energy_z_mev = (
         longitudinal_kinetic_energy_mev - initial_longitudinal_kinetic_energy_mev
     )
+
+    kinetic_energy_x_mev = gamma_sq * bx_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_kinetic_energy_x_mev = (
+        gamma_initial**2 * bx_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
+    delta_kinetic_energy_x_mev = kinetic_energy_x_mev - initial_kinetic_energy_x_mev
+
+    kinetic_energy_y_mev = gamma_sq * by_series**2 / gamma_plus_1 * rest_energy_mev
+    initial_kinetic_energy_y_mev = (
+        gamma_initial**2 * by_initial**2 / (gamma_initial + 1.0) * rest_energy_mev
+    )
+    delta_kinetic_energy_y_mev = kinetic_energy_y_mev - initial_kinetic_energy_y_mev
 
     return {
         "kinetic_energy_mev": kinetic_energy_mev,
         "delta_kinetic_energy_mev": delta_kinetic_energy_mev,
         "longitudinal_kinetic_energy_mev": longitudinal_kinetic_energy_mev,
+        "kinetic_energy_z_mev": longitudinal_kinetic_energy_mev,
         "delta_kinetic_energy_z_mev": delta_kinetic_energy_z_mev,
+        "kinetic_energy_x_mev": kinetic_energy_x_mev,
+        "delta_kinetic_energy_x_mev": delta_kinetic_energy_x_mev,
+        "kinetic_energy_y_mev": kinetic_energy_y_mev,
+        "delta_kinetic_energy_y_mev": delta_kinetic_energy_y_mev,
         "initial_gamma": float(gamma_initial),
         "initial_bz": float(bz_initial),
+        "initial_bx": float(bx_initial),
+        "initial_by": float(by_initial),
         "initial_kinetic_energy_mev": float(initial_kinetic_energy_mev),
         "initial_longitudinal_kinetic_energy_mev": float(
             initial_longitudinal_kinetic_energy_mev
         ),
+        "initial_kinetic_energy_x_mev": float(initial_kinetic_energy_x_mev),
+        "initial_kinetic_energy_y_mev": float(initial_kinetic_energy_y_mev),
     }
 
 
@@ -1417,23 +1588,40 @@ def _ledger_scalar_metrics(
     ledger: Dict[str, np.ndarray | float],
 ) -> Dict[str, float]:
     kinetic_energy_mev = np.asarray(ledger["kinetic_energy_mev"], dtype=float)
-    delta_kinetic_energy_mev = np.asarray(ledger["delta_kinetic_energy_mev"], dtype=float)
+    delta_kinetic_energy_mev = np.asarray(
+        ledger["delta_kinetic_energy_mev"], dtype=float
+    )
     delta_kinetic_energy_z_mev = np.asarray(
         ledger["delta_kinetic_energy_z_mev"], dtype=float
     )
+    delta_kinetic_energy_x_mev = np.asarray(
+        ledger["delta_kinetic_energy_x_mev"], dtype=float
+    )
+    delta_kinetic_energy_y_mev = np.asarray(
+        ledger["delta_kinetic_energy_y_mev"], dtype=float
+    )
+
+    initial_kinetic_energy_mev = float(ledger["initial_kinetic_energy_mev"])
+    final_delta_kinetic_energy_mev = float(delta_kinetic_energy_mev[-1])
+    max_delta_kinetic_energy_mev = float(np.max(delta_kinetic_energy_mev))
+
+    if initial_kinetic_energy_mev != 0.0:
+        final_percent_energy_gain = (
+            100.0 * final_delta_kinetic_energy_mev / initial_kinetic_energy_mev
+        )
+        max_percent_energy_gain = (
+            100.0 * max_delta_kinetic_energy_mev / initial_kinetic_energy_mev
+        )
+    else:
+        final_percent_energy_gain = 0.0
+        max_percent_energy_gain = 0.0
 
     metrics = {
-        f"{prefix}_initial_mean_kinetic_energy_mev": float(
-            ledger["initial_kinetic_energy_mev"]
-        ),
+        f"{prefix}_initial_mean_kinetic_energy_mev": initial_kinetic_energy_mev,
         f"{prefix}_final_mean_kinetic_energy_mev": float(kinetic_energy_mev[-1]),
         f"{prefix}_max_mean_kinetic_energy_mev": float(np.max(kinetic_energy_mev)),
-        f"{prefix}_final_delta_kinetic_energy_mev": float(
-            delta_kinetic_energy_mev[-1]
-        ),
-        f"{prefix}_max_delta_kinetic_energy_mev": float(
-            np.max(delta_kinetic_energy_mev)
-        ),
+        f"{prefix}_final_delta_kinetic_energy_mev": final_delta_kinetic_energy_mev,
+        f"{prefix}_max_delta_kinetic_energy_mev": max_delta_kinetic_energy_mev,
         f"{prefix}_final_delta_kinetic_energy_z_mev": float(
             delta_kinetic_energy_z_mev[-1]
         ),
@@ -1443,6 +1631,26 @@ def _ledger_scalar_metrics(
         f"{prefix}_min_delta_kinetic_energy_z_mev": float(
             np.min(delta_kinetic_energy_z_mev)
         ),
+        f"{prefix}_final_delta_kinetic_energy_x_mev": float(
+            delta_kinetic_energy_x_mev[-1]
+        ),
+        f"{prefix}_max_delta_kinetic_energy_x_mev": float(
+            np.max(delta_kinetic_energy_x_mev)
+        ),
+        f"{prefix}_min_delta_kinetic_energy_x_mev": float(
+            np.min(delta_kinetic_energy_x_mev)
+        ),
+        f"{prefix}_final_delta_kinetic_energy_y_mev": float(
+            delta_kinetic_energy_y_mev[-1]
+        ),
+        f"{prefix}_max_delta_kinetic_energy_y_mev": float(
+            np.max(delta_kinetic_energy_y_mev)
+        ),
+        f"{prefix}_min_delta_kinetic_energy_y_mev": float(
+            np.min(delta_kinetic_energy_y_mev)
+        ),
+        f"{prefix}_final_percent_energy_gain": final_percent_energy_gain,
+        f"{prefix}_max_percent_energy_gain": max_percent_energy_gain,
     }
     return metrics
 
@@ -1627,6 +1835,10 @@ class RunResult:
     particle_failure_info: Optional[Dict[int, Dict]] = (
         None  # Detailed failure info per particle
     )
+    # Pseudo-grid field-representative charge-localization diagnostics.
+    # Per-step list of dicts with max_anchor_fraction and gini for rider/driver
+    # field-rep source charges. Empty when field reps are not used.
+    pseudo_grid_charge_localization: Optional[List[Dict[str, float]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1685,6 +1897,43 @@ def _extract_vector_series(
     return np.stack(components, axis=-1)
 
 
+def _apply_macroparticle_dynamics_mode(
+    state: Dict[str, np.ndarray] | None,
+    mode: str,
+) -> None:
+    if state is None or mode == "representative":
+        return
+    if mode != "macro_inertia":
+        raise ValueError(
+            "macroparticle_dynamics_mode must be representative or macro_inertia"
+        )
+    if "macro_population" not in state:
+        return
+    macro_population = np.asarray(state["macro_population"], dtype=float)
+    if "q_species" in state:
+        state["q_observer"] = (
+            np.asarray(state["q_species"], dtype=float) * macro_population
+        )
+    elif "q_observer" in state:
+        state["q_observer"] = (
+            np.asarray(state["q_observer"], dtype=float) * macro_population
+        )
+    if "m_species" in state:
+        scaled_mass = np.asarray(state["m_species"], dtype=float) * macro_population
+        state["m_species"] = scaled_mass
+        state["m"] = scaled_mass.copy()
+    elif "m" in state:
+        state["m"] = np.asarray(state["m"], dtype=float) * macro_population
+    for momentum_field in ("Px", "Py", "Pz", "Pt"):
+        if momentum_field in state:
+            state[momentum_field] = (
+                np.asarray(state[momentum_field], dtype=float) * macro_population
+            )
+    observer_charge = np.asarray(state.get("q_observer", state["q"]), dtype=float)
+    inertia_mass = np.asarray(state.get("m", state.get("m_species")), dtype=float)
+    state["char_time"] = (2.0 / 3.0) * observer_charge**2 / (inertia_mass * C_MMNS**3)
+
+
 def prepare_particle_bunches(
     seed: int,
     *,
@@ -1698,7 +1947,9 @@ def prepare_particle_bunches(
     seed : int
         Random seed for reproducibility
     rider_params : dict
-        Rider particle parameters
+        Rider particle parameters. If ``momentum_axis`` is present, uses
+        :func:`create_particle_state_3d` for arbitrary 3D orientation;
+        otherwise uses the legacy z-axis :func:`create_bunch_from_params`.
     driver_params : dict, optional
         Driver particle parameters (None for single-bunch modes)
     Returns
@@ -1712,21 +1963,78 @@ def prepare_particle_bunches(
     driver_rest_mev : float or None
         Driver rest energy in MeV (None if not provided)
     """
-    rider_state, rider_rest_mev = create_bunch_from_params(
-        seed=seed,
-        **rider_params,
-    )
+    if "momentum_axis" in rider_params:
+        rider_state, rider_rest_mev = _create_bunch_3d(seed=seed, **rider_params)
+    else:
+        rider_state, rider_rest_mev = create_bunch_from_params(
+            seed=seed,
+            **rider_params,
+        )
 
     if driver_params is not None:
-        driver_state, driver_rest_mev = create_bunch_from_params(
-            seed=seed + 1,  # Different seed for driver
-            **driver_params,
-        )
+        if "momentum_axis" in driver_params:
+            driver_state, driver_rest_mev = _create_bunch_3d(
+                seed=seed + 1, **driver_params
+            )
+        else:
+            driver_state, driver_rest_mev = create_bunch_from_params(
+                seed=seed + 1,  # Different seed for driver
+                **driver_params,
+            )
     else:
         driver_state = None
         driver_rest_mev = None
 
     return rider_state, driver_state, rider_rest_mev, driver_rest_mev
+
+
+def _create_bunch_3d(
+    *,
+    kinetic_energy_mev: float,
+    mass_amu: float,
+    charge_sign: float,
+    stripped_ions: float,
+    momentum_axis: list | tuple,
+    starting_position_mm: list | tuple = (0.0, 0.0, 0.0),
+    particle_count: int = 1,
+    transverse_distance_mm: float = 0.0,
+    transverse_momentum: float = 0.0,
+    longitudinal_span_mm: float = 0.0,
+    transverse_axes: list | tuple | None = None,
+    charge_multiplier: float = 1.0,
+    seed: int | None = None,
+    **_extra: Any,
+) -> Tuple[Dict[str, np.ndarray], float]:
+    """Create a 3D-oriented bunch from config params.
+
+    Wraps :func:`create_particle_state_3d` with the config-level parameter
+    names used by ``rider_params`` / ``driver_params``. Ignores legacy
+    z-axis-only keys (``starting_distance``, ``starting_Pz``, etc.) passed
+    in the same dict.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    from core.particle_initialization import create_particle_state_3d
+
+    axes_tuple = None
+    if transverse_axes is not None:
+        axes_tuple = tuple(tuple(float(v) for v in ax) for ax in transverse_axes)
+
+    return create_particle_state_3d(
+        starting_position_mm=tuple(float(v) for v in starting_position_mm),
+        momentum_axis=tuple(float(v) for v in momentum_axis),
+        kinetic_energy_mev=float(kinetic_energy_mev),
+        stripped_ions=float(stripped_ions),
+        particle_mass_amu=float(mass_amu),
+        particle_count=int(particle_count),
+        charge_sign=float(charge_sign),
+        transverse_distance_mm=float(transverse_distance_mm),
+        transverse_momentum=float(transverse_momentum),
+        longitudinal_span_mm=float(longitudinal_span_mm),
+        transverse_axes=axes_tuple,
+        charge_multiplier=float(charge_multiplier),
+    )
 
 
 def compute_initial_summary(options: SimulationOptions) -> InitialSummary:
@@ -1958,12 +2266,34 @@ def build_pseudo_grid_config(options: SimulationOptions) -> object:
         enabled=bool(options.pseudo_grid_enabled),
         active_rider_count=int(options.pseudo_grid_active_rider_count),
         active_driver_count=int(options.pseudo_grid_active_driver_count),
+        field_rider_count=int(options.pseudo_grid_field_rider_count),
+        field_driver_count=int(options.pseudo_grid_field_driver_count),
+        field_deposition_neighbor_count=int(
+            options.pseudo_grid_field_deposition_neighbor_count
+        ),
+        space_charge_near_neighbor_count=int(
+            options.pseudo_grid_space_charge_near_neighbor_count
+        ),
         passive_neighbor_count=int(options.pseudo_grid_passive_neighbor_count),
         coverage_strategy=str(options.pseudo_grid_coverage_strategy),
         coverage_space=str(options.pseudo_grid_coverage_space),
+        active_selection_mode=str(options.pseudo_grid_active_selection_mode),
+        passive_update_mode=str(options.pseudo_grid_passive_update_mode),
+        active_rotation_interval=int(options.pseudo_grid_active_rotation_interval),
+        active_rotation_fraction=float(options.pseudo_grid_active_rotation_fraction),
+        passive_remap_mode=str(options.pseudo_grid_passive_remap_mode),
+        passive_remap_warning_sigma=float(
+            options.pseudo_grid_passive_remap_warning_sigma
+        ),
+        passive_remap_trigger_sigma=float(
+            options.pseudo_grid_passive_remap_trigger_sigma
+        ),
         pair_reuse_window=int(options.pseudo_grid_pair_reuse_window),
         source_weighting_mode=str(options.pseudo_grid_source_weighting_mode),
         loss_tracking_enabled=bool(options.pseudo_grid_loss_tracking_enabled),
+        numerical_failure_tolerance_fraction=float(
+            options.pseudo_grid_numerical_failure_tolerance_fraction
+        ),
         causal_history_pruning_enabled=bool(
             options.pseudo_grid_causal_history_pruning_enabled
         ),
@@ -2004,6 +2334,34 @@ def build_macroparticle_smearing_config(options: SimulationOptions) -> object:
         refresh_policy=str(options.macroparticle_smearing_refresh_policy).replace(
             "-", "_"
         ),
+    )
+
+
+def build_beamline_geometry_config(
+    options: SimulationOptions,
+) -> BeamlineGeometryConfig:
+    """Build BeamlineGeometryConfig from SimulationOptions."""
+    occluders = []
+    for item in options.beamline_geometry_occluders:
+        if not isinstance(item, dict):
+            continue
+        try:
+            occluders.append(
+                Occluder(
+                    axis=tuple(float(v) for v in item.get("axis", [0.0, 0.0, 1.0])),
+                    center_mm=tuple(
+                        float(v) for v in item.get("center_mm", [0.0, 0.0, 0.0])
+                    ),
+                    radius_mm=float(item.get("radius_mm", 1.0)),
+                    length_mm=float(item.get("length_mm", 1.0)),
+                    label=str(item.get("label", "")),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return BeamlineGeometryConfig(
+        enabled=bool(options.beamline_geometry_enabled),
+        occluders=occluders,
     )
 
 
@@ -2279,13 +2637,31 @@ def run_testbed(
             )
         )
 
-        # Apply macroparticle charge multiplier if enabled
+        _apply_macroparticle_dynamics_mode(
+            rider_state,
+            str(options.macroparticle_dynamics_mode),
+        )
+        _apply_macroparticle_dynamics_mode(
+            driver_state,
+            str(options.macroparticle_dynamics_mode),
+        )
+
+        # Apply macroparticle source-charge multiplier if enabled
         if options.macroparticle_enabled and sim_type == SimulationType.CONDUCTING_WALL:
             charge_mult = float(options.macroparticle_charge_multiplier)
             if charge_mult != 1.0:
-                rider_state["q"] = rider_state["q"] * charge_mult
-                if driver_state is not None:
-                    driver_state["q"] = driver_state["q"] * charge_mult
+                for state in (rider_state, driver_state):
+                    if state is None:
+                        continue
+                    if "q_source" in state:
+                        state["q_source"] = state["q_source"] * charge_mult
+                        state["q"] = state["q_source"].copy()
+                        if "macro_population" in state:
+                            state["macro_population"] = (
+                                state["macro_population"] * charge_mult
+                            )
+                    else:
+                        state["q"] = state["q"] * charge_mult
 
         rider_initial = normalize_state(copy.deepcopy(rider_state))
         driver_initial = (
@@ -2342,8 +2718,15 @@ def run_testbed(
             max_residual_tail_steps=int(options.cavity_exit_max_residual_tail_steps),
         )
 
-        # Run core integrator directly
-        core_traj_rider, core_traj_driver, *_soa_out = retarded_integrator(
+        beamline_geometry_config = build_beamline_geometry_config(options)
+
+        # Default: no pseudo-grid charge-localization data; populated below when
+        # the integrator returns the per-step field-rep diagnostics.
+        _pseudo_grid_charge_localization: List[Dict[str, float]] = []
+
+        # Run core integrator directly. The 5th return element is the per-step
+        # pseudo-grid charge-localization list (empty when field reps are off).
+        _integrator_return = retarded_integrator(
             steps=_actual_steps,
             h_step=_actual_h_step,
             wall_z=filtered_core_params.get("wall_z", 1e5),
@@ -2391,6 +2774,13 @@ def run_testbed(
             cavity_exit=cavity_exit_config,
             particle_loss=particle_loss_config,
             macroparticle_smearing=macroparticle_smearing_config,
+            beamline_geometry=beamline_geometry_config,
+        )
+        # Unpack: rider_traj, driver_traj, rider_soa, driver_soa, localization
+        core_traj_rider = _integrator_return[0]
+        core_traj_driver = _integrator_return[1]
+        _pseudo_grid_charge_localization = (
+            _integrator_return[4] if len(_integrator_return) > 4 else []
         )
 
         # Build a normalized payload shared by the GUI and CLI surfaces.
@@ -3070,13 +3460,17 @@ def run_testbed(
                 )
 
                 if rider_trajectory_data is not None:
-                    rider_trajectory_data["driver_delta_kinetic_energy_mev"] = np.asarray(
-                        driver_energy_ledger["delta_kinetic_energy_mev"], dtype=float
+                    rider_trajectory_data["driver_delta_kinetic_energy_mev"] = (
+                        np.asarray(
+                            driver_energy_ledger["delta_kinetic_energy_mev"],
+                            dtype=float,
+                        )
                     )
-                    rider_trajectory_data[
-                        "driver_delta_kinetic_energy_z_mev"
-                    ] = np.asarray(
-                        driver_energy_ledger["delta_kinetic_energy_z_mev"], dtype=float
+                    rider_trajectory_data["driver_delta_kinetic_energy_z_mev"] = (
+                        np.asarray(
+                            driver_energy_ledger["delta_kinetic_energy_z_mev"],
+                            dtype=float,
+                        )
                     )
                     rider_trajectory_data["net_delta_kinetic_energy_z_mev"] = (
                         rider_net_z
@@ -3091,7 +3485,9 @@ def run_testbed(
                     energy_ledger_metrics["driver_bunch_count"] = len(
                         driver_bunch_ledgers
                     )
-                    for bunch_idx, bunch_ledger in enumerate(driver_bunch_ledgers, start=1):
+                    for bunch_idx, bunch_ledger in enumerate(
+                        driver_bunch_ledgers, start=1
+                    ):
                         bunch_prefix = f"driver_bunch_{bunch_idx:02d}"
                         energy_ledger_metrics.update(
                             _ledger_scalar_metrics(bunch_prefix, bunch_ledger)
@@ -4143,6 +4539,7 @@ def run_testbed(
         driver_gamma_final=driver_gamma_final,
         driver_trajectory=driver_trajectory_data,
         energy_ledger_metrics=energy_ledger_metrics,
+        pseudo_grid_charge_localization=_pseudo_grid_charge_localization,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,
         rider_norm_emittance_x_mm_mrad=rider_norm_emittance_x,

@@ -248,6 +248,7 @@ class ExternalSampleBatch:
     y: np.ndarray | None = None
     z: np.ndarray | None = None
     m: np.ndarray | None = None
+    macro_population: np.ndarray | None = None
 
     @property
     def any_valid(self) -> bool:
@@ -289,8 +290,18 @@ def gather_external_samples_soa(
     gamma = _soa_values_at_steps(
         traj_ext, "gamma", safe_indices, particle_indices
     ).copy()
-    charge = _soa_constant(traj_ext, "q").copy()
-    mass = _soa_constant(traj_ext, "m").copy()
+    try:
+        charge = _soa_constant(traj_ext, "q_source").copy()
+    except AttributeError:
+        charge = _soa_constant(traj_ext, "q").copy()
+    try:
+        mass = _soa_constant(traj_ext, "m_species").copy()
+    except AttributeError:
+        mass = _soa_constant(traj_ext, "m").copy()
+    try:
+        macro_population = _soa_constant(traj_ext, "macro_population").copy()
+    except AttributeError:
+        macro_population = np.ones_like(charge)
     dead_at_sample = _soa_values_at_steps(
         traj_ext, "dead", safe_indices, particle_indices
     )
@@ -313,6 +324,7 @@ def gather_external_samples_soa(
         gamma[invalid_mask] = 0.0
         charge[invalid_mask] = 0.0
         mass[invalid_mask] = 0.0
+        macro_population[invalid_mask] = 0.0
         if include_positions and x is not None and y is not None and z is not None:
             x[invalid_mask] = 0.0
             y[invalid_mask] = 0.0
@@ -396,6 +408,7 @@ def gather_external_samples_soa(
         charge=charge,
         valid_mask=valid_mask,
         m=mass,
+        macro_population=macro_population,
     )
 
 
@@ -442,6 +455,7 @@ def gather_external_samples(
     charge = np.zeros(sample_count, dtype=float)
     gamma = np.zeros(sample_count, dtype=float)
     mass = np.zeros(sample_count, dtype=float)
+    macro_population = np.ones(sample_count, dtype=float)
     bx = np.zeros(sample_count, dtype=float)
     by = np.zeros(sample_count, dtype=float)
     bz = np.zeros(sample_count, dtype=float)
@@ -479,7 +493,7 @@ def gather_external_samples(
         bdoty_val = float(state["bdoty"][j])
         bdotz_val = float(state["bdotz"][j])
 
-        charge_j = state["q"]
+        charge_j = state.get("q_source", state["q"])
         if hasattr(charge_j, "__getitem__"):
             charge_val = float(charge_j[j])
         else:
@@ -491,11 +505,17 @@ def gather_external_samples(
         else:
             gamma_val = float(gamma_j)
 
-        mass_j = state.get("m", 1.0)
+        mass_j = state.get("m_species", state.get("m", 1.0))
         if hasattr(mass_j, "__getitem__"):
             mass_val = float(mass_j[j])
         else:
             mass_val = float(mass_j)
+
+        macro_population_j = state.get("macro_population", 1.0)
+        if hasattr(macro_population_j, "__getitem__"):
+            macro_population_val = float(macro_population_j[j])
+        else:
+            macro_population_val = float(macro_population_j)
 
         # Store positions (may be interpolated later)
         x_vals[j] = float(state["x"][j])
@@ -672,6 +692,7 @@ def gather_external_samples(
         charge[j] = charge_val
         gamma[j] = gamma_val
         mass[j] = mass_val
+        macro_population[j] = macro_population_val
 
     return ExternalSampleBatch(
         charge=charge,
@@ -687,6 +708,7 @@ def gather_external_samples(
         y=y_vals if include_positions or interpolate_positions else None,
         z=z_vals if include_positions or interpolate_positions else None,
         m=mass,
+        macro_population=macro_population,
     )
 
 

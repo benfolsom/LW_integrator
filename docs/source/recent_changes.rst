@@ -3,14 +3,80 @@
 Recent Changes
 ==============
 
-*Last updated: June 2026*
+*Last updated: August 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
 
+August 2026 Updates
+-------------------
+
+Testbed CLI and GUI Configuration Fidelity (August 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An explicit ``lw-simulate --testbed-config`` route now runs full GUI/testbed
+JSON configurations through ``load_config()`` and ``run_testbed()`` without a
+schema translation. The saved configuration remains authoritative, preserving
+3D particle initialization, beamline geometry, driver trains, source smearing,
+startup mode, self-consistency, and trajectory-output settings.
+
+* Native direct-CLI JSON now preserves ``beamline_geometry`` and its occluder
+  list when constructing ``IntegratorConfig``.
+* GUI config round trips preserve every source-smearing field, including
+  ``macroparticle_smearing_use_momentum_errors`` independently from the legacy
+  conducting-wall image-momentum-error option.
+* Focused regression tests cover the explicit testbed CLI route, native
+  beamline-geometry ingestion, and headless GUI smearing serialization.
+
 June 2026 Updates
 -----------------
+
+Beamline Geometry Line-of-Sight Screening (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Beam-pipe-like occluders can now block direct retarded field contributions
+between bunches when the source particle (at its retarded position) exits a
+pipe's transverse aperture. Residual fields arrive naturally via retarded
+time because the occlusion test is applied at the retarded source position.
+
+* ``core.types.BeamlineGeometryConfig`` and ``core.types.Occluder`` define the
+  geometry as a list of finite open cylinders (axis, center, radius, length).
+* ``core/beamline_geometry.py`` provides ``compute_visibility_mask`` for the
+  per-particle aperture test.
+* Occlusion is wired through ``retarded_equations_of_motion``,
+  ``self_consistent_step``, ``retarded_integrator``, ``IntegratorConfig``,
+  ``SimulationOptions``, and ``run_testbed``. It applies to external
+  (bunch-to-bunch) samples only, not self-space-charge.
+* CLI flags: ``--beamline-geometry-enabled``, ``--no-beamline-geometry``,
+  ``--beamline-geometry-file``.
+* GUI: a new "Beamline/Geometry" tab with a plaintext JSON editor and validate
+  button feeds occluders into ``SimulationOptions``.
+
+General 3D Particle Initialization (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``create_particle_state_3d`` in ``core/particle_initialization.py`` supports
+arbitrary bunch orientation (``momentum_axis``), starting position
+(``starting_position_mm``), auto-computed or explicit transverse axes, and
+longitudinal span. When ``momentum_axis`` is present in rider/driver config
+params, the 3D initializer is used automatically in both the testbed
+(``prepare_particle_bunches``) and CLI single-run (``_build_particle_state``)
+paths. New configs/tests should prefer this full 3D surface; legacy z-axis
+configs remain supported for compatibility.
+
+The main single-run GUI now also includes a ``Manual Particle Config`` tab with
+rider/driver JSON editors and validation, so full 3D particle payloads can be
+entered and saved directly instead of being squeezed through the legacy
+z-axis-only particle form.
+
+Energy Ledger Per-Direction and Percent Gains (June 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The energy ledger now records per-direction kinetic energy (x, y, z) and
+``final_percent_energy_gain`` / ``max_percent_energy_gain`` for both rider and
+driver, in addition to the existing total and longitudinal-z metrics. All
+existing metrics are preserved for backward compatibility.
 
 Sweep Metrics For Compact Spallation Studies (May 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -37,23 +103,56 @@ An experimental pseudo-grid reduced solver is now available for
   same pseudo-grid settings round-trip through ``SimulationOptions``, the
   single-run CLI, the main GUI ``Particles`` tab, and saved single-run configs.
 * ``core/pseudo_grid.py`` now provides deterministic active-subset selection,
-  passive-anchor maps, effective source-charge aggregation, bounded pair-reuse
-  tracking, passive reconstruction helpers, conservative causal-history cutoff
-  helpers, and observer-specific self-excluded source-charge matrices for
-  reduced same-bunch space charge.
+  field-representative selection, direct passive-to-field source-charge
+  deposition, passive-anchor maps, bounded pair-reuse tracking, passive
+  reconstruction helpers, conservative causal-history cutoff helpers, and
+  observer-specific field-representative source-charge matrices for reduced
+  same-bunch space charge.
 * The integrator now builds per-step pseudo-grid schedules, stores them on the
   legacy and SoA trajectory paths, advances active observers against reduced
-  active-source histories with effective source charges, and reconstructs
-  passive particles from weighted active deltas while preserving full-state
-  outputs.
+  field-representative source histories with effective source charges, and uses
+  the same field-representative source set for reduced same-bunch space charge.
+  Passive updates are configurable: ``weighted_delta`` preserves the historical
+  active-anchor reconstruction, ``external_interbunch`` integrates passives
+  against external fields and opposite-bunch field representatives while omitting
+  same-bunch space charge, ``ballistic`` coasts force-free passives, and
+  ``frozen`` keeps static passives for diagnostics.  ``field_rider_count``,
+  ``field_driver_count``, and ``field_deposition_neighbor_count`` control the
+  separate weighted source set.
 * When causal-history pruning is enabled for supported reduced B2B solves, live
   rider/driver histories are compacted after each completed step and schedule
   snapshots record retained-start indices plus dropped-sample counts.
 * Adaptive-timestep retries now participate in the reduced pseudo-grid path.
 * Reduced intra-bunch space charge is also supported when each bunch keeps at
-  least two active particles, using observer-specific self-excluded source-
-  charge matrices. If the active counts are too small, the integrator
-  conservatively falls back to the canonical full-history solve.
+  least two active particles. The pseudo-grid path uses a hybrid source set:
+  each active observer evaluates a configurable number of nearest live
+  same-bunch neighbours exactly, while field representatives carry the remaining
+  farther charge. Exact-neighbour charge is subtracted from field-representative
+  deposits for that observer to conserve source charge without double counting.
+  Field representatives also carry a charge-magnitude-weighted RMS deposition
+  radius for same-bunch space charge, combined in quadrature with the global
+  space-charge softening so finite deposited clouds are not treated as singular
+  point sources. Exact near-neighbour sources keep zero additional deposition
+  radius. If the active counts are too small, the integrator conservatively falls
+  back to the canonical full-history solve. Feasibility study configs should
+  choose field-representative counts large enough for the desired source
+  resolution; the core API does not impose a fixed multiple of the active count.
+* Pseudo-grid reduced solves expose ``numerical_failure_tolerance_fraction`` as
+  a diagnostic continuation budget. Gamma blowups and self-consistency
+  nonconvergence in active solves mark individual particles dead until that
+  fraction is exceeded; the default is 15%.
+* High-passive source-representation studies should prefer rotating or
+  slow-rotating active observers with
+  ``passive_update_mode="external_interbunch"``. ``slow_rotating_live`` changes
+  only a configurable fraction of the active set every
+  ``active_rotation_interval`` steps, reducing role churn while still sampling
+  live particles through active duty. ``fixed_prefix`` remains useful as a
+  diagnostic/control mode, not the preferred production interpretation.
+* Role diagnostics now report active/passive/field-representative centroid
+  offsets in bunch-RMS units, active-duty spread, maximum time since active, and
+  passive-remap warning/trigger flags. Passive remapping is disabled by default;
+  the warning and trigger thresholds are recorded so long/dynamic runs can be
+  flagged before any opt-in remapping strategy is trusted.
 * ``scripts/pseudo_grid_feasibility_probe.py`` provides a lightweight sanity and
   scale probe covering zero-charge drift, weak-charge full-vs-reduced
   comparisons, optional instantaneous or retarded same-bunch space-charge

@@ -68,10 +68,10 @@ def test_diagnostic_only_matches_off_trajectory_state() -> None:
         use_numba=False,
     )
 
-    off_traj, _, off_soa, _ = retarded_integrator(
+    off_traj, _, off_soa, _, *_ = retarded_integrator(
         **common_kwargs, radiation_reaction_mode="off"
     )
-    diagnostic_traj, _, diagnostic_soa, _ = retarded_integrator(
+    diagnostic_traj, _, diagnostic_soa, _, *_ = retarded_integrator(
         **common_kwargs, radiation_reaction_mode="diagnostic_only"
     )
 

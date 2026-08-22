@@ -13,6 +13,11 @@ N_PARTICLES = 3
 def _make_state(step: int, n: int, include_optional: bool = True) -> dict:
     """Return a minimal legacy ParticleState for *step* with *n* particles."""
     rng = np.random.default_rng(step)
+    q_source = np.ones(n) * float(step + 1)
+    q_species = np.ones(n) * 0.5
+    q_observer = q_species.copy()
+    macro_population = q_source / q_observer
+    m_species = np.ones(n) * 1.25
     state = {
         "x": rng.random(n),
         "y": rng.random(n),
@@ -32,8 +37,13 @@ def _make_state(step: int, n: int, include_optional: bool = True) -> dict:
         "radiation_power": rng.random(n),
         "radiation_energy": rng.random(n),
         "radiation_energy_applied": rng.random(n),
-        "q": np.ones(n) * float(step + 1),
-        "m": np.ones(n) * 1.0,
+        "q": q_source,
+        "q_species": q_species,
+        "q_observer": q_observer,
+        "q_source": q_source,
+        "macro_population": macro_population,
+        "m": m_species.copy(),
+        "m_species": m_species,
         "char_time": np.ones(n) * 0.5,
         "_dead_particles": np.zeros(n, dtype=bool),
     }
@@ -253,6 +263,11 @@ class TestBuildPartial:
         partial_full = builder.build_partial(10)
         np.testing.assert_array_equal(partial_full.x, full.x)
         np.testing.assert_array_equal(partial_full.gamma, full.gamma)
+        np.testing.assert_array_equal(partial_full.q_species, full.q_species)
+        np.testing.assert_array_equal(partial_full.q_observer, full.q_observer)
+        np.testing.assert_array_equal(partial_full.q_source, full.q_source)
+        np.testing.assert_array_equal(partial_full.macro_population, full.macro_population)
+        np.testing.assert_array_equal(partial_full.m_species, full.m_species)
         assert partial_full.n_steps == full.n_steps
 
     def test_raises_on_zero(self):

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from core.constants import ELEMENTARY_CHARGE
-from core.macroparticle_smearing import effective_observer_charge, smear_source_samples
+from core.macroparticle_smearing import smear_source_samples
 from core.types import MacroparticleSmearingConfig
 from core.vectorized_interactions import ExternalSampleBatch
 
@@ -24,6 +24,7 @@ def _samples(charge_multiplier: float = 100.0) -> ExternalSampleBatch:
         y=np.array([0.0, 0.0]),
         z=np.array([0.0, 0.0]),
         m=np.array([1.0, 1.0]),
+        macro_population=np.array([charge_multiplier, 1.0]),
     )
 
 
@@ -88,11 +89,22 @@ def test_smearing_stays_within_half_spacing_cap() -> None:
     assert np.max(np.linalg.norm(displacements, axis=1)) <= 5.0 + 1e-12
 
 
-def test_observer_charge_normalization_uses_unit_particle_equivalent_charge() -> None:
-    macro_charge = 250.0 * ELEMENTARY_CHARGE
+def test_smearing_preserves_explicit_macro_population_metadata() -> None:
+    config = MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        seed=11,
+        position_sigma_mm=0.5,
+    )
 
-    assert effective_observer_charge(macro_charge) == pytest.approx(ELEMENTARY_CHARGE)
-    assert effective_observer_charge(-macro_charge) == pytest.approx(-ELEMENTARY_CHARGE)
-    assert effective_observer_charge(0.5 * ELEMENTARY_CHARGE) == pytest.approx(
-        0.5 * ELEMENTARY_CHARGE
+    smeared, _ = smear_source_samples(
+        samples=_samples(charge_multiplier=100.0),
+        observer_position=(0.0, 0.0, 10.0),
+        config=config,
+        step_index=0,
+    )
+
+    np.testing.assert_allclose(
+        smeared.macro_population,
+        np.repeat(np.array([100.0, 1.0]), 4),
     )

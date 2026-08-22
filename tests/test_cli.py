@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import argparse
-import core
 import json
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+import core
 import lw_integrator
 from core.external_fields import electric_field_v_per_m_to_native
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 from lw_integrator import cli
+from lw_integrator.testbed_runner import SimulationOptions
 
 
 def _make_args(**overrides) -> argparse.Namespace:
@@ -53,6 +55,8 @@ def _make_args(**overrides) -> argparse.Namespace:
         "cavity_exit_enabled": None,
         "cavity_exit_mode": None,
         "cavity_exit_length_mm": None,
+        "beamline_geometry_enabled": None,
+        "beamline_geometry_file": None,
         "chrono_mode": None,
         "chrono_interpolate": None,
         "chrono_tolerance": None,
@@ -65,6 +69,9 @@ def _make_args(**overrides) -> argparse.Namespace:
         "pseudo_grid_enabled": None,
         "pseudo_grid_active_rider_count": None,
         "pseudo_grid_active_driver_count": None,
+        "pseudo_grid_field_rider_count": None,
+        "pseudo_grid_field_driver_count": None,
+        "pseudo_grid_field_deposition_neighbor_count": None,
         "pseudo_grid_passive_neighbor_count": None,
         "pseudo_grid_coverage_strategy": None,
         "pseudo_grid_coverage_space": None,
@@ -126,6 +133,11 @@ class TestCliConfigParsing:
         args = cli.parse_args(["--results-file", "results/sweep_results.json"])
 
         assert args.results_file == Path("results/sweep_results.json")
+
+    def test_parse_args_accepts_testbed_config(self):
+        args = cli.parse_args(["--testbed-config", "configs/study_run.json"])
+
+        assert args.testbed_config == Path("configs/study_run.json")
 
     def test_parse_args_accepts_chrono_sampling_flags(self):
         args = cli.parse_args(
@@ -234,6 +246,12 @@ class TestCliConfigParsing:
                 "6",
                 "--pseudo-grid-active-driver-count",
                 "8",
+                "--pseudo-grid-field-rider-count",
+                "24",
+                "--pseudo-grid-field-driver-count",
+                "26",
+                "--pseudo-grid-field-deposition-neighbor-count",
+                "5",
                 "--pseudo-grid-passive-neighbor-count",
                 "3",
                 "--pseudo-grid-coverage-strategy",
@@ -254,6 +272,9 @@ class TestCliConfigParsing:
         assert args.pseudo_grid_enabled is True
         assert args.pseudo_grid_active_rider_count == 6
         assert args.pseudo_grid_active_driver_count == 8
+        assert args.pseudo_grid_field_rider_count == 24
+        assert args.pseudo_grid_field_driver_count == 26
+        assert args.pseudo_grid_field_deposition_neighbor_count == 5
         assert args.pseudo_grid_passive_neighbor_count == 3
         assert args.pseudo_grid_coverage_strategy == "farthest_point"
         assert args.pseudo_grid_coverage_space == "phase_space"
@@ -455,6 +476,9 @@ class TestCliConfigParsing:
                     "enabled": True,
                     "active_rider_count": 6,
                     "active_driver_count": 7,
+                    "field_rider_count": 24,
+                    "field_driver_count": 25,
+                    "field_deposition_neighbor_count": 6,
                     "passive_neighbor_count": 3,
                     "pair_reuse_window": 20,
                     "causal_history_pruning_enabled": True,
@@ -485,6 +509,9 @@ class TestCliConfigParsing:
         assert config.pseudo_grid.enabled is True
         assert config.pseudo_grid.active_rider_count == 6
         assert config.pseudo_grid.active_driver_count == 7
+        assert config.pseudo_grid.field_rider_count == 24
+        assert config.pseudo_grid.field_driver_count == 25
+        assert config.pseudo_grid.field_deposition_neighbor_count == 6
         assert config.pseudo_grid.passive_neighbor_count == 3
         assert config.pseudo_grid.pair_reuse_window == 20
         assert config.pseudo_grid.causal_history_pruning_enabled is True
@@ -587,6 +614,9 @@ class TestCliBuildRequest:
                 pseudo_grid_enabled=True,
                 pseudo_grid_active_rider_count=7,
                 pseudo_grid_active_driver_count=9,
+                pseudo_grid_field_rider_count=31,
+                pseudo_grid_field_driver_count=33,
+                pseudo_grid_field_deposition_neighbor_count=5,
                 pseudo_grid_passive_neighbor_count=2,
                 pseudo_grid_pair_reuse_window=30,
                 pseudo_grid_causal_history_pruning_enabled=True,
@@ -596,6 +626,9 @@ class TestCliBuildRequest:
         assert payload["pseudo_grid"]["enabled"] is True
         assert payload["pseudo_grid"]["active_rider_count"] == 7
         assert payload["pseudo_grid"]["active_driver_count"] == 9
+        assert payload["pseudo_grid"]["field_rider_count"] == 31
+        assert payload["pseudo_grid"]["field_driver_count"] == 33
+        assert payload["pseudo_grid"]["field_deposition_neighbor_count"] == 5
         assert payload["pseudo_grid"]["passive_neighbor_count"] == 2
         assert payload["pseudo_grid"]["pair_reuse_window"] == 30
         assert payload["pseudo_grid"]["causal_history_pruning_enabled"] is True
@@ -816,6 +849,59 @@ class TestCliBuildRequest:
         assert request.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
         assert request.driver is not None
         assert float(request.driver["z"][0]) == pytest.approx(10.0)
+
+    def test_build_request_loads_3d_particle_configs_from_file(self, tmp_path: Path):
+        config_path = tmp_path / "b2b_3d.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "simulation_type": "bunch-to-bunch",
+                    "rider": {
+                        "kinetic_energy_mev": 12.0,
+                        "mass_amu": 1.007276466621,
+                        "charge_sign": -1.0,
+                        "particle_count": 3,
+                        "seed": 123,
+                        "starting_position_mm": [1.0, 2.0, 3.0],
+                        "momentum_axis": [1.0, 0.0, 0.0],
+                        "longitudinal_span_mm": 2.0,
+                        "transverse_distance_mm": 0.0,
+                    },
+                    "driver": {
+                        "kinetic_energy_mev": 18.0,
+                        "mass_amu": 1.007276466621,
+                        "charge_sign": 1.0,
+                        "particle_count": 3,
+                        "seed": 124,
+                        "starting_position_mm": [4.0, 5.0, 6.0],
+                        "momentum_axis": [0.0, -1.0, 0.0],
+                        "longitudinal_span_mm": 4.0,
+                        "transverse_distance_mm": 0.0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+        repeated = cli.build_request(_make_args(config=config_path))
+
+        assert request.config.simulation_type == SimulationType.BUNCH_TO_BUNCH
+        assert request.driver is not None
+        assert repeated.driver is not None
+        assert request.rider["x"] == pytest.approx(repeated.rider["x"])
+        assert request.driver["y"] == pytest.approx(repeated.driver["y"])
+        assert request.rider["y"] == pytest.approx([2.0, 2.0, 2.0])
+        assert request.rider["z"] == pytest.approx([3.0, 3.0, 3.0])
+        assert request.rider["py"] == pytest.approx([0.0, 0.0, 0.0])
+        assert request.rider["pz"] == pytest.approx([0.0, 0.0, 0.0])
+        assert np.std(request.rider["x"]) > 0.0
+        assert request.driver["x"] == pytest.approx([4.0, 4.0, 4.0])
+        assert request.driver["z"] == pytest.approx([6.0, 6.0, 6.0])
+        assert request.driver["px"] == pytest.approx([0.0, 0.0, 0.0])
+        assert np.all(request.driver["py"] < 0.0)
+        assert request.driver["pz"] == pytest.approx([0.0, 0.0, 0.0])
+        assert np.std(request.driver["y"]) > 0.0
 
     def test_build_request_keeps_optional_driver_for_non_b2b(self, tmp_path: Path):
         config_path = tmp_path / "wall.json"
@@ -1113,6 +1199,96 @@ class TestCliMain:
         assert result == 1
         assert captured["args"].sweep_config == Path("configs/example.json")
 
+    def test_main_runs_testbed_config_through_testbed_runner(
+        self, monkeypatch, tmp_path: Path
+    ):
+        config_path = tmp_path / "study_config.json"
+        output_path = tmp_path / "summary.json"
+        source_occluders = [
+            {
+                "axis": [0.0, 0.0, 1.0],
+                "center_mm": [0.0, 0.0, 0.0],
+                "radius_mm": 2.0,
+                "length_mm": 500.0,
+                "label": "study_pipe",
+            }
+        ]
+        testbed_options = SimulationOptions(
+            config_name=config_path.name,
+            config_dir=tmp_path,
+            output_dir=tmp_path / "artifacts",
+            macroparticle_smearing_enabled=True,
+            macroparticle_smearing_use_momentum_errors=False,
+            beamline_geometry_enabled=True,
+            beamline_geometry_occluders=source_occluders,
+        )
+        config_path.write_text(
+            json.dumps(testbed_options.to_dict()),
+            encoding="utf-8",
+        )
+        captured = {}
+        result = SimpleNamespace(
+            duration_s=1.25,
+            filename_base="study_config_20260822_120000",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.125,
+            rider_gamma_initial=2.0,
+            rider_gamma_final=2.25,
+            driver_gamma_initial=1.5,
+            driver_gamma_final=1.5,
+            energy_ledger_metrics={"rider_final_delta_kinetic_energy_mev": 0.125},
+            saved_paths={"trajectory_json": tmp_path / "trajectory.json"},
+        )
+
+        def fake_run_testbed(received_options):
+            captured["options"] = received_options
+            return result
+
+        monkeypatch.setattr(
+            "lw_integrator.testbed_runner.run_testbed", fake_run_testbed
+        )
+
+        exit_code = cli.main(
+            [
+                "--testbed-config",
+                str(config_path),
+                "--output",
+                str(output_path),
+                "--quiet",
+            ]
+        )
+
+        report = json.loads(output_path.read_text(encoding="utf-8"))
+        assert exit_code == 0
+        loaded_options = captured["options"]
+        assert loaded_options.config_name == config_path.name
+        assert loaded_options.macroparticle_smearing_use_momentum_errors is False
+        assert loaded_options.beamline_geometry_enabled is True
+        assert loaded_options.beamline_geometry_occluders == source_occluders
+        assert report["run_mode"] == "testbed_config"
+        assert report["config_path"] == str(config_path)
+        assert report["rider_delta_e_mev"] == pytest.approx(0.125)
+        assert report["saved_paths"] == {
+            "trajectory_json": str(tmp_path / "trajectory.json")
+        }
+
+    def test_main_rejects_testbed_config_mode_conflicts(self, tmp_path: Path, capsys):
+        config_path = tmp_path / "study_config.json"
+
+        exit_code = cli.main(
+            [
+                "--testbed-config",
+                str(config_path),
+                "--config",
+                str(tmp_path / "native_config.json"),
+            ]
+        )
+
+        assert exit_code == 2
+        assert "cannot be combined with --config" in capsys.readouterr().err
+
     def test_main_writes_output_json(self, monkeypatch, tmp_path: Path):
         output_path = tmp_path / "summary.json"
         fake_request = object()
@@ -1339,6 +1515,7 @@ class TestCliRuntimeHelpers:
             )
         )
 
+        assert request.driver is not None
         request.driver["z"] = request.driver["z"] + 1000.0
 
         expected_steps, expected_h_step = cli._resolve_auto_duration(request)
@@ -1404,3 +1581,165 @@ class TestCliRuntimeHelpers:
         assert "Steps Completed: 5" in output
         assert "Traveled Distance Mm: 12.3457" in output
         assert "Delta Gamma Mean: 1.23457" in output
+
+
+class TestCliBeamlineGeometry:
+    def test_parse_args_accepts_beamline_geometry_flags(self):
+        args = cli.parse_args(
+            ["--beamline-geometry-enabled", "--beamline-geometry-file", "geom.json"]
+        )
+        assert args.beamline_geometry_enabled is True
+        assert args.beamline_geometry_file == "geom.json"
+
+    def test_parse_args_no_beamline_geometry_flag(self):
+        args = cli.parse_args(["--no-beamline-geometry"])
+        assert args.beamline_geometry_enabled is False
+
+    def test_merge_simulation_payload_applies_beamline_geometry_enabled(self):
+        payload = cli._merge_simulation_payload(
+            {"beamline_geometry": {"enabled": False, "occluders": []}},
+            _make_args(beamline_geometry_enabled=True),
+        )
+        assert payload["beamline_geometry"]["enabled"] is True
+
+    def test_merge_simulation_payload_preserves_json_beamline_geometry(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "beamline_geometry": {
+                    "enabled": True,
+                    "occluders": [
+                        {
+                            "axis": [0.0, 0.0, 1.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 2.0,
+                            "length_mm": 500.0,
+                            "label": "proton_straight_pipe",
+                        },
+                        {
+                            "axis": [0.0, 1.0, 0.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 2.0,
+                            "length_mm": 500.0,
+                            "label": "source_channel_pipe",
+                        },
+                    ],
+                }
+            },
+            _make_args(),
+        )
+
+        config = cli._build_integrator_config(payload)
+
+        assert config.beamline_geometry.enabled is True
+        assert [occluder.label for occluder in config.beamline_geometry.occluders] == [
+            "proton_straight_pipe",
+            "source_channel_pipe",
+        ]
+
+    def test_merge_simulation_payload_loads_beamline_geometry_file(self, tmp_path):
+        geom_file = tmp_path / "geom.json"
+        geom_file.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "occluders": [
+                        {
+                            "axis": [0.0, 0.0, 1.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 15.0,
+                            "length_mm": 2000.0,
+                            "label": "electron_pipe",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload = cli._merge_simulation_payload(
+            {},
+            _make_args(beamline_geometry_file=str(geom_file)),
+        )
+        block = payload["beamline_geometry"]
+        assert block["enabled"] is True
+        assert len(block["occluders"]) == 1
+        assert block["occluders"][0]["label"] == "electron_pipe"
+
+    def test_build_beamline_geometry_config_disabled_default(self):
+        config = cli._build_beamline_geometry_config(None)
+        assert config.enabled is False
+        assert config.occluders == []
+
+    def test_build_beamline_geometry_config_two_occluders(self):
+        config = cli._build_beamline_geometry_config(
+            {
+                "enabled": True,
+                "occluders": [
+                    {
+                        "axis": [0.0, 0.0, 2.0],
+                        "center_mm": [1.0, 2.0, 3.0],
+                        "radius_mm": 15.0,
+                        "length_mm": 2000.0,
+                        "label": "pipe_a",
+                    },
+                    {
+                        "axis": [1.0, 0.0, 0.0],
+                        "center_mm": [-1.0, -2.0, -3.0],
+                        "radius_mm": 7.5,
+                        "length_mm": 500.0,
+                        "label": "pipe_b",
+                    },
+                ],
+            }
+        )
+        assert config.enabled is True
+        assert len(config.occluders) == 2
+        first, second = config.occluders
+        assert first.label == "pipe_a"
+        assert first.radius_mm == pytest.approx(15.0)
+        assert first.length_mm == pytest.approx(2000.0)
+        assert first.center_mm == (1.0, 2.0, 3.0)
+        # axis is normalized in Occluder.__post_init__
+        assert first.axis == pytest.approx((0.0, 0.0, 1.0))
+        assert second.label == "pipe_b"
+        assert second.axis == pytest.approx((1.0, 0.0, 0.0))
+
+    def test_build_integrator_config_carries_beamline_geometry(self):
+        config = cli._build_integrator_config(
+            {
+                "steps": "12",
+                "time_step": "0.25",
+                "wall_position": "1.5",
+                "aperture_radius": "0.002",
+                "simulation_type": "switching-wall",
+                "chrono_mode": "fast",
+                "startup_mode": "approximate-back-history",
+                "image_subcharge_count": "16",
+                "use_image_weighting": "no",
+                "z_cutoff_mode": "relative",
+                "beamline_geometry": {
+                    "enabled": True,
+                    "occluders": [
+                        {
+                            "axis": [0.0, 0.0, 1.0],
+                            "center_mm": [0.0, 0.0, 0.0],
+                            "radius_mm": 12.0,
+                            "length_mm": 800.0,
+                            "label": "pipe",
+                        }
+                    ],
+                },
+            }
+        )
+        assert config.beamline_geometry.enabled is True
+        assert len(config.beamline_geometry.occluders) == 1
+        assert config.beamline_geometry.occluders[0].label == "pipe"
+
+    def test_build_beamline_geometry_config_rejects_non_object(self):
+        with pytest.raises(cli.SimulationConfigError, match="must be an object"):
+            cli._build_beamline_geometry_config([1, 2, 3])
+
+    def test_build_beamline_geometry_config_rejects_non_object_occluder(self):
+        with pytest.raises(cli.SimulationConfigError, match="each occluder"):
+            cli._build_beamline_geometry_config(
+                {"enabled": True, "occluders": ["not_an_object"]}
+            )

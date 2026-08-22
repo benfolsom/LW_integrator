@@ -183,9 +183,12 @@ def smear_source_samples(
     spacing_mm = _estimate_spacing_mm(
         samples.x, samples.y, samples.z, samples.valid_mask
     )
-    populations = np.asarray(
-        [_macro_population(q) for q in samples.charge], dtype=float
-    )
+    if samples.macro_population is not None:
+        populations = np.asarray(samples.macro_population, dtype=float)
+    else:
+        populations = np.asarray(
+            [_macro_population(q) for q in samples.charge], dtype=float
+        )
     source_displacements = np.zeros((total_count, 3), dtype=float)
 
     for source_idx in range(source_count):
@@ -301,6 +304,7 @@ def smear_source_samples(
         y=y,
         z=z,
         m=mass,
+        macro_population=np.repeat(populations, subcharge_count),
     )
     return smeared, nhat
 

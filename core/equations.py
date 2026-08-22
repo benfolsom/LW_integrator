@@ -85,13 +85,15 @@ from .distances import (
     compute_retarded_distance,
     compute_retarded_distance_soa,
 )
+from .beamline_geometry import compute_directional_visibility_mask
 from .external_fields import compute_uniform_external_field_impulse
-from .macroparticle_smearing import effective_observer_charge, smear_source_samples
+from .macroparticle_smearing import smear_source_samples
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
 )
 from .types import (
+    BeamlineGeometryConfig,
     ChronoMatchingMode,
     GammaReconciliationMethod,
     MacroparticleSmearingConfig,
@@ -279,6 +281,26 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "bdoty": _float_copy("bdoty"),
         "bdotz": _float_copy("bdotz"),
         "q": np.array(current_state["q"], dtype=float, copy=True),
+        "q_species": np.array(
+            current_state.get("q_species", current_state["q"]),
+            dtype=float,
+            copy=True,
+        ),
+        "q_observer": np.array(
+            current_state.get("q_observer", current_state["q"]),
+            dtype=float,
+            copy=True,
+        ),
+        "q_source": np.array(
+            current_state.get("q_source", current_state["q"]),
+            dtype=float,
+            copy=True,
+        ),
+        "macro_population": np.array(
+            current_state.get("macro_population", np.ones_like(current_state["x"])),
+            dtype=float,
+            copy=True,
+        ),
         "char_time": np.array(
             current_state.get("char_time", np.zeros_like(current_state["x"])),
             dtype=float,
@@ -286,6 +308,13 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         ),
         "m": np.array(
             current_state.get("m", np.ones_like(current_state["x"])),
+            dtype=float,
+            copy=True,
+        ),
+        "m_species": np.array(
+            current_state.get(
+                "m_species", current_state.get("m", np.ones_like(current_state["x"]))
+            ),
             dtype=float,
             copy=True,
         ),
@@ -315,20 +344,48 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
     return result
 
 
+def _get_state_scalar(
+    state: ParticleState, key: str, particle_idx: int, fallback_key: str | None = None
+):
+    values = state.get(key)
+    if values is None and fallback_key is not None:
+        values = state[fallback_key]
+    if values is None:
+        raise KeyError(key)
+    if hasattr(values, "__getitem__"):
+        return values[particle_idx]
+    return values
+
+
+def _get_particle_source_charge(state: ParticleState, particle_idx: int):
+    """Extract source charge for a single particle."""
+    return _get_state_scalar(state, "q_source", particle_idx, "q")
+
+
+def _get_particle_observer_charge(state: ParticleState, particle_idx: int):
+    """Extract observer charge for a single particle."""
+    return _get_state_scalar(state, "q_observer", particle_idx, "q")
+
+
 def _get_particle_charge(state: ParticleState, particle_idx: int):
-    """Extract charge for a single particle, handling scalar or array charge."""
-    charge = state["q"]
-    if hasattr(charge, "__getitem__"):
-        return charge[particle_idx]
-    return charge
+    """Backward-compatible alias for observer charge extraction."""
+    return _get_particle_observer_charge(state, particle_idx)
 
 
 def _get_particle_mass(state: ParticleState, particle_idx: int):
-    """Extract mass for a single particle, handling scalar or array mass."""
-    mass = state["m"]
-    if hasattr(mass, "__getitem__"):
-        return mass[particle_idx]
-    return mass
+    """Extract observer/species mass for a single particle."""
+    return _get_state_scalar(state, "m_species", particle_idx, "m")
+
+
+def effective_observer_charge(charge_native: float) -> float:
+    """Backward-compatible helper retained for legacy tests/imports.
+
+    Production force paths now read explicit ``q_observer`` metadata directly.
+    This shim preserves the historical equations-module contract for synthetic
+    tests that pass plain scalar charges rather than native-unit macroparticle
+    source charges.
+    """
+    return float(charge_native)
 
 
 def _scalar_potential_momentum_contribution(
@@ -1316,7 +1373,11 @@ def retarded_equations_of_motion(
     radiation_reaction_mode: Optional[str] = "off",
     external_field: Optional[Any] = None,
     pseudo_grid_space_charge_source_charges: Optional[np.ndarray] = None,
+    pseudo_grid_space_charge_source_trajectory: Optional[Trajectory] = None,
+    pseudo_grid_space_charge_source_soa: Optional[TrajectoryArrays] = None,
+    pseudo_grid_space_charge_source_radii_mm: Optional[np.ndarray] = None,
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
+    beamline_geometry: Optional[BeamlineGeometryConfig] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1368,15 +1429,33 @@ def retarded_equations_of_motion(
 
     num_particles = len(current_state["x"])
     pseudo_grid_sc_charge_matrix = None
+    pseudo_grid_sc_source_radii = None
+    if pseudo_grid_space_charge_source_radii_mm is not None:
+        pseudo_grid_sc_source_radii = np.asarray(
+            pseudo_grid_space_charge_source_radii_mm,
+            dtype=float,
+        )
+        if pseudo_grid_sc_source_radii.ndim != 1:
+            raise ValueError(
+                "pseudo_grid_space_charge_source_radii_mm must be a 1-D vector"
+            )
+        if np.any(pseudo_grid_sc_source_radii < 0.0):
+            raise ValueError(
+                "pseudo_grid_space_charge_source_radii_mm must be non-negative"
+            )
     if pseudo_grid_space_charge_source_charges is not None:
         pseudo_grid_sc_charge_matrix = np.asarray(
             pseudo_grid_space_charge_source_charges,
             dtype=float,
         )
-        if pseudo_grid_sc_charge_matrix.shape != (num_particles, num_particles):
+        if pseudo_grid_sc_charge_matrix.ndim != 2:
             raise ValueError(
-                "pseudo_grid_space_charge_source_charges must have shape "
-                f"({num_particles}, {num_particles})"
+                "pseudo_grid_space_charge_source_charges must be a 2-D matrix"
+            )
+        if pseudo_grid_sc_charge_matrix.shape[0] != num_particles:
+            raise ValueError(
+                "pseudo_grid_space_charge_source_charges must have one row per "
+                f"observer particle ({num_particles})"
             )
 
     # Track particles marked dead in this step
@@ -1454,10 +1533,9 @@ def retarded_equations_of_motion(
         working_y = current_state["y"][particle_idx]
         working_z = current_state["z"][particle_idx]
 
-        particle_charge: float = float(
-            _get_particle_charge(current_state, particle_idx)
+        force_particle_charge: float = float(
+            _get_particle_observer_charge(current_state, particle_idx)
         )
-        force_particle_charge: float = float(effective_observer_charge(particle_charge))
         particle_mass: float = float(_get_particle_mass(current_state, particle_idx))
         accumulated_field_x: float = 0.0
         accumulated_field_y: float = 0.0
@@ -1718,6 +1796,17 @@ def retarded_equations_of_motion(
             # ================================================================
             if apply_forces and nhat["R"].size > 0:
                 # Gather external particle data at retarded times (with interpolation if enabled)
+                _external_include_positions = bool(
+                    (
+                        macroparticle_smearing
+                        and macroparticle_smearing.enabled
+                        and (
+                            macroparticle_smearing.apply_to_active_sources
+                            or macroparticle_smearing.apply_to_passive_sources
+                        )
+                    )
+                    or (beamline_geometry is not None and beamline_geometry.enabled)
+                )
                 if traj_ext_soa is not None and chrono_result is not None:
                     external_samples = gather_external_samples_soa(
                         traj_ext_soa,
@@ -1725,14 +1814,7 @@ def retarded_equations_of_motion(
                         indices_next=chrono_result.indices_next,
                         weights=chrono_result.weights,
                         needs_interpolation=chrono_result.needs_interpolation,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
                 elif chrono_result is not None:
                     # Use interpolation (with cubic and position interpolation if high-precision)
@@ -1745,41 +1827,20 @@ def retarded_equations_of_motion(
                         indices_next2=chrono_result.indices_next2,
                         use_cubic=chrono_result.use_cubic,
                         interpolate_positions=chrono_high_precision,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
                 elif traj_ext_soa is not None:
                     external_samples = gather_external_samples_soa(
                         traj_ext_soa,
                         indices_bounded,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
                 else:
                     # Legacy path: no interpolation
                     external_samples = gather_external_samples(
                         trajectory_ext,
                         indices_bounded,
-                        include_positions=bool(
-                            macroparticle_smearing
-                            and macroparticle_smearing.enabled
-                            and (
-                                macroparticle_smearing.apply_to_active_sources
-                                or macroparticle_smearing.apply_to_passive_sources
-                            )
-                        ),
+                        include_positions=_external_include_positions,
                     )
 
                 external_samples, smeared_nhat = smear_source_samples(
@@ -1794,6 +1855,32 @@ def retarded_equations_of_motion(
                 )
                 if smeared_nhat:
                     nhat = smeared_nhat
+
+                if (
+                    beamline_geometry is not None
+                    and beamline_geometry.enabled
+                    and external_samples.x is not None
+                ):
+                    src_positions = np.stack(
+                        [
+                            np.asarray(external_samples.x, dtype=float),
+                            np.asarray(external_samples.y, dtype=float),
+                            np.asarray(external_samples.z, dtype=float),
+                        ],
+                        axis=-1,
+                    )
+                    visibility = compute_directional_visibility_mask(
+                        src_positions,
+                        beamline_geometry,
+                        observer_direction=(
+                            float(working_beta_x),
+                            float(working_beta_y),
+                            float(working_beta_z),
+                        ),
+                    )
+                    external_samples.valid_mask = (
+                        external_samples.valid_mask & visibility
+                    )
 
                 # Compute electromagnetic force contributions
                 (
@@ -1862,13 +1949,45 @@ def retarded_equations_of_motion(
                 and len(trajectory) >= 1
             ):
                 n_particles = current_state["x"].shape[0]
-                if n_particles > 1:
+                sc_source_trajectory = (
+                    pseudo_grid_space_charge_source_trajectory
+                    if pseudo_grid_space_charge_source_trajectory is not None
+                    else trajectory
+                )
+                sc_source_soa = (
+                    pseudo_grid_space_charge_source_soa
+                    if pseudo_grid_space_charge_source_soa is not None
+                    else traj_soa
+                )
+                sc_source_count = (
+                    sc_source_soa.n_particles
+                    if sc_source_soa is not None
+                    else len(sc_source_trajectory[-1]["x"])
+                )
+                if n_particles > 1 and sc_source_count > 0:
                     sc_softening = float(space_charge.softening_mm)
                     observer_sc_charge_row = None
                     if pseudo_grid_sc_charge_matrix is not None:
                         observer_sc_charge_row = pseudo_grid_sc_charge_matrix[
                             particle_idx
                         ]
+                    if (
+                        pseudo_grid_sc_charge_matrix is not None
+                        and pseudo_grid_sc_charge_matrix.shape[1] != sc_source_count
+                    ):
+                        raise ValueError(
+                            "pseudo-grid space-charge source matrix column count "
+                            f"({pseudo_grid_sc_charge_matrix.shape[1]}) must match "
+                            f"the source particle count ({sc_source_count})"
+                        )
+                    if (
+                        pseudo_grid_sc_source_radii is not None
+                        and pseudo_grid_sc_source_radii.shape != (sc_source_count,)
+                    ):
+                        raise ValueError(
+                            "pseudo-grid space-charge source radii must have shape "
+                            f"({sc_source_count},)"
+                        )
                     # Use retarded SC only once sufficient history has accumulated
                     # (at least one light-crossing time of the bunch width).
                     # resolve_min_retarded_steps returns the step threshold; below
@@ -1878,12 +1997,12 @@ def retarded_equations_of_motion(
                     use_retarded_sc = len(trajectory) > _sc_threshold
 
                     sc_chrono_result = None
-                    use_sc_soa = traj_soa is not None
+                    use_sc_soa = traj_soa is not None and sc_source_soa is not None
                     if use_retarded_sc:
                         if use_sc_soa:
                             sc_retarded_result = chrono_match_indices_soa(
                                 traj_soa,
-                                traj_soa,
+                                sc_source_soa,
                                 index_traj,
                                 particle_idx,
                                 mode=ChronoMatchingMode.FAST,
@@ -1897,7 +2016,7 @@ def retarded_equations_of_motion(
                         else:
                             sc_retarded_result = chrono_match_indices(
                                 trajectory,
-                                trajectory,
+                                sc_source_trajectory,
                                 index_traj,
                                 particle_idx,
                                 mode=ChronoMatchingMode.FAST,
@@ -1914,16 +2033,20 @@ def retarded_equations_of_motion(
                         else:
                             sc_indices = sc_retarded_result
                     else:
-                        current_sc_index = min(index_traj, len(trajectory) - 1)
-                        sc_indices = np.full(n_particles, current_sc_index, dtype=int)
+                        current_sc_index = min(
+                            index_traj, len(sc_source_trajectory) - 1
+                        )
+                        sc_indices = np.full(
+                            sc_source_count, current_sc_index, dtype=int
+                        )
 
                     sc_indices = np.minimum(
-                        np.maximum(sc_indices, 0), len(trajectory) - 1
+                        np.maximum(sc_indices, 0), len(sc_source_trajectory) - 1
                     )
                     if use_sc_soa:
                         sc_nhat = compute_retarded_distance_soa(
                             traj_soa,
-                            traj_soa,
+                            sc_source_soa,
                             index_traj,
                             particle_idx,
                             sc_indices,
@@ -1931,20 +2054,25 @@ def retarded_equations_of_motion(
                     else:
                         sc_nhat = compute_retarded_distance(
                             trajectory,
-                            trajectory,
+                            sc_source_trajectory,
                             index_traj,
                             particle_idx,
                             sc_indices,
                         )
                     sc_R = np.asarray(sc_nhat["R"], dtype=float)
-                    if sc_softening > 0.0:
-                        sc_R = np.sqrt(sc_R**2 + sc_softening**2)
+                    source_radius = (
+                        pseudo_grid_sc_source_radii
+                        if pseudo_grid_sc_source_radii is not None
+                        else 0.0
+                    )
+                    if sc_softening > 0.0 or pseudo_grid_sc_source_radii is not None:
+                        sc_R = np.sqrt(sc_R**2 + sc_softening**2 + source_radius**2)
                         sc_nhat = dict(sc_nhat)
                         sc_nhat["R"] = sc_R
                     if sc_chrono_result is not None:
                         if use_sc_soa:
                             sc_samples = gather_external_samples_soa(
-                                traj_soa,
+                                sc_source_soa,
                                 sc_indices,
                                 indices_next=sc_chrono_result.indices_next,
                                 weights=sc_chrono_result.weights,
@@ -1960,7 +2088,7 @@ def retarded_equations_of_motion(
                             )
                         else:
                             sc_samples = gather_external_samples(
-                                trajectory,
+                                sc_source_trajectory,
                                 sc_indices,
                                 indices_next=sc_chrono_result.indices_next,
                                 weights=sc_chrono_result.weights,
@@ -1980,7 +2108,7 @@ def retarded_equations_of_motion(
                     else:
                         if use_sc_soa:
                             sc_samples = gather_external_samples_soa(
-                                traj_soa,
+                                sc_source_soa,
                                 sc_indices,
                                 include_positions=bool(
                                     macroparticle_smearing
@@ -1993,7 +2121,7 @@ def retarded_equations_of_motion(
                             )
                         else:
                             sc_samples = gather_external_samples(
-                                trajectory,
+                                sc_source_trajectory,
                                 sc_indices,
                                 include_positions=bool(
                                     macroparticle_smearing
@@ -2020,15 +2148,17 @@ def retarded_equations_of_motion(
                             observer_sc_charge_row,
                             dtype=float,
                         ).copy()
-                        if sc_source_charges.shape != (n_particles,):
+                        if sc_source_charges.shape != (sc_source_count,):
                             raise ValueError(
                                 "pseudo-grid space-charge row must have shape "
-                                f"({n_particles},)"
+                                f"({sc_source_count},)"
                             )
-                    sc_source_charges[particle_idx] = 0.0
+                    if pseudo_grid_sc_charge_matrix is None:
+                        sc_source_charges[particle_idx] = 0.0
                     sc_samples.charge[...] = sc_source_charges
                     sc_samples.valid_mask = sc_samples.valid_mask.copy()
-                    sc_samples.valid_mask[particle_idx] = False
+                    if pseudo_grid_sc_charge_matrix is None:
+                        sc_samples.valid_mask[particle_idx] = False
 
                     sc_samples, smeared_sc_nhat = smear_source_samples(
                         samples=sc_samples,
@@ -2742,7 +2872,7 @@ def retarded_equations_of_motion(
                                 result["z"][particle_idx],
                             ),
                             particle_time=result["t"][particle_idx],
-                    )
+                        )
                     break
                 elif sc_iteration == sc_max_iterations - 1:
                     last_mass_shell_error = mass_shell_error_rel

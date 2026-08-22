@@ -71,8 +71,8 @@ def _run(**kwargs):
 def test_numba_path_energy_monitor_warn():
     monitor = EnergyMonitorConfig(enabled=True, halt_on_jump=False, relative_threshold=0.0)
     result = _run(energy_monitor=monitor)
-    assert len(result) == 4
-    traj, traj_drv, _, _ = result
+    assert len(result) == 5
+    traj, traj_drv, _, _, *_ = result
     assert len(traj) == _STEPS
     assert len(traj_drv) == _STEPS
 
@@ -82,7 +82,7 @@ def test_numba_path_energy_monitor_halt():
     try:
         result = _run(energy_monitor=monitor)
         # Completed without raising — still valid
-        assert len(result) == 4
+        assert len(result) == 5
     except EnergyJumpDetected:
         pass  # Expected when energy changes
     except Exception as exc:
@@ -91,8 +91,8 @@ def test_numba_path_energy_monitor_halt():
 
 def test_numba_path_macroparticle():
     result_2x = _run(macroparticle_charge_multiplier=2.0)
-    assert len(result_2x) == 4
-    traj_2x, traj_drv_2x, _, _ = result_2x
+    assert len(result_2x) == 5
+    traj_2x, traj_drv_2x, _, _, *_ = result_2x
     assert len(traj_2x) == _STEPS
 
     result_1x = _run(macroparticle_charge_multiplier=1.0)
@@ -109,8 +109,8 @@ def test_numba_path_macroparticle():
 def test_numba_path_space_charge():
     sc = SpaceChargeConfig(enabled=True, retarded=False)
     result = _run(space_charge=sc)
-    assert len(result) == 4
-    traj, traj_drv, _, _ = result
+    assert len(result) == 5
+    traj, traj_drv, _, _, *_ = result
     assert len(traj) == _STEPS
 
 
@@ -123,7 +123,7 @@ def test_numba_path_all_three():
             macroparticle_charge_multiplier=2.0,
             space_charge=sc,
         )
-        assert len(result) == 4
+        assert len(result) == 5
         assert len(result[0]) == _STEPS
     except EnergyJumpDetected:
         pass
@@ -135,8 +135,8 @@ def test_numba_path_adaptive_timestep_basic():
 
     at = AdaptiveTimestepConfig(enabled=True, energy_jump_threshold=1e9)
     result = _run(adaptive_timestep=at)
-    assert len(result) == 4
-    traj, traj_drv, _, _ = result
+    assert len(result) == 5
+    traj, traj_drv, _, _, *_ = result
     assert len(traj) == _STEPS
     assert len(traj_drv) == _STEPS
 
@@ -148,7 +148,7 @@ def test_numba_path_adaptive_timestep_triggers():
     at = AdaptiveTimestepConfig(enabled=True, energy_jump_threshold=0.0)
     try:
         result = _run(adaptive_timestep=at)
-        assert len(result) == 4
+        assert len(result) == 5
     except EnergyJumpDetected:
         pass
     except Exception as exc:
@@ -180,8 +180,8 @@ def test_numba_path_adaptive_vs_python_parity():
     result_numba = retarded_integrator(**common_kwargs, use_numba=True)
     result_python = retarded_integrator(**common_kwargs, use_numba=False)
 
-    assert len(result_numba) == 4
-    assert len(result_python) == 4
+    assert len(result_numba) == 5
+    assert len(result_python) == 5
 
     traj_n = result_numba[0]
     traj_p = result_python[0]
@@ -196,7 +196,7 @@ def test_numba_path_adaptive_vs_python_parity():
 
 def test_numba_kernel_mode_preserves_radiation_bookkeeping_soa():
     result = _run(radiation_reaction_mode="diagnostic_only")
-    traj, _, traj_soa, _ = result
+    traj, _, traj_soa, _, *_ = result
 
     assert traj_soa is not None
     assert traj_soa.radiation_power.shape == (_STEPS, 2)
@@ -237,6 +237,6 @@ def test_adaptive_step_state_persists():
         use_numba=True,
         adaptive_timestep=at,
     )
-    assert len(result) == 4
+    assert len(result) == 5
     traj = result[0]
     assert len(traj) >= 1

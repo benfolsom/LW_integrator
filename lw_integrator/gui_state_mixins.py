@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tkinter as tk
 from tkinter import ttk
 
 from core.types import SimulationType
@@ -219,7 +220,9 @@ class IntegratorGUIStateMixin:
         state = "normal" if enabled else "disabled"
         label_color = "black" if enabled else "gray"
         for widget in getattr(self, "_macroparticle_smearing_widgets", []):
-            if isinstance(widget, ttk.Entry):
+            if isinstance(widget, ttk.Combobox):
+                widget.configure(state="readonly" if enabled else "disabled")
+            elif isinstance(widget, ttk.Entry):
                 widget.configure(state=state)
             elif isinstance(widget, ttk.Checkbutton):
                 widget.configure(state=state)
@@ -363,6 +366,42 @@ class IntegratorGUIStateMixin:
                     widget.configure(foreground="black" if enabled else "gray")
                 elif isinstance(widget, ttk.Combobox):
                     widget.configure(state="readonly" if enabled else "disabled")
+                else:
+                    widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _toggle_beamline_geometry_controls(self) -> None:
+        if not hasattr(self, "beamline_geometry_enable_check"):
+            return
+        enabled = bool(self.beamline_geometry_enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        text_widget = getattr(self, "beamline_geometry_text", None)
+        if text_widget is not None:
+            try:
+                text_widget.configure(state=state)
+            except Exception:
+                pass
+        for widget in getattr(self, "_beamline_geometry_sub_widgets", []):
+            try:
+                if isinstance(widget, ttk.Label):
+                    widget.configure(foreground="black" if enabled else "gray")
+                else:
+                    widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _toggle_manual_particle_config_controls(self) -> None:
+        if not hasattr(self, "manual_particle_config_enable_check"):
+            return
+        enabled = bool(self.manual_particle_config_enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        for widget in getattr(self, "_manual_particle_config_sub_widgets", []):
+            try:
+                if isinstance(widget, ttk.Label):
+                    widget.configure(foreground="black" if enabled else "gray")
+                elif isinstance(widget, tk.Text):
+                    widget.configure(state=state)
                 else:
                     widget.configure(state=state)
             except Exception:
