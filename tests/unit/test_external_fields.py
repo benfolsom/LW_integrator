@@ -9,6 +9,8 @@ from core.external_fields import (
     NATIVE_FORCE_UNIT_NEWTON,
     compute_uniform_external_field_impulse,
     electric_field_v_per_m_to_native,
+    evaluate_external_field_si,
+    magnetic_field_tesla_to_native,
 )
 from core.integration_runner import retarded_integrator
 from core.types import ExternalFieldConfig, SimulationType, StartupMode
@@ -69,16 +71,10 @@ def _empty_driver_state() -> dict:
 
 
 def test_si_electric_field_converter_matches_native_force_units() -> None:
-    expected = (
-        ELEMENTARY_CHARGE_COULOMB
-        / NATIVE_FORCE_UNIT_NEWTON
-        / ELEMENTARY_CHARGE
-    )
+    expected = ELEMENTARY_CHARGE_COULOMB / NATIVE_FORCE_UNIT_NEWTON / ELEMENTARY_CHARGE
 
     assert electric_field_v_per_m_to_native(1.0) == pytest.approx(expected)
-    assert electric_field_v_per_m_to_native(-1.5e9) == pytest.approx(
-        -1.5e9 * expected
-    )
+    assert electric_field_v_per_m_to_native(-1.5e9) == pytest.approx(-1.5e9 * expected)
 
 
 def test_uniform_electric_field_impulse_uses_proper_time_lorentz_form() -> None:
@@ -104,6 +100,32 @@ def test_uniform_electric_field_impulse_uses_proper_time_lorentz_form() -> None:
     assert delta_pt == pytest.approx(h_step * charge * gamma * 10.0 * beta[2])
 
 
+def test_uniform_native_field_impulse_preserves_exact_legacy_arithmetic() -> None:
+    field = ExternalFieldConfig(
+        electric_field_native=(1.0e12, 0.0, 0.0),
+        magnetic_field_native=(0.0, 3.0e11, 0.0),
+    )
+    charge = -ELEMENTARY_CHARGE
+    gamma = 2.0
+    beta = (0.0, 0.0, 0.5)
+    h_step = 1.0e-9
+
+    impulse = compute_uniform_external_field_impulse(
+        field,
+        charge=charge,
+        gamma=gamma,
+        beta=beta,
+        h_step=h_step,
+        position=(0.0, 0.0, 0.0),
+        time=0.0,
+    )
+    prefactor = h_step * charge * gamma
+    expected_x = prefactor * (1.0e12 - beta[2] * 3.0e11)
+
+    assert impulse[0] == expected_x
+    assert impulse[1:] == (0.0, 0.0, 0.0)
+
+
 def test_uniform_magnetic_field_impulse_bends_transversely() -> None:
     field = ExternalFieldConfig(magnetic_field_native=(0.0, 3.0, 0.0))
     charge = ELEMENTARY_CHARGE
@@ -125,6 +147,50 @@ def test_uniform_magnetic_field_impulse_bends_transversely() -> None:
     assert delta_py == pytest.approx(0.0)
     assert delta_pz == pytest.approx(0.0)
     assert delta_pt == pytest.approx(0.0)
+
+
+def test_linear_magnetic_gradient_is_evaluated_in_si_at_particle_position() -> None:
+    field = ExternalFieldConfig(
+        magnetic_field_native=(0.0, 0.0, magnetic_field_tesla_to_native(0.25)),
+        magnetic_field_gradient_t_per_m=(
+            (-2.0, 0.0, 0.0),
+            (0.0, -2.0, 0.0),
+            (2.0, -3.0, 4.0),
+        ),
+    )
+
+    electric, magnetic, gradient = evaluate_external_field_si(
+        field,
+        position_mm=(100.0, 200.0, -50.0),
+        time_ns=0.0,
+    )
+
+    np.testing.assert_array_equal(electric, np.zeros(3))
+    np.testing.assert_allclose(magnetic, (-0.2, -0.4, -0.35), atol=2.0e-15)
+    np.testing.assert_array_equal(
+        gradient, np.asarray(field.magnetic_field_gradient_t_per_m)
+    )
+
+
+def test_external_magnetic_gradient_requires_finite_three_by_three_matrix() -> None:
+    with pytest.raises(ValueError, match="finite 3x3"):
+        ExternalFieldConfig(magnetic_field_gradient_t_per_m=((1.0,),))
+    with pytest.raises(ValueError, match="finite 3x3"):
+        ExternalFieldConfig(
+            magnetic_field_gradient_t_per_m=(
+                (0.0, 0.0, 0.0),
+                (0.0, np.nan, 0.0),
+                (0.0, 0.0, 0.0),
+            )
+        )
+    with pytest.raises(ValueError, match=r"div\(B\)=0"):
+        ExternalFieldConfig(
+            magnetic_field_gradient_t_per_m=(
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+            )
+        )
 
 
 def test_external_field_respects_spatial_temporal_window() -> None:

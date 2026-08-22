@@ -8,7 +8,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+from core.external_fields import (
+    magnetic_field_native_to_tesla,
+    magnetic_field_tesla_to_native,
+)
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
+from core.species import get_species
 from core.types import SimulationType
 from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
@@ -88,6 +93,223 @@ def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
 
 class IntegratorGUIConfigMixin:
     """Translate between GUI state and ``SimulationOptions`` configs."""
+
+    def _apply_magnetic_dipole_options_to_ui(
+        self: Any, options: SimulationOptions
+    ) -> None:
+        """Populate the compact magnetic-dipole controls from run options."""
+        if not hasattr(self, "magnetic_dipole_enabled_var"):
+            return
+
+        self.magnetic_dipole_enabled_var.set(
+            getattr(options, "magnetic_dipole_enabled", False)
+        )
+        self.magnetic_dipole_spin_precession_enabled_var.set(
+            getattr(options, "magnetic_dipole_spin_precession_enabled", True)
+        )
+        self.magnetic_dipole_stern_gerlach_force_enabled_var.set(
+            getattr(
+                options,
+                "magnetic_dipole_stern_gerlach_force_enabled",
+                False,
+            )
+        )
+
+        rider_species = str(getattr(options, "rider_magnetic_species", "electron"))
+        driver_species = str(getattr(options, "driver_magnetic_species", "proton"))
+        self.rider_magnetic_species_var.set(
+            self._magnetic_species_label_by_key.get(rider_species, rider_species)
+        )
+        self.driver_magnetic_species_var.set(
+            self._magnetic_species_label_by_key.get(driver_species, driver_species)
+        )
+
+        rider_spin = getattr(options, "rider_rest_spin", (0.0, 0.0, 1.0))
+        driver_spin = getattr(options, "driver_rest_spin", (0.0, 0.0, 1.0))
+        for var, value in zip(self.rider_rest_spin_vars, rider_spin):
+            var.set(_format_gui_float(value))
+        for var, value in zip(self.driver_rest_spin_vars, driver_spin):
+            var.set(_format_gui_float(value))
+
+    def _build_magnetic_dipole_options_from_ui(self: Any) -> dict[str, Any]:
+        """Return the magnetic-dipole fields represented by the GUI."""
+
+        enabled = bool(self.magnetic_dipole_enabled_var.get())
+        driver_enabled = enabled and (
+            not hasattr(self, "sim_type_var")
+            or self.sim_type_var.get() == "BUNCH_TO_BUNCH"
+        )
+
+        def selected_species(variable: Any, role: str) -> str:
+            selection = str(variable.get()).strip()
+            species = self._magnetic_species_by_label.get(selection, selection)
+            if species not in self._magnetic_species_label_by_key:
+                raise ValueError(f"Select a known magnetic species for the {role}.")
+            return species
+
+        def spin_vector(
+            variables: Any, role: str, *, validate: bool
+        ) -> tuple[float, float, float]:
+            defaults = (0.0, 0.0, 1.0)
+            values = []
+            for var, axis, default in zip(variables, ("x", "y", "z"), defaults):
+                if validate:
+                    value = _parse_gui_float(var.get(), f"{role} rest spin {axis}")
+                else:
+                    value = _parse_gui_float_lenient(var.get(), default)
+                values.append(value)
+            return (values[0], values[1], values[2])
+
+        return {
+            "magnetic_dipole_enabled": enabled,
+            "magnetic_dipole_spin_precession_enabled": bool(
+                self.magnetic_dipole_spin_precession_enabled_var.get()
+            ),
+            "magnetic_dipole_stern_gerlach_force_enabled": bool(
+                self.magnetic_dipole_stern_gerlach_force_enabled_var.get()
+            ),
+            "rider_magnetic_species": selected_species(
+                self.rider_magnetic_species_var, "rider"
+            ),
+            "driver_magnetic_species": selected_species(
+                self.driver_magnetic_species_var, "driver"
+            ),
+            "rider_rest_spin": spin_vector(
+                self.rider_rest_spin_vars, "Rider", validate=enabled
+            ),
+            "driver_rest_spin": spin_vector(
+                self.driver_rest_spin_vars, "Driver", validate=driver_enabled
+            ),
+        }
+
+    def _validate_magnetic_species_particle_matches(
+        self: Any,
+        *,
+        magnetic_options: dict[str, Any],
+        rider_params: dict[str, Any],
+        driver_params: dict[str, Any] | None,
+    ) -> None:
+        """Reject named magnetic presets that disagree with particle q and m."""
+        if not magnetic_options["magnetic_dipole_enabled"]:
+            return
+
+        def validate_role(role: str, params: dict[str, Any], species_key: str) -> None:
+            species = get_species(species_key)
+            if not species.has_supported_magnetic_moment:
+                raise ValueError(
+                    f"The magnetic {role} species '{species.display_name}' has no "
+                    "built-in magnetic-moment preset. The GUI does not expose "
+                    "custom moments; choose a supported preset or use a documented "
+                    "custom CLI/JSON configuration."
+                )
+
+            mass_value = params.get("mass_amu", params.get("m_particle"))
+            charge_sign = params.get("charge_sign")
+            stripped_ions = params.get("stripped_ions")
+            if mass_value is None or charge_sign is None or stripped_ions is None:
+                raise ValueError(
+                    f"Magnetic dipole validation needs {role} particle mass, "
+                    "charge_sign, and stripped_ions values."
+                )
+            try:
+                actual_mass = float(mass_value)
+                actual_charge_e = float(charge_sign) * float(stripped_ions)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"The {role} particle mass and charge values must be numeric "
+                    "when magnetic dipoles are enabled."
+                ) from exc
+
+            mass_matches = math.isclose(
+                actual_mass,
+                species.mass_amu,
+                rel_tol=1.0e-3,
+                abs_tol=1.0e-12,
+            )
+            charge_matches = math.isclose(
+                actual_charge_e,
+                float(species.charge_e),
+                rel_tol=0.0,
+                abs_tol=1.0e-6,
+            )
+            if not mass_matches or not charge_matches:
+                raise ValueError(
+                    f"Magnetic dipole {role} species mismatch: "
+                    f"'{species.display_name}' expects mass "
+                    f"{species.mass_amu:.12g} amu and charge "
+                    f"{species.charge_e:+d} e, but the current {role} particle "
+                    f"values give {actual_mass:.12g} amu and "
+                    f"{actual_charge_e:+.12g} e. Select the matching general "
+                    f"{role} species preset, or make the Custom particle mass "
+                    "and charge match the magnetic preset."
+                )
+
+        validate_role("rider", rider_params, magnetic_options["rider_magnetic_species"])
+        if driver_params is not None:
+            validate_role(
+                "driver",
+                driver_params,
+                magnetic_options["driver_magnetic_species"],
+            )
+
+    def _apply_external_magnetic_options_to_ui(
+        self: Any, options: SimulationOptions
+    ) -> None:
+        """Populate native, tesla, and T/m prescribed magnetic-field controls."""
+        native = getattr(options, "external_magnetic_field_native", (0.0, 0.0, 0.0))
+        for var, value in zip(self.external_magnetic_native_vars, native):
+            var.set(_format_gui_float(value))
+        for var, value in zip(self.external_magnetic_tesla_vars, native):
+            var.set(_format_gui_float(magnetic_field_native_to_tesla(value)))
+
+        gradient = getattr(
+            options,
+            "external_magnetic_field_gradient_t_per_m",
+            ((0.0, 0.0, 0.0),) * 3,
+        )
+        for variable_row, value_row in zip(
+            self.external_magnetic_gradient_vars, gradient
+        ):
+            for var, value in zip(variable_row, value_row):
+                var.set(_format_gui_float(value))
+
+    def _build_external_magnetic_options_from_ui(
+        self: Any, *, enabled: bool
+    ) -> dict[str, Any]:
+        """Return prescribed B in native units and its static gradient in T/m."""
+        strict_parser = _parse_gui_float if enabled else None
+
+        def parse(variable: Any, label: str) -> float:
+            if strict_parser is not None:
+                return strict_parser(variable.get(), label)
+            return _parse_gui_float_lenient(variable.get(), 0.0)
+
+        if self.external_field_input_mode_var.get() == "SI V/m":
+            magnetic_native = tuple(
+                magnetic_field_tesla_to_native(parse(var, f"External B T {axis}"))
+                for var, axis in zip(self.external_magnetic_tesla_vars, ("x", "y", "z"))
+            )
+        else:
+            magnetic_native = tuple(
+                parse(var, f"External B native {axis}")
+                for var, axis in zip(
+                    self.external_magnetic_native_vars, ("x", "y", "z")
+                )
+            )
+
+        gradient = tuple(
+            tuple(
+                parse(var, f"External dB{component}/d{coordinate} T/m")
+                for var, coordinate in zip(variable_row, ("x", "y", "z"))
+            )
+            for variable_row, component in zip(
+                self.external_magnetic_gradient_vars, ("x", "y", "z")
+            )
+        )
+        return {
+            "external_magnetic_field_native": magnetic_native,
+            "external_magnetic_field_gradient_t_per_m": gradient,
+        }
 
     def _apply_macroparticle_smearing_options_to_ui(
         self: Any, options: SimulationOptions
@@ -356,6 +578,7 @@ class IntegratorGUIConfigMixin:
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
         self._apply_macroparticle_smearing_options_to_ui(options)
+        self._apply_magnetic_dipole_options_to_ui(options)
         if hasattr(self, "pseudo_grid_enabled_var"):
             self.pseudo_grid_enabled_var.set(
                 getattr(options, "pseudo_grid_enabled", False)
@@ -584,21 +807,21 @@ class IntegratorGUIConfigMixin:
             getattr(options, "external_field_enabled", False)
         )
         electric_si = getattr(options, "external_electric_field_v_per_m", None)
-        self.external_field_input_mode_var.set("SI V/m" if electric_si else "Native")
+        electric_native = getattr(
+            options, "external_electric_field_native", (0.0, 0.0, 0.0)
+        )
+        use_si_inputs = electric_si is not None or not any(electric_native)
+        self.external_field_input_mode_var.set("SI V/m" if use_si_inputs else "Native")
         for var, value in zip(
             self.external_electric_native_vars,
-            getattr(options, "external_electric_field_native", (0.0, 0.0, 0.0)),
+            electric_native,
         ):
             var.set(_format_gui_float(value))
         for var, value in zip(
             self.external_electric_si_vars, electric_si or (0.0, 0.0, 0.0)
         ):
             var.set(_format_gui_float(value))
-        for var, value in zip(
-            self.external_magnetic_native_vars,
-            getattr(options, "external_magnetic_field_native", (0.0, 0.0, 0.0)),
-        ):
-            var.set(_format_gui_float(value))
+        self._apply_external_magnetic_options_to_ui(options)
         for axis in ("x", "y", "z", "t"):
             for bound in ("min", "max"):
                 key = f"{axis}_{bound}"
@@ -672,6 +895,8 @@ class IntegratorGUIConfigMixin:
         )
         if hasattr(self, "_toggle_macroparticle_smearing_controls"):
             self._toggle_macroparticle_smearing_controls()
+        if hasattr(self, "_toggle_magnetic_dipole_controls"):
+            self._toggle_magnetic_dipole_controls()
         self._toggle_space_charge_controls()
         self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
@@ -825,12 +1050,6 @@ class IntegratorGUIConfigMixin:
                         self.external_electric_si_vars, ("x", "y", "z")
                     )
                 )
-            external_magnetic_native = tuple(
-                _parse_gui_float(var.get(), f"External B native {axis}")
-                for var, axis in zip(
-                    self.external_magnetic_native_vars, ("x", "y", "z")
-                )
-            )
             external_bounds = {
                 f"{axis}_{bound}": _parse_gui_optional_float(
                     self.external_field_window_vars[f"{axis}_{bound}"].get(),
@@ -850,10 +1069,6 @@ class IntegratorGUIConfigMixin:
                     _parse_gui_float_lenient(var.get(), 0.0)
                     for var in self.external_electric_si_vars
                 )
-            external_magnetic_native = tuple(
-                _parse_gui_float_lenient(var.get(), 0.0)
-                for var in self.external_magnetic_native_vars
-            )
             external_bounds = {
                 f"{axis}_{bound}": _parse_gui_optional_float_lenient(
                     self.external_field_window_vars[f"{axis}_{bound}"].get()
@@ -862,6 +1077,15 @@ class IntegratorGUIConfigMixin:
                 for bound in ("min", "max")
             }
 
+        external_magnetic_options = self._build_external_magnetic_options_from_ui(
+            enabled=external_field_enabled
+        )
+        magnetic_dipole_options = self._build_magnetic_dipole_options_from_ui()
+        self._validate_magnetic_species_particle_matches(
+            magnetic_options=magnetic_dipole_options,
+            rider_params=rider_params,
+            driver_params=driver_params,
+        )
         macroparticle_smearing_options = (
             self._build_macroparticle_smearing_options_from_ui()
         )
@@ -911,6 +1135,7 @@ class IntegratorGUIConfigMixin:
                 self.macroparticle_use_momentum_errors_var.get()
             ),
             **macroparticle_smearing_options,
+            **magnetic_dipole_options,
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
@@ -1017,7 +1242,7 @@ class IntegratorGUIConfigMixin:
             external_field_enabled=external_field_enabled,
             external_electric_field_native=external_electric_native,
             external_electric_field_v_per_m=external_electric_si,
-            external_magnetic_field_native=external_magnetic_native,
+            **external_magnetic_options,
             external_field_x_min=external_bounds["x_min"],
             external_field_x_max=external_bounds["x_max"],
             external_field_y_min=external_bounds["y_min"],

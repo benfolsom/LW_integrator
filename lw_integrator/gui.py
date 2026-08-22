@@ -25,6 +25,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from core.batched_logger import BatchedLogger
 from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
+from core.species import list_species
 from core.types import SimulationType
 from .gui_config_mixins import IntegratorGUIConfigMixin
 from .gui_config_list_mixins import IntegratorGUIConfigListMixin
@@ -285,6 +286,51 @@ class IntegratorGUI(
         )
         self.rider_species_var = tk.StringVar(value=default_species_label)
         self.driver_species_var = tk.StringVar(value=default_species_label)
+
+        magnetic_species_options = list_species()
+        self._magnetic_species_by_label = {
+            species.display_name: species.name for species in magnetic_species_options
+        }
+        self._magnetic_species_label_by_key = {
+            species.name: species.display_name for species in magnetic_species_options
+        }
+        self.magnetic_dipole_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "magnetic_dipole_enabled", False)
+        )
+        self.magnetic_dipole_spin_precession_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "magnetic_dipole_spin_precession_enabled",
+                True,
+            )
+        )
+        self.magnetic_dipole_stern_gerlach_force_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "magnetic_dipole_stern_gerlach_force_enabled",
+                False,
+            )
+        )
+        self.rider_magnetic_species_var = tk.StringVar(
+            value=self._magnetic_species_label_by_key.get(
+                getattr(self.options, "rider_magnetic_species", "electron"),
+                "Electron",
+            )
+        )
+        self.driver_magnetic_species_var = tk.StringVar(
+            value=self._magnetic_species_label_by_key.get(
+                getattr(self.options, "driver_magnetic_species", "proton"),
+                "Proton",
+            )
+        )
+        self.rider_rest_spin_vars = [
+            tk.StringVar(value=str(component))
+            for component in getattr(self.options, "rider_rest_spin", (0.0, 0.0, 1.0))
+        ]
+        self.driver_rest_spin_vars = [
+            tk.StringVar(value=str(component))
+            for component in getattr(self.options, "driver_rest_spin", (0.0, 0.0, 1.0))
+        ]
 
         self.rider_param_vars: Dict[str, tk.Variable] = {}
         self.driver_param_vars: Dict[str, tk.Variable] = {}
@@ -777,6 +823,13 @@ class IntegratorGUI(
         ]
         self.external_magnetic_native_vars = [
             tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_magnetic_tesla_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_magnetic_gradient_vars = [
+            [tk.StringVar(value="0.0") for _coordinate in range(3)]
+            for _component in range(3)
         ]
         self.external_field_window_vars = {
             f"{axis}_{bound}": tk.StringVar(value="")

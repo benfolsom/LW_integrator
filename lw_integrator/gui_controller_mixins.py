@@ -27,6 +27,12 @@ class IntegratorGUIControllerMixin:
         apply_species_preset(params, preset_key)
         for field, value in params.items():
             var_map[field].set(value)
+
+        magnetic_label_by_key = getattr(self, "_magnetic_species_label_by_key", {})
+        magnetic_label = magnetic_label_by_key.get(preset_key)
+        magnetic_var = getattr(self, f"{target}_magnetic_species_var", None)
+        if magnetic_label is not None and magnetic_var is not None:
+            magnetic_var.set(magnetic_label)
         self._refresh_initial_summary()
 
     def _on_tab_changed(self, event=None) -> None:

@@ -15,3 +15,13 @@ Core integrator
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: core.species
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: core.magnetic_dipole
+   :members:
+   :undoc-members:
+   :show-inheritance:

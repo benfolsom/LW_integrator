@@ -3,11 +3,26 @@
 Recent Changes
 ==============
 
-*Last updated: June 2026*
+*Last updated: August 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+August 2026 Updates
+-------------------
+
+Experimental magnetic moments and spin (August 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Added an immutable, cited species registry with signed moments for common
+  accelerator, plasma, and fusion particles, including neutral neutrons.
+* Added neutral-capable BMT/Larmor spin transport through prescribed
+  fields, exact constant-step spin rotation, and trajectory spin diagnostics.
+* Added an opt-in static rest-gradient Stern--Gerlach impulse.  Arbitrary
+  retarded gradients and source dipole fields are explicitly deferred.
+* Added nested testbed configuration, CLI/GUI controls, pseudo-grid rejection,
+  and focused physics/regression tests.  See :doc:`magnetic_dipole_moments`.
 
 June 2026 Updates
 -----------------

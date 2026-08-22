@@ -23,6 +23,7 @@ import numpy as np
 from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
+from core.species import SPECIES, resolve_species
 from core.types import (
     BeamlineGeometryConfig,
     CavityExitConfig,
@@ -32,6 +33,8 @@ from core.types import (
     GammaReconciliationMethod,
     IntegratorConfig,
     MacroparticleSmearingConfig,
+    MagneticDipoleConfig,
+    MagneticDipoleParticleConfig,
     Occluder,
     ParticleLossConfig,
     ParticleState,
@@ -149,6 +152,25 @@ DEFAULT_MACROPARTICLE_SMEARING: Dict[str, Any] = {
     "seed": 12345,
     "refresh_policy": "fixed_per_particle",
 }
+
+DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
+    "enabled": False,
+    "spin_precession_enabled": True,
+    "stern_gerlach_force_enabled": False,
+    "spin_model": "bmt_frenkel",
+    "stern_gerlach_model": "static_rest_gradient",
+    "rider": {
+        "species": "electron",
+        "rest_spin": (0.0, 0.0, 1.0),
+    },
+    "driver": {
+        "species": "proton",
+        "rest_spin": (0.0, 0.0, 1.0),
+    },
+}
+
+MAGNETIC_SPECIES_CHOICES: Tuple[str, ...] = tuple(SPECIES)
+"""Canonical names accepted by the direct magnetic-dipole CLI."""
 
 DEFAULT_DRIVER_TRAIN: Dict[str, Any] = {
     "enabled": False,
@@ -417,6 +439,13 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         metavar=("BX", "BY", "BZ"),
         help="Uniform magnetic field vector in native solver units.",
     )
+    parser.add_argument(
+        "--external-b-field-tesla",
+        type=float,
+        nargs=3,
+        metavar=("BX", "BY", "BZ"),
+        help="Uniform magnetic field vector in tesla, converted to native units.",
+    )
     for axis in ("x", "y", "z", "t"):
         parser.add_argument(
             f"--external-field-{axis}-min",
@@ -622,6 +651,71 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Choose off or diagnostic_only for baselines."
         ),
     )
+    parser.add_argument(
+        "--magnetic-dipoles",
+        dest="magnetic_dipole_enabled",
+        action="store_true",
+        help="Enable intrinsic magnetic-moment spin dynamics.",
+    )
+    parser.add_argument(
+        "--no-magnetic-dipoles",
+        dest="magnetic_dipole_enabled",
+        action="store_false",
+        help="Disable intrinsic magnetic-moment dynamics explicitly.",
+    )
+    parser.set_defaults(magnetic_dipole_enabled=None)
+    parser.add_argument(
+        "--rider-magnetic-species",
+        type=_parse_magnetic_species,
+        choices=MAGNETIC_SPECIES_CHOICES,
+        help="Rider magnetic-moment preset (for example electron or neutron).",
+    )
+    parser.add_argument(
+        "--driver-magnetic-species",
+        type=_parse_magnetic_species,
+        choices=MAGNETIC_SPECIES_CHOICES,
+        help="Driver magnetic-moment preset (for example proton or antiproton).",
+    )
+    parser.add_argument(
+        "--rider-spin",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        help="Initial rider rest-frame spin direction; normalized by the solver.",
+    )
+    parser.add_argument(
+        "--driver-spin",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        help="Initial driver rest-frame spin direction; normalized by the solver.",
+    )
+    parser.add_argument(
+        "--stern-gerlach",
+        dest="stern_gerlach_force_enabled",
+        action="store_true",
+        help="Enable the experimental static rest-frame magnetic-gradient force.",
+    )
+    parser.add_argument(
+        "--no-stern-gerlach",
+        dest="stern_gerlach_force_enabled",
+        action="store_false",
+        help="Disable magnetic-gradient translation explicitly.",
+    )
+    parser.set_defaults(stern_gerlach_force_enabled=None)
+    parser.add_argument(
+        "--spin-precession",
+        dest="spin_precession_enabled",
+        action="store_true",
+        help="Enable BMT/Fermi--Walker spin precession when dipoles are enabled.",
+    )
+    parser.add_argument(
+        "--no-spin-precession",
+        dest="spin_precession_enabled",
+        action="store_false",
+        help="Keep configured spin fixed while retaining other dipole dynamics.",
+    )
+    parser.set_defaults(spin_precession_enabled=None)
     parser.add_argument(
         "--image-subcharge-count",
         type=int,
@@ -985,6 +1079,15 @@ def _version_string() -> str:
     return f"lw-integrator {__version__}"
 
 
+def _parse_magnetic_species(value: str) -> str:
+    """Resolve a documented species name or alias to its canonical name."""
+
+    try:
+        return resolve_species(value).name
+    except KeyError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Configuration handling
 # ---------------------------------------------------------------------------
@@ -1193,6 +1296,13 @@ def _merge_simulation_payload(
     result["driver_train"] = dict(DEFAULT_DRIVER_TRAIN)
     result["beamline_geometry"] = dict(DEFAULT_BEAMLINE_GEOMETRY)
     result["macroparticle_smearing"] = dict(DEFAULT_MACROPARTICLE_SMEARING)
+    result["magnetic_dipole"] = {
+        key: value
+        for key, value in DEFAULT_MAGNETIC_DIPOLE.items()
+        if key not in {"rider", "driver"}
+    }
+    result["magnetic_dipole"]["rider"] = dict(DEFAULT_MAGNETIC_DIPOLE["rider"])
+    result["magnetic_dipole"]["driver"] = dict(DEFAULT_MAGNETIC_DIPOLE["driver"])
     result["adaptive_timestep"] = dict(DEFAULT_ADAPTIVE_TIMESTEP)
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
@@ -1219,6 +1329,22 @@ def _merge_simulation_payload(
     file_smearing = file_payload.get("macroparticle_smearing")
     if isinstance(file_smearing, Mapping):
         result["macroparticle_smearing"].update(file_smearing)
+    if "magnetic_dipole" in file_payload:
+        file_magnetic_dipole = file_payload["magnetic_dipole"]
+        if not isinstance(file_magnetic_dipole, Mapping):
+            raise SimulationConfigError("'magnetic_dipole' must be an object")
+        for key, value in file_magnetic_dipole.items():
+            if key not in {"rider", "driver"}:
+                result["magnetic_dipole"][key] = value
+        for role in ("rider", "driver"):
+            if role not in file_magnetic_dipole:
+                continue
+            role_payload = file_magnetic_dipole[role]
+            if not isinstance(role_payload, Mapping):
+                raise SimulationConfigError(
+                    f"'magnetic_dipole.{role}' must be an object"
+                )
+            result["magnetic_dipole"][role].update(role_payload)
     file_adaptive_timestep = file_payload.get("adaptive_timestep")
     if isinstance(file_adaptive_timestep, Mapping):
         result["adaptive_timestep"].update(file_adaptive_timestep)
@@ -1357,6 +1483,9 @@ def _merge_simulation_payload(
         external_field["enabled"] = True
     if getattr(args, "external_b_field_native", None) is not None:
         external_field["magnetic_field_native"] = args.external_b_field_native
+        external_field["enabled"] = True
+    if getattr(args, "external_b_field_tesla", None) is not None:
+        external_field["magnetic_field_tesla"] = args.external_b_field_tesla
         external_field["enabled"] = True
     for axis in ("x", "y", "z", "t"):
         for bound in ("min", "max"):
@@ -1511,6 +1640,44 @@ def _merge_simulation_payload(
     if getattr(args, "sc_verbosity", None) is not None:
         result["self_consistency_verbosity"] = args.sc_verbosity
 
+    magnetic_dipole = result["magnetic_dipole"]
+    if getattr(args, "magnetic_dipole_enabled", None) is not None:
+        magnetic_dipole["enabled"] = bool(args.magnetic_dipole_enabled)
+    if getattr(args, "stern_gerlach_force_enabled", None) is not None:
+        magnetic_dipole["stern_gerlach_force_enabled"] = bool(
+            args.stern_gerlach_force_enabled
+        )
+    if getattr(args, "spin_precession_enabled", None) is not None:
+        magnetic_dipole["spin_precession_enabled"] = bool(args.spin_precession_enabled)
+    for role in ("rider", "driver"):
+        role_payload = magnetic_dipole[role]
+        species = getattr(args, f"{role}_magnetic_species", None)
+        if species is not None:
+            role_payload["species"] = species
+        rest_spin = getattr(args, f"{role}_spin", None)
+        if rest_spin is not None:
+            role_payload["rest_spin"] = rest_spin
+
+    if getattr(args, "driver_from_rider", False):
+        file_magnetic = file_payload.get("magnetic_dipole")
+        file_driver_magnetic = (
+            file_magnetic.get("driver", {})
+            if isinstance(file_magnetic, Mapping)
+            and isinstance(file_magnetic.get("driver"), Mapping)
+            else {}
+        )
+        explicit_driver_keys = set(file_driver_magnetic)
+        if getattr(args, "driver_magnetic_species", None) is not None:
+            explicit_driver_keys.add("species")
+        if getattr(args, "driver_spin", None) is not None:
+            explicit_driver_keys.add("rest_spin")
+        configured_driver = dict(magnetic_dipole["driver"])
+        inherited_driver = dict(magnetic_dipole["rider"])
+        for key in explicit_driver_keys:
+            if key in configured_driver:
+                inherited_driver[key] = configured_driver[key]
+        magnetic_dipole["driver"] = inherited_driver
+
     return result
 
 
@@ -1571,6 +1738,13 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     macroparticle_smearing = _build_macroparticle_smearing_config(
         payload.get("macroparticle_smearing")
     )
+    magnetic_dipole = _build_magnetic_dipole_config(payload.get("magnetic_dipole"))
+    if magnetic_dipole.enabled and pseudo_grid.enabled:
+        raise SimulationConfigError(
+            "Magnetic-dipole dynamics are not compatible with pseudo-grid spin "
+            "reconstruction yet; disable --pseudo-grid or "
+            "--no-magnetic-dipoles for this run."
+        )
 
     return IntegratorConfig(
         steps=int(payload["steps"]),
@@ -1602,7 +1776,91 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         cavity_exit=cavity_exit,
         particle_loss=particle_loss,
         beamline_geometry=beamline_geometry,
+        magnetic_dipole=magnetic_dipole,
     )
+
+
+def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
+    """Build and validate magnetic-moment settings for a direct run."""
+
+    if payload is None:
+        return MagneticDipoleConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("magnetic_dipole must be a JSON object")
+
+    def _particle_config(
+        role: str, default_species: str
+    ) -> MagneticDipoleParticleConfig:
+        role_payload = payload.get(role, {})
+        if not isinstance(role_payload, Mapping):
+            raise SimulationConfigError(f"magnetic_dipole.{role} must be a JSON object")
+
+        raw_species = str(role_payload.get("species", default_species)).strip().lower()
+        species = None
+        if raw_species == "custom":
+            canonical_species = "custom"
+        else:
+            try:
+                species = resolve_species(raw_species)
+            except KeyError as exc:
+                raise SimulationConfigError(str(exc)) from exc
+            canonical_species = species.name
+
+        try:
+            particle_config = MagneticDipoleParticleConfig(
+                species=canonical_species,
+                magnetic_moment_j_per_t=role_payload.get("magnetic_moment_j_per_t"),
+                spin_quantum_number=role_payload.get("spin_quantum_number"),
+                rest_spin=role_payload.get("rest_spin", (0.0, 0.0, 1.0)),
+                polarization=role_payload.get("polarization", 1.0),
+            )
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"Invalid magnetic_dipole.{role} configuration: {exc}"
+            ) from exc
+
+        enabled = bool(payload.get("enabled", False))
+        preset_moment = species.magnetic_moment_j_t if species is not None else None
+        resolved_moment = particle_config.magnetic_moment_j_per_t
+        if resolved_moment is None:
+            resolved_moment = preset_moment
+        if enabled and resolved_moment is None:
+            raise SimulationConfigError(
+                f"Magnetic species '{canonical_species}' has no supported moment "
+                "preset; provide magnetic_moment_j_per_t and a documented "
+                "spin_quantum_number in the native JSON configuration."
+            )
+        if (
+            enabled
+            and resolved_moment is not None
+            and abs(float(resolved_moment)) > 0.0
+            and particle_config.spin_quantum_number is None
+            and species is None
+        ):
+            raise SimulationConfigError(
+                f"magnetic_dipole.{role}.spin_quantum_number is required for "
+                "a custom non-zero magnetic moment"
+            )
+        return particle_config
+
+    try:
+        return MagneticDipoleConfig(
+            enabled=payload.get("enabled", False),
+            spin_precession_enabled=payload.get("spin_precession_enabled", True),
+            stern_gerlach_force_enabled=payload.get(
+                "stern_gerlach_force_enabled", False
+            ),
+            spin_model=payload.get("spin_model", "bmt_frenkel"),
+            stern_gerlach_model=payload.get(
+                "stern_gerlach_model", "static_rest_gradient"
+            ),
+            rider=_particle_config("rider", "electron"),
+            driver=_particle_config("driver", "proton"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid magnetic_dipole configuration: {exc}"
+        ) from exc
 
 
 def _parse_simulation_type(value: Any) -> SimulationType:
@@ -2065,6 +2323,31 @@ def _parse_field_vector(
         ) from exc
 
 
+def _parse_field_matrix(
+    payload: Mapping[str, Any],
+    name: str,
+) -> Optional[
+    Tuple[
+        Tuple[float, float, float],
+        Tuple[float, float, float],
+        Tuple[float, float, float],
+    ]
+]:
+    value = payload.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise SimulationConfigError(f"external_field.{name} must be a 3x3 matrix")
+    if any(not isinstance(row, (list, tuple)) or len(row) != 3 for row in value):
+        raise SimulationConfigError(f"external_field.{name} must be a 3x3 matrix")
+    try:
+        return tuple(tuple(float(component) for component in row) for row in value)  # type: ignore[return-value]
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"external_field.{name} must contain numeric values"
+        ) from exc
+
+
 def _build_space_charge_config(
     payload: Mapping[str, Any],
 ) -> Optional[SpaceChargeConfig]:
@@ -2289,11 +2572,22 @@ def _build_external_field_config(payload: Any) -> Optional[ExternalFieldConfig]:
         0.0,
         0.0,
     )
+    magnetic_si = _parse_field_vector(payload, "magnetic_field_tesla")
+    if magnetic_si is not None:
+        from core.external_fields import magnetic_field_tesla_to_native
+
+        magnetic_native = tuple(
+            magnetic_field_tesla_to_native(component) for component in magnetic_si
+        )
+    magnetic_gradient = _parse_field_matrix(
+        payload, "magnetic_field_gradient_t_per_m"
+    ) or ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
 
     return ExternalFieldConfig(
         enabled=True,
         electric_field_native=electric_native,
         magnetic_field_native=magnetic_native,
+        magnetic_field_gradient_t_per_m=magnetic_gradient,
         x_min=_optional_float_field(payload, "x_min"),
         x_max=_optional_float_field(payload, "x_max"),
         y_min=_optional_float_field(payload, "y_min"),
@@ -2460,6 +2754,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         particle_loss=request.config.particle_loss,
         macroparticle_smearing=request.config.macroparticle_smearing,
         beamline_geometry=request.config.beamline_geometry,
+        magnetic_dipole=request.config.magnetic_dipole,
     )
 
 

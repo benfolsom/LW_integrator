@@ -18,6 +18,22 @@ Use the pytest suite as the primary regression gate:
 
 For broad local validation, run ``pytest`` from the repository root.
 
+Magnetic-moment checks
+----------------------
+
+Run the deterministic magnetic helper and integration tests with:
+
+.. code-block:: bash
+
+   pytest tests/unit/test_species.py \
+      tests/unit/test_magnetic_dipole.py \
+      tests/unit/test_magnetic_dipole_integration.py
+
+These tests validate signed moments, charged and neutral precession, spin
+invariants, the static-gradient rest limit, and the feature-off regression.
+They do not validate arbitrary retarded Stern--Gerlach dynamics or atomic
+binding; those models are outside the first implementation's scope.
+
 Maintained Plotting Validation
 ------------------------------
 

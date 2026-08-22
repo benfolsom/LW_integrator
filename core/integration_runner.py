@@ -13,7 +13,7 @@ from typing import Any, Callable, Optional, Tuple, cast
 
 import numpy as np
 
-from .constants import C_MMNS
+from .constants import C_MMNS, ELEMENTARY_CHARGE
 from .equations import (
     GammaBlowupError,
     SelfConsistencyNonConvergenceError,
@@ -51,6 +51,8 @@ from .types import (
     IndexedTrajectoryArrays,
     IntegratorConfig,
     MacroparticleSmearingConfig,
+    MagneticDipoleConfig,
+    MagneticDipoleParticleConfig,
     ParticleLossConfig,
     ParticleState,
     PseudoGridConfig,
@@ -60,6 +62,158 @@ from .types import (
     TrajectoryArrays,
     TrajectoryBuilder,
 )
+
+
+def _initialize_magnetic_dipole_state(
+    state: ParticleState | None,
+    particle_config: MagneticDipoleParticleConfig,
+    config: MagneticDipoleConfig,
+    *,
+    role: str,
+) -> None:
+    """Attach single-particle moment and rest-polarization arrays to a bunch."""
+    if state is None:
+        return
+    magnetic_state_keys = (
+        "spin_x",
+        "spin_y",
+        "spin_z",
+        "local_magnetic_field_x_t",
+        "local_magnetic_field_y_t",
+        "local_magnetic_field_z_t",
+        "magnetic_moment_j_per_t",
+        "spin_quantum_number",
+        "gyromagnetic_ratio_rad_s_t",
+        "magnetic_dipole_active",
+        "spin_precession_active",
+        "stern_gerlach_active",
+    )
+    if not config.enabled:
+        for key in magnetic_state_keys:
+            state.pop(key, None)
+        return
+
+    from .magnetic_dipole import HBAR_J_S
+    from .species import resolve_species
+
+    particle_count = len(np.asarray(state.get("x", [])))
+    species = None
+    if particle_config.species != "custom":
+        species = resolve_species(particle_config.species)
+
+    if species is not None and particle_count:
+        state_mass = np.asarray(state.get("m_species", state.get("m", [])), dtype=float)
+        state_charge = np.asarray(
+            state.get("q_species", state.get("q_observer", state.get("q", []))),
+            dtype=float,
+        )
+        if state_mass.size != particle_count or state_charge.size != particle_count:
+            raise ValueError(
+                f"Cannot validate the {role} magnetic species against particle "
+                "mass and observer charge arrays"
+            )
+        mass_matches = np.allclose(
+            state_mass,
+            species.mass_amu,
+            rtol=1.0e-3,
+            atol=1.0e-12,
+        )
+        charge_e = state_charge / ELEMENTARY_CHARGE
+        charge_matches = np.allclose(
+            charge_e,
+            float(species.charge_e),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        if not mass_matches or not charge_matches:
+            actual_mass = float(state_mass[0])
+            actual_charge_e = float(charge_e[0])
+            raise ValueError(
+                f"The {role} magnetic species '{species.name}' expects "
+                f"mass {species.mass_amu:.12g} amu and charge "
+                f"{species.charge_e:+d} e, but the particle state starts at "
+                f"{actual_mass:.12g} amu and {actual_charge_e:+.12g} e. "
+                "Select the matching particle preset, or use magnetic species "
+                "'custom' with an explicit documented moment and spin."
+            )
+
+    moment = particle_config.magnetic_moment_j_per_t
+    if moment is None and species is not None:
+        moment = species.magnetic_moment_j_t
+    if moment is None:
+        raise ValueError(
+            "A custom or unsupported magnetic species requires "
+            "magnetic_moment_j_per_t"
+        )
+
+    spin_quantum_number = particle_config.spin_quantum_number
+    if spin_quantum_number is None and species is not None:
+        spin_quantum_number = species.spin_quantum_number
+    if spin_quantum_number is None or spin_quantum_number <= 0.0:
+        if abs(float(moment)) > 0.0:
+            raise ValueError(
+                "A non-zero magnetic moment requires a positive " "spin_quantum_number"
+            )
+        spin_quantum_number = 0.0
+
+    spin = np.asarray(particle_config.rest_spin, dtype=float)
+    spin = spin / np.linalg.norm(spin) * float(particle_config.polarization)
+    gyromagnetic_ratio = (
+        float(moment) / (float(spin_quantum_number) * HBAR_J_S)
+        if spin_quantum_number > 0.0
+        else 0.0
+    )
+
+    state["spin_x"] = np.full(particle_count, spin[0], dtype=float)
+    state["spin_y"] = np.full(particle_count, spin[1], dtype=float)
+    state["spin_z"] = np.full(particle_count, spin[2], dtype=float)
+    for axis in "xyz":
+        state[f"local_magnetic_field_{axis}_t"] = np.zeros(particle_count, dtype=float)
+    state["magnetic_moment_j_per_t"] = np.full(
+        particle_count, float(moment), dtype=float
+    )
+    state["spin_quantum_number"] = np.full(
+        particle_count, float(spin_quantum_number), dtype=float
+    )
+    state["gyromagnetic_ratio_rad_s_t"] = np.full(
+        particle_count, gyromagnetic_ratio, dtype=float
+    )
+    state["magnetic_dipole_active"] = np.ones(particle_count, dtype=float)
+    state["spin_precession_active"] = np.full(
+        particle_count, float(config.spin_precession_enabled), dtype=float
+    )
+    state["stern_gerlach_active"] = np.full(
+        particle_count, float(config.stern_gerlach_force_enabled), dtype=float
+    )
+
+
+def _initialize_magnetic_field_diagnostic(
+    state: ParticleState | None, external_field: object | None
+) -> None:
+    """Sample prescribed B at each stored initial particle state."""
+    if (
+        state is None
+        or "magnetic_dipole_active" not in state
+        or external_field is None
+        or not getattr(external_field, "enabled", False)
+    ):
+        return
+
+    from .external_fields import evaluate_external_field_si
+
+    for particle_idx in range(len(np.asarray(state.get("x", [])))):
+        _, magnetic_field_t, _ = evaluate_external_field_si(
+            external_field,  # type: ignore[arg-type]
+            position_mm=(
+                float(state["x"][particle_idx]),
+                float(state["y"][particle_idx]),
+                float(state["z"][particle_idx]),
+            ),
+            time_ns=float(state["t"][particle_idx]),
+        )
+        state["local_magnetic_field_x_t"][particle_idx] = magnetic_field_t[0]
+        state["local_magnetic_field_y_t"][particle_idx] = magnetic_field_t[1]
+        state["local_magnetic_field_z_t"][particle_idx] = magnetic_field_t[2]
 
 
 class IntegrationCancelled(RuntimeError):
@@ -591,6 +745,12 @@ def _slice_trajectory_arrays(
         beta_avg_y=arrays.beta_avg_y[start:stop],
         beta_avg_z=arrays.beta_avg_z[start:stop],
         beta_samples=arrays.beta_samples[start:stop],
+        spin_x=arrays.spin_x[start:stop],
+        spin_y=arrays.spin_y[start:stop],
+        spin_z=arrays.spin_z[start:stop],
+        local_magnetic_field_x_t=arrays.local_magnetic_field_x_t[start:stop],
+        local_magnetic_field_y_t=arrays.local_magnetic_field_y_t[start:stop],
+        local_magnetic_field_z_t=arrays.local_magnetic_field_z_t[start:stop],
         dead=arrays.dead[start:stop],
         q=arrays.q,
         q_species=arrays.q_species,
@@ -600,6 +760,12 @@ def _slice_trajectory_arrays(
         m=arrays.m,
         m_species=arrays.m_species,
         char_time=arrays.char_time,
+        magnetic_moment_j_per_t=arrays.magnetic_moment_j_per_t,
+        spin_quantum_number=arrays.spin_quantum_number,
+        gyromagnetic_ratio_rad_s_t=arrays.gyromagnetic_ratio_rad_s_t,
+        magnetic_dipole_active=arrays.magnetic_dipole_active,
+        spin_precession_active=arrays.spin_precession_active,
+        stern_gerlach_active=arrays.stern_gerlach_active,
         halted_early=arrays.halted_early[start:stop],
         halt_step=arrays.halt_step[start:stop],
         halt_reason=arrays.halt_reason[start:stop],
@@ -1907,6 +2073,7 @@ def retarded_integrator(
     particle_loss: Optional[ParticleLossConfig] = None,
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
+    magnetic_dipole: Optional[MagneticDipoleConfig] = None,
 ) -> Tuple[
     Trajectory,
     Trajectory,
@@ -2042,11 +2209,32 @@ def retarded_integrator(
 
     from . import vectorized_interactions as _vectorized_interactions
 
+    if not np.isfinite(h_step) or h_step <= 0.0:
+        raise ValueError("h_step must be finite and positive")
+
     pseudo_grid = pseudo_grid or PseudoGridConfig()
     driver_train = driver_train or DriverTrainConfig()
     cavity_exit = cavity_exit or CavityExitConfig()
     particle_loss = particle_loss or ParticleLossConfig()
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
+    magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
+    # Magnetic metadata is integration-local state. Copy caller-owned inputs so
+    # an enabled run cannot leave active spin arrays behind for a later disabled
+    # run that reuses the same dictionaries.
+    init_rider = _copy_particle_state(init_rider)
+    if init_driver is not None:
+        init_driver = _copy_particle_state(init_driver)
+    if magnetic_dipole.enabled and pseudo_grid.enabled:
+        raise NotImplementedError(
+            "Magnetic-dipole dynamics are not yet compatible with pseudo-grid "
+            "spin reconstruction; disable pseudo_grid for this run."
+        )
+    _initialize_magnetic_dipole_state(
+        init_rider, magnetic_dipole.rider, magnetic_dipole, role="rider"
+    )
+    _initialize_magnetic_dipole_state(
+        init_driver, magnetic_dipole.driver, magnetic_dipole, role="driver"
+    )
     driver_train_enabled = bool(driver_train.enabled)
     driver_train_bunch_ranges: tuple[slice, ...] = ()
     if driver_train_enabled and init_driver is not None:
@@ -2068,6 +2256,9 @@ def retarded_integrator(
         if init_driver is None:
             raise ValueError("Driver-train mode requires init_driver state")
         init_driver = _build_driver_train_initial_state(init_driver, driver_train)
+
+    _initialize_magnetic_field_diagnostic(init_rider, external_field)
+    _initialize_magnetic_field_diagnostic(init_driver, external_field)
 
     cavity_exit_enabled = bool(cavity_exit.enabled)
     if cavity_exit_enabled:
@@ -2163,12 +2354,21 @@ def retarded_integrator(
         if driver_train_enabled and init_driver is not None
         else None
     )
+    for seed_state in rider_seed_history:
+        _initialize_magnetic_field_diagnostic(seed_state, external_field)
+    if driver_seed_history is not None:
+        for seed_state in driver_seed_history:
+            _initialize_magnetic_field_diagnostic(seed_state, external_field)
 
     trajectory: Trajectory = [{} for _ in range(total_steps)]
     trajectory_drv: Trajectory = [{} for _ in range(total_steps)]
     _n_particles_rider = len(init_rider["x"])
     _n_particles_drv: int | None = None
-    _traj_builder = TrajectoryBuilder(total_steps, _n_particles_rider)
+    _traj_builder = TrajectoryBuilder(
+        total_steps,
+        _n_particles_rider,
+        magnetic_dipole=magnetic_dipole.enabled,
+    )
     _traj_drv_builder: TrajectoryBuilder | None = None
     _pseudo_grid_planner_state: PseudoGridPlannerState | None = None
     # Per-step charge-localization stats for field representatives, accumulated
@@ -2524,7 +2724,11 @@ def retarded_integrator(
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             _n_particles_drv = len(trajectory_drv[i]["x"])
             if _traj_drv_builder is None:
-                _traj_drv_builder = TrajectoryBuilder(total_steps, _n_particles_drv)
+                _traj_drv_builder = TrajectoryBuilder(
+                    total_steps,
+                    _n_particles_drv,
+                    magnetic_dipole=magnetic_dipole.enabled,
+                )
             _traj_drv_builder.set_step(i, trajectory_drv[i])
             if pseudo_grid.enabled and i == active_start:
                 _pseudo_grid_planner_state = initialize_pseudo_grid_planner_state(
@@ -2794,6 +2998,9 @@ def retarded_integrator(
                         trajectory_drv[i - 1],
                         h_step,
                         1,
+                    )
+                    _initialize_magnetic_field_diagnostic(
+                        trajectory_drv[i], external_field
                     )
                     trajectory_drv[i]["_cavity_exit_tail_mode"] = "coasted"
                     trajectory_drv[i][
@@ -3311,6 +3518,7 @@ def run_integrator(
         particle_loss=config.particle_loss,
         macroparticle_smearing=config.macroparticle_smearing,
         beamline_geometry=config.beamline_geometry,
+        magnetic_dipole=config.magnetic_dipole,
     )
 
 

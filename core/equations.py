@@ -86,7 +86,10 @@ from .distances import (
     compute_retarded_distance_soa,
 )
 from .beamline_geometry import compute_directional_visibility_mask
-from .external_fields import compute_uniform_external_field_impulse
+from .external_fields import (
+    compute_uniform_external_field_impulse,
+    evaluate_external_field_si,
+)
 from .macroparticle_smearing import smear_source_samples
 from .self_consistency import (
     SelfConsistencyConfig,
@@ -202,6 +205,18 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
         state["radiation_energy_applied"] = np.zeros_like(
             state.get("x", np.array([])), dtype=float
         )
+    if np.any(np.asarray(state.get("magnetic_dipole_active", []), dtype=float)):
+        particle_template = state.get("x", np.array([]))
+        for name in (
+            "spin_x",
+            "spin_y",
+            "spin_z",
+            "local_magnetic_field_x_t",
+            "local_magnetic_field_y_t",
+            "local_magnetic_field_z_t",
+        ):
+            if name not in state:
+                state[name] = np.zeros_like(particle_template, dtype=float)
 
 
 def _extract_self_consistency_params(
@@ -330,6 +345,24 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "radiation_energy": np.zeros_like(current_state["x"], dtype=float),
         "radiation_energy_applied": np.zeros_like(current_state["x"], dtype=float),
     }
+
+    magnetic_fields = (
+        "spin_x",
+        "spin_y",
+        "spin_z",
+        "local_magnetic_field_x_t",
+        "local_magnetic_field_y_t",
+        "local_magnetic_field_z_t",
+        "magnetic_moment_j_per_t",
+        "spin_quantum_number",
+        "gyromagnetic_ratio_rad_s_t",
+        "magnetic_dipole_active",
+        "spin_precession_active",
+        "stern_gerlach_active",
+    )
+    for name in magnetic_fields:
+        if name in current_state:
+            result[name] = np.array(current_state[name], dtype=float, copy=True)
 
     # Preserve dead particle metadata to prevent redundant logging
     if "_dead_particles" in current_state:
@@ -1517,6 +1550,12 @@ def retarded_equations_of_motion(
                 "bdotx",
                 "bdoty",
                 "bdotz",
+                "spin_x",
+                "spin_y",
+                "spin_z",
+                "local_magnetic_field_x_t",
+                "local_magnetic_field_y_t",
+                "local_magnetic_field_z_t",
             ]:
                 if key in current_state:
                     result[key][particle_idx] = current_state[key][particle_idx]
@@ -1541,6 +1580,10 @@ def retarded_equations_of_motion(
         accumulated_field_y: float = 0.0
         accumulated_field_z: float = 0.0
         accumulated_scalar_potential: float = 0.0
+        local_electric_field_v_m = np.zeros(3, dtype=float)
+        local_magnetic_field_t = np.zeros(3, dtype=float)
+        local_magnetic_gradient_t_per_m = np.zeros((3, 3), dtype=float)
+        stern_gerlach_impulse_applied = False
 
         # Self-consistency loop: iterate until gamma converges
         converged = False
@@ -1769,6 +1812,10 @@ def retarded_equations_of_motion(
 
             # Accumulated scalar potential (used in gamma calculation)
             accumulated_scalar_potential = 0.0
+            # Each nonlinear iteration recomputes the physical step from the
+            # accepted start state. Only the final iteration may trigger the
+            # dipole-specific mass-shell projection below.
+            stern_gerlach_impulse_applied = False
 
             # ================================================================
             # STEP 4: Determine if external forces should be applied
@@ -2214,6 +2261,27 @@ def retarded_equations_of_motion(
             # STEP 4c: Prescribed external uniform fields
             # ================================================================
             if external_field is not None and getattr(external_field, "enabled", False):
+                if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                    field_position = (
+                        float(working_x),
+                        float(working_y),
+                        float(working_z),
+                    )
+                else:
+                    field_position = (
+                        float(current_state["x"][particle_idx]),
+                        float(current_state["y"][particle_idx]),
+                        float(current_state["z"][particle_idx]),
+                    )
+                (
+                    local_electric_field_v_m,
+                    local_magnetic_field_t,
+                    local_magnetic_gradient_t_per_m,
+                ) = evaluate_external_field_si(
+                    external_field,
+                    position_mm=field_position,
+                    time_ns=float(current_state["t"][particle_idx]),
+                )
                 (
                     ext_dp_x,
                     ext_dp_y,
@@ -2229,17 +2297,112 @@ def retarded_equations_of_motion(
                         float(particle_beta[2]),
                     ),
                     h_step=float(h),
-                    position=(
-                        float(working_x),
-                        float(working_y),
-                        float(working_z),
-                    ),
+                    position=field_position,
                     time=float(current_state["t"][particle_idx]),
                 )
                 accumulated_momentum_x += ext_dp_x
                 accumulated_momentum_y += ext_dp_y
                 accumulated_momentum_z += ext_dp_z
                 accumulated_momentum_t += ext_dp_t
+
+                dipole_active = (
+                    bool(
+                        _get_state_scalar(
+                            current_state,
+                            "magnetic_dipole_active",
+                            particle_idx,
+                        )
+                    )
+                    if "magnetic_dipole_active" in current_state
+                    else False
+                )
+                sg_active = (
+                    bool(
+                        _get_state_scalar(
+                            current_state,
+                            "stern_gerlach_active",
+                            particle_idx,
+                        )
+                    )
+                    if "stern_gerlach_active" in current_state
+                    else False
+                )
+                if dipole_active and sg_active:
+                    from .magnetic_dipole import (
+                        STATIC_REST_GRADIENT_MAX_BETA,
+                        stern_gerlach_rest_impulse_native,
+                    )
+
+                    spin_vector = np.asarray(
+                        (
+                            current_state["spin_x"][particle_idx],
+                            current_state["spin_y"][particle_idx],
+                            current_state["spin_z"][particle_idx],
+                        ),
+                        dtype=float,
+                    )
+                    signed_moment = float(
+                        _get_state_scalar(
+                            current_state,
+                            "magnetic_moment_j_per_t",
+                            particle_idx,
+                        )
+                    )
+                    sg_impulse = np.asarray(
+                        stern_gerlach_rest_impulse_native(
+                            signed_moment * spin_vector,
+                            local_magnetic_gradient_t_per_m,
+                            float(h),
+                        ),
+                        dtype=float,
+                    )
+                    beta_magnitude = float(
+                        np.linalg.norm(np.asarray(particle_beta, dtype=float))
+                    )
+                    trial_px = accumulated_momentum_x + float(sg_impulse[0])
+                    trial_py = accumulated_momentum_y + float(sg_impulse[1])
+                    trial_pz = accumulated_momentum_z + float(sg_impulse[2])
+                    trial_mechanical_momentum = np.asarray(
+                        _mechanical_momentum_components(
+                            px=trial_px,
+                            py=trial_py,
+                            pz=trial_pz,
+                            particle_mass=particle_mass,
+                            field_x=accumulated_field_x,
+                            field_y=accumulated_field_y,
+                            field_z=accumulated_field_z,
+                        ),
+                        dtype=float,
+                    )
+                    trial_momentum_magnitude = float(
+                        np.linalg.norm(trial_mechanical_momentum)
+                    )
+                    trial_beta_magnitude = trial_momentum_magnitude / float(
+                        np.sqrt(
+                            trial_momentum_magnitude**2 + (particle_mass * C_MMNS) ** 2
+                        )
+                    )
+                    if (
+                        np.any(sg_impulse)
+                        and max(beta_magnitude, trial_beta_magnitude)
+                        > STATIC_REST_GRADIENT_MAX_BETA
+                    ):
+                        raise NotImplementedError(
+                            "static_rest_gradient is restricted to "
+                            f"|beta| <= {STATIC_REST_GRADIENT_MAX_BETA:g}; "
+                            "this step would span "
+                            f"|beta|={beta_magnitude:.6g} to "
+                            f"{trial_beta_magnitude:.6g}. "
+                            "Disable the Stern-Gerlach force or choose a future "
+                            "named covariant gradient model."
+                        )
+                    accumulated_momentum_x += float(sg_impulse[0])
+                    accumulated_momentum_y += float(sg_impulse[1])
+                    accumulated_momentum_z += float(sg_impulse[2])
+                    accumulated_momentum_t += float(
+                        np.dot(np.asarray(particle_beta, dtype=float), sg_impulse)
+                    )
+                    stern_gerlach_impulse_applied = bool(np.any(sg_impulse))
 
             # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt
@@ -2252,6 +2415,26 @@ def retarded_equations_of_motion(
             scalar_potential_contribution = _scalar_potential_momentum_contribution(
                 force_particle_charge, accumulated_scalar_potential
             )
+
+            if stern_gerlach_impulse_applied:
+                # The static-gradient helper supplies a mechanical spatial
+                # impulse, not a complete canonical Hamiltonian. Put the
+                # combined momentum back on the ordinary mass shell before
+                # positions, acceleration, radiation, and running averages
+                # are evaluated. This is deliberately part of the named
+                # approximation and must be replaced with its energy model if
+                # a covariant Stern--Gerlach Hamiltonian is added later.
+                _, sg_projected_pt = _canonical_pt_from_mechanical_mass_shell(
+                    px=result["Px"][particle_idx],
+                    py=result["Py"][particle_idx],
+                    pz=result["Pz"][particle_idx],
+                    particle_mass=particle_mass,
+                    scalar_potential_contribution=scalar_potential_contribution,
+                    field_x=accumulated_field_x,
+                    field_y=accumulated_field_y,
+                    field_z=accumulated_field_z,
+                )
+                result["Pt"][particle_idx] = sg_projected_pt
 
             # ================================================================
             # STEP 4a: Correct Pt during SC iterations based on mode
@@ -3020,6 +3203,89 @@ def retarded_equations_of_motion(
                     accumulated_field_y,
                     accumulated_field_z,
                 )
+
+        # Spin is advanced exactly once per accepted physical step, after all
+        # self-consistency iterations. Reusing the start-of-step spin avoids
+        # accidentally applying one precession update per nonlinear iteration.
+        if bool(
+            current_state.get("magnetic_dipole_active", np.zeros(num_particles))[
+                particle_idx
+            ]
+        ):
+            diagnostic_magnetic_field_t = np.zeros(3, dtype=float)
+            if external_field is not None and getattr(external_field, "enabled", False):
+                _, diagnostic_magnetic_field_t, _ = evaluate_external_field_si(
+                    external_field,
+                    position_mm=(
+                        float(result["x"][particle_idx]),
+                        float(result["y"][particle_idx]),
+                        float(result["z"][particle_idx]),
+                    ),
+                    time_ns=float(result["t"][particle_idx]),
+                )
+            result["local_magnetic_field_x_t"][particle_idx] = (
+                diagnostic_magnetic_field_t[0]
+            )
+            result["local_magnetic_field_y_t"][particle_idx] = (
+                diagnostic_magnetic_field_t[1]
+            )
+            result["local_magnetic_field_z_t"][particle_idx] = (
+                diagnostic_magnetic_field_t[2]
+            )
+            precession_active = bool(
+                current_state.get("spin_precession_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            if precession_active:
+                from .constants import ELEMENTARY_CHARGE
+                from .external_fields import AMU_KG, ELEMENTARY_CHARGE_COULOMB
+                from .magnetic_dipole import advance_spin_uniform_fields
+
+                spin_start = np.asarray(
+                    (
+                        current_state["spin_x"][particle_idx],
+                        current_state["spin_y"][particle_idx],
+                        current_state["spin_z"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                beta_midpoint = 0.5 * np.asarray(
+                    (
+                        current_state["bx"][particle_idx] + result["bx"][particle_idx],
+                        current_state["by"][particle_idx] + result["by"][particle_idx],
+                        current_state["bz"][particle_idx] + result["bz"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                coordinate_step_s = (
+                    max(
+                        float(
+                            result["t"][particle_idx] - current_state["t"][particle_idx]
+                        ),
+                        0.0,
+                    )
+                    * 1.0e-9
+                )
+                spin_next = advance_spin_uniform_fields(
+                    spin_start,
+                    beta=beta_midpoint,
+                    electric_field_v_m=local_electric_field_v_m,
+                    magnetic_field_t=local_magnetic_field_t,
+                    charge_coulomb=(
+                        float(force_particle_charge)
+                        / ELEMENTARY_CHARGE
+                        * ELEMENTARY_CHARGE_COULOMB
+                    ),
+                    mass_kg=float(particle_mass) * AMU_KG,
+                    gyromagnetic_ratio_rad_s_t=float(
+                        current_state["gyromagnetic_ratio_rad_s_t"][particle_idx]
+                    ),
+                    delta_time_s=coordinate_step_s,
+                )
+                result["spin_x"][particle_idx] = spin_next[0]
+                result["spin_y"][particle_idx] = spin_next[1]
+                result["spin_z"][particle_idx] = spin_next[2]
 
     # Log summary if any particles died in this step
     if particles_marked_dead_this_step > 0:

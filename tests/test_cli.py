@@ -64,6 +64,13 @@ def _make_args(**overrides) -> argparse.Namespace:
         "chrono_adaptive_tolerance": None,
         "startup_mode": None,
         "radiation_reaction_mode": None,
+        "magnetic_dipole_enabled": None,
+        "rider_magnetic_species": None,
+        "driver_magnetic_species": None,
+        "rider_spin": None,
+        "driver_spin": None,
+        "stern_gerlach_force_enabled": None,
+        "spin_precession_enabled": None,
         "image_subcharge_count": None,
         "use_image_weighting": None,
         "pseudo_grid_enabled": None,
@@ -102,6 +109,7 @@ def _make_args(**overrides) -> argparse.Namespace:
         "external_e_field_native": None,
         "external_e_field_v_per_m": None,
         "external_b_field_native": None,
+        "external_b_field_tesla": None,
     }
     for axis in ("x", "y", "z", "t"):
         defaults[f"external_field_{axis}_min"] = None
@@ -221,6 +229,10 @@ class TestCliConfigParsing:
                 "0",
                 "3",
                 "0",
+                "--external-b-field-tesla",
+                "0.1",
+                "0.2",
+                "0.3",
                 "--external-field-z-min",
                 "-0.2",
                 "--external-field-t-max",
@@ -230,6 +242,7 @@ class TestCliConfigParsing:
 
         assert args.external_e_field_v_per_m == [0.0, 0.0, -1.5e9]
         assert args.external_b_field_native == [0.0, 3.0, 0.0]
+        assert args.external_b_field_tesla == [0.1, 0.2, 0.3]
         assert args.external_field_z_min == pytest.approx(-0.2)
         assert args.external_field_t_max == pytest.approx(1.0e-6)
 
@@ -237,6 +250,46 @@ class TestCliConfigParsing:
         args = cli.parse_args(["--radiation-reaction-mode", "off"])
 
         assert args.radiation_reaction_mode == "off"
+
+    def test_parse_args_accepts_magnetic_dipole_options_and_species_aliases(self):
+        args = cli.parse_args(
+            [
+                "--magnetic-dipoles",
+                "--rider-magnetic-species",
+                "n",
+                "--driver-magnetic-species",
+                "h-",
+                "--rider-spin",
+                "0",
+                "3",
+                "4",
+                "--driver-spin",
+                "1",
+                "0",
+                "0",
+                "--stern-gerlach",
+            ]
+        )
+
+        assert args.magnetic_dipole_enabled is True
+        assert args.rider_magnetic_species == "neutron"
+        assert args.driver_magnetic_species == "h_minus"
+        assert args.rider_spin == [0.0, 3.0, 4.0]
+        assert args.driver_spin == [1.0, 0.0, 0.0]
+        assert args.stern_gerlach_force_enabled is True
+
+    def test_parse_args_accepts_disabling_magnetic_dipole_options(self):
+        args = cli.parse_args(
+            ["--no-magnetic-dipoles", "--no-stern-gerlach", "--no-spin-precession"]
+        )
+
+        assert args.magnetic_dipole_enabled is False
+        assert args.stern_gerlach_force_enabled is False
+        assert args.spin_precession_enabled is False
+
+    def test_magnetic_species_choices_include_neutral_and_h_minus_presets(self):
+        assert "neutron" in cli.MAGNETIC_SPECIES_CHOICES
+        assert "h_minus" in cli.MAGNETIC_SPECIES_CHOICES
 
     def test_parse_args_accepts_pseudo_grid_options(self):
         args = cli.parse_args(
@@ -566,6 +619,7 @@ class TestCliBuildRequest:
         args = _make_args(
             external_e_field_v_per_m=[0.0, 0.0, -1.5e9],
             external_b_field_native=[0.0, 3.0, 0.0],
+            external_b_field_tesla=[0.0, 0.0, 2.0],
             external_field_z_min=-0.2,
             external_field_t_max=1.0e-6,
         )
@@ -576,6 +630,7 @@ class TestCliBuildRequest:
             "enabled": True,
             "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
             "magnetic_field_native": [0.0, 3.0, 0.0],
+            "magnetic_field_tesla": [0.0, 0.0, 2.0],
             "z_min": -0.2,
             "t_max": 1.0e-6,
         }
@@ -652,6 +707,39 @@ class TestCliBuildRequest:
         assert smearing["position_sigma_mm"] == pytest.approx(0.1)
         assert smearing["refresh_policy"] == "per_step"
 
+    def test_merge_simulation_payload_applies_magnetic_dipole_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "magnetic_dipole": {
+                    "enabled": True,
+                    "stern_gerlach_force_enabled": True,
+                    "rider": {
+                        "species": "electron",
+                        "magnetic_moment_j_per_t": -1.0e-23,
+                    },
+                }
+            },
+            _make_args(
+                magnetic_dipole_enabled=False,
+                rider_magnetic_species="neutron",
+                rider_spin=[0.0, 1.0, 0.0],
+                driver_magnetic_species="antiproton",
+                driver_spin=[1.0, 0.0, 0.0],
+                stern_gerlach_force_enabled=False,
+                spin_precession_enabled=False,
+            ),
+        )
+
+        magnetic = payload["magnetic_dipole"]
+        assert magnetic["enabled"] is False
+        assert magnetic["stern_gerlach_force_enabled"] is False
+        assert magnetic["spin_precession_enabled"] is False
+        assert magnetic["rider"]["species"] == "neutron"
+        assert magnetic["rider"]["rest_spin"] == [0.0, 1.0, 0.0]
+        assert magnetic["rider"]["magnetic_moment_j_per_t"] == pytest.approx(-1.0e-23)
+        assert magnetic["driver"]["species"] == "antiproton"
+        assert magnetic["driver"]["rest_spin"] == [1.0, 0.0, 0.0]
+
     def test_merge_simulation_payload_applies_cavity_exit_mode_override(self):
         payload = cli._merge_simulation_payload(
             {"cavity_exit": {"enabled": False, "mode": "first_exit"}},
@@ -712,6 +800,148 @@ class TestCliBuildRequest:
 
         assert request.config.radiation_reaction_mode == "medina_lad"
 
+    def test_build_request_keeps_magnetic_dipoles_off_by_default(self):
+        request = cli.build_request(_make_args())
+
+        assert request.config.magnetic_dipole.enabled is False
+        assert request.config.magnetic_dipole.rider.species == "electron"
+        assert request.config.magnetic_dipole.driver.species == "proton"
+
+    def test_build_request_applies_direct_magnetic_dipole_options(self):
+        request = cli.build_request(
+            _make_args(
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="neutron",
+                driver_magnetic_species="antiproton",
+                rider_spin=[0.0, 3.0, 4.0],
+                driver_spin=[1.0, 0.0, 0.0],
+                stern_gerlach_force_enabled=True,
+            )
+        )
+
+        magnetic = request.config.magnetic_dipole
+        assert magnetic.enabled is True
+        assert magnetic.stern_gerlach_force_enabled is True
+        assert magnetic.rider.species == "neutron"
+        assert magnetic.rider.rest_spin == pytest.approx((0.0, 0.6, 0.8))
+        assert magnetic.driver.species == "antiproton"
+        assert magnetic.driver.rest_spin == pytest.approx((1.0, 0.0, 0.0))
+
+    def test_driver_from_rider_inherits_magnetic_species_unless_overridden(self):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="electron",
+                rider_spin=[0.0, 1.0, 0.0],
+            )
+        )
+
+        assert request.config.magnetic_dipole.rider.species == "electron"
+        assert request.config.magnetic_dipole.driver.species == "electron"
+        assert request.config.magnetic_dipole.driver.rest_spin == pytest.approx(
+            (0.0, 1.0, 0.0)
+        )
+
+    def test_driver_from_rider_preserves_explicit_driver_spin(self):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="electron",
+                rider_spin=[0.0, 1.0, 0.0],
+                driver_spin=[1.0, 0.0, 0.0],
+            )
+        )
+
+        assert request.config.magnetic_dipole.driver.species == "electron"
+        assert request.config.magnetic_dipole.driver.rest_spin == pytest.approx(
+            (1.0, 0.0, 0.0)
+        )
+
+    def test_build_request_native_json_can_supply_custom_h_minus_moment(
+        self, tmp_path: Path
+    ):
+        config_path = tmp_path / "h_minus.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "magnetic_dipole": {
+                        "enabled": True,
+                        "rider": {
+                            "species": "h_minus",
+                            "magnetic_moment_j_per_t": -9.2e-24,
+                            "spin_quantum_number": 0.5,
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+
+        rider = request.config.magnetic_dipole.rider
+        assert rider.species == "h_minus"
+        assert rider.magnetic_moment_j_per_t == pytest.approx(-9.2e-24)
+        assert rider.spin_quantum_number == pytest.approx(0.5)
+
+    def test_build_request_rejects_h_minus_without_custom_moment(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="h_minus.*no supported moment preset",
+        ):
+            cli.build_request(
+                _make_args(
+                    magnetic_dipole_enabled=True,
+                    rider_magnetic_species="h_minus",
+                )
+            )
+
+    def test_build_request_rejects_magnetic_dipoles_with_pseudo_grid(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="not compatible with pseudo-grid",
+        ):
+            cli.build_request(
+                _make_args(
+                    magnetic_dipole_enabled=True,
+                    pseudo_grid_enabled=True,
+                )
+            )
+
+    def test_build_request_supports_neutral_rider_from_native_particle_json(
+        self, tmp_path: Path
+    ):
+        config_path = tmp_path / "neutron.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "rider": {
+                        "kinetic_energy_mev": 1.0,
+                        "mass_amu": 1.00866491606,
+                        "charge_sign": 0.0,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(
+            _make_args(
+                config=config_path,
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="neutron",
+            )
+        )
+
+        assert request.config.magnetic_dipole.rider.species == "neutron"
+        assert np.all(request.rider["q"] == 0.0)
+        assert np.all(request.rider["q_source"] == 0.0)
+        assert np.all(request.rider["q_observer"] == 0.0)
+
     def test_build_request_rr_flag_overrides_config_file(self, tmp_path: Path):
         config_path = tmp_path / "rr_mode.json"
         config_path.write_text(
@@ -737,6 +967,11 @@ class TestCliBuildRequest:
                         "enabled": True,
                         "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
                         "magnetic_field_native": [0.0, 3.0, 0.0],
+                        "magnetic_field_gradient_t_per_m": [
+                            [-1.0, 0.0, 0.0],
+                            [0.0, -2.0, 0.0],
+                            [0.0, 0.0, 3.0],
+                        ],
                         "z_min": -0.2,
                         "z_max": 0.2,
                         "t_min": 1.0e-6,
@@ -756,10 +991,28 @@ class TestCliBuildRequest:
         assert request.external_field.magnetic_field_native == pytest.approx(
             (0.0, 3.0, 0.0)
         )
+        np.testing.assert_allclose(
+            request.external_field.magnetic_field_gradient_t_per_m,
+            ((-1.0, 0.0, 0.0), (0.0, -2.0, 0.0), (0.0, 0.0, 3.0)),
+        )
         assert request.external_field.z_min == pytest.approx(-0.2)
         assert request.external_field.z_max == pytest.approx(0.2)
         assert request.external_field.t_min == pytest.approx(1.0e-6)
         assert request.external_field.t_max == pytest.approx(2.0e-6)
+
+    def test_build_external_field_accepts_magnetic_field_in_tesla(self):
+        from core.external_fields import magnetic_field_native_to_tesla
+
+        field = cli._build_external_field_config(
+            {"enabled": True, "magnetic_field_tesla": [0.1, -0.2, 0.3]}
+        )
+
+        assert field is not None
+        converted = tuple(
+            magnetic_field_native_to_tesla(component)
+            for component in field.magnetic_field_native
+        )
+        assert converted == pytest.approx((0.1, -0.2, 0.3))
 
     def test_build_request_clones_driver_from_rider(self):
         args = _make_args(
@@ -1462,6 +1715,14 @@ class TestCliMain:
         assert result == 2
         assert "Error: bad config" in capsys.readouterr().err
 
+    def test_main_presents_pseudo_grid_magnetic_incompatibility(self, capsys):
+        result = cli.main(["--pseudo-grid", "--magnetic-dipoles", "--quiet"])
+
+        assert result == 2
+        error = capsys.readouterr().err
+        assert "not compatible with pseudo-grid" in error
+        assert "--no-magnetic-dipoles" in error
+
 
 class TestCliRuntimeHelpers:
     def test_run_simulation_forwards_request_to_retarded_integrator(self, monkeypatch):
@@ -1503,6 +1764,7 @@ class TestCliRuntimeHelpers:
         assert (
             captured["macroparticle_smearing"] is request.config.macroparticle_smearing
         )
+        assert captured["magnetic_dipole"] is request.config.magnetic_dipole
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

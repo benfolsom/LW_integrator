@@ -5,7 +5,6 @@ import pytest
 
 from core.types import TrajectoryBuilder
 
-
 N_STEPS = 5
 N_PARTICLES = 3
 
@@ -210,6 +209,29 @@ class TestHaltMetadata:
 
 
 class TestMissingOptionalFields:
+    def test_disabled_magnetic_sidecars_use_constant_broadcast_storage(self):
+        builder = TrajectoryBuilder(100, 200)
+        trajectory = builder.build()
+
+        assert trajectory.spin_x.shape == (100, 200)
+        assert not trajectory.spin_x.flags.writeable
+        assert np.shares_memory(trajectory.spin_x, trajectory.spin_x.base)
+
+    def test_magnetic_sidecars_allocate_lazily_when_spin_state_is_present(self):
+        builder = TrajectoryBuilder(2, 1)
+        state = _make_state(0, 1)
+        state["spin_x"] = np.array([0.25])
+        state["spin_y"] = np.array([0.5])
+        state["spin_z"] = np.array([0.75])
+
+        builder.set_step(0, state)
+        trajectory = builder.build()
+
+        assert trajectory.spin_x.flags.writeable
+        np.testing.assert_array_equal(trajectory.spin_x[0], (0.25,))
+        np.testing.assert_array_equal(trajectory.spin_y[0], (0.5,))
+        np.testing.assert_array_equal(trajectory.spin_z[0], (0.75,))
+
     def test_origin_defaults_to_zero(self):
         traj, _ = _build_trajectory(include_optional=False)
         assert traj.origin_x.shape == (N_STEPS, N_PARTICLES)
@@ -266,7 +288,9 @@ class TestBuildPartial:
         np.testing.assert_array_equal(partial_full.q_species, full.q_species)
         np.testing.assert_array_equal(partial_full.q_observer, full.q_observer)
         np.testing.assert_array_equal(partial_full.q_source, full.q_source)
-        np.testing.assert_array_equal(partial_full.macro_population, full.macro_population)
+        np.testing.assert_array_equal(
+            partial_full.macro_population, full.macro_population
+        )
         np.testing.assert_array_equal(partial_full.m_species, full.m_species)
         assert partial_full.n_steps == full.n_steps
 

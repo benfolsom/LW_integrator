@@ -4,6 +4,30 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ## Unreleased
 
+### Experimental Magnetic Dipole Moments (August 2026)
+
+- Added a shared immutable species registry with signed, cited free-particle
+  magnetic moments for electrons, positrons, protons, antiprotons, neutrons,
+  deuterons, tritons, helions, and spin-zero alpha particles. H- is explicitly
+  marked as requiring a custom bound-state moment model.
+- Added charged and neutral BMT/Larmor spin transport in prescribed
+  electromagnetic fields, using exact Rodrigues rotation per accepted step.
+- Added an opt-in static rest-gradient Stern--Gerlach force with SI/native unit
+  bridges, mass-shell projection, and an explicit warning that it is not a
+  unique relativistic retarded-gradient model. Nonzero impulses are rejected
+  above ``|beta| = 0.01`` rather than extrapolating the rest model to beams.
+- Added spin/moment trajectory state, testbed/CLI/GUI configuration surfaces,
+  and visualization-ready spin and local-field output.
+- Magnetic dipoles are disabled by default. Pseudo-grid plus dipole dynamics is
+  rejected until spin-aware passive reconstruction is implemented; conducting
+  images and Liénard--Wiechert sources remain charge-only in this first slice.
+- Named magnetic presets are checked against the particle state's physical
+  mass and observer charge, preventing accidental electron-moment/proton-mass
+  hybrid particles. Deliberate custom models must state their moment and spin.
+- Added unit and integration coverage for tensor conventions, signed species,
+  charged/neutral precession, spin norm, static gradient response, neutral
+  observer dynamics, zero-gradient no-op behavior, and feature-off equivalence.
+
 ### Testbed CLI and GUI Configuration Fidelity (August 2026)
 
 - Added `lw-simulate --testbed-config PATH` for executing full testbed/GUI JSON

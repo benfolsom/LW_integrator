@@ -15,6 +15,7 @@ class IntegratorGUIStateMixin:
 
     def _on_sim_type_change(self) -> None:
         self._update_driver_visibility()
+        self._toggle_magnetic_dipole_controls()
         self._update_cavity_spacing_state()
         self._update_image_subcharge_state()
         self._update_macroparticle_state()
@@ -56,6 +57,37 @@ class IntegratorGUIStateMixin:
             label.configure(foreground=label_color)
         for label in getattr(self, "_driver_offset_labels", []):
             label.configure(foreground=label_color)
+
+    def _toggle_magnetic_dipole_controls(self) -> None:
+        """Enable spin controls only when their associated particle is active."""
+        if not hasattr(self, "magnetic_dipole_enabled_var"):
+            return
+
+        enabled = bool(self.magnetic_dipole_enabled_var.get())
+        sim_type = SimulationType[self.sim_type_var.get()]
+        driver_enabled = enabled and sim_type == SimulationType.BUNCH_TO_BUNCH
+
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_common_controls", []
+        ):
+            widget.configure(state=active_state if enabled else "disabled")
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_rider_controls", []
+        ):
+            widget.configure(state=active_state if enabled else "disabled")
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_driver_controls", []
+        ):
+            widget.configure(state=active_state if driver_enabled else "disabled")
+
+        common_color = "black" if enabled else "gray"
+        driver_color = "black" if driver_enabled else "gray"
+        for label in getattr(self, "_magnetic_dipole_common_labels", []):
+            label.configure(foreground=common_color)
+        for label in getattr(self, "_magnetic_dipole_rider_labels", []):
+            label.configure(foreground=common_color)
+        for label in getattr(self, "_magnetic_dipole_driver_labels", []):
+            label.configure(foreground=driver_color)
 
     def _update_image_subcharge_state(self) -> None:
         sim_type = SimulationType[self.sim_type_var.get()]

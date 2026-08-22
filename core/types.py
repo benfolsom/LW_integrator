@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, cast
 
 import numpy as np
 
@@ -374,8 +374,16 @@ class Occluder:
         norm = float(np.linalg.norm(axis_arr))
         if norm < 1e-15:
             raise ValueError("Occluder axis must be non-zero")
-        self.axis = tuple(axis_arr / norm)
-        self.center_mm = tuple(float(v) for v in self.center_mm)
+        normalized_axis = axis_arr / norm
+        self.axis = (
+            float(normalized_axis[0]),
+            float(normalized_axis[1]),
+            float(normalized_axis[2]),
+        )
+        center = np.asarray(self.center_mm, dtype=float)
+        if center.shape != (3,) or not np.all(np.isfinite(center)):
+            raise ValueError("Occluder center_mm must contain three finite values")
+        self.center_mm = (float(center[0]), float(center[1]), float(center[2]))
         if self.radius_mm <= 0:
             raise ValueError("Occluder radius_mm must be positive")
         if self.length_mm <= 0:
@@ -403,6 +411,96 @@ class BeamlineGeometryConfig:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
+
+
+@dataclass
+class MagneticDipoleParticleConfig:
+    """Magnetic-moment and initial-polarization settings for one bunch.
+
+    ``magnetic_moment_j_per_t`` is signed with respect to the configured spin
+    direction.  A value of ``None`` selects the cited value from ``species``.
+    The three-vector is a unit rest-frame polarization expressed in the lab
+    coordinate axes; ``polarization`` scales its magnitude between zero and
+    one without changing the physical single-particle moment.
+    """
+
+    species: str = "custom"
+    magnetic_moment_j_per_t: float | None = None
+    spin_quantum_number: float | None = None
+    rest_spin: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    polarization: float = 1.0
+
+    def __post_init__(self) -> None:
+        self.species = str(self.species).strip().lower()
+        if not self.species:
+            raise ValueError("magnetic-dipole species must not be empty")
+        if self.magnetic_moment_j_per_t is not None:
+            self.magnetic_moment_j_per_t = float(self.magnetic_moment_j_per_t)
+            if not np.isfinite(self.magnetic_moment_j_per_t):
+                raise ValueError("magnetic moment must be finite")
+        if self.spin_quantum_number is not None:
+            self.spin_quantum_number = float(self.spin_quantum_number)
+            if (
+                not np.isfinite(self.spin_quantum_number)
+                or self.spin_quantum_number <= 0.0
+            ):
+                raise ValueError("spin quantum number must be finite and positive")
+        spin = np.asarray(self.rest_spin, dtype=float)
+        if spin.shape != (3,) or not np.all(np.isfinite(spin)):
+            raise ValueError("rest_spin must contain three finite values")
+        norm = float(np.linalg.norm(spin))
+        if norm <= 0.0:
+            raise ValueError("rest_spin must be non-zero")
+        normalized_spin = spin / norm
+        self.rest_spin = (
+            float(normalized_spin[0]),
+            float(normalized_spin[1]),
+            float(normalized_spin[2]),
+        )
+        self.polarization = float(self.polarization)
+        if not 0.0 <= self.polarization <= 1.0:
+            raise ValueError("polarization must be in [0, 1]")
+
+
+@dataclass
+class MagneticDipoleConfig:
+    """Configuration for experimental intrinsic magnetic-moment dynamics.
+
+    Spin transport and Stern--Gerlach translation are deliberately separate.
+    ``bmt_frenkel`` denotes the neutral-capable BMT/Fermi--Walker transport
+    model.  The first translational model, ``static_rest_gradient``, consumes
+    an explicit prescribed magnetic-field gradient and is not presented as a
+    unique relativistic Stern--Gerlach law.
+    """
+
+    enabled: bool = False
+    spin_precession_enabled: bool = True
+    stern_gerlach_force_enabled: bool = False
+    spin_model: str = "bmt_frenkel"
+    stern_gerlach_model: str = "static_rest_gradient"
+    rider: MagneticDipoleParticleConfig = field(
+        default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
+    )
+    driver: MagneticDipoleParticleConfig = field(
+        default_factory=lambda: MagneticDipoleParticleConfig(species="proton")
+    )
+
+    def __post_init__(self) -> None:
+        self.enabled = bool(self.enabled)
+        self.spin_precession_enabled = bool(self.spin_precession_enabled)
+        self.stern_gerlach_force_enabled = bool(self.stern_gerlach_force_enabled)
+        self.spin_model = str(self.spin_model).strip().lower()
+        self.stern_gerlach_model = str(self.stern_gerlach_model).strip().lower()
+        if self.spin_model != "bmt_frenkel":
+            raise ValueError("magnetic-dipole spin_model must be bmt_frenkel")
+        if self.stern_gerlach_model != "static_rest_gradient":
+            raise ValueError(
+                "magnetic-dipole stern_gerlach_model must be " "static_rest_gradient"
+            )
+        if isinstance(self.rider, dict):
+            self.rider = MagneticDipoleParticleConfig(**self.rider)
+        if isinstance(self.driver, dict):
+            self.driver = MagneticDipoleParticleConfig(**self.driver)
 
 
 @dataclass
@@ -509,6 +607,7 @@ class IntegratorConfig:
     beamline_geometry: BeamlineGeometryConfig = field(
         default_factory=BeamlineGeometryConfig
     )
+    magnetic_dipole: MagneticDipoleConfig = field(default_factory=MagneticDipoleConfig)
 
 
 @dataclass
@@ -571,21 +670,27 @@ class SpaceChargeConfig:
 
 @dataclass
 class ExternalFieldConfig:
-    """Configuration for prescribed uniform external electromagnetic fields.
+    """Configuration for prescribed external electromagnetic fields.
 
     Field components use the solver's native units. Electric field components
     are force per native charge, i.e. ``amu * mm / ns^2 / q_native``. Magnetic
     field components are expressed in the same force-per-charge convention and
     enter the Lorentz term as ``beta × B``.
 
-    This first implementation intentionally supports uniform fields with simple
-    spatial/temporal windows. More general field maps or callable field
-    providers can build on the same integrator hook later.
+    This first implementation supports uniform fields, plus an optional linear
+    magnetic-field gradient in SI T/m, with simple spatial/temporal windows.
+    More general field maps or callable field providers can build on the same
+    integrator hook later.
     """
 
     enabled: bool = True
     electric_field_native: tuple[float, float, float] = (0.0, 0.0, 0.0)
     magnetic_field_native: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    magnetic_field_gradient_t_per_m: tuple[
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ] = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
     x_min: float | None = None
     x_max: float | None = None
     y_min: float | None = None
@@ -594,6 +699,37 @@ class ExternalFieldConfig:
     z_max: float | None = None
     t_min: float | None = None
     t_max: float | None = None
+
+    def __post_init__(self) -> None:
+        gradient = np.asarray(self.magnetic_field_gradient_t_per_m, dtype=float)
+        if gradient.shape != (3, 3) or not np.all(np.isfinite(gradient)):
+            raise ValueError(
+                "magnetic_field_gradient_t_per_m must be a finite 3x3 matrix"
+            )
+        divergence = float(np.trace(gradient))
+        divergence_tolerance = 1.0e-12 + 1.0e-10 * float(np.max(np.abs(gradient)))
+        if abs(divergence) > divergence_tolerance:
+            raise ValueError(
+                "magnetic_field_gradient_t_per_m must satisfy div(B)=0; "
+                f"matrix trace is {divergence:.12g} T/m"
+            )
+        self.magnetic_field_gradient_t_per_m = (
+            (
+                float(gradient[0, 0]),
+                float(gradient[0, 1]),
+                float(gradient[0, 2]),
+            ),
+            (
+                float(gradient[1, 0]),
+                float(gradient[1, 1]),
+                float(gradient[1, 2]),
+            ),
+            (
+                float(gradient[2, 0]),
+                float(gradient[2, 1]),
+                float(gradient[2, 2]),
+            ),
+        )
 
     def is_active(self, x: float, y: float, z: float, t: float) -> bool:
         """Return whether the field should be applied at a particle location."""
@@ -649,6 +785,12 @@ class TrajectoryArrays:
     beta_avg_y: np.ndarray
     beta_avg_z: np.ndarray
     beta_samples: np.ndarray
+    spin_x: np.ndarray
+    spin_y: np.ndarray
+    spin_z: np.ndarray
+    local_magnetic_field_x_t: np.ndarray
+    local_magnetic_field_y_t: np.ndarray
+    local_magnetic_field_z_t: np.ndarray
 
     # Dead-particle mask — [n_steps, n_particles], bool
     dead: np.ndarray
@@ -662,6 +804,12 @@ class TrajectoryArrays:
     m: np.ndarray
     m_species: np.ndarray
     char_time: np.ndarray
+    magnetic_moment_j_per_t: np.ndarray
+    spin_quantum_number: np.ndarray
+    gyromagnetic_ratio_rad_s_t: np.ndarray
+    magnetic_dipole_active: np.ndarray
+    spin_precession_active: np.ndarray
+    stern_gerlach_active: np.ndarray
 
     # Per-step scalars — [n_steps]
     halted_early: np.ndarray  # dtype bool
@@ -674,11 +822,11 @@ class TrajectoryArrays:
 
     @property
     def n_steps(self) -> int:
-        return self.x.shape[0]
+        return int(self.x.shape[0])
 
     @property
     def n_particles(self) -> int:
-        return self.x.shape[1]
+        return int(self.x.shape[1])
 
     def state_at(self, step: int) -> ParticleState:
         """Return a legacy ``ParticleState`` dict for *step*."""
@@ -719,12 +867,30 @@ class TrajectoryArrays:
             "_dead_particles": self.dead[step],
         }
         if self.halted_early[step]:
-            s["_halted_early"] = bool(self.halted_early[step])
-            s["_halt_step"] = int(self.halt_step[step])
-            s["_halt_reason"] = self.halt_reason[step]
+            metadata = cast(Dict[str, object], s)
+            metadata["_halted_early"] = bool(self.halted_early[step])
+            metadata["_halt_step"] = int(self.halt_step[step])
+            metadata["_halt_reason"] = self.halt_reason[step]
         pseudo_grid_schedule = self.pseudo_grid_schedule[step]
         if pseudo_grid_schedule is not None:
             s["_pseudo_grid_schedule"] = pseudo_grid_schedule
+        if np.any(self.magnetic_dipole_active):
+            s.update(
+                {
+                    "spin_x": self.spin_x[step],
+                    "spin_y": self.spin_y[step],
+                    "spin_z": self.spin_z[step],
+                    "local_magnetic_field_x_t": self.local_magnetic_field_x_t[step],
+                    "local_magnetic_field_y_t": self.local_magnetic_field_y_t[step],
+                    "local_magnetic_field_z_t": self.local_magnetic_field_z_t[step],
+                    "magnetic_moment_j_per_t": self.magnetic_moment_j_per_t,
+                    "spin_quantum_number": self.spin_quantum_number,
+                    "gyromagnetic_ratio_rad_s_t": (self.gyromagnetic_ratio_rad_s_t),
+                    "magnetic_dipole_active": self.magnetic_dipole_active,
+                    "spin_precession_active": self.spin_precession_active,
+                    "stern_gerlach_active": self.stern_gerlach_active,
+                }
+            )
         return s
 
     def to_legacy(self) -> "Trajectory":
@@ -773,9 +939,10 @@ class IndexedTrajectoryArrays:
         return int(self.start_step) + local_step
 
     def row(self, field_name: str, step: int) -> np.ndarray:
-        return np.asarray(getattr(self.base, field_name))[self.global_step(step), :][
+        values = np.asarray(getattr(self.base, field_name))[self.global_step(step), :][
             self.particle_indices
         ]
+        return np.asarray(values)
 
     def scalar(self, field_name: str, step: int, particle_idx: int) -> float:
         return float(
@@ -793,10 +960,11 @@ class IndexedTrajectoryArrays:
     ) -> np.ndarray:
         local_steps = np.asarray(steps, dtype=int)
         local_particles = np.asarray(particle_indices, dtype=int)
-        return np.asarray(getattr(self.base, field_name))[
+        values = np.asarray(getattr(self.base, field_name))[
             int(self.start_step) + local_steps,
             self.particle_indices[local_particles],
         ]
+        return np.asarray(values)
 
     def time_columns(self, up_to_step: int) -> np.ndarray:
         end_step = self.global_step(up_to_step) + 1
@@ -807,7 +975,8 @@ class IndexedTrajectoryArrays:
     def constant(self, field_name: str) -> np.ndarray:
         if field_name in {"q", "q_source"} and self.q_override is not None:
             return np.asarray(self.q_override, dtype=float)
-        return np.asarray(getattr(self.base, field_name))[self.particle_indices]
+        values = np.asarray(getattr(self.base, field_name))[self.particle_indices]
+        return np.asarray(values)
 
     def state_at(self, step: int) -> ParticleState:
         global_step = self.global_step(step)
@@ -854,9 +1023,35 @@ class IndexedTrajectoryArrays:
         if pseudo_grid_schedule is not None:
             state["_pseudo_grid_schedule"] = pseudo_grid_schedule
         if self.base.halted_early[global_step]:
-            state["_halted_early"] = bool(self.base.halted_early[global_step])
-            state["_halt_step"] = int(self.base.halt_step[global_step])
-            state["_halt_reason"] = self.base.halt_reason[global_step]
+            metadata = cast(Dict[str, object], state)
+            metadata["_halted_early"] = bool(self.base.halted_early[global_step])
+            metadata["_halt_step"] = int(self.base.halt_step[global_step])
+            metadata["_halt_reason"] = self.base.halt_reason[global_step]
+        if np.any(self.constant("magnetic_dipole_active")):
+            state.update(
+                {
+                    "spin_x": self.row("spin_x", step),
+                    "spin_y": self.row("spin_y", step),
+                    "spin_z": self.row("spin_z", step),
+                    "local_magnetic_field_x_t": self.row(
+                        "local_magnetic_field_x_t", step
+                    ),
+                    "local_magnetic_field_y_t": self.row(
+                        "local_magnetic_field_y_t", step
+                    ),
+                    "local_magnetic_field_z_t": self.row(
+                        "local_magnetic_field_z_t", step
+                    ),
+                    "magnetic_moment_j_per_t": self.constant("magnetic_moment_j_per_t"),
+                    "spin_quantum_number": self.constant("spin_quantum_number"),
+                    "gyromagnetic_ratio_rad_s_t": self.constant(
+                        "gyromagnetic_ratio_rad_s_t"
+                    ),
+                    "magnetic_dipole_active": self.constant("magnetic_dipole_active"),
+                    "spin_precession_active": self.constant("spin_precession_active"),
+                    "stern_gerlach_active": self.constant("stern_gerlach_active"),
+                }
+            )
         return state
 
     def to_legacy(self) -> "Trajectory":
@@ -898,6 +1093,14 @@ class TrajectoryBuilder:
         "beta_avg_z",
         "beta_samples",
     )
+    _MAGNETIC_KINEMATIC_FIELDS: tuple = (
+        "spin_x",
+        "spin_y",
+        "spin_z",
+        "local_magnetic_field_x_t",
+        "local_magnetic_field_y_t",
+        "local_magnetic_field_z_t",
+    )
     _PARTICLE_CONST_FIELDS: tuple = (
         "q",
         "q_species",
@@ -907,16 +1110,35 @@ class TrajectoryBuilder:
         "m",
         "m_species",
         "char_time",
+        "magnetic_moment_j_per_t",
+        "spin_quantum_number",
+        "gyromagnetic_ratio_rad_s_t",
+        "magnetic_dipole_active",
+        "spin_precession_active",
+        "stern_gerlach_active",
     )
 
-    def __init__(self, n_steps: int, n_particles: int) -> None:
+    def __init__(
+        self, n_steps: int, n_particles: int, *, magnetic_dipole: bool = False
+    ) -> None:
         self._n_steps = n_steps
         self._n_particles = n_particles
+        self._magnetic_arrays_allocated = bool(magnetic_dipole)
 
         self._arrays: dict = {
             field_name: np.zeros((n_steps, n_particles), dtype=np.float64)
             for field_name in self._KINEMATIC_FIELDS
         }
+        for field_name in self._MAGNETIC_KINEMATIC_FIELDS:
+            if self._magnetic_arrays_allocated:
+                magnetic_array = np.zeros((n_steps, n_particles), dtype=np.float64)
+            else:
+                # Preserve the public SOA shape without paying one full array
+                # per magnetic diagnostic in feature-off simulations.
+                magnetic_array = np.broadcast_to(
+                    np.array(0.0, dtype=np.float64), (n_steps, n_particles)
+                )
+            self._arrays[field_name] = magnetic_array
         self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
 
         for field_name in self._PARTICLE_CONST_FIELDS:
@@ -930,7 +1152,16 @@ class TrajectoryBuilder:
 
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
-        for field_name in self._KINEMATIC_FIELDS:
+        if not self._magnetic_arrays_allocated and any(
+            field_name in state for field_name in self._MAGNETIC_KINEMATIC_FIELDS
+        ):
+            for field_name in self._MAGNETIC_KINEMATIC_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles), dtype=np.float64
+                )
+            self._magnetic_arrays_allocated = True
+
+        for field_name in self._KINEMATIC_FIELDS + self._MAGNETIC_KINEMATIC_FIELDS:
             if field_name in state:
                 self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
@@ -1009,6 +1240,12 @@ class TrajectoryBuilder:
             beta_avg_y=self._arrays["beta_avg_y"][:s],
             beta_avg_z=self._arrays["beta_avg_z"][:s],
             beta_samples=self._arrays["beta_samples"][:s],
+            spin_x=self._arrays["spin_x"][:s],
+            spin_y=self._arrays["spin_y"][:s],
+            spin_z=self._arrays["spin_z"][:s],
+            local_magnetic_field_x_t=self._arrays["local_magnetic_field_x_t"][:s],
+            local_magnetic_field_y_t=self._arrays["local_magnetic_field_y_t"][:s],
+            local_magnetic_field_z_t=self._arrays["local_magnetic_field_z_t"][:s],
             dead=self._arrays["dead"][:s],
             q=self._arrays["q"],
             q_species=self._arrays["q_species"],
@@ -1018,6 +1255,12 @@ class TrajectoryBuilder:
             m=self._arrays["m"],
             m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
+            magnetic_moment_j_per_t=self._arrays["magnetic_moment_j_per_t"],
+            spin_quantum_number=self._arrays["spin_quantum_number"],
+            gyromagnetic_ratio_rad_s_t=self._arrays["gyromagnetic_ratio_rad_s_t"],
+            magnetic_dipole_active=self._arrays["magnetic_dipole_active"],
+            spin_precession_active=self._arrays["spin_precession_active"],
+            stern_gerlach_active=self._arrays["stern_gerlach_active"],
             halted_early=self._halted_early[:s],
             halt_step=self._halt_step_arr[:s],
             halt_reason=self._halt_reason,
@@ -1053,6 +1296,12 @@ class TrajectoryBuilder:
             beta_avg_y=self._arrays["beta_avg_y"],
             beta_avg_z=self._arrays["beta_avg_z"],
             beta_samples=self._arrays["beta_samples"],
+            spin_x=self._arrays["spin_x"],
+            spin_y=self._arrays["spin_y"],
+            spin_z=self._arrays["spin_z"],
+            local_magnetic_field_x_t=self._arrays["local_magnetic_field_x_t"],
+            local_magnetic_field_y_t=self._arrays["local_magnetic_field_y_t"],
+            local_magnetic_field_z_t=self._arrays["local_magnetic_field_z_t"],
             dead=self._arrays["dead"],
             q=self._arrays["q"],
             q_species=self._arrays["q_species"],
@@ -1062,6 +1311,12 @@ class TrajectoryBuilder:
             m=self._arrays["m"],
             m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
+            magnetic_moment_j_per_t=self._arrays["magnetic_moment_j_per_t"],
+            spin_quantum_number=self._arrays["spin_quantum_number"],
+            gyromagnetic_ratio_rad_s_t=self._arrays["gyromagnetic_ratio_rad_s_t"],
+            magnetic_dipole_active=self._arrays["magnetic_dipole_active"],
+            spin_precession_active=self._arrays["spin_precession_active"],
+            stern_gerlach_active=self._arrays["stern_gerlach_active"],
             halted_early=self._halted_early,
             halt_step=self._halt_step_arr,
             halt_reason=self._halt_reason,
@@ -1088,4 +1343,6 @@ __all__ = [
     "TrajectoryBuilder",
     "Occluder",
     "BeamlineGeometryConfig",
+    "MagneticDipoleConfig",
+    "MagneticDipoleParticleConfig",
 ]
