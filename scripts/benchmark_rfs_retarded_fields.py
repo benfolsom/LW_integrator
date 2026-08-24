@@ -205,13 +205,26 @@ def _sha256_arrays(arrays: Sequence[np.ndarray]) -> str:
     return digest.hexdigest()
 
 
+def _length_metres(result: Any, stem: str) -> np.ndarray:
+    metres_name = f"{stem}_m"
+    millimetres_name = f"{stem}_mm"
+    if hasattr(result, metres_name):
+        return np.asarray(getattr(result, metres_name), dtype=float)
+    if hasattr(result, millimetres_name):
+        return np.asarray(getattr(result, millimetres_name), dtype=float) * 1.0e-3
+    raise AttributeError(
+        f"retarded-field result provides neither {metres_name} nor "
+        f"{millimetres_name}"
+    )
+
+
 def _capture_field_payload(results: Sequence[Any]) -> dict[str, Any]:
     tensors = np.stack([np.asarray(result.field_tensor) for result in results])
     times = np.stack([np.asarray(result.retarded_time_ns) for result in results])
     residuals = np.stack(
-        [np.asarray(result.light_cone_residual_m) for result in results]
+        [_length_metres(result, "light_cone_residual") for result in results]
     )
-    separations = np.stack([np.asarray(result.separation_m) for result in results])
+    separations = np.stack([_length_metres(result, "separation") for result in results])
     valid = np.stack([np.asarray(result.valid_sources) for result in results])
     checksum_arrays = (tensors, times, residuals, separations, valid.astype(float))
     return {
@@ -231,7 +244,9 @@ def _capture_gradient_payload(results: Sequence[Any]) -> dict[str, Any]:
     stencil_times = np.stack(
         [np.asarray(result.stencil_retarded_time_ns) for result in results]
     )
-    steps = np.asarray([result.stencil_step_m for result in results])
+    steps = np.asarray(
+        [float(_length_metres(result, "stencil_step")) for result in results]
+    )
     return {
         "center": center_payload,
         "partial_f": partial_f.tolist(),
@@ -282,11 +297,7 @@ def compare_reports(
 
     current_payload = current["parity"]
     reference_payload = reference["parity"]
-    return {
-        "field_tensor": _difference_metrics(
-            current_payload["field"]["field_tensor"],
-            reference_payload["field"]["field_tensor"],
-        ),
+    comparison: dict[str, Any] = {
         "field_retarded_time_ns": _difference_metrics(
             current_payload["field"]["retarded_time_ns"],
             reference_payload["field"]["retarded_time_ns"],
@@ -295,14 +306,89 @@ def compare_reports(
             current_payload["field"]["light_cone_residual_m"],
             reference_payload["field"]["light_cone_residual_m"],
         ),
-        "gradient_partial_f": _difference_metrics(
-            current_payload["gradient"]["partial_f"],
-            reference_payload["gradient"]["partial_f"],
+        "field_separation_m": _difference_metrics(
+            current_payload["field"]["separation_m"],
+            reference_payload["field"]["separation_m"],
         ),
         "gradient_stencil_retarded_time_ns": _difference_metrics(
             current_payload["gradient"]["stencil_retarded_time_ns"],
             reference_payload["gradient"]["stencil_retarded_time_ns"],
         ),
+        "gradient_stencil_step_m": _difference_metrics(
+            current_payload["gradient"]["stencil_step_m"],
+            reference_payload["gradient"]["stencil_step_m"],
+        ),
+    }
+    if current["unit_system"] == reference["unit_system"]:
+        comparison.update(
+            {
+                "field_tensor": _difference_metrics(
+                    current_payload["field"]["field_tensor"],
+                    reference_payload["field"]["field_tensor"],
+                ),
+                "gradient_partial_f": _difference_metrics(
+                    current_payload["gradient"]["partial_f"],
+                    reference_payload["gradient"]["partial_f"],
+                ),
+            }
+        )
+    else:
+        comparison["raw_tensor_comparison"] = {
+            "skipped": True,
+            "reason": (
+                "raw field tensors and derivatives use different unit systems; "
+                "use normalized light-cone and integration-trajectory parity"
+            ),
+        }
+    return comparison
+
+
+def _valid_field_root_count(results: Sequence[Any]) -> int:
+    return sum(int(np.count_nonzero(result.valid_sources)) for result in results)
+
+
+def _valid_gradient_root_count(results: Sequence[Any]) -> int:
+    center_roots = sum(
+        int(np.count_nonzero(result.field.valid_sources)) for result in results
+    )
+    stencil_roots = sum(
+        int(np.count_nonzero(np.isfinite(result.stencil_retarded_time_ns)))
+        for result in results
+    )
+    return center_roots + stencil_roots
+
+
+def _count_interpolated_samples(
+    operation: Callable[[], Sequence[Any]],
+    root_counter: Callable[[Sequence[Any]], int],
+) -> dict[str, float | int] | None:
+    sample_function = getattr(retarded_fields, "_quintic_worldline_sample", None)
+    if sample_function is None:
+        return None
+    sample_count = 0
+
+    def counted_sample(*args: Any, **kwargs: Any) -> Any:
+        nonlocal sample_count
+        sample_count += 1
+        return sample_function(*args, **kwargs)
+
+    setattr(retarded_fields, "_quintic_worldline_sample", counted_sample)
+    try:
+        results = operation()
+    finally:
+        setattr(retarded_fields, "_quintic_worldline_sample", sample_function)
+    root_count = root_counter(results)
+    if root_count == 0:
+        mean_samples = 0.0
+        mean_iterations = 0.0
+    else:
+        mean_samples = sample_count / root_count
+        mean_iterations = (sample_count - root_count) / root_count
+    return {
+        "retarded_roots": root_count,
+        "interpolated_samples": sample_count,
+        "mean_samples_per_root": mean_samples,
+        "mean_iterations_per_root": mean_iterations,
     }
 
 
@@ -328,6 +414,12 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     gradient_results, gradient_timing = _time_workload(
         gradient_workload, warmups=args.warmups, repeats=args.repeats
     )
+    sample_counts = {
+        "field": _count_interpolated_samples(field_workload, _valid_field_root_count),
+        "gradient": _count_interpolated_samples(
+            gradient_workload, _valid_gradient_root_count
+        ),
+    }
     report: dict[str, Any] = {
         "schema_version": 1,
         "unit_system": unit_system,
@@ -341,6 +433,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         },
         "hardware": _hardware_metadata(),
         "timing": {"field": field_timing, "gradient": gradient_timing},
+        "root_solver": sample_counts,
         "maximum_resident_memory_mib": _maximum_resident_mebibytes(),
         "parity": {
             "field": _capture_field_payload(field_results),
