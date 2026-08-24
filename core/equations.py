@@ -366,6 +366,7 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "magnetic_dipole_active",
         "spin_precession_active",
         "stern_gerlach_active",
+        "dipole_source_canonical_ready",
     )
     for name in magnetic_fields:
         if name in current_state:
@@ -1830,6 +1831,12 @@ def retarded_equations_of_motion(
             and magnetic_dipole is not None
             and magnetic_dipole.stern_gerlach_model == "rfs_full_g"
         )
+        dipole_source_selected = bool(
+            magnetic_dipole is not None
+            and magnetic_dipole.enabled
+            and magnetic_dipole.source.active
+        )
+        dipole_source_interaction = None
 
         # Self-consistency loop: iterate until gamma converges
         converged = False
@@ -2064,6 +2071,7 @@ def retarded_equations_of_motion(
             stern_gerlach_impulse_applied = False
             rfs_field_tensor = np.zeros((4, 4), dtype=float)
             rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
+            dipole_source_interaction = None
 
             # ================================================================
             # STEP 4: Determine if external forces should be applied
@@ -2664,7 +2672,7 @@ def retarded_equations_of_motion(
                     stern_gerlach_impulse_applied = bool(np.any(sg_impulse))
 
             # ================================================================
-            # STEP 4d: Coupled RFS response to prescribed and charge fields
+            # STEP 4d: Ordinary retarded dipole source and coupled RFS response
             # ================================================================
             dipole_active = bool(
                 current_state.get("magnetic_dipole_active", np.zeros(num_particles))[
@@ -2681,6 +2689,114 @@ def retarded_equations_of_motion(
                     particle_idx
                 ]
             )
+            if (
+                dipole_source_selected
+                and sim_type == SimulationType.BUNCH_TO_BUNCH
+                and len(trajectory_ext) > 0
+            ):
+                from .dipole_source_interactions import (
+                    evaluate_retarded_dipole_source_interaction_native,
+                )
+                from .retarded_fields import ObserverEvent, RetardedHistoryError
+
+                if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                    dipole_source_position = (
+                        float(working_x),
+                        float(working_y),
+                        float(working_z),
+                    )
+                else:
+                    dipole_source_position = (
+                        float(current_state["x"][particle_idx]),
+                        float(current_state["y"][particle_idx]),
+                        float(current_state["z"][particle_idx]),
+                    )
+                try:
+                    dipole_source_interaction = (
+                        evaluate_retarded_dipole_source_interaction_native(
+                            (
+                                traj_ext_soa
+                                if traj_ext_soa is not None
+                                else trajectory_ext
+                            ),
+                            ObserverEvent(
+                                time_ns=float(current_state["t"][particle_idx]),
+                                position_mm=dipole_source_position,
+                            ),
+                            four_velocity_mm_ns=_four_velocity_native(
+                                np.asarray(particle_beta, dtype=float)
+                            ),
+                            observer_charge_native=float(force_particle_charge),
+                            proper_time_step_ns=float(h),
+                            relative_step=(
+                                magnetic_dipole.source.relative_stencil_step
+                            ),
+                            minimum_step_mm=(
+                                magnetic_dipole.source.minimum_stencil_step_mm
+                            ),
+                            minimum_separation_mm=(
+                                magnetic_dipole.source.minimum_separation_mm
+                            ),
+                            root_tolerance_mm=(
+                                magnetic_dipole.source.root_tolerance_mm
+                            ),
+                            max_root_iterations=(
+                                magnetic_dipole.source.max_root_iterations
+                            ),
+                        )
+                    )
+                except RetardedHistoryError:
+                    # As for the exact charge-field derivative, COLD_START
+                    # contributes nothing until every nested stencil event has
+                    # an explicitly bracketed source light cone.
+                    dipole_source_interaction = None
+
+                if dipole_source_interaction is not None:
+                    dipole_canonical_impulse = (
+                        dipole_source_interaction.canonical_four_impulse
+                    )
+                    accumulated_momentum_t += float(dipole_canonical_impulse[0])
+                    accumulated_momentum_x += float(dipole_canonical_impulse[1])
+                    accumulated_momentum_y += float(dipole_canonical_impulse[2])
+                    accumulated_momentum_z += float(dipole_canonical_impulse[3])
+
+                    dipole_potential_momentum = (
+                        dipole_source_interaction.canonical_potential_momentum
+                    )
+                    dipole_canonical_ready = bool(
+                        current_state.get(
+                            "dipole_source_canonical_ready",
+                            np.zeros(num_particles, dtype=bool),
+                        )[particle_idx]
+                    )
+                    if not dipole_canonical_ready:
+                        # Public initial states specify mechanical momentum.  A
+                        # COLD_START dipole field becomes available only after
+                        # an explicit light cone can be bracketed.  Rebase the
+                        # state once from p to P=p+qA/c when that happens so the
+                        # newly available vector potential cannot create a
+                        # spurious mechanical-momentum jump.
+                        accumulated_momentum_t += float(dipole_potential_momentum[0])
+                        accumulated_momentum_x += float(dipole_potential_momentum[1])
+                        accumulated_momentum_y += float(dipole_potential_momentum[2])
+                        accumulated_momentum_z += float(dipole_potential_momentum[3])
+                    result["dipole_source_canonical_ready"][particle_idx] = True
+                    accumulated_field_x += float(
+                        dipole_potential_momentum[1] / particle_mass
+                    )
+                    accumulated_field_y += float(
+                        dipole_potential_momentum[2] / particle_mass
+                    )
+                    accumulated_field_z += float(
+                        dipole_potential_momentum[3] / particle_mass
+                    )
+                    # accumulated_scalar_potential stores raw phi; its q/c
+                    # conversion remains centralized below with the charge
+                    # source potential.
+                    accumulated_scalar_potential += float(
+                        dipole_source_interaction.field.four_potential[0]
+                    )
+
             if rfs_selected and dipole_active and (precession_active or sg_active):
                 from .magnetic_dipole import boost_rest_polarization
                 from .retarded_fields import (
@@ -2696,6 +2812,10 @@ def retarded_equations_of_motion(
                 )
                 rfs_field_tensor += external_tensor
                 rfs_partial_f += external_partial_f
+
+                if dipole_source_interaction is not None:
+                    rfs_field_tensor += dipole_source_interaction.field.field_tensor
+                    rfs_partial_f += dipole_source_interaction.field.partial_f
 
                 if (
                     sim_type == SimulationType.BUNCH_TO_BUNCH

@@ -88,6 +88,7 @@ def _initialize_magnetic_dipole_state(
         "magnetic_dipole_active",
         "spin_precession_active",
         "stern_gerlach_active",
+        "dipole_source_canonical_ready",
     )
     if not config.enabled:
         for key in magnetic_state_keys:
@@ -190,6 +191,10 @@ def _initialize_magnetic_dipole_state(
     )
     state["stern_gerlach_active"] = np.full(
         particle_count, float(config.stern_gerlach_force_enabled), dtype=float
+    )
+    state["dipole_source_canonical_ready"] = np.zeros(
+        particle_count,
+        dtype=bool,
     )
 
 
@@ -2252,6 +2257,10 @@ def retarded_integrator(
             or magnetic_dipole.stern_gerlach_force_enabled
         )
     )
+    dipole_source_active = bool(
+        magnetic_dipole.enabled and magnetic_dipole.source.active
+    )
+    exact_magnetic_active = bool(rfs_active or dipole_source_active)
 
     def _has_particles(state: ParticleState | None) -> bool:
         return state is not None and np.asarray(state.get("x", np.zeros(0))).size > 0
@@ -2273,18 +2282,26 @@ def retarded_integrator(
         (_has_particles(init_rider) and _has_source_charge(init_driver))
         or (_has_particles(init_driver) and _has_source_charge(init_rider))
     )
-    if rfs_active:
+    if exact_magnetic_active:
         if sim_type != SimulationType.BUNCH_TO_BUNCH:
             raise NotImplementedError(
-                "rfs_minimal_2021 currently supports BUNCH_TO_BUNCH point-charge "
-                "sources. Prescribed-field-only and image-source RFS runs will be "
-                "enabled after their source histories are validated."
+                "Exact RFS/dipole-source dynamics currently support only "
+                "BUNCH_TO_BUNCH point sources. Prescribed-field-only and "
+                "image-source runs will be enabled after their source histories "
+                "are validated."
             )
-        if rfs_has_charge_sources and startup_mode is not StartupMode.COLD_START:
+        if (
+            rfs_has_charge_sources or dipole_source_active
+        ) and startup_mode is not StartupMode.COLD_START:
             raise ValueError(
-                "rfs_minimal_2021 requires COLD_START so its exact light-cone "
-                "solver can use explicit source history; "
+                "Exact RFS/dipole-source light-cone evaluation requires "
+                "COLD_START with explicit source history; "
                 "APPROXIMATE_BACK_HISTORY is not a full RFS derivative."
+            )
+        if dipole_source_active and magnetic_dipole.spin_model != "rfs_minimal_2021":
+            raise ValueError(
+                "covariant_retarded_point requires the rfs_minimal_2021 response "
+                "model so charge, moment, and spin consume one total field"
             )
         normalized_radiation_mode = str(radiation_reaction_mode).strip().lower()
         if normalized_radiation_mode not in {
@@ -2302,24 +2319,27 @@ def retarded_integrator(
             )
         if _space_charge_enabled(space_charge):
             raise NotImplementedError(
-                "rfs_minimal_2021 does not yet include same-bunch charge fields; "
-                "disable space charge for the first point-particle validation."
+                "Exact RFS/dipole-source dynamics do not yet include same-bunch "
+                "fields; disable space charge for the first point-particle "
+                "validation."
             )
         if (
-            rfs_has_charge_sources
+            (rfs_has_charge_sources or dipole_source_active)
             and beamline_geometry is not None
             and beamline_geometry.enabled
         ):
             raise NotImplementedError(
-                "rfs_minimal_2021 finite-difference stencils do not yet support "
-                "beamline visibility boundaries."
+                "Exact RFS/dipole-source finite-difference stencils do not yet "
+                "support beamline visibility boundaries."
             )
         if adaptive_timestep is not None and adaptive_timestep.enabled:
             raise NotImplementedError(
-                "rfs_minimal_2021 exact source histories are not yet validated "
-                "with adaptive substeps."
+                "Exact RFS/dipole-source histories are not yet validated with "
+                "adaptive substeps."
             )
-        if rfs_has_charge_sources and macroparticle_smearing.enabled:
+        if (
+            rfs_has_charge_sources or dipole_source_active
+        ) and macroparticle_smearing.enabled:
             smearing_widths = (
                 macroparticle_smearing.position_sigma_mm,
                 macroparticle_smearing.longitudinal_sigma_mm,
@@ -2327,8 +2347,8 @@ def retarded_integrator(
             )
             if any(value is None or float(value) != 0.0 for value in smearing_widths):
                 raise NotImplementedError(
-                    "rfs_minimal_2021 currently requires zero-width point-charge "
-                    "sources; each displaced subcharge will need its own light-cone "
+                    "Exact RFS/dipole-source dynamics require zero-width point "
+                    "sources; each displaced source would need its own light-cone "
                     "solve before nonzero smearing is supported."
                 )
         for role, particle_config in (
@@ -2340,6 +2360,39 @@ def retarded_integrator(
                     f"RFS {role} polarization must be 0 or 1 in the first coupled "
                     "model. Partial polarization requires a weighted ensemble of "
                     "unit-spin orientations, not a shrunken individual spin."
+                )
+        if dipole_source_active:
+            for role, state in (("rider", init_rider), ("driver", init_driver)):
+                if not _has_particles(state):
+                    continue
+                particle_count = int(np.asarray(state["x"]).size)
+                if particle_count != 1:
+                    raise NotImplementedError(
+                        "covariant_retarded_point initially supports exactly one "
+                        f"physical particle per nonempty bunch; {role} has "
+                        f"{particle_count}"
+                    )
+                macro_population = np.asarray(
+                    state.get("macro_population", np.ones(particle_count)),
+                    dtype=float,
+                )
+                if macro_population.shape != (particle_count,) or not np.array_equal(
+                    macro_population,
+                    np.ones(particle_count),
+                ):
+                    raise ValueError(
+                        "covariant_retarded_point requires macro_population=1 for "
+                        f"every {role} particle; coherent/incoherent moment scaling "
+                        "has not been selected"
+                    )
+            if driver_train.enabled:
+                raise NotImplementedError(
+                    "covariant_retarded_point does not yet support driver trains"
+                )
+            if cavity_exit.enabled:
+                raise NotImplementedError(
+                    "covariant_retarded_point does not yet support cavity-exit "
+                    "synthetic coasting tails"
                 )
     # Magnetic metadata is integration-local state. Copy caller-owned inputs so
     # an enabled run cannot leave active spin arrays behind for a later disabled
