@@ -557,15 +557,26 @@ def _advance_rfs_rest_spin(
     magnetic_moment_native: float,
     spin_quantum_number: float,
     proper_time_step_ns: float,
+    applied_radiation_reaction_force_native: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Advance normalized RFS four-spin and return rest-frame polarization."""
+    """Advance normalized RFS four-spin and return rest-frame polarization.
+
+    When supplied, ``applied_radiation_reaction_force_native`` is the Medina
+    lab three-force that the momentum update actually received after any
+    numerical impulse cap.  The same step-averaged force is converted at the
+    start and midpoint four-velocity/spin states so both Runge--Kutta stages
+    include the matching Fermi--Walker correction.
+    """
 
     from .magnetic_dipole import (
         HBAR_NATIVE,
         boost_rest_polarization,
         rest_polarization_from_four_vector,
     )
-    from .rfs import rfs_spin_rhs_native
+    from .rfs import (
+        rfs_charge_radiation_reaction_terms_native,
+        rfs_spin_rhs_native,
+    )
 
     rest_spin = np.asarray(rest_spin, dtype=float)
     polarization = float(np.linalg.norm(rest_spin))
@@ -574,6 +585,17 @@ def _advance_rfs_rest_spin(
     invariant_spin = float(spin_quantum_number) * HBAR_NATIVE
     if invariant_spin <= 0.0:
         return rest_spin.copy()
+    applied_rr_force = (
+        np.zeros(3, dtype=float)
+        if applied_radiation_reaction_force_native is None
+        else np.asarray(applied_radiation_reaction_force_native, dtype=float)
+    )
+    if applied_rr_force.shape != (3,) or not np.all(np.isfinite(applied_rr_force)):
+        raise ValueError(
+            "applied_radiation_reaction_force_native must contain three finite "
+            "components"
+        )
+    radiation_reaction_active = bool(np.any(applied_rr_force != 0.0))
     u_start = _four_velocity_native(beta_start)
     u_end = _four_velocity_native(beta_end)
     beta_midpoint = 0.5 * (beta_start + beta_end)
@@ -593,6 +615,13 @@ def _advance_rfs_rest_spin(
         magnetic_moment_native=magnetic_moment_native,
         invariant_spin_native=invariant_spin,
     )
+    if radiation_reaction_active:
+        derivative_start += rfs_charge_radiation_reaction_terms_native(
+            four_velocity_mm_ns=u_start,
+            spin_four_vector=spin_start,
+            applied_radiation_reaction_force_native=applied_rr_force,
+            mass_amu=mass_amu,
+        ).spin_rhs_correction
     spin_midpoint = _project_normalized_spin(
         spin_start + 0.5 * delta_tau_ns * derivative_start,
         u_midpoint,
@@ -608,6 +637,13 @@ def _advance_rfs_rest_spin(
         magnetic_moment_native=magnetic_moment_native,
         invariant_spin_native=invariant_spin,
     )
+    if radiation_reaction_active:
+        derivative_midpoint += rfs_charge_radiation_reaction_terms_native(
+            four_velocity_mm_ns=u_midpoint,
+            spin_four_vector=spin_midpoint,
+            applied_radiation_reaction_force_native=applied_rr_force,
+            mass_amu=mass_amu,
+        ).spin_rhs_correction
     spin_end = _project_normalized_spin(
         spin_start + delta_tau_ns * derivative_midpoint,
         u_end,
@@ -1837,11 +1873,19 @@ def retarded_equations_of_motion(
             and magnetic_dipole.source.active
         )
         dipole_source_interaction = None
+        # This is the Medina three-force actually applied during the final
+        # nonlinear trial.  It stays exactly zero for off, neutral, and
+        # derivative-unprimed steps so their RFS spin update is unchanged.
+        applied_medina_force_native = np.zeros(3, dtype=float)
 
         # Self-consistency loop: iterate until gamma converges
         converged = False
         last_mass_shell_error = float("inf")
         for sc_iteration in range(sc_max_iterations):
+            # Only the final self-consistency trial feeds the once-per-step
+            # spin update.  Resetting here prevents an earlier trial's Medina
+            # force from leaking into it.
+            applied_medina_force_native.fill(0.0)
             # Check for cancellation during self-consistency iterations
             if cancel_callback is not None and cancel_callback():
                 raise IntegrationCancelled("Integration cancelled by caller.")
@@ -3475,6 +3519,14 @@ def retarded_equations_of_motion(
                             "by numerical guard"
                         )
                     impulse_vec = np.asarray(medina_impulse, dtype=float)
+                    if derivative_ready:
+                        # Use the same coordinate-time interval that formed
+                        # and capped the applied impulse.  The RFS helper later
+                        # converts this lab three-force separately at its start
+                        # and midpoint four-velocity/spin states.
+                        applied_medina_force_native[:] = impulse_vec / float(
+                            coordinate_dt
+                        )
                     if derivative_ready and float(np.linalg.norm(impulse_vec)) > 0.0:
                         mechanical_px = float(mechanical_px + impulse_vec[0])
                         mechanical_py = float(mechanical_py + impulse_vec[1])
@@ -3891,6 +3943,9 @@ def retarded_equations_of_motion(
                             current_state["spin_quantum_number"][particle_idx]
                         ),
                         proper_time_step_ns=float(h),
+                        applied_radiation_reaction_force_native=(
+                            applied_medina_force_native
+                        ),
                     )
                 else:
                     from .constants import ELEMENTARY_CHARGE

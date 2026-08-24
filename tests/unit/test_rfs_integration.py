@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Any, cast
+
 import numpy as np
 import pytest
 
+import core.equations as equations
+import core.rfs as rfs
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
-from core.external_fields import ExternalFieldConfig, NATIVE_FORCE_UNIT_NEWTON
+from core.external_fields import (
+    ExternalFieldConfig,
+    NATIVE_FORCE_UNIT_NEWTON,
+    electric_field_v_per_m_to_native,
+)
 from core.integration_runner import retarded_integrator
 from core.magnetic_dipole import HBAR_NATIVE, boost_rest_polarization
-from core.rfs import minkowski_dot
+from core.medina_radiation_reaction import MedinaRadiationReactionResult
+from core.rfs import electromagnetic_field_tensor_native, minkowski_dot
 from core.self_consistency import SelfConsistencyConfig
 from core.species import get_species
 from core.types import (
@@ -89,13 +99,15 @@ def _empty_state() -> dict[str, np.ndarray]:
     }
 
 
-def _rfs_config(*, rider_polarization: float = 1.0) -> MagneticDipoleConfig:
+def _rfs_config(
+    *, rider_polarization: float = 1.0, rider_species: str = "neutron"
+) -> MagneticDipoleConfig:
     return MagneticDipoleConfig(
         enabled=True,
         spin_precession_enabled=True,
         stern_gerlach_force_enabled=True,
         rider=MagneticDipoleParticleConfig(
-            species="neutron",
+            species=rider_species,
             rest_spin=(0.0, 0.0, 1.0),
             polarization=rider_polarization,
         ),
@@ -117,7 +129,7 @@ def _run(
     startup_mode: StartupMode = StartupMode.COLD_START,
     radiation_reaction_mode: str = "off",
     external_field: ExternalFieldConfig | None = None,
-):
+) -> Any:
     return retarded_integrator(
         steps=steps,
         h_step=h_step,
@@ -252,16 +264,264 @@ def test_rfs_off_is_an_exact_neutral_baseline() -> None:
             np.testing.assert_array_equal(gradient_state[key], zero_state[key])
 
 
-def test_rfs_rejects_dynamic_radiation_reaction() -> None:
+def test_rfs_rejects_non_medina_dynamic_radiation_reaction() -> None:
     with pytest.raises(
-        NotImplementedError, match="no validated radiation-reaction completion"
+        NotImplementedError, match="only the explicitly named.*medina_lad"
     ):
         _run(
             rider=_particle_state("neutron", position_mm=(0.0, 0.1, 0.0)),
             driver=_particle_state("proton", beta=(0.1, 0.0, 0.0)),
             magnetic_dipole=_rfs_config(),
-            radiation_reaction_mode="medina_lad",
+            radiation_reaction_mode="power_matched_damping",
         )
+
+
+@pytest.mark.parametrize("mode", ("medina", "medina_rr", "lad_medina", "lad-medina"))
+def test_rfs_accepts_canonical_medina_aliases(mode: str) -> None:
+    _run(
+        rider=_particle_state("neutron"),
+        driver=_empty_state(),
+        magnetic_dipole=_rfs_config(),
+        radiation_reaction_mode=mode,
+    )
+
+
+def test_rfs_spin_midpoint_uses_rr_force_at_both_covariant_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_terms = rfs.rfs_charge_radiation_reaction_terms_native
+    recorded_calls: list[dict[str, np.ndarray]] = []
+
+    def recording_terms(**kwargs: Any) -> rfs.RFSRadiationReactionTerms:
+        recorded_calls.append(
+            {
+                "four_velocity_mm_ns": np.asarray(
+                    kwargs["four_velocity_mm_ns"], dtype=float
+                ).copy(),
+                "spin_four_vector": np.asarray(
+                    kwargs["spin_four_vector"], dtype=float
+                ).copy(),
+                "applied_radiation_reaction_force_native": np.asarray(
+                    kwargs["applied_radiation_reaction_force_native"], dtype=float
+                ).copy(),
+            }
+        )
+        return real_terms(**kwargs)
+
+    monkeypatch.setattr(
+        rfs,
+        "rfs_charge_radiation_reaction_terms_native",
+        recording_terms,
+    )
+    rest_spin = np.asarray((0.3, -0.4, 0.5), dtype=float)
+    rest_spin /= np.linalg.norm(rest_spin)
+    beta_start = np.asarray((0.12, -0.04, 0.03), dtype=float)
+    beta_end = np.asarray((0.14, -0.01, 0.02), dtype=float)
+    applied_force = np.asarray((0.8, -0.3, 0.5), dtype=float)
+
+    rest_end = equations._advance_rfs_rest_spin(
+        rest_spin,
+        beta_start=beta_start,
+        beta_end=beta_end,
+        field_tensor=np.zeros((4, 4), dtype=float),
+        partial_f=np.zeros((4, 4, 4), dtype=float),
+        charge_native=0.0,
+        mass_amu=1.7,
+        magnetic_moment_native=0.0,
+        spin_quantum_number=0.5,
+        proper_time_step_ns=2.0e-3,
+        applied_radiation_reaction_force_native=applied_force,
+    )
+
+    assert len(recorded_calls) == 2
+    midpoint_beta = 0.5 * (beta_start + beta_end)
+    np.testing.assert_allclose(
+        recorded_calls[0]["four_velocity_mm_ns"],
+        equations._four_velocity_native(beta_start),
+    )
+    np.testing.assert_allclose(
+        recorded_calls[1]["four_velocity_mm_ns"],
+        equations._four_velocity_native(midpoint_beta),
+    )
+    np.testing.assert_array_equal(
+        recorded_calls[0]["applied_radiation_reaction_force_native"], applied_force
+    )
+    np.testing.assert_array_equal(
+        recorded_calls[1]["applied_radiation_reaction_force_native"], applied_force
+    )
+    for call in recorded_calls:
+        assert minkowski_dot(
+            call["four_velocity_mm_ns"], call["spin_four_vector"]
+        ) == pytest.approx(0.0, abs=2.0e-14)
+        assert minkowski_dot(
+            call["spin_four_vector"], call["spin_four_vector"]
+        ) == pytest.approx(-1.0, rel=2.0e-15)
+
+    spin_end = boost_rest_polarization(rest_end, beta_end)
+    u_end = equations._four_velocity_native(beta_end)
+    assert minkowski_dot(u_end, spin_end) == pytest.approx(0.0, abs=2.0e-14)
+    assert minkowski_dot(spin_end, spin_end) == pytest.approx(-1.0, rel=2.0e-15)
+
+
+def test_zero_rr_force_is_exactly_the_legacy_rfs_spin_step() -> None:
+    rest_spin = np.asarray((0.2, 0.7, -0.3), dtype=float)
+    rest_spin /= np.linalg.norm(rest_spin)
+    common: dict[str, Any] = {
+        "beta_start": np.asarray((0.07, -0.02, 0.03), dtype=float),
+        "beta_end": np.asarray((0.08, -0.015, 0.025), dtype=float),
+        "field_tensor": electromagnetic_field_tensor_native(
+            (0.2, -0.1, 0.3), (0.4, 0.1, -0.2)
+        ),
+        "partial_f": np.zeros((4, 4, 4), dtype=float),
+        "charge_native": 1.2e-5,
+        "mass_amu": 0.9,
+        "magnetic_moment_native": -2.0e-15,
+        "spin_quantum_number": 0.5,
+        "proper_time_step_ns": 1.0e-4,
+    }
+
+    legacy = equations._advance_rfs_rest_spin(rest_spin, **common)
+    explicit_zero = equations._advance_rfs_rest_spin(
+        rest_spin,
+        **common,
+        applied_radiation_reaction_force_native=np.zeros(3, dtype=float),
+    )
+
+    np.testing.assert_array_equal(explicit_zero, legacy)
+
+
+def test_unprimed_rfs_medina_step_is_an_exact_dynamical_no_op() -> None:
+    electron = _particle_state("electron", beta=(0.01, 0.02, 0.0))
+    config = _rfs_config(rider_species="electron")
+    external_field = ExternalFieldConfig(
+        electric_field_native=(electric_field_v_per_m_to_native(1.0e4), 0.0, 0.0)
+    )
+
+    off_trajectory, _, off_soa, _, *_ = _run(
+        rider=electron,
+        driver=_empty_state(),
+        magnetic_dipole=config,
+        steps=2,
+        h_step=1.0e-6,
+        radiation_reaction_mode="off",
+        external_field=external_field,
+    )
+    medina_trajectory, _, medina_soa, _, *_ = _run(
+        rider=electron,
+        driver=_empty_state(),
+        magnetic_dipole=config,
+        steps=2,
+        h_step=1.0e-6,
+        radiation_reaction_mode="medina_lad",
+        external_field=external_field,
+    )
+
+    assert off_soa is not None
+    assert medina_soa is not None
+    assert not np.any(medina_soa.medina_force_derivative_ready)
+    assert not np.any(medina_soa.medina_impulse_capped)
+    for key in (
+        "x",
+        "y",
+        "z",
+        "t",
+        "Px",
+        "Py",
+        "Pz",
+        "Pt",
+        "gamma",
+        "bx",
+        "by",
+        "bz",
+        "spin_x",
+        "spin_y",
+        "spin_z",
+    ):
+        np.testing.assert_array_equal(
+            off_trajectory[-1][key], medina_trajectory[-1][key]
+        )
+
+
+def test_capped_medina_force_drives_constraint_compatible_rfs_spin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_compute = equations.compute_medina_radiation_reaction
+    real_advance = equations._advance_rfs_rest_spin
+    uncapped_forces: list[np.ndarray] = []
+    spin_forces: list[np.ndarray] = []
+
+    def amplified_medina(**kwargs: Any) -> MedinaRadiationReactionResult:
+        result = real_compute(**kwargs)
+        external_force = np.asarray(kwargs["external_force"], dtype=float)
+        coordinate_dt = float(kwargs["coordinate_dt"])
+        force = 2.0 * external_force
+        impulse = force * coordinate_dt
+        uncapped_forces.append(force.copy())
+        return replace(
+            result,
+            radiation_reaction_force=(
+                float(force[0]),
+                float(force[1]),
+                float(force[2]),
+            ),
+            radiation_reaction_impulse=(
+                float(impulse[0]),
+                float(impulse[1]),
+                float(impulse[2]),
+            ),
+        )
+
+    def recording_advance(*args: Any, **kwargs: Any) -> np.ndarray:
+        spin_forces.append(
+            np.asarray(
+                kwargs["applied_radiation_reaction_force_native"], dtype=float
+            ).copy()
+        )
+        return cast(np.ndarray, real_advance(*args, **kwargs))
+
+    monkeypatch.setattr(
+        equations, "compute_medina_radiation_reaction", amplified_medina
+    )
+    monkeypatch.setattr(equations, "_advance_rfs_rest_spin", recording_advance)
+    trajectory, _, soa, _, *_ = _run(
+        rider=_particle_state("electron", beta=(0.01, 0.02, 0.0)),
+        driver=_empty_state(),
+        magnetic_dipole=_rfs_config(rider_species="electron"),
+        steps=3,
+        h_step=1.0e-6,
+        radiation_reaction_mode="medina_lad",
+        external_field=ExternalFieldConfig(
+            electric_field_native=(
+                electric_field_v_per_m_to_native(1.0e4),
+                0.0,
+                0.0,
+            )
+        ),
+    )
+
+    assert soa is not None
+    assert len(uncapped_forces) == 2
+    assert len(spin_forces) == 2
+    np.testing.assert_array_equal(spin_forces[0], 0.0)
+    # The production guard caps the two-times-external impulse to 25% of the
+    # external impulse. Spin must follow that applied force, not the amplified
+    # uncapped kernel result.
+    np.testing.assert_allclose(spin_forces[1], 0.125 * uncapped_forces[1])
+    assert bool(soa.medina_force_derivative_ready[-1, 0])
+    assert bool(soa.medina_impulse_capped[-1, 0])
+
+    final_state = trajectory[-1]
+    beta_end = np.asarray(
+        [final_state[key][0] for key in ("bx", "by", "bz")], dtype=float
+    )
+    gamma_end = float(final_state["gamma"][0])
+    spin_end = boost_rest_polarization(
+        [final_state[key][0] for key in ("spin_x", "spin_y", "spin_z")],
+        beta_end,
+    )
+    u_end = C_MMNS * np.concatenate(([gamma_end], gamma_end * beta_end))
+    assert minkowski_dot(u_end, spin_end) / C_MMNS == pytest.approx(0.0, abs=2.0e-14)
+    assert minkowski_dot(spin_end, spin_end) == pytest.approx(-1.0, rel=2.0e-14)
 
 
 def test_rfs_rejects_approximate_charge_source_history() -> None:

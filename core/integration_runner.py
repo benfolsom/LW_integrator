@@ -17,6 +17,7 @@ from .constants import C_MMNS, ELEMENTARY_CHARGE
 from .equations import (
     GammaBlowupError,
     SelfConsistencyNonConvergenceError,
+    _canonicalize_radiation_reaction_mode,
     retarded_equations_of_motion,
 )
 from .images import generate_conducting_image, generate_switching_image
@@ -2203,7 +2204,10 @@ def retarded_integrator(
         ``power_matched_damping`` removes the radiated energy from mechanical
         momentum after the normal LW update. ``medina_lad`` applies the
         experimental Medina/LAD candidate force to mechanical momentum before
-        recomposing canonical momentum.
+        recomposing canonical momentum. With ``rfs_minimal_2021``, this is a
+        charge-radiation-only hybrid: the applied charge self-force also adds
+        its constraint-compatible Fermi--Walker spin term, while intrinsic
+        dipole self-recoil remains outside the model.
     pseudo_grid:
         Experimental pseudo-grid configuration surface. When enabled for
         ``BUNCH_TO_BUNCH`` runs, the integrator builds per-step active/passive
@@ -2303,19 +2307,19 @@ def retarded_integrator(
                 "covariant_retarded_point requires the rfs_minimal_2021 response "
                 "model so charge, moment, and spin consume one total field"
             )
-        normalized_radiation_mode = str(radiation_reaction_mode).strip().lower()
+        normalized_radiation_mode = _canonicalize_radiation_reaction_mode(
+            radiation_reaction_mode
+        )
         if normalized_radiation_mode not in {
             "off",
-            "none",
-            "disabled",
             "diagnostic_only",
-            "diagnostic",
-            "diagnostics",
+            "medina_lad",
         }:
             raise NotImplementedError(
-                "rfs_minimal_2021 has no validated radiation-reaction completion. "
-                "Use radiation_reaction_mode='off' for dynamics or "
-                "'diagnostic_only' for read-only radiation diagnostics."
+                "rfs_minimal_2021 supports only the explicitly named "
+                "radiation_reaction_mode='medina_lad' charge-radiation hybrid. "
+                "Use 'off' or 'diagnostic_only' otherwise; q*mu interference "
+                "and mu**2 intrinsic-dipole self-recoil remain outside the model."
             )
         if _space_charge_enabled(space_charge):
             raise NotImplementedError(
