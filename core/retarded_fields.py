@@ -28,6 +28,10 @@ from typing import Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .prepared_history_cache import (
+    AppendAwarePreparedHistoryCache,
+    history_storage_capacity,
+)
 from .rfs import electromagnetic_field_tensor_native
 from .types import IndexedTrajectoryArrays, Trajectory, TrajectoryArrays
 
@@ -100,7 +104,7 @@ class RetardedChargeFieldGradientResult:
     )
 
 
-@dataclass(frozen=True)
+@dataclass
 class _HistoryArrays:
     time_ns: np.ndarray
     position_mm: np.ndarray
@@ -108,13 +112,18 @@ class _HistoryArrays:
     beta_prime_per_mm: np.ndarray
     charge_native: np.ndarray
     dead: np.ndarray
+    _time_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _position_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _beta_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _beta_prime_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _dead_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
 
     @property
     def n_sources(self) -> int:
         return int(self.time_ns.shape[1])
 
 
-@dataclass(frozen=True)
+@dataclass
 class _PreparedSourceHistory:
     """One alive source prefix with reusable quintic segment coefficients."""
 
@@ -126,6 +135,8 @@ class _PreparedSourceHistory:
     segment_duration_ns: np.ndarray
     position_coefficients_mm: np.ndarray
     ended_by_loss: bool
+    _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _coefficient_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -134,6 +145,11 @@ class _PreparedHistory:
 
     arrays: _HistoryArrays
     sources: dict[int, _PreparedSourceHistory]
+
+
+_CHARGE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
+    TrajectoryHistory, _PreparedHistory
+] = AppendAwarePreparedHistoryCache(max_entries=16)
 
 
 @dataclass(frozen=True)
@@ -259,6 +275,168 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
     )
 
 
+def _reserve_history_arrays(
+    arrays: _HistoryArrays,
+    capacity: int | None,
+) -> _HistoryArrays:
+    """Move visible rows into fixed-capacity append buffers when requested."""
+
+    visible_stop = int(arrays.time_ns.shape[0])
+    if capacity is None:
+        return arrays
+    reserved = max(visible_stop, int(capacity))
+    n_sources = arrays.n_sources
+    time_buffer = np.empty((reserved, n_sources), dtype=float)
+    position_buffer = np.empty((reserved, n_sources, 3), dtype=float)
+    beta_buffer = np.empty((reserved, n_sources, 3), dtype=float)
+    beta_prime_buffer = np.empty((reserved, n_sources, 3), dtype=float)
+    dead_buffer = np.empty((reserved, n_sources), dtype=bool)
+    time_buffer[:visible_stop] = arrays.time_ns
+    position_buffer[:visible_stop] = arrays.position_mm
+    beta_buffer[:visible_stop] = arrays.beta
+    beta_prime_buffer[:visible_stop] = arrays.beta_prime_per_mm
+    dead_buffer[:visible_stop] = arrays.dead
+    arrays.time_ns = time_buffer[:visible_stop]
+    arrays.position_mm = position_buffer[:visible_stop]
+    arrays.beta = beta_buffer[:visible_stop]
+    arrays.beta_prime_per_mm = beta_prime_buffer[:visible_stop]
+    arrays.dead = dead_buffer[:visible_stop]
+    arrays.charge_native = np.array(arrays.charge_native, dtype=float, copy=True)
+    arrays._time_buffer = time_buffer
+    arrays._position_buffer = position_buffer
+    arrays._beta_buffer = beta_buffer
+    arrays._beta_prime_buffer = beta_prime_buffer
+    arrays._dead_buffer = dead_buffer
+    return arrays
+
+
+def _history_matrix_slice(
+    history: TrajectoryHistory,
+    field_name: str,
+    start_step: int,
+) -> np.ndarray:
+    """Extract only a newly visible tail from one history field."""
+
+    start = int(start_step)
+    if isinstance(history, IndexedTrajectoryArrays):
+        global_start = int(history.start_step) + start
+        values = np.asarray(getattr(history.base, field_name), dtype=float)[
+            global_start : history.base.n_steps
+        ]
+        return np.asarray(values[:, history.particle_indices], dtype=float)
+    if isinstance(history, TrajectoryArrays):
+        return np.asarray(getattr(history, field_name), dtype=float)[start:]
+    return _legacy_matrix(history[start:], field_name)
+
+
+def _history_dead_slice(
+    history: TrajectoryHistory,
+    start_step: int,
+    shape: tuple[int, int],
+) -> np.ndarray:
+    start = int(start_step)
+    if isinstance(history, IndexedTrajectoryArrays):
+        global_start = int(history.start_step) + start
+        dead = np.asarray(history.base.dead, dtype=bool)[
+            global_start : history.base.n_steps
+        ]
+        return np.asarray(dead[:, history.particle_indices], dtype=bool)
+    if isinstance(history, TrajectoryArrays):
+        return np.asarray(history.dead, dtype=bool)[start:]
+    rows = [
+        np.asarray(
+            state.get("_dead_particles", np.zeros(shape[1], dtype=bool)),
+            dtype=bool,
+        )
+        for state in history[start:]
+    ]
+    return np.stack(rows, axis=0) if rows else np.zeros(shape, dtype=bool)
+
+
+def _extract_history_tail(
+    history: TrajectoryHistory,
+    start_step: int,
+) -> _HistoryArrays:
+    """Validate and extract only rows at or after ``start_step``."""
+
+    time_ns = _history_matrix_slice(history, "t", start_step)
+    x_mm = _history_matrix_slice(history, "x", start_step)
+    y_mm = _history_matrix_slice(history, "y", start_step)
+    z_mm = _history_matrix_slice(history, "z", start_step)
+    bx = _history_matrix_slice(history, "bx", start_step)
+    by = _history_matrix_slice(history, "by", start_step)
+    bz = _history_matrix_slice(history, "bz", start_step)
+    bdotx = _history_matrix_slice(history, "bdotx", start_step)
+    bdoty = _history_matrix_slice(history, "bdoty", start_step)
+    bdotz = _history_matrix_slice(history, "bdotz", start_step)
+    matrices = (x_mm, y_mm, z_mm, bx, by, bz, bdotx, bdoty, bdotz)
+    if time_ns.ndim != 2 or any(matrix.shape != time_ns.shape for matrix in matrices):
+        raise ValueError("source history fields must share shape [steps, particles]")
+    if not all(np.all(np.isfinite(matrix)) for matrix in (time_ns, *matrices)):
+        raise ValueError("source history kinematics must be finite")
+    charge_native = np.asarray(_source_charge_native(history), dtype=float)
+    if charge_native.shape != (time_ns.shape[1],):
+        raise ValueError("source charge array must match the particle count")
+    if not np.all(np.isfinite(charge_native)):
+        raise ValueError("source charge array must contain only finite values")
+    return _HistoryArrays(
+        time_ns=time_ns,
+        position_mm=np.stack((x_mm, y_mm, z_mm), axis=-1),
+        beta=np.stack((bx, by, bz), axis=-1),
+        beta_prime_per_mm=np.stack((bdotx, bdoty, bdotz), axis=-1),
+        charge_native=charge_native,
+        dead=_history_dead_slice(history, start_step, time_ns.shape),
+    )
+
+
+def _append_history_arrays(
+    previous: _HistoryArrays,
+    history: TrajectoryHistory,
+    old_stop: int,
+) -> _HistoryArrays:
+    """Extend extracted arrays from the newly visible history tail."""
+
+    tail = _extract_history_tail(history, old_stop)
+    if tail.n_sources != previous.n_sources:
+        raise ValueError("source particle count changed while appending history")
+    if not np.array_equal(tail.charge_native, previous.charge_native):
+        return _extract_history(history)
+
+    tail_count = int(tail.time_ns.shape[0])
+    new_stop = int(old_stop) + tail_count
+    buffers = (
+        previous._time_buffer,
+        previous._position_buffer,
+        previous._beta_buffer,
+        previous._beta_prime_buffer,
+        previous._dead_buffer,
+    )
+    if any(buffer is None for buffer in buffers):
+        # Append is normally reached only through a builder-managed cached
+        # history. Keep this private helper safe for direct test/research use.
+        _reserve_history_arrays(previous, max(new_stop, max(1, 2 * int(old_stop))))
+    assert previous._time_buffer is not None
+    assert previous._position_buffer is not None
+    assert previous._beta_buffer is not None
+    assert previous._beta_prime_buffer is not None
+    assert previous._dead_buffer is not None
+    capacity = int(previous._time_buffer.shape[0])
+    if new_stop > capacity:
+        raise ValueError("prepared history append exceeded its reserved capacity")
+
+    previous._time_buffer[old_stop:new_stop] = tail.time_ns
+    previous._position_buffer[old_stop:new_stop] = tail.position_mm
+    previous._beta_buffer[old_stop:new_stop] = tail.beta
+    previous._beta_prime_buffer[old_stop:new_stop] = tail.beta_prime_per_mm
+    previous._dead_buffer[old_stop:new_stop] = tail.dead
+    previous.time_ns = previous._time_buffer[:new_stop]
+    previous.position_mm = previous._position_buffer[:new_stop]
+    previous.beta = previous._beta_buffer[:new_stop]
+    previous.beta_prime_per_mm = previous._beta_prime_buffer[:new_stop]
+    previous.dead = previous._dead_buffer[:new_stop]
+    return previous
+
+
 def _quintic_worldline_sample(
     source: _PreparedSourceHistory,
     segment_index: int,
@@ -306,16 +484,14 @@ def _alive_prefix_length(history: _HistoryArrays, source_index: int) -> int:
     return first_dead
 
 
-def _prepare_source_history(
-    history: _HistoryArrays, source_index: int
-) -> _PreparedSourceHistory:
-    """Validate and prepare one source's alive interpolation segments."""
+def _quintic_position_coefficients_mm(
+    times: np.ndarray,
+    positions: np.ndarray,
+    betas: np.ndarray,
+    beta_primes: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return segment durations and quintic worldline coefficients."""
 
-    alive_stop = _alive_prefix_length(history, source_index)
-    times = history.time_ns[:alive_stop, source_index]
-    positions = history.position_mm[:alive_stop, source_index]
-    betas = history.beta[:alive_stop, source_index]
-    beta_primes = history.beta_prime_per_mm[:alive_stop, source_index]
     durations = np.diff(times)
     if np.any(durations <= 0.0):
         raise ValueError("source coordinate times must be strictly increasing")
@@ -351,7 +527,29 @@ def _prepare_source_history(
         )
         coefficients = np.stack((c0, c1, c2, c3, c4, c5), axis=1)
 
-    return _PreparedSourceHistory(
+    return durations, coefficients
+
+
+def _prepare_source_history(
+    history: _HistoryArrays,
+    source_index: int,
+    *,
+    reserve_capacity: int | None = None,
+) -> _PreparedSourceHistory:
+    """Validate and prepare one source's alive interpolation segments."""
+
+    alive_stop = _alive_prefix_length(history, source_index)
+    times = history.time_ns[:alive_stop, source_index]
+    positions = history.position_mm[:alive_stop, source_index]
+    betas = history.beta[:alive_stop, source_index]
+    beta_primes = history.beta_prime_per_mm[:alive_stop, source_index]
+    durations, coefficients = _quintic_position_coefficients_mm(
+        times,
+        positions,
+        betas,
+        beta_primes,
+    )
+    prepared = _PreparedSourceHistory(
         source_index=source_index,
         time_ns=times,
         position_mm=positions,
@@ -361,25 +559,162 @@ def _prepare_source_history(
         position_coefficients_mm=coefficients,
         ended_by_loss=alive_stop != history.time_ns.shape[0],
     )
+    if reserve_capacity is None:
+        return prepared
+
+    knot_capacity = max(alive_stop, int(reserve_capacity))
+    segment_capacity = max(0, knot_capacity - 1)
+    duration_buffer = np.empty(segment_capacity, dtype=float)
+    coefficient_buffer = np.empty((segment_capacity, 6, 3), dtype=float)
+    segment_stop = int(durations.size)
+    duration_buffer[:segment_stop] = durations
+    coefficient_buffer[:segment_stop] = coefficients
+    prepared.segment_duration_ns = duration_buffer[:segment_stop]
+    prepared.position_coefficients_mm = coefficient_buffer[:segment_stop]
+    prepared._duration_buffer = duration_buffer
+    prepared._coefficient_buffer = coefficient_buffer
+    return prepared
+
+
+def _append_prepared_source_history(
+    previous: _PreparedSourceHistory,
+    history: _HistoryArrays,
+    old_stop: int,
+) -> _PreparedSourceHistory:
+    """Append alive knots and only their new quintic segments."""
+
+    source_index = previous.source_index
+    tail_dead = np.asarray(history.dead[old_stop:, source_index], dtype=bool)
+    if previous.ended_by_loss:
+        if np.any(~tail_dead):
+            raise ValueError("source dead-state history must remain dead after loss")
+        return previous
+    dead_indices = np.flatnonzero(tail_dead)
+    if dead_indices.size:
+        first_dead = int(dead_indices[0])
+        if np.any(~tail_dead[first_dead:]):
+            raise ValueError("source dead-state history must remain dead after loss")
+        append_alive = first_dead
+        ended_by_loss = True
+    else:
+        append_alive = int(tail_dead.size)
+        ended_by_loss = False
+
+    new_alive_stop = int(old_stop) + append_alive
+    if append_alive == 0:
+        previous.ended_by_loss = ended_by_loss
+        return previous
+
+    old_alive_stop = int(previous.time_ns.size)
+    coefficient_start = max(0, old_alive_stop - 1)
+    new_durations, new_coefficients = _quintic_position_coefficients_mm(
+        history.time_ns[coefficient_start:new_alive_stop, source_index],
+        history.position_mm[coefficient_start:new_alive_stop, source_index],
+        history.beta[coefficient_start:new_alive_stop, source_index],
+        history.beta_prime_per_mm[coefficient_start:new_alive_stop, source_index],
+    )
+    if previous._duration_buffer is None or previous._coefficient_buffer is None:
+        segment_capacity = max(
+            new_alive_stop - 1,
+            max(1, 2 * int(previous.segment_duration_ns.size)),
+        )
+        duration_buffer = np.empty(segment_capacity, dtype=float)
+        coefficient_buffer = np.empty((segment_capacity, 6, 3), dtype=float)
+        old_segment_stop = int(previous.segment_duration_ns.size)
+        duration_buffer[:old_segment_stop] = previous.segment_duration_ns
+        coefficient_buffer[:old_segment_stop] = previous.position_coefficients_mm
+        previous._duration_buffer = duration_buffer
+        previous._coefficient_buffer = coefficient_buffer
+    segment_start = max(0, old_alive_stop - 1)
+    segment_stop = max(0, new_alive_stop - 1)
+    assert previous._duration_buffer is not None
+    assert previous._coefficient_buffer is not None
+    if segment_stop > previous._duration_buffer.size:
+        raise ValueError("prepared source append exceeded its reserved capacity")
+    previous._duration_buffer[segment_start:segment_stop] = new_durations
+    previous._coefficient_buffer[segment_start:segment_stop] = new_coefficients
+    previous.time_ns = history.time_ns[:new_alive_stop, source_index]
+    previous.position_mm = history.position_mm[:new_alive_stop, source_index]
+    previous.beta = history.beta[:new_alive_stop, source_index]
+    previous.beta_prime_per_mm = history.beta_prime_per_mm[
+        :new_alive_stop, source_index
+    ]
+    previous.segment_duration_ns = previous._duration_buffer[:segment_stop]
+    previous.position_coefficients_mm = previous._coefficient_buffer[:segment_stop]
+    previous.ended_by_loss = ended_by_loss
+    return previous
+
+
+def _prepare_history_uncached(
+    history: TrajectoryHistory,
+    excluded_source_indices: Sequence[int],
+    *,
+    reserve_capacity: int | None = None,
+) -> _PreparedHistory:
+    """Extract once and prepare only sources that can contribute a field."""
+
+    arrays = _reserve_history_arrays(_extract_history(history), reserve_capacity)
+    excluded = {int(index) for index in excluded_source_indices}
+    if any(index < 0 or index >= arrays.n_sources for index in excluded):
+        raise IndexError("excluded source index is out of bounds")
+    sources = {
+        source_index: _prepare_source_history(
+            arrays,
+            source_index,
+            reserve_capacity=reserve_capacity,
+        )
+        for source_index in range(arrays.n_sources)
+        if source_index not in excluded
+        and abs(arrays.charge_native[source_index]) != 0.0
+    }
+    return _PreparedHistory(arrays=arrays, sources=sources)
+
+
+def _append_prepared_history(
+    previous: _PreparedHistory,
+    history: TrajectoryHistory,
+    old_stop: int,
+    excluded_source_indices: Sequence[int] = (),
+) -> _PreparedHistory:
+    """Extend charged-source preparation from one builder history tail."""
+
+    arrays = _append_history_arrays(previous.arrays, history, old_stop)
+    # A changed constant forces _append_history_arrays to re-extract the full
+    # history. Rebuild source selection as well instead of treating it as an
+    # append under stale charges.
+    if not np.array_equal(arrays.charge_native, previous.arrays.charge_native):
+        return _prepare_history_uncached(
+            history,
+            excluded_source_indices,
+            reserve_capacity=history_storage_capacity(history),
+        )
+    for source in previous.sources.values():
+        _append_prepared_source_history(source, arrays, old_stop)
+    return previous
 
 
 def _prepare_history(
     history: TrajectoryHistory,
     excluded_source_indices: Sequence[int],
 ) -> _PreparedHistory:
-    """Extract once and prepare only sources that can contribute a field."""
+    """Prepare charged histories, extending a safe builder-backed cache."""
 
-    arrays = _extract_history(history)
-    excluded = {int(index) for index in excluded_source_indices}
-    if any(index < 0 or index >= arrays.n_sources for index in excluded):
-        raise IndexError("excluded source index is out of bounds")
-    sources = {
-        source_index: _prepare_source_history(arrays, source_index)
-        for source_index in range(arrays.n_sources)
-        if source_index not in excluded
-        and abs(arrays.charge_native[source_index]) != 0.0
-    }
-    return _PreparedHistory(arrays=arrays, sources=sources)
+    excluded = tuple(sorted({int(index) for index in excluded_source_indices}))
+    return _CHARGE_PREPARED_HISTORY_CACHE.prepare(
+        history,
+        variant=("charge", excluded),
+        prepare_full=lambda current: _prepare_history_uncached(
+            current,
+            excluded,
+            reserve_capacity=history_storage_capacity(current),
+        ),
+        append=lambda previous, current, old_stop: _append_prepared_history(
+            previous,
+            current,
+            old_stop,
+            excluded,
+        ),
+    ).value
 
 
 def _next_safeguarded_root_trial(

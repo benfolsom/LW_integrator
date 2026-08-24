@@ -49,7 +49,7 @@ terms are outside this provider.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from functools import lru_cache
 from itertools import product
 from typing import Hashable, Sequence, cast
@@ -58,6 +58,10 @@ import numpy as np
 
 from .constants import C_MMNS
 from .magnetic_dipole import boost_rest_polarization
+from .prepared_history_cache import (
+    AppendAwarePreparedHistoryCache,
+    history_storage_capacity,
+)
 from .retarded_fields import (
     ObserverEvent,
     RetardedHistoryError,
@@ -66,7 +70,11 @@ from .retarded_fields import (
     _history_constant,
     _history_matrix,
     _HistoryArrays,
+    _append_history_arrays,
+    _append_prepared_source_history,
+    _history_matrix_slice,
     _prepare_source_history,
+    _reserve_history_arrays,
     _PreparedSourceHistory,
     _solve_retarded_sample,
     _source_terminated_before_light_cone,
@@ -130,7 +138,7 @@ class RetardedDipoleFieldGradientResult:
     lorenz_gauge_residual_per_mm: float
 
 
-@dataclass(frozen=True)
+@dataclass
 class _PreparedDipoleSource:
     identity: Hashable
     worldline: _PreparedSourceHistory
@@ -138,6 +146,8 @@ class _PreparedDipoleSource:
     rest_spin_derivative_per_ns: np.ndarray
     preserved_rest_spin_magnitude: float | None
     magnetic_moment_native: float
+    _rest_spin_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _slope_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -145,6 +155,11 @@ class _PreparedDipoleHistory:
     arrays: _HistoryArrays
     source_identities: tuple[Hashable, ...]
     sources: dict[int, _PreparedDipoleSource]
+
+
+_DIPOLE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
+    TrajectoryHistory, _PreparedDipoleHistory
+] = AppendAwarePreparedHistoryCache(max_entries=16)
 
 
 def _validate_source_identities(
@@ -189,14 +204,92 @@ def _source_spin_slopes_per_ns(spin: np.ndarray, time_ns: np.ndarray) -> np.ndar
     return cast(np.ndarray, slopes)
 
 
-def _prepare_dipole_history(
+def _append_source_spin_slopes_per_ns(
+    source: _PreparedDipoleSource,
+    appended_spin: np.ndarray,
+    combined_time_ns: np.ndarray,
+) -> None:
+    """Append spin knots in place and recompute only the Hermite tail.
+
+    Appending a knot changes the former endpoint slope.  That changes the old
+    final segment and creates the new final segment, so both tail segments are
+    represented with the same slopes as a full rebuild while the older prefix
+    remains bit-for-bit unchanged.
+    """
+
+    old_count = int(source.rest_spin.shape[0])
+    append_count = int(appended_spin.shape[0])
+    count = old_count + append_count
+    if source._rest_spin_buffer is None or source._slope_buffer is None:
+        capacity = max(count, max(1, 2 * old_count))
+        spin_buffer = np.empty((capacity, 3), dtype=float)
+        slope_buffer = np.empty((capacity, 3), dtype=float)
+        spin_buffer[:old_count] = source.rest_spin
+        slope_buffer[:old_count] = source.rest_spin_derivative_per_ns
+        source._rest_spin_buffer = spin_buffer
+        source._slope_buffer = slope_buffer
+    assert source._rest_spin_buffer is not None
+    assert source._slope_buffer is not None
+    if count > source._rest_spin_buffer.shape[0]:
+        raise ValueError("prepared dipole spin append exceeded its reserved capacity")
+    source._rest_spin_buffer[old_count:count] = appended_spin
+    spin = source._rest_spin_buffer[:count]
+    slopes = source._slope_buffer
+    if count < 2:
+        slopes[:count] = 0.0
+        source.rest_spin = spin
+        source.rest_spin_derivative_per_ns = slopes[:count]
+        return
+    recompute_start = max(0, old_count - 1)
+    for index in range(recompute_start, count):
+        if index == 0:
+            duration = combined_time_ns[1] - combined_time_ns[0]
+            slopes[index] = (spin[1] - spin[0]) / duration
+        elif index == count - 1:
+            duration = combined_time_ns[-1] - combined_time_ns[-2]
+            slopes[index] = (spin[-1] - spin[-2]) / duration
+        else:
+            previous_duration = combined_time_ns[index] - combined_time_ns[index - 1]
+            next_duration = combined_time_ns[index + 1] - combined_time_ns[index]
+            previous_secant = (spin[index] - spin[index - 1]) / previous_duration
+            next_secant = (spin[index + 1] - spin[index]) / next_duration
+            slopes[index] = (
+                next_duration * previous_secant + previous_duration * next_secant
+            ) / (previous_duration + next_duration)
+    source.rest_spin = spin
+    source.rest_spin_derivative_per_ns = slopes[:count]
+
+
+def _reserve_dipole_spin(
+    source: _PreparedDipoleSource,
+    capacity: int | None,
+) -> _PreparedDipoleSource:
+    """Give a cached dipole source fixed-capacity spin and slope buffers."""
+
+    if capacity is None:
+        return source
+    count = int(source.rest_spin.shape[0])
+    reserved = max(count, int(capacity))
+    spin_buffer = np.empty((reserved, 3), dtype=float)
+    slope_buffer = np.empty((reserved, 3), dtype=float)
+    spin_buffer[:count] = source.rest_spin
+    slope_buffer[:count] = source.rest_spin_derivative_per_ns
+    source.rest_spin = spin_buffer[:count]
+    source.rest_spin_derivative_per_ns = slope_buffer[:count]
+    source._rest_spin_buffer = spin_buffer
+    source._slope_buffer = slope_buffer
+    return source
+
+
+def _prepare_dipole_history_uncached(
     history: TrajectoryHistory,
     *,
     source_identities: Sequence[Hashable] | None,
     observer_source_identity: Hashable | None,
     excluded_source_identities: Sequence[Hashable],
+    reserve_capacity: int | None = None,
 ) -> _PreparedDipoleHistory:
-    arrays = _extract_history(history)
+    arrays = _reserve_history_arrays(_extract_history(history), reserve_capacity)
     identities = _validate_source_identities(arrays.n_sources, source_identities)
     excluded = set(excluded_source_identities)
     if observer_source_identity is not None:
@@ -237,7 +330,11 @@ def _prepare_dipole_history(
             or moments[source_index] == 0.0
         ):
             continue
-        worldline = _prepare_source_history(arrays, source_index)
+        worldline = _prepare_source_history(
+            arrays,
+            source_index,
+            reserve_capacity=reserve_capacity,
+        )
         alive_count = int(worldline.time_ns.size)
         source_spin = spin[:alive_count, source_index]
         source_spin_norm = np.linalg.norm(source_spin, axis=1)
@@ -252,21 +349,178 @@ def _prepare_dipole_history(
             )
             else None
         )
-        sources[source_index] = _PreparedDipoleSource(
-            identity=identity,
-            worldline=worldline,
-            rest_spin=source_spin,
-            rest_spin_derivative_per_ns=_source_spin_slopes_per_ns(
-                source_spin, worldline.time_ns
+        sources[source_index] = _reserve_dipole_spin(
+            _PreparedDipoleSource(
+                identity=identity,
+                worldline=worldline,
+                rest_spin=source_spin,
+                rest_spin_derivative_per_ns=_source_spin_slopes_per_ns(
+                    source_spin, worldline.time_ns
+                ),
+                preserved_rest_spin_magnitude=preserved_magnitude,
+                magnetic_moment_native=float(moments[source_index]),
             ),
-            preserved_rest_spin_magnitude=preserved_magnitude,
-            magnetic_moment_native=float(moments[source_index]),
+            reserve_capacity,
         )
     return _PreparedDipoleHistory(
         arrays=arrays,
         source_identities=identities,
         sources=sources,
     )
+
+
+def _append_prepared_dipole_history(
+    previous: _PreparedDipoleHistory,
+    history: TrajectoryHistory,
+    old_stop: int,
+    *,
+    source_identities: Sequence[Hashable] | None,
+    observer_source_identity: Hashable | None,
+    excluded_source_identities: Sequence[Hashable],
+) -> _PreparedDipoleHistory:
+    """Extend worldline quintics and the C1 source-spin interpolation tail."""
+
+    arrays = _append_history_arrays(previous.arrays, history, old_stop)
+    moments = np.asarray(
+        _history_constant(history, "magnetic_moment_native"), dtype=float
+    )
+    try:
+        active = np.asarray(
+            _history_constant(history, "magnetic_dipole_active"), dtype=bool
+        )
+    except (AttributeError, KeyError):
+        active = moments != 0.0
+    if (
+        moments.shape != (arrays.n_sources,)
+        or not np.all(np.isfinite(moments))
+        or active.shape != (arrays.n_sources,)
+    ):
+        return _prepare_dipole_history_uncached(
+            history,
+            source_identities=source_identities,
+            observer_source_identity=observer_source_identity,
+            excluded_source_identities=excluded_source_identities,
+            reserve_capacity=history_storage_capacity(history),
+        )
+    previous_moments = np.zeros(arrays.n_sources, dtype=float)
+    previous_active = np.zeros(arrays.n_sources, dtype=bool)
+    for source_index, source in previous.sources.items():
+        previous_moments[source_index] = source.magnetic_moment_native
+        previous_active[source_index] = True
+    included_identities = {
+        previous.source_identities[source_index] for source_index in previous.sources
+    }
+    excluded = set(excluded_source_identities)
+    if observer_source_identity is not None:
+        excluded.add(observer_source_identity)
+    expected_included = np.array(
+        [
+            previous.source_identities[index] not in excluded
+            and bool(active[index])
+            and moments[index] != 0.0
+            for index in range(arrays.n_sources)
+        ],
+        dtype=bool,
+    )
+    if (
+        not np.array_equal(arrays.charge_native, previous.arrays.charge_native)
+        or moments.shape != previous_moments.shape
+        or active.shape != previous_active.shape
+        or {
+            previous.source_identities[index]
+            for index in np.flatnonzero(expected_included)
+        }
+        != included_identities
+        or any(moments[index] != previous_moments[index] for index in previous.sources)
+    ):
+        return _prepare_dipole_history_uncached(
+            history,
+            source_identities=source_identities,
+            observer_source_identity=observer_source_identity,
+            excluded_source_identities=excluded_source_identities,
+            reserve_capacity=history_storage_capacity(history),
+        )
+
+    spin_components = tuple(
+        np.asarray(
+            _history_matrix_slice(history, f"spin_{axis}", old_stop), dtype=float
+        )
+        for axis in "xyz"
+    )
+    tail_shape = (int(arrays.time_ns.shape[0]) - int(old_stop), arrays.n_sources)
+    if any(component.shape != tail_shape for component in spin_components):
+        raise ValueError("source spin histories must share shape [steps, particles]")
+    if not all(np.all(np.isfinite(component)) for component in spin_components):
+        raise ValueError("source spin histories must contain only finite values")
+    spin_tail = np.stack(spin_components, axis=-1)
+
+    for source_index, source in previous.sources.items():
+        old_alive_count = int(source.worldline.time_ns.size)
+        worldline = _append_prepared_source_history(
+            source.worldline,
+            arrays,
+            old_stop,
+        )
+        new_alive_count = int(worldline.time_ns.size)
+        appended_alive_count = new_alive_count - old_alive_count
+        if appended_alive_count:
+            appended_spin = spin_tail[:appended_alive_count, source_index]
+            _append_source_spin_slopes_per_ns(
+                source,
+                appended_spin,
+                worldline.time_ns,
+            )
+        preserved_magnitude = source.preserved_rest_spin_magnitude
+        if preserved_magnitude is not None and appended_alive_count:
+            appended_norms = np.linalg.norm(appended_spin, axis=1)
+            if not np.allclose(
+                appended_norms,
+                preserved_magnitude,
+                rtol=1.0e-10,
+                atol=1.0e-12,
+            ):
+                preserved_magnitude = None
+        source.worldline = worldline
+        source.preserved_rest_spin_magnitude = preserved_magnitude
+    return previous
+
+
+def _prepare_dipole_history(
+    history: TrajectoryHistory,
+    *,
+    source_identities: Sequence[Hashable] | None,
+    observer_source_identity: Hashable | None,
+    excluded_source_identities: Sequence[Hashable],
+) -> _PreparedDipoleHistory:
+    """Prepare dipole histories, extending a safe builder-backed cache."""
+
+    identities_key = None if source_identities is None else tuple(source_identities)
+    excluded_key = frozenset(excluded_source_identities)
+    variant = (
+        "dipole",
+        identities_key,
+        observer_source_identity,
+        excluded_key,
+    )
+    return _DIPOLE_PREPARED_HISTORY_CACHE.prepare(
+        history,
+        variant=variant,
+        prepare_full=lambda current: _prepare_dipole_history_uncached(
+            current,
+            source_identities=source_identities,
+            observer_source_identity=observer_source_identity,
+            excluded_source_identities=excluded_source_identities,
+            reserve_capacity=history_storage_capacity(current),
+        ),
+        append=lambda prepared, current, old_stop: _append_prepared_dipole_history(
+            prepared,
+            current,
+            old_stop,
+            source_identities=source_identities,
+            observer_source_identity=observer_source_identity,
+            excluded_source_identities=excluded_source_identities,
+        ),
+    ).value
 
 
 def _interpolate_rest_spin_c1(

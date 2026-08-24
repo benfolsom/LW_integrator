@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
+from itertools import count
 from typing import Dict, List, Sequence, cast
 
 import numpy as np
@@ -19,6 +20,27 @@ from .constants import C_MMNS
 ParticleState = Dict[str, np.ndarray]
 Trajectory = List[ParticleState]
 TrajectoryView = Sequence[ParticleState]
+
+
+_TRAJECTORY_STORAGE_TOKENS = count(1)
+
+
+@dataclass
+class _TrajectoryStorageState:
+    """Live mutation metadata shared by every view of one builder's arrays.
+
+    The monotonic token identifies the allocation without relying on the
+    identity of a short-lived :class:`TrajectoryArrays` wrapper. ``generation``
+    advances for every builder write. ``rewrite_epoch`` advances whenever a
+    row already exposed by :meth:`TrajectoryBuilder.build_partial` is changed,
+    so append-aware consumers can distinguish a safe tail extension from a
+    history rewrite.
+    """
+
+    token: int = field(default_factory=lambda: next(_TRAJECTORY_STORAGE_TOKENS))
+    capacity: int = 0
+    generation: int = 0
+    rewrite_epoch: int = 0
 
 
 class SimulationType(IntEnum):
@@ -914,6 +936,14 @@ class TrajectoryArrays:
     particle_failure_info: dict  # keyed by (step, particle_idx)
     pseudo_grid_schedule: list  # length n_steps, object or None
 
+    # Builder-owned live metadata. Manually constructed SOA objects deliberately
+    # leave this unset and are therefore not eligible for persistent caches.
+    _storage_state: _TrajectoryStorageState | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
     @property
     def n_steps(self) -> int:
         return int(self.x.shape[0])
@@ -921,6 +951,32 @@ class TrajectoryArrays:
     @property
     def n_particles(self) -> int:
         return int(self.x.shape[1])
+
+    @property
+    def storage_token(self) -> int | None:
+        """Stable allocation token, or ``None`` for unmanaged arrays."""
+
+        return None if self._storage_state is None else self._storage_state.token
+
+    @property
+    def storage_generation(self) -> int | None:
+        """Current builder-write generation shared by all allocation views."""
+
+        return None if self._storage_state is None else self._storage_state.generation
+
+    @property
+    def storage_capacity(self) -> int | None:
+        """Allocated row capacity, or ``None`` for unmanaged arrays."""
+
+        return None if self._storage_state is None else self._storage_state.capacity
+
+    @property
+    def storage_rewrite_epoch(self) -> int | None:
+        """Current epoch for rewrites of previously exposed rows."""
+
+        return (
+            None if self._storage_state is None else self._storage_state.rewrite_epoch
+        )
 
     def state_at(self, step: int) -> ParticleState:
         """Return a legacy ``ParticleState`` dict for *step*."""
@@ -1285,6 +1341,8 @@ class TrajectoryBuilder:
         self._n_particles = n_particles
         self._magnetic_arrays_allocated = bool(magnetic_dipole)
         self._medina_arrays_allocated = False
+        self._storage_state = _TrajectoryStorageState(capacity=int(n_steps))
+        self._published_stop = 0
 
         self._arrays: dict = {
             field_name: np.zeros((n_steps, n_particles), dtype=np.float64)
@@ -1326,6 +1384,15 @@ class TrajectoryBuilder:
 
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
+        step = int(step)
+        if step < 0:
+            step += self._n_steps
+        if step < 0 or step >= self._n_steps:
+            raise IndexError("trajectory step index out of range")
+        self._storage_state.generation += 1
+        if step < self._published_stop:
+            self._storage_state.rewrite_epoch += 1
+
         if not self._magnetic_arrays_allocated and any(
             field_name in state for field_name in self._MAGNETIC_KINEMATIC_FIELDS
         ):
@@ -1334,6 +1401,9 @@ class TrajectoryBuilder:
                     (self._n_steps, self._n_particles), dtype=np.float64
                 )
             self._magnetic_arrays_allocated = True
+            # Replacing one family of backing arrays changes the storage seen
+            # by any previously built view, even when the current row is new.
+            self._storage_state.rewrite_epoch += 1
 
         medina_fields = self._MEDINA_FLOAT_FIELDS + self._MEDINA_BOOL_FIELDS
         if not self._medina_arrays_allocated and any(
@@ -1357,6 +1427,7 @@ class TrajectoryBuilder:
                     dtype=bool,
                 )
             self._medina_arrays_allocated = True
+            self._storage_state.rewrite_epoch += 1
 
         for field_name in (
             self._KINEMATIC_FIELDS + self._MAGNETIC_KINEMATIC_FIELDS + medina_fields
@@ -1413,6 +1484,11 @@ class TrajectoryBuilder:
         if up_to_step < 1:
             raise ValueError(f"up_to_step must be >= 1, got {up_to_step}")
         s = up_to_step
+        if s > self._n_steps:
+            raise ValueError(
+                f"up_to_step must be <= the allocated step count {self._n_steps}"
+            )
+        self._published_stop = max(self._published_stop, int(s))
         return TrajectoryArrays(
             x=self._arrays["x"][:s],
             y=self._arrays["y"][:s],
@@ -1481,10 +1557,12 @@ class TrajectoryBuilder:
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
+            _storage_state=self._storage_state,
         )
 
     def build(self) -> TrajectoryArrays:
         """Finalise and return the accumulated :class:`TrajectoryArrays`."""
+        self._published_stop = self._n_steps
         return TrajectoryArrays(
             x=self._arrays["x"],
             y=self._arrays["y"],
@@ -1551,6 +1629,7 @@ class TrajectoryBuilder:
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule,
+            _storage_state=self._storage_state,
         )
 
 
