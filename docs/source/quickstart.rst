@@ -123,8 +123,9 @@ simulation, and confirm that the regression tooling works on your machine.
 
    Intrinsic magnetic moments are experimental and off by default.  The
    selected RFS model is currently guarded to fixed-step, COLD_START
-   BUNCH_TO_BUNCH point-charge runs with dynamic radiation reaction and
-   same-bunch space charge disabled.  For example, add these switches to a
+   BUNCH_TO_BUNCH point-charge runs with same-bunch space charge disabled.
+   Dynamic recoil is either off or the explicit charge-only ``medina_lad``
+   hybrid.  For example, add these switches to a
    suitable electron--proton BUNCH_TO_BUNCH run:
 
    .. code-block:: bash
@@ -146,6 +147,11 @@ simulation, and confirm that the regression tooling works on your machine.
    best configured in a saved JSON.  See :doc:`magnetic_dipole_moments` for all
    hard scope guards, the diagnostic legacy models, and the retarded source
    limitations.
+
+   Replacing ``--radiation-reaction-mode off`` with ``medina_lad`` enables the
+   charge-only RFS/Medina hybrid.  It does not include intrinsic-dipole
+   self-recoil or charge--dipole radiation-interference recoil, and any run
+   with a capped Medina impulse is unsuitable as capture evidence.
 
    **Running a parameter sweep from the CLI:**
 

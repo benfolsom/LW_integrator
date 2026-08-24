@@ -35,10 +35,10 @@ With normalized spin, the equations implemented here are
 
 ``dp/dtau = (q/c) F.u + (mu/c) G[a].u``
 
-and
+and::
 
-``da/dtau = q/(m c) F.a + (mu/S - q/(m c))
-             [F.a - u (u.F.a)/c^2] + mu/(m c) G[a].a``.
+    da/dtau = q/(m c) F.a + (mu/S - q/(m c))
+              [F.a - u (u.F.a)/c^2] + mu/(m c) G[a].a
 
 The partial derivative used to form ``G`` acts on the supplied field while
 holding the observer spin fixed. Source-spin retardation and derivatives and

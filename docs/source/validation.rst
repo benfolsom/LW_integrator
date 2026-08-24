@@ -29,6 +29,8 @@ Run the deterministic magnetic helper and integration tests with:
       tests/unit/test_magnetic_dipole.py \
       tests/unit/test_magnetic_dipole_config.py \
       tests/unit/test_rfs.py \
+      tests/unit/test_rfs_radiation_reaction.py \
+      tests/unit/test_medina_radiation_reaction.py \
       tests/unit/test_retarded_fields.py \
       tests/unit/test_retarded_dipole_fields.py \
       tests/unit/test_dipole_source_interactions.py \
@@ -49,15 +51,17 @@ field invariants, source identity exclusion, retarded-time stencil
 convergence, canonical charge response, and mutual neutral RFS response.
 
 The first coupled RFS implementation has intentionally narrow integration
-guards: fixed-step COLD_START BUNCH_TO_BUNCH point charges, no dynamic radiation
-reaction, no same-bunch RFS field, no nonzero smearing, no beamline visibility
-stencil, no pseudo-grid, and polarization zero or one.  The full-retarded point
-source is further limited to one physical particle per bunch, without macro
-moment scaling, driver trains, or synthetic coasting tails.  Passing these
-tests does not validate dipole self-reaction, contact or finite-size physics,
-atomic binding, or long-time electron--proton capture.  Capture runs remain
-classical characterization studies and require a separate total-energy and
-radiation balance before supporting stability claims.
+guards: fixed-step COLD_START BUNCH_TO_BUNCH point charges, no same-bunch RFS
+field, no nonzero smearing, no beamline visibility stencil, no pseudo-grid, and
+polarization zero or one.  Dynamic recoil is limited to the explicit
+charge-only ``medina_lad`` hybrid; its ``q mu`` and ``mu^2`` self-radiation
+sectors are absent.  The full-retarded point source is further limited to one
+physical particle per bunch, without macro moment scaling, driver trains, or
+synthetic coasting tails.  Passing these tests does not validate dipole
+self-reaction, contact or finite-size physics, atomic binding, or long-time
+electron--proton capture.  Capture runs remain classical characterization
+studies, must reject capped Medina impulses, and require a separate total-energy
+and radiation balance before supporting stability claims.
 
 Maintained Plotting Validation
 ------------------------------

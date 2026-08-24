@@ -25,6 +25,12 @@ All notable changes and updates to the LW Integrator project are documented in t
   expose derivative readiness, cap activation, signed reaction work, and
   Medina cross-field energy diagnostics. Capped steps must be rejected in
   capture-validation studies.
+- Enabled the explicit ``rfs_minimal_2021`` plus ``medina_lad`` charge-only
+  radiation-reaction hybrid. The actually applied post-cap Medina force now
+  supplies the matching Fermi--Walker term at both RFS spin midpoint stages,
+  preserving the spin/velocity constraint at the equation level. This does
+  not add charge--dipole interference recoil or intrinsic-dipole self-recoil;
+  those missing ``q mu`` and ``mu^2`` sectors remain outside the model.
 
 - Added a shared immutable species registry with signed, cited free-particle
   magnetic moments for electrons, positrons, protons, antiprotons, neutrons,
@@ -54,10 +60,10 @@ All notable changes and updates to the LW Integrator project are documented in t
   and visualization-ready spin and local-field output. Magnetic dipoles remain
   disabled by default.
 - Added explicit first-slice guards: coupled RFS is limited to COLD_START
-  BUNCH_TO_BUNCH point-charge sources with radiation-reaction dynamics,
-  same-bunch response, nonzero smearing, beamline stencil boundaries,
-  adaptive substeps, and pseudo-grid reconstruction disabled. Polarization is
-  restricted to zero or one.
+  BUNCH_TO_BUNCH point-charge sources with same-bunch response, nonzero
+  smearing, beamline stencil boundaries, adaptive substeps, and pseudo-grid
+  reconstruction disabled. Dynamic recoil is restricted to the named
+  charge-only ``medina_lad`` hybrid. Polarization is restricted to zero or one.
 - Added an optional full-retarded point-dipole source based on a conserved
   antisymmetric moment tensor and retarded Hertz potential. The ordinary
   non-self field includes near, induction, and radiation zones and feeds the

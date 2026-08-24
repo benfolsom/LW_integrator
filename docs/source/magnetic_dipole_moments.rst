@@ -218,9 +218,11 @@ diagnostic, but it is not a complete coupled RFS evolution.  On the CLI,
 ``--magnetic-dipoles`` selects spin-only RFS and adding ``--stern-gerlach``
 selects the fully coupled mode.  The RFS safety guards currently also require
 ``--simulation-type bunch-to-bunch``, ``--startup-mode cold-start``,
-``--radiation-reaction-mode off``, and ``--no-adaptive-timestep`` for a dynamic
-run.  The direct CLI and GUI select radiation reaction ``off`` when RFS is
-enabled unless the user explicitly supplies a mode; a dynamic mode is rejected.
+``--radiation-reaction-mode off``, and ``--no-adaptive-timestep`` for a pure
+RFS run.  ``--radiation-reaction-mode medina_lad`` instead selects the explicit
+charge-radiation-only RFS/Medina hybrid described below.  Other dynamic recoil
+modes are rejected.  The direct CLI and GUI still select radiation reaction
+``off`` when RFS is enabled unless the user explicitly requests the hybrid.
 
 Intrinsic source fields are a separate selection.  The GUI offers ``Off`` and
 ``Full retarded point (experimental)``.  The matching direct CLI choice is
@@ -288,6 +290,12 @@ diagnostic unavailable even when the accepted start-of-step RFS force used a
 nonzero field.  Treat these arrays as visualization aids, not as proof that a
 field was absent.
 
+The current saved local-field diagnostic does not yet add the intrinsic
+dipole-source field.  That field is present in the accepted canonical and RFS
+dynamics when its provider is enabled; use provider-readiness data and direct
+field diagnostics, rather than the legacy ``local_magnetic_field_*`` arrays,
+for source-field validation.
+
 Hard scope guards
 -----------------
 
@@ -298,9 +306,10 @@ meaning has not yet been validated:
   sources.  Conducting and switching image-source modes are not enabled.
 * Charge-source RFS requires ``COLD_START`` and explicit history.  Approximate
   back-history is not treated as a complete retarded derivative.
-* Dynamic radiation reaction must be off.  ``diagnostic_only`` may record
-  read-only radiation diagnostics, but Medina/LAD and other recoil modes are
-  rejected because RFS does not supply an RR completion.
+* Dynamic recoil is limited to ``medina_lad``.  It is an explicitly named
+  charge-only hybrid, not a complete RFS radiation-reaction theory.  ``off``
+  and read-only ``diagnostic_only`` also remain available; other recoil modes
+  are rejected.
 * Same-bunch RFS response is absent, so ``space_charge`` must be disabled.
 * Nonzero macroparticle smearing is unsupported.  Each displaced subcharge would
   require its own light-cone solve before a smeared source could be supported.
@@ -367,6 +376,32 @@ or dipole radiation-reaction completion.  It can emit an outgoing retarded
 field that acts on the other particle, but it does not yet apply the associated
 self-recoil to its source.
 
+Charge-only Medina/RFS hybrid
+-----------------------------
+
+``radiation_reaction_mode="medina_lad"`` applies the corrected Medina
+charge-self-force to mechanical momentum.  The production derivative retains
+the full :math:`d(\gamma\mathbf F_{\rm ext})/dt`, using accepted midpoint
+force samples; an unprimed first sample records far radiation but applies no
+incomplete impulse.  If the numerical impulse guard caps the force, spin sees
+the same post-cap force that translation received.
+
+For that applied charge-radiation four-acceleration
+:math:`A_{\rm RR}^\mu`, the normalized RFS spin equation receives
+
+.. math::
+
+   \delta\dot a^\mu=-{u^\mu\over c^2}
+   \left(A_{\rm RR}\mathbin{\cdot}a\right).
+
+This Fermi--Walker term is evaluated at both spin midpoint stages.  Together
+with the applied translation it preserves :math:`u\mathbin{\cdot}a=0`
+instantaneously instead of relying only on the final numerical projection.
+The hybrid covers the charge ``q^2`` self-radiation sector.  It does not cover
+charge--dipole ``q mu`` interference recoil, intrinsic-dipole ``mu^2`` recoil,
+or self torque.  A capture-validation run must also reject every step whose
+``medina_impulse_capped`` diagnostic is true.
+
 Validation and capture boundary
 -------------------------------
 
@@ -381,12 +416,12 @@ convergence, explicit model-pair validation, and feature-off equivalence.  See
 Electron--proton capture is a classical characterization and sensitivity
 study, not a validation of atomic stability.  The source option can compare
 charge-only evolution with mutual retarded charge--dipole and dipole--dipole
-response, including the outgoing field that reaches the other particle.
-Dynamic radiation reaction and dipole self-recoil are still guarded off, so it
-cannot yet decide a proposed long-time balance between emitted radiation and
-mutual retarded interactions.  A later balance study must track particle
-energy, near-field energy, outgoing radiation, and every self-force without
-double counting.  No classical point-particle result should be presented as
+response, including the outgoing field that reaches the other particle.  The
+Medina hybrid adds charge-only recoil, but dipole self-recoil and ``q mu``
+interference recoil remain absent, so it cannot yet close a total long-time
+radiation balance.  A later balance study must track particle energy,
+near-field energy, outgoing radiation, and every self-force without double
+counting.  No classical point-particle result should be presented as
 reproducing the quantum hydrogen spectrum.
 
 The archived ``TUPAB218.tex`` equations remain a research input rather than the

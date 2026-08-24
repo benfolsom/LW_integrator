@@ -92,7 +92,7 @@ The Medina radiation-reaction force from the paper is
 =
 \frac{2}{3}\frac{q^2}{mc^3}
 \left[
-\frac{d\gamma}{dt}\mathbf{F}_{\mathrm{ext}}
+\frac{d}{dt}\left(\gamma\mathbf{F}_{\mathrm{ext}}\right)
 -
 \frac{\gamma^3}{c^2}
 \left(\mathbf{F}_{\mathrm{ext}}\cdot \mathbf{a}\right)
@@ -111,7 +111,7 @@ Then
 =
 \tau_0
 \left[
-\frac{d\gamma}{dt}\mathbf{F}_{\mathrm{ext}}
+\frac{d}{dt}\left(\gamma\mathbf{F}_{\mathrm{ext}}\right)
 -
 \frac{\gamma^3}{c^2}
 \left(\mathbf{F}_{\mathrm{ext}}\cdot \mathbf{a}\right)
@@ -124,6 +124,18 @@ with
 \mathbf{a} &= \frac{d\mathbf{v}}{dt}
             = c\frac{d\boldsymbol{\beta}}{dt}.
 \end{align}
+
+The complete derivative is
+\begin{equation}
+\frac{d}{dt}\left(\gamma\mathbf{F}_{\mathrm{ext}}\right)
+=
+\gamma\frac{d\mathbf{F}_{\mathrm{ext}}}{dt}
++
+\frac{d\gamma}{dt}\mathbf{F}_{\mathrm{ext}}.
+\end{equation}
+The first implementation accidentally retained only the second term.  That
+specialization is valid for a constant external force, but not for a Coulomb
+flyby or another spatially varying field.
 
 The Medina impulse over one solver step would be
 \begin{equation}
@@ -207,8 +219,12 @@ Medina instead computes a vector force from
 Thus, Medina can change both the magnitude and direction of mechanical
 momentum.
 
-For the current experimental implementation, \(d\boldsymbol{\beta}/dt\) and
-\(d\gamma/dt\) are derived from the estimated mechanical force:
+For the current experimental implementation, accepted interval-midpoint force
+samples supply a first-order backward estimate of
+\(d(\gamma\mathbf{F}_{\mathrm{ext}})/dt\).  The first unprimed sample records
+far radiation but applies no incomplete reaction impulse.
+The quantities \(d\boldsymbol{\beta}/dt\) and \(d\gamma/dt\) are derived from
+the estimated mechanical force:
 \begin{align}
 \frac{d\boldsymbol{\beta}}{dt}
 &=
@@ -220,9 +236,9 @@ For the current experimental implementation, \(d\boldsymbol{\beta}/dt\) and
 &=
 \frac{\boldsymbol{\beta}\cdot\mathbf{F}_{\mathrm{ext}}}{m c}.
 \end{align}
-This keeps the one-dimensional longitudinal terms self-consistent. In the
-ideal collinear case, the two Medina bracket terms cancel to numerical
-precision. In a transverse bend, \(d\gamma/dt=0\) while
+This keeps the one-dimensional longitudinal terms self-consistent. For a
+constant ideal collinear force, the two Medina bracket terms cancel to
+numerical precision. In a transverse bend, \(d\gamma/dt=0\) while
 \(\mathbf{F}_{\mathrm{ext}}\cdot\mathbf{a}\neq 0\), producing a recoil mostly
 opposite the particle velocity.
 
@@ -235,10 +251,11 @@ magnitude, preserves momentum direction, and is best treated as bounded energy
 bookkeeping.
 
 \item[Medina/LAD candidate]
-Computes a radiation-reaction force vector, applies its impulse to mechanical
-momentum, may change both direction and magnitude, and remains experimental
-until the mechanical \(\mathbf{F}_{\mathrm{ext}}\) extraction API is validated
-for retarded image/source forces.
+Computes the complete force derivative from accepted force samples, applies a
+radiation-reaction impulse to mechanical momentum, may change both direction
+and magnitude, and exposes derivative-readiness, cap, signed-work, radiated
+energy, and cross-field-energy diagnostics.  It remains experimental until
+active recoil converges for retarded source forces.
 \end{description}
 
 The first Medina implementation should use rest mass in \(\tau_0\) and

@@ -29,10 +29,14 @@ Experimental magnetic moments and spin (August 2026)
   cross-bunch-only path rather than a unified replacement for the charge
   kernel.
 * Added explicit safety guards for the first implementation: COLD_START
-  BUNCH_TO_BUNCH point charges only, radiation-reaction dynamics off, no
-  same-bunch RFS response, no nonzero smearing, beamline stencil boundaries,
-  adaptive substeps, or pseudo-grid reconstruction, and polarization zero or
-  one.
+  BUNCH_TO_BUNCH point charges only, no same-bunch RFS response, no nonzero
+  smearing, beamline stencil boundaries, adaptive substeps, or pseudo-grid
+  reconstruction, and polarization zero or one.  Dynamic recoil is restricted
+  to the explicit charge-only ``medina_lad`` hybrid.
+* Corrected production Medina/LAD to retain the complete force derivative and
+  coupled its actually applied post-cap force to RFS spin through the matching
+  Fermi--Walker term.  Charge--dipole and intrinsic-dipole self-recoil remain
+  outside this named hybrid.
 * Added an optional full-retarded point-dipole source for the ordinary non-self
   Maxwell field.  The total field now supplies charge--dipole and
   dipole--dipole response without another pair-force law.  Dipole self-reaction,

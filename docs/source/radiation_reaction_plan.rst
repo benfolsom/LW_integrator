@@ -32,13 +32,22 @@ on the Lorentz-Abraham-Dirac equation:
    F^{RAD} =
    {2 \over 3}{e^2 \over mc^3}
    \left[
-     {d\gamma \over dt}F_{ext}
+     {d \over dt}\left(\gamma F_{ext}\right)
      - {\gamma^3 \over c^2}(F_{ext}\cdot a)v
    \right].
 
-This remains a reasonable candidate model, but it should not be added directly
-to the existing canonical momentum accumulator until the variable mapping is
-explicit:
+The first term is the complete derivative
+
+.. math::
+
+   {d \over dt}\left(\gamma F_{ext}\right)
+   =\gamma {dF_{ext}\over dt}+{d\gamma\over dt}F_{ext}.
+
+Dropping :math:`\gamma\,dF_{ext}/dt` is not the Medina equation and severely
+underestimates reaction during a Coulomb flyby.  The maintained implementation
+uses accepted force samples to approximate this complete derivative.  The
+model is applied to mechanical momentum rather than being added directly to
+the canonical accumulator:
 
 * ``F_ext`` is a mechanical external force, not the canonical
   ``delta_Px/Py/Pz/Pt`` accumulator.
@@ -118,7 +127,7 @@ The Medina force can be written in native variables as
 
    F^{RAD} = \tau_0
    \left[
-     {d\gamma \over dt}F_{ext}
+     {d \over dt}\left(\gamma F_{ext}\right)
      - {\gamma^3 \over c^2}(F_{ext}\cdot a)v
    \right],
 
@@ -133,7 +142,7 @@ This is the same characteristic time already stored on particle states as
 ``v = c beta`` and ``a = dv/dt = c d beta/dt`` are coordinate-time mechanical
 quantities. Both bracketed terms have units of force per time:
 
-* ``(d gamma / dt) F_ext`` gives ``amu mm / ns^3``;
+* ``d(gamma F_ext)/dt`` gives ``amu mm / ns^3``;
 * ``(gamma^3 / c^2)(F_ext dot a)v`` also gives ``amu mm / ns^3``.
 
 Multiplying by ``tau_0`` gives a mechanical force in ``amu mm / ns^2``. The
@@ -236,22 +245,23 @@ Ordered Tasks
    * the magnetic-bend integration test checks that applied damping energy
      matches the observed gamma reduction.
 
-5. Derive the Medina implementation in native units. **Status: first draft
-   complete; needs continued review.**
+5. Derive the Medina implementation in native units. **Status: corrected first
+   implementation complete; needs continued review.**
 
    Produce a short derivation note before coding. It should define native units
    for charge, mass, force, acceleration, time, and energy; state whether the
    force is integrated over coordinate time or proper time; and include a
    dimension check for the final impulse.
 
-6. Implement the Medina candidate behind an explicit mode. **Status:
-   experimental first pass complete.**
+6. Implement the Medina candidate behind an explicit mode. **Status: complete
+   for the charge-only candidate path.**
 
    The first code path should be opt-in, probably
    ``radiation_reaction_mode="medina_lad"``. It should:
 
    * compute the external mechanical force represented by the current step,
-   * compute ``dgamma/dt`` from coordinate-time quantities,
+   * compute the complete ``d(gamma F_ext)/dt`` from coordinate-time
+     quantities,
    * compute coordinate-time acceleration from beta-dot,
    * apply the radiation-reaction impulse to mechanical momentum,
    * cap the impulse only as a numerical guard with diagnostics, and
@@ -262,17 +272,19 @@ Ordered Tasks
    * ``radiation_reaction_mode="medina_lad"`` is accepted as an explicit mode,
    * the non-radiation mechanical force is estimated from the mass-shell
      projected mechanical momentum increment over coordinate time,
-   * ``d beta/dt`` and ``dgamma/dt`` are derived from the mechanical force
-     estimate, keeping longitudinal Medina terms self-consistent and preserving
-     the expected near-cancellation for one-dimensional acceleration,
+   * accepted interval-midpoint force samples provide a first-order backward
+     estimate of the complete ``d(gamma F_ext)/dt``; an unprimed first sample
+     records far radiation but applies no incomplete reaction impulse,
+   * ``d beta/dt`` is derived from the mechanical force estimate, keeping the
+     recoil term consistent with the accepted non-radiation update,
    * the impulse is applied to mechanical momentum and canonical momentum is
      recomposed with the existing vector/scalar potential terms, and
-   * the impulse has a small numerical cap with a verbosity-gated diagnostic.
+   * the impulse cap, derivative readiness, signed reaction work, far-radiated
+     energy, and cross-field energy are exposed as trajectory diagnostics.
 
    Remaining work before treating this as physics evidence:
 
    * add timestep convergence tests for ``medina_lad`` itself,
-   * record when the numerical impulse cap activates in controlled tests, and
    * evaluate whether the mechanical-force estimator is adequate for retarded
      image/source forces or whether those contributions need a more explicit
      force-decomposition API.
@@ -364,10 +376,10 @@ Ordered Tasks
 Next Best Steps
 ---------------
 
-The immediate low-risk work is now validation rather than new physics:
+The immediate low-risk work is now validation rather than another force model:
 
-* keep the Medina/native-units derivation under review as the primary
-  implementation target,
+* keep the corrected complete force derivative and native-unit mapping under
+  review,
 * add active-mode timestep convergence tests for ``medina_lad`` under known
   prescribed external forces,
 * add mixed-field and low/high-energy benchmark brackets with explicit
