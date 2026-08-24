@@ -6,6 +6,12 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Corrected the charge-canonical spatial vector-potential bookkeeping so
+  ``q A / c`` is an event-local momentum offset independent of the proper-time
+  step. The previous path included an extra factor of the timestep when
+  reconstructing mechanical momentum, which affected moving-source position,
+  mass-shell, and subsequent self-consistent dynamics. Static charge sources
+  were unaffected because their spatial vector potential is zero.
 - Derived the native elementary charge from the repository's statcoulomb
   conversion instead of retaining the historical rounded literal. This lowers
   a singly charged native value by about 21.33 ppm and a two-charge Coulomb

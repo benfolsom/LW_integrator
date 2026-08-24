@@ -440,6 +440,78 @@ def test_compute_vectorized_contributions_matches_simple_normal_regime(
     assert result == pytest.approx((0.0625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5))
 
 
+@pytest.mark.parametrize(
+    ("source_beta", "nhat", "k_factor"),
+    [
+        pytest.param(0.2, (0.0, 1.0, 0.0), 1.0, id="normal-k"),
+        pytest.param(
+            1.0 - 5.0e-4,
+            (1.0, 0.0, 0.0),
+            5.0e-4,
+            id="small-k",
+        ),
+    ],
+)
+def test_moving_source_vector_potential_offset_is_independent_of_timestep(
+    monkeypatch: pytest.MonkeyPatch,
+    source_beta: float,
+    nhat: tuple[float, float, float],
+    k_factor: float,
+) -> None:
+    """The event-local qA/(mc) offset is not a proper-time increment."""
+
+    monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", False)
+    source_charge = 2.0
+    observer_charge = 1.0
+    observer_mass = 3.0
+    radius = 4.0
+    samples = _make_samples(
+        charge=[source_charge],
+        gamma=[1.0 / np.sqrt(1.0 - source_beta**2)],
+        bx=[source_beta],
+        valid_mask=[True],
+    )
+
+    def evaluate(h_step: float) -> tuple[float, ...]:
+        return vectorized_interactions.compute_vectorized_contributions(
+            h=h_step,
+            charge_i=observer_charge,
+            mass_i=observer_mass,
+            gamma_i=1.0,
+            beta_vec=(0.0, 0.0, 0.0),
+            nhat_nx=np.array([nhat[0]]),
+            nhat_ny=np.array([nhat[1]]),
+            nhat_nz=np.array([nhat[2]]),
+            R_separation=np.array([radius]),
+            samples=samples,
+            apply_external=True,
+        )
+
+    short_step = 0.125
+    long_step = 0.5
+    short_result = evaluate(short_step)
+    long_result = evaluate(long_step)
+    expected_potential_velocity_x = (
+        observer_charge
+        * source_charge
+        * source_beta
+        / (observer_mass * C_MMNS * radius * k_factor)
+    )
+
+    assert short_result[4] == pytest.approx(expected_potential_velocity_x)
+    assert long_result[4] == pytest.approx(expected_potential_velocity_x)
+    assert short_result[5:7] == pytest.approx((0.0, 0.0))
+    assert long_result[5:7] == pytest.approx((0.0, 0.0))
+    assert short_result[7] == pytest.approx(source_charge / (radius * k_factor))
+    assert long_result[7] == pytest.approx(source_charge / (radius * k_factor))
+    np.testing.assert_allclose(
+        np.asarray(long_result[:4]),
+        (long_step / short_step) * np.asarray(short_result[:4]),
+        rtol=2.0e-14,
+        atol=0.0,
+    )
+
+
 def test_compute_vectorized_contributions_uses_series_helper_for_small_k(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
