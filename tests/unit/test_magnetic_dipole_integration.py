@@ -400,7 +400,7 @@ def test_magnetic_dipole_path_is_identical_across_forced_python_and_numba_kernel
         mean=0.0,
         cav_spacing=0.0,
         z_cutoff=1.0e9,
-        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        startup_mode=StartupMode.COLD_START,
         radiation_reaction_mode="off",
         external_field=field,
         magnetic_dipole=magnetic,
