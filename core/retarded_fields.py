@@ -388,31 +388,48 @@ def _solve_retarded_sample(
     lower_time = float(times[segment])
     upper_time = float(times[segment + 1])
     source_position = source.position_m[segment]
-    source_beta = source.beta[segment]
-    source_beta_dot = source.beta_dot_s[segment]
     residual = float(knot_residuals[segment])
     separation = float(np.linalg.norm(observer_position_m - source_position))
+    trial_time = 0.5 * (lower_time + upper_time)
 
     for _ in range(max_root_iterations):
-        midpoint = 0.5 * (lower_time + upper_time)
         source_position, source_beta, source_beta_dot = _quintic_worldline_sample(
-            source, segment, midpoint
+            source, segment, trial_time
         )
         residual, separation = _light_cone_residual_m(
             observer_time_s=observer_time_s,
             observer_position_m=observer_position_m,
-            source_time_s=midpoint,
+            source_time_s=trial_time,
             source_position_m=source_position,
         )
         if abs(residual) <= root_tolerance_m:
-            lower_time = upper_time = midpoint
+            lower_time = upper_time = trial_time
             break
         if residual > 0.0:
-            lower_time = midpoint
+            lower_time = trial_time
         else:
-            upper_time = midpoint
+            upper_time = trial_time
         if np.nextafter(lower_time, upper_time) >= upper_time:
             break
+
+        derivative = float("nan")
+        if separation > 0.0:
+            direction = (observer_position_m - source_position) / separation
+            derivative = -SPEED_OF_LIGHT_M_S * (1.0 - float(direction @ source_beta))
+        if np.isfinite(derivative) and derivative < 0.0:
+            next_trial = trial_time - residual / derivative
+        else:
+            next_trial = float("nan")
+        if next_trial == trial_time:
+            target = upper_time if residual > 0.0 else lower_time
+            next_trial = float(np.nextafter(trial_time, target))
+        elif (
+            not np.isfinite(next_trial)
+            or next_trial <= lower_time
+            or next_trial >= upper_time
+        ):
+            next_trial = 0.5 * (lower_time + upper_time)
+        trial_time = next_trial
 
     retarded_time = 0.5 * (lower_time + upper_time)
     source_position, source_beta, source_beta_dot = _quintic_worldline_sample(

@@ -119,6 +119,39 @@ def test_uniform_motion_light_cone_root_matches_analytic_solution() -> None:
     assert abs(field.light_cone_residual_m[0]) <= 1.0e-18
 
 
+def test_uniform_motion_newton_root_needs_few_interpolated_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    beta_x = 0.2
+    times_ns = np.linspace(-0.02, 0.002, 45)
+    positions = np.zeros((times_ns.size, 3))
+    positions[:, 0] = beta_x * C_MMNS * times_ns
+    betas = np.zeros_like(positions)
+    betas[:, 0] = beta_x
+    history = _source_history(
+        times_ns=times_ns,
+        position_mm=positions,
+        beta=betas,
+    )
+    original = retarded_fields._quintic_worldline_sample
+    sample_count = 0
+
+    def counted_sample(*args, **kwargs):
+        nonlocal sample_count
+        sample_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(retarded_fields, "_quintic_worldline_sample", counted_sample)
+
+    field = evaluate_retarded_charge_field_si(
+        history,
+        ObserverEvent(time_ns=0.0, position_mm=(1.0, 0.0, 0.0)),
+    )
+
+    assert sample_count <= 6
+    assert abs(field.light_cone_residual_m[0]) <= 1.0e-18
+
+
 def test_complete_gradient_matches_static_coulomb_jacobian() -> None:
     radius_m = 1.0e-3
     result = evaluate_retarded_charge_field_gradient_si(
