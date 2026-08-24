@@ -248,7 +248,7 @@ class TestMissingOptionalFields:
         trajectory = builder.build()
         restored = trajectory.state_at(0)
 
-        assert trajectory.radiation_reaction_work.flags.writeable
+        assert not trajectory.radiation_reaction_work.flags.writeable
         assert trajectory.medina_force_derivative_ready.dtype == bool
         np.testing.assert_array_equal(restored["radiation_reaction_work"], (-2.0,))
         np.testing.assert_array_equal(
@@ -276,7 +276,7 @@ class TestMissingOptionalFields:
         builder.set_step(0, state)
         trajectory = builder.build()
 
-        assert trajectory.spin_x.flags.writeable
+        assert not trajectory.spin_x.flags.writeable
         np.testing.assert_array_equal(trajectory.spin_x[0], (0.25,))
         np.testing.assert_array_equal(trajectory.spin_y[0], (0.5,))
         np.testing.assert_array_equal(trajectory.spin_z[0], (0.75,))

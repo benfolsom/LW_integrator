@@ -8,7 +8,7 @@ and example notebooks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
 from itertools import count
 from typing import Dict, List, Sequence, cast
@@ -41,6 +41,50 @@ class _TrajectoryStorageState:
     capacity: int = 0
     generation: int = 0
     rewrite_epoch: int = 0
+    array_revision: int = 0
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "_TrajectoryStorageState":
+        """Copy one storage graph while minting a collision-free token."""
+
+        copied = _TrajectoryStorageState(
+            capacity=self.capacity,
+            generation=self.generation,
+            rewrite_epoch=self.rewrite_epoch,
+            array_revision=self.array_revision,
+        )
+        memo[id(self)] = copied
+        return copied
+
+    def __reduce__(self) -> tuple[object, tuple[int, int, int, int]]:
+        """Never persist a process-local allocation token through pickle."""
+
+        return (
+            _restore_trajectory_storage_state,
+            (
+                self.capacity,
+                self.generation,
+                self.rewrite_epoch,
+                self.array_revision,
+            ),
+        )
+
+
+def _restore_trajectory_storage_state(
+    capacity: int,
+    generation: int,
+    rewrite_epoch: int,
+    array_revision: int,
+) -> _TrajectoryStorageState:
+    return _TrajectoryStorageState(
+        capacity=capacity,
+        generation=generation,
+        rewrite_epoch=rewrite_epoch,
+        array_revision=array_revision,
+    )
+
+
+class StaleTrajectoryViewError(RuntimeError):
+    """Raised when a trajectory wrapper no longer names current backing arrays."""
 
 
 class SimulationType(IntEnum):
@@ -943,6 +987,11 @@ class TrajectoryArrays:
         repr=False,
         compare=False,
     )
+    _storage_array_revision: int | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def n_steps(self) -> int:
@@ -978,8 +1027,45 @@ class TrajectoryArrays:
             None if self._storage_state is None else self._storage_state.rewrite_epoch
         )
 
+    @property
+    def storage_array_revision(self) -> int | None:
+        """Backing-array revision captured when this wrapper was constructed."""
+
+        return self._storage_array_revision
+
+    def require_current_storage(self) -> None:
+        """Reject a wrapper after its builder replaces a backing-array family."""
+
+        state = self._storage_state
+        if state is None:
+            return
+        if self._storage_array_revision != state.array_revision:
+            raise StaleTrajectoryViewError(
+                "trajectory view is stale because its builder replaced backing "
+                "arrays; request a fresh build_partial() or build() view"
+            )
+
+    def _make_managed_arrays_read_only(self) -> "TrajectoryArrays":
+        """Expose non-writeable views while the builder keeps writable bases."""
+
+        for descriptor in fields(self):
+            values = getattr(self, descriptor.name)
+            if isinstance(values, np.ndarray):
+                readonly = values.view()
+                readonly.flags.writeable = False
+                setattr(self, descriptor.name, readonly)
+        return self
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Restore managed wrappers with their read-only publication contract."""
+
+        self.__dict__.update(state)
+        if self._storage_state is not None:
+            self._make_managed_arrays_read_only()
+
     def state_at(self, step: int) -> ParticleState:
         """Return a legacy ``ParticleState`` dict for *step*."""
+        self.require_current_storage()
         s: ParticleState = {
             "x": self.x[step],
             "y": self.y[step],
@@ -1079,6 +1165,7 @@ class IndexedTrajectoryArrays:
     q_override: np.ndarray | None = None
 
     def __post_init__(self) -> None:
+        self.base.require_current_storage()
         indices = np.asarray(self.particle_indices, dtype=int)
         if indices.ndim != 1:
             raise ValueError("particle_indices must be a 1-D array")
@@ -1110,12 +1197,14 @@ class IndexedTrajectoryArrays:
         return int(self.start_step) + local_step
 
     def row(self, field_name: str, step: int) -> np.ndarray:
+        self.base.require_current_storage()
         values = np.asarray(getattr(self.base, field_name))[self.global_step(step), :][
             self.particle_indices
         ]
         return np.asarray(values)
 
     def scalar(self, field_name: str, step: int, particle_idx: int) -> float:
+        self.base.require_current_storage()
         return float(
             np.asarray(getattr(self.base, field_name))[
                 self.global_step(step),
@@ -1129,6 +1218,7 @@ class IndexedTrajectoryArrays:
         steps: np.ndarray,
         particle_indices: np.ndarray,
     ) -> np.ndarray:
+        self.base.require_current_storage()
         local_steps = np.asarray(steps, dtype=int)
         local_particles = np.asarray(particle_indices, dtype=int)
         values = np.asarray(getattr(self.base, field_name))[
@@ -1138,12 +1228,14 @@ class IndexedTrajectoryArrays:
         return np.asarray(values)
 
     def time_columns(self, up_to_step: int) -> np.ndarray:
+        self.base.require_current_storage()
         end_step = self.global_step(up_to_step) + 1
         return np.asarray(self.base.t)[int(self.start_step) : end_step, :][
             :, self.particle_indices
         ]
 
     def constant(self, field_name: str) -> np.ndarray:
+        self.base.require_current_storage()
         if field_name in {"q", "q_source"} and self.q_override is not None:
             return np.asarray(self.q_override, dtype=float)
         values = np.asarray(getattr(self.base, field_name))[self.particle_indices]
@@ -1404,6 +1496,7 @@ class TrajectoryBuilder:
             # Replacing one family of backing arrays changes the storage seen
             # by any previously built view, even when the current row is new.
             self._storage_state.rewrite_epoch += 1
+            self._storage_state.array_revision += 1
 
         medina_fields = self._MEDINA_FLOAT_FIELDS + self._MEDINA_BOOL_FIELDS
         if not self._medina_arrays_allocated and any(
@@ -1428,6 +1521,7 @@ class TrajectoryBuilder:
                 )
             self._medina_arrays_allocated = True
             self._storage_state.rewrite_epoch += 1
+            self._storage_state.array_revision += 1
 
         for field_name in (
             self._KINEMATIC_FIELDS + self._MAGNETIC_KINEMATIC_FIELDS + medina_fields
@@ -1558,7 +1652,8 @@ class TrajectoryBuilder:
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
             _storage_state=self._storage_state,
-        )
+            _storage_array_revision=self._storage_state.array_revision,
+        )._make_managed_arrays_read_only()
 
     def build(self) -> TrajectoryArrays:
         """Finalise and return the accumulated :class:`TrajectoryArrays`."""
@@ -1630,7 +1725,8 @@ class TrajectoryBuilder:
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule,
             _storage_state=self._storage_state,
-        )
+            _storage_array_revision=self._storage_state.array_revision,
+        )._make_managed_arrays_read_only()
 
 
 __all__ = [
@@ -1649,6 +1745,7 @@ __all__ = [
     "TrajectoryArrays",
     "IndexedTrajectoryArrays",
     "TrajectoryBuilder",
+    "StaleTrajectoryViewError",
     "Occluder",
     "BeamlineGeometryConfig",
     "DipoleSourceConfig",

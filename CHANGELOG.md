@@ -6,6 +6,10 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Builder-published ``TrajectoryArrays`` now expose read-only NumPy views so
+  direct mutation cannot bypass trajectory-version and retarded-field cache
+  invalidation. Builder writes remain supported; callers that need an
+  independently mutable array must make an explicit copy.
 - Corrected the charge-canonical spatial vector-potential bookkeeping so
   ``q A / c`` is an event-local momentum offset independent of the proper-time
   step. The previous path included an extra factor of the timestep when

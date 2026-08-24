@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import copy
+import gc
+import pickle
+
 import numpy as np
 import pytest
 
 from core import retarded_dipole_fields, retarded_fields
 from core.prepared_history_cache import AppendAwarePreparedHistoryCache
-from core.types import IndexedTrajectoryArrays, TrajectoryBuilder
+from core.types import (
+    IndexedTrajectoryArrays,
+    StaleTrajectoryViewError,
+    TrajectoryBuilder,
+)
 
 
 def _state(step: int, *, particles: int = 2, x_shift: float = 0.0) -> dict:
@@ -96,6 +104,7 @@ def test_builder_views_share_token_and_expose_live_mutation_versions() -> None:
     assert first is not repeated
     assert first.storage_token == repeated.storage_token
     assert first.storage_capacity == repeated.storage_capacity == 4
+    assert first.storage_array_revision == repeated.storage_array_revision == 0
     assert first.storage_generation == repeated.storage_generation == 1
     assert first.storage_rewrite_epoch == repeated.storage_rewrite_epoch == 0
 
@@ -438,3 +447,371 @@ def test_append_cache_rejects_source_resurrection_after_loss() -> None:
     builder.set_step(2, resurrected)
     with pytest.raises(ValueError, match="must remain dead after loss"):
         retarded_fields._prepare_history(builder.build_partial(3), ())
+
+
+def test_stale_wrapper_cannot_poison_dipole_cache_after_lazy_allocation() -> None:
+    retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
+    builder = TrajectoryBuilder(2, 1)
+    builder.set_step(0, _state(0, particles=1))
+    stale = builder.build_partial(1)
+    initial = retarded_dipole_fields._prepare_dipole_history(
+        stale,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    assert initial.sources == {}
+    stats_before_stale_query = (
+        retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats()
+    )
+
+    # Rewriting the published row lazily replaces every spin/field backing
+    # array. The old wrapper still names the zero-valued broadcast arrays.
+    builder.set_step(0, _magnetic_state(0))
+    with pytest.raises(StaleTrajectoryViewError, match="fresh build_partial"):
+        retarded_dipole_fields._prepare_dipole_history(
+            stale,
+            source_identities=("electron",),
+            observer_source_identity=None,
+            excluded_source_identities=(),
+        )
+    with pytest.raises(StaleTrajectoryViewError, match="fresh build_partial"):
+        retarded_dipole_fields._prepare_dipole_history_uncached(
+            stale,
+            source_identities=("electron",),
+            observer_source_identity=None,
+            excluded_source_identities=(),
+        )
+    assert (
+        retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats()
+        == stats_before_stale_query
+    )
+
+    fresh = builder.build_partial(1)
+    cached = retarded_dipole_fields._prepare_dipole_history(
+        fresh,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    rebuilt = retarded_dipole_fields._prepare_dipole_history_uncached(
+        fresh,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    np.testing.assert_array_equal(cached.sources[0].rest_spin, [[1.0, 0.0, 0.0]])
+    np.testing.assert_array_equal(
+        cached.sources[0].rest_spin,
+        rebuilt.sources[0].rest_spin,
+    )
+
+
+def test_appended_lazy_magnetic_allocation_stales_old_prefix_only() -> None:
+    retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
+    builder = TrajectoryBuilder(2, 1)
+    first = _state(0, particles=1)
+    first.update(
+        {
+            "magnetic_moment_native": np.array([0.7]),
+            "magnetic_dipole_active": np.array([True]),
+        }
+    )
+    builder.set_step(0, first)
+    stale_prefix = builder.build_partial(1)
+    retarded_dipole_fields._prepare_dipole_history(
+        stale_prefix,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+
+    builder.set_step(1, _magnetic_state(1))
+    with pytest.raises(StaleTrajectoryViewError):
+        retarded_dipole_fields._prepare_dipole_history(
+            stale_prefix,
+            source_identities=("electron",),
+            observer_source_identity=None,
+            excluded_source_identities=(),
+        )
+
+    fresh = builder.build_partial(2)
+    cached = retarded_dipole_fields._prepare_dipole_history(
+        fresh,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    rebuilt = retarded_dipole_fields._prepare_dipole_history_uncached(
+        fresh,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    np.testing.assert_array_equal(
+        cached.sources[0].rest_spin,
+        rebuilt.sources[0].rest_spin,
+    )
+
+
+def test_lazy_medina_allocation_invalidates_whole_old_wrapper() -> None:
+    builder = TrajectoryBuilder(2, 1)
+    builder.set_step(0, _state(0, particles=1))
+    stale = builder.build_partial(1)
+    assert stale.storage_array_revision == 0
+
+    medina = _state(1, particles=1)
+    medina["medina_external_force_x"] = np.array([0.25])
+    medina["medina_external_force_sample_time"] = np.array([0.01])
+    builder.set_step(1, medina)
+    with pytest.raises(StaleTrajectoryViewError):
+        stale.state_at(0)
+    with pytest.raises(StaleTrajectoryViewError):
+        retarded_fields._prepare_history(stale, ())
+
+    fresh = builder.build_partial(2)
+    assert fresh.storage_array_revision == 1
+    assert fresh.state_at(1)["medina_external_force_x"][0] == pytest.approx(0.25)
+    retarded_fields._prepare_history(fresh, ())
+
+
+def test_geometric_buffers_grow_at_eight_to_nine_with_exact_parity() -> None:
+    retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
+    retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
+    builder = TrajectoryBuilder(10, 1, magnetic_dipole=True)
+    for step in range(8):
+        builder.set_step(step, _magnetic_state(step))
+    first = builder.build_partial(8)
+    charge_before = retarded_fields._prepare_history(first, ())
+    dipole_before = retarded_dipole_fields._prepare_dipole_history(
+        first,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    assert charge_before.arrays._time_buffer.shape[0] == 8
+    assert charge_before.sources[0]._coefficient_buffer.shape[0] == 7
+    assert dipole_before.sources[0]._rest_spin_buffer.shape[0] == 8
+
+    builder.set_step(8, _magnetic_state(8))
+    grown = builder.build_partial(9)
+    charge_after = retarded_fields._prepare_history(grown, ())
+    dipole_after = retarded_dipole_fields._prepare_dipole_history(
+        grown,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    assert charge_after.arrays._time_buffer.shape[0] == 10
+    assert charge_after.sources[0]._coefficient_buffer.shape[0] == 9
+    assert dipole_after.sources[0]._rest_spin_buffer.shape[0] == 10
+    _assert_worldlines_equal(
+        charge_after.sources[0],
+        retarded_fields._prepare_history_uncached(grown, ()).sources[0],
+    )
+    rebuilt_dipole = retarded_dipole_fields._prepare_dipole_history_uncached(
+        grown,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    np.testing.assert_array_equal(
+        dipole_after.sources[0].rest_spin_derivative_per_ns,
+        rebuilt_dipole.sources[0].rest_spin_derivative_per_ns,
+    )
+
+
+def test_two_live_storage_histories_are_retained_without_thrash() -> None:
+    cache = AppendAwarePreparedHistoryCache(max_entries=2)
+    builders = [TrajectoryBuilder(3, 1), TrajectoryBuilder(3, 1)]
+    for builder in builders:
+        builder.set_step(0, _state(0, particles=1))
+
+    def prepare_full(history) -> tuple[float, ...]:
+        return tuple(float(value) for value in history.x[:, 0])
+
+    def append(previous, history, old_stop):
+        return previous + tuple(float(value) for value in history.x[old_stop:, 0])
+
+    for builder in builders:
+        cache.prepare(
+            builder.build_partial(1),
+            variant="charge",
+            prepare_full=prepare_full,
+            append=append,
+        )
+    for step in (1, 2):
+        for builder in builders:
+            builder.set_step(step, _state(step, particles=1))
+            result = cache.prepare(
+                builder.build_partial(step + 1),
+                variant="charge",
+                prepare_full=prepare_full,
+                append=append,
+            )
+            assert result.disposition == "append"
+    assert cache.stats().entries == 2
+    assert cache.stats().misses == 2
+    assert cache.stats().appends == 4
+
+
+def test_charge_and_dipole_provider_caches_retain_two_growing_histories() -> None:
+    retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
+    retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
+    builders = [
+        TrajectoryBuilder(3, 1, magnetic_dipole=True),
+        TrajectoryBuilder(3, 1, magnetic_dipole=True),
+    ]
+    for builder in builders:
+        builder.set_step(0, _magnetic_state(0))
+        history = builder.build_partial(1)
+        retarded_fields._prepare_history(history, ())
+        retarded_dipole_fields._prepare_dipole_history(
+            history,
+            source_identities=("source",),
+            observer_source_identity=None,
+            excluded_source_identities=(),
+        )
+    for step in (1, 2):
+        for builder in builders:
+            builder.set_step(step, _magnetic_state(step))
+            history = builder.build_partial(step + 1)
+            retarded_fields._prepare_history(history, ())
+            retarded_dipole_fields._prepare_dipole_history(
+                history,
+                source_identities=("source",),
+                observer_source_identity=None,
+                excluded_source_identities=(),
+            )
+
+    for cache in (
+        retarded_fields._CHARGE_PREPARED_HISTORY_CACHE,
+        retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE,
+    ):
+        stats = cache.stats()
+        assert stats.entries == 2
+        assert stats.misses == 2
+        assert stats.appends == 4
+
+
+def test_dipole_variant_uses_only_effective_source_exclusions() -> None:
+    retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
+    builder = TrajectoryBuilder(1, 1, magnetic_dipole=True)
+    builder.set_step(0, _magnetic_state(0))
+    history = builder.build_partial(1)
+    common = {
+        "source_identities": ("source",),
+    }
+    retarded_dipole_fields._prepare_dipole_history(
+        history,
+        observer_source_identity="not-a-source",
+        excluded_source_identities=("also-not-a-source",),
+        **common,
+    )
+    retarded_dipole_fields._prepare_dipole_history(
+        history,
+        observer_source_identity=None,
+        excluded_source_identities=(),
+        **common,
+    )
+    assert retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats().reuses == 1
+
+    retarded_dipole_fields._prepare_dipole_history(
+        history,
+        observer_source_identity="source",
+        excluded_source_identities=(),
+        **common,
+    )
+    retarded_dipole_fields._prepare_dipole_history(
+        history,
+        observer_source_identity=None,
+        excluded_source_identities=("source",),
+        **common,
+    )
+    stats = retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats()
+    assert stats.misses == 2
+    assert stats.reuses == 2
+
+
+def test_dead_storage_owner_is_evicted_by_weakref_cleanup() -> None:
+    cache = AppendAwarePreparedHistoryCache(max_entries=2)
+    builder = TrajectoryBuilder(1, 1)
+    builder.set_step(0, _state(0, particles=1))
+    history = builder.build_partial(1)
+    cache.prepare(
+        history,
+        variant="charge",
+        prepare_full=lambda current: tuple(current.x[:, 0]),
+        append=lambda previous, current, old_stop: previous,
+    )
+    assert cache.stats().entries == 1
+    del history
+    del builder
+    gc.collect()
+    assert len(cache._entries) == 0
+
+
+def test_deepcopy_and_pickle_mint_independent_storage_tokens() -> None:
+    retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
+    builder = TrajectoryBuilder(2, 1)
+    builder.set_step(0, _state(0, particles=1))
+    builder.set_step(1, _state(1, particles=1))
+    original = builder.build_partial(2)
+    original_prepared = retarded_fields._prepare_history(original, ())
+
+    copied_builder = copy.deepcopy(builder)
+    copied_builder.set_step(1, _state(1, particles=1, x_shift=99.0))
+    copied = copied_builder.build_partial(2)
+    assert copied.storage_token != original.storage_token
+    copied_prepared = retarded_fields._prepare_history(copied, ())
+    assert original_prepared.sources[0].position_mm[-1, 0] == pytest.approx(1.0)
+    assert copied_prepared.sources[0].position_mm[-1, 0] == pytest.approx(100.0)
+
+    payload = pickle.dumps(builder)
+    unpickled_a = pickle.loads(payload)
+    unpickled_b = pickle.loads(payload)
+    view_a = unpickled_a.build_partial(2)
+    view_b = unpickled_b.build_partial(2)
+    assert (
+        len({original.storage_token, view_a.storage_token, view_b.storage_token}) == 3
+    )
+
+    pair = copy.deepcopy((original, original))
+    assert pair[0].storage_token == pair[1].storage_token
+    assert pair[0].storage_token != original.storage_token
+    assert not pair[0].x.flags.writeable
+    assert not pair[0].q_source.flags.writeable
+
+    restored_view = pickle.loads(pickle.dumps(original))
+    assert restored_view.storage_token not in {
+        original.storage_token,
+        pair[0].storage_token,
+    }
+    assert not restored_view.x.flags.writeable
+    assert not restored_view.q_source.flags.writeable
+
+
+def test_builder_managed_views_are_read_only_but_builder_can_advance() -> None:
+    builder = TrajectoryBuilder(2, 1, magnetic_dipole=True)
+    builder.set_step(0, _magnetic_state(0))
+    partial = builder.build_partial(1)
+    state = partial.state_at(0)
+    for values in (
+        partial.x,
+        partial.q_source,
+        partial.spin_x,
+        partial.dead,
+        state["x"],
+        state["q_source"],
+        state["spin_x"],
+        state["_dead_particles"],
+    ):
+        assert not values.flags.writeable
+        with pytest.raises(ValueError, match="read-only"):
+            values.flat[0] = values.flat[0]
+
+    builder.set_step(1, _magnetic_state(1))
+    complete = builder.build()
+    assert complete.n_steps == 2
+    assert not complete.x.flags.writeable
+    assert complete.x[1, 0] == pytest.approx(_magnetic_state(1)["x"][0])

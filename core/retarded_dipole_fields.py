@@ -60,6 +60,7 @@ from .constants import C_MMNS
 from .magnetic_dipole import boost_rest_polarization
 from .prepared_history_cache import (
     AppendAwarePreparedHistoryCache,
+    history_prepared_buffer_capacity,
     history_storage_capacity,
 )
 from .retarded_fields import (
@@ -159,7 +160,7 @@ class _PreparedDipoleHistory:
 
 _DIPOLE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
     TrajectoryHistory, _PreparedDipoleHistory
-] = AppendAwarePreparedHistoryCache(max_entries=16)
+] = AppendAwarePreparedHistoryCache(max_entries=2)
 
 
 def _validate_source_identities(
@@ -220,8 +221,21 @@ def _append_source_spin_slopes_per_ns(
     old_count = int(source.rest_spin.shape[0])
     append_count = int(appended_spin.shape[0])
     count = old_count + append_count
-    if source._rest_spin_buffer is None or source._slope_buffer is None:
-        capacity = max(count, max(1, 2 * old_count))
+    current_capacity = (
+        0
+        if source._rest_spin_buffer is None
+        else int(source._rest_spin_buffer.shape[0])
+    )
+    if (
+        source._rest_spin_buffer is None
+        or source._slope_buffer is None
+        or count > current_capacity
+    ):
+        capacity = max(count, max(8, 2 * current_capacity))
+        if source.worldline._maximum_capacity is not None:
+            capacity = min(capacity, source.worldline._maximum_capacity)
+        if count > capacity:
+            raise ValueError("prepared dipole spin append exceeded builder capacity")
         spin_buffer = np.empty((capacity, 3), dtype=float)
         slope_buffer = np.empty((capacity, 3), dtype=float)
         spin_buffer[:old_count] = source.rest_spin
@@ -230,8 +244,6 @@ def _append_source_spin_slopes_per_ns(
         source._slope_buffer = slope_buffer
     assert source._rest_spin_buffer is not None
     assert source._slope_buffer is not None
-    if count > source._rest_spin_buffer.shape[0]:
-        raise ValueError("prepared dipole spin append exceeded its reserved capacity")
     source._rest_spin_buffer[old_count:count] = appended_spin
     spin = source._rest_spin_buffer[:count]
     slopes = source._slope_buffer
@@ -288,8 +300,13 @@ def _prepare_dipole_history_uncached(
     observer_source_identity: Hashable | None,
     excluded_source_identities: Sequence[Hashable],
     reserve_capacity: int | None = None,
+    maximum_capacity: int | None = None,
 ) -> _PreparedDipoleHistory:
-    arrays = _reserve_history_arrays(_extract_history(history), reserve_capacity)
+    arrays = _reserve_history_arrays(
+        _extract_history(history),
+        reserve_capacity,
+        maximum_capacity=maximum_capacity,
+    )
     identities = _validate_source_identities(arrays.n_sources, source_identities)
     excluded = set(excluded_source_identities)
     if observer_source_identity is not None:
@@ -400,7 +417,8 @@ def _append_prepared_dipole_history(
             source_identities=source_identities,
             observer_source_identity=observer_source_identity,
             excluded_source_identities=excluded_source_identities,
-            reserve_capacity=history_storage_capacity(history),
+            reserve_capacity=history_prepared_buffer_capacity(history),
+            maximum_capacity=history_storage_capacity(history),
         )
     previous_moments = np.zeros(arrays.n_sources, dtype=float)
     previous_active = np.zeros(arrays.n_sources, dtype=bool)
@@ -438,7 +456,8 @@ def _append_prepared_dipole_history(
             source_identities=source_identities,
             observer_source_identity=observer_source_identity,
             excluded_source_identities=excluded_source_identities,
-            reserve_capacity=history_storage_capacity(history),
+            reserve_capacity=history_prepared_buffer_capacity(history),
+            maximum_capacity=history_storage_capacity(history),
         )
 
     spin_components = tuple(
@@ -495,12 +514,16 @@ def _prepare_dipole_history(
     """Prepare dipole histories, extending a safe builder-backed cache."""
 
     identities_key = None if source_identities is None else tuple(source_identities)
-    excluded_key = frozenset(excluded_source_identities)
+    effective_excluded = set(excluded_source_identities)
+    if observer_source_identity is not None:
+        effective_excluded.add(observer_source_identity)
+    if identities_key is not None:
+        available_identities = frozenset(identities_key)
+        effective_excluded.intersection_update(available_identities)
     variant = (
         "dipole",
         identities_key,
-        observer_source_identity,
-        excluded_key,
+        frozenset(effective_excluded),
     )
     return _DIPOLE_PREPARED_HISTORY_CACHE.prepare(
         history,
@@ -510,7 +533,8 @@ def _prepare_dipole_history(
             source_identities=source_identities,
             observer_source_identity=observer_source_identity,
             excluded_source_identities=excluded_source_identities,
-            reserve_capacity=history_storage_capacity(current),
+            reserve_capacity=history_prepared_buffer_capacity(current),
+            maximum_capacity=history_storage_capacity(current),
         ),
         append=lambda prepared, current, old_stop: _append_prepared_dipole_history(
             prepared,

@@ -30,6 +30,7 @@ import numpy as np
 from .constants import C_MMNS
 from .prepared_history_cache import (
     AppendAwarePreparedHistoryCache,
+    history_prepared_buffer_capacity,
     history_storage_capacity,
 )
 from .rfs import electromagnetic_field_tensor_native
@@ -117,6 +118,7 @@ class _HistoryArrays:
     _beta_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _beta_prime_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _dead_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _maximum_capacity: int | None = dataclass_field(default=None, repr=False)
 
     @property
     def n_sources(self) -> int:
@@ -137,6 +139,7 @@ class _PreparedSourceHistory:
     ended_by_loss: bool
     _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _coefficient_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _maximum_capacity: int | None = dataclass_field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -149,7 +152,7 @@ class _PreparedHistory:
 
 _CHARGE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
     TrajectoryHistory, _PreparedHistory
-] = AppendAwarePreparedHistoryCache(max_entries=16)
+] = AppendAwarePreparedHistoryCache(max_entries=2)
 
 
 @dataclass(frozen=True)
@@ -184,7 +187,15 @@ def _legacy_constant(history: Trajectory, field_name: str) -> np.ndarray:
     return np.asarray(history[-1][field_name], dtype=float)
 
 
+def _require_current_history_storage(history: TrajectoryHistory) -> None:
+    if isinstance(history, IndexedTrajectoryArrays):
+        history.base.require_current_storage()
+    elif isinstance(history, TrajectoryArrays):
+        history.require_current_storage()
+
+
 def _history_matrix(history: TrajectoryHistory, field_name: str) -> np.ndarray:
+    _require_current_history_storage(history)
     if isinstance(history, IndexedTrajectoryArrays):
         start = int(history.start_step)
         values = np.asarray(getattr(history.base, field_name), dtype=float)[start:]
@@ -195,6 +206,7 @@ def _history_matrix(history: TrajectoryHistory, field_name: str) -> np.ndarray:
 
 
 def _history_constant(history: TrajectoryHistory, field_name: str) -> np.ndarray:
+    _require_current_history_storage(history)
     if isinstance(history, IndexedTrajectoryArrays):
         return np.asarray(history.constant(field_name), dtype=float)
     if isinstance(history, TrajectoryArrays):
@@ -203,6 +215,7 @@ def _history_constant(history: TrajectoryHistory, field_name: str) -> np.ndarray
 
 
 def _history_dead(history: TrajectoryHistory, shape: tuple[int, int]) -> np.ndarray:
+    _require_current_history_storage(history)
     if isinstance(history, IndexedTrajectoryArrays):
         start = int(history.start_step)
         dead = np.asarray(history.base.dead, dtype=bool)[start:]
@@ -278,13 +291,19 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
 def _reserve_history_arrays(
     arrays: _HistoryArrays,
     capacity: int | None,
+    *,
+    maximum_capacity: int | None = None,
 ) -> _HistoryArrays:
     """Move visible rows into fixed-capacity append buffers when requested."""
 
     visible_stop = int(arrays.time_ns.shape[0])
     if capacity is None:
         return arrays
-    reserved = max(visible_stop, int(capacity))
+    if maximum_capacity is not None:
+        arrays._maximum_capacity = max(visible_stop, int(maximum_capacity))
+    limit = arrays._maximum_capacity
+    requested = max(visible_stop, int(capacity))
+    reserved = requested if limit is None else min(requested, limit)
     n_sources = arrays.n_sources
     time_buffer = np.empty((reserved, n_sources), dtype=float)
     position_buffer = np.empty((reserved, n_sources, 3), dtype=float)
@@ -317,6 +336,7 @@ def _history_matrix_slice(
 ) -> np.ndarray:
     """Extract only a newly visible tail from one history field."""
 
+    _require_current_history_storage(history)
     start = int(start_step)
     if isinstance(history, IndexedTrajectoryArrays):
         global_start = int(history.start_step) + start
@@ -334,6 +354,7 @@ def _history_dead_slice(
     start_step: int,
     shape: tuple[int, int],
 ) -> np.ndarray:
+    _require_current_history_storage(history)
     start = int(start_step)
     if isinstance(history, IndexedTrajectoryArrays):
         global_start = int(history.start_step) + start
@@ -422,7 +443,14 @@ def _append_history_arrays(
     assert previous._dead_buffer is not None
     capacity = int(previous._time_buffer.shape[0])
     if new_stop > capacity:
-        raise ValueError("prepared history append exceeded its reserved capacity")
+        _reserve_history_arrays(previous, max(new_stop, max(8, 2 * capacity)))
+        assert previous._time_buffer is not None
+        assert previous._position_buffer is not None
+        assert previous._beta_buffer is not None
+        assert previous._beta_prime_buffer is not None
+        assert previous._dead_buffer is not None
+        if new_stop > previous._time_buffer.shape[0]:
+            raise ValueError("prepared history append exceeded builder capacity")
 
     previous._time_buffer[old_stop:new_stop] = tail.time_ns
     previous._position_buffer[old_stop:new_stop] = tail.position_mm
@@ -558,6 +586,7 @@ def _prepare_source_history(
         segment_duration_ns=durations,
         position_coefficients_mm=coefficients,
         ended_by_loss=alive_stop != history.time_ns.shape[0],
+        _maximum_capacity=history._maximum_capacity,
     )
     if reserve_capacity is None:
         return prepared
@@ -613,11 +642,24 @@ def _append_prepared_source_history(
         history.beta[coefficient_start:new_alive_stop, source_index],
         history.beta_prime_per_mm[coefficient_start:new_alive_stop, source_index],
     )
-    if previous._duration_buffer is None or previous._coefficient_buffer is None:
+    required_segment_capacity = max(0, new_alive_stop - 1)
+    current_segment_capacity = (
+        0 if previous._duration_buffer is None else int(previous._duration_buffer.size)
+    )
+    if (
+        previous._duration_buffer is None
+        or previous._coefficient_buffer is None
+        or required_segment_capacity > current_segment_capacity
+    ):
         segment_capacity = max(
-            new_alive_stop - 1,
-            max(1, 2 * int(previous.segment_duration_ns.size)),
+            required_segment_capacity,
+            max(7, 2 * current_segment_capacity),
         )
+        if previous._maximum_capacity is not None:
+            segment_capacity = min(
+                segment_capacity,
+                max(0, previous._maximum_capacity - 1),
+            )
         duration_buffer = np.empty(segment_capacity, dtype=float)
         coefficient_buffer = np.empty((segment_capacity, 6, 3), dtype=float)
         old_segment_stop = int(previous.segment_duration_ns.size)
@@ -630,7 +672,7 @@ def _append_prepared_source_history(
     assert previous._duration_buffer is not None
     assert previous._coefficient_buffer is not None
     if segment_stop > previous._duration_buffer.size:
-        raise ValueError("prepared source append exceeded its reserved capacity")
+        raise ValueError("prepared source append exceeded builder capacity")
     previous._duration_buffer[segment_start:segment_stop] = new_durations
     previous._coefficient_buffer[segment_start:segment_stop] = new_coefficients
     previous.time_ns = history.time_ns[:new_alive_stop, source_index]
@@ -650,10 +692,15 @@ def _prepare_history_uncached(
     excluded_source_indices: Sequence[int],
     *,
     reserve_capacity: int | None = None,
+    maximum_capacity: int | None = None,
 ) -> _PreparedHistory:
     """Extract once and prepare only sources that can contribute a field."""
 
-    arrays = _reserve_history_arrays(_extract_history(history), reserve_capacity)
+    arrays = _reserve_history_arrays(
+        _extract_history(history),
+        reserve_capacity,
+        maximum_capacity=maximum_capacity,
+    )
     excluded = {int(index) for index in excluded_source_indices}
     if any(index < 0 or index >= arrays.n_sources for index in excluded):
         raise IndexError("excluded source index is out of bounds")
@@ -686,7 +733,8 @@ def _append_prepared_history(
         return _prepare_history_uncached(
             history,
             excluded_source_indices,
-            reserve_capacity=history_storage_capacity(history),
+            reserve_capacity=history_prepared_buffer_capacity(history),
+            maximum_capacity=history_storage_capacity(history),
         )
     for source in previous.sources.values():
         _append_prepared_source_history(source, arrays, old_stop)
@@ -706,7 +754,8 @@ def _prepare_history(
         prepare_full=lambda current: _prepare_history_uncached(
             current,
             excluded,
-            reserve_capacity=history_storage_capacity(current),
+            reserve_capacity=history_prepared_buffer_capacity(current),
+            maximum_capacity=history_storage_capacity(current),
         ),
         append=lambda previous, current, old_stop: _append_prepared_history(
             previous,

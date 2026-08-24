@@ -17,6 +17,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from threading import RLock
 from typing import Callable, Generic, Hashable, Literal, TypeVar
+from weakref import ReferenceType, ref
 
 import numpy as np
 
@@ -32,9 +33,12 @@ class HistoryStorageSnapshot:
     """Cache identity and live version for one visible history view."""
 
     identity: tuple[Hashable, ...]
+    storage_token: int
     visible_stop: int
     generation: int
     rewrite_epoch: int
+    array_revision: int
+    owner_ref: ReferenceType[object]
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,7 @@ class PreparedHistoryCacheStats:
     reuses: int
     appends: int
     rebuilds: int
+    entries: int
 
 
 @dataclass
@@ -67,7 +72,9 @@ class _CacheEntry(Generic[PreparedT]):
     visible_stop: int
     generation: int
     rewrite_epoch: int
+    array_revision: int
     revision: int
+    owner_ref: ReferenceType[object]
 
 
 def _array_value_signature(values: np.ndarray) -> tuple[Hashable, ...]:
@@ -84,10 +91,19 @@ def history_storage_snapshot(
 
     if isinstance(history, IndexedTrajectoryArrays):
         base = history.base
+        base.require_current_storage()
+        owner = base._storage_state
         token = base.storage_token
         generation = base.storage_generation
         rewrite_epoch = base.storage_rewrite_epoch
-        if token is None or generation is None or rewrite_epoch is None:
+        array_revision = base.storage_array_revision
+        if (
+            owner is None
+            or token is None
+            or generation is None
+            or rewrite_epoch is None
+            or array_revision is None
+        ):
             return None
         q_signature: tuple[Hashable, ...] | None = None
         if history.q_override is not None:
@@ -103,22 +119,37 @@ def history_storage_snapshot(
         )
         return HistoryStorageSnapshot(
             identity=identity,
+            storage_token=token,
             visible_stop=history.n_steps,
             generation=generation,
             rewrite_epoch=rewrite_epoch,
+            array_revision=array_revision,
+            owner_ref=ref(owner),
         )
 
     if isinstance(history, TrajectoryArrays):
+        history.require_current_storage()
+        owner = history._storage_state
         token = history.storage_token
         generation = history.storage_generation
         rewrite_epoch = history.storage_rewrite_epoch
-        if token is None or generation is None or rewrite_epoch is None:
+        array_revision = history.storage_array_revision
+        if (
+            owner is None
+            or token is None
+            or generation is None
+            or rewrite_epoch is None
+            or array_revision is None
+        ):
             return None
         return HistoryStorageSnapshot(
             identity=("trajectory_arrays", token),
+            storage_token=token,
             visible_stop=history.n_steps,
             generation=generation,
             rewrite_epoch=rewrite_epoch,
+            array_revision=array_revision,
+            owner_ref=ref(owner),
         )
 
     return None
@@ -128,14 +159,40 @@ def history_storage_capacity(history: object) -> int | None:
     """Return usable builder row capacity for a managed history view."""
 
     if isinstance(history, IndexedTrajectoryArrays):
+        history.base.require_current_storage()
         capacity = history.base.storage_capacity
         if capacity is None:
             return None
         return max(0, int(capacity) - int(history.start_step))
     if isinstance(history, TrajectoryArrays):
+        history.require_current_storage()
         capacity = history.storage_capacity
         return None if capacity is None else int(capacity)
     return None
+
+
+def history_prepared_buffer_capacity(
+    history: object,
+    *,
+    minimum: int = 8,
+) -> int | None:
+    """Choose a small initial buffer that can grow geometrically.
+
+    Reserving the builder's entire requested run at the first one- or two-row
+    field evaluation retained hundreds of megabytes per cache variant.  Start
+    at the visible length (with a small floor) and grow only when needed.
+    """
+
+    maximum = history_storage_capacity(history)
+    if maximum is None:
+        return None
+    if isinstance(history, IndexedTrajectoryArrays):
+        visible = history.n_steps
+    elif isinstance(history, TrajectoryArrays):
+        visible = history.n_steps
+    else:
+        return None
+    return min(maximum, max(int(minimum), int(visible)))
 
 
 class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
@@ -171,12 +228,14 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
         """Return an immutable counter snapshot."""
 
         with self._lock:
+            self._purge_dead_entries()
             return PreparedHistoryCacheStats(
                 uncached=self._uncached,
                 misses=self._misses,
                 reuses=self._reuses,
                 appends=self._appends,
                 rebuilds=self._rebuilds,
+                entries=len(self._entries),
             )
 
     def prepare(
@@ -193,6 +252,9 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
             hash(variant)
         except TypeError as exc:
             raise TypeError("prepared-history cache variant must be hashable") from exc
+
+        with self._lock:
+            self._purge_dead_entries()
 
         snapshot = history_storage_snapshot(history)
         if snapshot is None:
@@ -211,7 +273,9 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                     visible_stop=snapshot.visible_stop,
                     generation=snapshot.generation,
                     rewrite_epoch=snapshot.rewrite_epoch,
+                    array_revision=snapshot.array_revision,
                     revision=1,
+                    owner_ref=self._owner_ref_with_eviction(snapshot, key),
                 )
                 self._entries[key] = entry
                 self._entries.move_to_end(key)
@@ -222,6 +286,7 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
             disposition: CacheDisposition
             if (
                 snapshot.rewrite_epoch != entry.rewrite_epoch
+                or snapshot.array_revision != entry.array_revision
                 or snapshot.visible_stop < entry.visible_stop
                 or (
                     snapshot.visible_stop > entry.visible_stop
@@ -233,7 +298,9 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 entry.visible_stop = snapshot.visible_stop
                 entry.generation = snapshot.generation
                 entry.rewrite_epoch = snapshot.rewrite_epoch
+                entry.array_revision = snapshot.array_revision
                 entry.revision += 1
+                entry.owner_ref = self._owner_ref_with_eviction(snapshot, key)
                 self._rebuilds += 1
                 disposition = "rebuild"
             elif snapshot.visible_stop > entry.visible_stop:
@@ -249,7 +316,9 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 entry.visible_stop = snapshot.visible_stop
                 entry.generation = snapshot.generation
                 entry.rewrite_epoch = snapshot.rewrite_epoch
+                entry.array_revision = snapshot.array_revision
                 entry.revision += 1
+                entry.owner_ref = self._owner_ref_with_eviction(snapshot, key)
                 self._appends += 1
                 disposition = "append"
             else:
@@ -261,11 +330,40 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 disposition = "reuse"
 
             self._entries.move_to_end(key)
+            self._trim()
             return PreparedHistoryCacheResult(entry.value, disposition, entry.revision)
 
     def _trim(self) -> None:
         while len(self._entries) > self._max_entries:
             self._entries.popitem(last=False)
+
+    def _purge_dead_entries(self) -> None:
+        for key in tuple(self._entries):
+            if self._entries[key].owner_ref() is None:
+                del self._entries[key]
+
+    def _owner_ref_with_eviction(
+        self,
+        snapshot: HistoryStorageSnapshot,
+        key: tuple[tuple[Hashable, ...], Hashable],
+    ) -> ReferenceType[object]:
+        owner = snapshot.owner_ref()
+        if owner is None:
+            raise RuntimeError(
+                "trajectory storage owner expired during cache preparation"
+            )
+        cache_ref = ref(self)
+
+        def evict(dead_ref: ReferenceType[object]) -> None:
+            cache = cache_ref()
+            if cache is None:
+                return
+            with cache._lock:
+                entry = cache._entries.get(key)
+                if entry is not None and entry.owner_ref is dead_ref:
+                    del cache._entries[key]
+
+        return ref(owner, evict)
 
 
 __all__ = [
@@ -273,6 +371,7 @@ __all__ = [
     "HistoryStorageSnapshot",
     "PreparedHistoryCacheResult",
     "PreparedHistoryCacheStats",
+    "history_prepared_buffer_capacity",
     "history_storage_capacity",
     "history_storage_snapshot",
 ]
