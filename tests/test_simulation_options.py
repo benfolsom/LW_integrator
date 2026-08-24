@@ -7,16 +7,18 @@ from pathlib import Path
 import pytest
 
 from core.external_fields import electric_field_v_per_m_to_native
-from core.types import SimulationType
+from core.types import SimulationType, StartupMode
 from lw_integrator.testbed_runner import (
     CORE_PARAM_DEFAULTS,
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
+    STARTUP_MODE_OPTIONS,
     SimulationOptions,
     build_driver_train_config,
     build_external_field_config,
     build_pseudo_grid_config,
     build_self_consistency_config,
+    build_startup_mode_enum,
 )
 
 
@@ -347,6 +349,25 @@ def test_simulation_options_from_dict_falls_back_on_invalid_numeric_values():
     assert options.adaptive_timestep_min_factor == pytest.approx(1e-4)
     assert options.energy_monitor_threshold == pytest.approx(2.0)
     assert options.trajectory_interval == 10
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("INERTIAL_PREHISTORY", "inertial-prehistory", "inertial_prehistory"),
+)
+def test_testbed_accepts_inertial_prehistory_spellings(value: str):
+    assert build_startup_mode_enum(value) is StartupMode.INERTIAL_PREHISTORY
+
+
+def test_inertial_prehistory_roundtrips_through_testbed_config():
+    core_params = dict(CORE_PARAM_DEFAULTS)
+    core_params["startup_mode"] = "INERTIAL_PREHISTORY"
+    options = SimulationOptions(core_params=core_params)
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+
+    assert "INERTIAL_PREHISTORY" in STARTUP_MODE_OPTIONS
+    assert restored.core_params["startup_mode"] == "INERTIAL_PREHISTORY"
 
 
 def test_build_pseudo_grid_config_reflects_simulation_options():

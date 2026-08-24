@@ -61,11 +61,15 @@ class StartupMode(Enum):
     far enough for the light-cone constraint to be satisfied using a running
     average of the observer velocity. ``APPROXIMATE_BACK_HISTORY`` assumes the
     source velocity remains constant between steps, enabling an analytic
-    back-fill of the retarded separation.
+    back-fill of the retarded separation. ``INERTIAL_PREHISTORY`` supplies a
+    finite, synthetic constant-velocity source history before active time zero,
+    allowing exact retarded light-cone solves without exposing the prefix as
+    part of the requested trajectory.
     """
 
     COLD_START = auto()
     APPROXIMATE_BACK_HISTORY = auto()
+    INERTIAL_PREHISTORY = auto()
 
 
 class GammaReconciliationMethod(Enum):

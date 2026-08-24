@@ -180,7 +180,9 @@ Key ideas to keep in mind
   supported wall configurations.  The enum still accepts the historical integer
   values for compatibility.
 * **Startup modes are configurable.**  ``StartupMode`` switches between
-  ``COLD_START`` (the default, suppressing early retarded forces) and
+  ``COLD_START`` (the default, suppressing early retarded forces),
+  ``INERTIAL_PREHISTORY`` (a finite synthetic coasting prefix that supports
+  exact retarded light-cone solves from active time zero), and
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
   matches the archived reference treatment).  Maintained CLI and GUI workflows
   surface the enum so you can pick the right transient treatment per study.

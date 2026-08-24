@@ -114,6 +114,12 @@ CORE_PARAM_DEFAULTS: Dict[str, Any] = {
     "startup_mode": "COLD_START",
 }
 
+STARTUP_MODE_OPTIONS: Tuple[str, ...] = (
+    "COLD_START",
+    "INERTIAL_PREHISTORY",
+    "APPROXIMATE_BACK_HISTORY",
+)
+
 CORE_REQUIRED_PARAMS: Dict[SimulationType, set[str]] = {
     SimulationType.CONDUCTING_WALL: {"time_step", "wall_z", "aperture_radius"},
     SimulationType.SWITCHING_WALL: {
@@ -2762,9 +2768,11 @@ def build_startup_mode_enum(startup_mode_str: str) -> object:
     """Convert startup mode string to StartupMode enum."""
     from core.types import StartupMode
 
-    startup_mode_upper = startup_mode_str.upper()
+    startup_mode_upper = startup_mode_str.strip().replace("-", "_").upper()
     if startup_mode_upper == "COLD_START":
         return StartupMode.COLD_START
+    elif startup_mode_upper == "INERTIAL_PREHISTORY":
+        return StartupMode.INERTIAL_PREHISTORY
     elif startup_mode_upper == "APPROXIMATE_BACK_HISTORY":
         return StartupMode.APPROXIMATE_BACK_HISTORY
     else:

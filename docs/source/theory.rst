@@ -252,6 +252,29 @@ reported configurations:
   boundary cases still require dedicated convergence checks before
   ``medina_lad`` should be treated as physics evidence.
 
+Exact inertial prehistory
+-------------------------
+
+The ``INERTIAL_PREHISTORY`` startup mode constructs a finite synthetic history
+in which each initialized particle coasts inertially before active time zero.
+That explicit prefix gives the exact retarded-field evaluators enough source
+history to solve their light-cone equations immediately.  This is useful for an
+incoming particle that is intended to have existed before the simulation
+window, rather than for a source that physically turns on at time zero.
+
+The synthetic prefix supplies history only.  It is omitted from normal
+trajectory output, and active time zero remains the first reported event.  It
+also does not invent a pre-simulation force sample for Medina/LAD radiation
+reaction: the force derivative remains unprimed until accepted active-time
+force samples exist.  Thus the mode specifies an inertial incoming state, not
+an assertion that the preceding interacting trajectory has been solved.
+
+``INERTIAL_PREHISTORY`` differs from ``APPROXIMATE_BACK_HISTORY`` because the
+former supplies finite, explicit source events to the exact retarded-time
+solver.  The latter retains the archived analytic extrapolation and remains a
+benchmarking mode.  ``COLD_START`` remains appropriate when the desired model
+is a genuine turn-on transient.
+
 COLD_START gating mechanism
 ---------------------------
 

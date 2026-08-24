@@ -225,6 +225,9 @@ STARTUP_MODE_ALIASES: Mapping[str, StartupMode] = {
     "approximate-back-history": StartupMode.APPROXIMATE_BACK_HISTORY,
     "approximate_back_history": StartupMode.APPROXIMATE_BACK_HISTORY,
     "approximate": StartupMode.APPROXIMATE_BACK_HISTORY,
+    "inertial-prehistory": StartupMode.INERTIAL_PREHISTORY,
+    "inertial_prehistory": StartupMode.INERTIAL_PREHISTORY,
+    "inertial": StartupMode.INERTIAL_PREHISTORY,
 }
 
 REQUIRED_PARTICLE_FIELDS: Iterable[str] = (
@@ -643,11 +646,17 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.set_defaults(chrono_adaptive_tolerance=None)
     parser.add_argument(
         "--startup-mode",
-        choices=("cold-start", "approximate-back-history"),
+        choices=(
+            "cold-start",
+            "inertial-prehistory",
+            "approximate-back-history",
+        ),
         dest="startup_mode",
         help=(
             "Early-step strategy: 'cold-start' suppresses forces until the "
-            "observer has travelled sufficiently, while "
+            "observer has travelled sufficiently; 'inertial-prehistory' "
+            "supplies a finite synthetic coasting history for exact retarded "
+            "light-cone solves; and "
             "'approximate-back-history' assumes constant source velocity."
         ),
     )
@@ -1982,7 +1991,8 @@ def _parse_startup_mode(value: Any) -> StartupMode:
         if key in STARTUP_MODE_ALIASES:
             return STARTUP_MODE_ALIASES[key]
         raise SimulationConfigError(
-            f"Unknown startup_mode value: {value!r}. Expected 'cold-start' or 'approximate-back-history'."
+            f"Unknown startup_mode value: {value!r}. Expected 'cold-start', "
+            "'inertial-prehistory', or 'approximate-back-history'."
         )
     raise SimulationConfigError("startup_mode must be a string or StartupMode instance")
 

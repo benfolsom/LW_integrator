@@ -13,6 +13,7 @@ from .testbed_runner import (
     PARTICLE_PARAM_FIELDS,
     RADIATION_REACTION_MODE_CHOICES,
     SPECIES_OPTIONS,
+    STARTUP_MODE_OPTIONS,
 )
 
 
@@ -1112,7 +1113,7 @@ class IntegratorGUITabMixin:
         startup_mode_combo = ttk.Combobox(
             core_frame,
             textvariable=self.core_param_vars["startup_mode"],
-            values=["COLD_START", "APPROXIMATE_BACK_HISTORY"],
+            values=STARTUP_MODE_OPTIONS,
             state="readonly",
             width=22,
         )
@@ -1128,20 +1129,28 @@ class IntegratorGUITabMixin:
             "  • Avoids unphysical extrapolation errors\n"
             "  • Compatible with all features (adaptive timestep, energy monitor)\n"
             "  • May show startup transient in first ~100 steps\n\n"
+            "INERTIAL_PREHISTORY (exact-history startup):\n"
+            "  • Adds a finite synthetic inertial-coasting prefix before t = 0\n"
+            "  • Supplies exact retarded light-cone support immediately\n"
+            "  • Keeps the synthetic prefix out of normal trajectory output\n"
+            "  • Leaves the Medina force derivative unprimed at active t = 0\n"
+            "  • Suits incoming-particle and steady-coasting initial states\n\n"
             "APPROXIMATE_BACK_HISTORY (experimental, benchmarking only):\n"
             "  • Assumes particles had constant velocity since t = -∞\n"
             "  • Enables immediate force calculation (no gating)\n"
             "  • Intended only for benchmark/reference studies\n"
             "  • Not validated for production physics\n"
             "  • May introduce unphysical initial conditions\n\n"
-            "For production: use COLD_START\n"
+            "For physical turn-on transients: use COLD_START\n"
+            "For exact steady-coasting startup: use INERTIAL_PREHISTORY\n"
             "For reference benchmarking: use APPROXIMATE_BACK_HISTORY",
         )
         row += 1
 
         startup_help_label = ttk.Label(
             core_frame,
-            text="COLD_START (recommended): Forces gated until causal history available\n"
+            text="COLD_START: Forces gated until causal history is available\n"
+            "INERTIAL_PREHISTORY: Finite coasting prefix for exact retarded startup\n"
             "APPROXIMATE_BACK_HISTORY: Constant-velocity extrapolation (benchmarking only)",
             foreground="gray",
             font=("TkDefaultFont", 8),

@@ -165,6 +165,11 @@ class TestCliConfigParsing:
         assert args.chrono_high_precision is True
         assert args.chrono_adaptive_tolerance is True
 
+    def test_parse_args_accepts_inertial_prehistory(self):
+        args = cli.parse_args(["--startup-mode", "inertial-prehistory"])
+
+        assert args.startup_mode == "inertial-prehistory"
+
     def test_package_exports_only_maintained_entry_points(self):
         assert lw_integrator.__all__ == ["__version__", "VERSION"]
         for name in [
@@ -493,9 +498,30 @@ class TestCliConfigParsing:
         assert cli._parse_startup_mode("approximate") == (
             StartupMode.APPROXIMATE_BACK_HISTORY
         )
+        assert cli._parse_startup_mode("inertial-prehistory") == (
+            StartupMode.INERTIAL_PREHISTORY
+        )
+        assert cli._parse_startup_mode("inertial_prehistory") == (
+            StartupMode.INERTIAL_PREHISTORY
+        )
+        assert cli._parse_startup_mode("inertial") == (StartupMode.INERTIAL_PREHISTORY)
         assert cli._parse_startup_mode(StartupMode.COLD_START) == (
             StartupMode.COLD_START
         )
+
+    def test_build_integrator_config_accepts_inertial_prehistory(self):
+        config = cli._build_integrator_config(
+            {
+                "steps": 12,
+                "time_step": 0.25,
+                "wall_position": 1.5,
+                "aperture_radius": 0.002,
+                "simulation_type": "bunch-to-bunch",
+                "startup_mode": "inertial-prehistory",
+            }
+        )
+
+        assert config.startup_mode is StartupMode.INERTIAL_PREHISTORY
 
     def test_parse_startup_mode_rejects_invalid_values(self):
         with pytest.raises(cli.SimulationConfigError, match="Unknown startup_mode"):
