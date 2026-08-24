@@ -211,6 +211,10 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
         state["radiation_energy_applied"] = np.zeros_like(
             state.get("x", np.array([])), dtype=float
         )
+    if "mass_shell_projection_energy" not in state:
+        state["mass_shell_projection_energy"] = np.zeros_like(
+            state.get("x", np.array([])), dtype=float
+        )
     if np.any(np.asarray(state.get("magnetic_dipole_active", []), dtype=float)):
         particle_template = state.get("x", np.array([]))
         for name in (
@@ -350,6 +354,7 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "radiation_power": np.zeros_like(current_state["x"], dtype=float),
         "radiation_energy": np.zeros_like(current_state["x"], dtype=float),
         "radiation_energy_applied": np.zeros_like(current_state["x"], dtype=float),
+        "mass_shell_projection_energy": np.zeros_like(current_state["x"], dtype=float),
     }
 
     magnetic_fields = (
@@ -1274,10 +1279,12 @@ def _accepted_medina_force_derivative(
     """Backward-difference two accepted midpoint force samples.
 
     Each force sample is the average non-radiation-reaction mechanical force
-    over one accepted lab-time interval and is timestamped at that interval's
-    midpoint.  The resulting derivative is first-order accurate at the current
-    midpoint.  A nonlinear iteration never writes ``current_state``; rejected
-    adaptive trials are therefore excluded automatically.
+    over one on-shell predictor interval and is timestamped at that interval's
+    midpoint.  A later Medina endpoint kick may shift the accepted endpoint
+    time by second-order terms; it does not retrospectively move the force
+    sample.  The resulting derivative is first-order accurate at the current
+    predictor midpoint.  A nonlinear iteration never writes ``current_state``;
+    rejected adaptive trials are therefore excluded automatically.
 
     Missing history and history whose timestamp lies after the accepted state
     are treated as unprimed.  The caller must not apply a Medina impulse until
@@ -1883,6 +1890,9 @@ def retarded_equations_of_motion(
             rfs_selected
             and startup_mode is StartupMode.INERTIAL_PREHISTORY
             and sim_type == SimulationType.BUNCH_TO_BUNCH
+        )
+        on_shell_kinematic_boundary_selected = bool(
+            exact_charge_source_selected or radiation_mode == "medina_lad"
         )
         exact_charge_field_cache = None
         dipole_source_field_cache = None
@@ -3134,6 +3144,12 @@ def retarded_equations_of_motion(
                 force_particle_charge, accumulated_scalar_potential
             )
 
+            # Preserve the unconstrained temporal canonical update before any
+            # named mass-shell projection or nonlinear relaxation.  The
+            # public projection ledger must report the complete energy
+            # correction discarded on the final trial.
+            raw_canonical_pt_before_constraints = float(result["Pt"][particle_idx])
+
             if stern_gerlach_impulse_applied:
                 # The static-gradient helper supplies a mechanical spatial
                 # impulse, not a complete canonical Hamiltonian. Put the
@@ -3243,6 +3259,141 @@ def retarded_equations_of_motion(
 
             gamma_mass_shell = kinetic_pt_from_mass_shell / (particle_mass * C_MMNS)
 
+            spatial_momentum_authoritative = exact_charge_source_selected
+            if radiation_mode == "medina_lad" and not exact_charge_source_selected:
+                # The maintained non-exact Medina path historically treats
+                # canonical temporal energy as authoritative.  Put its spatial
+                # mechanical momentum on that shell *before* predictor drift,
+                # beta, and force sampling.  The exact charge/RFS path instead
+                # remains spatial-momentum-authoritative so its RR-off and
+                # RR-on capture controls share one boundary.
+                energy_boundary_momentum = np.asarray(
+                    _mechanical_momentum_components(
+                        px=result["Px"][particle_idx],
+                        py=result["Py"][particle_idx],
+                        pz=result["Pz"][particle_idx],
+                        particle_mass=particle_mass,
+                        field_x=accumulated_field_x,
+                        field_y=accumulated_field_y,
+                        field_z=accumulated_field_z,
+                    ),
+                    dtype=float,
+                )
+                gamma_energy_boundary = float(result["gamma"][particle_idx])
+                momentum_is_finite = bool(np.all(np.isfinite(energy_boundary_momentum)))
+                mechanical_magnitude = float(
+                    np.hypot(
+                        np.hypot(
+                            abs(float(energy_boundary_momentum[0])),
+                            abs(float(energy_boundary_momentum[1])),
+                        ),
+                        abs(float(energy_boundary_momentum[2])),
+                    )
+                )
+                with np.errstate(over="ignore", invalid="ignore"):
+                    target_factor = float(
+                        np.sqrt(
+                            (gamma_energy_boundary - 1.0)
+                            * (gamma_energy_boundary + 1.0)
+                        )
+                    )
+                    target_mechanical_magnitude = float(
+                        particle_mass * C_MMNS * target_factor
+                    )
+                valid_rest_boundary = bool(
+                    gamma_energy_boundary == 1.0 and mechanical_magnitude == 0.0
+                )
+                valid_moving_boundary = bool(
+                    gamma_energy_boundary > 1.0
+                    and mechanical_magnitude > 0.0
+                    and target_mechanical_magnitude > 0.0
+                )
+                can_use_energy_boundary = bool(
+                    np.isfinite(gamma_energy_boundary)
+                    and momentum_is_finite
+                    and np.isfinite(mechanical_magnitude)
+                    and np.isfinite(target_mechanical_magnitude)
+                    and (valid_rest_boundary or valid_moving_boundary)
+                )
+                if can_use_energy_boundary and valid_moving_boundary:
+                    scale = target_mechanical_magnitude / mechanical_magnitude
+                    scaled_momentum = energy_boundary_momentum * scale
+                    if not np.isfinite(scale) or not np.all(
+                        np.isfinite(scaled_momentum)
+                    ):
+                        can_use_energy_boundary = False
+                    else:
+                        result["Px"][particle_idx] = float(
+                            scaled_momentum[0] + accumulated_field_x * particle_mass
+                        )
+                        result["Py"][particle_idx] = float(
+                            scaled_momentum[1] + accumulated_field_y * particle_mass
+                        )
+                        result["Pz"][particle_idx] = float(
+                            scaled_momentum[2] + accumulated_field_z * particle_mass
+                        )
+                        gamma_mass_shell = gamma_energy_boundary
+                if not can_use_energy_boundary:
+                    # At the near-rest/roundoff boundary, an energy-derived
+                    # target can be imaginary, zero for nonzero p, directionless
+                    # for p=0, or nonfinite.  Falling back to finite spatial p
+                    # prevents the old sqrt(max(gamma**2-1, 0)) zeroing bug.
+                    spatial_momentum_authoritative = True
+
+            if spatial_momentum_authoritative:
+                # Reconstruct the complete physical state from spatial
+                # p = P - q A / c.  Near rest this avoids cancellation in
+                # Pt - q Phi / c, and exact RR-off/RR-on capture controls both
+                # use this same projection.
+                on_shell_mechanical_momentum = np.asarray(
+                    _mechanical_momentum_components(
+                        px=result["Px"][particle_idx],
+                        py=result["Py"][particle_idx],
+                        pz=result["Pz"][particle_idx],
+                        particle_mass=particle_mass,
+                        field_x=accumulated_field_x,
+                        field_y=accumulated_field_y,
+                        field_z=accumulated_field_z,
+                    ),
+                    dtype=float,
+                )
+                on_shell_mechanical_magnitude = float(
+                    np.hypot(
+                        np.hypot(
+                            abs(float(on_shell_mechanical_momentum[0])),
+                            abs(float(on_shell_mechanical_momentum[1])),
+                        ),
+                        abs(float(on_shell_mechanical_momentum[2])),
+                    )
+                )
+                on_shell_kinetic_pt = float(
+                    np.hypot(
+                        particle_mass * C_MMNS,
+                        on_shell_mechanical_magnitude,
+                    )
+                )
+                gamma_mass_shell = on_shell_kinetic_pt / (particle_mass * C_MMNS)
+                Pt_from_mass_shell = float(
+                    on_shell_kinetic_pt + scalar_potential_contribution
+                )
+                result["Px"][particle_idx] = float(
+                    on_shell_mechanical_momentum[0]
+                    + accumulated_field_x * particle_mass
+                )
+                result["Py"][particle_idx] = float(
+                    on_shell_mechanical_momentum[1]
+                    + accumulated_field_y * particle_mass
+                )
+                result["Pz"][particle_idx] = float(
+                    on_shell_mechanical_momentum[2]
+                    + accumulated_field_z * particle_mass
+                )
+                result["Pt"][particle_idx] = Pt_from_mass_shell
+                result["gamma"][particle_idx] = gamma_mass_shell
+                result["mass_shell_projection_energy"][particle_idx] = float(
+                    C_MMNS * (Pt_from_mass_shell - raw_canonical_pt_before_constraints)
+                )
+
             if sc_verbosity >= 3 and sc_enabled and sc_iteration > 0:
                 # Use Pt BEFORE projection to show the actual difference
                 gamma_from_conjugate_before = Pt_before_projection / (
@@ -3267,8 +3418,9 @@ def retarded_equations_of_motion(
                 )
 
             # Update x^0 = dt = dtau * gamma
+            proper_to_coordinate_dt = float(h * result["gamma"][particle_idx])
             result["t"][particle_idx] = (
-                current_state["t"][particle_idx] + h * result["gamma"][particle_idx]
+                current_state["t"][particle_idx] + proper_to_coordinate_dt
             )
 
             # ================================================================
@@ -3302,12 +3454,33 @@ def retarded_equations_of_motion(
 
             # β = Δx/(c·Δt) using the actual coordinate-time step
             # Since Δx = (P/m)·h and Δt = γ·h, we get β = P/(γ·m·c)
-            coordinate_dt = result["t"][particle_idx] - current_state["t"][particle_idx]
+            coordinate_dt = (
+                proper_to_coordinate_dt
+                if on_shell_kinematic_boundary_selected
+                else result["t"][particle_idx] - current_state["t"][particle_idx]
+            )
             if coordinate_dt == 0.0:
-                coordinate_dt = h * result["gamma"][particle_idx]
-            beta_x = position_change_x / (C_MMNS * coordinate_dt)
-            beta_y = position_change_y / (C_MMNS * coordinate_dt)
-            beta_z = position_change_z / (C_MMNS * coordinate_dt)
+                coordinate_dt = proper_to_coordinate_dt
+            if on_shell_kinematic_boundary_selected:
+                # Derive beta from the same on-shell mechanical momentum used
+                # for gamma.  Recovering it from two close positions can erase
+                # the motion of a nearly stationary massive particle.
+                beta_denominator = (
+                    result["gamma"][particle_idx] * particle_mass * C_MMNS
+                )
+                beta_x = (
+                    result["Px"][particle_idx] - accumulated_field_x * particle_mass
+                ) / beta_denominator
+                beta_y = (
+                    result["Py"][particle_idx] - accumulated_field_y * particle_mass
+                ) / beta_denominator
+                beta_z = (
+                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass
+                ) / beta_denominator
+            else:
+                beta_x = position_change_x / (C_MMNS * coordinate_dt)
+                beta_y = position_change_y / (C_MMNS * coordinate_dt)
+                beta_z = position_change_z / (C_MMNS * coordinate_dt)
 
             # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(
@@ -3539,29 +3712,14 @@ def retarded_equations_of_motion(
                             beta_z_limited - current_state["bz"][particle_idx]
                         ) / time_factor
             elif radiation_mode == "medina_lad":
-                mechanical_px = (
-                    result["Px"][particle_idx] - accumulated_field_x * particle_mass
-                )
-                mechanical_py = (
-                    result["Py"][particle_idx] - accumulated_field_y * particle_mass
-                )
-                mechanical_pz = (
-                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass
-                )
-                mechanical_vec = np.asarray(
-                    (mechanical_px, mechanical_py, mechanical_pz), dtype=float
-                )
-                mechanical_mag = float(np.linalg.norm(mechanical_vec))
-                target_mechanical_mag = float(
-                    particle_mass
-                    * C_MMNS
-                    * np.sqrt(max(result["gamma"][particle_idx] ** 2 - 1.0, 0.0))
-                )
-                if mechanical_mag > 0.0:
-                    mechanical_vec *= target_mechanical_mag / mechanical_mag
-                    mechanical_px = float(mechanical_vec[0])
-                    mechanical_py = float(mechanical_vec[1])
-                    mechanical_pz = float(mechanical_vec[2])
+                predictor_coordinate_dt = coordinate_dt
+                # These are the already on-shell, non-RR momenta used for the
+                # position and beta update.  Do not rescale them from an
+                # independently accumulated gamma: at the near-rest boundary,
+                # sqrt(max(gamma**2 - 1, 0)) can collapse real momentum to zero.
+                mechanical_px = physical_mechanical_px
+                mechanical_py = physical_mechanical_py
+                mechanical_pz = physical_mechanical_pz
                 previous_mechanical_px = (
                     current_state["gamma"][particle_idx]
                     * particle_mass
@@ -3580,23 +3738,23 @@ def retarded_equations_of_motion(
                     * C_MMNS
                     * current_state["bz"][particle_idx]
                 )
-                if coordinate_dt > 0.0 and force_particle_charge != 0.0:
+                if predictor_coordinate_dt > 0.0 and force_particle_charge != 0.0:
                     external_force = (
                         float(
                             (physical_mechanical_px - previous_mechanical_px)
-                            / coordinate_dt
+                            / predictor_coordinate_dt
                         ),
                         float(
                             (physical_mechanical_py - previous_mechanical_py)
-                            / coordinate_dt
+                            / predictor_coordinate_dt
                         ),
                         float(
                             (physical_mechanical_pz - previous_mechanical_pz)
-                            / coordinate_dt
+                            / predictor_coordinate_dt
                         ),
                     )
                     current_force_sample_time = float(
-                        current_state["t"][particle_idx] + 0.5 * coordinate_dt
+                        current_state["t"][particle_idx] + 0.5 * predictor_coordinate_dt
                     )
                     result["medina_external_force_x"][particle_idx] = external_force[0]
                     result["medina_external_force_y"][particle_idx] = external_force[1]
@@ -3639,7 +3797,7 @@ def retarded_equations_of_motion(
                             gamma=float(result["gamma"][particle_idx]),
                             mass=float(particle_mass),
                             charge=float(force_particle_charge),
-                            coordinate_dt=float(coordinate_dt),
+                            coordinate_dt=float(predictor_coordinate_dt),
                         )
                     )
                     # Far radiation and the instantaneous cross-field energy do
@@ -3666,7 +3824,7 @@ def retarded_equations_of_motion(
                             _cap_medina_radiation_reaction_impulse(
                                 impulse=medina_result.radiation_reaction_impulse,
                                 external_force=external_force,
-                                coordinate_dt=float(coordinate_dt),
+                                coordinate_dt=float(predictor_coordinate_dt),
                             )
                         )
                         result["medina_impulse_capped"][particle_idx] = medina_capped
@@ -3709,20 +3867,25 @@ def retarded_equations_of_motion(
                         # converts this lab three-force separately at its start
                         # and midpoint four-velocity/spin states.
                         applied_medina_force_native[:] = impulse_vec / float(
-                            coordinate_dt
+                            predictor_coordinate_dt
                         )
                     if derivative_ready and float(np.linalg.norm(impulse_vec)) > 0.0:
                         mechanical_px = float(mechanical_px + impulse_vec[0])
                         mechanical_py = float(mechanical_py + impulse_vec[1])
                         mechanical_pz = float(mechanical_pz + impulse_vec[2])
-                        mechanical_p_sq = (
-                            mechanical_px**2 + mechanical_py**2 + mechanical_pz**2
-                        )
-                        medina_gamma = float(
-                            np.sqrt(
-                                1.0 + mechanical_p_sq / (particle_mass * C_MMNS) ** 2
+                        mechanical_p_magnitude = float(
+                            np.hypot(
+                                np.hypot(abs(mechanical_px), abs(mechanical_py)),
+                                abs(mechanical_pz),
                             )
                         )
+                        medina_kinetic_pt = float(
+                            np.hypot(
+                                particle_mass * C_MMNS,
+                                mechanical_p_magnitude,
+                            )
+                        )
+                        medina_gamma = medina_kinetic_pt / (particle_mass * C_MMNS)
                         result["Px"][particle_idx] = (
                             mechanical_px + accumulated_field_x * particle_mass
                         )
@@ -3733,14 +3896,18 @@ def retarded_equations_of_motion(
                             mechanical_pz + accumulated_field_z * particle_mass
                         )
                         result["gamma"][particle_idx] = medina_gamma
+                        # The next nonlinear trial must start from one
+                        # post-kick state.  Keeping the pre-RR gamma beside the
+                        # post-RR beta would make its trial four-velocity
+                        # internally inconsistent.
+                        reconciled_gamma_for_iteration = medina_gamma
                         scalar_potential_contribution = (
                             _scalar_potential_momentum_contribution(
                                 force_particle_charge, accumulated_scalar_potential
                             )
                         )
-                        result["Pt"][particle_idx] = (
-                            medina_gamma * particle_mass * C_MMNS
-                            + scalar_potential_contribution
+                        result["Pt"][particle_idx] = float(
+                            medina_kinetic_pt + scalar_potential_contribution
                         )
                         beta_denom = medina_gamma * particle_mass * C_MMNS
                         if beta_denom > 0.0:
@@ -3759,6 +3926,31 @@ def retarded_equations_of_motion(
                             result["bx"][particle_idx] = beta_x_limited
                             result["by"][particle_idx] = beta_y_limited
                             result["bz"][particle_idx] = beta_z_limited
+                            # Ordinary and RFS forces in this solver are kicks
+                            # followed by an endpoint drift.  Medina is
+                            # evaluated from the non-RR predictor above, then
+                            # joins that same split at first order: rebuild the
+                            # endpoint from the final mechanical momentum and
+                            # its mass-shell gamma.  Pt is reconstructed from
+                            # p and q Phi / c; there is no independent temporal
+                            # radiation-reaction kick.
+                            result["x"][particle_idx] = (
+                                current_state["x"][particle_idx]
+                                + h * mechanical_px / particle_mass
+                            )
+                            result["y"][particle_idx] = (
+                                current_state["y"][particle_idx]
+                                + h * mechanical_py / particle_mass
+                            )
+                            result["z"][particle_idx] = (
+                                current_state["z"][particle_idx]
+                                + h * mechanical_pz / particle_mass
+                            )
+                            coordinate_dt = float(h * medina_gamma)
+                            result["t"][particle_idx] = (
+                                current_state["t"][particle_idx] + coordinate_dt
+                            )
+                            time_factor = C_MMNS * coordinate_dt
                             result["bdotx"][particle_idx] = (
                                 beta_x_limited - current_state["bx"][particle_idx]
                             ) / time_factor
@@ -3768,6 +3960,7 @@ def retarded_equations_of_motion(
                             result["bdotz"][particle_idx] = (
                                 beta_z_limited - current_state["bz"][particle_idx]
                             ) / time_factor
+                            gamma_from_velocity = medina_gamma
 
             # ================================================================
             # STEP 9: Update running average of beta

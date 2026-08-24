@@ -58,6 +58,7 @@ class ParticleCaptureTrace:
     medina_force_derivative_ready: np.ndarray
     medina_impulse_capped: np.ndarray
     medina_external_force_sample_time_ns: np.ndarray
+    mass_shell_projection_energy_native: np.ndarray
     dead: np.ndarray
     ordinary_four_potential_native: np.ndarray | None = None
 
@@ -89,6 +90,16 @@ class MedinaCaptureAudit:
 
 
 @dataclass(frozen=True)
+class MassShellProjectionAudit:
+    """Signed energy inserted or removed by explicit on-shell projection."""
+
+    nonzero_step_count: int
+    signed_energy_native: float
+    sum_absolute_energy_native: float
+    max_absolute_energy_native: float
+
+
+@dataclass(frozen=True)
 class TwoBodyOsculatingSeries:
     """Lab-synchronized two-body kinematics and reference energy series."""
 
@@ -113,6 +124,8 @@ class FirstPassCaptureAnalysis:
     second_canonical_audit: CanonicalMomentumAudit
     first_medina_audit: MedinaCaptureAudit
     second_medina_audit: MedinaCaptureAudit
+    first_mass_shell_projection_audit: MassShellProjectionAudit
+    second_mass_shell_projection_audit: MassShellProjectionAudit
     initial_separation_mm: float
     periapsis_time_ns: float
     periapsis_separation_mm: float
@@ -146,6 +159,27 @@ class FirstPassCaptureAnalysis:
         return float(
             self.first_medina_audit.signed_reaction_work_native
             + self.second_medina_audit.signed_reaction_work_native
+        )
+
+    @property
+    def total_signed_mass_shell_projection_energy_native(self) -> float:
+        return float(
+            self.first_mass_shell_projection_audit.signed_energy_native
+            + self.second_mass_shell_projection_audit.signed_energy_native
+        )
+
+    @property
+    def max_absolute_mass_shell_projection_energy_native(self) -> float:
+        return max(
+            self.first_mass_shell_projection_audit.max_absolute_energy_native,
+            self.second_mass_shell_projection_audit.max_absolute_energy_native,
+        )
+
+    @property
+    def total_absolute_mass_shell_projection_energy_native(self) -> float:
+        return float(
+            self.first_mass_shell_projection_audit.sum_absolute_energy_native
+            + self.second_mass_shell_projection_audit.sum_absolute_energy_native
         )
 
 
@@ -228,6 +262,9 @@ def particle_capture_trace_from_soa(
         ),
         medina_external_force_sample_time_ns=np.asarray(
             trajectory.medina_external_force_sample_time[:, index], dtype=float
+        ),
+        mass_shell_projection_energy_native=np.asarray(
+            trajectory.mass_shell_projection_energy[:, index], dtype=float
         ),
         dead=np.asarray(trajectory.dead[:, index], dtype=bool),
         ordinary_four_potential_native=potential,
@@ -377,6 +414,27 @@ def audit_medina_capture_trace(
     )
 
 
+def audit_mass_shell_projection(
+    trace: ParticleCaptureTrace,
+) -> MassShellProjectionAudit:
+    """Summarize the explicit pre-RR mass-shell energy correction by step."""
+
+    projection = np.asarray(
+        trace.mass_shell_projection_energy_native,
+        dtype=float,
+    )
+    if projection.ndim != 1 or not np.all(np.isfinite(projection)):
+        raise ValueError(
+            "mass_shell_projection_energy_native must be one-dimensional and finite"
+        )
+    return MassShellProjectionAudit(
+        nonzero_step_count=int(np.count_nonzero(projection)),
+        signed_energy_native=float(np.sum(projection, dtype=float)),
+        sum_absolute_energy_native=float(np.sum(np.abs(projection), dtype=float)),
+        max_absolute_energy_native=float(np.max(np.abs(projection), initial=0.0)),
+    )
+
+
 def relativistic_invariant_com_kinetic_energy_native(
     first_four_momentum_native: Sequence[Sequence[float]] | np.ndarray,
     second_four_momentum_native: Sequence[Sequence[float]] | np.ndarray,
@@ -476,6 +534,7 @@ def _validate_trace(trace: ParticleCaptureTrace, *, name: str) -> None:
         "medina_force_derivative_ready",
         "medina_impulse_capped",
         "medina_external_force_sample_time_ns",
+        "mass_shell_projection_energy_native",
         "dead",
     )
     for field_name in one_dimensional:
@@ -493,6 +552,7 @@ def _validate_trace(trace: ParticleCaptureTrace, *, name: str) -> None:
         "far_radiated_energy_native",
         "medina_cross_field_energy_native",
         "medina_cross_field_energy_change_native",
+        "mass_shell_projection_energy_native",
     )
     for field_name in finite_fields:
         if not np.all(np.isfinite(np.asarray(getattr(trace, field_name), dtype=float))):
@@ -766,6 +826,8 @@ def analyze_first_pass_capture(
     second_medina = audit_medina_capture_trace(
         second, negative_energy_tolerance_native=balance_atol
     )
+    first_projection = audit_mass_shell_projection(first)
+    second_projection = audit_mass_shell_projection(second)
     invalid: list[str] = []
 
     initial_energy = float(series.osculating_energy_native[0])
@@ -842,6 +904,8 @@ def analyze_first_pass_capture(
         second_canonical_audit=second_canonical,
         first_medina_audit=first_medina,
         second_medina_audit=second_medina,
+        first_mass_shell_projection_audit=first_projection,
+        second_mass_shell_projection_audit=second_projection,
         initial_separation_mm=initial_separation,
         periapsis_time_ns=float(periapsis_time),
         periapsis_separation_mm=float(periapsis_separation),
@@ -860,12 +924,14 @@ def analyze_first_pass_capture(
 __all__ = [
     "CanonicalMomentumAudit",
     "FirstPassCaptureAnalysis",
+    "MassShellProjectionAudit",
     "MedinaCaptureAudit",
     "ParticleCaptureTrace",
     "TwoBodyOsculatingSeries",
     "analyze_first_pass_capture",
     "audit_canonical_mechanical_momentum",
     "audit_medina_capture_trace",
+    "audit_mass_shell_projection",
     "native_energy_to_ev",
     "particle_capture_trace_from_soa",
     "reconstruct_mechanical_four_momentum_series_native",

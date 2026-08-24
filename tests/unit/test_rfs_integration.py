@@ -390,7 +390,7 @@ def test_zero_rr_force_is_exactly_the_legacy_rfs_spin_step() -> None:
     np.testing.assert_array_equal(explicit_zero, legacy)
 
 
-def test_unprimed_rfs_medina_step_is_an_exact_dynamical_no_op() -> None:
+def test_unprimed_rfs_medina_step_applies_no_reaction_impulse() -> None:
     electron = _particle_state("electron", beta=(0.01, 0.02, 0.0))
     config = _rfs_config(rider_species="electron")
     external_field = ExternalFieldConfig(
@@ -405,6 +405,7 @@ def test_unprimed_rfs_medina_step_is_an_exact_dynamical_no_op() -> None:
         h_step=1.0e-6,
         radiation_reaction_mode="off",
         external_field=external_field,
+        startup_mode=StartupMode.INERTIAL_PREHISTORY,
     )
     medina_trajectory, _, medina_soa, _, *_ = _run(
         rider=electron,
@@ -414,25 +415,22 @@ def test_unprimed_rfs_medina_step_is_an_exact_dynamical_no_op() -> None:
         h_step=1.0e-6,
         radiation_reaction_mode="medina_lad",
         external_field=external_field,
+        startup_mode=StartupMode.INERTIAL_PREHISTORY,
     )
 
     assert off_soa is not None
     assert medina_soa is not None
     assert not np.any(medina_soa.medina_force_derivative_ready)
     assert not np.any(medina_soa.medina_impulse_capped)
+    np.testing.assert_array_equal(medina_soa.radiation_reaction_work, 0.0)
+    np.testing.assert_array_equal(medina_soa.radiation_energy_applied, 0.0)
     for key in (
         "x",
         "y",
         "z",
-        "t",
         "Px",
         "Py",
         "Pz",
-        "Pt",
-        "gamma",
-        "bx",
-        "by",
-        "bz",
         "spin_x",
         "spin_y",
         "spin_z",
@@ -440,6 +438,34 @@ def test_unprimed_rfs_medina_step_is_an_exact_dynamical_no_op() -> None:
         np.testing.assert_array_equal(
             off_trajectory[-1][key], medina_trajectory[-1][key]
         )
+
+    # Exact RFS off/on controls share one spatial-momentum-authoritative input
+    # boundary.  A derivative-unprimed Medina step therefore has no separate
+    # reaction impulse or kinematic effect.
+    final_state = medina_trajectory[-1]
+    mass = float(final_state["m"][0])
+    mechanical_momentum = np.asarray(
+        [final_state[key][0] for key in ("Px", "Py", "Pz")], dtype=float
+    )
+    expected_gamma = float(
+        np.sqrt(
+            1.0
+            + np.dot(mechanical_momentum, mechanical_momentum) / (mass * C_MMNS) ** 2
+        )
+    )
+    expected_beta = mechanical_momentum / (expected_gamma * mass * C_MMNS)
+    assert float(final_state["gamma"][0]) == expected_gamma
+    np.testing.assert_allclose(
+        [final_state[key][0] for key in ("bx", "by", "bz")],
+        expected_beta,
+        rtol=0.0,
+        atol=2.0e-18,
+    )
+    assert float(final_state["Pt"][0]) == pytest.approx(
+        expected_gamma * mass * C_MMNS,
+        rel=0.0,
+        abs=np.spacing(expected_gamma * mass * C_MMNS),
+    )
 
 
 def test_capped_medina_force_drives_constraint_compatible_rfs_spin(
@@ -522,6 +548,150 @@ def test_capped_medina_force_drives_constraint_compatible_rfs_spin(
     u_end = C_MMNS * np.concatenate(([gamma_end], gamma_end * beta_end))
     assert minkowski_dot(u_end, spin_end) / C_MMNS == pytest.approx(0.0, abs=2.0e-14)
     assert minkowski_dot(spin_end, spin_end) == pytest.approx(-1.0, rel=2.0e-14)
+
+
+def test_medina_predictor_and_post_kick_endpoint_share_one_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    electron = _particle_state("electron", beta=(0.01, 0.02, 0.0))
+    electron.update(
+        {
+            "spin_x": np.array([0.0]),
+            "spin_y": np.array([0.0]),
+            "spin_z": np.array([1.0]),
+            "local_magnetic_field_x_t": np.array([0.0]),
+            "local_magnetic_field_y_t": np.array([0.0]),
+            "local_magnetic_field_z_t": np.array([0.0]),
+            "magnetic_moment_j_per_t": np.array([0.0]),
+            "magnetic_moment_native": np.array([0.0]),
+            "spin_quantum_number": np.array([0.5]),
+            "gyromagnetic_ratio_rad_s_t": np.array([0.0]),
+            "magnetic_dipole_active": np.array([True]),
+            "spin_precession_active": np.array([True]),
+            "stern_gerlach_active": np.array([False]),
+            "dipole_source_canonical_ready": np.array([False]),
+            "medina_external_force_x": np.array([0.0]),
+            "medina_external_force_y": np.array([0.0]),
+            "medina_external_force_z": np.array([0.0]),
+            "medina_external_force_sample_time": np.array([-1.0e-6]),
+            "medina_force_derivative_ready": np.array([False]),
+            "medina_impulse_capped": np.array([False]),
+        }
+    )
+    raw_pt = float(electron["Pt"][0] - 1.0e-9)
+    electron["Pt"][0] = raw_pt
+
+    real_compute = equations.compute_medina_radiation_reaction
+    real_advance = equations._advance_rfs_rest_spin
+    kernel_calls: list[tuple[dict[str, Any], MedinaRadiationReactionResult]] = []
+    spin_forces: list[np.ndarray] = []
+
+    def forced_medina(**kwargs: Any) -> MedinaRadiationReactionResult:
+        base = real_compute(**kwargs)
+        predictor_dt = float(kwargs["coordinate_dt"])
+        external_force = np.asarray(kwargs["external_force"], dtype=float)
+        impulse = 0.1 * external_force * predictor_dt
+        forced = replace(
+            base,
+            radiation_reaction_force=tuple(impulse / predictor_dt),
+            radiation_reaction_impulse=tuple(impulse),
+            reaction_work=-7.0 * predictor_dt,
+            far_radiated_power=11.0,
+            far_radiated_energy=11.0 * predictor_dt,
+            cross_field_energy=13.0,
+            cross_field_energy_change=-3.0 * predictor_dt,
+        )
+        kernel_calls.append((dict(kwargs), forced))
+        return forced
+
+    def recording_advance(*args: Any, **kwargs: Any) -> np.ndarray:
+        spin_forces.append(
+            np.asarray(
+                kwargs["applied_radiation_reaction_force_native"], dtype=float
+            ).copy()
+        )
+        return cast(np.ndarray, real_advance(*args, **kwargs))
+
+    monkeypatch.setattr(equations, "compute_medina_radiation_reaction", forced_medina)
+    monkeypatch.setattr(equations, "_advance_rfs_rest_spin", recording_advance)
+
+    h_step = 1.0e-6
+    result = equations.retarded_equations_of_motion(
+        h_step,
+        [electron],
+        [],
+        0,
+        aperture_radius=1.0e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        startup_mode=StartupMode.INERTIAL_PREHISTORY,
+        self_consistency=SelfConsistencyConfig(
+            enabled=True,
+            max_iterations=2,
+            mass_shell_relaxation=0.7,
+        ),
+        radiation_reaction_mode="medina_lad",
+        external_field=ExternalFieldConfig(magnetic_field_native=(0.0, 1.0e7, 0.0)),
+        magnetic_dipole=_rfs_config(rider_species="electron"),
+    )
+
+    assert len(kernel_calls) == 2
+    assert len(spin_forces) == 1
+    final_kwargs, final_kernel = kernel_calls[-1]
+    predictor_dt = float(final_kwargs["coordinate_dt"])
+    external_force = np.asarray(final_kwargs["external_force"], dtype=float)
+    impulse = np.asarray(final_kernel.radiation_reaction_impulse, dtype=float)
+    mass = float(electron["m"][0])
+    previous_beta = np.asarray(
+        [electron[key][0] for key in ("bx", "by", "bz")], dtype=float
+    )
+    previous_momentum = float(electron["gamma"][0]) * mass * C_MMNS * previous_beta
+    predictor_momentum = previous_momentum + external_force * predictor_dt
+    final_momentum = predictor_momentum + impulse
+    final_gamma = float(
+        np.sqrt(1.0 + np.dot(final_momentum, final_momentum) / (mass * C_MMNS) ** 2)
+    )
+    final_beta = final_momentum / (final_gamma * mass * C_MMNS)
+    final_dt = h_step * final_gamma
+
+    assert result["medina_external_force_sample_time"][0] == pytest.approx(
+        float(electron["t"][0]) + 0.5 * predictor_dt
+    )
+    assert result["radiation_reaction_work"][0] == pytest.approx(
+        final_kernel.reaction_work
+    )
+    assert result["radiation_energy"][0] == pytest.approx(
+        final_kernel.far_radiated_energy
+    )
+    assert result["medina_cross_field_energy"][0] == pytest.approx(13.0)
+    assert result["medina_cross_field_energy_change"][0] == pytest.approx(
+        final_kernel.cross_field_energy_change
+    )
+    np.testing.assert_allclose(spin_forces[0], impulse / predictor_dt)
+    np.testing.assert_allclose(
+        [result[key][0] for key in ("Px", "Py", "Pz")], final_momentum
+    )
+    assert result["Pt"][0] == pytest.approx(final_gamma * mass * C_MMNS)
+    assert result["gamma"][0] == pytest.approx(final_gamma)
+    np.testing.assert_allclose(
+        [result[key][0] for key in ("bx", "by", "bz")], final_beta
+    )
+    np.testing.assert_allclose(
+        [result[key][0] - electron[key][0] for key in ("x", "y", "z")],
+        h_step * final_momentum / mass,
+    )
+    assert result["t"][0] - electron["t"][0] == pytest.approx(final_dt)
+    np.testing.assert_allclose(
+        [result[key][0] for key in ("bdotx", "bdoty", "bdotz")],
+        (final_beta - previous_beta) / (C_MMNS * final_dt),
+    )
+    predictor_gamma = float(
+        np.sqrt(
+            1.0 + np.dot(predictor_momentum, predictor_momentum) / (mass * C_MMNS) ** 2
+        )
+    )
+    assert result["mass_shell_projection_energy"][0] == pytest.approx(
+        C_MMNS * (predictor_gamma * mass * C_MMNS - raw_pt)
+    )
 
 
 def test_rfs_rejects_approximate_charge_source_history() -> None:

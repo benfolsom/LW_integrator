@@ -6,6 +6,23 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Made exact-charge/RFS trial kinematics authoritative from the spatial
+  mechanical momentum ``p = P - q A / c`` for matched RR-off and Medina
+  controls. The ordinary non-exact Medina path retains its historical
+  temporal-energy-authoritative shell, but now applies that shell before force
+  sampling and falls back to finite spatial momentum when the near-rest energy
+  is below one, rounds to rest despite nonzero momentum, has no momentum
+  direction, or is nonfinite. This prevents roundoff in ``Pt - q Phi / c``
+  from erasing a nearly stationary massive particle's motion. A nonzero Medina
+  impulse is applied as an endpoint kick and the final drift is rebuilt from
+  the post-kick on-shell state; its force derivative and energy terms remain
+  evaluated over the documented non-RR predictor interval.
+- Added signed per-step ``mass_shell_projection_energy`` diagnostics in native
+  energy units. The value records the complete final-trial correction from raw
+  accumulated canonical ``Pt`` before nonlinear relaxation, is available in
+  trajectory arrays, and is summarized per particle and in combination by the
+  first-pass capture audit, including both signed and absolute accumulated
+  correction energy.
 - Builder-published ``TrajectoryArrays`` now expose read-only NumPy views so
   direct mutation cannot bypass trajectory-version and retarded-field cache
   invalidation. Builder writes remain supported; callers that need an

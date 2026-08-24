@@ -928,6 +928,7 @@ class TrajectoryArrays:
     radiation_power: np.ndarray
     radiation_energy: np.ndarray
     radiation_energy_applied: np.ndarray
+    mass_shell_projection_energy: np.ndarray
     radiation_reaction_work: np.ndarray
     medina_cross_field_energy: np.ndarray
     medina_cross_field_energy_change: np.ndarray
@@ -1085,6 +1086,7 @@ class TrajectoryArrays:
             "radiation_power": self.radiation_power[step],
             "radiation_energy": self.radiation_energy[step],
             "radiation_energy_applied": self.radiation_energy_applied[step],
+            "mass_shell_projection_energy": self.mass_shell_projection_energy[step],
             "q": self.q,
             "q_species": self.q_species,
             "q_observer": self.q_observer,
@@ -1262,6 +1264,9 @@ class IndexedTrajectoryArrays:
             "radiation_power": self.row("radiation_power", step),
             "radiation_energy": self.row("radiation_energy", step),
             "radiation_energy_applied": self.row("radiation_energy_applied", step),
+            "mass_shell_projection_energy": self.row(
+                "mass_shell_projection_energy", step
+            ),
             "q": self.constant("q"),
             "q_species": self.constant("q_species"),
             "q_observer": self.constant("q_observer"),
@@ -1379,6 +1384,7 @@ class TrajectoryBuilder:
         "radiation_power",
         "radiation_energy",
         "radiation_energy_applied",
+        "mass_shell_projection_energy",
         "origin_x",
         "origin_y",
         "origin_z",
@@ -1602,6 +1608,9 @@ class TrajectoryBuilder:
             radiation_power=self._arrays["radiation_power"][:s],
             radiation_energy=self._arrays["radiation_energy"][:s],
             radiation_energy_applied=self._arrays["radiation_energy_applied"][:s],
+            mass_shell_projection_energy=self._arrays["mass_shell_projection_energy"][
+                :s
+            ],
             radiation_reaction_work=self._arrays["radiation_reaction_work"][:s],
             medina_cross_field_energy=self._arrays["medina_cross_field_energy"][:s],
             medina_cross_field_energy_change=self._arrays[
@@ -1677,6 +1686,7 @@ class TrajectoryBuilder:
             radiation_power=self._arrays["radiation_power"],
             radiation_energy=self._arrays["radiation_energy"],
             radiation_energy_applied=self._arrays["radiation_energy_applied"],
+            mass_shell_projection_energy=self._arrays["mass_shell_projection_energy"],
             radiation_reaction_work=self._arrays["radiation_reaction_work"],
             medina_cross_field_energy=self._arrays["medina_cross_field_energy"],
             medina_cross_field_energy_change=self._arrays[

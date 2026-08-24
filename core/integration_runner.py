@@ -505,6 +505,7 @@ def _ensure_startup_metadata(state: Optional[ParticleState]) -> None:
     _ensure("radiation_power")
     _ensure("radiation_energy")
     _ensure("radiation_energy_applied")
+    _ensure("mass_shell_projection_energy")
 
 
 def _set_pseudo_grid_schedule_metadata(
@@ -747,6 +748,7 @@ def _clear_medina_force_history(state: ParticleState) -> None:
         "radiation_reaction_work",
         "medina_cross_field_energy",
         "medina_cross_field_energy_change",
+        "mass_shell_projection_energy",
     ):
         state[name] = np.zeros_like(template, dtype=float)
     state["medina_external_force_sample_time"] = np.full_like(
@@ -1054,6 +1056,7 @@ def _slice_trajectory_arrays(
         radiation_power=arrays.radiation_power[start:stop],
         radiation_energy=arrays.radiation_energy[start:stop],
         radiation_energy_applied=arrays.radiation_energy_applied[start:stop],
+        mass_shell_projection_energy=arrays.mass_shell_projection_energy[start:stop],
         radiation_reaction_work=arrays.radiation_reaction_work[start:stop],
         medina_cross_field_energy=arrays.medina_cross_field_energy[start:stop],
         medina_cross_field_energy_change=arrays.medina_cross_field_energy_change[

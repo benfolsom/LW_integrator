@@ -11,6 +11,7 @@ from core.capture_diagnostics import (
     ParticleCaptureTrace,
     analyze_first_pass_capture,
     audit_canonical_mechanical_momentum,
+    audit_mass_shell_projection,
     audit_medina_capture_trace,
     reconstruct_mechanical_four_momentum_series_native,
     relativistic_invariant_com_kinetic_energy_native,
@@ -33,6 +34,7 @@ def _trace(
     cross_energy: np.ndarray | None = None,
     cross_change: np.ndarray | None = None,
     force_sample_time: np.ndarray | None = None,
+    mass_shell_projection_energy: np.ndarray | None = None,
     derivative_ready: np.ndarray | None = None,
     capped: np.ndarray | None = None,
     dead: np.ndarray | None = None,
@@ -81,6 +83,7 @@ def _trace(
         medina_external_force_sample_time_ns=floating(
             force_sample_time, default=np.nan
         ),
+        mass_shell_projection_energy_native=floating(mass_shell_projection_energy),
         dead=boolean(dead),
         ordinary_four_potential_native=potential,
     )
@@ -178,6 +181,25 @@ def test_medina_audit_keeps_priming_radiation_out_of_ready_balance() -> None:
     assert audit.balance_residual_native == pytest.approx(0.0, abs=1.0e-16)
 
 
+def test_mass_shell_projection_audit_preserves_sign_and_maximum() -> None:
+    projection = np.array([0.0, 2.0e-9, -5.0e-9, 1.0e-9])
+    trace = _trace(
+        time_ns=np.arange(4.0),
+        position_mm=np.column_stack((np.arange(4.0), np.zeros((4, 2)))),
+        velocity_mm_per_ns=np.zeros((4, 3)),
+        mass_amu=1.0,
+        observer_charge_native=1.0,
+        source_charge_native=1.0,
+        mass_shell_projection_energy=projection,
+    )
+
+    audit = audit_mass_shell_projection(trace)
+    assert audit.nonzero_step_count == 3
+    assert audit.signed_energy_native == pytest.approx(-2.0e-9)
+    assert audit.sum_absolute_energy_native == pytest.approx(8.0e-9)
+    assert audit.max_absolute_energy_native == pytest.approx(5.0e-9)
+
+
 def _capturing_pair() -> tuple[ParticleCaptureTrace, ParticleCaptureTrace]:
     first_time = np.arange(5.0)
     first_position = np.array(
@@ -240,6 +262,9 @@ def test_first_pass_capture_uses_same_radius_outbound_energy_and_periapsis() -> 
     assert result.series.radial_velocity_mm_per_ns[0] < 0.0
     assert result.series.radial_velocity_mm_per_ns[-1] > 0.0
     assert result.total_far_radiated_energy_native == pytest.approx(0.07)
+    assert result.total_signed_mass_shell_projection_energy_native == 0.0
+    assert result.total_absolute_mass_shell_projection_energy_native == 0.0
+    assert result.max_absolute_mass_shell_projection_energy_native == 0.0
     assert "not conserved for retarded fields" in result.energy_model
 
 

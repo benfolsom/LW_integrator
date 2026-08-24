@@ -172,6 +172,7 @@ PSEUDO_GRID_PASSIVE_DELTA_FIELDS: tuple[str, ...] = (
     "radiation_power",
     "radiation_energy",
     "radiation_energy_applied",
+    "mass_shell_projection_energy",
     "radiation_reaction_work",
     "medina_cross_field_energy",
     "medina_cross_field_energy_change",

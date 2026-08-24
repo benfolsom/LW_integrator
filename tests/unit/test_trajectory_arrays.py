@@ -36,6 +36,7 @@ def _make_state(step: int, n: int, include_optional: bool = True) -> dict:
         "radiation_power": rng.random(n),
         "radiation_energy": rng.random(n),
         "radiation_energy_applied": rng.random(n),
+        "mass_shell_projection_energy": rng.random(n) - 0.5,
         "q": q_source,
         "q_species": q_species,
         "q_observer": q_observer,
@@ -113,6 +114,7 @@ class TestShapeProperties:
             "radiation_power",
             "radiation_energy",
             "radiation_energy_applied",
+            "mass_shell_projection_energy",
             "radiation_reaction_work",
             "medina_cross_field_energy",
             "medina_cross_field_energy_change",
@@ -144,6 +146,10 @@ class TestRoundTrip:
             np.testing.assert_array_equal(
                 s["radiation_energy_applied"],
                 states[step]["radiation_energy_applied"],
+            )
+            np.testing.assert_array_equal(
+                s["mass_shell_projection_energy"],
+                states[step]["mass_shell_projection_energy"],
             )
 
     def test_particle_consts_from_step0(self):
@@ -301,11 +307,13 @@ class TestMissingOptionalFields:
             state.pop("radiation_power")
             state.pop("radiation_energy")
             state.pop("radiation_energy_applied")
+            state.pop("mass_shell_projection_energy")
             builder.set_step(step, state)
         traj = builder.build()
         np.testing.assert_array_equal(traj.radiation_power, 0.0)
         np.testing.assert_array_equal(traj.radiation_energy, 0.0)
         np.testing.assert_array_equal(traj.radiation_energy_applied, 0.0)
+        np.testing.assert_array_equal(traj.mass_shell_projection_energy, 0.0)
 
 
 class TestBuildPartial:
