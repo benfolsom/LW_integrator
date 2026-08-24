@@ -229,6 +229,7 @@ def _run_simple_inertial(
     radiation_reaction_mode: str = "off",
     external_field: ExternalFieldConfig | None = None,
     magnetic_dipole: MagneticDipoleConfig | None = None,
+    self_consistency: SelfConsistencyConfig | None = None,
 ):
     return retarded_integrator(
         steps=steps,
@@ -245,7 +246,11 @@ def _run_simple_inertial(
         radiation_reaction_mode=radiation_reaction_mode,
         external_field=external_field,
         magnetic_dipole=magnetic_dipole,
-        self_consistency=SelfConsistencyConfig(enabled=False),
+        self_consistency=(
+            SelfConsistencyConfig(enabled=False)
+            if self_consistency is None
+            else self_consistency
+        ),
         use_numba=False,
     )
 
@@ -511,7 +516,7 @@ def test_inertial_history_rejects_nonzero_acceleration_and_nonfinite_beta() -> N
 def test_runtime_missing_exact_history_raises_instead_of_falling_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import core.dipole_source_interactions as source_interactions
+    import core.retarded_dipole_fields as dipole_fields
     import core.integration_runner as integration_runner
 
     neutron = get_species("neutron")
@@ -543,8 +548,8 @@ def test_runtime_missing_exact_history_raises_instead_of_falling_back(
         raise RetardedHistoryError("synthetic runtime history loss")
 
     monkeypatch.setattr(
-        source_interactions,
-        "evaluate_retarded_dipole_source_interaction_native",
+        dipole_fields,
+        "evaluate_retarded_dipole_field_gradient_native",
         missing_history,
     )
 
@@ -556,3 +561,85 @@ def test_runtime_missing_exact_history_raises_instead_of_falling_back(
             steps=2,
             magnetic_dipole=magnetic,
         )
+
+
+def test_fixed_geometry_reuses_exact_field_but_variable_geometry_recomputes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.retarded_dipole_fields as retarded_dipole_fields
+    import core.retarded_fields as retarded_fields
+
+    rider = _species_state(
+        "electron",
+        position_mm=(-500.0, 0.0, 0.0),
+        beta=(0.0, 1.0e-4, 0.0),
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(500.0, 0.0, 0.0),
+        beta=(0.0, -1.0e-7, 0.0),
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=False,
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            minimum_separation_mm=1.0e-6,
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+    original_charge = retarded_fields.evaluate_retarded_charge_field_gradient_native
+    original_dipole = (
+        retarded_dipole_fields.evaluate_retarded_dipole_field_gradient_native
+    )
+
+    def run_and_count(mode: str) -> tuple[int, int]:
+        charge_calls = 0
+        dipole_calls = 0
+
+        def counted_charge(*args: object, **kwargs: object):
+            nonlocal charge_calls
+            charge_calls += 1
+            return original_charge(*args, **kwargs)
+
+        def counted_dipole(*args: object, **kwargs: object):
+            nonlocal dipole_calls
+            dipole_calls += 1
+            return original_dipole(*args, **kwargs)
+
+        monkeypatch.setattr(
+            retarded_fields,
+            "evaluate_retarded_charge_field_gradient_native",
+            counted_charge,
+        )
+        monkeypatch.setattr(
+            retarded_dipole_fields,
+            "evaluate_retarded_dipole_field_gradient_native",
+            counted_dipole,
+        )
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=2,
+            h_step=1.0e-12,
+            magnetic_dipole=magnetic,
+            self_consistency=SelfConsistencyConfig(
+                enabled=True,
+                convergence_mode=mode,
+                max_iterations=2,
+                target_ms_tolerance=1.0e-12,
+                verbosity=0,
+            ),
+        )
+        return charge_calls, dipole_calls
+
+    fixed_calls = run_and_count("fixed_geometry")
+    variable_calls = run_and_count("variable_geometry")
+
+    # One rider and one driver field evaluation per nonlinear trial.  Fixed
+    # geometry can reuse the event-local field jet across both trials; variable
+    # geometry changes the event and therefore must evaluate both times.
+    assert fixed_calls == (2, 2)
+    assert variable_calls == (4, 4)

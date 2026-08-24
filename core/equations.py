@@ -1884,6 +1884,8 @@ def retarded_equations_of_motion(
             and startup_mode is StartupMode.INERTIAL_PREHISTORY
             and sim_type == SimulationType.BUNCH_TO_BUNCH
         )
+        exact_charge_field_cache = None
+        dipole_source_field_cache = None
         exact_charge_source_interaction = None
         dipole_source_interaction = None
         # This is the Medina three-force actually applied during the final
@@ -2039,7 +2041,7 @@ def retarded_equations_of_motion(
             nhat = None
             indices_bounded = None
 
-            if not skip_external_forces:
+            if not skip_external_forces and not exact_charge_source_selected:
                 if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
                     external_current_step_idx = min(
                         index_traj,
@@ -2136,7 +2138,9 @@ def retarded_equations_of_motion(
             # ================================================================
             # If we already determined to skip (COLD_START early exit), use that
             # Otherwise, do the full check with computed nhat values
-            if skip_external_forces:
+            if exact_charge_source_selected:
+                apply_forces = True
+            elif skip_external_forces:
                 apply_forces = False
             elif nhat is not None:
                 # Do full gating check with actual retarded distances
@@ -2155,7 +2159,12 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 4: Compute and accumulate external force contributions
             # ================================================================
-            if apply_forces and nhat["R"].size > 0 and not exact_charge_source_selected:
+            if (
+                apply_forces
+                and not exact_charge_source_selected
+                and nhat is not None
+                and nhat["R"].size > 0
+            ):
                 # Gather external particle data at retarded times (with interpolation if enabled)
                 _external_include_positions = bool(
                     (
@@ -2753,9 +2762,13 @@ def retarded_equations_of_motion(
                 and len(trajectory_ext) > 0
             ):
                 from .charge_source_interactions import (
-                    evaluate_retarded_charge_source_interaction_native,
+                    charge_source_interaction_from_field_native,
                 )
-                from .retarded_fields import ObserverEvent, RetardedHistoryError
+                from .retarded_fields import (
+                    ObserverEvent,
+                    RetardedHistoryError,
+                    evaluate_retarded_charge_field_gradient_native,
+                )
 
                 if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
                     charge_source_position = (
@@ -2770,8 +2783,13 @@ def retarded_equations_of_motion(
                         float(current_state["z"][particle_idx]),
                     )
                 try:
-                    exact_charge_source_interaction = (
-                        evaluate_retarded_charge_source_interaction_native(
+                    if (
+                        sc_convergence_mode == "fixed_geometry"
+                        and exact_charge_field_cache is not None
+                    ):
+                        exact_charge_field = exact_charge_field_cache
+                    else:
+                        exact_charge_field = evaluate_retarded_charge_field_gradient_native(
                             (
                                 traj_ext_soa
                                 if traj_ext_soa is not None
@@ -2781,11 +2799,6 @@ def retarded_equations_of_motion(
                                 time_ns=float(current_state["t"][particle_idx]),
                                 position_mm=charge_source_position,
                             ),
-                            four_velocity_mm_ns=_four_velocity_native(
-                                np.asarray(particle_beta, dtype=float)
-                            ),
-                            observer_charge_native=float(force_particle_charge),
-                            proper_time_step_ns=float(h),
                             relative_step=max(
                                 1.0e-4,
                                 (
@@ -2819,12 +2832,24 @@ def retarded_equations_of_motion(
                                 else 96
                             ),
                         )
-                    )
+                        if sc_convergence_mode == "fixed_geometry":
+                            exact_charge_field_cache = exact_charge_field
                 except RetardedHistoryError:
                     # INERTIAL_PREHISTORY preflights every displaced light cone.
                     # Missing history after that gate is a model failure, never a
                     # request to fall back to cold-start force suppression.
                     raise
+
+                exact_charge_source_interaction = (
+                    charge_source_interaction_from_field_native(
+                        exact_charge_field,
+                        four_velocity_mm_ns=_four_velocity_native(
+                            np.asarray(particle_beta, dtype=float)
+                        ),
+                        observer_charge_native=float(force_particle_charge),
+                        proper_time_step_ns=float(h),
+                    )
+                )
 
                 charge_canonical_impulse = (
                     exact_charge_source_interaction.canonical_four_impulse
@@ -2875,7 +2900,10 @@ def retarded_equations_of_motion(
                 and len(trajectory_ext) > 0
             ):
                 from .dipole_source_interactions import (
-                    evaluate_retarded_dipole_source_interaction_native,
+                    dipole_source_interaction_from_field_native,
+                )
+                from .retarded_dipole_fields import (
+                    evaluate_retarded_dipole_field_gradient_native,
                 )
                 from .retarded_fields import ObserverEvent, RetardedHistoryError
 
@@ -2892,46 +2920,61 @@ def retarded_equations_of_motion(
                         float(current_state["z"][particle_idx]),
                     )
                 try:
-                    dipole_source_interaction = (
-                        evaluate_retarded_dipole_source_interaction_native(
-                            (
-                                traj_ext_soa
-                                if traj_ext_soa is not None
-                                else trajectory_ext
-                            ),
-                            ObserverEvent(
-                                time_ns=float(current_state["t"][particle_idx]),
-                                position_mm=dipole_source_position,
-                            ),
-                            four_velocity_mm_ns=_four_velocity_native(
-                                np.asarray(particle_beta, dtype=float)
-                            ),
-                            observer_charge_native=float(force_particle_charge),
-                            proper_time_step_ns=float(h),
-                            relative_step=(
-                                magnetic_dipole.source.relative_stencil_step
-                            ),
-                            minimum_step_mm=(
-                                magnetic_dipole.source.minimum_stencil_step_mm
-                            ),
-                            minimum_separation_mm=(
-                                magnetic_dipole.source.minimum_separation_mm
-                            ),
-                            root_tolerance_mm=(
-                                magnetic_dipole.source.root_tolerance_mm
-                            ),
-                            max_root_iterations=(
-                                magnetic_dipole.source.max_root_iterations
-                            ),
+                    if (
+                        sc_convergence_mode == "fixed_geometry"
+                        and dipole_source_field_cache is not None
+                    ):
+                        dipole_source_field = dipole_source_field_cache
+                    else:
+                        dipole_source_field = (
+                            evaluate_retarded_dipole_field_gradient_native(
+                                (
+                                    traj_ext_soa
+                                    if traj_ext_soa is not None
+                                    else trajectory_ext
+                                ),
+                                ObserverEvent(
+                                    time_ns=float(current_state["t"][particle_idx]),
+                                    position_mm=dipole_source_position,
+                                ),
+                                relative_step=(
+                                    magnetic_dipole.source.relative_stencil_step
+                                ),
+                                minimum_step_mm=(
+                                    magnetic_dipole.source.minimum_stencil_step_mm
+                                ),
+                                minimum_separation_mm=(
+                                    magnetic_dipole.source.minimum_separation_mm
+                                ),
+                                root_tolerance_mm=(
+                                    magnetic_dipole.source.root_tolerance_mm
+                                ),
+                                max_root_iterations=(
+                                    magnetic_dipole.source.max_root_iterations
+                                ),
+                            )
                         )
-                    )
+                        if sc_convergence_mode == "fixed_geometry":
+                            dipole_source_field_cache = dipole_source_field
                 except RetardedHistoryError:
                     if startup_mode is StartupMode.INERTIAL_PREHISTORY:
                         raise
                     # As for the exact charge-field derivative, COLD_START
                     # contributes nothing until every nested stencil event has
                     # an explicitly bracketed source light cone.
-                    dipole_source_interaction = None
+                    dipole_source_field = None
+
+                if dipole_source_field is not None:
+                    dipole_source_interaction = (
+                        dipole_source_interaction_from_field_native(
+                            dipole_source_field,
+                            four_velocity_mm_ns=_four_velocity_native(
+                                np.asarray(particle_beta, dtype=float)
+                            ),
+                            observer_charge_native=float(force_particle_charge),
+                            proper_time_step_ns=float(h),
+                        )
+                    )
 
                 if dipole_source_interaction is not None:
                     dipole_canonical_impulse = (

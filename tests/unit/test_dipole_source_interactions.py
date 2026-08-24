@@ -7,7 +7,11 @@ import pytest
 
 from core.constants import C_MMNS
 from core.dipole_source_interactions import (
+    dipole_source_interaction_from_field_native,
     evaluate_retarded_dipole_source_interaction_native,
+)
+from core.retarded_dipole_fields import (
+    evaluate_retarded_dipole_field_gradient_native,
 )
 from core.retarded_fields import ObserverEvent
 from core.rfs import rfs_four_force_native
@@ -115,3 +119,46 @@ def test_neutral_observer_receives_field_but_no_canonical_response() -> None:
     np.testing.assert_array_equal(interaction.canonical_potential_momentum, 0.0)
     np.testing.assert_array_equal(interaction.canonical_four_force, 0.0)
     np.testing.assert_array_equal(interaction.canonical_four_impulse, 0.0)
+
+
+def test_cached_dipole_field_is_recontracted_with_each_trial_velocity() -> None:
+    history = _static_dipole_history(1.1)
+    event = ObserverEvent(0.0, (1.5, 0.2, -0.1))
+    field = evaluate_retarded_dipole_field_gradient_native(
+        history,
+        event,
+        stencil_step_mm=1.0e-3,
+    )
+    trial_betas = (
+        np.array((0.03, 0.08, -0.02)),
+        np.array((-0.04, 0.12, 0.01)),
+    )
+    interactions = []
+    for beta in trial_betas:
+        gamma = 1.0 / np.sqrt(1.0 - float(beta @ beta))
+        interactions.append(
+            dipole_source_interaction_from_field_native(
+                field,
+                four_velocity_mm_ns=(gamma * C_MMNS * np.concatenate(((1.0,), beta))),
+                observer_charge_native=-0.7,
+                proper_time_step_ns=0.015,
+            )
+        )
+
+    assert interactions[0].field is field
+    assert interactions[1].field is field
+    np.testing.assert_array_equal(
+        interactions[0].canonical_potential_momentum,
+        interactions[1].canonical_potential_momentum,
+    )
+    assert not np.array_equal(
+        interactions[0].canonical_four_force,
+        interactions[1].canonical_four_force,
+    )
+    for interaction in interactions:
+        np.testing.assert_allclose(
+            interaction.canonical_four_impulse,
+            0.015 * interaction.canonical_four_force,
+            rtol=2.0e-15,
+            atol=2.0e-14,
+        )

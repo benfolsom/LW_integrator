@@ -42,6 +42,45 @@ class RetardedChargeSourceInteraction:
     canonical_four_impulse: np.ndarray
 
 
+def charge_source_interaction_from_field_native(
+    field: RetardedChargeFieldGradientResult,
+    *,
+    four_velocity_mm_ns: Sequence[float] | np.ndarray,
+    observer_charge_native: float,
+    proper_time_step_ns: float,
+) -> RetardedChargeSourceInteraction:
+    """Contract one already-evaluated field with the current observer state.
+
+    Exact fields depend on the observer event and source history, but the
+    canonical force also depends on the trial four-velocity.  Keeping this
+    contraction separate lets fixed-geometry nonlinear iterations reuse the
+    expensive light-cone/stencil result while still recomputing the part that
+    changes with velocity.
+    """
+
+    potential_momentum = canonical_potential_momentum_native(
+        field.field.four_potential,
+        charge_native=observer_charge_native,
+    )
+    canonical_force = canonical_four_force_from_potential_gradient_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        partial_a=field.partial_a,
+        charge_native=observer_charge_native,
+    )
+    canonical_impulse = canonical_four_impulse_from_potential_gradient_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        partial_a=field.partial_a,
+        charge_native=observer_charge_native,
+        proper_time_step_ns=proper_time_step_ns,
+    )
+    return RetardedChargeSourceInteraction(
+        field=field,
+        canonical_potential_momentum=potential_momentum,
+        canonical_four_force=canonical_force,
+        canonical_four_impulse=canonical_impulse,
+    )
+
+
 def evaluate_retarded_charge_source_interaction_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
@@ -73,30 +112,16 @@ def evaluate_retarded_charge_source_interaction_native(
         root_tolerance_mm=root_tolerance_mm,
         max_root_iterations=max_root_iterations,
     )
-    potential_momentum = canonical_potential_momentum_native(
-        field.field.four_potential,
-        charge_native=observer_charge_native,
-    )
-    canonical_force = canonical_four_force_from_potential_gradient_native(
-        four_velocity_mm_ns=four_velocity_mm_ns,
-        partial_a=field.partial_a,
-        charge_native=observer_charge_native,
-    )
-    canonical_impulse = canonical_four_impulse_from_potential_gradient_native(
-        four_velocity_mm_ns=four_velocity_mm_ns,
-        partial_a=field.partial_a,
-        charge_native=observer_charge_native,
-        proper_time_step_ns=proper_time_step_ns,
-    )
-    return RetardedChargeSourceInteraction(
+    return charge_source_interaction_from_field_native(
         field=field,
-        canonical_potential_momentum=potential_momentum,
-        canonical_four_force=canonical_force,
-        canonical_four_impulse=canonical_impulse,
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        observer_charge_native=observer_charge_native,
+        proper_time_step_ns=proper_time_step_ns,
     )
 
 
 __all__ = [
     "RetardedChargeSourceInteraction",
+    "charge_source_interaction_from_field_native",
     "evaluate_retarded_charge_source_interaction_native",
 ]

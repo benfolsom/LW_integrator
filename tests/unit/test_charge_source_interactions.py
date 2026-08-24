@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from core.charge_source_interactions import (
+    charge_source_interaction_from_field_native,
     evaluate_retarded_charge_source_interaction_native,
 )
 from core.constants import C_MMNS
@@ -198,6 +199,53 @@ def test_neutral_observer_receives_charge_field_but_no_canonical_response() -> N
     np.testing.assert_array_equal(interaction.canonical_potential_momentum, 0.0)
     np.testing.assert_array_equal(interaction.canonical_four_force, 0.0)
     np.testing.assert_array_equal(interaction.canonical_four_impulse, 0.0)
+
+
+def test_cached_charge_field_is_recontracted_with_each_trial_velocity() -> None:
+    history = _uniform_charge_history(
+        knot_count=8,
+        charge_native=1.2,
+        beta=np.array((0.13, -0.02, 0.04)),
+    )
+    event = ObserverEvent(0.0, (1.0, 0.4, -0.3))
+    field = evaluate_retarded_charge_field_gradient_native(
+        history,
+        event,
+        relative_step=1.0e-5,
+    )
+    trial_betas = (
+        np.array((0.02, 0.07, -0.01)),
+        np.array((-0.05, 0.11, 0.03)),
+    )
+    interactions = []
+    for beta in trial_betas:
+        gamma = 1.0 / np.sqrt(1.0 - float(beta @ beta))
+        interactions.append(
+            charge_source_interaction_from_field_native(
+                field,
+                four_velocity_mm_ns=(gamma * C_MMNS * np.concatenate(((1.0,), beta))),
+                observer_charge_native=-0.6,
+                proper_time_step_ns=0.02,
+            )
+        )
+
+    assert interactions[0].field is field
+    assert interactions[1].field is field
+    np.testing.assert_array_equal(
+        interactions[0].canonical_potential_momentum,
+        interactions[1].canonical_potential_momentum,
+    )
+    assert not np.array_equal(
+        interactions[0].canonical_four_force,
+        interactions[1].canonical_four_force,
+    )
+    for interaction in interactions:
+        np.testing.assert_allclose(
+            interaction.canonical_four_impulse,
+            0.02 * interaction.canonical_four_force,
+            rtol=2.0e-15,
+            atol=2.0e-14,
+        )
 
 
 def test_sparse_uniform_inertial_history_is_invariant_for_two_four_eight_knots() -> (

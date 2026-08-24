@@ -43,6 +43,38 @@ class RetardedDipoleSourceInteraction:
     canonical_four_impulse: np.ndarray
 
 
+def dipole_source_interaction_from_field_native(
+    field: RetardedDipoleFieldGradientResult,
+    *,
+    four_velocity_mm_ns: Sequence[float] | np.ndarray,
+    observer_charge_native: float,
+    proper_time_step_ns: float,
+) -> RetardedDipoleSourceInteraction:
+    """Contract one cached dipole field with the current trial velocity."""
+
+    potential_momentum = canonical_potential_momentum_native(
+        field.four_potential,
+        charge_native=observer_charge_native,
+    )
+    canonical_force = canonical_four_force_from_potential_gradient_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        partial_a=field.partial_a,
+        charge_native=observer_charge_native,
+    )
+    canonical_impulse = canonical_four_impulse_from_potential_gradient_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        partial_a=field.partial_a,
+        charge_native=observer_charge_native,
+        proper_time_step_ns=proper_time_step_ns,
+    )
+    return RetardedDipoleSourceInteraction(
+        field=field,
+        canonical_potential_momentum=potential_momentum,
+        canonical_four_force=canonical_force,
+        canonical_four_impulse=canonical_impulse,
+    )
+
+
 def evaluate_retarded_dipole_source_interaction_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
@@ -82,30 +114,16 @@ def evaluate_retarded_dipole_source_interaction_native(
         root_tolerance_mm=root_tolerance_mm,
         max_root_iterations=max_root_iterations,
     )
-    potential_momentum = canonical_potential_momentum_native(
-        field.four_potential,
-        charge_native=observer_charge_native,
-    )
-    canonical_force = canonical_four_force_from_potential_gradient_native(
-        four_velocity_mm_ns=four_velocity_mm_ns,
-        partial_a=field.partial_a,
-        charge_native=observer_charge_native,
-    )
-    canonical_impulse = canonical_four_impulse_from_potential_gradient_native(
-        four_velocity_mm_ns=four_velocity_mm_ns,
-        partial_a=field.partial_a,
-        charge_native=observer_charge_native,
-        proper_time_step_ns=proper_time_step_ns,
-    )
-    return RetardedDipoleSourceInteraction(
+    return dipole_source_interaction_from_field_native(
         field=field,
-        canonical_potential_momentum=potential_momentum,
-        canonical_four_force=canonical_force,
-        canonical_four_impulse=canonical_impulse,
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        observer_charge_native=observer_charge_native,
+        proper_time_step_ns=proper_time_step_ns,
     )
 
 
 __all__ = [
     "RetardedDipoleSourceInteraction",
+    "dipole_source_interaction_from_field_native",
     "evaluate_retarded_dipole_source_interaction_native",
 ]
