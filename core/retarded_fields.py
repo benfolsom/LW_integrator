@@ -431,6 +431,87 @@ def _next_safeguarded_root_trial(
     )
 
 
+def _knot_light_cone_residual_mm(
+    source: _PreparedSourceHistory,
+    knot_index: int,
+    *,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+) -> float:
+    """Return the light-cone residual at one stored source knot.
+
+    For a timelike source history this residual is monotonically decreasing
+    with source time.  Keeping the scalar evaluation separate makes the
+    bracketing cost directly testable and avoids allocating a full-history
+    separation vector for every retarded-field stencil event.
+    """
+
+    separation_mm = float(
+        np.linalg.norm(observer_position_mm - source.position_mm[knot_index])
+    )
+    return float(
+        C_MMNS * (observer_time_ns - float(source.time_ns[knot_index])) - separation_mm
+    )
+
+
+def _find_retarded_knot_bracket(
+    source: _PreparedSourceHistory,
+    *,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+) -> int | None:
+    """Return the latest knot segment bracketing the retarded event.
+
+    The source worldline is timelike, so
+
+    ``g(t_s) = c (t_observer - t_s) - |x_observer - x_source(t_s)|``
+
+    decreases monotonically at its stored knots.  Binary search therefore
+    finds the same latest ``g[j] >= 0 >= g[j + 1]`` segment as the historical
+    full scan in ``O(log n)`` scalar residual evaluations.  Treating an exact
+    internal-knot root as the lower endpoint selects the following segment,
+    matching the old ``brackets[-1]`` convention.
+    """
+
+    knot_count = int(source.time_ns.size)
+    if knot_count < 2:
+        return None
+
+    lower = 0
+    upper = knot_count - 1
+    lower_residual = _knot_light_cone_residual_mm(
+        source,
+        lower,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+    )
+    if lower_residual < 0.0:
+        return None
+
+    upper_residual = _knot_light_cone_residual_mm(
+        source,
+        upper,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+    )
+    if upper_residual > 0.0:
+        return None
+
+    while upper - lower > 1:
+        middle = lower + (upper - lower) // 2
+        middle_residual = _knot_light_cone_residual_mm(
+            source,
+            middle,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+        )
+        if middle_residual >= 0.0:
+            lower = middle
+        else:
+            upper = middle
+    return lower
+
+
 def _solve_retarded_sample(
     source: _PreparedSourceHistory,
     *,
@@ -440,25 +521,16 @@ def _solve_retarded_sample(
     max_root_iterations: int,
 ) -> _RetardedSample | None:
     times = source.time_ns
-    if times.size < 2:
-        return None
-
-    knot_separations = np.linalg.norm(
-        observer_position_mm[np.newaxis, :] - source.position_mm,
-        axis=1,
+    segment = _find_retarded_knot_bracket(
+        source,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
     )
-    knot_residuals = C_MMNS * (observer_time_ns - times) - knot_separations
-    brackets = np.flatnonzero(
-        (knot_residuals[:-1] >= 0.0) & (knot_residuals[1:] <= 0.0)
-    )
-    if brackets.size == 0:
+    if segment is None:
         return None
-    segment = int(brackets[-1])
     lower_time = float(times[segment])
     upper_time = float(times[segment + 1])
     source_position = source.position_mm[segment]
-    residual = float(knot_residuals[segment])
-    separation = float(np.linalg.norm(observer_position_mm - source_position))
     trial_time = 0.5 * (lower_time + upper_time)
 
     for _ in range(max_root_iterations):

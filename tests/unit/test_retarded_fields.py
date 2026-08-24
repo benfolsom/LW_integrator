@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -75,6 +77,87 @@ def _stationary_history(*, charge_native: float = ELEMENTARY_CHARGE):
         beta=np.zeros((times_ns.size, 3)),
         charge_native=charge_native,
     )
+
+
+def _prepared_single_source(
+    history: list[dict[str, np.ndarray]],
+) -> retarded_fields._PreparedSourceHistory:
+    arrays = retarded_fields._extract_history(history)
+    return retarded_fields._prepare_source_history(arrays, 0)
+
+
+def _prepared_single_source_arrays(
+    *,
+    times_ns: np.ndarray,
+    position_mm: np.ndarray,
+    beta: np.ndarray,
+    beta_prime_per_mm: np.ndarray | None = None,
+    dead: np.ndarray | None = None,
+) -> retarded_fields._PreparedSourceHistory:
+    if beta_prime_per_mm is None:
+        beta_prime_per_mm = np.zeros_like(beta)
+    if dead is None:
+        dead = np.zeros(times_ns.size, dtype=bool)
+    arrays = retarded_fields._HistoryArrays(
+        time_ns=times_ns[:, np.newaxis],
+        position_mm=position_mm[:, np.newaxis, :],
+        beta=beta[:, np.newaxis, :],
+        beta_prime_per_mm=beta_prime_per_mm[:, np.newaxis, :],
+        charge_native=np.array((ELEMENTARY_CHARGE,)),
+        dead=dead[:, np.newaxis],
+    )
+    return retarded_fields._prepare_source_history(arrays, 0)
+
+
+def _reference_full_scan_knot_bracket(
+    source: retarded_fields._PreparedSourceHistory,
+    *,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+) -> int | None:
+    """Historical full-history bracket scan retained as a test oracle."""
+
+    if source.time_ns.size < 2:
+        return None
+    knot_separations = np.linalg.norm(
+        observer_position_mm[np.newaxis, :] - source.position_mm,
+        axis=1,
+    )
+    knot_residuals = C_MMNS * (observer_time_ns - source.time_ns) - knot_separations
+    brackets = np.flatnonzero(
+        (knot_residuals[:-1] >= 0.0) & (knot_residuals[1:] <= 0.0)
+    )
+    if brackets.size == 0:
+        return None
+    return int(brackets[-1])
+
+
+def _solve_with_reference_full_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    source: retarded_fields._PreparedSourceHistory,
+    *,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+) -> retarded_fields._RetardedSample | None:
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            retarded_fields,
+            "_find_retarded_knot_bracket",
+            lambda candidate, *, observer_time_ns, observer_position_mm: (
+                _reference_full_scan_knot_bracket(
+                    candidate,
+                    observer_time_ns=observer_time_ns,
+                    observer_position_mm=observer_position_mm,
+                )
+            ),
+        )
+        return retarded_fields._solve_retarded_sample(
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            root_tolerance_mm=1.0e-21,
+            max_root_iterations=96,
+        )
 
 
 def _si_lw_oracle(
@@ -224,6 +307,319 @@ def test_uniform_motion_light_cone_root_matches_analytic_solution() -> None:
     expected_time_ns = -1.0 / (C_MMNS * (1.0 - beta_x))
     assert field.retarded_time_ns[0] == pytest.approx(expected_time_ns, abs=2.0e-16)
     assert abs(field.light_cone_residual_mm[0]) <= 1.0e-15
+
+
+def test_binary_bracket_and_root_match_full_scan_on_random_timelike_histories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rng = np.random.default_rng(20260824)
+
+    for _ in range(40):
+        knot_count = int(rng.integers(8, 240))
+        durations = rng.uniform(2.0e-5, 8.0e-4, size=knot_count - 1)
+        times_ns = np.concatenate(([0.0], np.cumsum(durations)))
+        times_ns -= 0.8 * times_ns[-1]
+
+        base_beta = rng.normal(0.0, 0.08, size=3)
+        amplitudes = rng.normal(0.0, 0.025, size=(2, 3))
+        frequencies = rng.uniform(4.0, 18.0, size=2)
+        phases = rng.uniform(-np.pi, np.pi, size=2)
+        phase_at_knots = (
+            times_ns[:, np.newaxis] * frequencies[np.newaxis, :] + phases[np.newaxis, :]
+        )
+        beta = base_beta[np.newaxis, :] + np.sum(
+            amplitudes[np.newaxis, :, :] * np.sin(phase_at_knots)[:, :, np.newaxis],
+            axis=1,
+        )
+        beta_prime_per_mm = (
+            np.sum(
+                amplitudes[np.newaxis, :, :]
+                * frequencies[np.newaxis, :, np.newaxis]
+                * np.cos(phase_at_knots)[:, :, np.newaxis],
+                axis=1,
+            )
+            / C_MMNS
+        )
+        position_mm = C_MMNS * (
+            times_ns[:, np.newaxis] * base_beta[np.newaxis, :]
+            - np.sum(
+                amplitudes[np.newaxis, :, :]
+                * np.cos(phase_at_knots)[:, :, np.newaxis]
+                / frequencies[np.newaxis, :, np.newaxis],
+                axis=1,
+            )
+        )
+        assert np.max(np.linalg.norm(beta, axis=1)) < 0.5
+
+        source = _prepared_single_source(
+            _source_history(
+                times_ns=times_ns,
+                position_mm=position_mm,
+                beta=beta,
+                beta_prime_per_mm=beta_prime_per_mm,
+            )
+        )
+        target_segment = int(rng.integers(1, knot_count - 2))
+        fraction = float(rng.uniform(0.1, 0.9))
+        source_time_ns = float(
+            times_ns[target_segment]
+            + fraction * (times_ns[target_segment + 1] - times_ns[target_segment])
+        )
+        source_position, _, _ = retarded_fields._quintic_worldline_sample(
+            source, target_segment, source_time_ns
+        )
+        direction = rng.normal(size=3)
+        direction /= np.linalg.norm(direction)
+        separation_mm = float(rng.uniform(0.05, 2.0))
+        observer_position = source_position + separation_mm * direction
+        observer_time_ns = source_time_ns + separation_mm / C_MMNS
+
+        expected_segment = _reference_full_scan_knot_bracket(
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position,
+        )
+        actual_segment = retarded_fields._find_retarded_knot_bracket(
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position,
+        )
+        assert actual_segment == expected_segment
+
+        optimized = retarded_fields._solve_retarded_sample(
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position,
+            root_tolerance_mm=1.0e-21,
+            max_root_iterations=96,
+        )
+        reference = _solve_with_reference_full_scan(
+            monkeypatch,
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position,
+        )
+        assert optimized is not None
+        assert reference is not None
+        assert optimized.time_ns == reference.time_ns
+        assert optimized.residual_mm == reference.residual_mm
+        assert optimized.separation_mm == reference.separation_mm
+        np.testing.assert_array_equal(optimized.position_mm, reference.position_mm)
+        np.testing.assert_array_equal(optimized.beta, reference.beta)
+        np.testing.assert_array_equal(
+            optimized.beta_prime_per_mm,
+            reference.beta_prime_per_mm,
+        )
+
+
+def test_binary_bracket_preserves_latest_segment_at_exact_internal_knot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exact_root_time_ns = -1.0 / C_MMNS
+    times_ns = np.array((-0.02, -0.01, exact_root_time_ns, -0.002, 0.001))
+    source = _prepared_single_source(
+        _source_history(
+            times_ns=times_ns,
+            position_mm=np.zeros((times_ns.size, 3)),
+            beta=np.zeros((times_ns.size, 3)),
+        )
+    )
+    observer_position = np.array((1.0, 0.0, 0.0))
+
+    assert (
+        retarded_fields._knot_light_cone_residual_mm(
+            source,
+            2,
+            observer_time_ns=0.0,
+            observer_position_mm=observer_position,
+        )
+        == 0.0
+    )
+    assert (
+        _reference_full_scan_knot_bracket(
+            source,
+            observer_time_ns=0.0,
+            observer_position_mm=observer_position,
+        )
+        == 2
+    )
+    assert (
+        retarded_fields._find_retarded_knot_bracket(
+            source,
+            observer_time_ns=0.0,
+            observer_position_mm=observer_position,
+        )
+        == 2
+    )
+
+    optimized = retarded_fields._solve_retarded_sample(
+        source,
+        observer_time_ns=0.0,
+        observer_position_mm=observer_position,
+        root_tolerance_mm=1.0e-21,
+        max_root_iterations=96,
+    )
+    reference = _solve_with_reference_full_scan(
+        monkeypatch,
+        source,
+        observer_time_ns=0.0,
+        observer_position_mm=observer_position,
+    )
+    assert optimized is not None
+    assert reference is not None
+    assert optimized.time_ns == reference.time_ns == exact_root_time_ns
+
+
+@pytest.mark.parametrize(
+    "times_ns",
+    (
+        np.array((-0.001, 0.0)),
+        np.array((-0.1, -0.05)),
+    ),
+    ids=("history_starts_too_late", "history_ends_too_early"),
+)
+def test_binary_bracket_matches_full_scan_when_no_root_is_bracketed(
+    times_ns: np.ndarray,
+) -> None:
+    source = _prepared_single_source(
+        _source_history(
+            times_ns=times_ns,
+            position_mm=np.zeros((times_ns.size, 3)),
+            beta=np.zeros((times_ns.size, 3)),
+        )
+    )
+    observer_position = np.array((10.0, 0.0, 0.0))
+
+    expected = _reference_full_scan_knot_bracket(
+        source,
+        observer_time_ns=0.0,
+        observer_position_mm=observer_position,
+    )
+    actual = retarded_fields._find_retarded_knot_bracket(
+        source,
+        observer_time_ns=0.0,
+        observer_position_mm=observer_position,
+    )
+    assert actual == expected is None
+
+
+def test_binary_bracket_uses_only_the_alive_prefix_of_a_lost_source() -> None:
+    times_ns = np.array((-0.02, -0.01, -0.005, -0.005, -0.005))
+    history = _source_history(
+        times_ns=times_ns,
+        position_mm=np.zeros((times_ns.size, 3)),
+        beta=np.zeros((times_ns.size, 3)),
+    )
+    history[-2]["_dead_particles"][0] = True
+    history[-1]["_dead_particles"][0] = True
+    source = _prepared_single_source(history)
+    observer_position = np.array((1.0, 0.0, 0.0))
+
+    assert source.ended_by_loss
+    assert source.time_ns.size == 3
+    assert retarded_fields._find_retarded_knot_bracket(
+        source,
+        observer_time_ns=0.0,
+        observer_position_mm=observer_position,
+    ) == _reference_full_scan_knot_bracket(
+        source,
+        observer_time_ns=0.0,
+        observer_position_mm=observer_position,
+    )
+
+
+def test_binary_bracket_matches_full_scan_for_near_lightlike_timelike_chords(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    beta_x = 1.0 - 1.0e-10
+    normalized_knots = np.linspace(0.0, 1.0, 257) ** 1.7
+    times_ns = -0.02 + 0.04 * normalized_knots
+    positions = np.zeros((times_ns.size, 3))
+    positions[:, 0] = beta_x * C_MMNS * times_ns
+    betas = np.zeros_like(positions)
+    betas[:, 0] = beta_x
+    source = _prepared_single_source(
+        _source_history(
+            times_ns=times_ns,
+            position_mm=positions,
+            beta=betas,
+        )
+    )
+    target_segment = 127
+    source_time_ns = float(
+        0.37 * times_ns[target_segment] + 0.63 * times_ns[target_segment + 1]
+    )
+    source_position, _, _ = retarded_fields._quintic_worldline_sample(
+        source, target_segment, source_time_ns
+    )
+    separation_mm = 0.25
+    observer_position = source_position + np.array((separation_mm, 0.0, 0.0))
+    observer_time_ns = source_time_ns + separation_mm / C_MMNS
+
+    assert retarded_fields._find_retarded_knot_bracket(
+        source,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position,
+    ) == _reference_full_scan_knot_bracket(
+        source,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position,
+    )
+    optimized = retarded_fields._solve_retarded_sample(
+        source,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position,
+        root_tolerance_mm=1.0e-21,
+        max_root_iterations=96,
+    )
+    reference = _solve_with_reference_full_scan(
+        monkeypatch,
+        source,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position,
+    )
+    assert optimized is not None
+    assert reference is not None
+    assert optimized.time_ns == reference.time_ns
+    assert optimized.residual_mm == reference.residual_mm
+    np.testing.assert_array_equal(optimized.position_mm, reference.position_mm)
+
+
+def test_binary_bracket_residual_work_is_logarithmic_at_100k_knots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knot_count = 100_000
+    times_ns = np.linspace(-0.1, 0.01, knot_count)
+    source = _prepared_single_source_arrays(
+        times_ns=times_ns,
+        position_mm=np.zeros((knot_count, 3)),
+        beta=np.zeros((knot_count, 3)),
+    )
+    original = retarded_fields._knot_light_cone_residual_mm
+    residual_evaluations = 0
+
+    def counted_residual(*args, **kwargs):
+        nonlocal residual_evaluations
+        residual_evaluations += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        retarded_fields,
+        "_knot_light_cone_residual_mm",
+        counted_residual,
+    )
+    sample = retarded_fields._solve_retarded_sample(
+        source,
+        observer_time_ns=0.0,
+        observer_position_mm=np.array((1.0, 0.0, 0.0)),
+        root_tolerance_mm=1.0e-21,
+        max_root_iterations=96,
+    )
+
+    assert sample is not None
+    maximum_binary_work = 2 + math.ceil(math.log2(knot_count - 1))
+    assert residual_evaluations <= maximum_binary_work
+    assert residual_evaluations < 25
 
 
 def test_uniform_motion_newton_root_needs_few_interpolated_samples(
