@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -35,3 +36,25 @@ def test_integration_benchmark_payload_and_comparison() -> None:
     assert comparison["rider"]["selected_arrays_sha256_equal"] is False
     assert comparison["rider"]["fields"]["x"]["maximum_absolute"] > 0.0
     assert comparison["driver"]["maximum_absolute"] == 0.0
+
+
+def test_benchmark_options_can_override_steps_without_editing_config(
+    monkeypatch,
+) -> None:
+    loaded = SimpleNamespace(steps=123, self_consistency_verbosity=2)
+    monkeypatch.setattr(
+        benchmark.testbed_runner,
+        "load_config",
+        lambda _path: loaded,
+    )
+
+    unchanged = benchmark._benchmark_options(
+        benchmark.Path("input.json"),
+    )
+    assert unchanged.steps == 123
+
+    shortened = benchmark._benchmark_options(
+        benchmark.Path("input.json"),
+        steps_override=17,
+    )
+    assert shortened.steps == 17

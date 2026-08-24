@@ -85,8 +85,10 @@ _OUTPUT_FLAGS = (
 )
 
 
-def _benchmark_options(config_path: Path) -> Any:
+def _benchmark_options(config_path: Path, *, steps_override: int | None = None) -> Any:
     options = testbed_runner.load_config(config_path)
+    if steps_override is not None:
+        options.steps = int(steps_override)
     for name in _OUTPUT_FLAGS:
         if hasattr(options, name):
             setattr(options, name, False)
@@ -210,7 +212,8 @@ def _selected_arrays_sha256(role_payload: dict[str, Any]) -> str:
 
 
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
-    options = _benchmark_options(args.config)
+    steps_override = getattr(args, "steps_override", None)
+    options = _benchmark_options(args.config, steps_override=steps_override)
     for _ in range(args.warmups):
         _run_once(options)
 
@@ -237,6 +240,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "warmups": args.warmups,
             "repeats": args.repeats,
             "steps": int(options.steps),
+            "configured_steps": int(testbed_runner.load_config(args.config).steps),
+            "steps_override": (None if steps_override is None else int(steps_override)),
         },
         "hardware": _hardware_metadata(),
         "timing": {
@@ -272,6 +277,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("config", type=Path)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repeats", type=_positive_integer, default=5)
+    parser.add_argument(
+        "--steps-override",
+        type=_positive_integer,
+        help=(
+            "benchmark only this many stored samples without changing the "
+            "input configuration"
+        ),
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--compare-to", type=Path)
     args = parser.parse_args(argv)
