@@ -18,7 +18,9 @@ The model responds to prescribed fields and to charge-generated, retarded
 Lienard--Wiechert fields.  Charge and magnetic moment are independent particle
 properties, so the same equations have a regular neutral-particle limit.  The
 older ``bmt_frenkel`` plus ``static_rest_gradient`` pair remains available only
-as a controlled diagnostic.
+as a controlled diagnostic.  A separate full-retarded point-dipole source can
+now add the ordinary non-self field of intrinsic moments.  That source is also
+experimental and remains off unless selected explicitly.
 
 Selected RFS equations
 ----------------------
@@ -163,6 +165,14 @@ gradient-force switches.  Saved testbed configurations use a nested block:
        "stern_gerlach_force_enabled": true,
        "spin_model": "rfs_minimal_2021",
        "stern_gerlach_model": "rfs_full_g",
+       "source": {
+         "model": "off",
+         "minimum_separation_mm": 2e-9,
+         "relative_stencil_step": 1e-3,
+         "minimum_stencil_step_mm": 1e-15,
+         "root_tolerance_mm": 1e-21,
+         "max_root_iterations": 96
+       },
        "rider": {
          "species": "electron",
          "magnetic_moment_j_per_t": null,
@@ -211,6 +221,13 @@ selects the fully coupled mode.  The RFS safety guards currently also require
 ``--radiation-reaction-mode off``, and ``--no-adaptive-timestep`` for a dynamic
 run.  The direct CLI and GUI select radiation reaction ``off`` when RFS is
 enabled unless the user explicitly supplies a mode; a dynamic mode is rejected.
+
+Intrinsic source fields are a separate selection.  The GUI offers ``Off`` and
+``Full retarded point (experimental)``.  The matching direct CLI choice is
+``--dipole-source off`` or ``--dipole-source full-retarded-point``.  The latter
+is active only when magnetic-dipole dynamics are enabled.  The advanced
+``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
+boundary.  It does not soften the point field.
 
 ``null`` selects the cited species value.  A custom species must provide both a
 signed moment in J/T and its spin quantum number.  ``rest_spin`` is normalized
@@ -294,6 +311,9 @@ meaning has not yet been validated:
 * RFS polarization is restricted to zero or one.
 * Pseudo-grid mode remains incompatible with spin-aware particle
   reconstruction.
+* The full-retarded point source is initially limited to exactly one physical
+  particle in each nonempty bunch, with ``macro_population`` equal to one.  It
+  does not yet support a driver train or a cavity-exit synthetic coasting tail.
 
 The legacy diagnostic pair has different limits.  ``bmt_frenkel`` performs
 charged or neutral BMT/Larmor transport in prescribed fields.
@@ -303,29 +323,49 @@ static gradient and rejects a nonzero impulse at
 :math:`|\boldsymbol\beta|>0.01`.  It is useful for sign and unit checks, but it
 must not be presented as a relativistic retarded-gradient calculation.
 
-Deferred source physics
------------------------
+Retarded intrinsic-dipole source
+--------------------------------
 
-The present model describes **response** to prescribed and charge-generated
-:math:`F^{\mu\nu}`.  It does not make an intrinsic particle moment a source of
-its own retarded electromagnetic field.  Therefore it currently contains no
-mutual dipole--dipole force, no hyperfine-type source field, and no intrinsic
-dipole radiation or dipole radiation reaction.  Conducting images also remain
-charge-only sources.
+``covariant_retarded_point`` is the first ordinary Maxwell field provider for
+an intrinsic moment.  It uses a conserved antisymmetric moment tensor and a
+retarded Hertz potential to construct the ordinary four-potential, field
+tensor, and full spacetime field gradient.  Every nested finite-difference
+event solves its own source light cone.  The provider therefore includes the
+near, induction, and radiation zones without freezing source acceleration,
+spin evolution, or retarded time.
 
-Those effects require a separately documented covariant magnetization-current
-or retarded moving-dipole source model.  The retarded field and radiation of a
-moving magnetic dipole are treated, for example, by `Sautbekov
+Source creation is independent of electric charge, so a neutral magnetic
+particle remains a field source.  Stable particle identities exclude the
+observer's own source.  The ordinary charge response consumes the returned
+potential and its derivative through the existing canonical equation, while
+the RFS response consumes the returned field and field gradient exactly once.
+The resulting total non-self field supplies charge--dipole and dipole--dipole
+force and torque without adding another pair-force law.  Adding a textbook
+dipole pair force on top would double-count the interaction.
+
+This first implementation is a full-retarded finite-difference oracle rather
+than a fast production kernel.  ``relative_stencil_step``,
+``minimum_stencil_step_mm``, ``root_tolerance_mm``, and
+``max_root_iterations`` are advanced convergence controls preserved by the
+CLI, GUI, and testbed JSON round trip.  A validation study should repeat the
+calculation with half and twice the relative stencil step.  The normal GUI
+exposes only the source model and ``minimum_separation_mm``.
+
+The point source is singular.  ``minimum_separation_mm`` is a strict abort
+boundary, not a particle radius, contact interaction, field clamp, or
+softening length.  The default is 2 pm.  Crossing the boundary means that the
+selected point model has left its declared domain; it does not authorize the
+integrator to continue with a finite force.
+
+The retarded construction and its static, oscillating, and moving limits are
+consistent with the Green-function treatments by `Sautbekov
 <https://doi.org/10.1016/j.jmmm.2019.04.012>`_
-(`arXiv:1806.07089 <https://arxiv.org/abs/1806.07089>`_).  If a validated
-dipole-source field is later added to the total non-self
-:math:`F^{\mu\nu}`, the existing :math:`qF` response and full RFS
-:math:`G[F]` response generate charge--dipole and dipole--dipole interactions.
-Thus the source model is a separate field provider, but dipole--dipole response
-is **not** a separate force toggle.  Adding an independent textbook pair force
-on top of that total-field response would double-count the interaction.  A
-static near-field provider, a fully retarded provider, and any dipole
-self-radiation/reaction completion must be named and validated separately.
+(`arXiv:1806.07089 <https://arxiv.org/abs/1806.07089>`_) and `Heras
+<https://doi.org/10.1103/PhysRevE.58.5047>`_.  The implementation still has no
+dipole self-field, contact term, finite-size source, conducting dipole image,
+or dipole radiation-reaction completion.  It can emit an outgoing retarded
+field that acts on the other particle, but it does not yet apply the associated
+self-recoil to its source.
 
 Validation and capture boundary
 -------------------------------
@@ -333,20 +373,21 @@ Validation and capture boundary
 The maintained deterministic checks cover signed species data, tensor and
 Hodge-dual conventions, the static-rest and neutral limits, covariant
 constraint derivatives, the full :math:`G^{\mu\nu}` tensor in vacuum and
-current regions, analytic light-cone roots, charge-field gradients, explicit
-model-pair validation, and feature-off equivalence.  See :doc:`validation` for
-the focused commands.
+current regions, analytic light-cone roots, charge-field gradients, retarded
+dipole static and uniform-motion limits, source self-exclusion, stencil
+convergence, explicit model-pair validation, and feature-off equivalence.  See
+:doc:`validation` for the focused commands.
 
 Electron--proton capture is a classical characterization and sensitivity
-study, not a validation of atomic stability.  This first stage can compare
-charge-only evolution with RFS spin and gradient response, but it cannot test
-dipole--dipole or hyperfine physics while dipole sourcing is absent.  Dynamic
-radiation reaction is also guarded off, so it cannot yet decide a proposed
-long-time balance between emitted radiation and mutual retarded interactions.
-A later balance study must track particle energy, near-field energy, outgoing
-radiation, and any self-force without double counting.  No classical
-point-particle result should be presented as reproducing the quantum hydrogen
-spectrum.
+study, not a validation of atomic stability.  The source option can compare
+charge-only evolution with mutual retarded charge--dipole and dipole--dipole
+response, including the outgoing field that reaches the other particle.
+Dynamic radiation reaction and dipole self-recoil are still guarded off, so it
+cannot yet decide a proposed long-time balance between emitted radiation and
+mutual retarded interactions.  A later balance study must track particle
+energy, near-field energy, outgoing radiation, and every self-force without
+double counting.  No classical point-particle result should be presented as
+reproducing the quantum hydrogen spectrum.
 
 The archived ``TUPAB218.tex`` equations remain a research input rather than the
 implemented authority.  The maintained model follows the cited RFS sign,

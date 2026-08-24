@@ -58,10 +58,18 @@ All notable changes and updates to the LW Integrator project are documented in t
   same-bunch response, nonzero smearing, beamline stencil boundaries,
   adaptive substeps, and pseudo-grid reconstruction disabled. Polarization is
   restricted to zero or one.
-- Intrinsic dipole sourcing, dipole--dipole and hyperfine-type interactions,
-  dipole radiation, and dipole radiation reaction remain deferred. The RFS
-  implementation currently responds to prescribed and charge-generated fields
-  only.
+- Added an optional full-retarded point-dipole source based on a conserved
+  antisymmetric moment tensor and retarded Hertz potential. The ordinary
+  non-self field includes near, induction, and radiation zones and feeds the
+  existing canonical charge response and RFS response without a separate pair
+  force. Neutral magnetic particles remain sources.
+- Added CLI and GUI choices for source off or full retarded point
+  (experimental), plus a strict minimum-separation abort boundary. Saved JSON
+  preserves the complete stencil and light-cone convergence controls. Source
+  off remains the default for legacy configurations.
+- Dipole self-reaction, contact and finite-size physics, conducting dipole
+  images, and coherent or incoherent macroparticle moment scaling remain
+  deferred. The point-source separation boundary is an abort, not softening.
 - Named magnetic presets are checked against the particle state's physical
   mass and observer charge, preventing accidental electron-moment/proton-mass
   hybrid particles. Deliberate custom models must state their moment and spin.

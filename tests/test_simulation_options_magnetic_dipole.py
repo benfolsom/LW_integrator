@@ -15,6 +15,12 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
         magnetic_dipole_enabled=True,
         magnetic_dipole_spin_precession_enabled=True,
         magnetic_dipole_stern_gerlach_force_enabled=True,
+        magnetic_dipole_source_model="covariant_retarded_point",
+        magnetic_dipole_source_minimum_separation_mm=7.0e-9,
+        magnetic_dipole_source_relative_stencil_step=2.0e-3,
+        magnetic_dipole_source_minimum_stencil_step_mm=3.0e-15,
+        magnetic_dipole_source_root_tolerance_mm=4.0e-21,
+        magnetic_dipole_source_max_root_iterations=80,
         rider_magnetic_species="neutron",
         rider_rest_spin=(1.0, 2.0, 3.0),
         rider_polarization=0.75,
@@ -37,6 +43,20 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     assert config.stern_gerlach_force_enabled is True
     assert config.spin_model == "rfs_minimal_2021"
     assert config.stern_gerlach_model == "rfs_full_g"
+    assert config.source.model == "covariant_retarded_point"
+    assert config.source.minimum_separation_mm == pytest.approx(7.0e-9)
+    assert config.source.relative_stencil_step == pytest.approx(2.0e-3)
+    assert config.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
+    assert config.source.root_tolerance_mm == pytest.approx(4.0e-21)
+    assert config.source.max_root_iterations == 80
+    assert restored.to_dict()["magnetic_dipole"]["source"] == {
+        "model": "covariant_retarded_point",
+        "minimum_separation_mm": 7.0e-9,
+        "relative_stencil_step": 2.0e-3,
+        "minimum_stencil_step_mm": 3.0e-15,
+        "root_tolerance_mm": 4.0e-21,
+        "max_root_iterations": 80,
+    }
     assert config.rider.species == "neutron"
     assert config.rider.polarization == pytest.approx(0.75)
     assert config.rider.rest_spin == pytest.approx(
@@ -61,7 +81,33 @@ def test_old_config_defaults_magnetic_dipoles_off() -> None:
     assert options.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert magnetic_payload["spin_model"] == "rfs_minimal_2021"
     assert magnetic_payload["stern_gerlach_model"] == "rfs_full_g"
+    assert magnetic_payload["source"]["model"] == "off"
+    assert magnetic_payload["source"]["minimum_separation_mm"] == pytest.approx(2.0e-9)
     assert build_magnetic_dipole_config(options).enabled is False
+    assert build_magnetic_dipole_config(options).source.active is False
+
+
+def test_flat_testbed_source_fields_are_preserved_for_legacy_serializers() -> None:
+    options = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole_source_model": "full_retarded_point",
+            "magnetic_dipole_source_minimum_separation_mm": 5.0e-9,
+            "magnetic_dipole_source_relative_stencil_step": 1.5e-3,
+            "magnetic_dipole_source_minimum_stencil_step_mm": 2.0e-15,
+            "magnetic_dipole_source_root_tolerance_mm": 3.0e-21,
+            "magnetic_dipole_source_max_root_iterations": 70,
+        }
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+    config = build_magnetic_dipole_config(restored)
+
+    assert config.source.model == "covariant_retarded_point"
+    assert config.source.minimum_separation_mm == pytest.approx(5.0e-9)
+    assert config.source.relative_stencil_step == pytest.approx(1.5e-3)
+    assert config.source.minimum_stencil_step_mm == pytest.approx(2.0e-15)
+    assert config.source.root_tolerance_mm == pytest.approx(3.0e-21)
+    assert config.source.max_root_iterations == 70
 
 
 def test_rfs_config_without_rr_mode_defaults_to_off() -> None:

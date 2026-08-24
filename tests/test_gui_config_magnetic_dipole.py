@@ -51,6 +51,8 @@ class _MagneticHarness(IntegratorGUIConfigMixin):
         self.magnetic_dipole_enabled_var = _Var()
         self.magnetic_dipole_spin_precession_enabled_var = _Var()
         self.magnetic_dipole_stern_gerlach_force_enabled_var = _Var()
+        self.magnetic_dipole_source_model_var = _Var()
+        self.magnetic_dipole_source_minimum_separation_var = _Var()
         self.rider_magnetic_species_var = _Var()
         self.driver_magnetic_species_var = _Var()
         self.rider_rest_spin_vars = [_Var() for _axis in range(3)]
@@ -80,6 +82,14 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
                 "enabled": True,
                 "spin_precession_enabled": False,
                 "stern_gerlach_force_enabled": True,
+                "source": {
+                    "model": "covariant_retarded_point",
+                    "minimum_separation_mm": 7.0e-9,
+                    "relative_stencil_step": 2.0e-3,
+                    "minimum_stencil_step_mm": 3.0e-15,
+                    "root_tolerance_mm": 4.0e-21,
+                    "max_root_iterations": 80,
+                },
                 "rider": {
                     "species": "neutron",
                     "rest_spin": [1.0, -2.0, 0.5],
@@ -104,6 +114,20 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert rebuilt.magnetic_dipole_stern_gerlach_force_enabled is True
     assert rebuilt.magnetic_dipole_spin_model == "rfs_minimal_2021"
     assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
+    assert harness.magnetic_dipole_source_model_var.get() == (
+        "Full retarded point (experimental)"
+    )
+    assert float(harness.magnetic_dipole_source_minimum_separation_var.get()) == (
+        pytest.approx(7.0e-9)
+    )
+    assert rebuilt.magnetic_dipole_source_model == "covariant_retarded_point"
+    assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(7.0e-9)
+    assert rebuilt.magnetic_dipole_source_relative_stencil_step == pytest.approx(2.0e-3)
+    assert rebuilt.magnetic_dipole_source_minimum_stencil_step_mm == pytest.approx(
+        3.0e-15
+    )
+    assert rebuilt.magnetic_dipole_source_root_tolerance_mm == pytest.approx(4.0e-21)
+    assert rebuilt.magnetic_dipole_source_max_root_iterations == 80
     assert rebuilt.rider_magnetic_species == "neutron"
     assert rebuilt.driver_magnetic_species == "antiproton"
     assert rebuilt.rider_rest_spin == pytest.approx((1.0, -2.0, 0.5))
@@ -123,6 +147,8 @@ def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     assert rebuilt.magnetic_dipole_stern_gerlach_force_enabled is False
     assert rebuilt.magnetic_dipole_spin_model == "rfs_minimal_2021"
     assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
+    assert rebuilt.magnetic_dipole_source_model == "off"
+    assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
     assert rebuilt.rider_magnetic_species == "electron"
     assert rebuilt.driver_magnetic_species == "proton"
     assert rebuilt.rider_rest_spin == (0.0, 0.0, 1.0)
@@ -306,6 +332,13 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
         assert app.magnetic_dipole_stern_gerlach_check.cget("text") == (
             "Fully coupled force (Stern–Gerlach)"
         )
+        assert tuple(app.magnetic_dipole_source_model_combo.cget("values")) == (
+            "Off",
+            "Full retarded point (experimental)",
+        )
+        assert app.magnetic_dipole_source_cutoff_label.cget("text") == (
+            "Minimum separation abort (mm):"
+        )
         assert not hasattr(app, "magnetic_dipole_spin_model_var")
         assert not hasattr(app, "magnetic_dipole_stern_gerlach_model_var")
     finally:
@@ -319,14 +352,23 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     driver_combo = _Widget()
     driver_spin = _Widget()
     driver_label = _Widget()
+    source_combo = _Widget()
+    source_cutoff = _Widget()
+    source_label = _Widget()
     harness = type(
         "StateHarness",
         (IntegratorGUIStateMixin,),
         {},
     )()
     harness.magnetic_dipole_enabled_var = _Var(False)
+    harness.magnetic_dipole_source_model_var = _Var("Off")
     harness.sim_type_var = _Var("BUNCH_TO_BUNCH")
-    harness._magnetic_dipole_common_controls = [(common, "normal")]
+    harness._magnetic_dipole_common_controls = [
+        (common, "normal"),
+        (source_combo, "readonly"),
+    ]
+    harness._magnetic_dipole_source_controls = [(source_cutoff, "normal")]
+    harness._magnetic_dipole_source_labels = [source_label]
     harness._magnetic_dipole_rider_controls = [
         (rider_combo, "readonly"),
         (rider_spin, "normal"),
@@ -342,6 +384,8 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     assert common.config["state"] == "disabled"
     assert rider_combo.config["state"] == "disabled"
     assert driver_combo.config["state"] == "disabled"
+    assert source_combo.config["state"] == "disabled"
+    assert source_cutoff.config["state"] == "disabled"
 
     harness.magnetic_dipole_enabled_var.set(True)
     harness._toggle_magnetic_dipole_controls()
@@ -352,6 +396,14 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     assert driver_combo.config["state"] == "readonly"
     assert driver_spin.config["state"] == "normal"
     assert driver_label.config["foreground"] == "black"
+    assert source_combo.config["state"] == "readonly"
+    assert source_cutoff.config["state"] == "disabled"
+
+    harness.magnetic_dipole_source_model_var.set("Full retarded point (experimental)")
+    harness._toggle_magnetic_dipole_controls()
+
+    assert source_cutoff.config["state"] == "normal"
+    assert source_label.config["foreground"] == "black"
 
     harness.sim_type_var.set("CONDUCTING_WALL")
     harness._toggle_magnetic_dipole_controls()
@@ -360,6 +412,8 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     assert driver_combo.config["state"] == "disabled"
     assert driver_spin.config["state"] == "disabled"
     assert driver_label.config["foreground"] == "gray"
+    assert source_cutoff.config["state"] == "disabled"
+    assert source_label.config["foreground"] == "gray"
 
 
 def test_user_enabling_rfs_selects_rr_off() -> None:

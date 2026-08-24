@@ -65,6 +65,8 @@ def _make_args(**overrides) -> argparse.Namespace:
         "startup_mode": None,
         "radiation_reaction_mode": None,
         "magnetic_dipole_enabled": None,
+        "dipole_source_model": None,
+        "dipole_source_minimum_separation_mm": None,
         "rider_magnetic_species": None,
         "driver_magnetic_species": None,
         "rider_spin": None,
@@ -268,6 +270,10 @@ class TestCliConfigParsing:
                 "0",
                 "0",
                 "--stern-gerlach",
+                "--dipole-source",
+                "full-retarded-point",
+                "--dipole-source-cutoff-mm",
+                "2e-9",
             ]
         )
 
@@ -277,6 +283,8 @@ class TestCliConfigParsing:
         assert args.rider_spin == [0.0, 3.0, 4.0]
         assert args.driver_spin == [1.0, 0.0, 0.0]
         assert args.stern_gerlach_force_enabled is True
+        assert args.dipole_source_model == "full-retarded-point"
+        assert args.dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
 
     def test_parse_args_accepts_disabling_magnetic_dipole_options(self):
         args = cli.parse_args(
@@ -296,6 +304,8 @@ class TestCliConfigParsing:
         assert "intrinsic magnetic-moment dynamics (RFS by default)" in help_text
         assert "full RFS G tensor by default" in help_text
         assert "RFS minimal 2021 by default" in help_text
+        assert "full retarded point-dipole oracle (experimental)" in help_text
+        assert "Crossing it aborts the run; it is not softening" in help_text
 
     def test_magnetic_species_choices_include_neutral_and_h_minus_presets(self):
         assert "neutron" in cli.MAGNETIC_SPECIES_CHOICES
@@ -723,6 +733,14 @@ class TestCliBuildRequest:
                 "magnetic_dipole": {
                     "enabled": True,
                     "stern_gerlach_force_enabled": True,
+                    "source": {
+                        "model": "covariant_retarded_point",
+                        "minimum_separation_mm": 4.0e-9,
+                        "relative_stencil_step": 2.0e-3,
+                        "minimum_stencil_step_mm": 3.0e-15,
+                        "root_tolerance_mm": 4.0e-21,
+                        "max_root_iterations": 72,
+                    },
                     "rider": {
                         "species": "electron",
                         "magnetic_moment_j_per_t": -1.0e-23,
@@ -737,6 +755,8 @@ class TestCliBuildRequest:
                 driver_spin=[1.0, 0.0, 0.0],
                 stern_gerlach_force_enabled=False,
                 spin_precession_enabled=False,
+                dipole_source_model="off",
+                dipole_source_minimum_separation_mm=8.0e-9,
             ),
         )
 
@@ -744,6 +764,14 @@ class TestCliBuildRequest:
         assert magnetic["enabled"] is False
         assert magnetic["stern_gerlach_force_enabled"] is False
         assert magnetic["spin_precession_enabled"] is False
+        assert magnetic["source"] == {
+            "model": "off",
+            "minimum_separation_mm": 8.0e-9,
+            "relative_stencil_step": 2.0e-3,
+            "minimum_stencil_step_mm": 3.0e-15,
+            "root_tolerance_mm": 4.0e-21,
+            "max_root_iterations": 72,
+        }
         assert magnetic["rider"]["species"] == "neutron"
         assert magnetic["rider"]["rest_spin"] == [0.0, 1.0, 0.0]
         assert magnetic["rider"]["magnetic_moment_j_per_t"] == pytest.approx(-1.0e-23)
@@ -816,6 +844,10 @@ class TestCliBuildRequest:
         assert request.config.magnetic_dipole.enabled is False
         assert request.config.magnetic_dipole.spin_model == "rfs_minimal_2021"
         assert request.config.magnetic_dipole.stern_gerlach_model == "rfs_full_g"
+        assert request.config.magnetic_dipole.source.model == "off"
+        assert request.config.magnetic_dipole.source.minimum_separation_mm == (
+            pytest.approx(2.0e-9)
+        )
         assert request.config.magnetic_dipole.rider.species == "electron"
         assert request.config.magnetic_dipole.driver.species == "proton"
 
@@ -829,6 +861,34 @@ class TestCliBuildRequest:
 
         assert magnetic.spin_model == "bmt_frenkel"
         assert magnetic.stern_gerlach_model == "static_rest_gradient"
+
+    def test_direct_config_preserves_full_retarded_source_controls(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "source": {
+                    "model": "full_retarded_point",
+                    "minimum_separation_mm": 7.0e-9,
+                    "relative_stencil_step": 2.0e-3,
+                    "minimum_stencil_step_mm": 3.0e-15,
+                    "root_tolerance_mm": 4.0e-21,
+                    "max_root_iterations": 80,
+                }
+            }
+        )
+
+        assert magnetic.source.model == "covariant_retarded_point"
+        assert magnetic.source.minimum_separation_mm == pytest.approx(7.0e-9)
+        assert magnetic.source.relative_stencil_step == pytest.approx(2.0e-3)
+        assert magnetic.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
+        assert magnetic.source.root_tolerance_mm == pytest.approx(4.0e-21)
+        assert magnetic.source.max_root_iterations == 80
+
+    def test_direct_config_rejects_non_object_dipole_source(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="magnetic_dipole.source must be a JSON object",
+        ):
+            cli._build_magnetic_dipole_config({"source": "full-retarded-point"})
 
     @pytest.mark.parametrize(
         ("spin_model", "stern_gerlach_model", "required_model"),
@@ -863,6 +923,8 @@ class TestCliBuildRequest:
                 rider_spin=[0.0, 3.0, 4.0],
                 driver_spin=[1.0, 0.0, 0.0],
                 stern_gerlach_force_enabled=True,
+                dipole_source_model="full-retarded-point",
+                dipole_source_minimum_separation_mm=6.0e-9,
             )
         )
 
@@ -873,6 +935,8 @@ class TestCliBuildRequest:
         assert magnetic.rider.rest_spin == pytest.approx((0.0, 0.6, 0.8))
         assert magnetic.driver.species == "antiproton"
         assert magnetic.driver.rest_spin == pytest.approx((1.0, 0.0, 0.0))
+        assert magnetic.source.model == "covariant_retarded_point"
+        assert magnetic.source.minimum_separation_mm == pytest.approx(6.0e-9)
         assert request.config.radiation_reaction_mode == "off"
 
     def test_build_request_preserves_explicit_rr_with_rfs(self):

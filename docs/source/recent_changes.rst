@@ -33,9 +33,12 @@ Experimental magnetic moments and spin (August 2026)
   same-bunch RFS response, no nonzero smearing, beamline stencil boundaries,
   adaptive substeps, or pseudo-grid reconstruction, and polarization zero or
   one.
-* Intrinsic dipole sourcing, mutual dipole--dipole response, and dipole
-  radiation remain deferred.  See :doc:`magnetic_dipole_moments` for the model
-  equations, references, and capture-study boundary.
+* Added an optional full-retarded point-dipole source for the ordinary non-self
+  Maxwell field.  The total field now supplies charge--dipole and
+  dipole--dipole response without another pair-force law.  Dipole self-reaction,
+  contact terms, finite-size sources, and conducting dipole images remain
+  deferred.  See :doc:`magnetic_dipole_moments` for the model equations,
+  references, singularity boundary, and capture-study limits.
 
 Testbed CLI and GUI Configuration Fidelity (August 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

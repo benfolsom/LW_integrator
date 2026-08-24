@@ -139,10 +139,13 @@ simulation, and confirm that the regression tooling works on your machine.
    ``--magnetic-dipoles`` without ``--stern-gerlach`` enables spin transport
    only.  Adding ``--stern-gerlach`` selects the fully coupled full-G response;
    ``--no-spin-precession`` leaves a frozen-spin force diagnostic rather than a
-   complete RFS evolution.  Neutral particles and prescribed gradients are best
-   configured in a saved JSON.  See :doc:`magnetic_dipole_moments` for all hard
-   scope guards, the diagnostic legacy models, and the deferred dipole-source
-   physics.
+   complete RFS evolution.  To add the ordinary non-self field of each moment,
+   also select ``--dipole-source full-retarded-point``.  The optional
+   ``--dipole-source-cutoff-mm`` value is a strict point-singularity abort
+   boundary, not softening.  Neutral particles and prescribed gradients are
+   best configured in a saved JSON.  See :doc:`magnetic_dipole_moments` for all
+   hard scope guards, the diagnostic legacy models, and the retarded source
+   limitations.
 
    **Running a parameter sweep from the CLI:**
 

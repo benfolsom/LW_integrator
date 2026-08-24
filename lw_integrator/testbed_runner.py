@@ -72,6 +72,11 @@ RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
     "medina_lad",
 )
 
+DIPOLE_SOURCE_MODEL_OPTIONS: Tuple[Tuple[str, str], ...] = (
+    ("Off", "off"),
+    ("Full retarded point (experimental)", "covariant_retarded_point"),
+)
+
 PARAM_LABELS: Dict[str, str] = {
     "starting_distance": "Start z (mm)",
     "transv_mom": "Transverse momentum spread (amu*mm/ns, ±)",
@@ -396,6 +401,12 @@ class SimulationOptions:
     magnetic_dipole_stern_gerlach_force_enabled: bool = False
     magnetic_dipole_spin_model: str = "rfs_minimal_2021"
     magnetic_dipole_stern_gerlach_model: str = "rfs_full_g"
+    magnetic_dipole_source_model: str = "off"
+    magnetic_dipole_source_minimum_separation_mm: float = 2.0e-9
+    magnetic_dipole_source_relative_stencil_step: float = 1.0e-3
+    magnetic_dipole_source_minimum_stencil_step_mm: float = 1.0e-15
+    magnetic_dipole_source_root_tolerance_mm: float = 1.0e-21
+    magnetic_dipole_source_max_root_iterations: int = 96
     rider_magnetic_species: str = "electron"
     rider_magnetic_moment_j_per_t: Optional[float] = None
     rider_spin_quantum_number: Optional[float] = None
@@ -634,6 +645,24 @@ class SimulationOptions:
                 ),
                 "spin_model": self.magnetic_dipole_spin_model,
                 "stern_gerlach_model": (self.magnetic_dipole_stern_gerlach_model),
+                "source": {
+                    "model": self.magnetic_dipole_source_model,
+                    "minimum_separation_mm": (
+                        self.magnetic_dipole_source_minimum_separation_mm
+                    ),
+                    "relative_stencil_step": (
+                        self.magnetic_dipole_source_relative_stencil_step
+                    ),
+                    "minimum_stencil_step_mm": (
+                        self.magnetic_dipole_source_minimum_stencil_step_mm
+                    ),
+                    "root_tolerance_mm": (
+                        self.magnetic_dipole_source_root_tolerance_mm
+                    ),
+                    "max_root_iterations": (
+                        self.magnetic_dipole_source_max_root_iterations
+                    ),
+                },
                 "rider": {
                     "species": self.rider_magnetic_species,
                     "magnetic_moment_j_per_t": (self.rider_magnetic_moment_j_per_t),
@@ -777,6 +806,10 @@ class SimulationOptions:
         magnetic_driver = (
             magnetic_driver_raw if isinstance(magnetic_driver_raw, dict) else {}
         )
+        magnetic_source_raw = magnetic_payload.get("source")
+        magnetic_source = (
+            magnetic_source_raw if isinstance(magnetic_source_raw, dict) else {}
+        )
 
         def _magnetic_value(name: str, default: object) -> object:
             flat_name = f"magnetic_dipole_{name}"
@@ -790,6 +823,12 @@ class SimulationOptions:
                 return payload.get(flat_name, default)
             role_payload = magnetic_rider if role == "rider" else magnetic_driver
             return role_payload.get(name, default)
+
+        def _magnetic_source_value(name: str, default: object) -> object:
+            flat_name = f"magnetic_dipole_source_{name}"
+            if flat_name in payload:
+                return payload.get(flat_name, default)
+            return magnetic_source.get(name, default)
 
         def _magnetic_optional_float(role: str, name: str) -> Optional[float]:
             value = _magnetic_particle_value(role, name, None)
@@ -1325,6 +1364,22 @@ class SimulationOptions:
             ),
             magnetic_dipole_stern_gerlach_model=str(
                 _magnetic_value("stern_gerlach_model", "rfs_full_g")
+            ),
+            magnetic_dipole_source_model=str(_magnetic_source_value("model", "off")),
+            magnetic_dipole_source_minimum_separation_mm=float(
+                _magnetic_source_value("minimum_separation_mm", 2.0e-9)
+            ),
+            magnetic_dipole_source_relative_stencil_step=float(
+                _magnetic_source_value("relative_stencil_step", 1.0e-3)
+            ),
+            magnetic_dipole_source_minimum_stencil_step_mm=float(
+                _magnetic_source_value("minimum_stencil_step_mm", 1.0e-15)
+            ),
+            magnetic_dipole_source_root_tolerance_mm=float(
+                _magnetic_source_value("root_tolerance_mm", 1.0e-21)
+            ),
+            magnetic_dipole_source_max_root_iterations=int(
+                _magnetic_source_value("max_root_iterations", 96)
             ),
             rider_magnetic_species=str(
                 _magnetic_particle_value("rider", "species", "electron")
@@ -2644,7 +2699,11 @@ def build_external_field_config(options: SimulationOptions) -> Optional[object]:
 
 def build_magnetic_dipole_config(options: SimulationOptions) -> object:
     """Build the validated core magnetic-dipole configuration."""
-    from core.types import MagneticDipoleConfig, MagneticDipoleParticleConfig
+    from core.types import (
+        DipoleSourceConfig,
+        MagneticDipoleConfig,
+        MagneticDipoleParticleConfig,
+    )
 
     return MagneticDipoleConfig(
         enabled=options.magnetic_dipole_enabled,
@@ -2654,6 +2713,20 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
         ),
         spin_model=options.magnetic_dipole_spin_model,
         stern_gerlach_model=options.magnetic_dipole_stern_gerlach_model,
+        source=DipoleSourceConfig(
+            model=options.magnetic_dipole_source_model,
+            minimum_separation_mm=(
+                options.magnetic_dipole_source_minimum_separation_mm
+            ),
+            relative_stencil_step=(
+                options.magnetic_dipole_source_relative_stencil_step
+            ),
+            minimum_stencil_step_mm=(
+                options.magnetic_dipole_source_minimum_stencil_step_mm
+            ),
+            root_tolerance_mm=options.magnetic_dipole_source_root_tolerance_mm,
+            max_root_iterations=(options.magnetic_dipole_source_max_root_iterations),
+        ),
         rider=MagneticDipoleParticleConfig(
             species=options.rider_magnetic_species,
             magnetic_moment_j_per_t=options.rider_magnetic_moment_j_per_t,
@@ -4925,6 +4998,7 @@ __all__ = [
     "PARAM_LABELS",
     "PARTICLE_PARAM_FIELDS",
     "RADIATION_REACTION_MODE_CHOICES",
+    "DIPOLE_SOURCE_MODEL_OPTIONS",
     "SimulationOptions",
     "InitialSummary",
     "RunResult",

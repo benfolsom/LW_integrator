@@ -8,6 +8,7 @@ from tkinter import ttk
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
     CORE_PARAM_LABELS,
+    DIPOLE_SOURCE_MODEL_OPTIONS,
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
     RADIATION_REACTION_MODE_CHOICES,
@@ -173,6 +174,8 @@ class IntegratorGUITabMixin:
             text=(
                 "Default selection: RFS minimal 2021 spin transport; the "
                 "Stern–Gerlach toggle selects full G-tensor translation. "
+                "The optional full retarded point source supplies the ordinary "
+                "non-self dipole field. "
                 "Enabling RFS selects radiation reaction and adaptive timesteps "
                 "off; neither is yet part of the coupled model. Legacy "
                 "BMT/static-gradient diagnostics remain available in JSON."
@@ -183,18 +186,62 @@ class IntegratorGUITabMixin:
             wraplength=720,
         ).grid(row=2, column=0, columnspan=3, sticky="w", padx=(20, 0), pady=(0, 5))
 
+        self.magnetic_dipole_source_model_label = ttk.Label(
+            magnetic_frame, text="Intrinsic source field:"
+        )
+        self.magnetic_dipole_source_model_label.grid(
+            row=3, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_source_model_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_source_model_var,
+            values=[label for label, _model in DIPOLE_SOURCE_MODEL_OPTIONS],
+            state="readonly",
+            width=34,
+        )
+        self.magnetic_dipole_source_model_combo.grid(
+            row=3, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        self.magnetic_dipole_source_model_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._toggle_magnetic_dipole_controls(),
+        )
+        Tooltip(
+            self.magnetic_dipole_source_model_combo,
+            "Full retarded point includes near, induction, and radiation fields.",
+        )
+
+        self.magnetic_dipole_source_cutoff_label = ttk.Label(
+            magnetic_frame, text="Minimum separation abort (mm):"
+        )
+        self.magnetic_dipole_source_cutoff_label.grid(
+            row=4, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_source_cutoff_entry = ttk.Entry(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_source_minimum_separation_var,
+            width=16,
+        )
+        self.magnetic_dipole_source_cutoff_entry.grid(
+            row=4, column=1, sticky="ew", padx=(0, 8), pady=2
+        )
+        Tooltip(
+            self.magnetic_dipole_source_cutoff_entry,
+            "Strict point-source singularity guard; this does not soften the field.",
+        )
+
         self.magnetic_rider_heading_label = ttk.Label(
             magnetic_frame, text="Rider", font=("TkDefaultFont", 8, "bold")
         )
-        self.magnetic_rider_heading_label.grid(row=3, column=1, sticky="w")
+        self.magnetic_rider_heading_label.grid(row=5, column=1, sticky="w")
         self.magnetic_driver_heading_label = ttk.Label(
             magnetic_frame, text="Driver", font=("TkDefaultFont", 8, "bold")
         )
-        self.magnetic_driver_heading_label.grid(row=3, column=2, sticky="w")
+        self.magnetic_driver_heading_label.grid(row=5, column=2, sticky="w")
 
         self.magnetic_species_label = ttk.Label(magnetic_frame, text="Species preset:")
         self.magnetic_species_label.grid(
-            row=4, column=0, sticky="w", padx=(20, 8), pady=2
+            row=6, column=0, sticky="w", padx=(20, 8), pady=2
         )
         magnetic_species_labels = list(self._magnetic_species_by_label)
         self.rider_magnetic_species_combo = ttk.Combobox(
@@ -205,7 +252,7 @@ class IntegratorGUITabMixin:
             width=24,
         )
         self.rider_magnetic_species_combo.grid(
-            row=4, column=1, sticky="ew", padx=(0, 8), pady=2
+            row=6, column=1, sticky="ew", padx=(0, 8), pady=2
         )
         self.driver_magnetic_species_combo = ttk.Combobox(
             magnetic_frame,
@@ -214,19 +261,19 @@ class IntegratorGUITabMixin:
             state="readonly",
             width=24,
         )
-        self.driver_magnetic_species_combo.grid(row=4, column=2, sticky="ew", pady=2)
+        self.driver_magnetic_species_combo.grid(row=6, column=2, sticky="ew", pady=2)
 
         self.magnetic_spin_labels = []
         self.rider_rest_spin_entries = []
         self.driver_rest_spin_entries = []
-        for row_offset, axis in enumerate(("x", "y", "z"), start=5):
+        for row_offset, axis in enumerate(("x", "y", "z"), start=7):
             label = ttk.Label(magnetic_frame, text=f"Rest spin {axis}:")
             label.grid(row=row_offset, column=0, sticky="w", padx=(20, 8), pady=2)
             self.magnetic_spin_labels.append(label)
 
             rider_entry = ttk.Entry(
                 magnetic_frame,
-                textvariable=self.rider_rest_spin_vars[row_offset - 5],
+                textvariable=self.rider_rest_spin_vars[row_offset - 7],
                 width=12,
             )
             rider_entry.grid(row=row_offset, column=1, sticky="ew", padx=(0, 8), pady=2)
@@ -234,7 +281,7 @@ class IntegratorGUITabMixin:
 
             driver_entry = ttk.Entry(
                 magnetic_frame,
-                textvariable=self.driver_rest_spin_vars[row_offset - 5],
+                textvariable=self.driver_rest_spin_vars[row_offset - 7],
                 width=12,
             )
             driver_entry.grid(row=row_offset, column=2, sticky="ew", pady=2)
@@ -243,6 +290,10 @@ class IntegratorGUITabMixin:
         self._magnetic_dipole_common_controls = [
             (self.magnetic_dipole_precession_check, "normal"),
             (self.magnetic_dipole_stern_gerlach_check, "normal"),
+            (self.magnetic_dipole_source_model_combo, "readonly"),
+        ]
+        self._magnetic_dipole_source_controls = [
+            (self.magnetic_dipole_source_cutoff_entry, "normal"),
         ]
         self._magnetic_dipole_rider_controls = [
             (self.rider_magnetic_species_combo, "readonly"),
@@ -255,6 +306,10 @@ class IntegratorGUITabMixin:
         self._magnetic_dipole_common_labels = [
             self.magnetic_species_label,
             *self.magnetic_spin_labels,
+            self.magnetic_dipole_source_model_label,
+        ]
+        self._magnetic_dipole_source_labels = [
+            self.magnetic_dipole_source_cutoff_label,
         ]
         self._magnetic_dipole_rider_labels = [self.magnetic_rider_heading_label]
         self._magnetic_dipole_driver_labels = [self.magnetic_driver_heading_label]

@@ -66,6 +66,14 @@ class IntegratorGUIStateMixin:
         enabled = bool(self.magnetic_dipole_enabled_var.get())
         sim_type = SimulationType[self.sim_type_var.get()]
         driver_enabled = enabled and sim_type == SimulationType.BUNCH_TO_BUNCH
+        source_var = getattr(self, "magnetic_dipole_source_model_var", None)
+        source_selection = str(source_var.get()) if source_var is not None else "off"
+        source_enabled = (
+            enabled
+            and sim_type == SimulationType.BUNCH_TO_BUNCH
+            and source_selection.strip().lower().replace("-", "_")
+            not in {"off", "none", "disabled"}
+        )
 
         for widget, active_state in getattr(
             self, "_magnetic_dipole_common_controls", []
@@ -79,15 +87,22 @@ class IntegratorGUIStateMixin:
             self, "_magnetic_dipole_driver_controls", []
         ):
             widget.configure(state=active_state if driver_enabled else "disabled")
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_source_controls", []
+        ):
+            widget.configure(state=active_state if source_enabled else "disabled")
 
         common_color = "black" if enabled else "gray"
         driver_color = "black" if driver_enabled else "gray"
+        source_color = "black" if source_enabled else "gray"
         for label in getattr(self, "_magnetic_dipole_common_labels", []):
             label.configure(foreground=common_color)
         for label in getattr(self, "_magnetic_dipole_rider_labels", []):
             label.configure(foreground=common_color)
         for label in getattr(self, "_magnetic_dipole_driver_labels", []):
             label.configure(foreground=driver_color)
+        for label in getattr(self, "_magnetic_dipole_source_labels", []):
+            label.configure(foreground=source_color)
 
     def _on_magnetic_dipole_toggle(self) -> None:
         """Apply the safe RFS default when the user enables dipole dynamics."""

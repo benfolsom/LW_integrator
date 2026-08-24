@@ -30,8 +30,11 @@ Run the deterministic magnetic helper and integration tests with:
       tests/unit/test_magnetic_dipole_config.py \
       tests/unit/test_rfs.py \
       tests/unit/test_retarded_fields.py \
+      tests/unit/test_retarded_dipole_fields.py \
+      tests/unit/test_dipole_source_interactions.py \
       tests/unit/test_rfs_integration.py \
-      tests/unit/test_magnetic_dipole_integration.py
+      tests/unit/test_magnetic_dipole_integration.py \
+      tests/unit/test_retarded_dipole_source_integration.py
 
 These tests validate signed moments, tensor conventions, charged and neutral
 limits, the three covariant spin/velocity constraints, full-G response in
@@ -40,16 +43,21 @@ gradients, matched model configuration, the static-gradient diagnostic, and
 the feature-off regression.  They also compare randomized native-Gaussian RFS
 states against an SI equation oracle, certify static, moving, and accelerated
 Lienard--Wiechert fields across the unit boundary, and verify that the source
-evaluator uses the stored native charge without renormalization.
+evaluator uses the stored native charge without renormalization.  The dipole
+source checks cover the static and uniform-motion limits, induced electric
+field invariants, source identity exclusion, retarded-time stencil
+convergence, canonical charge response, and mutual neutral RFS response.
 
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step COLD_START BUNCH_TO_BUNCH point charges, no dynamic radiation
 reaction, no same-bunch RFS field, no nonzero smearing, no beamline visibility
-stencil, no pseudo-grid, and polarization zero or one.  Passing these tests does
-not validate intrinsic dipole source fields, dipole--dipole forces, dipole
-radiation, atomic binding, or long-time electron--proton capture.  Capture runs
-remain classical characterization studies and require a separate total-energy
-and radiation balance before supporting stability claims.
+stencil, no pseudo-grid, and polarization zero or one.  The full-retarded point
+source is further limited to one physical particle per bunch, without macro
+moment scaling, driver trains, or synthetic coasting tails.  Passing these
+tests does not validate dipole self-reaction, contact or finite-size physics,
+atomic binding, or long-time electron--proton capture.  Capture runs remain
+classical characterization studies and require a separate total-energy and
+radiation balance before supporting stability claims.
 
 Maintained Plotting Validation
 ------------------------------

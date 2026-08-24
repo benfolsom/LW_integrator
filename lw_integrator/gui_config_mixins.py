@@ -19,6 +19,7 @@ from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
+    DIPOLE_SOURCE_MODEL_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SimulationOptions,
     load_config,
@@ -27,6 +28,18 @@ from .testbed_runner import (
 )
 
 _SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
+_DIPOLE_SOURCE_MODEL_BY_LABEL = dict(DIPOLE_SOURCE_MODEL_OPTIONS)
+_DIPOLE_SOURCE_LABEL_BY_MODEL = {
+    model: label for label, model in DIPOLE_SOURCE_MODEL_OPTIONS
+}
+_DIPOLE_SOURCE_LABEL_BY_MODEL.update(
+    {
+        "retarded_point": _DIPOLE_SOURCE_LABEL_BY_MODEL["covariant_retarded_point"],
+        "full_retarded_point": _DIPOLE_SOURCE_LABEL_BY_MODEL[
+            "covariant_retarded_point"
+        ],
+    }
+)
 
 
 def _particle_params_require_manual_config(params: object) -> bool:
@@ -122,6 +135,52 @@ class IntegratorGUIConfigMixin:
         self._magnetic_dipole_stern_gerlach_model = str(
             getattr(options, "magnetic_dipole_stern_gerlach_model", "rfs_full_g")
         )
+        source_model = (
+            str(getattr(options, "magnetic_dipole_source_model", "off"))
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        self.magnetic_dipole_source_model_var.set(
+            _DIPOLE_SOURCE_LABEL_BY_MODEL.get(source_model, source_model)
+        )
+        self.magnetic_dipole_source_minimum_separation_var.set(
+            _format_gui_float(
+                getattr(
+                    options,
+                    "magnetic_dipole_source_minimum_separation_mm",
+                    2.0e-9,
+                )
+            )
+        )
+        self._magnetic_dipole_source_relative_stencil_step = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_relative_stencil_step",
+                1.0e-3,
+            )
+        )
+        self._magnetic_dipole_source_minimum_stencil_step_mm = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_minimum_stencil_step_mm",
+                1.0e-15,
+            )
+        )
+        self._magnetic_dipole_source_root_tolerance_mm = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_root_tolerance_mm",
+                1.0e-21,
+            )
+        )
+        self._magnetic_dipole_source_max_root_iterations = int(
+            getattr(
+                options,
+                "magnetic_dipole_source_max_root_iterations",
+                96,
+            )
+        )
 
         rider_species = str(getattr(options, "rider_magnetic_species", "electron"))
         driver_species = str(getattr(options, "driver_magnetic_species", "proton"))
@@ -168,6 +227,31 @@ class IntegratorGUIConfigMixin:
                 values.append(value)
             return (values[0], values[1], values[2])
 
+        source_selection = str(self.magnetic_dipole_source_model_var.get()).strip()
+        source_model = _DIPOLE_SOURCE_MODEL_BY_LABEL.get(source_selection)
+        if source_model is None:
+            normalized_source_model = source_selection.lower().replace("-", "_")
+            source_model = {
+                "retarded_point": "covariant_retarded_point",
+                "full_retarded_point": "covariant_retarded_point",
+            }.get(normalized_source_model, normalized_source_model)
+        if source_model not in _DIPOLE_SOURCE_LABEL_BY_MODEL:
+            raise ValueError(
+                "Select Off or Full retarded point (experimental) for the "
+                "dipole source."
+            )
+        source_minimum_separation = _parse_gui_float(
+            self.magnetic_dipole_source_minimum_separation_var.get(),
+            "Dipole source minimum separation",
+        )
+        if (
+            not math.isfinite(source_minimum_separation)
+            or source_minimum_separation <= 0.0
+        ):
+            raise ValueError(
+                "Dipole source minimum separation must be finite and positive."
+            )
+
         return {
             "magnetic_dipole_enabled": enabled,
             "magnetic_dipole_spin_precession_enabled": bool(
@@ -181,6 +265,22 @@ class IntegratorGUIConfigMixin:
             ),
             "magnetic_dipole_stern_gerlach_model": getattr(
                 self, "_magnetic_dipole_stern_gerlach_model", "rfs_full_g"
+            ),
+            "magnetic_dipole_source_model": source_model,
+            "magnetic_dipole_source_minimum_separation_mm": (source_minimum_separation),
+            "magnetic_dipole_source_relative_stencil_step": getattr(
+                self, "_magnetic_dipole_source_relative_stencil_step", 1.0e-3
+            ),
+            "magnetic_dipole_source_minimum_stencil_step_mm": getattr(
+                self,
+                "_magnetic_dipole_source_minimum_stencil_step_mm",
+                1.0e-15,
+            ),
+            "magnetic_dipole_source_root_tolerance_mm": getattr(
+                self, "_magnetic_dipole_source_root_tolerance_mm", 1.0e-21
+            ),
+            "magnetic_dipole_source_max_root_iterations": getattr(
+                self, "_magnetic_dipole_source_max_root_iterations", 96
             ),
             "rider_magnetic_species": selected_species(
                 self.rider_magnetic_species_var, "rider"

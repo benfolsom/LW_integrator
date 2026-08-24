@@ -27,8 +27,9 @@ from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.species import list_species
 from core.types import SimulationType
-from .gui_config_mixins import IntegratorGUIConfigMixin
+
 from .gui_config_list_mixins import IntegratorGUIConfigListMixin
+from .gui_config_mixins import IntegratorGUIConfigMixin
 from .gui_controller_mixins import IntegratorGUIControllerMixin
 from .gui_layout_mixins import (
     CONFIG_PANEL_MIN_WIDTH,
@@ -46,6 +47,7 @@ from .gui_tab_mixins import IntegratorGUITabMixin
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
+    DIPOLE_SOURCE_MODEL_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SPECIES_OPTIONS,
     SimulationOptions,
@@ -309,6 +311,24 @@ class IntegratorGUI(
                 self.options,
                 "magnetic_dipole_stern_gerlach_force_enabled",
                 False,
+            )
+        )
+        dipole_source_label_by_model = {
+            model: label for label, model in DIPOLE_SOURCE_MODEL_OPTIONS
+        }
+        dipole_source_model = str(
+            getattr(self.options, "magnetic_dipole_source_model", "off")
+        )
+        self.magnetic_dipole_source_model_var = tk.StringVar(
+            value=dipole_source_label_by_model.get(dipole_source_model, "Off")
+        )
+        self.magnetic_dipole_source_minimum_separation_var = tk.StringVar(
+            value=str(
+                getattr(
+                    self.options,
+                    "magnetic_dipole_source_minimum_separation_mm",
+                    2.0e-9,
+                )
             )
         )
         self.rider_magnetic_species_var = tk.StringVar(

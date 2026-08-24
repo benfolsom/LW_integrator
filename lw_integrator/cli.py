@@ -28,6 +28,7 @@ from core.types import (
     BeamlineGeometryConfig,
     CavityExitConfig,
     ChronoMatchingMode,
+    DipoleSourceConfig,
     DriverTrainConfig,
     ExternalFieldConfig,
     GammaReconciliationMethod,
@@ -159,6 +160,14 @@ DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
     "stern_gerlach_force_enabled": False,
     "spin_model": "rfs_minimal_2021",
     "stern_gerlach_model": "rfs_full_g",
+    "source": {
+        "model": "off",
+        "minimum_separation_mm": 2.0e-9,
+        "relative_stencil_step": 1.0e-3,
+        "minimum_stencil_step_mm": 1.0e-15,
+        "root_tolerance_mm": 1.0e-21,
+        "max_root_iterations": 96,
+    },
     "rider": {
         "species": "electron",
         "rest_spin": (0.0, 0.0, 1.0),
@@ -667,6 +676,26 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Disable intrinsic magnetic-moment dynamics explicitly.",
     )
     parser.set_defaults(magnetic_dipole_enabled=None)
+    parser.add_argument(
+        "--dipole-source",
+        dest="dipole_source_model",
+        choices=("off", "full-retarded-point"),
+        help=(
+            "Ordinary field sourced by intrinsic moments: off or the full "
+            "retarded point-dipole oracle (experimental). Active only with "
+            "--magnetic-dipoles."
+        ),
+    )
+    parser.add_argument(
+        "--dipole-source-cutoff-mm",
+        "--dipole-source-minimum-separation-mm",
+        dest="dipole_source_minimum_separation_mm",
+        type=float,
+        help=(
+            "Strict minimum observer/source separation in mm for the point "
+            "dipole field. Crossing it aborts the run; it is not softening."
+        ),
+    )
     parser.add_argument(
         "--rider-magnetic-species",
         type=_parse_magnetic_species,
@@ -1308,8 +1337,9 @@ def _merge_simulation_payload(
     result["magnetic_dipole"] = {
         key: value
         for key, value in DEFAULT_MAGNETIC_DIPOLE.items()
-        if key not in {"rider", "driver"}
+        if key not in {"source", "rider", "driver"}
     }
+    result["magnetic_dipole"]["source"] = dict(DEFAULT_MAGNETIC_DIPOLE["source"])
     result["magnetic_dipole"]["rider"] = dict(DEFAULT_MAGNETIC_DIPOLE["rider"])
     result["magnetic_dipole"]["driver"] = dict(DEFAULT_MAGNETIC_DIPOLE["driver"])
     result["adaptive_timestep"] = dict(DEFAULT_ADAPTIVE_TIMESTEP)
@@ -1343,8 +1373,15 @@ def _merge_simulation_payload(
         if not isinstance(file_magnetic_dipole, Mapping):
             raise SimulationConfigError("'magnetic_dipole' must be an object")
         for key, value in file_magnetic_dipole.items():
-            if key not in {"rider", "driver"}:
+            if key not in {"source", "rider", "driver"}:
                 result["magnetic_dipole"][key] = value
+        if "source" in file_magnetic_dipole:
+            source_payload = file_magnetic_dipole["source"]
+            if not isinstance(source_payload, Mapping):
+                raise SimulationConfigError(
+                    "'magnetic_dipole.source' must be an object"
+                )
+            result["magnetic_dipole"]["source"].update(source_payload)
         for role in ("rider", "driver"):
             if role not in file_magnetic_dipole:
                 continue
@@ -1658,6 +1695,13 @@ def _merge_simulation_payload(
         )
     if getattr(args, "spin_precession_enabled", None) is not None:
         magnetic_dipole["spin_precession_enabled"] = bool(args.spin_precession_enabled)
+    dipole_source = magnetic_dipole["source"]
+    if getattr(args, "dipole_source_model", None) is not None:
+        dipole_source["model"] = args.dipole_source_model
+    if getattr(args, "dipole_source_minimum_separation_mm", None) is not None:
+        dipole_source["minimum_separation_mm"] = (
+            args.dipole_source_minimum_separation_mm
+        )
     for role in ("rider", "driver"):
         role_payload = magnetic_dipole[role]
         species = getattr(args, f"{role}_magnetic_species", None)
@@ -1812,6 +1856,16 @@ def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
     if not isinstance(payload, Mapping):
         raise SimulationConfigError("magnetic_dipole must be a JSON object")
 
+    source_payload = payload.get("source", {})
+    if not isinstance(source_payload, Mapping):
+        raise SimulationConfigError("magnetic_dipole.source must be a JSON object")
+    try:
+        source_config = DipoleSourceConfig(**dict(source_payload))
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid magnetic_dipole.source configuration: {exc}"
+        ) from exc
+
     def _particle_config(
         role: str, default_species: str
     ) -> MagneticDipoleParticleConfig:
@@ -1876,6 +1930,7 @@ def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
             ),
             spin_model=payload.get("spin_model", "rfs_minimal_2021"),
             stern_gerlach_model=payload.get("stern_gerlach_model", "rfs_full_g"),
+            source=source_config,
             rider=_particle_config("rider", "electron"),
             driver=_particle_config("driver", "proton"),
         )
