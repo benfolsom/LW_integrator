@@ -6,6 +6,16 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Corrected exact ``INERTIAL_PREHISTORY`` charge and dipole-source momentum
+  bookkeeping. The accepted step now advances the gauge-invariant mechanical
+  response ``q F`` together with the RFS ``mu G`` response, then reconstructs
+  ``P_end = p_end + q (A_charge,end + A_dipole,end) / c`` after both bunch
+  endpoints are available. The previous explicit path decoded the endpoint
+  with the start-event potential, producing a one-step potential-energy lag
+  and a false mass-shell correction. Endpoint dipole-potential evaluation uses
+  a dedicated nine-event Hertz stencil rather than the 129-event full field
+  gradient. Exact endpoint reconstruction currently requires
+  ``fixed_geometry`` self-consistency.
 - Made exact-charge/RFS trial kinematics authoritative from the spatial
   mechanical momentum ``p = P - q A / c`` for matched RR-off and Medina
   controls. The ordinary non-exact Medina path retains its historical
@@ -18,11 +28,14 @@ All notable changes and updates to the LW Integrator project are documented in t
   the post-kick on-shell state; its force derivative and energy terms remain
   evaluated over the documented non-RR predictor interval.
 - Added signed per-step ``mass_shell_projection_energy`` diagnostics in native
-  energy units. The value records the complete final-trial correction from raw
-  accumulated canonical ``Pt`` before nonlinear relaxation, is available in
-  trajectory arrays, and is summarized per particle and in combination by the
-  first-pass capture audit, including both signed and absolute accumulated
-  correction energy.
+  energy units. For the accepted-on-shell exact path, the value is evaluated
+  stably as the non-RR on-shell kinetic-energy change minus the temporal
+  mechanical impulse, avoiding rest-energy cancellation for a nearly
+  stationary proton; a later Medina endpoint kick is not projection work.
+  Other paths retain the raw canonical-``Pt`` correction. The series is
+  available in trajectory arrays and is summarized per particle and in
+  combination by the first-pass capture audit, including both signed and
+  absolute accumulated correction energy.
 - Builder-published ``TrajectoryArrays`` now expose read-only NumPy views so
   direct mutation cannot bypass trajectory-version and retarded-field cache
   invalidation. Builder writes remain supported; callers that need an
@@ -104,8 +117,9 @@ All notable changes and updates to the LW Integrator project are documented in t
 - Added an optional full-retarded point-dipole source based on a conserved
   antisymmetric moment tensor and retarded Hertz potential. The ordinary
   non-self field includes near, induction, and radiation zones and feeds the
-  existing canonical charge response and RFS response without a separate pair
-  force. Neutral magnetic particles remain sources.
+  ordinary charge response and RFS response without a separate pair force.
+  Exact inertial runs reconstruct the canonical endpoint from its ordinary
+  potential. Neutral magnetic particles remain sources.
 - Added CLI and GUI choices for source off or full retarded point
   (experimental), plus a strict minimum-separation abort boundary. Saved JSON
   preserves the complete stencil and light-cone convergence controls. Source

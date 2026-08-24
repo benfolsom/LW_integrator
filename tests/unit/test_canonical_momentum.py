@@ -6,10 +6,14 @@ import numpy as np
 import pytest
 
 from core.canonical_momentum import (
+    canonical_four_momentum_native,
     canonical_four_force_from_potential_gradient_native,
     canonical_four_impulse_from_potential_gradient_native,
     canonical_potential_momentum_native,
+    mechanical_lorentz_four_force_native,
+    mechanical_lorentz_four_impulse_native,
     mechanical_four_momentum_native,
+    replace_canonical_potential_native,
 )
 from core.constants import C_MMNS
 from core.dipole_fields import static_point_dipole_field_native
@@ -40,7 +44,11 @@ def test_potential_offset_is_step_independent_and_round_trips() -> None:
         potential,
         charge_native=charge,
     )
-    canonical = mechanical + offset
+    canonical = canonical_four_momentum_native(
+        mechanical,
+        potential,
+        charge_native=charge,
+    )
 
     np.testing.assert_array_equal(offset, charge * potential / C_MMNS)
     np.testing.assert_array_equal(
@@ -50,6 +58,36 @@ def test_potential_offset_is_step_independent_and_round_trips() -> None:
             charge_native=charge,
         ),
         mechanical,
+    )
+
+
+def test_replacing_potential_offset_preserves_mechanical_momentum() -> None:
+    mechanical = np.array((4.2, -0.3, 0.7, 1.1))
+    start = np.array((0.8, 0.2, -0.4, 0.1))
+    end = np.array((-0.6, 0.9, 0.5, -0.7))
+    charge = -1.7
+    canonical_start = canonical_four_momentum_native(
+        mechanical,
+        start,
+        charge_native=charge,
+    )
+
+    canonical_end = replace_canonical_potential_native(
+        canonical_start,
+        start,
+        end,
+        charge_native=charge,
+    )
+
+    np.testing.assert_allclose(
+        mechanical_four_momentum_native(
+            canonical_end,
+            end,
+            charge_native=charge,
+        ),
+        mechanical,
+        rtol=0.0,
+        atol=1.0e-15,
     )
 
 
@@ -105,6 +143,27 @@ def test_canonical_minus_convective_potential_derivative_is_lorentz_force() -> N
         rfs_lorentz_force,
         rtol=2.0e-15,
         atol=2.0e-14,
+    )
+    np.testing.assert_allclose(
+        mechanical_lorentz_four_force_native(
+            four_velocity_mm_ns=velocity,
+            field_tensor=field_tensor,
+            charge_native=charge,
+        ),
+        rfs_lorentz_force,
+        rtol=3.0e-16,
+        atol=3.0e-16,
+    )
+    np.testing.assert_allclose(
+        mechanical_lorentz_four_impulse_native(
+            four_velocity_mm_ns=velocity,
+            field_tensor=field_tensor,
+            charge_native=charge,
+            proper_time_step_ns=0.25,
+        ),
+        0.25 * rfs_lorentz_force,
+        rtol=3.0e-16,
+        atol=3.0e-16,
     )
 
 

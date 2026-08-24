@@ -655,6 +655,57 @@ def test_two_live_storage_histories_are_retained_without_thrash() -> None:
     assert cache.stats().appends == 4
 
 
+def test_canonical_momentum_rebase_does_not_invalidate_history_append() -> None:
+    cache = AppendAwarePreparedHistoryCache(max_entries=2)
+    builder = TrajectoryBuilder(3, 1)
+
+    def prepare_full(history) -> tuple[float, ...]:
+        return tuple(float(value) for value in history.x[:, 0])
+
+    def append(previous, history, old_stop):
+        return previous + tuple(float(value) for value in history.x[old_stop:, 0])
+
+    builder.set_step(0, _state(0, particles=1))
+    initial = cache.prepare(
+        builder.build_partial(1),
+        variant="charge",
+        prepare_full=prepare_full,
+        append=append,
+    )
+    assert initial.disposition == "miss"
+
+    step_one = _state(1, particles=1)
+    builder.set_step(1, step_one)
+    grown = cache.prepare(
+        builder.build_partial(2),
+        variant="charge",
+        prepare_full=prepare_full,
+        append=append,
+    )
+    assert grown.disposition == "append"
+
+    rebased = dict(step_one)
+    rebased["Px"] = np.asarray(step_one["Px"]) + 17.0
+    builder.set_canonical_momentum_step(1, rebased)
+    repeated = cache.prepare(
+        builder.build_partial(2),
+        variant="charge",
+        prepare_full=prepare_full,
+        append=append,
+    )
+    assert repeated.disposition == "reuse"
+
+    builder.set_step(2, _state(2, particles=1))
+    final = cache.prepare(
+        builder.build_partial(3),
+        variant="charge",
+        prepare_full=prepare_full,
+        append=append,
+    )
+    assert final.disposition == "append"
+    assert cache.stats().rebuilds == 0
+
+
 def test_charge_and_dipole_provider_caches_retain_two_growing_histories() -> None:
     retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
     retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()

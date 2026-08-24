@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ from core.external_fields import electric_field_v_per_m_to_native
 from core.integration_runner import (
     _estimate_inertial_prehistory_duration_ns,
     _build_inertial_coasting_history,
+    _evaluate_exact_endpoint_four_potential,
     _initialize_magnetic_dipole_state,
     _maximum_beta_magnitude,
     retarded_integrator,
@@ -392,6 +394,9 @@ def test_public_startup_momentum_is_rebased_by_charge_plus_dipole_once() -> None
         h_step=1.0e-24,
         magnetic_dipole=magnetic,
     )
+    for state in (*rider_traj, *driver_traj):
+        assert "_exact_source_start_four_potential" not in state
+        assert "_exact_source_endpoint_rebase_required" not in state
     component_keys = ("Pt", "Px", "Py", "Pz")
     input_mechanical = np.array([float(rider[key][0]) for key in component_keys])
     public_initial = np.array([float(rider_traj[0][key][0]) for key in component_keys])
@@ -448,6 +453,231 @@ def test_public_startup_momentum_is_rebased_by_charge_plus_dipole_once() -> None
         rtol=3.0e-10,
         atol=1.0e-15,
     )
+
+
+def test_exact_endpoint_projection_converges_locally_and_globally() -> None:
+    rider = _species_state("electron", position_mm=(-5.0e-8, 0.0, 0.0))
+    driver = _species_state("proton", position_mm=(5.0e-8, 0.0, 0.0))
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=False,
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+    proper_time_horizon_ns = 2.0e-11
+    cumulative: list[float] = []
+    maximum: list[float] = []
+
+    for interval_count in (2, 4, 8):
+        _, _, rider_soa, driver_soa, *_ = _run_simple_inertial(
+            rider,
+            driver,
+            steps=interval_count + 1,
+            h_step=proper_time_horizon_ns / interval_count,
+            magnetic_dipole=magnetic,
+        )
+        assert rider_soa is not None and driver_soa is not None
+        projection = np.concatenate(
+            (
+                rider_soa.mass_shell_projection_energy[:, 0],
+                driver_soa.mass_shell_projection_energy[:, 0],
+            )
+        )
+        assert np.all(np.isfinite(projection))
+        cumulative.append(float(np.sum(np.abs(projection))))
+        maximum.append(float(np.max(np.abs(projection))))
+
+    # With accepted endpoint A rather than lagged start-event A, the local
+    # shell correction is O(h^2) and its fixed-horizon cumulative sum is O(h).
+    for coarse, fine in zip(cumulative, cumulative[1:]):
+        assert coarse / fine == pytest.approx(2.0, rel=0.05)
+    for coarse, fine in zip(maximum, maximum[1:]):
+        assert coarse / fine == pytest.approx(4.0, rel=0.05)
+
+
+def test_joint_endpoint_publication_keeps_exact_history_append_only() -> None:
+    import core.retarded_dipole_fields as dipole_fields
+    import core.retarded_fields as charge_fields
+
+    charge_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
+    dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
+    rider = _species_state(
+        "electron",
+        position_mm=(0.0, 0.1, 0.0),
+        beta=(0.01, 0.0, 0.0),
+    )
+    driver = _species_state("proton", position_mm=(0.0, 0.0, 0.0))
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=True,
+        source=DipoleSourceConfig(model="covariant_retarded_point"),
+        rider=MagneticDipoleParticleConfig(species="electron", polarization=1.0),
+        driver=MagneticDipoleParticleConfig(species="proton", polarization=1.0),
+    )
+
+    _run_simple_inertial(
+        rider,
+        driver,
+        steps=8,
+        h_step=1.0e-3,
+        magnetic_dipole=magnetic,
+    )
+
+    for cache in (
+        charge_fields._CHARGE_PREPARED_HISTORY_CACHE,
+        dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE,
+    ):
+        stats = cache.stats()
+        assert stats.appends == 7
+        assert stats.rebuilds == 0
+
+
+def test_joint_endpoint_publication_is_role_swap_symmetric() -> None:
+    first = _species_state(
+        "proton",
+        position_mm=(0.0, 0.1, 0.0),
+        beta=(0.01, 0.0, 0.0),
+    )
+    second = _species_state("proton", position_mm=(0.0, 0.0, 0.0))
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=True,
+        source=DipoleSourceConfig(model="covariant_retarded_point"),
+        rider=MagneticDipoleParticleConfig(species="proton", polarization=1.0),
+        driver=MagneticDipoleParticleConfig(species="proton", polarization=1.0),
+    )
+
+    _, _, rider_ab, driver_ab, *_ = _run_simple_inertial(
+        first,
+        second,
+        steps=6,
+        h_step=1.0e-3,
+        magnetic_dipole=magnetic,
+    )
+    _, _, rider_ba, driver_ba, *_ = _run_simple_inertial(
+        second,
+        first,
+        steps=6,
+        h_step=1.0e-3,
+        magnetic_dipole=magnetic,
+    )
+    assert all(
+        value is not None for value in (rider_ab, driver_ab, rider_ba, driver_ba)
+    )
+    assert rider_ab is not None and driver_ab is not None
+    assert rider_ba is not None and driver_ba is not None
+
+    for field_name in (
+        "x",
+        "y",
+        "z",
+        "t",
+        "Pt",
+        "Px",
+        "Py",
+        "Pz",
+        "gamma",
+        "bx",
+        "by",
+        "bz",
+        "bdotx",
+        "bdoty",
+        "bdotz",
+        "spin_x",
+        "spin_y",
+        "spin_z",
+        "mass_shell_projection_energy",
+    ):
+        np.testing.assert_array_equal(
+            getattr(rider_ab, field_name),
+            getattr(driver_ba, field_name),
+        )
+        np.testing.assert_array_equal(
+            getattr(driver_ab, field_name),
+            getattr(rider_ba, field_name),
+        )
+
+
+def test_endpoint_charge_root_options_match_start_and_preflight_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.retarded_dipole_fields as dipole_fields
+    import core.retarded_fields as charge_fields
+
+    charge_calls: list[dict[str, object]] = []
+    dipole_calls: list[dict[str, object]] = []
+
+    def fake_charge(*args, **kwargs):
+        charge_calls.append(dict(kwargs))
+        return SimpleNamespace(four_potential=np.zeros(4))
+
+    def fake_dipole(*args, **kwargs):
+        dipole_calls.append(dict(kwargs))
+        return SimpleNamespace(four_potential=np.zeros(4))
+
+    monkeypatch.setattr(
+        charge_fields,
+        "evaluate_retarded_charge_field_native",
+        fake_charge,
+    )
+    monkeypatch.setattr(
+        dipole_fields,
+        "evaluate_retarded_dipole_potential_native",
+        fake_dipole,
+    )
+    observer = {
+        "x": np.array([1.0]),
+        "y": np.array([2.0]),
+        "z": np.array([3.0]),
+        "t": np.array([4.0]),
+        "_exact_source_endpoint_rebase_required": np.array([True]),
+    }
+    particle = MagneticDipoleParticleConfig(species="proton")
+
+    inactive = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        source=DipoleSourceConfig(
+            model="off",
+            root_tolerance_mm=7.0e-17,
+            max_root_iterations=41,
+        ),
+        rider=particle,
+        driver=particle,
+    )
+    _evaluate_exact_endpoint_four_potential(
+        observer,
+        [],
+        magnetic_dipole=inactive,
+        include_dipole_source=False,
+    )
+    assert charge_calls[-1]["root_tolerance_mm"] == 1.0e-21
+    assert charge_calls[-1]["max_root_iterations"] == 96
+    assert not dipole_calls
+
+    active = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            root_tolerance_mm=7.0e-17,
+            max_root_iterations=41,
+        ),
+        rider=particle,
+        driver=particle,
+    )
+    _evaluate_exact_endpoint_four_potential(
+        observer,
+        [],
+        magnetic_dipole=active,
+        include_dipole_source=True,
+    )
+    for calls in (charge_calls, dipole_calls):
+        assert calls[-1]["root_tolerance_mm"] == 7.0e-17
+        assert calls[-1]["max_root_iterations"] == 41
 
 
 def test_inertial_prefix_does_not_prime_medina_force_derivative() -> None:
@@ -563,7 +793,7 @@ def test_runtime_missing_exact_history_raises_instead_of_falling_back(
         )
 
 
-def test_fixed_geometry_reuses_exact_field_but_variable_geometry_recomputes(
+def test_fixed_geometry_reuses_exact_field_and_variable_geometry_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import core.retarded_dipole_fields as retarded_dipole_fields
@@ -636,10 +866,10 @@ def test_fixed_geometry_reuses_exact_field_but_variable_geometry_recomputes(
         return charge_calls, dipole_calls
 
     fixed_calls = run_and_count("fixed_geometry")
-    variable_calls = run_and_count("variable_geometry")
 
-    # One rider and one driver field evaluation per nonlinear trial.  Fixed
-    # geometry can reuse the event-local field jet across both trials; variable
-    # geometry changes the event and therefore must evaluate both times.
+    # One rider and one driver field evaluation per accepted direction.  The
+    # accepted-start canonical potential is not allowed to drift with a
+    # variable-geometry nonlinear trial until those two event roles are split.
     assert fixed_calls == (2, 2)
-    assert variable_calls == (4, 4)
+    with pytest.raises(NotImplementedError, match="requires fixed_geometry"):
+        run_and_count("variable_geometry")

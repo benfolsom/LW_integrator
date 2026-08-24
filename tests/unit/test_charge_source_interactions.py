@@ -180,6 +180,18 @@ def test_charge_source_canonical_response_recovers_lorentz_force() -> None:
         rtol=3.0e-9,
         atol=3.0e-9,
     )
+    np.testing.assert_allclose(
+        interaction.mechanical_four_force,
+        expected_lorentz,
+        rtol=3.0e-16,
+        atol=1.0e-16,
+    )
+    np.testing.assert_allclose(
+        interaction.mechanical_four_impulse,
+        step * expected_lorentz,
+        rtol=3.0e-16,
+        atol=1.0e-16,
+    )
 
 
 def test_neutral_observer_receives_charge_field_but_no_canonical_response() -> None:
@@ -199,6 +211,8 @@ def test_neutral_observer_receives_charge_field_but_no_canonical_response() -> N
     np.testing.assert_array_equal(interaction.canonical_potential_momentum, 0.0)
     np.testing.assert_array_equal(interaction.canonical_four_force, 0.0)
     np.testing.assert_array_equal(interaction.canonical_four_impulse, 0.0)
+    np.testing.assert_array_equal(interaction.mechanical_four_force, 0.0)
+    np.testing.assert_array_equal(interaction.mechanical_four_impulse, 0.0)
 
 
 def test_cached_charge_field_is_recontracted_with_each_trial_velocity() -> None:

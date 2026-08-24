@@ -50,12 +50,15 @@ Lienard--Wiechert fields across the unit boundary, and verify that the source
 evaluator uses the stored native charge without renormalization.  The dipole
 source checks cover the static and uniform-motion limits, induced electric
 field invariants, source identity exclusion, retarded-time stencil
-convergence, canonical charge response, and mutual neutral RFS response.  The
+convergence, mechanical/canonical response equivalence, accepted-endpoint
+canonical reconstruction, and mutual neutral RFS response.  The
 inertial-startup checks cover the eight sparse coasting knots, conservative
 causal sizing, geometric full-stencil preflight, hidden-prefix output, exact
 charge/dipole startup readiness, the one-time
 :math:`P=p+q(A_q+A_{\rm dip})/c` rebase, unprimed Medina history, and hard
-failure when exact source history is missing.
+failure when exact source history is missing.  They also require
+:math:`P-p=q(A_q+A_{\rm dip})/c` at evolved endpoints and preserve append-only
+retarded-history preparation across the representation update.
 
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``

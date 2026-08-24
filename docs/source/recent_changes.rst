@@ -27,8 +27,10 @@ Experimental magnetic moments and spin (August 2026)
   :math:`F`.
 * Preserved the charge-canonical momentum definition and added only the RFS
   dipole four-force.  CLI and GUI switches expose off, spin-only, and fully
-  coupled operation.  Exact inertial startup now uses one charge provider for
-  canonical response and RFS field/gradient sampling; COLD_START retains the
+  coupled operation.  Exact inertial evolution advances the ordinary
+  mechanical :math:`qF` response, then reconstructs
+  :math:`P_{n+1}=p_{n+1}+qA_{n+1}/c` after both bunch endpoints are available;
+  this removes a one-step start-potential lag.  COLD_START retains the
   established charge kernel plus the separate exact RFS sample.
 * Added ``INERTIAL_PREHISTORY`` for exact-field startup.  It builds eight
   sparse coasting knots, sizes them conservatively, geometrically extends them

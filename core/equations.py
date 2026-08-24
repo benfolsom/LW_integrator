@@ -72,7 +72,7 @@ See :class:`core.self_consistency.SelfConsistencyConfig` for configuration.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -498,6 +498,29 @@ def _mechanical_momentum_components(
         float(np.float64(py) - np.float64(field_y * particle_mass)),
         float(np.float64(pz) - np.float64(field_z * particle_mass)),
     )
+
+
+def _stable_kinetic_energy_native(
+    mechanical_momentum: Sequence[float] | np.ndarray,
+    particle_mass: float,
+) -> float:
+    """Return kinetic energy without subtracting the rest energy."""
+
+    momentum = np.asarray(mechanical_momentum, dtype=float)
+    if momentum.shape != (3,) or not np.all(np.isfinite(momentum)):
+        raise ValueError("mechanical_momentum must be a finite three-vector")
+    mass = float(particle_mass)
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("particle_mass must be finite and positive")
+    magnitude = float(
+        np.hypot(
+            np.hypot(abs(float(momentum[0])), abs(float(momentum[1]))),
+            abs(float(momentum[2])),
+        )
+    )
+    rest_momentum = mass * C_MMNS
+    total_momentum = float(np.hypot(rest_momentum, magnitude))
+    return float(C_MMNS * magnitude**2 / (total_momentum + rest_momentum))
 
 
 def _canonical_pt_from_mechanical_mass_shell(
@@ -1743,6 +1766,23 @@ def retarded_equations_of_motion(
         _initialize_medina_step_state(result)
 
     num_particles = len(current_state["x"])
+    exact_endpoint_recomposition_selected = bool(
+        magnetic_dipole is not None
+        and magnetic_dipole.enabled
+        and magnetic_dipole.spin_model == "rfs_minimal_2021"
+        and startup_mode is StartupMode.INERTIAL_PREHISTORY
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+    )
+    if exact_endpoint_recomposition_selected:
+        # Private, step-local handoff to the pair-level accepted-endpoint
+        # finalizer in integration_runner.  It is intentionally absent from
+        # TrajectoryArrays and public output.
+        result["_exact_source_start_four_potential"] = np.zeros(
+            (num_particles, 4), dtype=float
+        )
+        result["_exact_source_endpoint_rebase_required"] = np.zeros(
+            num_particles, dtype=bool
+        )
     pseudo_grid_sc_charge_matrix = None
     pseudo_grid_sc_source_radii = None
     if pseudo_grid_space_charge_source_radii_mm is not None:
@@ -1886,11 +1926,7 @@ def retarded_equations_of_motion(
             and magnetic_dipole.enabled
             and magnetic_dipole.source.active
         )
-        exact_charge_source_selected = bool(
-            rfs_selected
-            and startup_mode is StartupMode.INERTIAL_PREHISTORY
-            and sim_type == SimulationType.BUNCH_TO_BUNCH
-        )
+        exact_charge_source_selected = exact_endpoint_recomposition_selected
         on_shell_kinematic_boundary_selected = bool(
             exact_charge_source_selected or radiation_mode == "medina_lad"
         )
@@ -1898,6 +1934,7 @@ def retarded_equations_of_motion(
         dipole_source_field_cache = None
         exact_charge_source_interaction = None
         dipole_source_interaction = None
+        exact_source_start_four_potential = np.zeros(4, dtype=float)
         # This is the Medina three-force actually applied during the final
         # nonlinear trial.  It stays exactly zero for off, neutral, and
         # derivative-unprimed steps so their RFS spin update is unchanged.
@@ -2126,6 +2163,7 @@ def retarded_equations_of_motion(
             accumulated_momentum_y = current_state["Py"][particle_idx]
             accumulated_momentum_z = current_state["Pz"][particle_idx]
             accumulated_momentum_t = current_state["Pt"][particle_idx]
+            exact_mechanical_temporal_impulse = 0.0
 
             # Accumulated field contributions (used in position update)
             accumulated_field_x = 0.0
@@ -2142,6 +2180,7 @@ def retarded_equations_of_motion(
             rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
             exact_charge_source_interaction = None
             dipole_source_interaction = None
+            exact_source_start_four_potential.fill(0.0)
 
             # ================================================================
             # STEP 4: Determine if external forces should be applied
@@ -2648,6 +2687,8 @@ def retarded_equations_of_motion(
                 accumulated_momentum_y += ext_dp_y
                 accumulated_momentum_z += ext_dp_z
                 accumulated_momentum_t += ext_dp_t
+                if exact_endpoint_recomposition_selected:
+                    exact_mechanical_temporal_impulse += float(ext_dp_t)
 
                 dipole_active = (
                     bool(
@@ -2746,6 +2787,10 @@ def retarded_equations_of_motion(
                     accumulated_momentum_t += float(
                         np.dot(np.asarray(particle_beta, dtype=float), sg_impulse)
                     )
+                    if exact_endpoint_recomposition_selected:
+                        exact_mechanical_temporal_impulse += float(
+                            np.dot(np.asarray(particle_beta, dtype=float), sg_impulse)
+                        )
                     stern_gerlach_impulse_applied = bool(np.any(sg_impulse))
 
             # ================================================================
@@ -2861,13 +2906,17 @@ def retarded_equations_of_motion(
                     )
                 )
 
-                charge_canonical_impulse = (
-                    exact_charge_source_interaction.canonical_four_impulse
+                # Evolve the gauge-invariant mechanical momentum.  The
+                # accepted canonical state is rebuilt from A at the endpoint
+                # after both bunch endpoints have been appended to history.
+                charge_mechanical_impulse = (
+                    exact_charge_source_interaction.mechanical_four_impulse
                 )
-                accumulated_momentum_t += float(charge_canonical_impulse[0])
-                accumulated_momentum_x += float(charge_canonical_impulse[1])
-                accumulated_momentum_y += float(charge_canonical_impulse[2])
-                accumulated_momentum_z += float(charge_canonical_impulse[3])
+                accumulated_momentum_t += float(charge_mechanical_impulse[0])
+                exact_mechanical_temporal_impulse += float(charge_mechanical_impulse[0])
+                accumulated_momentum_x += float(charge_mechanical_impulse[1])
+                accumulated_momentum_y += float(charge_mechanical_impulse[2])
+                accumulated_momentum_z += float(charge_mechanical_impulse[3])
 
                 charge_potential_momentum = (
                     exact_charge_source_interaction.canonical_potential_momentum
@@ -2899,6 +2948,9 @@ def retarded_equations_of_motion(
                 accumulated_scalar_potential += float(
                     exact_charge_source_interaction.field.field.four_potential[0]
                 )
+                exact_source_start_four_potential += (
+                    exact_charge_source_interaction.field.field.four_potential
+                )
                 rfs_field_tensor += (
                     exact_charge_source_interaction.field.field.field_tensor
                 )
@@ -2909,6 +2961,7 @@ def retarded_equations_of_motion(
                 and sim_type == SimulationType.BUNCH_TO_BUNCH
                 and len(trajectory_ext) > 0
             ):
+                assert magnetic_dipole is not None
                 from .dipole_source_interactions import (
                     dipole_source_interaction_from_field_native,
                 )
@@ -2987,13 +3040,24 @@ def retarded_equations_of_motion(
                     )
 
                 if dipole_source_interaction is not None:
-                    dipole_canonical_impulse = (
-                        dipole_source_interaction.canonical_four_impulse
-                    )
-                    accumulated_momentum_t += float(dipole_canonical_impulse[0])
-                    accumulated_momentum_x += float(dipole_canonical_impulse[1])
-                    accumulated_momentum_y += float(dipole_canonical_impulse[2])
-                    accumulated_momentum_z += float(dipole_canonical_impulse[3])
+                    if exact_endpoint_recomposition_selected:
+                        ordinary_dipole_impulse = (
+                            dipole_source_interaction.mechanical_four_impulse
+                        )
+                    else:
+                        # Retain the older COLD_START diagnostic boundary until
+                        # it receives the same pair-level endpoint finalizer.
+                        ordinary_dipole_impulse = (
+                            dipole_source_interaction.canonical_four_impulse
+                        )
+                    accumulated_momentum_t += float(ordinary_dipole_impulse[0])
+                    if exact_endpoint_recomposition_selected:
+                        exact_mechanical_temporal_impulse += float(
+                            ordinary_dipole_impulse[0]
+                        )
+                    accumulated_momentum_x += float(ordinary_dipole_impulse[1])
+                    accumulated_momentum_y += float(ordinary_dipole_impulse[2])
+                    accumulated_momentum_z += float(ordinary_dipole_impulse[3])
 
                     dipole_potential_momentum = (
                         dipole_source_interaction.canonical_potential_momentum
@@ -3031,6 +3095,10 @@ def retarded_equations_of_motion(
                     accumulated_scalar_potential += float(
                         dipole_source_interaction.field.four_potential[0]
                     )
+                    if exact_endpoint_recomposition_selected:
+                        exact_source_start_four_potential += (
+                            dipole_source_interaction.field.four_potential
+                        )
 
             if rfs_selected and dipole_active and (precession_active or sg_active):
                 from .magnetic_dipole import boost_rest_polarization
@@ -3094,10 +3162,10 @@ def retarded_equations_of_motion(
                         rfs_field_tensor += charge_field.field.field_tensor
                         rfs_partial_f += charge_field.partial_f
 
-                # The existing charge-canonical path already supplies q F u.
-                # Inject only the normalized-spin dipole term (mu/c) G[a] u
-                # here, in all four momentum components, to avoid counting the
-                # Lorentz force twice.
+                # The ordinary exact-source path already supplies q F u as a
+                # mechanical impulse. Inject only the normalized-spin dipole
+                # term (mu/c) G[a] u here, in all four components, to avoid
+                # counting the Lorentz force twice.
                 if rfs_force_selected and sg_active:
                     signed_moment_native = float(
                         current_state["magnetic_moment_native"][particle_idx]
@@ -3128,6 +3196,10 @@ def retarded_equations_of_motion(
                         )
                         dipole_impulse_native = dipole_force_native * float(h)
                         accumulated_momentum_t += float(dipole_impulse_native[0])
+                        if exact_endpoint_recomposition_selected:
+                            exact_mechanical_temporal_impulse += float(
+                                dipole_impulse_native[0]
+                            )
                         accumulated_momentum_x += float(dipole_impulse_native[1])
                         accumulated_momentum_y += float(dipole_impulse_native[2])
                         accumulated_momentum_z += float(dipole_impulse_native[3])
@@ -3145,9 +3217,10 @@ def retarded_equations_of_motion(
             )
 
             # Preserve the unconstrained temporal canonical update before any
-            # named mass-shell projection or nonlinear relaxation.  The
-            # public projection ledger must report the complete energy
-            # correction discarded on the final trial.
+            # named mass-shell projection or nonlinear relaxation. Non-exact
+            # paths ledger the correction from this raw value. The exact
+            # accepted-on-shell path uses the stable mechanical energy balance
+            # below so rest-scale subtraction cannot dominate atomic energies.
             raw_canonical_pt_before_constraints = float(result["Pt"][particle_idx])
 
             if stern_gerlach_impulse_applied:
@@ -3390,9 +3463,37 @@ def retarded_equations_of_motion(
                 )
                 result["Pt"][particle_idx] = Pt_from_mass_shell
                 result["gamma"][particle_idx] = gamma_mass_shell
-                result["mass_shell_projection_energy"][particle_idx] = float(
-                    C_MMNS * (Pt_from_mass_shell - raw_canonical_pt_before_constraints)
-                )
+                if exact_endpoint_recomposition_selected:
+                    start_mechanical_momentum = np.asarray(
+                        _mechanical_momentum_components(
+                            px=float(current_state["Px"][particle_idx]),
+                            py=float(current_state["Py"][particle_idx]),
+                            pz=float(current_state["Pz"][particle_idx]),
+                            particle_mass=particle_mass,
+                            field_x=accumulated_field_x,
+                            field_y=accumulated_field_y,
+                            field_z=accumulated_field_z,
+                        ),
+                        dtype=float,
+                    )
+                    start_kinetic_energy = _stable_kinetic_energy_native(
+                        start_mechanical_momentum,
+                        particle_mass,
+                    )
+                    end_kinetic_energy = _stable_kinetic_energy_native(
+                        on_shell_mechanical_momentum,
+                        particle_mass,
+                    )
+                    result["mass_shell_projection_energy"][particle_idx] = float(
+                        end_kinetic_energy
+                        - start_kinetic_energy
+                        - C_MMNS * exact_mechanical_temporal_impulse
+                    )
+                else:
+                    result["mass_shell_projection_energy"][particle_idx] = float(
+                        C_MMNS
+                        * (Pt_from_mass_shell - raw_canonical_pt_before_constraints)
+                    )
 
             if sc_verbosity >= 3 and sc_enabled and sc_iteration > 0:
                 # Use Pt BEFORE projection to show the actual difference
@@ -4128,6 +4229,12 @@ def retarded_equations_of_motion(
                 sc_max_iterations,
                 last_mass_shell_error,
             )
+
+        if exact_endpoint_recomposition_selected:
+            result["_exact_source_start_four_potential"][
+                particle_idx
+            ] = exact_source_start_four_potential
+            result["_exact_source_endpoint_rebase_required"][particle_idx] = True
 
         # ================================================================
         # AFTER self-consistency loop: Apply mass-shell projection if needed

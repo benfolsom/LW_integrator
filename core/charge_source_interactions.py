@@ -1,4 +1,4 @@
-"""Exact retarded charge fields and their canonical observer response.
+"""Exact retarded charge fields and ordinary observer responses.
 
 The exact light-cone provider in :mod:`core.retarded_fields` supplies one
 ordinary Maxwell potential, field, and complete spacetime derivatives.  This
@@ -7,9 +7,11 @@ canonical convention
 
 ``P^mu = p^mu + (q_observer / c) A^mu``.
 
-The field result remains independent of the observer charge.  A neutral
-observer therefore receives the same field for RFS magnetic-moment response,
-while its ordinary canonical momentum, force, and impulse are exactly zero.
+Both the canonical derivative oracle and the gauge-invariant mechanical
+Lorentz force are returned.  The maintained exact integration path advances
+the latter, then reconstructs canonical momentum from the accepted endpoint
+potential.  A neutral observer still receives the field for RFS response while
+both ordinary charge responses are exactly zero.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from .canonical_momentum import (
     canonical_four_force_from_potential_gradient_native,
     canonical_four_impulse_from_potential_gradient_native,
     canonical_potential_momentum_native,
+    mechanical_lorentz_four_force_native,
+    mechanical_lorentz_four_impulse_native,
 )
 from .retarded_fields import (
     ObserverEvent,
@@ -34,12 +38,14 @@ from .retarded_fields import (
 
 @dataclass(frozen=True)
 class RetardedChargeSourceInteraction:
-    """Exact charge field plus one observer's canonical charge response."""
+    """Exact charge field plus canonical and mechanical charge responses."""
 
     field: RetardedChargeFieldGradientResult
     canonical_potential_momentum: np.ndarray
     canonical_four_force: np.ndarray
     canonical_four_impulse: np.ndarray
+    mechanical_four_force: np.ndarray
+    mechanical_four_impulse: np.ndarray
 
 
 def charge_source_interaction_from_field_native(
@@ -73,11 +79,24 @@ def charge_source_interaction_from_field_native(
         charge_native=observer_charge_native,
         proper_time_step_ns=proper_time_step_ns,
     )
+    mechanical_force = mechanical_lorentz_four_force_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        field_tensor=field.field.field_tensor,
+        charge_native=observer_charge_native,
+    )
+    mechanical_impulse = mechanical_lorentz_four_impulse_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        field_tensor=field.field.field_tensor,
+        charge_native=observer_charge_native,
+        proper_time_step_ns=proper_time_step_ns,
+    )
     return RetardedChargeSourceInteraction(
         field=field,
         canonical_potential_momentum=potential_momentum,
         canonical_four_force=canonical_force,
         canonical_four_impulse=canonical_impulse,
+        mechanical_four_force=mechanical_force,
+        mechanical_four_impulse=mechanical_impulse,
     )
 
 
@@ -95,11 +114,12 @@ def evaluate_retarded_charge_source_interaction_native(
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
 ) -> RetardedChargeSourceInteraction:
-    """Evaluate exact non-self charge fields and canonical response once.
+    """Evaluate exact non-self charge fields and ordinary responses once.
 
-    ``canonical_four_force`` is ``dP^mu/dtau``.  Subtracting the convective
-    derivative of ``(q/c) A^mu`` recovers the mechanical Lorentz four-force.
-    No RFS force, dipole source field, or radiation reaction is added here.
+    ``canonical_four_force`` is ``dP^mu/dtau`` and remains a convention oracle.
+    ``mechanical_four_force`` is ``dp^mu/dtau=(q/c)F.u`` and is the production
+    exact-path translation response.  No RFS moment force, dipole source field,
+    or radiation reaction is added here.
     """
 
     field = evaluate_retarded_charge_field_gradient_native(

@@ -116,9 +116,19 @@ Intrinsic magnetic-moment response
 ----------------------------------
 
 The experimental magnetic-moment path preserves the charge-canonical momentum
-above.  The established ``main.tex`` charge solver continues to supply the
-Lorentz response, while the selected Rafelski--Formanek--Steinmetz model adds
-only the dipole four-force
+above.  Under exact ``INERTIAL_PREHISTORY`` evolution, the integrator advances
+the gauge-invariant mechanical Lorentz response and the selected
+Rafelski--Formanek--Steinmetz dipole response together.  Once both provisional
+bunch endpoints are present in the retarded histories, it reconstructs
+
+.. math::
+
+   P^\mu_{n+1}=p^\mu_{n+1}+{q\over c}A^\mu(x_{n+1}).
+
+This explicit endpoint representation is equivalent to the canonical
+equation at the continuum level while avoiding an implicit pair solve for
+:math:`A(x_{n+1})`.  The canonical potential-derivative contraction remains a
+tested convention oracle.  The RFS contribution is only the dipole four-force
 
 .. math::
 
@@ -143,8 +153,10 @@ derivative includes retarded-time variation.  Under
 ``INERTIAL_PREHISTORY``, the exact charge provider supplies
 :math:`A^\mu`, :math:`F^{\mu\nu}`, :math:`\partial_\lambda A^\nu`, and
 :math:`\partial_\lambda F^{\mu\nu}` from the same retarded event at each
-stencil point.  ``COLD_START`` retains the established charge-force path and a
-separate exact RFS field/gradient sample.  Adding only the native
+stencil point.  Force evaluation uses :math:`F`; accepted canonical output uses
+the potential evaluated at the accepted endpoint.  ``COLD_START`` retains the
+established charge-force path and a separate exact RFS field/gradient sample.
+Adding only the native
 :math:`(\mu/c)G[a]u` term avoids a second Lorentz force and preserves the
 feature-off baseline.  The signed minimal 2021 coefficients advance spin at
 the same time.  Its gradient term uses the full 2018 :math:`G` tensor: this

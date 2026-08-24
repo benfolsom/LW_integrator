@@ -153,7 +153,9 @@ simulation, and confirm that the regression tooling works on your machine.
    particle that existed before active time zero.  It constructs eight sparse
    coasting knots, extends their causal span until every initial exact charge
    and dipole stencil is bracketed, hides those knots from normal output, and
-   initializes canonical momentum once from the total retarded potential.  It
+   initializes canonical momentum once from the total retarded potential.
+   Each later accepted step advances mechanical :math:`qF+\mu G` and then
+   reconstructs canonical momentum from the accepted endpoint potential.  It
    does not reconstruct the earlier interacting trajectory or prime Medina's
    force derivative, so encounter results must converge as the active starting
    separation is moved outward.  Use ``cold-start`` instead for a physical

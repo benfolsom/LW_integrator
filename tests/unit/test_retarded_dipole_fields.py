@@ -12,8 +12,9 @@ from core.retarded_dipole_fields import (
     _prepare_dipole_history,
     evaluate_retarded_dipole_field_gradient_native,
     evaluate_retarded_dipole_hertz_tensor_native,
+    evaluate_retarded_dipole_potential_native,
 )
-from core.retarded_fields import ObserverEvent
+from core.retarded_fields import ObserverEvent, RetardedHistoryError
 from core.rfs import electromagnetic_field_tensor_native
 
 
@@ -27,7 +28,10 @@ def _dipole_history(
     times_ns = np.linspace(-0.05, 0.01, 121)
     beta_vector = np.asarray(beta, dtype=float)
     if spin_function is None:
-        spin_function = lambda _time_ns: np.array((0.0, 0.0, 1.0))
+
+        def spin_function(_time_ns: float) -> np.ndarray:
+            return np.array((0.0, 0.0, 1.0))
+
     result = []
     for time_ns in times_ns:
         position = beta_vector * C_MMNS * time_ns
@@ -63,6 +67,144 @@ def _static_dipole_field(moment: np.ndarray, position: np.ndarray) -> np.ndarray
     radius = float(np.linalg.norm(position))
     direction = position / radius
     return (3.0 * direction * float(direction @ moment) - moment) / radius**3
+
+
+def test_endpoint_potential_matches_full_oracle_for_representative_histories() -> None:
+    angular_frequency_per_ns = 19.0
+
+    def rotating_spin(time_ns: float) -> np.ndarray:
+        angle = angular_frequency_per_ns * time_ns
+        return np.array((0.8 * np.cos(angle), 0.8 * np.sin(angle), 0.6))
+
+    cases = (
+        (_dipole_history(), ObserverEvent(0.0, (1.2, -0.7, 0.9))),
+        (
+            _dipole_history(beta=(0.17, -0.08, 0.04)),
+            ObserverEvent(0.0, (0.8, 1.1, -0.6)),
+        ),
+        (
+            _dipole_history(beta=(-0.06, 0.09, 0.03), spin_function=rotating_spin),
+            ObserverEvent(0.0, (1.0, 0.5, 0.8)),
+        ),
+    )
+
+    for history, event in cases:
+        endpoint = evaluate_retarded_dipole_potential_native(
+            history,
+            event,
+            source_identities=("source",),
+            stencil_step_mm=7.0e-4,
+        )
+        oracle = evaluate_retarded_dipole_field_gradient_native(
+            history,
+            event,
+            source_identities=("source",),
+            stencil_step_mm=7.0e-4,
+        )
+
+        np.testing.assert_array_equal(endpoint.four_potential, oracle.four_potential)
+        np.testing.assert_array_equal(
+            endpoint.hertz.retarded_time_ns, oracle.hertz.retarded_time_ns
+        )
+        np.testing.assert_array_equal(
+            endpoint.hertz.light_cone_residual_mm,
+            oracle.hertz.light_cone_residual_mm,
+        )
+        assert endpoint.stencil_offsets.shape == (9, 4)
+        assert {tuple(offset) for offset in endpoint.stencil_offsets} == {
+            (0, 0, 0, 0),
+            (-1, 0, 0, 0),
+            (1, 0, 0, 0),
+            (0, -1, 0, 0),
+            (0, 1, 0, 0),
+            (0, 0, -1, 0),
+            (0, 0, 1, 0),
+            (0, 0, 0, -1),
+            (0, 0, 0, 1),
+        }
+        assert endpoint.stencil_retarded_time_ns.shape == (9, 1)
+        assert endpoint.stencil_light_cone_residual_mm.shape == (9, 1)
+        assert np.nanmax(np.abs(endpoint.stencil_light_cone_residual_mm)) < 1.0e-14
+
+
+def test_endpoint_potential_has_static_gaussian_sign_and_native_units() -> None:
+    moment_native = 2.3
+    position = np.array((1.2, -0.7, 0.9))
+    radius = float(np.linalg.norm(position))
+    expected = np.cross(np.array((0.0, 0.0, moment_native)), position) / radius**3
+    result = evaluate_retarded_dipole_potential_native(
+        _dipole_history(moment_native=moment_native),
+        ObserverEvent(0.0, tuple(position)),
+        stencil_step_mm=6.0e-4 * radius,
+    )
+
+    # In native Gaussian units [mu]=[q] mm, hence [A]=[q]/mm.
+    assert result.four_potential[0] == 0.0
+    np.testing.assert_allclose(result.four_potential[1:], expected, rtol=8.0e-7)
+
+    scaled = evaluate_retarded_dipole_potential_native(
+        _dipole_history(moment_native=3.0 * moment_native),
+        ObserverEvent(0.0, tuple(2.0 * position)),
+        stencil_step_mm=1.2e-3 * radius,
+    )
+    # A scales as mu/r^2, so tripling mu and doubling r gives 3/4 A.
+    np.testing.assert_allclose(
+        scaled.four_potential, 0.75 * result.four_potential, rtol=1.0e-10
+    )
+
+
+def test_endpoint_potential_is_causal_under_future_history_changes() -> None:
+    event = ObserverEvent(0.0, (1.1, -0.4, 0.7))
+    baseline = _dipole_history(beta=(0.08, -0.03, 0.02))
+    changed_future = _dipole_history(beta=(0.08, -0.03, 0.02))
+    for state in changed_future:
+        if float(state["t"][0]) >= 0.004:
+            state["x"] += 4.0
+            state["y"] -= 2.0
+            state["spin_x"][:] = -0.7
+            state["spin_y"][:] = 0.5
+            state["spin_z"][:] = -0.2
+
+    first = evaluate_retarded_dipole_potential_native(
+        baseline, event, stencil_step_mm=5.0e-4
+    )
+    second = evaluate_retarded_dipole_potential_native(
+        changed_future, event, stencil_step_mm=5.0e-4
+    )
+
+    np.testing.assert_array_equal(first.four_potential, second.four_potential)
+    np.testing.assert_array_equal(
+        first.stencil_retarded_time_ns, second.stencil_retarded_time_ns
+    )
+    observer_stencil_times = (
+        event.time_ns + first.stencil_offsets[:, 0] * first.stencil_step_mm / C_MMNS
+    )
+    assert np.all(first.stencil_retarded_time_ns[:, 0] < observer_stencil_times)
+
+
+def test_endpoint_potential_preserves_exclusion_separation_and_history_guards() -> None:
+    history = _dipole_history()
+    event = ObserverEvent(0.0, (1.0, 0.0, 0.0))
+    excluded = evaluate_retarded_dipole_potential_native(
+        history,
+        event,
+        source_identities=("self",),
+        observer_source_identity="self",
+        stencil_step_mm=1.0e-3,
+    )
+    np.testing.assert_array_equal(excluded.four_potential, 0.0)
+    assert excluded.hertz.valid_sources.tolist() == [False]
+
+    with pytest.raises(DipoleSourceSingularityError, match="minimum_separation_mm"):
+        evaluate_retarded_dipole_potential_native(
+            history,
+            ObserverEvent(0.0, (1.0e-6, 0.0, 0.0)),
+            minimum_separation_mm=2.0e-6,
+        )
+
+    incomplete = [state for state in history if float(state["t"][0]) >= -0.001]
+    with pytest.raises(RetardedHistoryError, match="does not bracket"):
+        evaluate_retarded_dipole_potential_native(incomplete, event)
 
 
 def test_static_gaussian_potential_field_and_gradient_converge_quadratically() -> None:

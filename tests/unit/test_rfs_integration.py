@@ -578,9 +578,6 @@ def test_medina_predictor_and_post_kick_endpoint_share_one_contract(
             "medina_impulse_capped": np.array([False]),
         }
     )
-    raw_pt = float(electron["Pt"][0] - 1.0e-9)
-    electron["Pt"][0] = raw_pt
-
     real_compute = equations.compute_medina_radiation_reaction
     real_advance = equations._advance_rfs_rest_spin
     kernel_calls: list[tuple[dict[str, Any], MedinaRadiationReactionResult]] = []
@@ -684,13 +681,14 @@ def test_medina_predictor_and_post_kick_endpoint_share_one_contract(
         [result[key][0] for key in ("bdotx", "bdoty", "bdotz")],
         (final_beta - previous_beta) / (C_MMNS * final_dt),
     )
-    predictor_gamma = float(
-        np.sqrt(
-            1.0 + np.dot(predictor_momentum, predictor_momentum) / (mass * C_MMNS) ** 2
-        )
-    )
+    # Exact accepted states enter on shell.  The projection ledger therefore
+    # records the local force-discretization correction without subtracting
+    # two nearly equal rest-scale canonical energies.  This prescribed
+    # magnetic field has zero temporal Lorentz impulse, so the correction is
+    # simply the stable kinetic-energy change of the non-RR predictor.
     assert result["mass_shell_projection_energy"][0] == pytest.approx(
-        C_MMNS * (predictor_gamma * mass * C_MMNS - raw_pt)
+        equations._stable_kinetic_energy_native(predictor_momentum, mass)
+        - equations._stable_kinetic_energy_native(previous_momentum, mass)
     )
 
 

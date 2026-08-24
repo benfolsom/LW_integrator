@@ -1559,6 +1559,34 @@ class TrajectoryBuilder:
             if "m_species" not in state:
                 self._arrays["m_species"][:] = state.get("m", 1.0)
 
+    def set_canonical_momentum_step(
+        self,
+        step: int,
+        state: ParticleState,
+    ) -> None:
+        """Replace only accepted ``P^mu`` after endpoint-potential rebasing.
+
+        Retarded charge and dipole providers consume worldline, velocity,
+        acceleration, spin, activity, and source constants, but never canonical
+        momentum.  The pair-level exact endpoint finalizer therefore uses this
+        narrow update after it has already published the provisional source
+        row.  Avoiding a general ``set_step`` rewrite preserves the prepared
+        history's append-only generation contract.
+        """
+
+        step = int(step)
+        if step < 0:
+            step += self._n_steps
+        if step < 0 or step >= self._published_stop:
+            raise IndexError("canonical momentum row must already be published")
+        for field_name in ("Pt", "Px", "Py", "Pz"):
+            values = np.asarray(state[field_name], dtype=np.float64)
+            if values.shape != (self._n_particles,):
+                raise ValueError(f"{field_name} must have shape ({self._n_particles},)")
+            if not np.all(np.isfinite(values)):
+                raise ValueError(f"{field_name} must contain only finite values")
+            self._arrays[field_name][step] = values
+
     def set_halt_metadata(
         self,
         step: int,

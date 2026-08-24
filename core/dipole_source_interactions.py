@@ -1,17 +1,17 @@
-"""Canonical response to ordinary fields sourced by intrinsic dipoles.
+"""Ordinary response to Maxwell fields sourced by intrinsic dipoles.
 
 This module joins two independently tested pieces without adding another
 pair-force law:
 
 * :mod:`core.retarded_dipole_fields` supplies the ordinary Maxwell
   ``A^mu``, ``partial A``, ``F``, and ``partial F`` of all non-self dipoles;
-* :mod:`core.canonical_momentum` applies the observer's ordinary charge to
-  that potential using the same canonical equation as the charge field.
+* :mod:`core.canonical_momentum` supplies both the canonical derivative oracle
+  and the equivalent gauge-invariant mechanical Lorentz response.
 
-The returned ``field_tensor`` and ``partial_f`` are still consumed separately
-by the RFS response.  A caller must pass them into RFS exactly once and keep
-``charge_native=0`` in that added RFS translational call, because the charge
-response is already represented by the canonical impulse here.
+The returned ``field_tensor`` and ``partial_f`` are consumed separately by the
+RFS moment response.  A caller must pass them into that response exactly once
+with ``charge_native=0``, because the ordinary charge response is already
+represented by either the canonical or mechanical result here.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from .canonical_momentum import (
     canonical_four_force_from_potential_gradient_native,
     canonical_four_impulse_from_potential_gradient_native,
     canonical_potential_momentum_native,
+    mechanical_lorentz_four_force_native,
+    mechanical_lorentz_four_impulse_native,
 )
 from .retarded_dipole_fields import (
     RetardedDipoleFieldGradientResult,
@@ -35,12 +37,14 @@ from .retarded_fields import ObserverEvent, TrajectoryHistory
 
 @dataclass(frozen=True)
 class RetardedDipoleSourceInteraction:
-    """Ordinary dipole field plus one observer's canonical charge response."""
+    """Dipole field plus canonical and mechanical observer-charge responses."""
 
     field: RetardedDipoleFieldGradientResult
     canonical_potential_momentum: np.ndarray
     canonical_four_force: np.ndarray
     canonical_four_impulse: np.ndarray
+    mechanical_four_force: np.ndarray
+    mechanical_four_impulse: np.ndarray
 
 
 def dipole_source_interaction_from_field_native(
@@ -67,11 +71,24 @@ def dipole_source_interaction_from_field_native(
         charge_native=observer_charge_native,
         proper_time_step_ns=proper_time_step_ns,
     )
+    mechanical_force = mechanical_lorentz_four_force_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        field_tensor=field.field_tensor,
+        charge_native=observer_charge_native,
+    )
+    mechanical_impulse = mechanical_lorentz_four_impulse_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        field_tensor=field.field_tensor,
+        charge_native=observer_charge_native,
+        proper_time_step_ns=proper_time_step_ns,
+    )
     return RetardedDipoleSourceInteraction(
         field=field,
         canonical_potential_momentum=potential_momentum,
         canonical_four_force=canonical_force,
         canonical_four_impulse=canonical_impulse,
+        mechanical_four_force=mechanical_force,
+        mechanical_four_impulse=mechanical_impulse,
     )
 
 
@@ -93,7 +110,7 @@ def evaluate_retarded_dipole_source_interaction_native(
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
 ) -> RetardedDipoleSourceInteraction:
-    """Evaluate the non-self dipole field and canonical charge impulse.
+    """Evaluate the non-self dipole field and ordinary charge responses.
 
     Source evaluation is independent of the observer charge.  Consequently a
     neutral observer receives the same field and RFS input while its ordinary

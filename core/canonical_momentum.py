@@ -8,7 +8,10 @@ and
 
 ``dP^alpha/dtau = (q / c) u_beta partial^alpha A^beta``.
 
-This module keeps that contraction explicit.  ``partial_a[lambda, nu]`` is
+This module keeps that contraction explicit as a convention oracle and also
+provides the equivalent mechanical Lorentz response.  The exact source path
+advances mechanical momentum and reconstructs canonical momentum from the
+accepted endpoint potential. ``partial_a[lambda, nu]`` is
 the covariant coordinate derivative ``partial_lambda A^nu`` for
 ``x=(ct,x,y,z)``.  The first index must therefore be raised before it is
 contracted into the canonical equation.  No mass, Lorentz-factor, or
@@ -22,14 +25,14 @@ must not be added to canonical momentum.
 
 from __future__ import annotations
 
-from typing import Sequence, cast
+from typing import Sequence, Union, cast
 
 import numpy as np
 
 from .constants import C_MMNS
 
-VectorLike = Sequence[float] | np.ndarray
-MatrixLike = Sequence[Sequence[float]] | np.ndarray
+VectorLike = Union[Sequence[float], np.ndarray]
+MatrixLike = Union[Sequence[Sequence[float]], np.ndarray]
 
 _MINKOWSKI_SIGNS = np.array((1.0, -1.0, -1.0, -1.0), dtype=float)
 
@@ -52,6 +55,17 @@ def _potential_gradient(value: MatrixLike) -> np.ndarray:
     return cast(np.ndarray, gradient)
 
 
+def _field_tensor(value: MatrixLike) -> np.ndarray:
+    field = np.asarray(value, dtype=float)
+    if field.shape != (4, 4):
+        raise ValueError("field_tensor must have shape (4, 4)")
+    if not np.all(np.isfinite(field)):
+        raise ValueError("field_tensor must contain only finite values")
+    if not np.allclose(field, -field.T, rtol=0.0, atol=1.0e-15):
+        raise ValueError("field_tensor must be antisymmetric")
+    return cast(np.ndarray, field)
+
+
 def canonical_potential_momentum_native(
     four_potential: VectorLike,
     *,
@@ -69,6 +83,102 @@ def canonical_potential_momentum_native(
     if not np.isfinite(charge):
         raise ValueError("charge_native must be finite")
     return cast(np.ndarray, charge * potential / C_MMNS)
+
+
+def canonical_four_momentum_native(
+    mechanical_four_momentum: VectorLike,
+    four_potential: VectorLike,
+    *,
+    charge_native: float,
+) -> np.ndarray:
+    """Return ``P^mu = p^mu + (q/c) A^mu`` at one observer event."""
+
+    mechanical = _four_vector(
+        mechanical_four_momentum,
+        name="mechanical_four_momentum",
+    )
+    return cast(
+        np.ndarray,
+        mechanical
+        + canonical_potential_momentum_native(
+            four_potential,
+            charge_native=charge_native,
+        ),
+    )
+
+
+def replace_canonical_potential_native(
+    canonical_four_momentum: VectorLike,
+    start_four_potential: VectorLike,
+    end_four_potential: VectorLike,
+    *,
+    charge_native: float,
+) -> np.ndarray:
+    """Replace the ordinary potential offset without changing mechanical ``p``.
+
+    This is the explicit accepted-endpoint bookkeeping operation
+
+    ``P_end = P_temporary + (q/c) (A_end - A_start)``.
+
+    It must be applied only after the mechanical endpoint is accepted.  The
+    operation is not an electromagnetic impulse or an energy transfer.
+    """
+
+    canonical = _four_vector(
+        canonical_four_momentum,
+        name="canonical_four_momentum",
+    )
+    start = _four_vector(start_four_potential, name="start_four_potential")
+    end = _four_vector(end_four_potential, name="end_four_potential")
+    return cast(np.ndarray, canonical + float(charge_native) * (end - start) / C_MMNS)
+
+
+def mechanical_lorentz_four_force_native(
+    *,
+    four_velocity_mm_ns: VectorLike,
+    field_tensor: MatrixLike,
+    charge_native: float,
+) -> np.ndarray:
+    """Return the gauge-invariant Lorentz force ``(q/c) F^(mu nu) u_nu``.
+
+    ``field_tensor`` follows the repository's contravariant native-Gaussian
+    convention.  This helper deliberately has no vector-potential argument:
+    accepted canonical momentum is reconstructed from the endpoint potential
+    separately.
+    """
+
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    field = _field_tensor(field_tensor)
+    charge = float(charge_native)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+    return cast(
+        np.ndarray,
+        (charge / C_MMNS) * (field @ (_MINKOWSKI_SIGNS * velocity)),
+    )
+
+
+def mechanical_lorentz_four_impulse_native(
+    *,
+    four_velocity_mm_ns: VectorLike,
+    field_tensor: MatrixLike,
+    charge_native: float,
+    proper_time_step_ns: float,
+) -> np.ndarray:
+    """Return the first-order mechanical Lorentz impulse over ``delta tau``."""
+
+    step = float(proper_time_step_ns)
+    if not np.isfinite(step):
+        raise ValueError("proper_time_step_ns must be finite")
+    return cast(
+        np.ndarray,
+        step
+        * mechanical_lorentz_four_force_native(
+            four_velocity_mm_ns=four_velocity_mm_ns,
+            field_tensor=field_tensor,
+            charge_native=charge_native,
+        ),
+    )
 
 
 def canonical_four_force_from_potential_gradient_native(
@@ -143,8 +253,12 @@ def mechanical_four_momentum_native(
 
 
 __all__ = [
+    "canonical_four_momentum_native",
     "canonical_four_force_from_potential_gradient_native",
     "canonical_four_impulse_from_potential_gradient_native",
     "canonical_potential_momentum_native",
+    "mechanical_lorentz_four_force_native",
+    "mechanical_lorentz_four_impulse_native",
     "mechanical_four_momentum_native",
+    "replace_canonical_potential_native",
 ]

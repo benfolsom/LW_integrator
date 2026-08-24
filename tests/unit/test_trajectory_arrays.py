@@ -69,6 +69,48 @@ def _build_trajectory(include_optional: bool = True) -> tuple:
     return traj, states
 
 
+def test_canonical_momentum_only_update_preserves_source_storage_versions() -> None:
+    builder = TrajectoryBuilder(3, 2)
+    original = _make_state(0, 2)
+    builder.set_step(0, original)
+    before = builder.build_partial(1)
+    generation = before.storage_generation
+    rewrite_epoch = before.storage_rewrite_epoch
+    array_revision = before.storage_array_revision
+    x_before = np.copy(before.x)
+
+    rebased = dict(original)
+    for offset, field_name in enumerate(("Pt", "Px", "Py", "Pz"), start=1):
+        rebased[field_name] = np.asarray(original[field_name]) + float(offset)
+    builder.set_canonical_momentum_step(0, rebased)
+    after = builder.build_partial(1)
+
+    assert after.storage_generation == generation
+    assert after.storage_rewrite_epoch == rewrite_epoch
+    assert after.storage_array_revision == array_revision
+    np.testing.assert_array_equal(after.x, x_before)
+    for field_name in ("Pt", "Px", "Py", "Pz"):
+        np.testing.assert_array_equal(
+            getattr(after, field_name)[0],
+            rebased[field_name],
+        )
+
+
+def test_canonical_momentum_only_update_requires_a_published_finite_row() -> None:
+    builder = TrajectoryBuilder(2, 2)
+    state = _make_state(0, 2)
+    builder.set_step(0, state)
+
+    with pytest.raises(IndexError, match="must already be published"):
+        builder.set_canonical_momentum_step(0, state)
+
+    builder.build_partial(1)
+    invalid = dict(state)
+    invalid["Px"] = np.array([np.nan, 0.0])
+    with pytest.raises(ValueError, match="Px must contain only finite"):
+        builder.set_canonical_momentum_step(0, invalid)
+
+
 class TestShapeProperties:
     def test_n_steps(self):
         traj, _ = _build_trajectory()

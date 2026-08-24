@@ -138,14 +138,14 @@ express a static spatial magnetic-field gradient in T/m; that boundary is
 converted to native field per mm before the gradient is applied to the native
 position.  Unconfigured electric and time derivatives are zero.
 
-The charge-canonical trajectory update derived in ``main.tex`` remains
-authoritative for the :math:`qF^{\mu\nu}u_\nu` response.  Under
-``INERTIAL_PREHISTORY``, one exact charge provider returns
+The charge-canonical state definition derived in ``main.tex`` remains
+authoritative.  Under ``INERTIAL_PREHISTORY``, one exact charge provider returns
 :math:`A^\mu`, :math:`F^{\mu\nu}`, :math:`\partial_\lambda A^\nu`, and
-:math:`\partial_\lambda F^{\mu\nu}`.  It supplies both the canonical charge
-response and the charge part of the RFS total field.  ``COLD_START`` retains
-the established canonical charge kernel plus a separate exact RFS
-field/gradient sample.  In both modes RFS adds only
+:math:`\partial_\lambda F^{\mu\nu}`.  The step advances the mechanical
+:math:`qF` response and, after both bunch endpoints are available, stores
+:math:`P_{n+1}=p_{n+1}+qA_{n+1}/c`.  The same field supplies the charge part of
+the RFS total field.  ``COLD_START`` retains the established canonical charge
+kernel plus a separate exact RFS field/gradient sample.  In both modes RFS adds only
 :math:`(\mu/c)G^{\mu\nu}[a]u_\nu`, including its temporal component.  This
 avoids counting the Lorentz force twice, preserves the feature-off baseline,
 and does not redefine canonical momentum by appending
@@ -322,7 +322,8 @@ meaning has not yet been validated:
 * Beamline visibility boundaries are not applied to a finite-difference
   stencil, so beamline geometry must be disabled for charge-source RFS.
 * Adaptive timestep substeps are not yet supported by the exact source-history
-  evaluator.
+  evaluator.  Exact inertial endpoint reconstruction also requires
+  ``fixed_geometry`` self-consistency.
 * RFS polarization is restricted to zero or one.
 * Pseudo-grid mode remains incompatible with spin-aware particle
   reconstruction.
@@ -352,11 +353,12 @@ spin evolution, or retarded time.
 Source creation is independent of electric charge, so a neutral magnetic
 particle remains a field source.  Stable particle identities exclude the
 observer's own source.  The ordinary charge response consumes the returned
-potential and its derivative through the existing canonical equation, while
-the RFS response consumes the returned field and field gradient exactly once.
-The resulting total non-self field supplies charge--dipole and dipole--dipole
-force and torque without adding another pair-force law.  Adding a textbook
-dipole pair force on top would double-count the interaction.
+field as mechanical :math:`qF`; a nine-event endpoint provider supplies the
+ordinary potential used to reconstruct accepted canonical momentum.  The RFS
+response consumes the returned field and field gradient exactly once.  The
+resulting total non-self field supplies charge--dipole and dipole--dipole force
+and torque without adding another pair-force law.  Adding a textbook dipole
+pair force on top would double-count the interaction.
 
 For exact inertial startup, the charge and dipole providers use the same
 explicit source histories and the same light-cone-root contract.  Within each
@@ -374,6 +376,12 @@ without changing the initialized velocity.  The eight-knot synthetic coasting
 prefix is hidden from output and never supplies a Medina force sample.  If an
 exact light cone later falls outside retained history, the run raises rather
 than degrading to zero field.
+
+At every later accepted step, both provisional endpoints are appended before
+either canonical state is changed.  The endpoint potentials are then sampled
+from those symmetric histories and :math:`q(A_{n+1}-A_n)/c` replaces the saved
+start offset without changing mechanical momentum, position, spin, or Medina
+work.  This is bookkeeping, not an additional force.
 
 This first implementation is a full-retarded finite-difference oracle rather
 than a fast production kernel.  ``relative_stencil_step``,

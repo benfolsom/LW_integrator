@@ -112,13 +112,34 @@ class RetardedDipoleHertzResult:
 
 
 @dataclass(frozen=True)
+class RetardedDipolePotentialResult:
+    """Ordinary dipole four-potential from a nine-event Hertz stencil.
+
+    ``four_potential`` is the contravariant native Gaussian potential
+    ``A^mu = partial_nu H^(mu nu)``.  The center event is evaluated for source
+    diagnostics and the eight signed unit offsets supply the four commuting
+    centered first derivatives.  ``stencil_offsets`` therefore always records
+    the center plus those eight derivative events, including when every source
+    is excluded.
+    """
+
+    four_potential: np.ndarray
+    hertz: RetardedDipoleHertzResult
+    stencil_step_mm: float
+    stencil_offsets: np.ndarray
+    stencil_retarded_time_ns: np.ndarray
+    stencil_light_cone_residual_mm: np.ndarray
+
+
+@dataclass(frozen=True)
 class RetardedDipoleFieldGradientResult:
     """Ordinary dipole potential, field, and full spacetime field gradient.
 
     ``partial_a[lambda, nu]`` is the covariant coordinate derivative
-    ``partial_lambda A^nu``.  It is returned explicitly for the integrator's
-    charge-canonical momentum update; callers must not replace that update by
-    an undocumented mechanical ``q F`` injection.
+    ``partial_lambda A^nu``.  It remains an explicit canonical-equation oracle.
+    The maintained exact integration path instead evolves the equivalent
+    mechanical ``q F`` response and reconstructs
+    ``P_end = p_end + (q/c) A_end`` at the accepted endpoint.
 
     ``stencil_offsets`` records integer multiples of ``stencil_step_mm`` for
     every Hertz evaluation used.  The matching retarded times make
@@ -756,6 +777,152 @@ def evaluate_retarded_dipole_hertz_tensor_native(
     )
 
 
+def evaluate_retarded_dipole_potential_native(
+    history: TrajectoryHistory,
+    observer_event: ObserverEvent,
+    *,
+    source_identities: Sequence[Hashable] | None = None,
+    observer_source_identity: Hashable | None = None,
+    excluded_source_identities: Sequence[Hashable] = (),
+    require_complete_history: bool = True,
+    relative_step: float = _DEFAULT_STENCIL_RELATIVE_STEP,
+    minimum_step_mm: float = _DEFAULT_STENCIL_MINIMUM_STEP_MM,
+    stencil_step_mm: float | None = None,
+    minimum_separation_mm: float = _DEFAULT_MINIMUM_SEPARATION_MM,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
+    max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+) -> RetardedDipolePotentialResult:
+    """Return the full-retarded ordinary dipole four-potential efficiently.
+
+    This is the endpoint-reconstruction path.  It evaluates the Hertz tensor
+    at the observer event for diagnostics and at the eight independently
+    retarded signed unit offsets needed by
+    ``A^mu = partial_nu H^(mu nu)``.  In contrast, the full field-gradient
+    oracle needs 129 Hertz evaluations to construct derivatives through third
+    order.
+
+    ``stencil_step_mm`` selects an absolute step.  Otherwise the step is
+    ``max(minimum_step_mm, relative_step * nearest_retarded_separation)``.
+    Every displaced event performs its own light-cone solve; source state and
+    retarded time are never frozen across the stencil.
+    """
+
+    tolerance, iterations = _validated_root_options(
+        root_tolerance_mm, max_root_iterations
+    )
+    relative, minimum_step, explicit_step, minimum_separation = (
+        _validated_oracle_options(
+            relative_step=relative_step,
+            minimum_step_mm=minimum_step_mm,
+            stencil_step_mm=stencil_step_mm,
+            minimum_separation_mm=minimum_separation_mm,
+        )
+    )
+    prepared = _prepare_dipole_history(
+        history,
+        source_identities=source_identities,
+        observer_source_identity=observer_source_identity,
+        excluded_source_identities=excluded_source_identities,
+    )
+    center = _evaluate_prepared_hertz_tensor_native(
+        prepared,
+        observer_event,
+        require_complete_history=require_complete_history,
+        minimum_separation_mm=minimum_separation,
+        root_tolerance_mm=tolerance,
+        max_root_iterations=iterations,
+    )
+    finite_separations = center.separation_mm[center.valid_sources]
+    if explicit_step is not None:
+        step = explicit_step
+    elif finite_separations.size == 0:
+        step = minimum_step
+    else:
+        step = max(minimum_step, relative * float(np.min(finite_separations)))
+    # This provider reaches one step from the center.  Keep the complete
+    # first-derivative stencil outside the strict singularity guard.  Each
+    # displaced evaluation retains the exact guard as the final authority.
+    if finite_separations.size and step >= (
+        float(np.min(finite_separations)) - minimum_separation
+    ):
+        raise ValueError(
+            "stencil reaches the minimum-separation guard; reduce stencil_step_mm"
+        )
+
+    center_position = np.asarray(observer_event.position_mm, dtype=float)
+    evaluated: dict[tuple[int, int, int, int], RetardedDipoleHertzResult] = {
+        (0, 0, 0, 0): center
+    }
+
+    def hertz_at_offset(
+        offset: tuple[int, int, int, int],
+    ) -> RetardedDipoleHertzResult:
+        cached = evaluated.get(offset)
+        if cached is not None:
+            return cached
+        displaced_position = center_position + step * np.asarray(
+            offset[1:], dtype=float
+        )
+        displaced = ObserverEvent(
+            time_ns=float(observer_event.time_ns) + offset[0] * step / C_MMNS,
+            position_mm=cast(
+                tuple[float, float, float],
+                tuple(float(value) for value in displaced_position),
+            ),
+        )
+        result = _evaluate_prepared_hertz_tensor_native(
+            prepared,
+            displaced,
+            require_complete_history=require_complete_history,
+            minimum_separation_mm=minimum_separation,
+            root_tolerance_mm=tolerance,
+            max_root_iterations=iterations,
+        )
+        evaluated[offset] = result
+        return result
+
+    first_derivatives: list[np.ndarray] = []
+    for derivative_index in range(4):
+        lower_offset = [0, 0, 0, 0]
+        upper_offset = [0, 0, 0, 0]
+        lower_offset[derivative_index] = -1
+        upper_offset[derivative_index] = 1
+        lower = hertz_at_offset(
+            cast(tuple[int, int, int, int], tuple(lower_offset))
+        ).hertz_tensor
+        upper = hertz_at_offset(
+            cast(tuple[int, int, int, int], tuple(upper_offset))
+        ).hertz_tensor
+        # Match the full oracle's accumulation order exactly: zero, lower
+        # with coefficient -1, then upper with coefficient +1.
+        derivative = np.zeros((4, 4), dtype=float)
+        derivative += -lower
+        derivative += upper
+        derivative /= 2.0 * step
+        first_derivatives.append(derivative)
+
+    four_potential = np.zeros(4, dtype=float)
+    for mu in range(4):
+        four_potential[mu] = sum(first_derivatives[nu][mu, nu] for nu in range(4))
+
+    ordered_offsets = tuple(sorted(evaluated))
+    stencil_retarded_times = np.stack(
+        [evaluated[offset].retarded_time_ns for offset in ordered_offsets], axis=0
+    )
+    stencil_residuals = np.stack(
+        [evaluated[offset].light_cone_residual_mm for offset in ordered_offsets],
+        axis=0,
+    )
+    return RetardedDipolePotentialResult(
+        four_potential=four_potential,
+        hertz=center,
+        stencil_step_mm=step,
+        stencil_offsets=np.asarray(ordered_offsets, dtype=int),
+        stencil_retarded_time_ns=stencil_retarded_times,
+        stencil_light_cone_residual_mm=stencil_residuals,
+    )
+
+
 def evaluate_retarded_dipole_field_gradient_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
@@ -946,6 +1113,8 @@ __all__ = [
     "DipoleSourceSingularityError",
     "RetardedDipoleFieldGradientResult",
     "RetardedDipoleHertzResult",
+    "RetardedDipolePotentialResult",
     "evaluate_retarded_dipole_field_gradient_native",
     "evaluate_retarded_dipole_hertz_tensor_native",
+    "evaluate_retarded_dipole_potential_native",
 ]
