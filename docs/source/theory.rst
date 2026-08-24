@@ -7,8 +7,10 @@ covariant Liénard–Wiechert formalism to the concrete data structures exposed 
 ``core/trajectory_integrator.py`` and the validation studies under
 ``examples/validation``.
 
-Note that throughout the codebase Gaussian units are used. The unorthodox choice of amu-millimeter-nanosecond
-units is implemented to avoid numerical overflows.
+The main charge integrator uses a native amu--millimetre--nanosecond unit
+system derived from the historical Gaussian-unit formulation.  External-field
+and magnetic-moment boundaries convert explicitly to SI; in particular, the RFS
+kernel and its charge-field gradient use SI throughout.
 
 
 Retarded fields
@@ -107,6 +109,36 @@ which the solver evaluates after each momentum update to keep particle states in
 sync.  Proper-time stepping avoids runaway behaviour at high :math:`\gamma`
 while keeping the integration scheme close to the historical reference
 implementation.
+
+Intrinsic magnetic-moment response
+----------------------------------
+
+The experimental magnetic-moment path preserves the charge-canonical momentum
+above.  The established ``main.tex`` charge solver continues to supply the
+Lorentz response, while the selected Rafelski--Formanek--Steinmetz model adds
+only the dipole four-force
+
+.. math::
+
+   \left.\frac{dp^\mu}{d\tau}\right|_{\mathrm{dipole}}
+   =dG^{\mu\nu}u_\nu, \qquad
+   G^{\mu\nu}=\partial^\mu(F^{*\nu\rho}s_\rho)
+   -\partial^\nu(F^{*\mu\rho}s_\rho).
+
+RFS samples its field and gradient independently from the charge-force path.
+The field includes prescribed fields and observer-charge-independent,
+cross-bunch point-charge Lienard--Wiechert fields.  Every centred
+spacetime-gradient stencil event performs a new light-cone solve, so the
+derivative includes retarded-time variation.  Adding only :math:`dG u` avoids a
+second Lorentz force and preserves the feature-off baseline, but the two
+sampling paths are not yet one unified field kernel.  The signed minimal 2021
+RFS equation advances spin at the same time.
+
+This is an experimental covariant response model with strict scope guards, not
+a closed all-orders action theory.  Intrinsic moments do not yet source a field,
+so dipole--dipole forces and dipole radiation are absent.  The equations,
+configuration modes, primary references, and current validation boundary are
+given in :doc:`magnetic_dipole_moments`.
 
 Relativistic position updates in coordinate time
 ------------------------------------------------

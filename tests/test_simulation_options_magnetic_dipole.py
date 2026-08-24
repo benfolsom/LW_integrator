@@ -35,6 +35,8 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     assert config.enabled is True
     assert config.spin_precession_enabled is True
     assert config.stern_gerlach_force_enabled is True
+    assert config.spin_model == "rfs_minimal_2021"
+    assert config.stern_gerlach_model == "rfs_full_g"
     assert config.rider.species == "neutron"
     assert config.rider.polarization == pytest.approx(0.75)
     assert config.rider.rest_spin == pytest.approx(
@@ -52,9 +54,62 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
 
 def test_old_config_defaults_magnetic_dipoles_off() -> None:
     options = SimulationOptions.from_dict({"steps": 4})
+    magnetic_payload = options.to_dict()["magnetic_dipole"]
 
     assert options.magnetic_dipole_enabled is False
+    assert options.magnetic_dipole_spin_model == "rfs_minimal_2021"
+    assert options.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
+    assert magnetic_payload["spin_model"] == "rfs_minimal_2021"
+    assert magnetic_payload["stern_gerlach_model"] == "rfs_full_g"
     assert build_magnetic_dipole_config(options).enabled is False
+
+
+def test_rfs_config_without_rr_mode_defaults_to_off() -> None:
+    options = SimulationOptions.from_dict({"magnetic_dipole": {"enabled": True}})
+
+    assert options.radiation_reaction_mode == "off"
+    assert options.adaptive_timestep_enabled is False
+
+
+def test_rfs_config_preserves_explicit_rr_mode_for_validation() -> None:
+    options = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {"enabled": True},
+            "radiation_reaction_mode": "medina_lad",
+        }
+    )
+
+    assert options.radiation_reaction_mode == "medina_lad"
+
+
+def test_rfs_config_preserves_explicit_adaptive_mode_for_validation() -> None:
+    options = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {"enabled": True},
+            "adaptive_timestep_enabled": True,
+        }
+    )
+
+    assert options.adaptive_timestep_enabled is True
+
+
+def test_legacy_diagnostic_models_round_trip_through_testbed_config() -> None:
+    options = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {
+                "spin_model": "bmt_frenkel",
+                "stern_gerlach_model": "static_rest_gradient",
+            }
+        }
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+    config = build_magnetic_dipole_config(restored)
+
+    assert restored.magnetic_dipole_spin_model == "bmt_frenkel"
+    assert restored.magnetic_dipole_stern_gerlach_model == "static_rest_gradient"
+    assert config.spin_model == "bmt_frenkel"
+    assert config.stern_gerlach_model == "static_rest_gradient"
 
 
 def test_custom_moment_round_trip_preserves_sign() -> None:

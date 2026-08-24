@@ -132,7 +132,7 @@ class IntegratorGUITabMixin:
 
         magnetic_frame = ttk.LabelFrame(
             particle_frame,
-            text="Magnetic dipole / spin (experimental)",
+            text="Magnetic dipole / spin (RFS, experimental)",
             padding=8,
         )
         magnetic_frame.grid(
@@ -145,7 +145,7 @@ class IntegratorGUITabMixin:
             magnetic_frame,
             text="Enable intrinsic magnetic dipole dynamics",
             variable=self.magnetic_dipole_enabled_var,
-            command=self._toggle_magnetic_dipole_controls,
+            command=self._on_magnetic_dipole_toggle,
         )
         self.magnetic_dipole_enable_check.grid(
             row=0, column=0, columnspan=3, sticky="w"
@@ -161,7 +161,7 @@ class IntegratorGUITabMixin:
         )
         self.magnetic_dipole_stern_gerlach_check = ttk.Checkbutton(
             magnetic_frame,
-            text="Stern–Gerlach force",
+            text="Fully coupled force (Stern–Gerlach)",
             variable=self.magnetic_dipole_stern_gerlach_force_enabled_var,
         )
         self.magnetic_dipole_stern_gerlach_check.grid(
@@ -171,9 +171,11 @@ class IntegratorGUITabMixin:
         ttk.Label(
             magnetic_frame,
             text=(
-                "Stern–Gerlach translation currently uses only the prescribed "
-                "static B-field gradient (T/m); gradients of retarded particle "
-                "fields are not included, and nonzero impulses require |β| ≤ 0.01."
+                "Default selection: RFS minimal 2021 spin transport; the "
+                "Stern–Gerlach toggle selects full G-tensor translation. "
+                "Enabling RFS selects radiation reaction and adaptive timesteps "
+                "off; neither is yet part of the coupled model. Legacy "
+                "BMT/static-gradient diagnostics remain available in JSON."
             ),
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray40",

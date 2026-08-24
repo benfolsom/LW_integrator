@@ -121,20 +121,28 @@ simulation, and confirm that the regression tooling works on your machine.
    ``--image-weighting``, and ``--self-consistency``. Run ``lw-simulate --help``
    for the complete list.
 
-   Intrinsic magnetic moments are experimental and off by default.  A common
-   charged-particle setup can be enabled directly:
+   Intrinsic magnetic moments are experimental and off by default.  The
+   selected RFS model is currently guarded to fixed-step, COLD_START
+   BUNCH_TO_BUNCH point-charge runs with dynamic radiation reaction and
+   same-bunch space charge disabled.  For example, add these switches to a
+   suitable electron--proton BUNCH_TO_BUNCH run:
 
    .. code-block:: bash
 
-      lw-simulate --magnetic-dipoles \
+      lw-simulate --simulation-type bunch-to-bunch \
+         --startup-mode cold-start \
+         --radiation-reaction-mode off --no-adaptive-timestep \
+         --magnetic-dipoles --stern-gerlach \
          --rider-magnetic-species electron --rider-spin 1 0 0 \
-         --external-b-field-tesla 0 0 1
+         --driver-magnetic-species proton --driver-spin 0 0 1
 
-   ``--no-spin-precession`` and ``--stern-gerlach`` independently control the
-   two experimental effects.  Neutral particles and arbitrary external
-   gradients are best configured in a saved JSON.  See
-   :doc:`magnetic_dipole_moments` for the supported model and its important
-   source-field and energy-accounting limitations.
+   ``--magnetic-dipoles`` without ``--stern-gerlach`` enables spin transport
+   only.  Adding ``--stern-gerlach`` selects the fully coupled full-G response;
+   ``--no-spin-precession`` leaves a frozen-spin force diagnostic rather than a
+   complete RFS evolution.  Neutral particles and prescribed gradients are best
+   configured in a saved JSON.  See :doc:`magnetic_dipole_moments` for all hard
+   scope guards, the diagnostic legacy models, and the deferred dipole-source
+   physics.
 
    **Running a parameter sweep from the CLI:**
 

@@ -1,30 +1,137 @@
 Magnetic dipole moments and spin
 ================================
 
-Intrinsic magnetic-moment support is experimental and disabled by default.  The
-first maintained implementation deliberately separates two questions:
+Intrinsic magnetic-moment dynamics are experimental and disabled by default.
+The selected physical model is the signed, minimal
+Rafelski--Formanek--Steinmetz (RFS) model:
 
-* ``bmt_frenkel`` transports a particle's rest-frame polarization through a
-  prescribed electromagnetic field.  It supports charged and neutral particles.
-* ``static_rest_gradient`` adds the non-relativistic Stern--Gerlach force
-  :math:`\nabla(\boldsymbol\mu\cdot\mathbf B)` from an explicitly configured,
-  static magnetic-field gradient.
+* ``rfs_minimal_2021`` transports spin with the minimal signed equation used in
+  the `2021 RFS charged-particle paper
+  <https://doi.org/10.1103/PhysRevA.103.052218>`_ (`arXiv:2103.02594
+  <https://arxiv.org/abs/2103.02594>`_).
+* ``rfs_full_g`` adds translational magnetic-gradient response through the full
+  :math:`G^{\mu\nu}` tensor defined in the `2018 RFS paper
+  <https://doi.org/10.1140/epjc/s10052-017-5493-2>`_
+  (`arXiv:1712.01825 <https://arxiv.org/abs/1712.01825>`_).
 
-This split matters because relativistic spin transport in a uniform field is
-well established, while relativistic point-dipole translation in an arbitrary
-retarded field is model-dependent.  The implementation follows the
-`Bargmann--Michel--Telegdi equation <https://doi.org/10.1103/PhysRevLett.2.435>`_
-for spin transport and uses the static rest limit discussed by
-`Rafelski, Formanek, and Steinmetz
-<https://doi.org/10.1140/epjc/s10052-017-5493-2>`_ for the first
-Stern--Gerlach check.
+The model responds to prescribed fields and to charge-generated, retarded
+Lienard--Wiechert fields.  Charge and magnetic moment are independent particle
+properties, so the same equations have a regular neutral-particle limit.  The
+older ``bmt_frenkel`` plus ``static_rest_gradient`` pair remains available only
+as a controlled diagnostic.
 
-Configuration
--------------
+Selected RFS equations
+----------------------
+
+The RFS kernel uses SI units, coordinates
+:math:`x^\mu=(ct,x,y,z)`, and metric ``(+---)``.  Its physical spin four-vector
+:math:`s^\mu` obeys
+
+.. math::
+
+   u^2=c^2, \qquad u\mathbin{\cdot}s=0, \qquad s^2=-S^2,
+
+for a fully polarized stretched state with
+
+.. math::
+
+   S=I\hbar, \qquad d=\frac{\mu_{\mathrm{signed}}}{cS}.
+
+Keeping the measured sign of :math:`\mu` is essential.  In particular, the
+electron and neutron moments are negative relative to spin.  The RFS magnetic
+four-potential and its antisymmetric gradient tensor are
+
+.. math::
+
+   \mathcal B_\mu=F^*_{\mu\nu}s^\nu, \qquad
+   G^{\mu\nu}=\partial^\mu\mathcal B^\nu
+   -\partial^\nu\mathcal B^\mu.
+
+Here :math:`\mathcal B_\mu` is RFS notation and is not the ordinary three-vector
+magnetic field.  The coupled equations implemented by the local response
+kernel are
+
+.. math::
+
+   m\dot u^\mu=(qF^{\mu\nu}+dG^{\mu\nu})u_\nu,
+
+.. math::
+
+   \dot s^\mu={q\over m}F^{\mu\nu}s_\nu
+   +\left(cd-{q\over m}\right)
+   \left(F^{\mu\nu}s_\nu
+   -{u^\mu\over c^2}u_\rho F^{\rho\lambda}s_\lambda\right)
+   +{d\over m}G^{\mu\nu}s_\nu.
+
+The dot denotes a proper-time derivative.  In code,
+``partial_f[lambda, mu, nu]`` is
+:math:`\partial_\lambda F^{\mu\nu}` with
+:math:`\partial_0=c^{-1}\partial_t`; the observer spin is held fixed while this
+field derivative is taken.  The implementation forms the full tensor instead
+of replacing it with the compact source-free Gilbert expression.  That avoids
+silently dropping the current-density term when a supplied field is not in
+vacuum.
+
+RFS model status
+----------------
+
+``minimal`` is part of the model name for a reason.  The `2018 RFS analysis
+<https://doi.org/10.1140/epjc/s10052-017-5493-2>`_ describes a family of
+covariant gradient corrections to spin transport; the `2021 charged-particle
+model <https://doi.org/10.1103/PhysRevA.103.052218>`_ selects the simplest
+member rather than establishing uniqueness.  The 2018 analysis also shows that
+varying the natural interaction action produces an extra term proportional to
+:math:`F^{*\mu\nu}\dot s_\nu` and then higher field orders.  It does not provide
+a closed, all-orders action or Hamiltonian for the coupled system.
+
+The maintained model should therefore be described as a covariant,
+linear-in-field/gradient response model, not as a finished action-based theory.
+Its covariant constraints and limiting cases are strong validation targets,
+but they do not remove this theory boundary.
+
+Charge-field and gradient evaluation
+------------------------------------
+
+The charge-generated RFS field is evaluated independently of observer charge,
+so a neutron is not lost through the ordinary Lorentz-force ``q=0`` shortcut.
+The integration seam currently applies this evaluator to the opposing bunch
+only; it does not yet supply same-bunch RFS response.
+
+For each observer event the dedicated evaluator:
+
+1. interpolates each stored point-charge worldline with position, velocity,
+   and acceleration continuous at the trajectory knots;
+2. solves the light-cone equation against that interpolated worldline;
+3. evaluates both the velocity and acceleration terms of the SI
+   Lienard--Wiechert field; and
+4. forms a centred spacetime finite difference of :math:`F^{\mu\nu}`.
+
+Every one of the eight displaced stencil events re-solves every source light
+cone.  The time stencil displaces :math:`ct`, not merely the stored source
+sample.  Consequently the numerical derivative includes the variation of
+retarded time.  Differencing a field while freezing a previously selected
+retarded source state would omit that chain rule and is not used by RFS.
+
+Prescribed :math:`\mathbf E` and :math:`\mathbf B` are added to the charge
+field.  The current prescribed-field schema can also express a static spatial
+magnetic-field gradient; unconfigured electric and time derivatives are zero.
+
+The existing charge-canonical trajectory update derived in ``main.tex`` remains
+authoritative for the :math:`qF^{\mu\nu}u_\nu` response.  RFS independently
+samples :math:`F` and :math:`\partial F` with the exact light-cone evaluator and
+adds only :math:`dG^{\mu\nu}u_\nu`, including its temporal component.  This
+avoids counting the Lorentz force twice, preserves the feature-off baseline,
+and does not redefine canonical momentum by appending
+:math:`d\mathcal B_\mu`.  It also means that the charge force and RFS response
+currently use two numerical sampling paths rather than one unified field
+kernel; that seam remains an explicit convergence and consistency target.
+
+Configuration and operating modes
+---------------------------------
 
 The GUI places the common switches with the particle controls.  The direct CLI
-offers matching on/off, species, and spin-direction switches.  Saved testbed
-configs use a nested block:
+offers matching enable, species, spin-direction, spin-transport, and
+gradient-force switches.  Saved testbed configurations use a nested block:
 
 .. code-block:: json
 
@@ -32,9 +139,9 @@ configs use a nested block:
      "magnetic_dipole": {
        "enabled": true,
        "spin_precession_enabled": true,
-       "stern_gerlach_force_enabled": false,
-       "spin_model": "bmt_frenkel",
-       "stern_gerlach_model": "static_rest_gradient",
+       "stern_gerlach_force_enabled": true,
+       "spin_model": "rfs_minimal_2021",
+       "stern_gerlach_model": "rfs_full_g",
        "rider": {
          "species": "electron",
          "magnetic_moment_j_per_t": null,
@@ -52,36 +159,44 @@ configs use a nested block:
      }
    }
 
+The switches give three intended user-facing states:
+
+.. list-table:: RFS operating modes
+   :header-rows: 1
+   :widths: 22 18 22 38
+
+   * - State
+     - ``enabled``
+     - ``spin_precession_enabled``
+     - ``stern_gerlach_force_enabled``
+   * - Off
+     - ``false``
+     - ignored
+     - ignored
+   * - Spin transport only
+     - ``true``
+     - ``true``
+     - ``false``
+   * - Fully coupled RFS
+     - ``true``
+     - ``true``
+     - ``true``
+
+A force run with spin transport disabled is possible as a frozen-spin
+diagnostic, but it is not a complete coupled RFS evolution.  On the CLI,
+``--magnetic-dipoles`` selects spin-only RFS and adding ``--stern-gerlach``
+selects the fully coupled mode.  The RFS safety guards currently also require
+``--simulation-type bunch-to-bunch``, ``--startup-mode cold-start``,
+``--radiation-reaction-mode off``, and ``--no-adaptive-timestep`` for a dynamic
+run.  The direct CLI and GUI select radiation reaction ``off`` when RFS is
+enabled unless the user explicitly supplies a mode; a dynamic mode is rejected.
+
 ``null`` selects the cited species value.  A custom species must provide both a
 signed moment in J/T and its spin quantum number.  ``rest_spin`` is normalized
-and interpreted as a rest-frame polarization expressed in the lab coordinate
-axes.  ``polarization`` scales its magnitude from zero to one.
-
-A named magnetic preset must match the simulated particle's physical mass and
-observer charge.  The run is rejected if, for example, an electron moment is
-paired with a proton-mass particle.  This protects the common one-click path
-from creating an unphysical hybrid.  Use ``species: "custom"`` with an explicit,
-documented moment and spin only when the mismatch is intentional.
-
-The optional prescribed-field gradient is a 3-by-3 matrix in T/m:
-
-.. code-block:: json
-
-   {
-     "external_field_enabled": true,
-     "external_magnetic_field_gradient_t_per_m": [
-       [-500.0, 0.0, 0.0],
-       [0.0, -500.0, 0.0],
-       [0.0, 0.0, 1000.0]
-     ]
-   }
-
-The indexing is ``gradient[field_component][coordinate]``.  The example sets
-:math:`\partial B_z/\partial z=1000` T/m.  The configured uniform magnetic field
-is the value at the coordinate origin; the gradient adds a linear position
-dependence.  Its trace must be zero so the prescribed field obeys
-:math:`\nabla\cdot\mathbf B=0`; the transverse terms in this example balance the
-longitudinal gradient.
+and interpreted as a rest-frame direction expressed in the lab coordinate
+axes.  For the current RFS slice, ``polarization`` must be exactly zero or one.
+Partial polarization must eventually be represented by a weighted ensemble of
+unit-spin orientations, not by shrinking one particle's invariant spin.
 
 Species presets and signs
 -------------------------
@@ -89,129 +204,124 @@ Species presets and signs
 ``core.species`` is the single immutable registry used by the physics and user
 interfaces.  It includes electron, positron, proton, antiproton, neutron,
 deuteron, triton, helion (the helium-3 nucleus), and alpha particle.  Free-
-particle masses and moments use the
-`2022 CODATA adjustment <https://doi.org/10.1103/RevModPhys.97.025002>`_.  The
-antiproton preset also records the direct
-`BASE measurement <https://doi.org/10.1038/nature24048>`_.
+particle masses and moments use the `2022 CODATA adjustment
+<https://doi.org/10.1103/RevModPhys.97.025002>`_.  The antiproton preset also
+records the direct `BASE measurement
+<https://doi.org/10.1038/nature24048>`_.
 
-Moments are signed relative to spin.  For example, electron and neutron moments
-are negative; replacing them by absolute values reverses their precession and
-gradient-force directions.  Antiparticles are separate presets rather than a
-charge-sign shortcut.  The H- entry is intentionally marked unsupported: its
-bound-state moment is not inferred by adding constituent free-particle moments.
-Use a documented custom model if an effective H- moment is needed.
+A named magnetic preset must match the simulated particle's physical mass and
+observer charge.  The run is rejected if, for example, an electron moment is
+paired with a proton-mass particle.  Antiparticles are separate presets rather
+than charge-sign shortcuts.  The H- entry is intentionally unsupported: its
+bound-state moment is not inferred by adding constituent free-particle
+moments.  Use ``species: "custom"`` with an explicit, documented moment and
+spin when such a model is intentional.
 
-Spin representation and update
-------------------------------
+Spin state and diagnostics
+--------------------------
 
-The trajectory stores the dimensionless rest-polarization components
-``spin_x``, ``spin_y``, and ``spin_z``.  For a particle with velocity
-:math:`\boldsymbol\beta`, the corresponding polarization four-vector is
-
-.. math::
-
-   a^0 = \gamma\,\boldsymbol\beta\cdot\boldsymbol\zeta,
+The trajectory stores dimensionless rest-frame spin-direction components
+``spin_x``, ``spin_y``, and ``spin_z``.  For velocity
+:math:`\boldsymbol\beta`, the corresponding dimensionless polarization
+four-vector is
 
 .. math::
 
-   \mathbf a = \boldsymbol\zeta
-   + \frac{\gamma^2}{\gamma+1}
-     (\boldsymbol\beta\cdot\boldsymbol\zeta)\boldsymbol\beta.
+   a^0=\gamma\,\boldsymbol\beta\mathbin{\cdot}\boldsymbol\zeta,
 
-It obeys :math:`a\cdot u=0` and
-:math:`a^2=-|\boldsymbol\zeta|^2` with metric ``(+---)``.  The helper module
-also defines :math:`F^{0i}=-E_i/c` and checks that applying its Hodge dual twice
-gives :math:`{}^{**}F=-F`.
+.. math::
 
-For constant fields over a step, spin is advanced with an exact Rodrigues
-rotation.  This preserves polarization norm to floating-point precision.  The
-signed gyromagnetic ratio is :math:`\Gamma=\mu/(I\hbar)`, so the neutral limit is
-finite rather than being obtained by dividing by charge.  A step starts from the
-accepted prior spin and commits one rotation only after the momentum
-self-consistency loop finishes.
+   \mathbf a=\boldsymbol\zeta
+   +{\gamma^2\over\gamma+1}
+   (\boldsymbol\beta\mathbin{\cdot}\boldsymbol\zeta)\boldsymbol\beta.
+
+The RFS kernel receives the physical spin :math:`s^\mu=S a^\mu`.  The accepted
+spin update is projected back onto :math:`u\mathbin{\cdot}s=0` and its invariant
+magnitude is restored to control numerical drift.
 
 ``local_magnetic_field_x_t``, ``local_magnetic_field_y_t``, and
-``local_magnetic_field_z_t`` are state-aligned diagnostics: each saved value is
-the prescribed field evaluated at that same sample's stored position and time,
-including the initial state.  The force/precession quadrature within the
-preceding step may sample a different point according to the selected
-self-consistency geometry.
+``local_magnetic_field_z_t`` are state-aligned diagnostics.  For RFS they
+contain the prescribed field plus the available charge-generated field
+re-evaluated at the saved observer event.  A COLD_START event without enough
+explicit source history is not extrapolated; the diagnostic remains zero and
+does not yet export a separate readiness flag.  In particular, a timestep
+longer than the source--observer light delay can leave an end-of-step field
+diagnostic unavailable even when the accepted start-of-step RFS force used a
+nonzero field.  Treat these arrays as visualization aids, not as proof that a
+field was absent.
 
-Scope and limitations
----------------------
+Hard scope guards
+-----------------
 
-The current scope is intentionally narrow:
+The first coupled implementation deliberately rejects combinations whose
+meaning has not yet been validated:
 
-* Spin and Stern--Gerlach dynamics consume prescribed external fields only.
-  Charge-generated Liénard--Wiechert fields are not yet fed into spin transport.
-* Particles do not yet source magnetic-dipole fields.  Conducting images remain
-  charge-only sources.  This is particularly important for proton--electron
-  capture studies: enabling the two presets does not create a proton dipole
-  field at the electron.
-* ``static_rest_gradient`` is a controlled low-velocity model.  It does not
-  implement the retarded-time chain rule, electric hidden momentum, or a unique
-  covariant Stern--Gerlach law.  The Ampere-dipole rest force can contain a
-  hidden-momentum term, as discussed by
-  `Hnizdo <https://doi.org/10.1155/1992/17383>`_.
-  A nonzero gradient impulse is rejected above :math:`|\boldsymbol\beta|=0.01`;
-  spin-only BMT transport is not subject to this guard.
-* The exact BMT rotation assumes the usual Lorentz-force kinematics.  This
-  first slice does not add the separate Fermi--Walker correction required for
-  non-Lorentz acceleration from radiation reaction or the experimental
-  gradient force.
-* The translational impulse is applied to mechanical momentum and projected
-  back to the ordinary mass shell.  The canonical Hamiltonian does not yet
-  contain an explicit :math:`-\boldsymbol\mu\cdot\mathbf B` interaction energy.
-  Do not claim symplectic or total-energy conservation for dipole-enabled runs.
-* Pseudo-grid mode is rejected while spin-aware passive interpolation is absent.
-* In representative macroparticle mode the observer moment is one physical
-  particle's moment.  It is not multiplied by ``macro_population``.  A future
-  source-moment model must make its population/coherence scaling explicit.
+* RFS runs are limited to ``BUNCH_TO_BUNCH`` with point-charge cross-bunch
+  sources.  Conducting and switching image-source modes are not enabled.
+* Charge-source RFS requires ``COLD_START`` and explicit history.  Approximate
+  back-history is not treated as a complete retarded derivative.
+* Dynamic radiation reaction must be off.  ``diagnostic_only`` may record
+  read-only radiation diagnostics, but Medina/LAD and other recoil modes are
+  rejected because RFS does not supply an RR completion.
+* Same-bunch RFS response is absent, so ``space_charge`` must be disabled.
+* Nonzero macroparticle smearing is unsupported.  Each displaced subcharge would
+  require its own light-cone solve before a smeared source could be supported.
+* Beamline visibility boundaries are not applied to a finite-difference
+  stencil, so beamline geometry must be disabled for charge-source RFS.
+* Adaptive timestep substeps are not yet supported by the exact source-history
+  evaluator.
+* RFS polarization is restricted to zero or one.
+* Pseudo-grid mode remains incompatible with spin-aware particle
+  reconstruction.
 
-The archived ``TUPAB218.tex`` equations were treated as a research input, not
-copied into the solver.  That draft used an absolute moment, a charge-only
-precession term, an incomplete rest-spin boost, and inconsistent factors of
-``c``; those choices would give the wrong sign for electrons and neutrons and
-zero neutral-particle Larmor precession.
+The legacy diagnostic pair has different limits.  ``bmt_frenkel`` performs
+charged or neutral BMT/Larmor transport in prescribed fields.
+``static_rest_gradient`` applies
+:math:`\nabla(\boldsymbol\mu\mathbin{\cdot}\mathbf B)` from the configured
+static gradient and rejects a nonzero impulse at
+:math:`|\boldsymbol\beta|>0.01`.  It is useful for sign and unit checks, but it
+must not be presented as a relativistic retarded-gradient calculation.
 
-Literature boundary
--------------------
+Deferred source physics
+-----------------------
 
-The narrower first release was chosen after comparing several inequivalent
-relativistic spin/gradient formulations.  `Good's 1962 equation
-<https://doi.org/10.1103/PhysRev.125.2112>`_ (see also the readable
-`Metodiev transcription <https://arxiv.org/abs/1507.04440>`_), the neutral
-particle treatment by `Formanek and collaborators
-<https://doi.org/10.1088/1361-6587/aac06a>`_, and the later source-free
-`Gilbert-form model <https://arxiv.org/abs/2103.02594>`_ informed the test and
-API boundaries but are not silently presented as one exact law.  Broader
-comparisons by `Heinemann <https://arxiv.org/abs/physics/9611001>`_ and
-`Wen and collaborators <https://doi.org/10.1038/srep31624>`_ likewise show why
-the translational model must be named explicitly.
+The present model describes **response** to prescribed and charge-generated
+:math:`F^{\mu\nu}`.  It does not make an intrinsic particle moment a source of
+its own retarded electromagnetic field.  Therefore it currently contains no
+mutual dipole--dipole force, no hyperfine-type source field, and no intrinsic
+dipole radiation or dipole radiation reaction.  Conducting images also remain
+charge-only sources.
 
-In particular, a future gradient of a Lienard--Wiechert field must re-evaluate
-the complete retarded field and its light-cone solution at each displaced
-observer point.  Differencing a field while freezing an already selected
-retarded source sample omits the retarded-time chain rule and will not be used
-as the physical default.
+Those effects require a separately documented covariant magnetization-current
+or retarded moving-dipole source model.  The retarded field and radiation of a
+moving magnetic dipole are treated, for example, by `Sautbekov
+<https://doi.org/10.1016/j.jmmm.2019.04.012>`_
+(`arXiv:1806.07089 <https://arxiv.org/abs/1806.07089>`_).  If a validated
+dipole-source field is later added to :math:`F^{\mu\nu}`, the same full RFS
+response law can act on it.  Adding both that field response and an independent
+pairwise dipole force would double-count the interaction.
 
-Validation boundary
--------------------
+Validation and capture boundary
+-------------------------------
 
-The maintained unit and integration checks cover:
+The maintained deterministic checks cover signed species data, tensor and
+Hodge-dual conventions, the static-rest and neutral limits, covariant
+constraint derivatives, the full :math:`G^{\mu\nu}` tensor in vacuum and
+current regions, analytic light-cone roots, charge-field gradients, explicit
+model-pair validation, and feature-off equivalence.  See :doc:`validation` for
+the focused commands.
 
-* SI/native conversions and signed preset values;
-* field-tensor round trips, dual convention, and polarization invariants;
-* analytic charged and neutral uniform-field precession;
-* exact spin-norm preservation;
-* zero translation in a uniform field and the sign of
-  :math:`\mu_z\,\partial B_z/\partial z`;
-* a neutral neutron response that does not pass through the observer-charge
-  short circuit;
-* identical legacy state and trajectory values when the feature is disabled;
-* explicit rejection of pseudo-grid plus dipole dynamics.
+Electron--proton capture is a classical characterization and sensitivity
+study, not a validation of atomic stability.  This first stage can compare
+charge-only evolution with RFS spin and gradient response, but it cannot test
+dipole--dipole or hyperfine physics while dipole sourcing is absent.  Dynamic
+radiation reaction is also guarded off, so it cannot yet decide a proposed
+long-time balance between emitted radiation and mutual retarded interactions.
+A later balance study must track particle energy, near-field energy, outgoing
+radiation, and any self-force without double counting.  No classical
+point-particle result should be presented as reproducing the quantum hydrogen
+spectrum.
 
-Electron capture is a characterization and negative-control experiment, not a
-validation of atomic physics.  A classical point-particle calculation does not
-reproduce the quantum hydrogen spectrum, and magnetic interactions are normally
-fine/hyperfine corrections rather than the primary Coulomb binding mechanism.
+The archived ``TUPAB218.tex`` equations remain a research input rather than the
+implemented authority.  The maintained model follows the cited RFS sign,
+normalization, neutral-limit, and full-gradient conventions explicitly.

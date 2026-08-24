@@ -10,23 +10,40 @@ All notable changes and updates to the LW Integrator project are documented in t
   magnetic moments for electrons, positrons, protons, antiprotons, neutrons,
   deuterons, tritons, helions, and spin-zero alpha particles. H- is explicitly
   marked as requiring a custom bound-state moment model.
-- Added charged and neutral BMT/Larmor spin transport in prescribed
-  electromagnetic fields, using exact Rodrigues rotation per accepted step.
-- Added an opt-in static rest-gradient Stern--Gerlach force with SI/native unit
-  bridges, mass-shell projection, and an explicit warning that it is not a
-  unique relativistic retarded-gradient model. Nonzero impulses are rejected
-  above ``|beta| = 0.01`` rather than extrapolating the rest model to beams.
+- Selected the signed ``rfs_minimal_2021`` spin equation and full 2018
+  ``rfs_full_g`` tensor as the experimental physical model for charged and
+  neutral particle response. The earlier BMT/Frenkel plus static-rest-gradient
+  implementation remains available as a named diagnostic.
+- Added an observer-charge-independent point-charge Liénard--Wiechert field
+  evaluator. It solves the light cone against interpolated source histories at
+  the observer event and re-solves it at every centred finite-difference
+  stencil event, so the full spacetime field gradient includes retarded-time
+  variation.
+- Kept the existing charge-canonical momentum definition: the established
+  charge path supplies the Lorentz response, while RFS adds only the dipole
+  ``d G u`` four-force. Independent switches expose off, spin-only, and fully
+  coupled RFS operation without counting the Lorentz force twice. RFS field
+  and gradient sampling remains a separate, cross-bunch-only numerical path
+  rather than a unified replacement for the existing charge kernel.
 - Added spin/moment trajectory state, testbed/CLI/GUI configuration surfaces,
-  and visualization-ready spin and local-field output.
-- Magnetic dipoles are disabled by default. Pseudo-grid plus dipole dynamics is
-  rejected until spin-aware passive reconstruction is implemented; conducting
-  images and Liénard--Wiechert sources remain charge-only in this first slice.
+  and visualization-ready spin and local-field output. Magnetic dipoles remain
+  disabled by default.
+- Added explicit first-slice guards: coupled RFS is limited to COLD_START
+  BUNCH_TO_BUNCH point-charge sources with radiation-reaction dynamics,
+  same-bunch response, nonzero smearing, beamline stencil boundaries,
+  adaptive substeps, and pseudo-grid reconstruction disabled. Polarization is
+  restricted to zero or one.
+- Intrinsic dipole sourcing, dipole--dipole and hyperfine-type interactions,
+  dipole radiation, and dipole radiation reaction remain deferred. The RFS
+  implementation currently responds to prescribed and charge-generated fields
+  only.
 - Named magnetic presets are checked against the particle state's physical
   mass and observer charge, preventing accidental electron-moment/proton-mass
   hybrid particles. Deliberate custom models must state their moment and spin.
 - Added unit and integration coverage for tensor conventions, signed species,
-  charged/neutral precession, spin norm, static gradient response, neutral
-  observer dynamics, zero-gradient no-op behavior, and feature-off equivalence.
+  charged and neutral limits, covariant RFS constraints, full-G current-region
+  response, analytic light-cone roots, complete retarded gradients, static
+  diagnostic response, model/scope guards, and feature-off equivalence.
 
 ### Testbed CLI and GUI Configuration Fidelity (August 2026)
 

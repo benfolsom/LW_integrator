@@ -114,6 +114,14 @@ class IntegratorGUIConfigMixin:
                 False,
             )
         )
+        # Model selection stays out of the compact GUI controls, but preserve
+        # it when loading and saving diagnostic JSON configurations.
+        self._magnetic_dipole_spin_model = str(
+            getattr(options, "magnetic_dipole_spin_model", "rfs_minimal_2021")
+        )
+        self._magnetic_dipole_stern_gerlach_model = str(
+            getattr(options, "magnetic_dipole_stern_gerlach_model", "rfs_full_g")
+        )
 
         rider_species = str(getattr(options, "rider_magnetic_species", "electron"))
         driver_species = str(getattr(options, "driver_magnetic_species", "proton"))
@@ -167,6 +175,12 @@ class IntegratorGUIConfigMixin:
             ),
             "magnetic_dipole_stern_gerlach_force_enabled": bool(
                 self.magnetic_dipole_stern_gerlach_force_enabled_var.get()
+            ),
+            "magnetic_dipole_spin_model": getattr(
+                self, "_magnetic_dipole_spin_model", "rfs_minimal_2021"
+            ),
+            "magnetic_dipole_stern_gerlach_model": getattr(
+                self, "_magnetic_dipole_stern_gerlach_model", "rfs_full_g"
             ),
             "rider_magnetic_species": selected_species(
                 self.rider_magnetic_species_var, "rider"

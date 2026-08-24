@@ -394,8 +394,8 @@ class SimulationOptions:
     magnetic_dipole_enabled: bool = False
     magnetic_dipole_spin_precession_enabled: bool = True
     magnetic_dipole_stern_gerlach_force_enabled: bool = False
-    magnetic_dipole_spin_model: str = "bmt_frenkel"
-    magnetic_dipole_stern_gerlach_model: str = "static_rest_gradient"
+    magnetic_dipole_spin_model: str = "rfs_minimal_2021"
+    magnetic_dipole_stern_gerlach_model: str = "rfs_full_g"
     rider_magnetic_species: str = "electron"
     rider_magnetic_moment_j_per_t: Optional[float] = None
     rider_spin_quantum_number: Optional[float] = None
@@ -810,6 +810,15 @@ class SimulationOptions:
                 return (float(value[0]), float(value[1]), float(value[2]))
             except (TypeError, ValueError):
                 return (0.0, 0.0, 1.0)
+
+        rfs_enabled_by_payload = (
+            bool(_magnetic_value("enabled", False))
+            and str(_magnetic_value("spin_model", "rfs_minimal_2021")).strip().lower()
+            == "rfs_minimal_2021"
+        )
+        default_radiation_reaction_mode = (
+            "off" if rfs_enabled_by_payload else "medina_lad"
+        )
 
         particle_loss_payload_raw = payload.get("particle_loss")
         particle_loss_payload = (
@@ -1242,7 +1251,9 @@ class SimulationOptions:
             energy_monitor_check_interval=_int("energy_monitor_check_interval", 10),
             energy_monitor_halt_on_jump=_bool("energy_monitor_halt_on_jump", False),
             energy_monitor_debug=_bool("energy_monitor_debug", False),
-            adaptive_timestep_enabled=_bool("adaptive_timestep_enabled", True),
+            adaptive_timestep_enabled=_bool(
+                "adaptive_timestep_enabled", not rfs_enabled_by_payload
+            ),
             adaptive_timestep_threshold=_float("adaptive_timestep_threshold", 0.10),
             adaptive_timestep_reduction_factor=_int(
                 "adaptive_timestep_reduction_factor", 3
@@ -1310,10 +1321,10 @@ class SimulationOptions:
                 _magnetic_value("stern_gerlach_force_enabled", False)
             ),
             magnetic_dipole_spin_model=str(
-                _magnetic_value("spin_model", "bmt_frenkel")
+                _magnetic_value("spin_model", "rfs_minimal_2021")
             ),
             magnetic_dipole_stern_gerlach_model=str(
-                _magnetic_value("stern_gerlach_model", "static_rest_gradient")
+                _magnetic_value("stern_gerlach_model", "rfs_full_g")
             ),
             rider_magnetic_species=str(
                 _magnetic_particle_value("rider", "species", "electron")
@@ -1341,7 +1352,9 @@ class SimulationOptions:
             driver_polarization=float(
                 _magnetic_particle_value("driver", "polarization", 1.0)
             ),
-            radiation_reaction_mode=_str("radiation_reaction_mode", "medina_lad"),
+            radiation_reaction_mode=_str(
+                "radiation_reaction_mode", default_radiation_reaction_mode
+            ),
             particle_loss_enabled=_particle_loss_enabled(True),
             particle_loss_radius_mm=_particle_loss_optional_float(
                 "loss_radius_mm",

@@ -27,12 +27,26 @@ Run the deterministic magnetic helper and integration tests with:
 
    pytest tests/unit/test_species.py \
       tests/unit/test_magnetic_dipole.py \
+      tests/unit/test_magnetic_dipole_config.py \
+      tests/unit/test_rfs.py \
+      tests/unit/test_retarded_fields.py \
+      tests/unit/test_rfs_integration.py \
       tests/unit/test_magnetic_dipole_integration.py
 
-These tests validate signed moments, charged and neutral precession, spin
-invariants, the static-gradient rest limit, and the feature-off regression.
-They do not validate arbitrary retarded Stern--Gerlach dynamics or atomic
-binding; those models are outside the first implementation's scope.
+These tests validate signed moments, tensor conventions, charged and neutral
+limits, the three covariant spin/velocity constraints, full-G response in
+vacuum and current regions, analytic light-cone roots, complete retarded field
+gradients, matched model configuration, the static-gradient diagnostic, and
+the feature-off regression.
+
+The first coupled RFS implementation has intentionally narrow integration
+guards: fixed-step COLD_START BUNCH_TO_BUNCH point charges, no dynamic radiation
+reaction, no same-bunch RFS field, no nonzero smearing, no beamline visibility
+stencil, no pseudo-grid, and polarization zero or one.  Passing these tests does
+not validate intrinsic dipole source fields, dipole--dipole forces, dipole
+radiation, atomic binding, or long-time electron--proton capture.  Capture runs
+remain classical characterization studies and require a separate total-energy
+and radiation balance before supporting stability claims.
 
 Maintained Plotting Validation
 ------------------------------

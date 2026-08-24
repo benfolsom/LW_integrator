@@ -287,6 +287,16 @@ class TestCliConfigParsing:
         assert args.stern_gerlach_force_enabled is False
         assert args.spin_precession_enabled is False
 
+    def test_magnetic_dipole_help_names_rfs_defaults(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.parse_args(["--help"])
+
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert exc_info.value.code == 0
+        assert "intrinsic magnetic-moment dynamics (RFS by default)" in help_text
+        assert "full RFS G tensor by default" in help_text
+        assert "RFS minimal 2021 by default" in help_text
+
     def test_magnetic_species_choices_include_neutral_and_h_minus_presets(self):
         assert "neutron" in cli.MAGNETIC_SPECIES_CHOICES
         assert "h_minus" in cli.MAGNETIC_SPECIES_CHOICES
@@ -804,8 +814,45 @@ class TestCliBuildRequest:
         request = cli.build_request(_make_args())
 
         assert request.config.magnetic_dipole.enabled is False
+        assert request.config.magnetic_dipole.spin_model == "rfs_minimal_2021"
+        assert request.config.magnetic_dipole.stern_gerlach_model == "rfs_full_g"
         assert request.config.magnetic_dipole.rider.species == "electron"
         assert request.config.magnetic_dipole.driver.species == "proton"
+
+    def test_direct_config_accepts_legacy_magnetic_diagnostic_pair(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "spin_model": "bmt_frenkel",
+                "stern_gerlach_model": "static_rest_gradient",
+            }
+        )
+
+        assert magnetic.spin_model == "bmt_frenkel"
+        assert magnetic.stern_gerlach_model == "static_rest_gradient"
+
+    @pytest.mark.parametrize(
+        ("spin_model", "stern_gerlach_model", "required_model"),
+        (
+            ("bmt_frenkel", "rfs_full_g", "rfs_minimal_2021"),
+            ("rfs_minimal_2021", "static_rest_gradient", "bmt_frenkel"),
+        ),
+    )
+    def test_direct_config_rejects_mismatched_magnetic_models(
+        self,
+        spin_model: str,
+        stern_gerlach_model: str,
+        required_model: str,
+    ):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match=f"requires spin_model '{required_model}'",
+        ):
+            cli._build_magnetic_dipole_config(
+                {
+                    "spin_model": spin_model,
+                    "stern_gerlach_model": stern_gerlach_model,
+                }
+            )
 
     def test_build_request_applies_direct_magnetic_dipole_options(self):
         request = cli.build_request(
@@ -826,6 +873,17 @@ class TestCliBuildRequest:
         assert magnetic.rider.rest_spin == pytest.approx((0.0, 0.6, 0.8))
         assert magnetic.driver.species == "antiproton"
         assert magnetic.driver.rest_spin == pytest.approx((1.0, 0.0, 0.0))
+        assert request.config.radiation_reaction_mode == "off"
+
+    def test_build_request_preserves_explicit_rr_with_rfs(self):
+        request = cli.build_request(
+            _make_args(
+                magnetic_dipole_enabled=True,
+                radiation_reaction_mode="medina_lad",
+            )
+        )
+
+        assert request.config.radiation_reaction_mode == "medina_lad"
 
     def test_driver_from_rider_inherits_magnetic_species_unless_overridden(self):
         request = cli.build_request(

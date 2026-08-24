@@ -333,6 +333,7 @@ def self_consistent_step(
     pseudo_grid_space_charge_source_radii_mm: Optional[Any] = None,
     macroparticle_smearing: Optional[Any] = None,
     beamline_geometry: Optional[Any] = None,
+    magnetic_dipole: Optional[Any] = None,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -481,6 +482,12 @@ def self_consistent_step(
             {"beamline_geometry": beamline_geometry}
             if beamline_geometry is not None
             and ("beamline_geometry" in _sig_params or _accepts_var_kwargs)
+            else {}
+        ),
+        **(
+            {"magnetic_dipole": magnetic_dipole}
+            if magnetic_dipole is not None
+            and ("magnetic_dipole" in _sig_params or _accepts_var_kwargs)
             else {}
         ),
     )

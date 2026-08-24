@@ -871,6 +871,7 @@ def _run_pseudo_grid_reduced_step(
     raise_gamma_blowup: bool = False,
     macroparticle_smearing: MacroparticleSmearingConfig | None = None,
     beamline_geometry: BeamlineGeometryConfig | None = None,
+    magnetic_dipole: MagneticDipoleConfig | None = None,
 ) -> ParticleState:
     """Advance one pseudo-grid half-step via active-only observer/source solves."""
     if not observer_history:
@@ -1228,6 +1229,7 @@ def _run_adaptive_step(
     use_full_history: bool = False,
     macroparticle_smearing: MacroparticleSmearingConfig | None = None,
     beamline_geometry: BeamlineGeometryConfig | None = None,
+    magnetic_dipole: MagneticDipoleConfig | None = None,
 ) -> ParticleState:
     """Run one adaptive step, updating adaptive_state in-place.
 
@@ -1543,6 +1545,7 @@ def _run_adaptive_step(
         _temp_traj_builder = TrajectoryBuilder(
             len(temp_trajectory) + num_substeps,
             _n_p_rider,
+            magnetic_dipole=bool(magnetic_dipole and magnetic_dipole.enabled),
         )
         for step_index, state in enumerate(temp_trajectory):
             _temp_traj_builder.set_step(step_index, state)
@@ -1550,6 +1553,7 @@ def _run_adaptive_step(
         _temp_drv_builder = TrajectoryBuilder(
             len(temp_driver) + num_substeps,
             _n_p_driver,
+            magnetic_dipole=bool(magnetic_dipole and magnetic_dipole.enabled),
         )
         for step_index, state in enumerate(temp_driver):
             _temp_drv_builder.set_step(step_index, state)
@@ -1625,6 +1629,7 @@ def _run_adaptive_step(
                         ),
                         macroparticle_smearing=macroparticle_smearing,
                         beamline_geometry=beamline_geometry,
+                        magnetic_dipole=magnetic_dipole,
                     )
                 else:
                     trial_state = self_consistent_step(
@@ -1676,6 +1681,7 @@ def _run_adaptive_step(
                         ),
                         macroparticle_smearing=macroparticle_smearing,
                         beamline_geometry=beamline_geometry,
+                        magnetic_dipole=magnetic_dipole,
                     )
             except GammaBlowupError as e:
                 if adaptive_timestep is None or not adaptive_timestep.enabled:
@@ -2218,6 +2224,103 @@ def retarded_integrator(
     particle_loss = particle_loss or ParticleLossConfig()
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
+    rfs_active = bool(
+        magnetic_dipole.enabled
+        and magnetic_dipole.spin_model == "rfs_minimal_2021"
+        and (
+            magnetic_dipole.spin_precession_enabled
+            or magnetic_dipole.stern_gerlach_force_enabled
+        )
+    )
+
+    def _has_particles(state: ParticleState | None) -> bool:
+        return state is not None and np.asarray(state.get("x", np.zeros(0))).size > 0
+
+    def _has_source_charge(state: ParticleState | None) -> bool:
+        return bool(
+            state is not None
+            and np.any(
+                np.asarray(
+                    state.get("q_source", state.get("q", np.zeros(0))),
+                    dtype=float,
+                )
+            )
+        )
+
+    # Only opposing-bunch fields enter this first RFS path. A charged rider
+    # with no driver (or vice versa) has no cross-bunch source history to solve.
+    rfs_has_charge_sources = bool(
+        (_has_particles(init_rider) and _has_source_charge(init_driver))
+        or (_has_particles(init_driver) and _has_source_charge(init_rider))
+    )
+    if rfs_active:
+        if sim_type != SimulationType.BUNCH_TO_BUNCH:
+            raise NotImplementedError(
+                "rfs_minimal_2021 currently supports BUNCH_TO_BUNCH point-charge "
+                "sources. Prescribed-field-only and image-source RFS runs will be "
+                "enabled after their source histories are validated."
+            )
+        if rfs_has_charge_sources and startup_mode is not StartupMode.COLD_START:
+            raise ValueError(
+                "rfs_minimal_2021 requires COLD_START so its exact light-cone "
+                "solver can use explicit source history; "
+                "APPROXIMATE_BACK_HISTORY is not a full RFS derivative."
+            )
+        normalized_radiation_mode = str(radiation_reaction_mode).strip().lower()
+        if normalized_radiation_mode not in {
+            "off",
+            "none",
+            "disabled",
+            "diagnostic_only",
+            "diagnostic",
+            "diagnostics",
+        }:
+            raise NotImplementedError(
+                "rfs_minimal_2021 has no validated radiation-reaction completion. "
+                "Use radiation_reaction_mode='off' for dynamics or "
+                "'diagnostic_only' for read-only radiation diagnostics."
+            )
+        if _space_charge_enabled(space_charge):
+            raise NotImplementedError(
+                "rfs_minimal_2021 does not yet include same-bunch charge fields; "
+                "disable space charge for the first point-particle validation."
+            )
+        if (
+            rfs_has_charge_sources
+            and beamline_geometry is not None
+            and beamline_geometry.enabled
+        ):
+            raise NotImplementedError(
+                "rfs_minimal_2021 finite-difference stencils do not yet support "
+                "beamline visibility boundaries."
+            )
+        if adaptive_timestep is not None and adaptive_timestep.enabled:
+            raise NotImplementedError(
+                "rfs_minimal_2021 exact source histories are not yet validated "
+                "with adaptive substeps."
+            )
+        if rfs_has_charge_sources and macroparticle_smearing.enabled:
+            smearing_widths = (
+                macroparticle_smearing.position_sigma_mm,
+                macroparticle_smearing.longitudinal_sigma_mm,
+                macroparticle_smearing.momentum_sigma_amu_mm_ns,
+            )
+            if any(value is None or float(value) != 0.0 for value in smearing_widths):
+                raise NotImplementedError(
+                    "rfs_minimal_2021 currently requires zero-width point-charge "
+                    "sources; each displaced subcharge will need its own light-cone "
+                    "solve before nonzero smearing is supported."
+                )
+        for role, particle_config in (
+            ("rider", magnetic_dipole.rider),
+            ("driver", magnetic_dipole.driver),
+        ):
+            if particle_config.polarization not in {0.0, 1.0}:
+                raise ValueError(
+                    f"RFS {role} polarization must be 0 or 1 in the first coupled "
+                    "model. Partial polarization requires a weighted ensemble of "
+                    "unit-spin orientations, not a shrunken individual spin."
+                )
     # Magnetic metadata is integration-local state. Copy caller-owned inputs so
     # an enabled run cannot leave active spin arrays behind for a later disabled
     # run that reuses the same dictionaries.
@@ -2876,6 +2979,7 @@ def retarded_integrator(
                 ),
                 macroparticle_smearing=macroparticle_smearing,
                 beamline_geometry=beamline_geometry,
+                magnetic_dipole=magnetic_dipole,
             )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(
@@ -3079,6 +3183,7 @@ def retarded_integrator(
                         source_soa=_traj_builder.build_partial(i),
                         macroparticle_smearing=macroparticle_smearing,
                         beamline_geometry=beamline_geometry,
+                        magnetic_dipole=magnetic_dipole,
                     )
                 else:
                     _b2b_scs_accepts_soa = _call_accepts_kw(
@@ -3130,6 +3235,7 @@ def retarded_integrator(
                         ),
                         macroparticle_smearing=macroparticle_smearing,
                         beamline_geometry=beamline_geometry,
+                        magnetic_dipole=magnetic_dipole,
                     )
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)

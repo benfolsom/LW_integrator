@@ -157,8 +157,8 @@ DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
     "enabled": False,
     "spin_precession_enabled": True,
     "stern_gerlach_force_enabled": False,
-    "spin_model": "bmt_frenkel",
-    "stern_gerlach_model": "static_rest_gradient",
+    "spin_model": "rfs_minimal_2021",
+    "stern_gerlach_model": "rfs_full_g",
     "rider": {
         "species": "electron",
         "rest_spin": (0.0, 0.0, 1.0),
@@ -655,7 +655,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--magnetic-dipoles",
         dest="magnetic_dipole_enabled",
         action="store_true",
-        help="Enable intrinsic magnetic-moment spin dynamics.",
+        help=(
+            "Enable intrinsic magnetic-moment dynamics (RFS by default). "
+            "RR defaults to off unless an RR mode is supplied explicitly."
+        ),
     )
     parser.add_argument(
         "--no-magnetic-dipoles",
@@ -694,7 +697,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--stern-gerlach",
         dest="stern_gerlach_force_enabled",
         action="store_true",
-        help="Enable the experimental static rest-frame magnetic-gradient force.",
+        help=(
+            "Enable translational magnetic-gradient coupling using the "
+            "configured model (full RFS G tensor by default)."
+        ),
     )
     parser.add_argument(
         "--no-stern-gerlach",
@@ -707,7 +713,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--spin-precession",
         dest="spin_precession_enabled",
         action="store_true",
-        help="Enable BMT/Fermi--Walker spin precession when dipoles are enabled.",
+        help=(
+            "Enable spin transport using the configured model "
+            "(RFS minimal 2021 by default)."
+        ),
     )
     parser.add_argument(
         "--no-spin-precession",
@@ -1678,6 +1687,21 @@ def _merge_simulation_payload(
                 inherited_driver[key] = configured_driver[key]
         magnetic_dipole["driver"] = inherited_driver
 
+    radiation_mode_was_explicit = (
+        "radiation_reaction_mode" in file_payload
+        or getattr(args, "radiation_reaction_mode", None) is not None
+    )
+    if (
+        bool(magnetic_dipole.get("enabled"))
+        and str(magnetic_dipole.get("spin_model", "")).strip().lower()
+        == "rfs_minimal_2021"
+        and not radiation_mode_was_explicit
+    ):
+        # Dynamic RR has no validated RFS completion yet. Keep the ordinary
+        # Medina default when dipoles are off, but avoid inheriting an
+        # incompatible RR mode when RFS is enabled without an RR choice.
+        result["radiation_reaction_mode"] = "off"
+
     return result
 
 
@@ -1850,10 +1874,8 @@ def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
             stern_gerlach_force_enabled=payload.get(
                 "stern_gerlach_force_enabled", False
             ),
-            spin_model=payload.get("spin_model", "bmt_frenkel"),
-            stern_gerlach_model=payload.get(
-                "stern_gerlach_model", "static_rest_gradient"
-            ),
+            spin_model=payload.get("spin_model", "rfs_minimal_2021"),
+            stern_gerlach_model=payload.get("stern_gerlach_model", "rfs_full_g"),
             rider=_particle_config("rider", "electron"),
             driver=_particle_config("driver", "proton"),
         )

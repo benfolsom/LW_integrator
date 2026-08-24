@@ -419,9 +419,11 @@ class MagneticDipoleParticleConfig:
 
     ``magnetic_moment_j_per_t`` is signed with respect to the configured spin
     direction.  A value of ``None`` selects the cited value from ``species``.
-    The three-vector is a unit rest-frame polarization expressed in the lab
-    coordinate axes; ``polarization`` scales its magnitude between zero and
-    one without changing the physical single-particle moment.
+    The three-vector is a unit rest-frame spin direction expressed in the lab
+    coordinate axes. ``polarization`` is retained for legacy diagnostics, but
+    the coupled RFS model accepts only 0 or 1: partial polarization must be an
+    ensemble of full-magnitude spin orientations rather than a shrunken
+    individual spin.
     """
 
     species: str = "custom"
@@ -467,17 +469,17 @@ class MagneticDipoleConfig:
     """Configuration for experimental intrinsic magnetic-moment dynamics.
 
     Spin transport and Stern--Gerlach translation are deliberately separate.
-    ``bmt_frenkel`` denotes the neutral-capable BMT/Fermi--Walker transport
-    model.  The first translational model, ``static_rest_gradient``, consumes
-    an explicit prescribed magnetic-field gradient and is not presented as a
-    unique relativistic Stern--Gerlach law.
+    ``rfs_minimal_2021`` with ``rfs_full_g`` is the selected covariant model.
+    The ``bmt_frenkel`` and ``static_rest_gradient`` pair remains available as
+    a legacy diagnostic; the latter consumes only an explicit prescribed
+    magnetic-field gradient and is not a relativistic Stern--Gerlach law.
     """
 
     enabled: bool = False
     spin_precession_enabled: bool = True
     stern_gerlach_force_enabled: bool = False
-    spin_model: str = "bmt_frenkel"
-    stern_gerlach_model: str = "static_rest_gradient"
+    spin_model: str = "rfs_minimal_2021"
+    stern_gerlach_model: str = "rfs_full_g"
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
     )
@@ -491,11 +493,26 @@ class MagneticDipoleConfig:
         self.stern_gerlach_force_enabled = bool(self.stern_gerlach_force_enabled)
         self.spin_model = str(self.spin_model).strip().lower()
         self.stern_gerlach_model = str(self.stern_gerlach_model).strip().lower()
-        if self.spin_model != "bmt_frenkel":
-            raise ValueError("magnetic-dipole spin_model must be bmt_frenkel")
-        if self.stern_gerlach_model != "static_rest_gradient":
+        valid_spin_models = {"bmt_frenkel", "rfs_minimal_2021"}
+        if self.spin_model not in valid_spin_models:
             raise ValueError(
-                "magnetic-dipole stern_gerlach_model must be " "static_rest_gradient"
+                "magnetic-dipole spin_model must be one of: "
+                "bmt_frenkel, rfs_minimal_2021"
+            )
+        required_spin_model = {
+            "rfs_full_g": "rfs_minimal_2021",
+            "static_rest_gradient": "bmt_frenkel",
+        }.get(self.stern_gerlach_model)
+        if required_spin_model is None:
+            raise ValueError(
+                "magnetic-dipole stern_gerlach_model must be one of: "
+                "rfs_full_g, static_rest_gradient"
+            )
+        if self.spin_model != required_spin_model:
+            raise ValueError(
+                "magnetic-dipole stern_gerlach_model "
+                f"'{self.stern_gerlach_model}' requires spin_model "
+                f"'{required_spin_model}'"
             )
         if isinstance(self.rider, dict):
             self.rider = MagneticDipoleParticleConfig(**self.rider)

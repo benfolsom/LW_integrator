@@ -314,6 +314,8 @@ def test_static_rest_gradient_rejects_relativistic_particle() -> None:
             magnetic_dipole=MagneticDipoleConfig(
                 enabled=True,
                 stern_gerlach_force_enabled=True,
+                spin_model="bmt_frenkel",
+                stern_gerlach_model="static_rest_gradient",
                 rider=MagneticDipoleParticleConfig(
                     species="neutron", rest_spin=(0.0, 0.0, 1.0)
                 ),
@@ -350,6 +352,8 @@ def test_static_rest_gradient_rejects_step_that_exits_low_beta_domain() -> None:
             magnetic_dipole=MagneticDipoleConfig(
                 enabled=True,
                 stern_gerlach_force_enabled=True,
+                spin_model="bmt_frenkel",
+                stern_gerlach_model="static_rest_gradient",
                 rider=MagneticDipoleParticleConfig(
                     species="neutron", rest_spin=(0.0, 0.0, 1.0)
                 ),

@@ -17,12 +17,25 @@ Experimental magnetic moments and spin (August 2026)
 
 * Added an immutable, cited species registry with signed moments for common
   accelerator, plasma, and fusion particles, including neutral neutrons.
-* Added neutral-capable BMT/Larmor spin transport through prescribed
-  fields, exact constant-step spin rotation, and trajectory spin diagnostics.
-* Added an opt-in static rest-gradient Stern--Gerlach impulse.  Arbitrary
-  retarded gradients and source dipole fields are explicitly deferred.
-* Added nested testbed configuration, CLI/GUI controls, pseudo-grid rejection,
-  and focused physics/regression tests.  See :doc:`magnetic_dipole_moments`.
+* Selected the signed 2021 minimal RFS spin equation and full 2018
+  :math:`G^{\mu\nu}` tensor for charged and neutral response.  The BMT/Frenkel
+  and static-rest-gradient pair remains a named diagnostic.
+* Added an observer-charge-independent point-charge Lienard--Wiechert field
+  evaluator.  It re-solves the light cone at the observer and at every
+  spacetime-gradient stencil event rather than freezing one retarded sample.
+* Preserved the charge-canonical momentum definition and added only the RFS
+  dipole four-force.  CLI and GUI switches expose off, spin-only, and fully
+  coupled operation.  RFS field/gradient sampling is currently a separate,
+  cross-bunch-only path rather than a unified replacement for the charge
+  kernel.
+* Added explicit safety guards for the first implementation: COLD_START
+  BUNCH_TO_BUNCH point charges only, radiation-reaction dynamics off, no
+  same-bunch RFS response, no nonzero smearing, beamline stencil boundaries,
+  adaptive substeps, or pseudo-grid reconstruction, and polarization zero or
+  one.
+* Intrinsic dipole sourcing, mutual dipole--dipole response, and dipole
+  radiation remain deferred.  See :doc:`magnetic_dipole_moments` for the model
+  equations, references, and capture-study boundary.
 
 Testbed CLI and GUI Configuration Fidelity (August 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

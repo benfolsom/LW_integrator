@@ -100,6 +100,7 @@ from .types import (
     ChronoMatchingMode,
     GammaReconciliationMethod,
     MacroparticleSmearingConfig,
+    MagneticDipoleConfig,
     ParticleState,
     SimulationType,
     StartupMode,
@@ -469,6 +470,144 @@ def _canonical_pt_from_mechanical_mass_shell(
     kinetic_pt = np.sqrt(p_spatial_sq + np.float64(particle_mass * C_MMNS) ** 2)
     canonical_pt = kinetic_pt + np.float64(scalar_potential_contribution)
     return float(kinetic_pt), float(canonical_pt)
+
+
+def _four_velocity_si(beta: np.ndarray) -> np.ndarray:
+    """Return contravariant u=(gamma*c, gamma*c*beta) in SI units."""
+
+    from .rfs import SPEED_OF_LIGHT_M_S
+
+    beta_squared = float(beta @ beta)
+    if beta_squared >= 1.0:
+        raise ValueError("beta magnitude must be less than one")
+    gamma = 1.0 / np.sqrt(1.0 - beta_squared)
+    return np.concatenate(
+        ([gamma * SPEED_OF_LIGHT_M_S], gamma * SPEED_OF_LIGHT_M_S * beta)
+    )
+
+
+def _project_physical_spin(
+    spin_four_vector: np.ndarray,
+    four_velocity: np.ndarray,
+    target_rest_magnitude_j_s: float,
+) -> np.ndarray:
+    """Project spin onto u-orthogonal space and restore its invariant norm."""
+
+    from .rfs import SPEED_OF_LIGHT_M_S, minkowski_dot
+
+    target = float(target_rest_magnitude_j_s)
+    if target == 0.0:
+        return np.zeros(4, dtype=float)
+    projected = np.asarray(spin_four_vector, dtype=float) - np.asarray(
+        four_velocity, dtype=float
+    ) * (minkowski_dot(four_velocity, spin_four_vector) / SPEED_OF_LIGHT_M_S**2)
+    norm_squared = -minkowski_dot(projected, projected)
+    if not np.isfinite(norm_squared) or norm_squared <= 0.0:
+        raise FloatingPointError("RFS spin update produced a non-spacelike spin")
+    return np.asarray(projected * (target / np.sqrt(norm_squared)), dtype=float)
+
+
+def _advance_rfs_rest_spin(
+    rest_spin: np.ndarray,
+    *,
+    beta_start: np.ndarray,
+    beta_end: np.ndarray,
+    field_tensor: np.ndarray,
+    partial_f: np.ndarray,
+    charge_coulomb: float,
+    mass_kg: float,
+    magnetic_moment_j_per_t: float,
+    spin_quantum_number: float,
+    proper_time_step_ns: float,
+) -> np.ndarray:
+    """Advance the RFS physical four-spin and return rest-frame polarization."""
+
+    from .magnetic_dipole import (
+        HBAR_J_S,
+        boost_rest_polarization,
+        rest_polarization_from_four_vector,
+    )
+    from .rfs import (
+        dipole_charge_from_moment_si,
+        rfs_spin_rhs_si,
+    )
+
+    rest_spin = np.asarray(rest_spin, dtype=float)
+    polarization = float(np.linalg.norm(rest_spin))
+    if polarization == 0.0 or proper_time_step_ns == 0.0:
+        return rest_spin.copy()
+    invariant_spin = float(spin_quantum_number) * HBAR_J_S
+    if invariant_spin <= 0.0:
+        return rest_spin.copy()
+    physical_magnitude = invariant_spin * polarization
+    coupling = dipole_charge_from_moment_si(magnetic_moment_j_per_t, invariant_spin)
+    u_start = _four_velocity_si(beta_start)
+    u_end = _four_velocity_si(beta_end)
+    beta_midpoint = 0.5 * (beta_start + beta_end)
+    if float(beta_midpoint @ beta_midpoint) >= 1.0:
+        beta_midpoint *= np.nextafter(1.0, 0.0) / np.linalg.norm(beta_midpoint)
+    u_midpoint = _four_velocity_si(beta_midpoint)
+    spin_start = invariant_spin * boost_rest_polarization(rest_spin, beta_start)
+    delta_tau_s = float(proper_time_step_ns) * 1.0e-9
+
+    derivative_start = rfs_spin_rhs_si(
+        four_velocity_m_s=u_start,
+        spin_four_vector_j_s=spin_start,
+        field_tensor=field_tensor,
+        partial_f=partial_f,
+        charge_coulomb=charge_coulomb,
+        mass_kg=mass_kg,
+        dipole_charge=coupling,
+    )
+    spin_midpoint = _project_physical_spin(
+        spin_start + 0.5 * delta_tau_s * derivative_start,
+        u_midpoint,
+        physical_magnitude,
+    )
+    derivative_midpoint = rfs_spin_rhs_si(
+        four_velocity_m_s=u_midpoint,
+        spin_four_vector_j_s=spin_midpoint,
+        field_tensor=field_tensor,
+        partial_f=partial_f,
+        charge_coulomb=charge_coulomb,
+        mass_kg=mass_kg,
+        dipole_charge=coupling,
+    )
+    spin_end = _project_physical_spin(
+        spin_start + delta_tau_s * derivative_midpoint,
+        u_end,
+        physical_magnitude,
+    )
+    rest_end = rest_polarization_from_four_vector(
+        spin_end / invariant_spin,
+        beta_end,
+    )
+    rest_norm = float(np.linalg.norm(rest_end))
+    if rest_norm == 0.0:
+        raise FloatingPointError("RFS spin update collapsed a nonzero spin")
+    return rest_end * (polarization / rest_norm)
+
+
+def _external_tensor_gradient(
+    electric_field_v_m: np.ndarray,
+    magnetic_field_t: np.ndarray,
+    magnetic_gradient_t_per_m: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build F and partial_lambda F from the prescribed linear field."""
+
+    from .rfs import electromagnetic_field_tensor_si
+
+    field_tensor = electromagnetic_field_tensor_si(
+        tuple(float(value) for value in electric_field_v_m),
+        tuple(float(value) for value in magnetic_field_t),
+    )
+    partial_f = np.zeros((4, 4, 4), dtype=float)
+    for coordinate in range(3):
+        partial_f[coordinate + 1] = electromagnetic_field_tensor_si(
+            (0.0, 0.0, 0.0),
+            tuple(float(value) for value in magnetic_gradient_t_per_m[:, coordinate]),
+        )
+    return field_tensor, partial_f
 
 
 def _refresh_kinematics_from_canonical_momentum(
@@ -1411,6 +1550,7 @@ def retarded_equations_of_motion(
     pseudo_grid_space_charge_source_radii_mm: Optional[np.ndarray] = None,
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
+    magnetic_dipole: Optional[MagneticDipoleConfig] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1583,7 +1723,19 @@ def retarded_equations_of_motion(
         local_electric_field_v_m = np.zeros(3, dtype=float)
         local_magnetic_field_t = np.zeros(3, dtype=float)
         local_magnetic_gradient_t_per_m = np.zeros((3, 3), dtype=float)
+        rfs_field_tensor = np.zeros((4, 4), dtype=float)
+        rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
         stern_gerlach_impulse_applied = False
+        rfs_selected = bool(
+            magnetic_dipole is not None
+            and magnetic_dipole.enabled
+            and magnetic_dipole.spin_model == "rfs_minimal_2021"
+        )
+        rfs_force_selected = bool(
+            rfs_selected
+            and magnetic_dipole is not None
+            and magnetic_dipole.stern_gerlach_model == "rfs_full_g"
+        )
 
         # Self-consistency loop: iterate until gamma converges
         converged = False
@@ -1816,6 +1968,8 @@ def retarded_equations_of_motion(
             # accepted start state. Only the final iteration may trigger the
             # dipole-specific mass-shell projection below.
             stern_gerlach_impulse_applied = False
+            rfs_field_tensor = np.zeros((4, 4), dtype=float)
+            rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
 
             # ================================================================
             # STEP 4: Determine if external forces should be applied
@@ -2327,7 +2481,7 @@ def retarded_equations_of_motion(
                     if "stern_gerlach_active" in current_state
                     else False
                 )
-                if dipole_active and sg_active:
+                if dipole_active and sg_active and not rfs_force_selected:
                     from .magnetic_dipole import (
                         STATIC_REST_GRADIENT_MAX_BETA,
                         stern_gerlach_rest_impulse_native,
@@ -2403,6 +2557,127 @@ def retarded_equations_of_motion(
                         np.dot(np.asarray(particle_beta, dtype=float), sg_impulse)
                     )
                     stern_gerlach_impulse_applied = bool(np.any(sg_impulse))
+
+            # ================================================================
+            # STEP 4d: Coupled RFS response to prescribed and charge fields
+            # ================================================================
+            dipole_active = bool(
+                current_state.get("magnetic_dipole_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            precession_active = bool(
+                current_state.get("spin_precession_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            sg_active = bool(
+                current_state.get("stern_gerlach_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            if rfs_selected and dipole_active and (precession_active or sg_active):
+                from .external_fields import NATIVE_FORCE_UNIT_NEWTON
+                from .magnetic_dipole import HBAR_J_S, boost_rest_polarization
+                from .retarded_fields import (
+                    ObserverEvent,
+                    evaluate_retarded_charge_field_gradient_si,
+                )
+                from .rfs import (
+                    dipole_charge_from_moment_si,
+                    rfs_four_force_si,
+                )
+
+                external_tensor, external_partial_f = _external_tensor_gradient(
+                    local_electric_field_v_m,
+                    local_magnetic_field_t,
+                    local_magnetic_gradient_t_per_m,
+                )
+                rfs_field_tensor += external_tensor
+                rfs_partial_f += external_partial_f
+
+                if (
+                    sim_type == SimulationType.BUNCH_TO_BUNCH
+                    and len(trajectory_ext) > 0
+                ):
+                    if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                        rfs_position = (
+                            float(working_x),
+                            float(working_y),
+                            float(working_z),
+                        )
+                    else:
+                        rfs_position = (
+                            float(current_state["x"][particle_idx]),
+                            float(current_state["y"][particle_idx]),
+                            float(current_state["z"][particle_idx]),
+                        )
+                    from .retarded_fields import RetardedHistoryError
+
+                    try:
+                        charge_field = evaluate_retarded_charge_field_gradient_si(
+                            (
+                                traj_ext_soa
+                                if traj_ext_soa is not None
+                                else trajectory_ext
+                            ),
+                            ObserverEvent(
+                                time_ns=float(current_state["t"][particle_idx]),
+                                position_mm=rfs_position,
+                            ),
+                        )
+                    except RetardedHistoryError:
+                        # COLD_START intentionally supplies no extrapolated
+                        # field until explicit source samples bracket the light
+                        # cone at every finite-difference stencil event.
+                        charge_field = None
+                    if charge_field is not None:
+                        rfs_field_tensor += charge_field.field.field_tensor
+                        rfs_partial_f += charge_field.partial_f
+
+                # The existing charge-canonical path already supplies q F u.
+                # Inject only the dipole term d G u here, in all four momentum
+                # components, to avoid counting the Lorentz force twice.
+                if rfs_force_selected and sg_active:
+                    signed_moment = float(
+                        current_state["magnetic_moment_j_per_t"][particle_idx]
+                    )
+                    spin_quantum_number = float(
+                        current_state["spin_quantum_number"][particle_idx]
+                    )
+                    if spin_quantum_number > 0.0 and signed_moment != 0.0:
+                        invariant_spin = spin_quantum_number * HBAR_J_S
+                        rest_spin = np.asarray(
+                            (
+                                current_state["spin_x"][particle_idx],
+                                current_state["spin_y"][particle_idx],
+                                current_state["spin_z"][particle_idx],
+                            ),
+                            dtype=float,
+                        )
+                        beta_vector = np.asarray(particle_beta, dtype=float)
+                        physical_spin = invariant_spin * boost_rest_polarization(
+                            rest_spin, beta_vector
+                        )
+                        dipole_coupling = dipole_charge_from_moment_si(
+                            signed_moment,
+                            invariant_spin,
+                        )
+                        dipole_force_si = rfs_four_force_si(
+                            four_velocity_m_s=_four_velocity_si(beta_vector),
+                            spin_four_vector_j_s=physical_spin,
+                            field_tensor=rfs_field_tensor,
+                            partial_f=rfs_partial_f,
+                            charge_coulomb=0.0,
+                            dipole_charge=dipole_coupling,
+                        )
+                        dipole_impulse_native = (
+                            dipole_force_si / NATIVE_FORCE_UNIT_NEWTON * float(h)
+                        )
+                        accumulated_momentum_t += float(dipole_impulse_native[0])
+                        accumulated_momentum_x += float(dipole_impulse_native[1])
+                        accumulated_momentum_y += float(dipole_impulse_native[2])
+                        accumulated_momentum_z += float(dipole_impulse_native[3])
 
             # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt
@@ -3223,6 +3498,35 @@ def retarded_equations_of_motion(
                     ),
                     time_ns=float(result["t"][particle_idx]),
                 )
+            if (
+                rfs_selected
+                and sim_type == SimulationType.BUNCH_TO_BUNCH
+                and len(trajectory_ext) > 0
+            ):
+                from .retarded_fields import (
+                    ObserverEvent,
+                    RetardedHistoryError,
+                    evaluate_retarded_charge_field_si,
+                )
+
+                try:
+                    diagnostic_charge_field = evaluate_retarded_charge_field_si(
+                        traj_ext_soa if traj_ext_soa is not None else trajectory_ext,
+                        ObserverEvent(
+                            time_ns=float(result["t"][particle_idx]),
+                            position_mm=(
+                                float(result["x"][particle_idx]),
+                                float(result["y"][particle_idx]),
+                                float(result["z"][particle_idx]),
+                            ),
+                        ),
+                    )
+                except RetardedHistoryError:
+                    diagnostic_charge_field = None
+                if diagnostic_charge_field is not None:
+                    diagnostic_magnetic_field_t += (
+                        diagnostic_charge_field.magnetic_field_t
+                    )
             result["local_magnetic_field_x_t"][particle_idx] = (
                 diagnostic_magnetic_field_t[0]
             )
@@ -3240,7 +3544,6 @@ def retarded_equations_of_motion(
             if precession_active:
                 from .constants import ELEMENTARY_CHARGE
                 from .external_fields import AMU_KG, ELEMENTARY_CHARGE_COULOMB
-                from .magnetic_dipole import advance_spin_uniform_fields
 
                 spin_start = np.asarray(
                     (
@@ -3250,39 +3553,70 @@ def retarded_equations_of_motion(
                     ),
                     dtype=float,
                 )
-                beta_midpoint = 0.5 * np.asarray(
+                beta_start = np.asarray(
                     (
-                        current_state["bx"][particle_idx] + result["bx"][particle_idx],
-                        current_state["by"][particle_idx] + result["by"][particle_idx],
-                        current_state["bz"][particle_idx] + result["bz"][particle_idx],
+                        current_state["bx"][particle_idx],
+                        current_state["by"][particle_idx],
+                        current_state["bz"][particle_idx],
                     ),
                     dtype=float,
                 )
-                coordinate_step_s = (
-                    max(
-                        float(
-                            result["t"][particle_idx] - current_state["t"][particle_idx]
+                beta_end = np.asarray(
+                    (
+                        result["bx"][particle_idx],
+                        result["by"][particle_idx],
+                        result["bz"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                charge_coulomb = (
+                    float(force_particle_charge)
+                    / ELEMENTARY_CHARGE
+                    * ELEMENTARY_CHARGE_COULOMB
+                )
+                if rfs_selected:
+                    spin_next = _advance_rfs_rest_spin(
+                        spin_start,
+                        beta_start=beta_start,
+                        beta_end=beta_end,
+                        field_tensor=rfs_field_tensor,
+                        partial_f=rfs_partial_f,
+                        charge_coulomb=charge_coulomb,
+                        mass_kg=float(particle_mass) * AMU_KG,
+                        magnetic_moment_j_per_t=float(
+                            current_state["magnetic_moment_j_per_t"][particle_idx]
                         ),
-                        0.0,
+                        spin_quantum_number=float(
+                            current_state["spin_quantum_number"][particle_idx]
+                        ),
+                        proper_time_step_ns=float(h),
                     )
-                    * 1.0e-9
-                )
-                spin_next = advance_spin_uniform_fields(
-                    spin_start,
-                    beta=beta_midpoint,
-                    electric_field_v_m=local_electric_field_v_m,
-                    magnetic_field_t=local_magnetic_field_t,
-                    charge_coulomb=(
-                        float(force_particle_charge)
-                        / ELEMENTARY_CHARGE
-                        * ELEMENTARY_CHARGE_COULOMB
-                    ),
-                    mass_kg=float(particle_mass) * AMU_KG,
-                    gyromagnetic_ratio_rad_s_t=float(
-                        current_state["gyromagnetic_ratio_rad_s_t"][particle_idx]
-                    ),
-                    delta_time_s=coordinate_step_s,
-                )
+                else:
+                    from .magnetic_dipole import advance_spin_uniform_fields
+
+                    beta_midpoint = 0.5 * (beta_start + beta_end)
+                    coordinate_step_s = (
+                        max(
+                            float(
+                                result["t"][particle_idx]
+                                - current_state["t"][particle_idx]
+                            ),
+                            0.0,
+                        )
+                        * 1.0e-9
+                    )
+                    spin_next = advance_spin_uniform_fields(
+                        spin_start,
+                        beta=beta_midpoint,
+                        electric_field_v_m=local_electric_field_v_m,
+                        magnetic_field_t=local_magnetic_field_t,
+                        charge_coulomb=charge_coulomb,
+                        mass_kg=float(particle_mass) * AMU_KG,
+                        gyromagnetic_ratio_rad_s_t=float(
+                            current_state["gyromagnetic_ratio_rad_s_t"][particle_idx]
+                        ),
+                        delta_time_s=coordinate_step_s,
+                    )
                 result["spin_x"][particle_idx] = spin_next[0]
                 result["spin_y"][particle_idx] = spin_next[1]
                 result["spin_z"][particle_idx] = spin_next[2]

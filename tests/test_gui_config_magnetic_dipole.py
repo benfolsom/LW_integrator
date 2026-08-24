@@ -102,6 +102,8 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert rebuilt.magnetic_dipole_enabled is True
     assert rebuilt.magnetic_dipole_spin_precession_enabled is False
     assert rebuilt.magnetic_dipole_stern_gerlach_force_enabled is True
+    assert rebuilt.magnetic_dipole_spin_model == "rfs_minimal_2021"
+    assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert rebuilt.rider_magnetic_species == "neutron"
     assert rebuilt.driver_magnetic_species == "antiproton"
     assert rebuilt.rider_rest_spin == pytest.approx((1.0, -2.0, 0.5))
@@ -119,11 +121,32 @@ def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     assert rebuilt.magnetic_dipole_enabled is False
     assert rebuilt.magnetic_dipole_spin_precession_enabled is True
     assert rebuilt.magnetic_dipole_stern_gerlach_force_enabled is False
+    assert rebuilt.magnetic_dipole_spin_model == "rfs_minimal_2021"
+    assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert rebuilt.rider_magnetic_species == "electron"
     assert rebuilt.driver_magnetic_species == "proton"
     assert rebuilt.rider_rest_spin == (0.0, 0.0, 1.0)
     assert rebuilt.driver_rest_spin == (0.0, 0.0, 1.0)
     assert rebuilt.to_dict()["magnetic_dipole"]["enabled"] is False
+
+
+def test_legacy_model_pair_round_trips_through_compact_gui() -> None:
+    source = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {
+                "spin_model": "bmt_frenkel",
+                "stern_gerlach_model": "static_rest_gradient",
+            }
+        }
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert rebuilt.magnetic_dipole_spin_model == "bmt_frenkel"
+    assert rebuilt.magnetic_dipole_stern_gerlach_model == "static_rest_gradient"
+    assert rebuilt.to_dict()["magnetic_dipole"] == source.to_dict()["magnetic_dipole"]
 
 
 def test_magnetic_species_selector_is_backed_by_core_registry() -> None:
@@ -268,6 +291,27 @@ def test_gui_build_rejects_mismatch_and_accepts_matching_custom_values() -> None
         root.destroy()
 
 
+def test_gui_labels_present_compact_rfs_controls() -> None:
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+
+        assert "RFS" in app.magnetic_dipole_enable_check.master.cget("text")
+        assert app.magnetic_dipole_precession_check.cget("text") == "Spin precession"
+        assert app.magnetic_dipole_stern_gerlach_check.cget("text") == (
+            "Fully coupled force (Stern–Gerlach)"
+        )
+        assert not hasattr(app, "magnetic_dipole_spin_model_var")
+        assert not hasattr(app, "magnetic_dipole_stern_gerlach_model_var")
+    finally:
+        root.destroy()
+
+
 def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     common = _Widget()
     rider_combo = _Widget()
@@ -316,6 +360,40 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     assert driver_combo.config["state"] == "disabled"
     assert driver_spin.config["state"] == "disabled"
     assert driver_label.config["foreground"] == "gray"
+
+
+def test_user_enabling_rfs_selects_rr_off() -> None:
+    harness = type(
+        "StateHarness",
+        (IntegratorGUIStateMixin,),
+        {},
+    )()
+    harness.magnetic_dipole_enabled_var = _Var(True)
+    harness.radiation_reaction_mode_var = _Var("medina_lad")
+    harness.adaptive_timestep_enabled_var = _Var(True)
+    harness.sim_type_var = _Var("BUNCH_TO_BUNCH")
+    harness._magnetic_dipole_spin_model = "rfs_minimal_2021"
+
+    harness._on_magnetic_dipole_toggle()
+
+    assert harness.radiation_reaction_mode_var.get() == "off"
+    assert harness.adaptive_timestep_enabled_var.get() is False
+
+
+def test_user_enabling_legacy_dipole_model_keeps_rr_choice() -> None:
+    harness = type(
+        "StateHarness",
+        (IntegratorGUIStateMixin,),
+        {},
+    )()
+    harness.magnetic_dipole_enabled_var = _Var(True)
+    harness.radiation_reaction_mode_var = _Var("medina_lad")
+    harness.sim_type_var = _Var("BUNCH_TO_BUNCH")
+    harness._magnetic_dipole_spin_model = "bmt_frenkel"
+
+    harness._on_magnetic_dipole_toggle()
+
+    assert harness.radiation_reaction_mode_var.get() == "medina_lad"
 
 
 def test_tesla_base_field_and_t_per_m_gradient_round_trip() -> None:

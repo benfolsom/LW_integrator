@@ -25,3 +25,12 @@ Core integrator
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: core.rfs
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autofunction:: core.retarded_fields.evaluate_retarded_charge_field_si
+
+.. autofunction:: core.retarded_fields.evaluate_retarded_charge_field_gradient_si

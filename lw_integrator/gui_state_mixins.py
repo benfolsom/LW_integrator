@@ -89,6 +89,25 @@ class IntegratorGUIStateMixin:
         for label in getattr(self, "_magnetic_dipole_driver_labels", []):
             label.configure(foreground=driver_color)
 
+    def _on_magnetic_dipole_toggle(self) -> None:
+        """Apply the safe RFS default when the user enables dipole dynamics."""
+
+        rfs_enabled = (
+            bool(self.magnetic_dipole_enabled_var.get())
+            and str(getattr(self, "_magnetic_dipole_spin_model", "rfs_minimal_2021"))
+            .strip()
+            .lower()
+            == "rfs_minimal_2021"
+        )
+        if rfs_enabled:
+            if hasattr(self, "radiation_reaction_mode_var") and str(
+                self.radiation_reaction_mode_var.get()
+            ).strip().lower() not in {"off", "diagnostic_only"}:
+                self.radiation_reaction_mode_var.set("off")
+            if hasattr(self, "adaptive_timestep_enabled_var"):
+                self.adaptive_timestep_enabled_var.set(False)
+        self._toggle_magnetic_dipole_controls()
+
     def _update_image_subcharge_state(self) -> None:
         sim_type = SimulationType[self.sim_type_var.get()]
         enabled = sim_type != SimulationType.BUNCH_TO_BUNCH
