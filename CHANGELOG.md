@@ -12,6 +12,20 @@ All notable changes and updates to the LW Integrator project are documented in t
   reconstructing mechanical momentum, which affected moving-source position,
   mass-shell, and subsequent self-consistent dynamics. Static charge sources
   were unaffected because their spatial vector potential is zero.
+- Added ``INERTIAL_PREHISTORY`` for exact RFS and retarded-dipole
+  ``BUNCH_TO_BUNCH`` runs. It builds eight sparse constant-velocity knots,
+  sizes their duration conservatively from the initial causal span, and
+  geometrically extends the prefix until every initial charge and dipole
+  finite-difference light cone is bracketed. The synthetic prefix is hidden
+  from normal output, and missing exact history after preflight now raises
+  instead of silently suppressing a force.
+- Extended the exact retarded charge provider to return one consistent
+  Lienard--Wiechert four-potential, field tensor, potential derivative, and
+  field derivative. At active time zero, inertial startup maps public
+  mechanical input to canonical momentum once as
+  ``P = p + q (A_charge + A_dipole) / c`` without changing the initialized
+  motion. Synthetic coasting history deliberately does not prime the Medina
+  force derivative.
 - Derived the native elementary charge from the repository's statcoulomb
   conversion instead of retaining the historical rounded literal. This lowers
   a singly charged native value by about 21.33 ppm and a two-charge Coulomb
@@ -40,30 +54,32 @@ All notable changes and updates to the LW Integrator project are documented in t
   ``rfs_full_g`` tensor as the experimental physical model for charged and
   neutral particle response. The earlier BMT/Frenkel plus static-rest-gradient
   implementation remains available as a named diagnostic.
-- Added an observer-charge-independent point-charge Liénard--Wiechert field
-  evaluator. It solves the light cone against interpolated source histories at
-  the observer event and re-solves it at every centred finite-difference
-  stencil event, so the full spacetime field gradient includes retarded-time
-  variation.
+- Added an observer-charge-independent point-charge Liénard--Wiechert
+  potential and field evaluator. It solves the light cone against interpolated
+  source histories at the observer event and re-solves it at every centred
+  finite-difference stencil event, so the full spacetime derivatives of both
+  potential and field include retarded-time variation.
 - Ported the production RFS response and exact retarded-field evaluator from an
   internal SI island to the integrator's native scaled-Gaussian amu--mm--ns
   units. Source charge now enters as ``q_source`` directly, measured signed
   moments are converted once at initialization, and normalized spin avoids
   carrying SI action through the hot path.
-- Kept the existing charge-canonical momentum definition: the established
-  charge path supplies the Lorentz response, while RFS adds only the dipole
-  ``d G u`` four-force. Independent switches expose off, spin-only, and fully
-  coupled RFS operation without counting the Lorentz force twice. RFS field
-  and gradient sampling remains a separate, cross-bunch-only numerical path
-  rather than a unified replacement for the existing charge kernel.
+- Kept the existing charge-canonical momentum definition: the charge path
+  supplies the Lorentz response, while RFS adds only the dipole ``d G u``
+  four-force. Independent switches expose off, spin-only, and fully coupled
+  RFS operation without counting the Lorentz force twice. In inertial startup,
+  exact charge potential, field, and derivatives come from one provider;
+  COLD_START retains the established charge kernel plus a separate exact RFS
+  field/gradient sample.
 - Added spin/moment trajectory state, testbed/CLI/GUI configuration surfaces,
   and visualization-ready spin and local-field output. Magnetic dipoles remain
   disabled by default.
-- Added explicit first-slice guards: coupled RFS is limited to COLD_START
-  BUNCH_TO_BUNCH point-charge sources with same-bunch response, nonzero
-  smearing, beamline stencil boundaries, adaptive substeps, and pseudo-grid
-  reconstruction disabled. Dynamic recoil is restricted to the named
-  charge-only ``medina_lad`` hybrid. Polarization is restricted to zero or one.
+- Added explicit first-slice guards: coupled exact-field RFS is limited to
+  ``COLD_START`` or ``INERTIAL_PREHISTORY`` ``BUNCH_TO_BUNCH`` point-charge
+  sources, with same-bunch response, nonzero smearing, beamline stencil
+  boundaries, adaptive substeps, and pseudo-grid reconstruction all disabled.
+  Dynamic recoil is restricted to the named charge-only ``medina_lad`` hybrid.
+  Polarization is restricted to zero or one.
 - Added an optional full-retarded point-dipole source based on a conserved
   antisymmetric moment tensor and retarded Hertz potential. The ordinary
   non-self field includes near, induction, and radiation zones and feeds the

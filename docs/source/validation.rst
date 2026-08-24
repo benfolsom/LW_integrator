@@ -32,8 +32,10 @@ Run the deterministic magnetic helper and integration tests with:
       tests/unit/test_rfs_radiation_reaction.py \
       tests/unit/test_medina_radiation_reaction.py \
       tests/unit/test_retarded_fields.py \
+      tests/unit/test_charge_source_interactions.py \
       tests/unit/test_retarded_dipole_fields.py \
       tests/unit/test_dipole_source_interactions.py \
+      tests/unit/test_inertial_prehistory.py \
       tests/unit/test_rfs_integration.py \
       tests/unit/test_magnetic_dipole_integration.py \
       tests/unit/test_retarded_dipole_source_integration.py
@@ -48,20 +50,33 @@ Lienard--Wiechert fields across the unit boundary, and verify that the source
 evaluator uses the stored native charge without renormalization.  The dipole
 source checks cover the static and uniform-motion limits, induced electric
 field invariants, source identity exclusion, retarded-time stencil
-convergence, canonical charge response, and mutual neutral RFS response.
+convergence, canonical charge response, and mutual neutral RFS response.  The
+inertial-startup checks cover the eight sparse coasting knots, conservative
+causal sizing, geometric full-stencil preflight, hidden-prefix output, exact
+charge/dipole startup readiness, the one-time
+:math:`P=p+q(A_q+A_{\rm dip})/c` rebase, unprimed Medina history, and hard
+failure when exact source history is missing.
 
 The first coupled RFS implementation has intentionally narrow integration
-guards: fixed-step COLD_START BUNCH_TO_BUNCH point charges, no same-bunch RFS
-field, no nonzero smearing, no beamline visibility stencil, no pseudo-grid, and
-polarization zero or one.  Dynamic recoil is limited to the explicit
-charge-only ``medina_lad`` hybrid; its ``q mu`` and ``mu^2`` self-radiation
-sectors are absent.  The full-retarded point source is further limited to one
-physical particle per bunch, without macro moment scaling, driver trains, or
-synthetic coasting tails.  Passing these tests does not validate dipole
-self-reaction, contact or finite-size physics, atomic binding, or long-time
-electron--proton capture.  Capture runs remain classical characterization
-studies, must reject capped Medina impulses, and require a separate total-energy
-and radiation balance before supporting stability claims.
+guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``
+``BUNCH_TO_BUNCH`` point charges, no same-bunch RFS field, no nonzero smearing,
+no beamline visibility stencil, no pseudo-grid, and polarization zero or one.
+Inertial prehistory is an exact RFS/retarded-dipole startup mode, not a general
+replacement for startup handling.  Dynamic recoil is limited to the explicit
+charge-only ``medina_lad`` hybrid; its :math:`q\mu` and :math:`\mu^2`
+self-radiation sectors are absent.  The full-retarded point source is further
+limited to one physical particle per bunch, without macro moment scaling,
+driver trains, or cavity-exit synthetic coasting tails.  Passing these tests
+does not validate dipole self-reaction, contact or finite-size physics, atomic
+binding, or long-time electron--proton capture.
+
+Capture runs remain classical characterization studies and must reject capped
+Medina impulses.  A first-pass capture classification must converge with
+timestep, field-gradient stencil, and active starting separation.  Following
+a weakly bound return orbit is a later history-preserving multirate problem;
+neither first-pass binding nor a return trajectory closes the total energy and
+radiation balance while the :math:`q\mu` and :math:`\mu^2` self-recoil sectors
+are absent.
 
 Maintained Plotting Validation
 ------------------------------

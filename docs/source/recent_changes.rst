@@ -20,19 +20,28 @@ Experimental magnetic moments and spin (August 2026)
 * Selected the signed 2021 minimal RFS spin equation and full 2018
   :math:`G^{\mu\nu}` tensor for charged and neutral response.  The BMT/Frenkel
   and static-rest-gradient pair remains a named diagnostic.
-* Added an observer-charge-independent point-charge Lienard--Wiechert field
-  evaluator.  It re-solves the light cone at the observer and at every
-  spacetime-gradient stencil event rather than freezing one retarded sample.
+* Added an observer-charge-independent point-charge Lienard--Wiechert
+  potential and field evaluator.  It re-solves the light cone at the observer
+  and at every spacetime-gradient stencil event rather than freezing one
+  retarded sample, and returns consistent derivatives of both :math:`A` and
+  :math:`F`.
 * Preserved the charge-canonical momentum definition and added only the RFS
   dipole four-force.  CLI and GUI switches expose off, spin-only, and fully
-  coupled operation.  RFS field/gradient sampling is currently a separate,
-  cross-bunch-only path rather than a unified replacement for the charge
-  kernel.
-* Added explicit safety guards for the first implementation: COLD_START
-  BUNCH_TO_BUNCH point charges only, no same-bunch RFS response, no nonzero
-  smearing, beamline stencil boundaries, adaptive substeps, or pseudo-grid
-  reconstruction, and polarization zero or one.  Dynamic recoil is restricted
-  to the explicit charge-only ``medina_lad`` hybrid.
+  coupled operation.  Exact inertial startup now uses one charge provider for
+  canonical response and RFS field/gradient sampling; COLD_START retains the
+  established charge kernel plus the separate exact RFS sample.
+* Added ``INERTIAL_PREHISTORY`` for exact-field startup.  It builds eight
+  sparse coasting knots, sizes them conservatively, geometrically extends them
+  until all initial charge/dipole stencils preflight, hides the prefix from
+  output, and performs one time-zero
+  :math:`P=p+q(A_q+A_{\rm dip})/c` initialization.  Medina remains unprimed,
+  and a later missing light-cone root is an error.
+* Added explicit safety guards for the first implementation: fixed-step
+  ``COLD_START`` or ``INERTIAL_PREHISTORY`` ``BUNCH_TO_BUNCH`` point charges
+  only, no same-bunch RFS response, no nonzero smearing, beamline stencil
+  boundaries, adaptive substeps, or pseudo-grid reconstruction, and
+  polarization zero or one.  Dynamic recoil is restricted to the explicit
+  charge-only ``medina_lad`` hybrid.
 * Corrected production Medina/LAD to retain the complete force derivative and
   coupled its actually applied post-cap force to RFS spin through the matching
   Fermi--Walker term.  Charge--dipole and intrinsic-dipole self-recoil remain

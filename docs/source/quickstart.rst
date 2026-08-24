@@ -122,8 +122,9 @@ simulation, and confirm that the regression tooling works on your machine.
    for the complete list.
 
    Intrinsic magnetic moments are experimental and off by default.  The
-   selected RFS model is currently guarded to fixed-step, COLD_START
-   BUNCH_TO_BUNCH point-charge runs with same-bunch space charge disabled.
+   selected RFS model is currently guarded to fixed-step
+   ``BUNCH_TO_BUNCH`` point-charge runs using ``COLD_START`` or
+   ``INERTIAL_PREHISTORY``, with same-bunch space charge disabled.
    Dynamic recoil is either off or the explicit charge-only ``medina_lad``
    hybrid.  For example, add these switches to a
    suitable electron--proton BUNCH_TO_BUNCH run:
@@ -131,7 +132,7 @@ simulation, and confirm that the regression tooling works on your machine.
    .. code-block:: bash
 
       lw-simulate --simulation-type bunch-to-bunch \
-         --startup-mode cold-start \
+         --startup-mode inertial-prehistory \
          --radiation-reaction-mode off --no-adaptive-timestep \
          --magnetic-dipoles --stern-gerlach \
          --rider-magnetic-species electron --rider-spin 1 0 0 \
@@ -147,6 +148,16 @@ simulation, and confirm that the regression tooling works on your machine.
    best configured in a saved JSON.  See :doc:`magnetic_dipole_moments` for all
    hard scope guards, the diagnostic legacy models, and the retarded source
    limitations.
+
+   ``inertial-prehistory`` is the appropriate boundary model for an incoming
+   particle that existed before active time zero.  It constructs eight sparse
+   coasting knots, extends their causal span until every initial exact charge
+   and dipole stencil is bracketed, hides those knots from normal output, and
+   initializes canonical momentum once from the total retarded potential.  It
+   does not reconstruct the earlier interacting trajectory or prime Medina's
+   force derivative, so encounter results must converge as the active starting
+   separation is moved outward.  Use ``cold-start`` instead for a physical
+   field turn-on transient.
 
    Replacing ``--radiation-reaction-mode off`` with ``medina_lad`` enables the
    charge-only RFS/Medina hybrid.  It does not include intrinsic-dipole

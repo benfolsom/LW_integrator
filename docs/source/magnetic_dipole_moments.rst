@@ -138,16 +138,18 @@ express a static spatial magnetic-field gradient in T/m; that boundary is
 converted to native field per mm before the gradient is applied to the native
 position.  Unconfigured electric and time derivatives are zero.
 
-The existing charge-canonical trajectory update derived in ``main.tex`` remains
-authoritative for the :math:`qF^{\mu\nu}u_\nu` response.  RFS independently
-samples :math:`F` and :math:`\partial F` with the exact light-cone evaluator and
-adds only :math:`(\mu/c)G^{\mu\nu}[a]u_\nu`, including its temporal
-component.  This
+The charge-canonical trajectory update derived in ``main.tex`` remains
+authoritative for the :math:`qF^{\mu\nu}u_\nu` response.  Under
+``INERTIAL_PREHISTORY``, one exact charge provider returns
+:math:`A^\mu`, :math:`F^{\mu\nu}`, :math:`\partial_\lambda A^\nu`, and
+:math:`\partial_\lambda F^{\mu\nu}`.  It supplies both the canonical charge
+response and the charge part of the RFS total field.  ``COLD_START`` retains
+the established canonical charge kernel plus a separate exact RFS
+field/gradient sample.  In both modes RFS adds only
+:math:`(\mu/c)G^{\mu\nu}[a]u_\nu`, including its temporal component.  This
 avoids counting the Lorentz force twice, preserves the feature-off baseline,
 and does not redefine canonical momentum by appending
-:math:`d\mathcal B_\mu`.  It also means that the charge force and RFS response
-currently use two numerical sampling paths rather than one unified field
-kernel; that seam remains an explicit convergence and consistency target.
+:math:`d\mathcal B_\mu`.
 
 Configuration and operating modes
 ---------------------------------
@@ -217,7 +219,8 @@ A force run with spin transport disabled is possible as a frozen-spin
 diagnostic, but it is not a complete coupled RFS evolution.  On the CLI,
 ``--magnetic-dipoles`` selects spin-only RFS and adding ``--stern-gerlach``
 selects the fully coupled mode.  The RFS safety guards currently also require
-``--simulation-type bunch-to-bunch``, ``--startup-mode cold-start``,
+``--simulation-type bunch-to-bunch``, either ``--startup-mode cold-start`` or
+``--startup-mode inertial-prehistory``,
 ``--radiation-reaction-mode off``, and ``--no-adaptive-timestep`` for a pure
 RFS run.  ``--radiation-reaction-mode medina_lad`` instead selects the explicit
 charge-radiation-only RFS/Medina hybrid described below.  Other dynamic recoil
@@ -287,8 +290,9 @@ explicit source history is not extrapolated; the diagnostic remains zero and
 does not yet export a separate readiness flag.  In particular, a timestep
 longer than the source--observer light delay can leave an end-of-step field
 diagnostic unavailable even when the accepted start-of-step RFS force used a
-nonzero field.  Treat these arrays as visualization aids, not as proof that a
-field was absent.
+nonzero field.  ``INERTIAL_PREHISTORY`` instead requires every initial exact
+stencil to be ready before the run begins.  Treat these arrays as visualization
+aids, not as proof that a field was absent.
 
 The current saved local-field diagnostic does not yet add the intrinsic
 dipole-source field.  That field is present in the accepted canonical and RFS
@@ -304,8 +308,10 @@ meaning has not yet been validated:
 
 * RFS runs are limited to ``BUNCH_TO_BUNCH`` with point-charge cross-bunch
   sources.  Conducting and switching image-source modes are not enabled.
-* Charge-source RFS requires ``COLD_START`` and explicit history.  Approximate
-  back-history is not treated as a complete retarded derivative.
+* Charge-source RFS requires ``COLD_START`` or ``INERTIAL_PREHISTORY`` and
+  explicit history.  Approximate back-history is not treated as a complete
+  retarded derivative.  Inertial startup is limited to exact-field
+  ``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs and rejects driver trains.
 * Dynamic recoil is limited to ``medina_lad``.  It is an explicitly named
   charge-only hybrid, not a complete RFS radiation-reaction theory.  ``off``
   and read-only ``diagnostic_only`` also remain available; other recoil modes
@@ -352,6 +358,23 @@ The resulting total non-self field supplies charge--dipole and dipole--dipole
 force and torque without adding another pair-force law.  Adding a textbook
 dipole pair force on top would double-count the interaction.
 
+For exact inertial startup, the charge and dipole providers use the same
+explicit source histories and the same light-cone-root contract.  Within each
+provider, :math:`A`, :math:`F`, and their spacetime derivatives at one stencil
+event are evaluated from the same retarded event; no force component freezes a
+previously selected source state.  Once all initial stencils preflight, the
+integrator performs one mechanical-to-canonical initialization,
+
+.. math::
+
+   P^\mu(0)=p^\mu(0)+{q\over c}
+   \left(A_q^\mu(0)+A_{\mathrm{dip}}^\mu(0)\right),
+
+without changing the initialized velocity.  The eight-knot synthetic coasting
+prefix is hidden from output and never supplies a Medina force sample.  If an
+exact light cone later falls outside retained history, the run raises rather
+than degrading to zero field.
+
 This first implementation is a full-retarded finite-difference oracle rather
 than a fast production kernel.  ``relative_stencil_step``,
 ``minimum_stencil_step_mm``, ``root_tolerance_mm``, and
@@ -385,6 +408,23 @@ the full :math:`d(\gamma\mathbf F_{\rm ext})/dt`, using accepted midpoint
 force samples; an unprimed first sample records far radiation but applies no
 incomplete impulse.  If the numerical impulse guard caps the force, spin sees
 the same post-cap force that translation received.
+
+.. math::
+
+   \mathbf F_{\rm RAD}={2q^2\over3mc^3}
+   \left[
+   {d\over dt}\left(\gamma\mathbf F_{\rm ext}\right)
+   -{\gamma^3\over c^2}
+   \left(\mathbf F_{\rm ext}\mathbin{\cdot}\mathbf a\right)\mathbf v
+   \right].
+
+The derivative is explicitly
+
+.. math::
+
+   {d\over dt}\left(\gamma\mathbf F_{\rm ext}\right)
+   =\gamma{d\mathbf F_{\rm ext}\over dt}
+   +{d\gamma\over dt}\mathbf F_{\rm ext}.
 
 For that applied charge-radiation four-acceleration
 :math:`A_{\rm RR}^\mu`, the normalized RFS spin equation receives
@@ -423,6 +463,17 @@ radiation balance.  A later balance study must track particle energy,
 near-field energy, outgoing radiation, and every self-force without double
 counting.  No classical point-particle result should be presented as
 reproducing the quantum hydrogen spectrum.
+
+The immediate capture target is a first-pass question: does an initially
+unbound flyby leave the encounter with negative relative mechanical energy,
+with no capped Medina step?  Because ``INERTIAL_PREHISTORY`` declares inertial
+motion before a finite active start, that result must converge as the starting
+separation is moved outward.  Following a weakly bound trajectory through
+apoapsis and a return encounter is a separate long-time test; it needs a
+history-preserving multirate strategy rather than carrying the periapsis
+timestep across the entire orbit.  Such a return test will still lack a closed
+radiation balance until the missing charge--dipole :math:`q\mu` and intrinsic
+dipole :math:`\mu^2` self-recoil sectors are implemented.
 
 The archived ``TUPAB218.tex`` equations remain a research input rather than the
 implemented authority.  The maintained model follows the cited RFS sign,
