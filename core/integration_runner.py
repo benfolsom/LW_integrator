@@ -64,6 +64,13 @@ from .types import (
     TrajectoryBuilder,
 )
 
+# A sparse inertial prefix is enough for the exact light-cone interpolants:
+# a uniformly moving worldline is represented exactly on every segment.  Eight
+# knots leave useful room for knot-count invariance tests without tying the
+# prefix spacing to the (much smaller) active integration timestep.
+_INERTIAL_PREHISTORY_KNOT_COUNT = 8
+_INERTIAL_PREHISTORY_SAFETY_FACTOR = 2.0
+
 
 def _initialize_magnetic_dipole_state(
     state: ParticleState | None,
@@ -702,6 +709,303 @@ def _coast_state_by_proper_steps(
     if "t" in state:
         result["t"] = np.asarray(state["t"], dtype=float) + dt_lab
     return result
+
+
+def _coast_state_by_coordinate_time(
+    state: ParticleState,
+    coordinate_time_offset_ns: float,
+) -> ParticleState:
+    """Copy ``state`` along its inertial worldline by one lab-time offset."""
+
+    result = _copy_particle_state(state)
+    dt_lab = float(coordinate_time_offset_ns)
+    for axis, beta_key in (("x", "bx"), ("y", "by"), ("z", "bz")):
+        if axis in state and beta_key in state:
+            result[axis] = np.asarray(state[axis], dtype=float) + (
+                np.asarray(state[beta_key], dtype=float) * C_MMNS * dt_lab
+            )
+    if "t" in state:
+        result["t"] = np.asarray(state["t"], dtype=float) + dt_lab
+    # This prefix is a declared inertial model, not a backwards integration of
+    # the active equations.  Keeping nonzero acceleration samples here would
+    # make the quintic worldline interpolant contradict that declaration.
+    for axis in "xyz":
+        key = f"bdot{axis}"
+        if key in result:
+            result[key] = np.zeros_like(np.asarray(result[key]), dtype=float)
+    return result
+
+
+def _clear_medina_force_history(state: ParticleState) -> None:
+    """Keep synthetic prehistory from priming a physical force derivative."""
+
+    template = np.asarray(state.get("x", np.zeros(0)), dtype=float)
+    for name in (
+        "medina_external_force_x",
+        "medina_external_force_y",
+        "medina_external_force_z",
+        "radiation_reaction_work",
+        "medina_cross_field_energy",
+        "medina_cross_field_energy_change",
+    ):
+        state[name] = np.zeros_like(template, dtype=float)
+    state["medina_external_force_sample_time"] = np.full_like(
+        template,
+        np.nan,
+        dtype=float,
+    )
+    state["medina_force_derivative_ready"] = np.zeros_like(template, dtype=bool)
+    state["medina_impulse_capped"] = np.zeros_like(template, dtype=bool)
+
+
+def _maximum_cross_bunch_separation_mm(
+    rider: ParticleState,
+    driver: ParticleState,
+) -> float:
+    rider_positions = np.stack(
+        [np.asarray(rider[axis], dtype=float) for axis in "xyz"], axis=-1
+    )
+    driver_positions = np.stack(
+        [np.asarray(driver[axis], dtype=float) for axis in "xyz"], axis=-1
+    )
+    if rider_positions.size == 0 or driver_positions.size == 0:
+        return 0.0
+    pair_offsets = (
+        rider_positions[:, np.newaxis, :] - driver_positions[np.newaxis, :, :]
+    )
+    return float(np.max(np.linalg.norm(pair_offsets, axis=-1)))
+
+
+def _maximum_beta_magnitude(*states: ParticleState | None) -> float:
+    maximum = 0.0
+    for state in states:
+        if state is None or not len(np.asarray(state.get("x", []))):
+            continue
+        beta = np.stack(
+            [np.asarray(state.get(f"b{axis}"), dtype=float) for axis in "xyz"],
+            axis=-1,
+        )
+        if not np.all(np.isfinite(beta)):
+            raise ValueError("inertial prehistory requires finite beta components")
+        maximum = max(maximum, float(np.max(np.linalg.norm(beta, axis=-1))))
+    if not np.isfinite(maximum) or maximum >= 1.0:
+        raise ValueError("inertial prehistory requires finite subluminal beta")
+    return maximum
+
+
+def _estimate_inertial_prehistory_duration_ns(
+    rider: ParticleState,
+    driver: ParticleState,
+    magnetic_dipole: MagneticDipoleConfig,
+    *,
+    safety_factor: float = _INERTIAL_PREHISTORY_SAFETY_FACTOR,
+) -> float:
+    """Conservatively cover every initial exact-field stencil light cone."""
+
+    safety = float(safety_factor)
+    if not np.isfinite(safety) or safety < 1.0:
+        raise ValueError("inertial prehistory safety_factor must be finite and >= 1")
+    separation = _maximum_cross_bunch_separation_mm(rider, driver)
+    if magnetic_dipole.enabled and magnetic_dipole.source.active:
+        relative_step = max(
+            1.0e-4,
+            float(magnetic_dipole.source.relative_stencil_step),
+        )
+        minimum_step = max(
+            1.0e-15,
+            float(magnetic_dipole.source.minimum_stencil_step_mm),
+        )
+    else:
+        # Exact charge-field RFS defaults.  The dipole oracle, when active,
+        # dominates this with its normally larger three-derivative stencil.
+        relative_step = 1.0e-4
+        minimum_step = 1.0e-15
+    stencil_step = max(minimum_step, relative_step * separation)
+    beta_max = _maximum_beta_magnitude(rider, driver)
+    causal_span_mm = separation + 3.0 * stencil_step
+    duration = safety * causal_span_mm / (C_MMNS * max(1.0e-15, 1.0 - beta_max))
+    if not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError("could not construct a finite positive inertial prehistory")
+    return float(duration)
+
+
+def _build_inertial_coasting_history(
+    active_state: ParticleState,
+    duration_ns: float,
+    *,
+    knot_count: int = _INERTIAL_PREHISTORY_KNOT_COUNT,
+) -> Trajectory:
+    """Build a sparse constant-velocity history ending at ``active_state``."""
+
+    duration = float(duration_ns)
+    knots = int(knot_count)
+    if not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError("inertial prehistory duration must be finite and positive")
+    if knots < 2:
+        raise ValueError("inertial prehistory requires at least two knots")
+    for axis in "xyz":
+        acceleration = np.asarray(
+            active_state.get(f"bdot{axis}", np.zeros_like(active_state["x"])),
+            dtype=float,
+        )
+        if not np.all(np.isfinite(acceleration)) or np.any(acceleration != 0.0):
+            raise ValueError(
+                "INERTIAL_PREHISTORY requires zero initial bdot; it is a fresh "
+                "constant-velocity boundary model, not a restart extrapolation"
+            )
+    offsets = np.linspace(-duration, 0.0, knots)
+    history = [
+        _coast_state_by_coordinate_time(active_state, float(offset))
+        for offset in offsets
+    ]
+    oldest = history[0]
+    for state in history:
+        for axis in ("x", "y", "z"):
+            state[f"origin_{axis}"] = np.copy(oldest[axis])
+        state["beta_avg_x"] = np.copy(state.get("bx", oldest["x"] * 0.0))
+        state["beta_avg_y"] = np.copy(state.get("by", oldest["y"] * 0.0))
+        state["beta_avg_z"] = np.copy(state.get("bz", oldest["z"] * 0.0))
+        state["beta_samples"] = np.ones_like(oldest["x"], dtype=float)
+        for readiness_key in (
+            "charge_source_canonical_ready",
+            "dipole_source_canonical_ready",
+        ):
+            if readiness_key in state:
+                state[readiness_key] = np.zeros_like(
+                    np.asarray(state[readiness_key]), dtype=bool
+                )
+        _clear_medina_force_history(state)
+    return history
+
+
+def _preflight_inertial_exact_histories(
+    rider_history: Trajectory,
+    driver_history: Trajectory,
+    *,
+    magnetic_dipole: MagneticDipoleConfig,
+    charge_field_required: bool,
+    dipole_field_required: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Preflight exact stencils and return each active state's total ``qA/c``."""
+
+    from .charge_source_interactions import (
+        evaluate_retarded_charge_source_interaction_native,
+    )
+    from .retarded_fields import ObserverEvent
+
+    if dipole_field_required:
+        from .dipole_source_interactions import (
+            evaluate_retarded_dipole_source_interaction_native,
+        )
+
+    source_options = magnetic_dipole.source
+    rider_offsets = np.zeros((len(np.asarray(rider_history[-1]["x"])), 4))
+    driver_offsets = np.zeros((len(np.asarray(driver_history[-1]["x"])), 4))
+    directions = (
+        (rider_history[-1], driver_history, rider_offsets),
+        (driver_history[-1], rider_history, driver_offsets),
+    )
+    for observer_state, source_history, potential_offsets in directions:
+        particle_count = len(np.asarray(observer_state.get("x", [])))
+        for particle_idx in range(particle_count):
+            beta = np.asarray(
+                [observer_state[f"b{axis}"][particle_idx] for axis in "xyz"],
+                dtype=float,
+            )
+            gamma = 1.0 / np.sqrt(1.0 - float(beta @ beta))
+            four_velocity = gamma * C_MMNS * np.concatenate(((1.0,), beta))
+            observer_charge = float(
+                np.asarray(
+                    observer_state.get(
+                        "q_observer",
+                        observer_state.get("q", np.zeros(particle_count)),
+                    ),
+                    dtype=float,
+                )[particle_idx]
+            )
+            event = ObserverEvent(
+                time_ns=float(observer_state["t"][particle_idx]),
+                position_mm=(
+                    float(observer_state["x"][particle_idx]),
+                    float(observer_state["y"][particle_idx]),
+                    float(observer_state["z"][particle_idx]),
+                ),
+            )
+            if charge_field_required:
+                charge_interaction = evaluate_retarded_charge_source_interaction_native(
+                    source_history,
+                    event,
+                    four_velocity_mm_ns=four_velocity,
+                    observer_charge_native=observer_charge,
+                    proper_time_step_ns=0.0,
+                    relative_step=max(
+                        1.0e-4,
+                        (
+                            float(source_options.relative_stencil_step)
+                            if source_options.active
+                            else 1.0e-4
+                        ),
+                    ),
+                    minimum_step_mm=max(
+                        1.0e-15,
+                        (
+                            float(source_options.minimum_stencil_step_mm)
+                            if source_options.active
+                            else 1.0e-15
+                        ),
+                    ),
+                    root_tolerance_mm=(
+                        float(source_options.root_tolerance_mm)
+                        if source_options.active
+                        else 1.0e-21
+                    ),
+                    max_root_iterations=(
+                        int(source_options.max_root_iterations)
+                        if source_options.active
+                        else 96
+                    ),
+                )
+                potential_offsets[
+                    particle_idx
+                ] += charge_interaction.canonical_potential_momentum
+            if dipole_field_required:
+                dipole_interaction = evaluate_retarded_dipole_source_interaction_native(
+                    source_history,
+                    event,
+                    four_velocity_mm_ns=four_velocity,
+                    observer_charge_native=observer_charge,
+                    proper_time_step_ns=0.0,
+                    relative_step=float(source_options.relative_stencil_step),
+                    minimum_step_mm=float(source_options.minimum_stencil_step_mm),
+                    minimum_separation_mm=float(source_options.minimum_separation_mm),
+                    root_tolerance_mm=float(source_options.root_tolerance_mm),
+                    max_root_iterations=int(source_options.max_root_iterations),
+                )
+                potential_offsets[
+                    particle_idx
+                ] += dipole_interaction.canonical_potential_momentum
+    return rider_offsets, driver_offsets
+
+
+def _apply_inertial_canonical_rebase(
+    state: ParticleState,
+    potential_momentum: np.ndarray,
+    *,
+    charge_field_ready: bool,
+    dipole_field_ready: bool,
+) -> None:
+    """Map public mechanical input to canonical momentum without changing motion."""
+
+    offsets = np.asarray(potential_momentum, dtype=float)
+    particle_count = len(np.asarray(state.get("x", [])))
+    if offsets.shape != (particle_count, 4) or not np.all(np.isfinite(offsets)):
+        raise ValueError("canonical prehistory offsets must have shape [particles, 4]")
+    for component_index, key in enumerate(("Pt", "Px", "Py", "Pz")):
+        state[key] = np.asarray(state[key], dtype=float) + offsets[:, component_index]
+    if charge_field_ready:
+        state["charge_source_canonical_ready"] = np.ones(particle_count, dtype=bool)
+    if dipole_field_ready and "dipole_source_canonical_ready" in state:
+        state["dipole_source_canonical_ready"] = np.ones(particle_count, dtype=bool)
 
 
 def _build_coasting_history(
@@ -2294,12 +2598,13 @@ def retarded_integrator(
                 "image-source runs will be enabled after their source histories "
                 "are validated."
             )
-        if (
-            rfs_has_charge_sources or dipole_source_active
-        ) and startup_mode is not StartupMode.COLD_START:
+        if (rfs_has_charge_sources or dipole_source_active) and startup_mode not in {
+            StartupMode.COLD_START,
+            StartupMode.INERTIAL_PREHISTORY,
+        }:
             raise ValueError(
                 "Exact RFS/dipole-source light-cone evaluation requires "
-                "COLD_START with explicit source history; "
+                "COLD_START or INERTIAL_PREHISTORY with explicit source history; "
                 "APPROXIMATE_BACK_HISTORY is not a full RFS derivative."
             )
         if dipole_source_active and magnetic_dipole.spin_model != "rfs_minimal_2021":
@@ -2416,6 +2721,30 @@ def retarded_integrator(
         init_driver, magnetic_dipole.driver, magnetic_dipole, role="driver"
     )
     driver_train_enabled = bool(driver_train.enabled)
+    inertial_prehistory_enabled = startup_mode is StartupMode.INERTIAL_PREHISTORY
+    if inertial_prehistory_enabled:
+        if not exact_magnetic_active:
+            raise ValueError(
+                "INERTIAL_PREHISTORY is currently an exact RFS/dipole-source "
+                "startup mode; enable rfs_minimal_2021 response or the retarded "
+                "dipole source"
+            )
+        if sim_type is not SimulationType.BUNCH_TO_BUNCH:
+            raise NotImplementedError(
+                "INERTIAL_PREHISTORY currently supports BUNCH_TO_BUNCH source "
+                "histories only"
+            )
+        if init_driver is None:
+            raise ValueError("INERTIAL_PREHISTORY requires init_driver")
+        if driver_train_enabled:
+            raise NotImplementedError(
+                "INERTIAL_PREHISTORY cannot yet be combined with driver trains"
+            )
+        for state in (init_rider, init_driver):
+            state["charge_source_canonical_ready"] = np.zeros(
+                len(np.asarray(state.get("x", []))),
+                dtype=bool,
+            )
     driver_train_bunch_ranges: tuple[slice, ...] = ()
     if driver_train_enabled and init_driver is not None:
         driver_train_bunch_ranges = _driver_train_bunch_slices(
@@ -2449,7 +2778,16 @@ def retarded_integrator(
         if init_driver is None:
             raise ValueError("Cavity-exit cutoff requires init_driver state")
 
-    active_start = int(driver_train.prehistory_steps) if driver_train_enabled else 0
+    inertial_prehistory_duration_ns: float | None = None
+    if inertial_prehistory_enabled:
+        inertial_prehistory_duration_ns = _estimate_inertial_prehistory_duration_ns(
+            init_rider,
+            cast(ParticleState, init_driver),
+            magnetic_dipole,
+        )
+        active_start = _INERTIAL_PREHISTORY_KNOT_COUNT - 1
+    else:
+        active_start = int(driver_train.prehistory_steps) if driver_train_enabled else 0
     requested_steps = int(steps)
     total_steps = requested_steps + active_start
 
@@ -2524,16 +2862,65 @@ def retarded_integrator(
 
     # Canonical integration implementation
 
-    rider_seed_history = (
-        _build_coasting_history(init_rider, h_step, active_start)
-        if driver_train_enabled
-        else [init_rider]
-    )
-    driver_seed_history = (
-        _build_coasting_history(cast(ParticleState, init_driver), h_step, active_start)
-        if driver_train_enabled and init_driver is not None
-        else None
-    )
+    if inertial_prehistory_enabled:
+        if inertial_prehistory_duration_ns is None or init_driver is None:
+            raise RuntimeError("inertial prehistory was not initialized")
+        from .retarded_fields import RetardedHistoryError
+
+        for extension_attempt in range(8):
+            rider_seed_history = _build_inertial_coasting_history(
+                init_rider,
+                inertial_prehistory_duration_ns,
+            )
+            driver_seed_history = _build_inertial_coasting_history(
+                init_driver,
+                inertial_prehistory_duration_ns,
+            )
+            try:
+                rider_potential_momentum, driver_potential_momentum = (
+                    _preflight_inertial_exact_histories(
+                        rider_seed_history,
+                        driver_seed_history,
+                        magnetic_dipole=magnetic_dipole,
+                        charge_field_required=exact_magnetic_active,
+                        dipole_field_required=dipole_source_active,
+                    )
+                )
+            except RetardedHistoryError:
+                if extension_attempt == 7:
+                    raise RuntimeError(
+                        "INERTIAL_PREHISTORY could not bracket every initial "
+                        "exact-field stencil after eight geometric extensions"
+                    )
+                inertial_prehistory_duration_ns *= 2.0
+                continue
+            _apply_inertial_canonical_rebase(
+                rider_seed_history[-1],
+                rider_potential_momentum,
+                charge_field_ready=exact_magnetic_active,
+                dipole_field_ready=dipole_source_active,
+            )
+            _apply_inertial_canonical_rebase(
+                driver_seed_history[-1],
+                driver_potential_momentum,
+                charge_field_ready=exact_magnetic_active,
+                dipole_field_ready=dipole_source_active,
+            )
+            break
+    else:
+        rider_seed_history = (
+            _build_coasting_history(init_rider, h_step, active_start)
+            if driver_train_enabled
+            else [init_rider]
+        )
+        driver_seed_history = (
+            _build_coasting_history(
+                cast(ParticleState, init_driver), h_step, active_start
+            )
+            if driver_train_enabled and init_driver is not None
+            else None
+        )
+    seed_history_enabled = bool(driver_train_enabled or inertial_prehistory_enabled)
     for seed_state in rider_seed_history:
         _initialize_magnetic_field_diagnostic(seed_state, external_field)
     if driver_seed_history is not None:
@@ -2849,7 +3236,11 @@ def retarded_integrator(
         list[dict[str, float]],
     ]:
         loc = list(_pseudo_grid_charge_localization)
-        if not driver_train_enabled or driver_train.preserve_prehistory_in_output:
+        hide_seed_prehistory = bool(
+            inertial_prehistory_enabled
+            or (driver_train_enabled and not driver_train.preserve_prehistory_in_output)
+        )
+        if not hide_seed_prehistory:
             return rider_traj, driver_traj, rider_soa, driver_soa, loc
         start = min(active_start, len(rider_traj))
         stop = len(rider_traj)
@@ -2867,7 +3258,7 @@ def retarded_integrator(
             raise IntegrationCancelled("Integration cancelled by caller.")
         if i <= active_start:
             trajectory[i] = (
-                rider_seed_history[i] if driver_train_enabled else init_rider
+                rider_seed_history[i] if seed_history_enabled else init_rider
             )
             _ensure_startup_metadata(trajectory[i])
             _set_pseudo_grid_schedule_metadata(trajectory[i], None)
@@ -2896,7 +3287,7 @@ def retarded_integrator(
                     raise ValueError(
                         "SimulationType.BUNCH_TO_BUNCH requires init_driver state"
                     )
-                if driver_train_enabled and driver_seed_history is not None:
+                if seed_history_enabled and driver_seed_history is not None:
                     trajectory_drv[i] = driver_seed_history[i]
                 else:
                     trajectory_drv[i] = init_driver
