@@ -41,12 +41,16 @@ and
              [F.a - u (u.F.a)/c^2] + mu/(m c) G[a].a``.
 
 The partial derivative used to form ``G`` acts on the supplied field while
-holding the observer spin fixed. Source-spin retardation and derivatives,
-self-field removal, and radiation reaction are responsibilities of the caller.
+holding the observer spin fixed. Source-spin retardation and derivatives and
+self-field removal are responsibilities of the caller.  This module does not
+compute radiation reaction, but it can convert an actually applied charge-
+radiation three-force into the four-acceleration and Fermi--Walker spin term
+needed to preserve the RFS spin constraints.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from itertools import permutations
 from typing import Sequence, Tuple, Union, cast
 
@@ -60,6 +64,24 @@ MINKOWSKI_METRIC = np.diag((1.0, -1.0, -1.0, -1.0))
 VectorLike = Union[Sequence[float], np.ndarray]
 TensorLike = Union[Sequence[Sequence[float]], np.ndarray]
 GradientLike = Union[Sequence[Sequence[Sequence[float]]], np.ndarray]
+
+
+@dataclass(frozen=True)
+class RFSRadiationReactionTerms:
+    """Charge-radiation terms needed for constraint-compatible spin transport.
+
+    ``four_acceleration`` is ``du^mu/dtau`` in ``mm/ns^2``.  The
+    dimensionless-spin ``spin_rhs_correction`` is in ``1/ns`` and must be added
+    once to the RFS spin right-hand side when the corresponding radiation-
+    reaction acceleration is added to the translational dynamics.
+
+    The arrays describe the actually applied force supplied by the caller.  In
+    particular, if a Medina impulse was capped, the caller must pass the capped
+    three-force rather than the uncapped kernel result.
+    """
+
+    four_acceleration: np.ndarray
+    spin_rhs_correction: np.ndarray
 
 
 def _permutation_sign(indices: Sequence[int]) -> float:
@@ -83,6 +105,15 @@ def _four_vector(value: VectorLike, *, name: str) -> np.ndarray:
     vector = np.asarray(value, dtype=float)
     if vector.shape != (4,):
         raise ValueError(f"{name} must have shape (4,)")
+    if not np.all(np.isfinite(vector)):
+        raise ValueError(f"{name} must contain only finite values")
+    return vector
+
+
+def _three_vector(value: VectorLike, *, name: str) -> np.ndarray:
+    vector = np.asarray(value, dtype=float)
+    if vector.shape != (3,):
+        raise ValueError(f"{name} must have shape (3,)")
     if not np.all(np.isfinite(vector)):
         raise ValueError(f"{name} must contain only finite values")
     return vector
@@ -123,6 +154,63 @@ def minkowski_dot(left: VectorLike, right: VectorLike) -> float:
     left_vector = _four_vector(left, name="left")
     right_vector = _four_vector(right, name="right")
     return float(left_vector @ MINKOWSKI_METRIC @ right_vector)
+
+
+def rfs_charge_radiation_reaction_terms_native(
+    *,
+    four_velocity_mm_ns: VectorLike,
+    spin_four_vector: VectorLike,
+    applied_radiation_reaction_force_native: VectorLike,
+    mass_amu: float,
+) -> RFSRadiationReactionTerms:
+    """Return the charge-RR acceleration and compatible spin correction.
+
+    ``applied_radiation_reaction_force_native`` is the mechanical lab-frame
+    three-force ``d p / d t`` in ``amu mm/ns^2``.  It must be the force that
+    the momentum update actually applies: if a Medina impulse cap changed the
+    result, pass the capped impulse divided by the same coordinate-time step.
+    Passing the uncapped kernel force would make spin follow an acceleration
+    that the translational dynamics did not receive.
+
+    For ``u^mu = gamma c (1, beta)`` and applied three-force ``f``, the returned
+    four-acceleration is
+
+    ``A_RR^mu = gamma/m (beta . f, f)``.
+
+    The spin correction uses the Fermi--Walker term
+
+    ``delta da^mu/dtau = -u^mu (A_RR . a) / c^2``.
+
+    Thus, for an initially physical normalized spin (``u.a = 0``), adding the
+    two returned arrays to the translational and spin right-hand sides gives
+    ``d(u.a)/dtau = 0`` and ``d(a.a)/dtau = 0`` instantaneously.  The helper
+    models only compatibility with an already computed charge-radiation
+    force.  It adds no intrinsic-dipole self-reaction or ``q mu`` interference.
+    """
+
+    mass = float(mass_amu)
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("mass_amu must be finite and positive")
+
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    spin = _four_vector(spin_four_vector, name="spin_four_vector")
+    applied_force = _three_vector(
+        applied_radiation_reaction_force_native,
+        name="applied_radiation_reaction_force_native",
+    )
+    if velocity[0] <= 0.0:
+        raise ValueError("four_velocity_mm_ns must be future-directed")
+
+    four_acceleration = np.empty(4, dtype=float)
+    four_acceleration[0] = float(np.dot(applied_force, velocity[1:]) / (mass * C_MMNS))
+    four_acceleration[1:] = velocity[0] * applied_force / (mass * C_MMNS)
+
+    acceleration_dot_spin = float(four_acceleration @ MINKOWSKI_METRIC @ spin)
+    spin_rhs_correction = -velocity * acceleration_dot_spin / C_MMNS**2
+    return RFSRadiationReactionTerms(
+        four_acceleration=four_acceleration,
+        spin_rhs_correction=spin_rhs_correction,
+    )
 
 
 def electromagnetic_field_tensor_native(
@@ -306,12 +394,14 @@ def rfs_spin_rhs_native(
 
 __all__ = [
     "MINKOWSKI_METRIC",
+    "RFSRadiationReactionTerms",
     "electromagnetic_field_tensor_native",
     "fields_from_tensor_native",
     "hodge_dual",
     "lower_four_vector",
     "magnetic_four_potential_covariant",
     "minkowski_dot",
+    "rfs_charge_radiation_reaction_terms_native",
     "rfs_four_force_native",
     "rfs_g_tensor",
     "rfs_spin_rhs_native",
