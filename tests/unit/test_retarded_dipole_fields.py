@@ -8,6 +8,8 @@ import pytest
 from core.constants import C_MMNS
 from core.retarded_dipole_fields import (
     DipoleSourceSingularityError,
+    _interpolate_rest_spin_c1,
+    _prepare_dipole_history,
     evaluate_retarded_dipole_field_gradient_native,
     evaluate_retarded_dipole_hertz_tensor_native,
 )
@@ -305,3 +307,26 @@ def test_duplicate_source_identities_are_rejected() -> None:
             ObserverEvent(0.0, (1.0, 0.0, 0.0)),
             source_identities=("same", "same"),
         )
+
+
+def test_c1_spin_interpolation_preserves_a_constant_physical_moment() -> None:
+    angular_frequency_per_ns = 35.0
+
+    def rotating_unit_spin(time_ns: float) -> np.ndarray:
+        angle = angular_frequency_per_ns * time_ns
+        return np.array((np.cos(angle), np.sin(angle), 0.0))
+
+    prepared = _prepare_dipole_history(
+        _dipole_history(spin_function=rotating_unit_spin),
+        source_identities=("rotating-dipole",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    source = prepared.sources[0]
+    knot_times = source.worldline.time_ns
+    midpoint_times = 0.5 * (knot_times[:-1] + knot_times[1:])
+    interpolated = np.stack(
+        [_interpolate_rest_spin_c1(source, float(time)) for time in midpoint_times]
+    )
+
+    np.testing.assert_allclose(np.linalg.norm(interpolated, axis=1), 1.0, atol=2e-16)

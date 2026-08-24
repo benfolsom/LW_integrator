@@ -37,9 +37,10 @@ Conventions
 * ``partial_f[lambda, mu, nu]`` is ``partial_lambda F^(mu nu)`` per
   millimetre.
 * Source rest-spin histories are interpolated with a shared-slope cubic
-  Hermite interpolant, which is C1 at history knots.  They are not
-  renormalized: a production caller should supply unit rest spins for fully
-  polarized individual particles.
+  Hermite interpolant, which is C1 at history knots.  When every stored knot
+  has the same spin magnitude, the interpolant is smoothly projected back to
+  that magnitude; a fully polarized source therefore cannot acquire a
+  step-size-dependent moment merely from Cartesian interpolation.
 
 The point source is singular.  ``minimum_separation_mm`` is a strict numerical
 guard, not a finite-size or softening model.  Dipole self-reaction and contact
@@ -135,6 +136,7 @@ class _PreparedDipoleSource:
     worldline: _PreparedSourceHistory
     rest_spin: np.ndarray
     rest_spin_derivative_per_ns: np.ndarray
+    preserved_rest_spin_magnitude: float | None
     magnetic_moment_native: float
 
 
@@ -238,6 +240,18 @@ def _prepare_dipole_history(
         worldline = _prepare_source_history(arrays, source_index)
         alive_count = int(worldline.time_ns.size)
         source_spin = spin[:alive_count, source_index]
+        source_spin_norm = np.linalg.norm(source_spin, axis=1)
+        preserved_magnitude = (
+            float(source_spin_norm[0])
+            if source_spin_norm.size
+            and np.allclose(
+                source_spin_norm,
+                source_spin_norm[0],
+                rtol=1.0e-10,
+                atol=1.0e-12,
+            )
+            else None
+        )
         sources[source_index] = _PreparedDipoleSource(
             identity=identity,
             worldline=worldline,
@@ -245,6 +259,7 @@ def _prepare_dipole_history(
             rest_spin_derivative_per_ns=_source_spin_slopes_per_ns(
                 source_spin, worldline.time_ns
             ),
+            preserved_rest_spin_magnitude=preserved_magnitude,
             magnetic_moment_native=float(moments[source_index]),
         )
     return _PreparedDipoleHistory(
@@ -272,12 +287,26 @@ def _interpolate_rest_spin_c1(
     h10 = fraction_cubed - 2.0 * fraction_squared + fraction
     h01 = -2.0 * fraction_cubed + 3.0 * fraction_squared
     h11 = fraction_cubed - fraction_squared
-    return cast(
-        np.ndarray,
+    interpolated = np.asarray(
         h00 * source.rest_spin[segment]
         + h10 * duration * source.rest_spin_derivative_per_ns[segment]
         + h01 * source.rest_spin[segment + 1]
         + h11 * duration * source.rest_spin_derivative_per_ns[segment + 1],
+    )
+    target_magnitude = source.preserved_rest_spin_magnitude
+    if target_magnitude is None:
+        return cast(np.ndarray, interpolated)
+    if target_magnitude == 0.0:
+        return cast(np.ndarray, np.zeros(3, dtype=float))
+    interpolated_magnitude = float(np.linalg.norm(interpolated))
+    if interpolated_magnitude <= 1.0e-15:
+        raise RetardedHistoryError(
+            "constant-magnitude source-spin interpolation crossed zero; "
+            "reduce the source-history timestep"
+        )
+    return cast(
+        np.ndarray,
+        interpolated * (target_magnitude / interpolated_magnitude),
     )
 
 
