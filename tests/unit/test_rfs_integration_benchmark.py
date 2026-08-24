@@ -23,15 +23,15 @@ def test_integration_benchmark_payload_and_comparison() -> None:
     report = {"trajectory": {"rider": deepcopy(payload), "driver": deepcopy(payload)}}
     changed = deepcopy(report)
     changed["trajectory"]["rider"]["arrays"]["x"][-1][0] += 1.0e-12
-    changed["trajectory"]["rider"]["sha256"] = "different"
+    changed["trajectory"]["rider"]["selected_arrays_sha256"] = "different"
 
     identical = benchmark.compare_reports(report, deepcopy(report))
     comparison = benchmark.compare_reports(changed, report)
 
     assert payload["steps"] == 3
     assert set(payload["arrays"]) == {"t", "x", "spin_z"}
-    assert identical["rider"]["sha256_equal"] is True
+    assert identical["rider"]["selected_arrays_sha256_equal"] is True
     assert identical["rider"]["maximum_absolute"] == 0.0
-    assert comparison["rider"]["sha256_equal"] is False
+    assert comparison["rider"]["selected_arrays_sha256_equal"] is False
     assert comparison["rider"]["fields"]["x"]["maximum_absolute"] > 0.0
     assert comparison["driver"]["maximum_absolute"] == 0.0

@@ -138,8 +138,9 @@ def _trajectory_payload(trajectory: Sequence[dict[str, Any]]) -> dict[str, Any]:
         digest.update(contiguous.tobytes())
     return {
         "steps": len(trajectory),
+        "selected_keys": list(arrays),
         "arrays": arrays,
-        "sha256": digest.hexdigest(),
+        "selected_arrays_sha256": digest.hexdigest(),
     }
 
 
@@ -184,7 +185,8 @@ def compare_reports(
             for key in current_arrays
         }
         comparison[role] = {
-            "sha256_equal": current_role["sha256"] == reference_role["sha256"],
+            "selected_arrays_sha256_equal": _selected_arrays_sha256(current_role)
+            == _selected_arrays_sha256(reference_role),
             "fields": field_metrics,
             "maximum_absolute": max(
                 (metric["maximum_absolute"] for metric in field_metrics.values()),
@@ -196,6 +198,15 @@ def compare_reports(
             ),
         }
     return comparison
+
+
+def _selected_arrays_sha256(role_payload: dict[str, Any]) -> str:
+    """Read the explicit hash name, accepting schema-v1 reports."""
+
+    value = role_payload.get("selected_arrays_sha256", role_payload.get("sha256"))
+    if not isinstance(value, str):
+        raise ValueError("trajectory report does not contain a selected-array hash")
+    return value
 
 
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
@@ -219,7 +230,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     rider_trajectory = final_integrator_result[0]
     driver_trajectory = final_integrator_result[1]
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "config_path": str(args.config.resolve()),
         "config_sha256": hashlib.sha256(args.config.read_bytes()).hexdigest(),
         "parameters": {
