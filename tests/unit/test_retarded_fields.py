@@ -241,14 +241,22 @@ def test_uniform_motion_newton_root_needs_few_interpolated_samples(
         beta=betas,
     )
     original = retarded_fields._quintic_worldline_sample
+    original_residual = retarded_fields._light_cone_residual_mm
     sample_count = 0
+    scalar_residual_count = 0
 
     def counted_sample(*args, **kwargs):
         nonlocal sample_count
         sample_count += 1
         return original(*args, **kwargs)
 
+    def counted_residual(*args, **kwargs):
+        nonlocal scalar_residual_count
+        scalar_residual_count += 1
+        return original_residual(*args, **kwargs)
+
     monkeypatch.setattr(retarded_fields, "_quintic_worldline_sample", counted_sample)
+    monkeypatch.setattr(retarded_fields, "_light_cone_residual_mm", counted_residual)
 
     field = evaluate_retarded_charge_field_native(
         history,
@@ -256,6 +264,7 @@ def test_uniform_motion_newton_root_needs_few_interpolated_samples(
     )
 
     assert sample_count <= 6
+    assert scalar_residual_count <= 6
     assert abs(field.light_cone_residual_mm[0]) <= 1.0e-15
 
 

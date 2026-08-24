@@ -425,14 +425,11 @@ def _solve_retarded_sample(
     if times.size < 2:
         return None
 
-    knot_residuals = np.empty(times.size, dtype=float)
-    for index, source_time in enumerate(times):
-        knot_residuals[index], _ = _light_cone_residual_mm(
-            observer_time_ns=observer_time_ns,
-            observer_position_mm=observer_position_mm,
-            source_time_ns=float(source_time),
-            source_position_mm=source.position_mm[index],
-        )
+    knot_separations = np.linalg.norm(
+        observer_position_mm[np.newaxis, :] - source.position_mm,
+        axis=1,
+    )
+    knot_residuals = C_MMNS * (observer_time_ns - times) - knot_separations
     brackets = np.flatnonzero(
         (knot_residuals[:-1] >= 0.0) & (knot_residuals[1:] <= 0.0)
     )
