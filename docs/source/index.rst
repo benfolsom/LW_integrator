@@ -55,6 +55,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    :caption: Workflows
 
    validation
+   rfs_m5_optimization
    notebooks
 
 .. toctree::
