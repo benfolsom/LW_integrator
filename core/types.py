@@ -465,6 +465,66 @@ class MagneticDipoleParticleConfig:
 
 
 @dataclass
+class DipoleSourceConfig:
+    """Ordinary Maxwell field sourced by an intrinsic magnetic moment.
+
+    ``covariant_retarded_point`` evaluates all near, induction, and radiation
+    zones from a conserved covariant point-dipole current.  The strict
+    ``minimum_separation_mm`` is an abort boundary, not softening or a
+    finite-size model.  The default 2 pm boundary is about 5.2 electron
+    reduced-Compton wavelengths and remains below the first 10 pm capture
+    benchmark.
+
+    Stencil and light-cone controls are advanced convergence settings.  The
+    normal user-facing choice is only ``model``; validation studies should
+    rerun with half and twice ``relative_stencil_step``.
+    """
+
+    model: str = "off"
+    minimum_separation_mm: float = 2.0e-9
+    relative_stencil_step: float = 1.0e-3
+    minimum_stencil_step_mm: float = 1.0e-15
+    root_tolerance_mm: float = 1.0e-21
+    max_root_iterations: int = 96
+
+    def __post_init__(self) -> None:
+        self.model = str(self.model).strip().lower().replace("-", "_")
+        aliases = {
+            "none": "off",
+            "disabled": "off",
+            "retarded_point": "covariant_retarded_point",
+            "full_retarded_point": "covariant_retarded_point",
+        }
+        self.model = aliases.get(self.model, self.model)
+        if self.model not in {"off", "covariant_retarded_point"}:
+            raise ValueError(
+                "dipole source model must be one of: off, " "covariant_retarded_point"
+            )
+
+        for name in (
+            "minimum_separation_mm",
+            "relative_stencil_step",
+            "minimum_stencil_step_mm",
+            "root_tolerance_mm",
+        ):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"dipole source {name} must be finite and positive")
+            setattr(self, name, value)
+        if self.relative_stencil_step >= 0.05:
+            raise ValueError("dipole source relative_stencil_step must be below 0.05")
+        self.max_root_iterations = int(self.max_root_iterations)
+        if self.max_root_iterations <= 0:
+            raise ValueError("dipole source max_root_iterations must be positive")
+
+    @property
+    def active(self) -> bool:
+        """Whether an intrinsic-dipole Maxwell source model is selected."""
+
+        return self.model != "off"
+
+
+@dataclass
 class MagneticDipoleConfig:
     """Configuration for experimental intrinsic magnetic-moment dynamics.
 
@@ -480,6 +540,7 @@ class MagneticDipoleConfig:
     stern_gerlach_force_enabled: bool = False
     spin_model: str = "rfs_minimal_2021"
     stern_gerlach_model: str = "rfs_full_g"
+    source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
     )
@@ -514,6 +575,8 @@ class MagneticDipoleConfig:
                 f"'{self.stern_gerlach_model}' requires spin_model "
                 f"'{required_spin_model}'"
             )
+        if isinstance(self.source, dict):
+            self.source = DipoleSourceConfig(**self.source)
         if isinstance(self.rider, dict):
             self.rider = MagneticDipoleParticleConfig(**self.rider)
         if isinstance(self.driver, dict):
@@ -1505,6 +1568,7 @@ __all__ = [
     "TrajectoryBuilder",
     "Occluder",
     "BeamlineGeometryConfig",
+    "DipoleSourceConfig",
     "MagneticDipoleConfig",
     "MagneticDipoleParticleConfig",
 ]

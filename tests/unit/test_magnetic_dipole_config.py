@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.types import MagneticDipoleConfig
+from core.types import DipoleSourceConfig, MagneticDipoleConfig
 
 
 def test_magnetic_dipole_defaults_to_disabled_rfs_pair() -> None:
@@ -13,6 +13,8 @@ def test_magnetic_dipole_defaults_to_disabled_rfs_pair() -> None:
     assert config.enabled is False
     assert config.spin_model == "rfs_minimal_2021"
     assert config.stern_gerlach_model == "rfs_full_g"
+    assert config.source.model == "off"
+    assert config.source.active is False
 
 
 @pytest.mark.parametrize(
@@ -66,3 +68,39 @@ def test_magnetic_dipole_rejects_unknown_models(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         MagneticDipoleConfig(**overrides)
+
+
+def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
+    config = MagneticDipoleConfig(
+        enabled=True,
+        source={
+            "model": "full-retarded-point",
+            "minimum_separation_mm": 3.0e-9,
+            "relative_stencil_step": 5.0e-4,
+        },
+    )
+
+    assert isinstance(config.source, DipoleSourceConfig)
+    assert config.source.model == "covariant_retarded_point"
+    assert config.source.active is True
+    assert config.source.minimum_separation_mm == 3.0e-9
+    assert config.source.relative_stencil_step == 5.0e-4
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"model": "quasistatic"}, "model"),
+        ({"minimum_separation_mm": 0.0}, "minimum_separation"),
+        ({"relative_stencil_step": 0.05}, "relative_stencil_step"),
+        ({"minimum_stencil_step_mm": float("nan")}, "minimum_stencil"),
+        ({"root_tolerance_mm": -1.0}, "root_tolerance"),
+        ({"max_root_iterations": 0}, "max_root_iterations"),
+    ),
+)
+def test_invalid_retarded_dipole_source_config_fails_explicitly(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DipoleSourceConfig(**overrides)
