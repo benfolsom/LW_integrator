@@ -822,6 +822,7 @@ class TrajectoryArrays:
     m_species: np.ndarray
     char_time: np.ndarray
     magnetic_moment_j_per_t: np.ndarray
+    magnetic_moment_native: np.ndarray
     spin_quantum_number: np.ndarray
     gyromagnetic_ratio_rad_s_t: np.ndarray
     magnetic_dipole_active: np.ndarray
@@ -901,6 +902,7 @@ class TrajectoryArrays:
                     "local_magnetic_field_y_t": self.local_magnetic_field_y_t[step],
                     "local_magnetic_field_z_t": self.local_magnetic_field_z_t[step],
                     "magnetic_moment_j_per_t": self.magnetic_moment_j_per_t,
+                    "magnetic_moment_native": self.magnetic_moment_native,
                     "spin_quantum_number": self.spin_quantum_number,
                     "gyromagnetic_ratio_rad_s_t": (self.gyromagnetic_ratio_rad_s_t),
                     "magnetic_dipole_active": self.magnetic_dipole_active,
@@ -1060,6 +1062,7 @@ class IndexedTrajectoryArrays:
                         "local_magnetic_field_z_t", step
                     ),
                     "magnetic_moment_j_per_t": self.constant("magnetic_moment_j_per_t"),
+                    "magnetic_moment_native": self.constant("magnetic_moment_native"),
                     "spin_quantum_number": self.constant("spin_quantum_number"),
                     "gyromagnetic_ratio_rad_s_t": self.constant(
                         "gyromagnetic_ratio_rad_s_t"
@@ -1128,6 +1131,7 @@ class TrajectoryBuilder:
         "m_species",
         "char_time",
         "magnetic_moment_j_per_t",
+        "magnetic_moment_native",
         "spin_quantum_number",
         "gyromagnetic_ratio_rad_s_t",
         "magnetic_dipole_active",
@@ -1273,6 +1277,7 @@ class TrajectoryBuilder:
             m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
             magnetic_moment_j_per_t=self._arrays["magnetic_moment_j_per_t"],
+            magnetic_moment_native=self._arrays["magnetic_moment_native"],
             spin_quantum_number=self._arrays["spin_quantum_number"],
             gyromagnetic_ratio_rad_s_t=self._arrays["gyromagnetic_ratio_rad_s_t"],
             magnetic_dipole_active=self._arrays["magnetic_dipole_active"],
@@ -1329,6 +1334,7 @@ class TrajectoryBuilder:
             m_species=self._arrays["m_species"],
             char_time=self._arrays["char_time"],
             magnetic_moment_j_per_t=self._arrays["magnetic_moment_j_per_t"],
+            magnetic_moment_native=self._arrays["magnetic_moment_native"],
             spin_quantum_number=self._arrays["spin_quantum_number"],
             gyromagnetic_ratio_rad_s_t=self._arrays["gyromagnetic_ratio_rad_s_t"],
             magnetic_dipole_active=self._arrays["magnetic_dipole_active"],

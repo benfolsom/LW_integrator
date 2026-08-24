@@ -6,6 +6,12 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Derived the native elementary charge from the repository's statcoulomb
+  conversion instead of retaining the historical rounded literal. This lowers
+  a singly charged native value by about 21.33 ppm and a two-charge Coulomb
+  force by about 42.66 ppm, while making the scaled-Gaussian unit identity
+  exact. Charged numerical baselines must be regenerated.
+
 - Added a shared immutable species registry with signed, cited free-particle
   magnetic moments for electrons, positrons, protons, antiprotons, neutrons,
   deuterons, tritons, helions, and spin-zero alpha particles. H- is explicitly
@@ -19,6 +25,11 @@ All notable changes and updates to the LW Integrator project are documented in t
   the observer event and re-solves it at every centred finite-difference
   stencil event, so the full spacetime field gradient includes retarded-time
   variation.
+- Ported the production RFS response and exact retarded-field evaluator from an
+  internal SI island to the integrator's native scaled-Gaussian amu--mm--ns
+  units. Source charge now enters as ``q_source`` directly, measured signed
+  moments are converted once at initialization, and normalized spin avoids
+  carrying SI action through the hot path.
 - Kept the existing charge-canonical momentum definition: the established
   charge path supplies the Lorentz response, while RFS adds only the dipole
   ``d G u`` four-force. Independent switches expose off, spin-only, and fully

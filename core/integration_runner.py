@@ -82,6 +82,7 @@ def _initialize_magnetic_dipole_state(
         "local_magnetic_field_y_t",
         "local_magnetic_field_z_t",
         "magnetic_moment_j_per_t",
+        "magnetic_moment_native",
         "spin_quantum_number",
         "gyromagnetic_ratio_rad_s_t",
         "magnetic_dipole_active",
@@ -93,7 +94,7 @@ def _initialize_magnetic_dipole_state(
             state.pop(key, None)
         return
 
-    from .magnetic_dipole import HBAR_J_S
+    from .magnetic_dipole import HBAR_J_S, magnetic_moment_j_per_t_to_native
     from .species import resolve_species
 
     particle_count = len(np.asarray(state.get("x", [])))
@@ -171,6 +172,11 @@ def _initialize_magnetic_dipole_state(
         state[f"local_magnetic_field_{axis}_t"] = np.zeros(particle_count, dtype=float)
     state["magnetic_moment_j_per_t"] = np.full(
         particle_count, float(moment), dtype=float
+    )
+    state["magnetic_moment_native"] = np.full(
+        particle_count,
+        magnetic_moment_j_per_t_to_native(float(moment)),
+        dtype=float,
     )
     state["spin_quantum_number"] = np.full(
         particle_count, float(spin_quantum_number), dtype=float
@@ -761,6 +767,7 @@ def _slice_trajectory_arrays(
         m_species=arrays.m_species,
         char_time=arrays.char_time,
         magnetic_moment_j_per_t=arrays.magnetic_moment_j_per_t,
+        magnetic_moment_native=arrays.magnetic_moment_native,
         spin_quantum_number=arrays.spin_quantum_number,
         gyromagnetic_ratio_rad_s_t=arrays.gyromagnetic_ratio_rad_s_t,
         magnetic_dipole_active=arrays.magnetic_dipole_active,

@@ -171,7 +171,7 @@ class TestLocateRetardedIndex:
 # ---------------------------------------------------------------------------
 
 def _build_kernel_args(n_ext: int, seed: int = 99):
-    from core.constants import C_MMNS
+    from core.constants import C_MMNS, ELEMENTARY_CHARGE
 
     rng = np.random.default_rng(seed)
     bx_e = rng.uniform(-0.05, 0.05, n_ext)
@@ -183,11 +183,11 @@ def _build_kernel_args(n_ext: int, seed: int = 99):
     ny = rng.uniform(-0.3, 0.3, n_ext)
     nz = np.sqrt(np.maximum(1.0 - nx**2 - ny**2, 0.0))
     bdot = rng.uniform(-0.005, 0.005, n_ext)
-    q_e = np.full(n_ext, -1.178734e-5)
+    q_e = np.full(n_ext, -ELEMENTARY_CHARGE)
 
     return (
         1e-4,           # h
-        -1.178734e-5,   # charge_i
+        -ELEMENTARY_CHARGE,  # charge_i
         5.485799e-4,    # mass_i
         3.0,            # gamma_i
         0.0, 0.0, 0.85, # bx_i, by_i, bz_i

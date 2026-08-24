@@ -1,31 +1,47 @@
-"""Isolated Rafelski--Formanek--Steinmetz point-dipole kernel.
+"""Native scaled-Gaussian Rafelski--Formanek--Steinmetz kernel.
 
 This module evaluates the local response of one classical point particle to a
-*supplied* electromagnetic field.  It deliberately does not construct charge
+*supplied* electromagnetic field. It deliberately does not construct charge
 or magnetic-dipole source fields and it does not advance an integrator state.
 
 The translational equation uses the full antisymmetric ``G`` tensor from
 Rafelski, Formanek, and Steinmetz, Eur. Phys. J. C 78, 6 (2018), Eqs. (14),
-(17), and (18), https://doi.org/10.1140/epjc/s10052-017-5493-2.  The spin
-right-hand side is their signed minimal solution as stated by Formanek,
-Steinmetz, and Rafelski, Phys. Rev. A 103, 052218 (2021), Eqs. (3), (8), and
-(11), https://doi.org/10.1103/PhysRevA.103.052218.
+(17), and (18), https://doi.org/10.1140/epjc/s10052-017-5493-2. The homogeneous
+spin coefficients use the signed minimal choice stated by Formanek, Steinmetz,
+and Rafelski, Phys. Rev. A 103, 052218 (2021), Eqs. (3) and (8),
+https://doi.org/10.1103/PhysRevA.103.052218. The spin-gradient term uses the
+full 2018 ``G`` tensor; it reduces to the compact 2021 Eq. (11) form in vacuum
+but is an explicit full-G extension inside a current distribution.
 
 Conventions
 -----------
 
-* SI units throughout.
-* Coordinates are ``x = (c t, x, y, z)`` and the metric is ``diag(+1,-1,-1,-1)``.
-* ``F`` means contravariant ``F^(mu nu)`` with ``F^(0i) = -E_i/c`` and
-  ``F^(ij) = -epsilon_ijk B_k``.
-* ``partial_f[lambda, mu, nu]`` means ``partial_lambda F^(mu nu)``.  Its
-  temporal derivative is therefore ``partial_0 = (1/c) partial_t`` and every
-  derivative component has units of inverse metres times the field tensor.
-* ``u`` is the contravariant four-velocity in m/s and ``s`` is the physical
-  contravariant spin four-vector in J s.
+* Solver-native scaled-Gaussian units throughout: amu, mm, ns, and native
+  charge. ``c`` is therefore :data:`core.constants.C_MMNS`.
+* Coordinates are ``x = (c t, x, y, z)`` in mm and the metric is
+  ``diag(+1,-1,-1,-1)``.
+* ``F`` means contravariant ``F^(mu nu)`` with ``F^(0i) = -E_i`` and
+  ``F^(ij) = -epsilon_ijk B_k``. Native ``E`` and ``B`` have the same units
+  and the Lorentz force is ``q (E + beta x B)``.
+* ``partial_f[lambda, mu, nu]`` means ``partial_lambda F^(mu nu)`` per mm.
+  The temporal derivative is ``partial_0 = (1/c) partial_t``.
+* ``u`` is the contravariant four-velocity in mm/ns. ``a`` is the
+  dimensionless normalized spin/polarization four-vector; its rest-frame norm
+  is one for a fully polarized particle.
+* The signed magnetic moment is in native ``charge * mm`` and the invariant
+  spin magnitude is in native ``amu * mm^2 / ns``.
+
+With normalized spin, the equations implemented here are
+
+``dp/dtau = (q/c) F.u + (mu/c) G[a].u``
+
+and
+
+``da/dtau = q/(m c) F.a + (mu/S - q/(m c))
+             [F.a - u (u.F.a)/c^2] + mu/(m c) G[a].a``.
 
 The partial derivative used to form ``G`` acts on the supplied field while
-holding the observer's spin fixed.  Source-spin retardation and derivatives,
+holding the observer spin fixed. Source-spin retardation and derivatives,
 self-field removal, and radiation reaction are responsibilities of the caller.
 """
 
@@ -36,8 +52,7 @@ from typing import Sequence, Tuple, Union, cast
 
 import numpy as np
 
-SPEED_OF_LIGHT_M_S = 299_792_458.0
-"""Speed of light in vacuum, exact in SI."""
+from .constants import C_MMNS
 
 MINKOWSKI_METRIC = np.diag((1.0, -1.0, -1.0, -1.0))
 """Minkowski metric with signature ``(+---)``."""
@@ -99,10 +114,7 @@ def _field_gradient(value: GradientLike) -> np.ndarray:
 def lower_four_vector(vector: VectorLike) -> np.ndarray:
     """Lower a contravariant four-vector index with ``diag(+1,-1,-1,-1)``."""
 
-    return cast(
-        np.ndarray,
-        MINKOWSKI_METRIC @ _four_vector(vector, name="vector"),
-    )
+    return cast(np.ndarray, MINKOWSKI_METRIC @ _four_vector(vector, name="vector"))
 
 
 def minkowski_dot(left: VectorLike, right: VectorLike) -> float:
@@ -113,19 +125,19 @@ def minkowski_dot(left: VectorLike, right: VectorLike) -> float:
     return float(left_vector @ MINKOWSKI_METRIC @ right_vector)
 
 
-def electromagnetic_field_tensor_si(
-    electric_field_v_m: Sequence[float], magnetic_field_t: Sequence[float]
+def electromagnetic_field_tensor_native(
+    electric_field_native: Sequence[float], magnetic_field_native: Sequence[float]
 ) -> np.ndarray:
-    """Construct contravariant ``F^(mu nu)`` from SI electric and magnetic fields."""
+    """Construct native Gaussian ``F^(mu nu)`` from equally scaled ``E`` and ``B``."""
 
-    electric = np.asarray(electric_field_v_m, dtype=float)
-    magnetic = np.asarray(magnetic_field_t, dtype=float)
+    electric = np.asarray(electric_field_native, dtype=float)
+    magnetic = np.asarray(magnetic_field_native, dtype=float)
     if electric.shape != (3,) or not np.all(np.isfinite(electric)):
-        raise ValueError("electric_field_v_m must contain three finite components")
+        raise ValueError("electric_field_native must contain three finite components")
     if magnetic.shape != (3,) or not np.all(np.isfinite(magnetic)):
-        raise ValueError("magnetic_field_t must contain three finite components")
+        raise ValueError("magnetic_field_native must contain three finite components")
 
-    ex, ey, ez = electric / SPEED_OF_LIGHT_M_S
+    ex, ey, ez = electric
     bx, by, bz = magnetic
     return np.array(
         [
@@ -138,11 +150,13 @@ def electromagnetic_field_tensor_si(
     )
 
 
-def fields_from_tensor_si(field_tensor: TensorLike) -> Tuple[np.ndarray, np.ndarray]:
-    """Recover SI ``(E, B)`` from a contravariant field tensor."""
+def fields_from_tensor_native(
+    field_tensor: TensorLike,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Recover native Gaussian ``(E, B)`` from a contravariant field tensor."""
 
     field = _field_tensor(field_tensor)
-    electric = -SPEED_OF_LIGHT_M_S * field[0, 1:4]
+    electric = -field[0, 1:4]
     magnetic = np.array((-field[2, 3], field[1, 3], -field[1, 2]))
     return cast(Tuple[np.ndarray, np.ndarray], (electric, magnetic))
 
@@ -151,7 +165,7 @@ def hodge_dual(field_tensor: TensorLike) -> np.ndarray:
     """Return contravariant ``F*`` with ``epsilon_0123 = +1``.
 
     The definition is ``F*^(mu nu) = 1/2 epsilon^(mu nu alpha beta)
-    F_(alpha beta)``.  With the conventions above, ``F*^(0i) = B_i`` and
+    F_(alpha beta)``. With the conventions above, ``F*^(0i) = B_i`` and
     applying the dual twice returns ``-F``.
     """
 
@@ -163,62 +177,35 @@ def hodge_dual(field_tensor: TensorLike) -> np.ndarray:
     )
 
 
-def dipole_charge_from_moment_si(
-    magnetic_moment_j_per_t: float, rest_spin_magnitude_j_s: float
-) -> float:
-    """Return the signed RFS dipole charge ``d = mu/(c S)``.
-
-    ``magnetic_moment_j_per_t`` is signed relative to spin.  The invariant
-    stretched-state spin magnitude ``S`` must be positive.  A partially
-    polarized spin vector may have a smaller magnitude while retaining this
-    species coupling.
-    """
-
-    moment = float(magnetic_moment_j_per_t)
-    spin_magnitude = float(rest_spin_magnitude_j_s)
-    if not np.isfinite(moment):
-        raise ValueError("magnetic_moment_j_per_t must be finite")
-    if not np.isfinite(spin_magnitude) or spin_magnitude <= 0.0:
-        raise ValueError("rest_spin_magnitude_j_s must be finite and positive")
-    return moment / (SPEED_OF_LIGHT_M_S * spin_magnitude)
-
-
 def magnetic_four_potential_covariant(
-    field_tensor: TensorLike, spin_four_vector_j_s: VectorLike
+    field_tensor: TensorLike, spin_four_vector: VectorLike
 ) -> np.ndarray:
-    """Return covariant ``B_mu = F*_(mu nu) s^nu`` in RFS notation."""
+    """Return covariant ``B_mu = F*_(mu nu) a^nu`` in RFS notation."""
 
     dual_contravariant = hodge_dual(field_tensor)
     dual_covariant = MINKOWSKI_METRIC @ dual_contravariant @ MINKOWSKI_METRIC
-    spin = _four_vector(spin_four_vector_j_s, name="spin_four_vector_j_s")
+    spin = _four_vector(spin_four_vector, name="spin_four_vector")
     return cast(np.ndarray, dual_covariant @ spin)
 
 
-def rfs_g_tensor(
-    partial_f: GradientLike, spin_four_vector_j_s: VectorLike
-) -> np.ndarray:
-    """Return the full contravariant RFS tensor ``G^(mu nu)``.
+def rfs_g_tensor(partial_f: GradientLike, spin_four_vector: VectorLike) -> np.ndarray:
+    """Return the full contravariant RFS tensor ``G^(mu nu)[a]``.
 
     The input derivative has ordering ``[lambda, mu, nu]`` and represents
-    ``partial_lambda F^(mu nu)``.  The observer spin is held fixed under this
+    ``partial_lambda F^(mu nu)``. The observer spin is held fixed under this
     partial derivative, exactly as in the local RFS response law.
     """
 
     gradient = _field_gradient(partial_f)
-    spin = _four_vector(spin_four_vector_j_s, name="spin_four_vector_j_s")
+    spin = _four_vector(spin_four_vector, name="spin_four_vector")
 
-    # Lower only the two field indices before applying the Hodge dual.  The
+    # Lower only the two field indices before applying the Hodge dual. The
     # leading derivative index remains the supplied covariant lambda index.
     gradient_field_lower = np.einsum(
-        "ma,lab,bn->lmn",
-        MINKOWSKI_METRIC,
-        gradient,
-        MINKOWSKI_METRIC,
+        "ma,lab,bn->lmn", MINKOWSKI_METRIC, gradient, MINKOWSKI_METRIC
     )
     dual_gradient_contravariant = 0.5 * np.einsum(
-        "mnab,lab->lmn",
-        _LEVI_CIVITA_UPPER,
-        gradient_field_lower,
+        "mnab,lab->lmn", _LEVI_CIVITA_UPPER, gradient_field_lower
     )
     dual_gradient_covariant = np.einsum(
         "ma,lab,bn->lmn",
@@ -227,77 +214,75 @@ def rfs_g_tensor(
         MINKOWSKI_METRIC,
     )
 
-    # partial_lambda B_nu, with s treated as an observer variable rather than
+    # partial_lambda B_nu, with a treated as an observer variable rather than
     # as part of the supplied spacetime field.
-    partial_b_covariant = np.einsum(
-        "lnr,r->ln",
-        dual_gradient_covariant,
-        spin,
-    )
+    partial_b_covariant = np.einsum("lnr,r->ln", dual_gradient_covariant, spin)
     g_covariant = partial_b_covariant - partial_b_covariant.T
-    g_contravariant = MINKOWSKI_METRIC @ g_covariant @ MINKOWSKI_METRIC
-    return cast(np.ndarray, g_contravariant)
+    return cast(np.ndarray, MINKOWSKI_METRIC @ g_covariant @ MINKOWSKI_METRIC)
 
 
-def rfs_four_force_si(
+def rfs_four_force_native(
     *,
-    four_velocity_m_s: VectorLike,
-    spin_four_vector_j_s: VectorLike,
+    four_velocity_mm_ns: VectorLike,
+    spin_four_vector: VectorLike,
     field_tensor: TensorLike,
     partial_f: GradientLike,
-    charge_coulomb: float,
-    dipole_charge: float,
+    charge_native: float,
+    magnetic_moment_native: float,
 ) -> np.ndarray:
-    """Return ``dp^mu/dtau`` from the full RFS translational equation.
+    """Return native ``dp^mu/dtau`` from the full RFS translational equation.
 
-    The result has force units (N) in all four components.  ``dipole_charge``
-    is the signed coupling returned by :func:`dipole_charge_from_moment_si`.
+    The result has native force units ``amu mm/ns^2`` in all four components.
+    ``spin_four_vector`` is normalized and ``magnetic_moment_native`` is signed
+    relative to it.
     """
 
-    charge = float(charge_coulomb)
-    coupling = float(dipole_charge)
-    if not np.isfinite(charge) or not np.isfinite(coupling):
-        raise ValueError("charge_coulomb and dipole_charge must be finite")
+    charge = float(charge_native)
+    moment = float(magnetic_moment_native)
+    if not np.isfinite(charge) or not np.isfinite(moment):
+        raise ValueError("charge_native and magnetic_moment_native must be finite")
 
-    velocity = _four_vector(four_velocity_m_s, name="four_velocity_m_s")
-    spin = _four_vector(spin_four_vector_j_s, name="spin_four_vector_j_s")
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    spin = _four_vector(spin_four_vector, name="spin_four_vector")
     field = _field_tensor(field_tensor)
     g_tensor = rfs_g_tensor(partial_f, spin)
     velocity_covariant = MINKOWSKI_METRIC @ velocity
     return cast(
         np.ndarray,
-        charge * (field @ velocity_covariant)
-        + coupling * (g_tensor @ velocity_covariant),
+        (
+            charge * (field @ velocity_covariant)
+            + moment * (g_tensor @ velocity_covariant)
+        )
+        / C_MMNS,
     )
 
 
-def rfs_spin_rhs_si(
+def rfs_spin_rhs_native(
     *,
-    four_velocity_m_s: VectorLike,
-    spin_four_vector_j_s: VectorLike,
+    four_velocity_mm_ns: VectorLike,
+    spin_four_vector: VectorLike,
     field_tensor: TensorLike,
     partial_f: GradientLike,
-    charge_coulomb: float,
-    mass_kg: float,
-    dipole_charge: float,
+    charge_native: float,
+    mass_amu: float,
+    magnetic_moment_native: float,
+    invariant_spin_native: float,
 ) -> np.ndarray:
-    """Return the signed 2021 minimal ``ds^mu/dtau`` in SI units.
+    """Return the signed minimal ``da^mu/dtau`` in inverse nanoseconds."""
 
-    The anomalous coefficient is not supplied independently.  It follows the
-    RFS relation ``a_tilde = c d - q/m``, so charged, neutral, positive-moment,
-    and negative-moment particles all share the same regular equation.
-    """
-
-    charge = float(charge_coulomb)
-    mass = float(mass_kg)
-    coupling = float(dipole_charge)
-    if not np.isfinite(charge) or not np.isfinite(coupling):
-        raise ValueError("charge_coulomb and dipole_charge must be finite")
+    charge = float(charge_native)
+    mass = float(mass_amu)
+    moment = float(magnetic_moment_native)
+    invariant_spin = float(invariant_spin_native)
+    if not np.isfinite(charge) or not np.isfinite(moment):
+        raise ValueError("charge_native and magnetic_moment_native must be finite")
     if not np.isfinite(mass) or mass <= 0.0:
-        raise ValueError("mass_kg must be finite and positive")
+        raise ValueError("mass_amu must be finite and positive")
+    if not np.isfinite(invariant_spin) or invariant_spin <= 0.0:
+        raise ValueError("invariant_spin_native must be finite and positive")
 
-    velocity = _four_vector(four_velocity_m_s, name="four_velocity_m_s")
-    spin = _four_vector(spin_four_vector_j_s, name="spin_four_vector_j_s")
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    spin = _four_vector(spin_four_vector, name="spin_four_vector")
     field = _field_tensor(field_tensor)
     g_tensor = rfs_g_tensor(partial_f, spin)
 
@@ -307,31 +292,27 @@ def rfs_spin_rhs_si(
     g_on_spin = g_tensor @ spin_covariant
     u_dot_f_dot_s = float(velocity_covariant @ field_on_spin)
 
-    charge_to_mass = charge / mass
-    moment_excess = SPEED_OF_LIGHT_M_S * coupling - charge_to_mass
-    orthogonal_field_on_spin = field_on_spin - (
-        velocity * u_dot_f_dot_s / SPEED_OF_LIGHT_M_S**2
-    )
+    charge_to_mass_c = charge / (mass * C_MMNS)
+    moment_to_spin = moment / invariant_spin
+    orthogonal_field_on_spin = field_on_spin - (velocity * u_dot_f_dot_s / C_MMNS**2)
 
     return cast(
         np.ndarray,
-        charge_to_mass * field_on_spin
-        + moment_excess * orthogonal_field_on_spin
-        + coupling / mass * g_on_spin,
+        charge_to_mass_c * field_on_spin
+        + (moment_to_spin - charge_to_mass_c) * orthogonal_field_on_spin
+        + moment / (mass * C_MMNS) * g_on_spin,
     )
 
 
 __all__ = [
     "MINKOWSKI_METRIC",
-    "SPEED_OF_LIGHT_M_S",
-    "dipole_charge_from_moment_si",
-    "electromagnetic_field_tensor_si",
-    "fields_from_tensor_si",
+    "electromagnetic_field_tensor_native",
+    "fields_from_tensor_native",
     "hodge_dual",
     "lower_four_vector",
     "magnetic_four_potential_covariant",
     "minkowski_dot",
-    "rfs_four_force_si",
+    "rfs_four_force_native",
     "rfs_g_tensor",
-    "rfs_spin_rhs_si",
+    "rfs_spin_rhs_native",
 ]

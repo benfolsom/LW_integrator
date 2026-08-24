@@ -37,7 +37,10 @@ These tests validate signed moments, tensor conventions, charged and neutral
 limits, the three covariant spin/velocity constraints, full-G response in
 vacuum and current regions, analytic light-cone roots, complete retarded field
 gradients, matched model configuration, the static-gradient diagnostic, and
-the feature-off regression.
+the feature-off regression.  They also compare randomized native-Gaussian RFS
+states against an SI equation oracle, certify static, moving, and accelerated
+Lienard--Wiechert fields across the unit boundary, and verify that the source
+evaluator uses the stored native charge without renormalization.
 
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step COLD_START BUNCH_TO_BUNCH point charges, no dynamic radiation

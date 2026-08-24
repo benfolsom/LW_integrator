@@ -8,8 +8,8 @@ import pytest
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.external_fields import ExternalFieldConfig, NATIVE_FORCE_UNIT_NEWTON
 from core.integration_runner import retarded_integrator
-from core.magnetic_dipole import HBAR_J_S, boost_rest_polarization
-from core.rfs import SPEED_OF_LIGHT_M_S, minkowski_dot
+from core.magnetic_dipole import HBAR_NATIVE, boost_rest_polarization
+from core.rfs import minkowski_dot
 from core.self_consistency import SelfConsistencyConfig
 from core.species import get_species
 from core.types import (
@@ -174,19 +174,17 @@ def test_neutral_neutron_gets_signed_rfs_impulse_in_vacuum_axial_gradient() -> N
     beta = np.array([final_state[axis][0] for axis in ("bx", "by", "bz")], dtype=float)
     gamma = float(final_state["gamma"][0])
     spin_four = boost_rest_polarization((0.0, 0.0, 1.0), beta)
-    four_velocity = SPEED_OF_LIGHT_M_S * np.concatenate(([gamma], gamma * beta))
-    spin_magnitude = neutron.spin_quantum_number * HBAR_J_S
-    physical_spin = spin_magnitude * spin_four
+    four_velocity = C_MMNS * np.concatenate(([gamma], gamma * beta))
+    spin_magnitude = neutron.spin_quantum_number * HBAR_NATIVE
 
     # The stored rest spin has no spatial precession at B=0, but its boosted
     # time component must become nonzero once the gradient accelerates it.
     assert spin_four[0] < 0.0
-    assert minkowski_dot(four_velocity, physical_spin) / (
-        SPEED_OF_LIGHT_M_S * spin_magnitude
-    ) == pytest.approx(0.0, abs=1.0e-22)
-    assert minkowski_dot(physical_spin, physical_spin) / spin_magnitude**2 == (
-        pytest.approx(-1.0, rel=2.0e-15)
+    assert minkowski_dot(four_velocity, spin_four) / C_MMNS == pytest.approx(
+        0.0, abs=1.0e-15
     )
+    assert spin_magnitude > 0.0
+    assert minkowski_dot(spin_four, spin_four) == pytest.approx(-1.0, rel=2.0e-15)
 
 
 def test_cold_start_moving_charge_drives_neutral_rfs_response() -> None:

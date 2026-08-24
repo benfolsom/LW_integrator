@@ -73,10 +73,10 @@ def test_benchmark_normalizes_native_lengths_and_skips_cross_unit_tensors() -> N
             "1",
         )
     )
-    si_report = benchmark.run_benchmark(args)
-    native_report = deepcopy(si_report)
-    native_report["unit_system"] = "native_gaussian"
-    native_report["parity"]["field"]["field_tensor"][0][0][1] *= 1.0e9
+    native_report = benchmark.run_benchmark(args)
+    si_report = deepcopy(native_report)
+    si_report["unit_system"] = "si"
+    si_report["parity"]["field"]["field_tensor"][0][0][1] *= 1.0e9
 
     comparison = benchmark.compare_reports(native_report, si_report)
 

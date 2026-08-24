@@ -18,12 +18,13 @@ STATCOULOMB_TO_NATIVE_CHARGE: float = 24540.05045243616
 ELEMENTARY_CHARGE_STATC: float = 4.803204712570263e-10
 """Elementary charge in statcoulombs (cgs esu), for analysis/conversion only."""
 
-ELEMENTARY_CHARGE: float = 1.178734e-5
+ELEMENTARY_CHARGE: float = ELEMENTARY_CHARGE_STATC * STATCOULOMB_TO_NATIVE_CHARGE
 """Elementary charge in native solver units.
 
 Particle states passed to the integrator must use this value, not raw
-statcoulombs. It is the historical charge value used by the solver in its
-``amu``, ``mm``, ``ns`` unit system.
+statcoulombs. It is derived from the elementary charge in statcoulombs and the
+solver's ``amu``, ``mm``, ``ns`` charge conversion so native Gaussian Coulomb
+forces have unit coefficient.
 """
 
 ELECTRON_MASS_AMU: float = 5.485799e-4

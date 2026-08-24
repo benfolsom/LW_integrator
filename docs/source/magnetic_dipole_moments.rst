@@ -23,13 +23,17 @@ as a controlled diagnostic.
 Selected RFS equations
 ----------------------
 
-The RFS kernel uses SI units, coordinates
-:math:`x^\mu=(ct,x,y,z)`, and metric ``(+---)``.  Its physical spin four-vector
-:math:`s^\mu` obeys
+The RFS papers state their equations in SI.  The production kernel implements
+the algebraically equivalent scaled-Gaussian form in the integrator's native
+amu--mm--ns--charge units.  Coordinates are
+:math:`x^\mu=(ct,x,y,z)`, the metric is ``(+---)``, and
+:math:`F^{0i}=-E_i`, so native :math:`\mathbf E` and :math:`\mathbf B` have the
+same scale.  The stored dimensionless spin/polarization four-vector
+:math:`a^\mu=s^\mu/S` obeys
 
 .. math::
 
-   u^2=c^2, \qquad u\mathbin{\cdot}s=0, \qquad s^2=-S^2,
+   u^2=c^2, \qquad u\mathbin{\cdot}a=0, \qquad a^2=-1,
 
 for a fully polarized stretched state with
 
@@ -43,8 +47,8 @@ four-potential and its antisymmetric gradient tensor are
 
 .. math::
 
-   \mathcal B_\mu=F^*_{\mu\nu}s^\nu, \qquad
-   G^{\mu\nu}=\partial^\mu\mathcal B^\nu
+   \mathcal B_\mu[a]=F^*_{\mu\nu}a^\nu, \qquad
+   G^{\mu\nu}[a]=\partial^\mu\mathcal B^\nu[a]
    -\partial^\nu\mathcal B^\mu.
 
 Here :math:`\mathcal B_\mu` is RFS notation and is not the ordinary three-vector
@@ -53,15 +57,29 @@ kernel are
 
 .. math::
 
-   m\dot u^\mu=(qF^{\mu\nu}+dG^{\mu\nu})u_\nu,
+   m\dot u^\mu=\left({q\over c}F^{\mu\nu}
+   +{\mu_{\mathrm{signed}}\over c}G^{\mu\nu}[a]\right)u_\nu,
 
 .. math::
 
-   \dot s^\mu={q\over m}F^{\mu\nu}s_\nu
-   +\left(cd-{q\over m}\right)
-   \left(F^{\mu\nu}s_\nu
-   -{u^\mu\over c^2}u_\rho F^{\rho\lambda}s_\lambda\right)
-   +{d\over m}G^{\mu\nu}s_\nu.
+   \dot a^\mu={q\over mc}F^{\mu\nu}a_\nu
+   +\left({\mu_{\mathrm{signed}}\over S}-{q\over mc}\right)
+   \left(F^{\mu\nu}a_\nu
+   -{u^\mu\over c^2}u_\rho F^{\rho\lambda}a_\lambda\right)
+   +{\mu_{\mathrm{signed}}\over mc}G^{\mu\nu}[a]a_\nu.
+
+The homogeneous-field spin coefficients are the signed minimal 2021 choice.
+For the final gradient term, the maintained model uses the full 2018
+:math:`G^{\mu\nu}` tensor.  It agrees with the compact directional-derivative
+form used in the 2021 paper in vacuum; inside a current distribution it is an
+explicit full-G extension and should not be described as literally 2021
+Eq. (11).
+
+This normalized form is exactly the physical-spin form because
+:math:`G[s]=S G[a]`.  The moment is converted once from the user-facing J/T
+value to native magnetic-moment units; :math:`S` is converted to native action
+units.  Source charges enter the native Lienard--Wiechert evaluator directly,
+without a charge-to-SI-to-charge normalization round trip.
 
 The dot denotes a proper-time derivative.  In code,
 ``partial_f[lambda, mu, nu]`` is
@@ -102,7 +120,7 @@ For each observer event the dedicated evaluator:
 1. interpolates each stored point-charge worldline with position, velocity,
    and acceleration continuous at the trajectory knots;
 2. solves the light-cone equation against that interpolated worldline;
-3. evaluates both the velocity and acceleration terms of the SI
+3. evaluates both the velocity and acceleration terms of the native Gaussian
    Lienard--Wiechert field; and
 4. forms a centred spacetime finite difference of :math:`F^{\mu\nu}`.
 
@@ -112,14 +130,17 @@ sample.  Consequently the numerical derivative includes the variation of
 retarded time.  Differencing a field while freezing a previously selected
 retarded source state would omit that chain rule and is not used by RFS.
 
-Prescribed :math:`\mathbf E` and :math:`\mathbf B` are added to the charge
-field.  The current prescribed-field schema can also express a static spatial
-magnetic-field gradient; unconfigured electric and time derivatives are zero.
+Prescribed native :math:`\mathbf E` and :math:`\mathbf B` pass through without
+renormalization and are added to the charge field.  The current schema can also
+express a static spatial magnetic-field gradient in T/m; that boundary is
+converted to native field per mm before the gradient is applied to the native
+position.  Unconfigured electric and time derivatives are zero.
 
 The existing charge-canonical trajectory update derived in ``main.tex`` remains
 authoritative for the :math:`qF^{\mu\nu}u_\nu` response.  RFS independently
 samples :math:`F` and :math:`\partial F` with the exact light-cone evaluator and
-adds only :math:`dG^{\mu\nu}u_\nu`, including its temporal component.  This
+adds only :math:`(\mu/c)G^{\mu\nu}[a]u_\nu`, including its temporal
+component.  This
 avoids counting the Lorentz force twice, preserves the feature-off baseline,
 and does not redefine canonical momentum by appending
 :math:`d\mathcal B_\mu`.  It also means that the charge force and RFS response
@@ -235,9 +256,9 @@ four-vector is
    +{\gamma^2\over\gamma+1}
    (\boldsymbol\beta\mathbin{\cdot}\boldsymbol\zeta)\boldsymbol\beta.
 
-The RFS kernel receives the physical spin :math:`s^\mu=S a^\mu`.  The accepted
-spin update is projected back onto :math:`u\mathbin{\cdot}s=0` and its invariant
-magnitude is restored to control numerical drift.
+The RFS kernel receives :math:`a^\mu` directly.  The accepted spin update is
+projected back onto :math:`u\mathbin{\cdot}a=0` and its invariant magnitude is
+restored to control numerical drift.
 
 ``local_magnetic_field_x_t``, ``local_magnetic_field_y_t``, and
 ``local_magnetic_field_z_t`` are state-aligned diagnostics.  For RFS they
@@ -297,9 +318,14 @@ or retarded moving-dipole source model.  The retarded field and radiation of a
 moving magnetic dipole are treated, for example, by `Sautbekov
 <https://doi.org/10.1016/j.jmmm.2019.04.012>`_
 (`arXiv:1806.07089 <https://arxiv.org/abs/1806.07089>`_).  If a validated
-dipole-source field is later added to :math:`F^{\mu\nu}`, the same full RFS
-response law can act on it.  Adding both that field response and an independent
-pairwise dipole force would double-count the interaction.
+dipole-source field is later added to the total non-self
+:math:`F^{\mu\nu}`, the existing :math:`qF` response and full RFS
+:math:`G[F]` response generate charge--dipole and dipole--dipole interactions.
+Thus the source model is a separate field provider, but dipole--dipole response
+is **not** a separate force toggle.  Adding an independent textbook pair force
+on top of that total-field response would double-count the interaction.  A
+static near-field provider, a fully retarded provider, and any dipole
+self-radiation/reaction completion must be named and validated separately.
 
 Validation and capture boundary
 -------------------------------

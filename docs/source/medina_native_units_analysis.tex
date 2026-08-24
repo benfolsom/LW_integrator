@@ -36,9 +36,12 @@ F &: \mathrm{amu\,mm/ns^2}, &
 E_{\mathrm{mech}} &: \mathrm{amu\,mm^2/ns^2}.
 \end{align}
 
-The native elementary charge used by the solver is
+The native elementary charge used by the solver is derived from the
+statcoulomb conversion:
 \begin{equation}
-e_{\mathrm{native}} = 1.178734 \times 10^{-5}.
+e_{\mathrm{native}}
+=e_{\mathrm{statC}}C_{\mathrm{statC}\rightarrow\mathrm{native}}
+\simeq 1.1787088598 \times 10^{-5}.
 \end{equation}
 
 A native electric field is a force-per-charge quantity, so
