@@ -92,6 +92,42 @@ def evaluate_external_field_si(
     return electric_v_m, magnetic_t, gradient
 
 
+def evaluate_external_field_native(
+    external_field: ExternalFieldConfig,
+    *,
+    position_mm: Tuple[float, float, float],
+    time_ns: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return local native ``(E, B, dB_i/dx_j)`` at one solver event.
+
+    Base fields already stored in native units pass through exactly. The
+    user-facing T/m gradient crosses the SI boundary once, becoming native
+    magnetic field per millimetre before it is applied to the native position.
+    """
+
+    x, y, z = (float(value) for value in position_mm)
+    if not external_field.is_active(x, y, z, float(time_ns)):
+        return np.zeros(3), np.zeros(3), np.zeros((3, 3))
+    electric_native = np.asarray(
+        external_field.electric_field_native, dtype=float
+    ).copy()
+    magnetic_native = np.asarray(
+        external_field.magnetic_field_native, dtype=float
+    ).copy()
+    gradient_t_per_m = np.asarray(
+        external_field.magnetic_field_gradient_t_per_m, dtype=float
+    )
+    gradient_native_per_mm = np.asarray(
+        [
+            [magnetic_field_tesla_to_native(value) * 1.0e-3 for value in row]
+            for row in gradient_t_per_m
+        ],
+        dtype=float,
+    )
+    magnetic_native += gradient_native_per_mm @ np.asarray((x, y, z), dtype=float)
+    return electric_native, magnetic_native, gradient_native_per_mm
+
+
 def compute_uniform_external_field_impulse(
     external_field: ExternalFieldConfig,
     *,
@@ -152,6 +188,7 @@ __all__ = [
     "compute_uniform_external_field_impulse",
     "electric_field_v_per_m_to_native",
     "electric_field_native_to_v_per_m",
+    "evaluate_external_field_native",
     "evaluate_external_field_si",
     "magnetic_field_native_to_tesla",
     "magnetic_field_tesla_to_native",

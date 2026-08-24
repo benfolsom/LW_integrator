@@ -19,6 +19,11 @@ All notable changes and updates to the LW Integrator project are documented in t
   the observer event and re-solves it at every centred finite-difference
   stencil event, so the full spacetime field gradient includes retarded-time
   variation.
+- Ported the production RFS response and exact retarded-field evaluator from an
+  internal SI island to the integrator's native scaled-Gaussian amu--mm--ns
+  units. Source charge now enters as ``q_source`` directly, measured signed
+  moments are converted once at initialization, and normalized spin avoids
+  carrying SI action through the hot path.
 - Kept the existing charge-canonical momentum definition: the established
   charge path supplies the Lorentz response, while RFS adds only the dipole
   ``d G u`` four-force. Independent switches expose off, spin-only, and fully

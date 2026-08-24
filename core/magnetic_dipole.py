@@ -36,6 +36,15 @@ HBAR_J_S = 1.054571817e-34
 NATIVE_MOMENTUM_UNIT_KG_M_S = NATIVE_FORCE_UNIT_NEWTON / NS_PER_S
 """One native momentum unit (amu mm/ns) in kg m/s."""
 
+NATIVE_ENERGY_UNIT_J = NATIVE_FORCE_UNIT_NEWTON * 1.0e-3
+"""One native energy unit (amu mm^2/ns^2) in joules."""
+
+NATIVE_ACTION_UNIT_J_S = NATIVE_ENERGY_UNIT_J * 1.0e-9
+"""One native action unit (amu mm^2/ns) in joule seconds."""
+
+HBAR_NATIVE = HBAR_J_S / NATIVE_ACTION_UNIT_J_S
+"""Reduced Planck constant in solver-native action units."""
+
 ELECTRIC_FIELD_NATIVE_TO_V_PER_M = (
     ELEMENTARY_CHARGE * NATIVE_FORCE_UNIT_NEWTON / ELEMENTARY_CHARGE_COULOMB
 )
@@ -106,6 +115,35 @@ def magnetic_field_native_to_tesla(value_native: float) -> float:
     """Convert the native magnetic field used with ``beta x B`` to tesla."""
 
     return float(value_native) * MAGNETIC_FIELD_NATIVE_TO_TESLA
+
+
+def magnetic_moment_j_per_t_to_native(value_j_per_t: float) -> float:
+    """Convert a measured SI moment to native energy per native magnetic field.
+
+    The conversion intentionally uses the same historical-elementary-charge
+    field scale as :func:`magnetic_field_tesla_to_native`. This keeps ``mu B``
+    and ``mu grad(B)`` consistent with the existing external-field boundary.
+    """
+
+    return float(value_j_per_t) * MAGNETIC_FIELD_NATIVE_TO_TESLA / NATIVE_ENERGY_UNIT_J
+
+
+def magnetic_moment_native_to_j_per_t(value_native: float) -> float:
+    """Convert a native magnetic moment to joules per tesla."""
+
+    return float(value_native) * NATIVE_ENERGY_UNIT_J / MAGNETIC_FIELD_NATIVE_TO_TESLA
+
+
+def magnetic_gradient_t_per_m_to_native_per_mm(value_t_per_m: float) -> float:
+    """Convert ``dB/dx`` from T/m to native magnetic field per millimetre."""
+
+    return float(value_t_per_m) / MAGNETIC_FIELD_NATIVE_TO_TESLA * 1.0e-3
+
+
+def magnetic_gradient_native_per_mm_to_t_per_m(value_native_per_mm: float) -> float:
+    """Convert native magnetic field per millimetre to T/m."""
+
+    return float(value_native_per_mm) * MAGNETIC_FIELD_NATIVE_TO_TESLA * 1.0e3
 
 
 def electromagnetic_field_tensor(
@@ -385,7 +423,10 @@ __all__ = [
     "ELECTRIC_FIELD_NATIVE_TO_V_PER_M",
     "HBAR_J_S",
     "MAGNETIC_FIELD_NATIVE_TO_TESLA",
+    "NATIVE_ACTION_UNIT_J_S",
+    "NATIVE_ENERGY_UNIT_J",
     "NATIVE_MOMENTUM_UNIT_KG_M_S",
+    "HBAR_NATIVE",
     "STATIC_REST_GRADIENT_MAX_BETA",
     "advance_spin_uniform_fields",
     "boost_rest_polarization",
@@ -399,6 +440,10 @@ __all__ = [
     "instantaneous_bmt_angular_velocity",
     "magnetic_field_native_to_tesla",
     "magnetic_field_tesla_to_native",
+    "magnetic_gradient_native_per_mm_to_t_per_m",
+    "magnetic_gradient_t_per_m_to_native_per_mm",
+    "magnetic_moment_j_per_t_to_native",
+    "magnetic_moment_native_to_j_per_t",
     "minkowski_dot",
     "momentum_kg_m_s_to_native",
     "momentum_native_to_kg_m_s",

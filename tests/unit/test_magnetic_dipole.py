@@ -3,9 +3,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from core.constants import (
+    ELEMENTARY_CHARGE,
+    ELEMENTARY_CHARGE_STATC,
+    STATCOULOMB_TO_NATIVE_CHARGE,
+)
 from core.external_fields import NATIVE_FORCE_UNIT_NEWTON
 from core.magnetic_dipole import (
     C_M_S,
+    HBAR_J_S,
+    HBAR_NATIVE,
+    NATIVE_ACTION_UNIT_J_S,
+    NATIVE_ENERGY_UNIT_J,
     advance_spin_uniform_fields,
     boost_rest_polarization,
     dual_electromagnetic_tensor,
@@ -18,6 +27,10 @@ from core.magnetic_dipole import (
     instantaneous_bmt_angular_velocity,
     magnetic_field_native_to_tesla,
     magnetic_field_tesla_to_native,
+    magnetic_gradient_native_per_mm_to_t_per_m,
+    magnetic_gradient_t_per_m_to_native_per_mm,
+    magnetic_moment_j_per_t_to_native,
+    magnetic_moment_native_to_j_per_t,
     minkowski_dot,
     momentum_kg_m_s_to_native,
     momentum_native_to_kg_m_s,
@@ -62,6 +75,32 @@ def test_native_magnetic_conversion_matches_beta_cross_b_force() -> None:
     )
 
     assert equivalent_electric_native == pytest.approx(beta * magnetic_native)
+
+
+def test_native_moment_gradient_and_action_bridges_are_mutually_consistent() -> None:
+    moment_j_t = -9.662_365_3e-27
+    gradient_t_m = 7.5
+    moment_native = magnetic_moment_j_per_t_to_native(moment_j_t)
+    gradient_native = magnetic_gradient_t_per_m_to_native_per_mm(gradient_t_m)
+
+    assert magnetic_moment_native_to_j_per_t(moment_native) == pytest.approx(moment_j_t)
+    assert magnetic_gradient_native_per_mm_to_t_per_m(gradient_native) == pytest.approx(
+        gradient_t_m
+    )
+    assert (
+        moment_native * gradient_native * NATIVE_FORCE_UNIT_NEWTON
+    ) == pytest.approx(moment_j_t * gradient_t_m, rel=2.0e-15)
+    assert HBAR_NATIVE * NATIVE_ACTION_UNIT_J_S == pytest.approx(HBAR_J_S)
+    assert NATIVE_ENERGY_UNIT_J == pytest.approx(NATIVE_FORCE_UNIT_NEWTON * 1.0e-3)
+
+
+def test_historical_charge_scale_offset_is_explicit_until_global_migration() -> None:
+    exact_gaussian_elementary_charge = (
+        ELEMENTARY_CHARGE_STATC * STATCOULOMB_TO_NATIVE_CHARGE
+    )
+    relative_offset = ELEMENTARY_CHARGE / exact_gaussian_elementary_charge - 1.0
+
+    assert relative_offset == pytest.approx(2.132859e-5, rel=2.0e-7)
 
 
 def test_field_tensor_round_trip_and_lorentz_force_signs() -> None:

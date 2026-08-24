@@ -3,12 +3,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import core.equations as equations
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 from core.external_fields import (
     ELEMENTARY_CHARGE_COULOMB,
     NATIVE_FORCE_UNIT_NEWTON,
     compute_uniform_external_field_impulse,
     electric_field_v_per_m_to_native,
+    evaluate_external_field_native,
     evaluate_external_field_si,
     magnetic_field_tesla_to_native,
 )
@@ -170,6 +172,63 @@ def test_linear_magnetic_gradient_is_evaluated_in_si_at_particle_position() -> N
     np.testing.assert_array_equal(
         gradient, np.asarray(field.magnetic_field_gradient_t_per_m)
     )
+
+
+def test_native_field_evaluator_preserves_base_and_applies_native_gradient() -> None:
+    base_electric = (1.25, -2.5, 3.75)
+    base_magnetic = (-4.5, 5.25, -6.75)
+    gradient_t_per_m = (
+        (-2.0, 0.0, 0.0),
+        (0.0, -2.0, 0.0),
+        (2.0, -3.0, 4.0),
+    )
+    field = ExternalFieldConfig(
+        electric_field_native=base_electric,
+        magnetic_field_native=base_magnetic,
+        magnetic_field_gradient_t_per_m=gradient_t_per_m,
+    )
+    position_mm = np.array((100.0, 200.0, -50.0))
+
+    electric, magnetic, gradient = evaluate_external_field_native(
+        field, position_mm=tuple(position_mm), time_ns=0.0
+    )
+    expected_gradient = np.asarray(
+        [
+            [magnetic_field_tesla_to_native(value) * 1.0e-3 for value in row]
+            for row in gradient_t_per_m
+        ]
+    )
+
+    np.testing.assert_array_equal(electric, np.asarray(base_electric))
+    np.testing.assert_array_equal(gradient, expected_gradient)
+    np.testing.assert_array_equal(
+        magnetic, np.asarray(base_magnetic) + expected_gradient @ position_mm
+    )
+
+
+def test_magnetic_feature_off_does_not_enter_native_rfs_field_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("disabled RFS must not evaluate its native field")
+
+    monkeypatch.setattr(equations, "evaluate_external_field_native", fail_if_called)
+    trajectory, *_ = retarded_integrator(
+        steps=2,
+        h_step=1.0e-4,
+        wall_z=0.0,
+        aperture_radius=1.0e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_single_particle_state(),
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1.0e9,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        external_field=ExternalFieldConfig(electric_field_native=(0.0, 0.0, 1.0)),
+        use_numba=False,
+    )
+    assert len(trajectory) == 2
 
 
 def test_external_magnetic_gradient_requires_finite_three_by_three_matrix() -> None:

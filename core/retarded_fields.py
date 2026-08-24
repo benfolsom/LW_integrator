@@ -27,19 +27,16 @@ from typing import Sequence, cast
 
 import numpy as np
 
-from .constants import C_MMNS, ELEMENTARY_CHARGE
-from .external_fields import ELEMENTARY_CHARGE_COULOMB
-from .rfs import SPEED_OF_LIGHT_M_S, electromagnetic_field_tensor_si
+from .constants import C_MMNS
+from .rfs import electromagnetic_field_tensor_native
 from .types import IndexedTrajectoryArrays, Trajectory, TrajectoryArrays
 
 TrajectoryHistory = Trajectory | TrajectoryArrays | IndexedTrajectoryArrays
 
-_NANOSECONDS_PER_SECOND = 1.0e9
-_METRES_PER_MILLIMETRE = 1.0e-3
-_DEFAULT_ROOT_TOLERANCE_M = 1.0e-24
+_DEFAULT_ROOT_TOLERANCE_MM = 1.0e-21
 _DEFAULT_MAX_ROOT_ITERATIONS = 96
 _DEFAULT_GRADIENT_RELATIVE_STEP = 1.0e-4
-_DEFAULT_GRADIENT_MINIMUM_STEP_M = 1.0e-18
+_DEFAULT_GRADIENT_MINIMUM_STEP_MM = 1.0e-15
 
 
 class RetardedHistoryError(ValueError):
@@ -64,49 +61,49 @@ class ObserverEvent:
 
 @dataclass(frozen=True)
 class RetardedChargeFieldResult:
-    """Total SI charge field and per-source light-cone diagnostics."""
+    """Total native Gaussian charge field and light-cone diagnostics."""
 
-    electric_field_v_m: np.ndarray
-    magnetic_field_t: np.ndarray
+    electric_field_native: np.ndarray
+    magnetic_field_native: np.ndarray
     field_tensor: np.ndarray
     retarded_time_ns: np.ndarray
-    light_cone_residual_m: np.ndarray
-    separation_m: np.ndarray
+    light_cone_residual_mm: np.ndarray
+    separation_mm: np.ndarray
     valid_sources: np.ndarray
 
 
 @dataclass(frozen=True)
 class RetardedChargeFieldGradientResult:
-    """A charge field plus partial_lambda F^(mu nu) in SI units."""
+    """A native charge field plus ``partial_lambda F^(mu nu)`` per mm."""
 
     field: RetardedChargeFieldResult
     partial_f: np.ndarray
-    stencil_step_m: float
+    stencil_step_mm: float
     stencil_retarded_time_ns: np.ndarray
 
 
 @dataclass(frozen=True)
 class _HistoryArrays:
-    time_s: np.ndarray
-    position_m: np.ndarray
+    time_ns: np.ndarray
+    position_mm: np.ndarray
     beta: np.ndarray
-    beta_dot_s: np.ndarray
-    charge_coulomb: np.ndarray
+    beta_prime_per_mm: np.ndarray
+    charge_native: np.ndarray
     dead: np.ndarray
 
     @property
     def n_sources(self) -> int:
-        return int(self.time_s.shape[1])
+        return int(self.time_ns.shape[1])
 
 
 @dataclass(frozen=True)
 class _RetardedSample:
-    time_s: float
-    position_m: np.ndarray
+    time_ns: float
+    position_mm: np.ndarray
     beta: np.ndarray
-    beta_dot_s: np.ndarray
-    residual_m: float
-    separation_m: float
+    beta_prime_per_mm: np.ndarray
+    residual_mm: float
+    separation_mm: float
 
 
 def _legacy_matrix(history: Trajectory, field_name: str) -> np.ndarray:
@@ -169,11 +166,11 @@ def _source_charge_native(history: TrajectoryHistory) -> np.ndarray:
 def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
     if isinstance(history, list) and not history:
         return _HistoryArrays(
-            time_s=np.zeros((0, 0)),
-            position_m=np.zeros((0, 0, 3)),
+            time_ns=np.zeros((0, 0)),
+            position_mm=np.zeros((0, 0, 3)),
             beta=np.zeros((0, 0, 3)),
-            beta_dot_s=np.zeros((0, 0, 3)),
-            charge_coulomb=np.zeros(0),
+            beta_prime_per_mm=np.zeros((0, 0, 3)),
+            charge_native=np.zeros(0),
             dead=np.zeros((0, 0), dtype=bool),
         )
 
@@ -196,20 +193,19 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
     charge_native = np.asarray(_source_charge_native(history), dtype=float)
     if charge_native.shape != (time_ns.shape[1],):
         raise ValueError("source charge array must match the particle count")
-    charge_coulomb = charge_native / ELEMENTARY_CHARGE * ELEMENTARY_CHARGE_COULOMB
-    position_m = np.stack((x_mm, y_mm, z_mm), axis=-1) * _METRES_PER_MILLIMETRE
+    if not np.all(np.isfinite(charge_native)):
+        raise ValueError("source charge array must contain only finite values")
+    position_mm = np.stack((x_mm, y_mm, z_mm), axis=-1)
     beta = np.stack((bx, by, bz), axis=-1)
     # Stored bdot is d beta / d(ct), where ct is measured in millimetres.
-    beta_dot_s = (
-        np.stack((bdotx, bdoty, bdotz), axis=-1) * C_MMNS * _NANOSECONDS_PER_SECOND
-    )
+    beta_prime_per_mm = np.stack((bdotx, bdoty, bdotz), axis=-1)
     dead = _history_dead(history, time_ns.shape)
     return _HistoryArrays(
-        time_s=time_ns / _NANOSECONDS_PER_SECOND,
-        position_m=position_m,
+        time_ns=time_ns,
+        position_mm=position_mm,
         beta=beta,
-        beta_dot_s=beta_dot_s,
-        charge_coulomb=charge_coulomb,
+        beta_prime_per_mm=beta_prime_per_mm,
+        charge_native=charge_native,
         dead=dead,
     )
 
@@ -218,26 +214,24 @@ def _quintic_worldline_sample(
     history: _HistoryArrays,
     source_index: int,
     segment_index: int,
-    time_s: float,
+    time_ns: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Interpolate position, velocity, and acceleration continuously."""
 
-    t0 = float(history.time_s[segment_index, source_index])
-    t1 = float(history.time_s[segment_index + 1, source_index])
+    t0 = float(history.time_ns[segment_index, source_index])
+    t1 = float(history.time_ns[segment_index + 1, source_index])
     duration = t1 - t0
     if not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("source coordinate times must be strictly increasing")
-    tau = float(np.clip((time_s - t0) / duration, 0.0, 1.0))
+    tau = float(np.clip((time_ns - t0) / duration, 0.0, 1.0))
 
-    position_0 = history.position_m[segment_index, source_index]
-    position_1 = history.position_m[segment_index + 1, source_index]
-    velocity_0 = SPEED_OF_LIGHT_M_S * history.beta[segment_index, source_index]
-    velocity_1 = SPEED_OF_LIGHT_M_S * history.beta[segment_index + 1, source_index]
-    acceleration_0 = (
-        SPEED_OF_LIGHT_M_S * history.beta_dot_s[segment_index, source_index]
-    )
+    position_0 = history.position_mm[segment_index, source_index]
+    position_1 = history.position_mm[segment_index + 1, source_index]
+    velocity_0 = C_MMNS * history.beta[segment_index, source_index]
+    velocity_1 = C_MMNS * history.beta[segment_index + 1, source_index]
+    acceleration_0 = C_MMNS**2 * history.beta_prime_per_mm[segment_index, source_index]
     acceleration_1 = (
-        SPEED_OF_LIGHT_M_S * history.beta_dot_s[segment_index + 1, source_index]
+        C_MMNS**2 * history.beta_prime_per_mm[segment_index + 1, source_index]
     )
 
     c0 = position_0
@@ -265,18 +259,18 @@ def _quintic_worldline_sample(
     acceleration = (
         2.0 * c2 + 6.0 * c3 * tau + 12.0 * c4 * tau**2 + 20.0 * c5 * tau**3
     ) / duration**2
-    return position, velocity / SPEED_OF_LIGHT_M_S, acceleration / SPEED_OF_LIGHT_M_S
+    return position, velocity / C_MMNS, acceleration / C_MMNS**2
 
 
-def _light_cone_residual_m(
+def _light_cone_residual_mm(
     *,
-    observer_time_s: float,
-    observer_position_m: np.ndarray,
-    source_time_s: float,
-    source_position_m: np.ndarray,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    source_time_ns: float,
+    source_position_mm: np.ndarray,
 ) -> tuple[float, float]:
-    separation = float(np.linalg.norm(observer_position_m - source_position_m))
-    residual = SPEED_OF_LIGHT_M_S * (observer_time_s - source_time_s) - separation
+    separation = float(np.linalg.norm(observer_position_mm - source_position_mm))
+    residual = C_MMNS * (observer_time_ns - source_time_ns) - separation
     return residual, separation
 
 
@@ -297,13 +291,13 @@ def _solve_retarded_sample(
     history: _HistoryArrays,
     source_index: int,
     *,
-    observer_time_s: float,
-    observer_position_m: np.ndarray,
-    root_tolerance_m: float,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    root_tolerance_mm: float,
     max_root_iterations: int,
 ) -> _RetardedSample | None:
     alive_stop = _alive_prefix_length(history, source_index)
-    times = history.time_s[:alive_stop, source_index]
+    times = history.time_ns[:alive_stop, source_index]
     if times.size < 2:
         return None
     if np.any(np.diff(times) <= 0.0):
@@ -311,11 +305,11 @@ def _solve_retarded_sample(
 
     knot_residuals = np.empty(times.size, dtype=float)
     for index, source_time in enumerate(times):
-        knot_residuals[index], _ = _light_cone_residual_m(
-            observer_time_s=observer_time_s,
-            observer_position_m=observer_position_m,
-            source_time_s=float(source_time),
-            source_position_m=history.position_m[index, source_index],
+        knot_residuals[index], _ = _light_cone_residual_mm(
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            source_time_ns=float(source_time),
+            source_position_mm=history.position_mm[index, source_index],
         )
     brackets = np.flatnonzero(
         (knot_residuals[:-1] >= 0.0) & (knot_residuals[1:] <= 0.0)
@@ -325,24 +319,24 @@ def _solve_retarded_sample(
     segment = int(brackets[-1])
     lower_time = float(times[segment])
     upper_time = float(times[segment + 1])
-    source_position = history.position_m[segment, source_index]
+    source_position = history.position_mm[segment, source_index]
     source_beta = history.beta[segment, source_index]
-    source_beta_dot = history.beta_dot_s[segment, source_index]
+    source_beta_prime = history.beta_prime_per_mm[segment, source_index]
     residual = float(knot_residuals[segment])
-    separation = float(np.linalg.norm(observer_position_m - source_position))
+    separation = float(np.linalg.norm(observer_position_mm - source_position))
 
     for _ in range(max_root_iterations):
         midpoint = 0.5 * (lower_time + upper_time)
-        source_position, source_beta, source_beta_dot = _quintic_worldline_sample(
+        source_position, source_beta, source_beta_prime = _quintic_worldline_sample(
             history, source_index, segment, midpoint
         )
-        residual, separation = _light_cone_residual_m(
-            observer_time_s=observer_time_s,
-            observer_position_m=observer_position_m,
-            source_time_s=midpoint,
-            source_position_m=source_position,
+        residual, separation = _light_cone_residual_mm(
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            source_time_ns=midpoint,
+            source_position_mm=source_position,
         )
-        if abs(residual) <= root_tolerance_m:
+        if abs(residual) <= root_tolerance_mm:
             lower_time = upper_time = midpoint
             break
         if residual > 0.0:
@@ -353,22 +347,22 @@ def _solve_retarded_sample(
             break
 
     retarded_time = 0.5 * (lower_time + upper_time)
-    source_position, source_beta, source_beta_dot = _quintic_worldline_sample(
+    source_position, source_beta, source_beta_prime = _quintic_worldline_sample(
         history, source_index, segment, retarded_time
     )
-    residual, separation = _light_cone_residual_m(
-        observer_time_s=observer_time_s,
-        observer_position_m=observer_position_m,
-        source_time_s=retarded_time,
-        source_position_m=source_position,
+    residual, separation = _light_cone_residual_mm(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        source_time_ns=retarded_time,
+        source_position_mm=source_position,
     )
     return _RetardedSample(
-        time_s=retarded_time,
-        position_m=source_position,
+        time_ns=retarded_time,
+        position_mm=source_position,
         beta=source_beta,
-        beta_dot_s=source_beta_dot,
-        residual_m=residual,
-        separation_m=separation,
+        beta_prime_per_mm=source_beta_prime,
+        residual_mm=residual,
+        separation_mm=separation,
     )
 
 
@@ -376,22 +370,22 @@ def _source_terminated_before_light_cone(
     history: _HistoryArrays,
     source_index: int,
     *,
-    observer_time_s: float,
-    observer_position_m: np.ndarray,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
 ) -> bool:
     """Return true when a lost source ended before the required emission event."""
 
     alive_stop = _alive_prefix_length(history, source_index)
-    if alive_stop == history.time_s.shape[0]:
+    if alive_stop == history.time_ns.shape[0]:
         return False
     if alive_stop == 0:
         return True
     last_alive = alive_stop - 1
-    residual, _ = _light_cone_residual_m(
-        observer_time_s=observer_time_s,
-        observer_position_m=observer_position_m,
-        source_time_s=float(history.time_s[last_alive, source_index]),
-        source_position_m=history.position_m[last_alive, source_index],
+    residual, _ = _light_cone_residual_mm(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        source_time_ns=float(history.time_ns[last_alive, source_index]),
+        source_position_mm=history.position_mm[last_alive, source_index],
     )
     # g(t_source) decreases monotonically for a timelike worldline. Positive
     # g at the final alive state means the required retarded emission would
@@ -399,25 +393,29 @@ def _source_terminated_before_light_cone(
     return residual > 0.0
 
 
-def lienard_wiechert_charge_field_si(
+def lienard_wiechert_charge_field_native(
     *,
-    charge_coulomb: float,
-    separation_vector_m: Sequence[float],
+    charge_native: float,
+    separation_vector_mm: Sequence[float],
     source_beta: Sequence[float],
-    source_beta_dot_s: Sequence[float],
+    source_beta_prime_per_mm: Sequence[float],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return SI (E, B) from one retarded point-charge sample."""
+    """Return native scaled-Gaussian ``(E, B)`` for one retarded charge.
 
-    charge = float(charge_coulomb)
-    separation_vector = np.asarray(separation_vector_m, dtype=float)
+    ``source_beta_prime_per_mm`` is ``d beta / d(c t)``. The radiation term
+    therefore has no additional factor of ``c``.
+    """
+
+    charge = float(charge_native)
+    separation_vector = np.asarray(separation_vector_mm, dtype=float)
     beta = np.asarray(source_beta, dtype=float)
-    beta_dot = np.asarray(source_beta_dot_s, dtype=float)
+    beta_prime = np.asarray(source_beta_prime_per_mm, dtype=float)
     if not np.isfinite(charge):
-        raise ValueError("charge_coulomb must be finite")
+        raise ValueError("charge_native must be finite")
     for name, vector in (
-        ("separation_vector_m", separation_vector),
+        ("separation_vector_mm", separation_vector),
         ("source_beta", beta),
-        ("source_beta_dot_s", beta_dot),
+        ("source_beta_prime_per_mm", beta_prime),
     ):
         if vector.shape != (3,) or not np.all(np.isfinite(vector)):
             raise ValueError(f"{name} must contain three finite values")
@@ -432,40 +430,37 @@ def lienard_wiechert_charge_field_si(
     if kappa <= 1.0e-14:
         raise ValueError("retarded field is singular because 1 - n.beta is too small")
 
-    vacuum_coulomb_constant = 8.987_551_792_3e9
     velocity_field = (
         (1.0 - beta_squared) * (direction - beta) / (kappa**3 * separation**2)
     )
     radiation_field = np.cross(
         direction,
-        np.cross(direction - beta, beta_dot),
-    ) / (SPEED_OF_LIGHT_M_S * kappa**3 * separation)
-    electric = vacuum_coulomb_constant * charge * (velocity_field + radiation_field)
-    magnetic = np.cross(direction, electric) / SPEED_OF_LIGHT_M_S
+        np.cross(direction - beta, beta_prime),
+    ) / (kappa**3 * separation)
+    electric = charge * (velocity_field + radiation_field)
+    magnetic = np.cross(direction, electric)
     return cast(tuple[np.ndarray, np.ndarray], (electric, magnetic))
 
 
-def evaluate_retarded_charge_field_si(
+def evaluate_retarded_charge_field_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),
     require_complete_history: bool = True,
-    root_tolerance_m: float = _DEFAULT_ROOT_TOLERANCE_M,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
 ) -> RetardedChargeFieldResult:
-    """Evaluate the summed charge field at one observer event."""
+    """Evaluate the summed native Gaussian charge field at one event."""
 
-    tolerance = float(root_tolerance_m)
+    tolerance = float(root_tolerance_mm)
     if not np.isfinite(tolerance) or tolerance <= 0.0:
-        raise ValueError("root_tolerance_m must be finite and positive")
+        raise ValueError("root_tolerance_mm must be finite and positive")
     if int(max_root_iterations) <= 0:
         raise ValueError("max_root_iterations must be positive")
     arrays = _extract_history(history)
-    observer_time_s = float(observer_event.time_ns) / _NANOSECONDS_PER_SECOND
-    observer_position_m = (
-        np.asarray(observer_event.position_mm, dtype=float) * _METRES_PER_MILLIMETRE
-    )
+    observer_time_ns = float(observer_event.time_ns)
+    observer_position_mm = np.asarray(observer_event.position_mm, dtype=float)
     excluded = {int(index) for index in excluded_source_indices}
     if any(index < 0 or index >= arrays.n_sources for index in excluded):
         raise IndexError("excluded source index is out of bounds")
@@ -473,43 +468,45 @@ def evaluate_retarded_charge_field_si(
     electric_total = np.zeros(3, dtype=float)
     magnetic_total = np.zeros(3, dtype=float)
     retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
-    residual_m = np.full(arrays.n_sources, np.nan, dtype=float)
-    separation_m = np.full(arrays.n_sources, np.nan, dtype=float)
+    residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+    separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
     valid_sources = np.zeros(arrays.n_sources, dtype=bool)
     missing_sources: list[int] = []
 
     for source_index in range(arrays.n_sources):
-        if source_index in excluded or abs(arrays.charge_coulomb[source_index]) == 0.0:
+        if source_index in excluded or abs(arrays.charge_native[source_index]) == 0.0:
             continue
         sample = _solve_retarded_sample(
             arrays,
             source_index,
-            observer_time_s=observer_time_s,
-            observer_position_m=observer_position_m,
-            root_tolerance_m=tolerance,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            root_tolerance_mm=tolerance,
             max_root_iterations=int(max_root_iterations),
         )
         if sample is None:
             if _source_terminated_before_light_cone(
                 arrays,
                 source_index,
-                observer_time_s=observer_time_s,
-                observer_position_m=observer_position_m,
+                observer_time_ns=observer_time_ns,
+                observer_position_mm=observer_position_mm,
             ):
                 continue
             missing_sources.append(source_index)
             continue
-        electric, magnetic = lienard_wiechert_charge_field_si(
-            charge_coulomb=float(arrays.charge_coulomb[source_index]),
-            separation_vector_m=observer_position_m - sample.position_m,
+        electric, magnetic = lienard_wiechert_charge_field_native(
+            charge_native=float(arrays.charge_native[source_index]),
+            separation_vector_mm=observer_position_mm - sample.position_mm,
             source_beta=tuple(float(value) for value in sample.beta),
-            source_beta_dot_s=tuple(float(value) for value in sample.beta_dot_s),
+            source_beta_prime_per_mm=tuple(
+                float(value) for value in sample.beta_prime_per_mm
+            ),
         )
         electric_total += electric
         magnetic_total += magnetic
-        retarded_time_ns[source_index] = sample.time_s * _NANOSECONDS_PER_SECOND
-        residual_m[source_index] = sample.residual_m
-        separation_m[source_index] = sample.separation_m
+        retarded_time_ns[source_index] = sample.time_ns
+        residual_mm[source_index] = sample.residual_mm
+        separation_mm[source_index] = sample.separation_mm
         valid_sources[source_index] = True
 
     if require_complete_history and missing_sources:
@@ -517,54 +514,54 @@ def evaluate_retarded_charge_field_si(
             "source history does not bracket the observer light cone for source "
             f"indices {missing_sources}"
         )
-    field_tensor = electromagnetic_field_tensor_si(
+    field_tensor = electromagnetic_field_tensor_native(
         tuple(float(value) for value in electric_total),
         tuple(float(value) for value in magnetic_total),
     )
     return RetardedChargeFieldResult(
-        electric_field_v_m=electric_total,
-        magnetic_field_t=magnetic_total,
+        electric_field_native=electric_total,
+        magnetic_field_native=magnetic_total,
         field_tensor=field_tensor,
         retarded_time_ns=retarded_time_ns,
-        light_cone_residual_m=residual_m,
-        separation_m=separation_m,
+        light_cone_residual_mm=residual_mm,
+        separation_mm=separation_mm,
         valid_sources=valid_sources,
     )
 
 
-def evaluate_retarded_charge_field_gradient_si(
+def evaluate_retarded_charge_field_gradient_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),
     require_complete_history: bool = True,
     relative_step: float = _DEFAULT_GRADIENT_RELATIVE_STEP,
-    minimum_step_m: float = _DEFAULT_GRADIENT_MINIMUM_STEP_M,
-    root_tolerance_m: float = _DEFAULT_ROOT_TOLERANCE_M,
+    minimum_step_mm: float = _DEFAULT_GRADIENT_MINIMUM_STEP_MM,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
 ) -> RetardedChargeFieldGradientResult:
     """Evaluate F and its complete centered spacetime derivative.
 
     partial_f[lambda, mu, nu] is partial_lambda F^(mu nu) for
-    x=(ct,x,y,z) in metres. Every displaced event independently re-solves
+    x=(ct,x,y,z) in millimetres. Every displaced event independently re-solves
     every source light cone.
     """
 
     relative = float(relative_step)
-    minimum = float(minimum_step_m)
+    minimum = float(minimum_step_mm)
     if not np.isfinite(relative) or relative <= 0.0 or relative >= 0.1:
         raise ValueError("relative_step must be finite and in (0, 0.1)")
     if not np.isfinite(minimum) or minimum <= 0.0:
-        raise ValueError("minimum_step_m must be finite and positive")
-    center = evaluate_retarded_charge_field_si(
+        raise ValueError("minimum_step_mm must be finite and positive")
+    center = evaluate_retarded_charge_field_native(
         history,
         observer_event,
         excluded_source_indices=excluded_source_indices,
         require_complete_history=require_complete_history,
-        root_tolerance_m=root_tolerance_m,
+        root_tolerance_mm=root_tolerance_mm,
         max_root_iterations=max_root_iterations,
     )
-    finite_separations = center.separation_m[center.valid_sources]
+    finite_separations = center.separation_mm[center.valid_sources]
     if finite_separations.size == 0:
         stencil_step = minimum
     else:
@@ -579,19 +576,13 @@ def evaluate_retarded_charge_field_gradient_si(
             if derivative_index == 0:
                 displaced = ObserverEvent(
                     time_ns=(
-                        float(observer_event.time_ns)
-                        + sign
-                        * stencil_step
-                        / SPEED_OF_LIGHT_M_S
-                        * _NANOSECONDS_PER_SECOND
+                        float(observer_event.time_ns) + sign * stencil_step / C_MMNS
                     ),
                     position_mm=observer_event.position_mm,
                 )
             else:
                 displaced_position = center_position.copy()
-                displaced_position[derivative_index - 1] += (
-                    sign * stencil_step / _METRES_PER_MILLIMETRE
-                )
+                displaced_position[derivative_index - 1] += sign * stencil_step
                 displaced_position_tuple = cast(
                     tuple[float, float, float],
                     tuple(float(value) for value in displaced_position),
@@ -600,12 +591,12 @@ def evaluate_retarded_charge_field_gradient_si(
                     time_ns=float(observer_event.time_ns),
                     position_mm=displaced_position_tuple,
                 )
-            field = evaluate_retarded_charge_field_si(
+            field = evaluate_retarded_charge_field_native(
                 history,
                 displaced,
                 excluded_source_indices=excluded_source_indices,
                 require_complete_history=require_complete_history,
-                root_tolerance_m=root_tolerance_m,
+                root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
             )
             fields.append(field.field_tensor)
@@ -615,7 +606,7 @@ def evaluate_retarded_charge_field_gradient_si(
     return RetardedChargeFieldGradientResult(
         field=center,
         partial_f=partial_f,
-        stencil_step_m=stencil_step,
+        stencil_step_mm=stencil_step,
         stencil_retarded_time_ns=retarded_times,
     )
 
@@ -625,7 +616,7 @@ __all__ = [
     "RetardedChargeFieldGradientResult",
     "RetardedChargeFieldResult",
     "RetardedHistoryError",
-    "evaluate_retarded_charge_field_gradient_si",
-    "evaluate_retarded_charge_field_si",
-    "lienard_wiechert_charge_field_si",
+    "evaluate_retarded_charge_field_gradient_native",
+    "evaluate_retarded_charge_field_native",
+    "lienard_wiechert_charge_field_native",
 ]

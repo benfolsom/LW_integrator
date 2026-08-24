@@ -9,7 +9,10 @@ import core.vectorized_interactions as vectorized_interactions
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.external_fields import ExternalFieldConfig, magnetic_field_tesla_to_native
 from core.integration_runner import retarded_integrator
-from core.magnetic_dipole import stern_gerlach_rest_impulse_native
+from core.magnetic_dipole import (
+    magnetic_moment_j_per_t_to_native,
+    stern_gerlach_rest_impulse_native,
+)
 from core.self_consistency import SelfConsistencyConfig
 from core.species import get_species
 from core.types import (
@@ -471,6 +474,10 @@ def test_observer_moment_is_not_scaled_by_macroparticle_population() -> None:
     assert float(trajectory[0]["magnetic_moment_j_per_t"][0]) == pytest.approx(
         electron.magnetic_moment_j_t
     )
+    assert float(trajectory[0]["magnetic_moment_native"][0]) == pytest.approx(
+        magnetic_moment_j_per_t_to_native(electron.magnetic_moment_j_t)
+    )
+    assert float(trajectory[0]["magnetic_moment_native"][0]) < 0.0
 
 
 def test_named_magnetic_species_rejects_mismatched_particle_mass_or_charge() -> None:

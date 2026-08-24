@@ -8,9 +8,11 @@ covariant Liénard–Wiechert formalism to the concrete data structures exposed 
 ``examples/validation``.
 
 The main charge integrator uses a native amu--millimetre--nanosecond unit
-system derived from the historical Gaussian-unit formulation.  External-field
-and magnetic-moment boundaries convert explicitly to SI; in particular, the RFS
-kernel and its charge-field gradient use SI throughout.
+system derived from the historical Gaussian-unit formulation.  The production
+RFS kernel and its retarded charge-field gradient now remain in that native
+scaled-Gaussian system.  User-facing J/T moments and T/m gradients cross an
+explicit boundary once; configured native electric and magnetic fields pass
+through unchanged.
 
 
 Retarded fields
@@ -121,22 +123,37 @@ only the dipole four-force
 .. math::
 
    \left.\frac{dp^\mu}{d\tau}\right|_{\mathrm{dipole}}
-   =dG^{\mu\nu}u_\nu, \qquad
-   G^{\mu\nu}=\partial^\mu(F^{*\nu\rho}s_\rho)
-   -\partial^\nu(F^{*\mu\rho}s_\rho).
+   ={\mu_{\mathrm{signed}}\over c}G^{\mu\nu}[a]u_\nu,
+   \qquad
+   G^{\mu\nu}[a]=\partial^\mu(F^{*\nu\rho}a_\rho)
+   -\partial^\nu(F^{*\mu\rho}a_\rho),
+
+where :math:`a^\mu=s^\mu/(I\hbar)` is the dimensionless spin four-vector.  In
+native Gaussian units the full Lorentz-plus-dipole equation is
+
+.. math::
+
+   m\dot u^\mu=\left({q\over c}F^{\mu\nu}
+   +{\mu_{\mathrm{signed}}\over c}G^{\mu\nu}[a]\right)u_\nu.
 
 RFS samples its field and gradient independently from the charge-force path.
 The field includes prescribed fields and observer-charge-independent,
 cross-bunch point-charge Lienard--Wiechert fields.  Every centred
 spacetime-gradient stencil event performs a new light-cone solve, so the
-derivative includes retarded-time variation.  Adding only :math:`dG u` avoids a
+derivative includes retarded-time variation.  Adding only the native
+:math:`(\mu/c)G[a]u` term avoids a
 second Lorentz force and preserves the feature-off baseline, but the two
 sampling paths are not yet one unified field kernel.  The signed minimal 2021
-RFS equation advances spin at the same time.
+coefficients advance spin at the same time.  Its gradient term uses the full
+2018 :math:`G` tensor: this matches the compact 2021 form in vacuum and is an
+explicit extension, rather than literally 2021 Eq. (11), in a current region.
 
 This is an experimental covariant response model with strict scope guards, not
 a closed all-orders action theory.  Intrinsic moments do not yet source a field,
-so dipole--dipole forces and dipole radiation are absent.  The equations,
+so dipole--dipole forces and dipole radiation are absent.  A future dipole
+source would enter the total non-self field; the existing :math:`qF` and full
+:math:`G[F]` response would then produce charge--dipole and dipole--dipole
+coupling without a second pair-force toggle.  The equations,
 configuration modes, primary references, and current validation boundary are
 given in :doc:`magnetic_dipole_moments`.
 
