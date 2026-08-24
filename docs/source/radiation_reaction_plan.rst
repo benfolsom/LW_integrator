@@ -67,11 +67,12 @@ The maintained solver uses the historical native system:
 * mechanical force: ``amu mm / ns^2``, and
 * mechanical energy: ``amu mm^2 / ns^2``.
 
-Charge uses the solver-native value ``ELEMENTARY_CHARGE = 1.178734e-5``. A
-native electric field is a force-per-charge quantity, so ``q E`` has units of
-``amu mm / ns^2``. The current prescribed-field implementation converts SI
-``V/m`` values by matching the SI force on one elementary charge to one native
-force unit.
+Charge uses the derived solver-native value
+``ELEMENTARY_CHARGE = ELEMENTARY_CHARGE_STATC * STATCOULOMB_TO_NATIVE_CHARGE``
+(approximately ``1.1787088598e-5``). A native electric field is a
+force-per-charge quantity, so ``q E`` has units of ``amu mm / ns^2``. The
+current prescribed-field implementation converts SI ``V/m`` values by
+matching the SI force on one elementary charge to one native force unit.
 
 The integrator step variable ``h`` is a proper-time increment ``d tau``. The
 coordinate-time increment for a particle is therefore

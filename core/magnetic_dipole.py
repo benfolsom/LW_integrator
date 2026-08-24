@@ -120,7 +120,7 @@ def magnetic_field_native_to_tesla(value_native: float) -> float:
 def magnetic_moment_j_per_t_to_native(value_j_per_t: float) -> float:
     """Convert a measured SI moment to native energy per native magnetic field.
 
-    The conversion intentionally uses the same historical-elementary-charge
+    The conversion intentionally uses the same exact native elementary-charge
     field scale as :func:`magnetic_field_tesla_to_native`. This keeps ``mu B``
     and ``mu grad(B)`` consistent with the existing external-field boundary.
     """

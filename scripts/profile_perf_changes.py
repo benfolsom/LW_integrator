@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.constants import C_MMNS, NUMERICAL_EPSILON
+from core.constants import C_MMNS, ELEMENTARY_CHARGE, NUMERICAL_EPSILON
 from core.distances import compute_instantaneous_distance, _locate_retarded_index
 from core.vectorized_interactions import NUMBA_AVAILABLE, _compute_forces_numba_kernel
 
@@ -158,7 +158,7 @@ def bench_numba_kernel(N: int = 200, n_ext: int = 500) -> None:
         ny = rng.uniform(-0.5, 0.5, n)
         nz = np.sqrt(np.maximum(1.0 - nx**2 - ny**2, 0.0))
         bdot = rng.uniform(-0.01, 0.01, n)
-        charge = np.ones(n) * (-1.178734e-5)
+        charge = np.ones(n) * (-ELEMENTARY_CHARGE)
         return bx, by, bz, gamma, R, nx, ny, nz, bdot, charge
 
     bx_e, by_e, bz_e, g_e, R, nx, ny, nz, bdot_s, q_e = _make_arrays(n_ext)
@@ -167,7 +167,7 @@ def bench_numba_kernel(N: int = 200, n_ext: int = 500) -> None:
     bdotz = bz_e * bdot_s
 
     h = 1e-4
-    charge_i = -1.178734e-5
+    charge_i = -ELEMENTARY_CHARGE
     mass_i = 5.485799e-4
     gamma_i = 3.0
     bx_i, by_i, bz_i = 0.0, 0.0, 0.94

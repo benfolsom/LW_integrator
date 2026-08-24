@@ -6,6 +6,12 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Derived the native elementary charge from the repository's statcoulomb
+  conversion instead of retaining the historical rounded literal. This lowers
+  a singly charged native value by about 21.33 ppm and a two-charge Coulomb
+  force by about 42.66 ppm, while making the scaled-Gaussian unit identity
+  exact. Charged numerical baselines must be regenerated.
+
 - Added a shared immutable species registry with signed, cited free-particle
   magnetic moments for electrons, positrons, protons, antiprotons, neutrons,
   deuterons, tritons, helions, and spin-zero alpha particles. H- is explicitly

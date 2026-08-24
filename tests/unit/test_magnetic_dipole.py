@@ -94,13 +94,12 @@ def test_native_moment_gradient_and_action_bridges_are_mutually_consistent() -> 
     assert NATIVE_ENERGY_UNIT_J == pytest.approx(NATIVE_FORCE_UNIT_NEWTON * 1.0e-3)
 
 
-def test_historical_charge_scale_offset_is_explicit_until_global_migration() -> None:
+def test_magnetic_boundaries_share_the_exact_gaussian_charge_scale() -> None:
     exact_gaussian_elementary_charge = (
         ELEMENTARY_CHARGE_STATC * STATCOULOMB_TO_NATIVE_CHARGE
     )
-    relative_offset = ELEMENTARY_CHARGE / exact_gaussian_elementary_charge - 1.0
 
-    assert relative_offset == pytest.approx(2.132859e-5, rel=2.0e-7)
+    assert ELEMENTARY_CHARGE == exact_gaussian_elementary_charge
 
 
 def test_field_tensor_round_trip_and_lorentz_force_signs() -> None:
