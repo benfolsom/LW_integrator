@@ -631,7 +631,10 @@ def evaluate_retarded_dipole_field_gradient_native(
 
     electric, magnetic = fields_from_tensor_native(field_tensor)
     # Reconstruct through the public convention helper as a local sign check.
-    reconstructed = electromagnetic_field_tensor_native(electric, magnetic)
+    reconstructed = electromagnetic_field_tensor_native(
+        cast(Sequence[float], electric),
+        cast(Sequence[float], magnetic),
+    )
     if not np.array_equal(field_tensor, reconstructed):
         raise RuntimeError("internal dipole field-tensor convention mismatch")
 
