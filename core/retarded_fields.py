@@ -22,7 +22,7 @@ of scope for this layer.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import Sequence, cast
 
 import numpy as np
@@ -61,7 +61,13 @@ class ObserverEvent:
 
 @dataclass(frozen=True)
 class RetardedChargeFieldResult:
-    """Total native Gaussian charge field and light-cone diagnostics."""
+    """Total native Gaussian charge potential, field, and diagnostics.
+
+    ``four_potential`` is the contravariant Lienard--Wiechert potential
+    ``A^mu=(phi, phi beta)`` in the gauge selected by the retarded point-charge
+    solution.  It is appended with a default to preserve compatibility with
+    older direct dataclass constructors.
+    """
 
     electric_field_native: np.ndarray
     magnetic_field_native: np.ndarray
@@ -70,16 +76,28 @@ class RetardedChargeFieldResult:
     light_cone_residual_mm: np.ndarray
     separation_mm: np.ndarray
     valid_sources: np.ndarray
+    four_potential: np.ndarray = dataclass_field(
+        default_factory=lambda: np.zeros(4, dtype=float)
+    )
 
 
 @dataclass(frozen=True)
 class RetardedChargeFieldGradientResult:
-    """A native charge field plus ``partial_lambda F^(mu nu)`` per mm."""
+    """A native charge field and its complete potential/field derivatives.
+
+    ``partial_a[lambda, nu]`` is ``partial_lambda A^nu`` per millimetre and
+    uses the same eight independently retarded stencil events as
+    ``partial_f``.  It is appended with a default to preserve compatibility
+    with older direct dataclass constructors.
+    """
 
     field: RetardedChargeFieldResult
     partial_f: np.ndarray
     stencil_step_mm: float
     stencil_retarded_time_ns: np.ndarray
+    partial_a: np.ndarray = dataclass_field(
+        default_factory=lambda: np.zeros((4, 4), dtype=float)
+    )
 
 
 @dataclass(frozen=True)
@@ -570,6 +588,53 @@ def lienard_wiechert_charge_field_native(
     return cast(tuple[np.ndarray, np.ndarray], (electric, magnetic))
 
 
+def lienard_wiechert_charge_potential_native(
+    *,
+    charge_native: float,
+    separation_vector_mm: Sequence[float],
+    source_beta: Sequence[float],
+) -> np.ndarray:
+    """Return the native Gaussian retarded four-potential of one charge.
+
+    With ``R`` and ``n`` evaluated at the retarded source event, the potential
+    is
+
+    ``A^mu = (phi, phi beta)``, ``phi = q / ((1 - n.beta) R)``.
+
+    The returned potential is contravariant and uses ``x=(ct,x,y,z)``.  Its
+    ordinary charge contribution to canonical momentum is therefore
+    ``(q_observer/c) A^mu``.
+    """
+
+    charge = float(charge_native)
+    separation_vector = np.asarray(separation_vector_mm, dtype=float)
+    beta = np.asarray(source_beta, dtype=float)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+    for name, vector in (
+        ("separation_vector_mm", separation_vector),
+        ("source_beta", beta),
+    ):
+        if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+            raise ValueError(f"{name} must contain three finite values")
+    separation = float(np.linalg.norm(separation_vector))
+    if separation <= 0.0:
+        raise ValueError("the observer cannot coincide with a point-charge source")
+    beta_squared = float(beta @ beta)
+    if beta_squared >= 1.0:
+        raise ValueError("source beta magnitude must be less than one")
+    direction = separation_vector / separation
+    kappa = 1.0 - float(direction @ beta)
+    if kappa <= 1.0e-14:
+        raise ValueError("retarded field is singular because 1 - n.beta is too small")
+
+    scalar_potential = charge / (kappa * separation)
+    return cast(
+        np.ndarray,
+        scalar_potential * np.concatenate((np.ones(1, dtype=float), beta)),
+    )
+
+
 def _validated_root_options(
     root_tolerance_mm: float, max_root_iterations: int
 ) -> tuple[float, int]:
@@ -597,6 +662,7 @@ def _evaluate_prepared_charge_field_native(
     observer_position_mm = np.asarray(observer_event.position_mm, dtype=float)
     electric_total = np.zeros(3, dtype=float)
     magnetic_total = np.zeros(3, dtype=float)
+    four_potential_total = np.zeros(4, dtype=float)
     retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
     residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
     separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
@@ -628,8 +694,14 @@ def _evaluate_prepared_charge_field_native(
                 float(value) for value in sample.beta_prime_per_mm
             ),
         )
+        four_potential = lienard_wiechert_charge_potential_native(
+            charge_native=float(arrays.charge_native[source_index]),
+            separation_vector_mm=observer_position_mm - sample.position_mm,
+            source_beta=tuple(float(value) for value in sample.beta),
+        )
         electric_total += electric
         magnetic_total += magnetic
+        four_potential_total += four_potential
         retarded_time_ns[source_index] = sample.time_ns
         residual_mm[source_index] = sample.residual_mm
         separation_mm[source_index] = sample.separation_mm
@@ -652,6 +724,7 @@ def _evaluate_prepared_charge_field_native(
         light_cone_residual_mm=residual_mm,
         separation_mm=separation_mm,
         valid_sources=valid_sources,
+        four_potential=four_potential_total,
     )
 
 
@@ -721,10 +794,12 @@ def evaluate_retarded_charge_field_gradient_native(
         stencil_step = max(minimum, relative * float(np.min(finite_separations)))
 
     partial_f = np.zeros((4, 4, 4), dtype=float)
+    partial_a = np.zeros((4, 4), dtype=float)
     retarded_times = np.full((4, 2, center.retarded_time_ns.size), np.nan, dtype=float)
     center_position = np.asarray(observer_event.position_mm, dtype=float)
     for derivative_index in range(4):
         fields = []
+        potentials = []
         for sign_index, sign in enumerate((-1.0, 1.0)):
             if derivative_index == 0:
                 displaced = ObserverEvent(
@@ -752,14 +827,19 @@ def evaluate_retarded_charge_field_gradient_native(
                 max_root_iterations=iterations,
             )
             fields.append(field.field_tensor)
+            potentials.append(field.four_potential)
             retarded_times[derivative_index, sign_index] = field.retarded_time_ns
         partial_f[derivative_index] = (fields[1] - fields[0]) / (2.0 * stencil_step)
+        partial_a[derivative_index] = (potentials[1] - potentials[0]) / (
+            2.0 * stencil_step
+        )
 
     return RetardedChargeFieldGradientResult(
         field=center,
         partial_f=partial_f,
         stencil_step_mm=stencil_step,
         stencil_retarded_time_ns=retarded_times,
+        partial_a=partial_a,
     )
 
 
@@ -771,4 +851,5 @@ __all__ = [
     "evaluate_retarded_charge_field_gradient_native",
     "evaluate_retarded_charge_field_native",
     "lienard_wiechert_charge_field_native",
+    "lienard_wiechert_charge_potential_native",
 ]
