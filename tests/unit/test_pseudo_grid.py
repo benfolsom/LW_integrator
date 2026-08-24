@@ -698,6 +698,51 @@ def test_reconstruct_full_state_from_active_result_can_leave_passives_frozen():
     np.testing.assert_allclose(reconstructed["t"], np.array([1.0, 2.0, 5.0]))
 
 
+def test_reconstruct_full_state_invalidates_passive_medina_force_history():
+    previous_full_state = _make_solver_state(
+        x=[0.0, 10.0, 20.0],
+        q=[1.0, 1.0, 1.0],
+        t=[2.0, 2.0, 2.0],
+    )
+    previous_full_state.update(
+        {
+            "radiation_reaction_work": np.zeros(3),
+            "medina_cross_field_energy": np.zeros(3),
+            "medina_cross_field_energy_change": np.zeros(3),
+            "medina_force_derivative_ready": np.ones(3, dtype=bool),
+            "medina_impulse_capped": np.zeros(3, dtype=bool),
+            "medina_external_force_x": np.ones(3),
+            "medina_external_force_y": np.zeros(3),
+            "medina_external_force_z": np.zeros(3),
+            "medina_external_force_sample_time": np.full(3, 1.5),
+        }
+    )
+    active_indices = np.array([0, 2], dtype=int)
+    active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["medina_external_force_x"] = np.array([2.0, 3.0])
+    active_result_state["medina_external_force_sample_time"] = np.array([2.5, 2.5])
+    passive_map = PassiveNeighborMap(
+        passive_indices=np.array([1], dtype=int),
+        neighbor_particle_indices=np.array([[0, 2]], dtype=int),
+        weights=np.array([[0.5, 0.5]], dtype=float),
+    )
+
+    reconstructed = reconstruct_full_state_from_active_result(
+        previous_full_state,
+        active_indices,
+        active_result_state,
+        passive_map,
+        passive_update_mode="frozen",
+    )
+
+    np.testing.assert_array_equal(
+        reconstructed["medina_external_force_sample_time"][[0, 2]],
+        (2.5, 2.5),
+    )
+    assert np.isnan(reconstructed["medina_external_force_sample_time"][1])
+    assert not reconstructed["medina_force_derivative_ready"][1]
+
+
 def test_reconstruct_full_state_from_active_result_can_coast_passives_ballistically():
     previous_full_state = _make_solver_state(
         x=[0.0, 10.0, 20.0],

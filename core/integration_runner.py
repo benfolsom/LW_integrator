@@ -744,6 +744,19 @@ def _slice_trajectory_arrays(
         radiation_power=arrays.radiation_power[start:stop],
         radiation_energy=arrays.radiation_energy[start:stop],
         radiation_energy_applied=arrays.radiation_energy_applied[start:stop],
+        radiation_reaction_work=arrays.radiation_reaction_work[start:stop],
+        medina_cross_field_energy=arrays.medina_cross_field_energy[start:stop],
+        medina_cross_field_energy_change=arrays.medina_cross_field_energy_change[
+            start:stop
+        ],
+        medina_force_derivative_ready=arrays.medina_force_derivative_ready[start:stop],
+        medina_impulse_capped=arrays.medina_impulse_capped[start:stop],
+        medina_external_force_x=arrays.medina_external_force_x[start:stop],
+        medina_external_force_y=arrays.medina_external_force_y[start:stop],
+        medina_external_force_z=arrays.medina_external_force_z[start:stop],
+        medina_external_force_sample_time=arrays.medina_external_force_sample_time[
+            start:stop
+        ],
         origin_x=arrays.origin_x[start:stop],
         origin_y=arrays.origin_y[start:stop],
         origin_z=arrays.origin_z[start:stop],

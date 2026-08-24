@@ -113,6 +113,15 @@ class TestShapeProperties:
             "radiation_power",
             "radiation_energy",
             "radiation_energy_applied",
+            "radiation_reaction_work",
+            "medina_cross_field_energy",
+            "medina_cross_field_energy_change",
+            "medina_force_derivative_ready",
+            "medina_impulse_capped",
+            "medina_external_force_x",
+            "medina_external_force_y",
+            "medina_external_force_z",
+            "medina_external_force_sample_time",
         ):
             arr = getattr(traj, field)
             assert arr.shape == (N_STEPS, N_PARTICLES), field
@@ -209,6 +218,46 @@ class TestHaltMetadata:
 
 
 class TestMissingOptionalFields:
+    def test_disabled_medina_sidecars_use_constant_broadcast_storage(self):
+        builder = TrajectoryBuilder(100, 200)
+        trajectory = builder.build()
+
+        assert trajectory.radiation_reaction_work.shape == (100, 200)
+        assert not trajectory.radiation_reaction_work.flags.writeable
+        assert not trajectory.medina_force_derivative_ready.flags.writeable
+        assert np.all(np.isnan(trajectory.medina_external_force_sample_time))
+
+    def test_medina_sidecars_allocate_lazily_and_round_trip(self):
+        builder = TrajectoryBuilder(2, 1)
+        state = _make_state(0, 1)
+        state.update(
+            {
+                "radiation_reaction_work": np.array([-2.0]),
+                "medina_cross_field_energy": np.array([3.0]),
+                "medina_cross_field_energy_change": np.array([-4.0]),
+                "medina_force_derivative_ready": np.array([True]),
+                "medina_impulse_capped": np.array([False]),
+                "medina_external_force_x": np.array([5.0]),
+                "medina_external_force_y": np.array([6.0]),
+                "medina_external_force_z": np.array([7.0]),
+                "medina_external_force_sample_time": np.array([0.25]),
+            }
+        )
+
+        builder.set_step(0, state)
+        trajectory = builder.build()
+        restored = trajectory.state_at(0)
+
+        assert trajectory.radiation_reaction_work.flags.writeable
+        assert trajectory.medina_force_derivative_ready.dtype == bool
+        np.testing.assert_array_equal(restored["radiation_reaction_work"], (-2.0,))
+        np.testing.assert_array_equal(
+            restored["medina_force_derivative_ready"], (True,)
+        )
+        np.testing.assert_array_equal(
+            restored["medina_external_force_sample_time"], (0.25,)
+        )
+
     def test_disabled_magnetic_sidecars_use_constant_broadcast_storage(self):
         builder = TrajectoryBuilder(100, 200)
         trajectory = builder.build()

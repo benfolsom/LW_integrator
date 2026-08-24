@@ -17,6 +17,14 @@ All notable changes and updates to the LW Integrator project are documented in t
   a singly charged native value by about 21.33 ppm and a two-charge Coulomb
   force by about 42.66 ppm, while making the scaled-Gaussian unit identity
   exact. Charged numerical baselines must be regenerated.
+- Corrected production Medina/LAD radiation reaction to retain the complete
+  lab-time derivative ``d(gamma F_ext)/dt``, including the previously omitted
+  ``gamma dF_ext/dt`` term. The derivative now uses accepted midpoint force
+  samples with a first-order backward difference; the first unprimed sample
+  reports far radiation but applies no incomplete self-force. Trajectories now
+  expose derivative readiness, cap activation, signed reaction work, and
+  Medina cross-field energy diagnostics. Capped steps must be rejected in
+  capture-validation studies.
 
 - Added a shared immutable species registry with signed, cited free-particle
   magnetic moments for electrons, positrons, protons, antiprotons, neutrons,

@@ -92,6 +92,10 @@ from .external_fields import (
     evaluate_external_field_si,
 )
 from .macroparticle_smearing import smear_source_samples
+from .medina_radiation_reaction import (
+    MedinaRadiationReactionResult,
+    compute_medina_radiation_reaction,
+)
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
@@ -378,6 +382,41 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         }
 
     return result
+
+
+def _initialize_medina_step_state(result: ParticleState) -> None:
+    """Reset Medina diagnostics and accepted-force history for one trial step.
+
+    The caller populates the force-history fields only after it has recomputed
+    the complete non-radiation-reaction force for the current trial.  Starting
+    from invalid history here is important: a rejected adaptive trial or a run
+    that changes radiation-reaction mode cannot leak a stale force derivative
+    into a later accepted step.
+    """
+
+    particle_template = result["x"]
+    for name in (
+        "radiation_reaction_work",
+        "medina_cross_field_energy",
+        "medina_cross_field_energy_change",
+        "medina_external_force_x",
+        "medina_external_force_y",
+        "medina_external_force_z",
+    ):
+        result[name] = np.zeros_like(particle_template, dtype=float)
+    result["medina_external_force_sample_time"] = np.full_like(
+        particle_template,
+        np.nan,
+        dtype=float,
+    )
+    result["medina_force_derivative_ready"] = np.zeros_like(
+        particle_template,
+        dtype=bool,
+    )
+    result["medina_impulse_capped"] = np.zeros_like(
+        particle_template,
+        dtype=bool,
+    )
 
 
 def _get_state_scalar(
@@ -1181,86 +1220,142 @@ def _compute_lienard_radiated_power(
     return float((2.0 * charge**2 / (3.0 * C_MMNS)) * gamma**6 * transverse_term)
 
 
-def _compute_medina_radiation_reaction_impulse(
+def _accepted_medina_force_derivative(
     *,
-    external_force: tuple[float, float, float],
-    beta: tuple[float, float, float],
-    beta_dot_t: tuple[float, float, float],
-    gamma: float,
-    dgamma_dt: float,
-    mass: float,
-    charge: float,
-    coordinate_dt: float,
-    max_impulse_fraction: float = 0.25,
+    current_state: ParticleState,
+    particle_idx: int,
+    current_force: tuple[float, float, float],
+    current_sample_time: float,
 ) -> tuple[tuple[float, float, float], bool]:
-    """Return Medina/LAD radiation-reaction impulse in native momentum units.
+    """Backward-difference two accepted midpoint force samples.
 
-    The Medina form is treated as an experimental candidate self-force:
+    Each force sample is the average non-radiation-reaction mechanical force
+    over one accepted lab-time interval and is timestamped at that interval's
+    midpoint.  The resulting derivative is first-order accurate at the current
+    midpoint.  A nonlinear iteration never writes ``current_state``; rejected
+    adaptive trials are therefore excluded automatically.
 
-    The direct form,
-
-    ``F_rad = tau0 * (dgamma_dt * F_ext - gamma^3/c^2 * (F_ext·a) * v)``,
-
-    suffers catastrophic cancellation for head-on longitudinal acceleration at
-    high gamma. This implementation uses the equivalent beta-parallel /
-    beta-transverse decomposition:
-
-    ``F_rad = tau0/(m c) * ((beta·F) F_perp - gamma^2 |F_perp|^2 beta)``
-
-    where ``F_perp`` is the component of the external mechanical force
-    perpendicular to ``beta``. The returned impulse is
-    ``F_rad * coordinate_dt``. A small cap is used only as a numerical guard for
-    the experimental mode.
+    Missing history and history whose timestamp lies after the accepted state
+    are treated as unprimed.  The caller must not apply a Medina impulse until
+    this function reports readiness.
     """
-    if coordinate_dt <= 0.0 or mass <= 0.0 or gamma <= 0.0 or charge == 0.0:
-        return (0.0, 0.0, 0.0), False
 
-    force_vec = np.asarray(external_force, dtype=float)
-    beta_vec = np.asarray(beta, dtype=float)
-    beta_dot_vec = np.asarray(beta_dot_t, dtype=float)
-    if not (
-        np.all(np.isfinite(force_vec))
-        and np.all(np.isfinite(beta_vec))
-        and np.all(np.isfinite(beta_dot_vec))
-        and np.isfinite(dgamma_dt)
+    force_keys = (
+        "medina_external_force_x",
+        "medina_external_force_y",
+        "medina_external_force_z",
+    )
+    if any(key not in current_state for key in force_keys) or (
+        "medina_external_force_sample_time" not in current_state
     ):
         return (0.0, 0.0, 0.0), False
 
-    if float(np.linalg.norm(force_vec)) <= 0.0:
+    try:
+        previous_force = np.asarray(
+            [current_state[key][particle_idx] for key in force_keys],
+            dtype=float,
+        )
+        previous_sample_time = float(
+            current_state["medina_external_force_sample_time"][particle_idx]
+        )
+        accepted_state_time = float(current_state["t"][particle_idx])
+    except (IndexError, KeyError, TypeError, ValueError):
         return (0.0, 0.0, 0.0), False
 
-    beta_sq = float(np.dot(beta_vec, beta_vec))
-    if beta_sq <= 0.0:
+    current_force_vector = np.asarray(current_force, dtype=float)
+    values_are_finite = bool(
+        np.all(np.isfinite(previous_force))
+        and np.all(np.isfinite(current_force_vector))
+        and np.isfinite(previous_sample_time)
+        and np.isfinite(current_sample_time)
+        and np.isfinite(accepted_state_time)
+    )
+    if not values_are_finite:
         return (0.0, 0.0, 0.0), False
 
-    force_norm = float(np.linalg.norm(force_vec))
-    beta_dot_force = float(np.dot(beta_vec, force_vec))
-    force_parallel = beta_vec * (beta_dot_force / beta_sq)
-    force_perp = force_vec - force_parallel
-    force_perp_norm = float(np.linalg.norm(force_perp))
-    if force_perp_norm <= 1.0e-14 * force_norm:
+    timestamp_tolerance = (
+        64.0
+        * np.finfo(float).eps
+        * max(
+            1.0,
+            abs(previous_sample_time),
+            abs(accepted_state_time),
+        )
+    )
+    if previous_sample_time > accepted_state_time + timestamp_tolerance:
         return (0.0, 0.0, 0.0), False
 
-    tau0 = (2.0 / 3.0) * charge**2 / (mass * C_MMNS**3)
-    force_perp_sq = float(np.dot(force_perp, force_perp))
-    radiation_force = (tau0 / (mass * C_MMNS)) * (
-        beta_dot_force * force_perp - gamma**2 * force_perp_sq * beta_vec
+    sample_interval = float(current_sample_time - previous_sample_time)
+    if sample_interval <= 0.0 or not np.isfinite(sample_interval):
+        return (0.0, 0.0, 0.0), False
+
+    derivative = (current_force_vector - previous_force) / sample_interval
+    if not np.all(np.isfinite(derivative)):
+        return (0.0, 0.0, 0.0), False
+    return (
+        (float(derivative[0]), float(derivative[1]), float(derivative[2])),
+        True,
     )
 
-    if not np.all(np.isfinite(radiation_force)):
+
+def _cap_medina_radiation_reaction_impulse(
+    *,
+    impulse: tuple[float, float, float],
+    external_force: tuple[float, float, float],
+    coordinate_dt: float,
+    max_impulse_fraction: float = 0.25,
+) -> tuple[tuple[float, float, float], bool]:
+    """Apply the legacy Medina step guard and report whether it activated.
+
+    The pure Medina kernel remains uncapped.  Production retains the historical
+    guard at 25 percent of the non-RR external impulse, but publishes a flag so
+    validation and capture studies can reject guarded steps rather than
+    silently treating them as physical results.
+    """
+
+    impulse_vector = np.asarray(impulse, dtype=float)
+    force_vector = np.asarray(external_force, dtype=float)
+    if not (
+        impulse_vector.shape == (3,)
+        and force_vector.shape == (3,)
+        and np.all(np.isfinite(impulse_vector))
+        and np.all(np.isfinite(force_vector))
+        and np.isfinite(coordinate_dt)
+        and coordinate_dt > 0.0
+    ):
         return (0.0, 0.0, 0.0), False
 
-    impulse = radiation_force * coordinate_dt
-    capped = False
-    if max_impulse_fraction > 0.0:
-        reference_impulse = max(float(np.linalg.norm(force_vec)) * coordinate_dt, 0.0)
-        max_impulse = max_impulse_fraction * reference_impulse
-        impulse_norm = float(np.linalg.norm(impulse))
-        if max_impulse > 0.0 and impulse_norm > max_impulse:
-            impulse *= max_impulse / impulse_norm
-            capped = True
+    if max_impulse_fraction <= 0.0:
+        return (
+            (
+                float(impulse_vector[0]),
+                float(impulse_vector[1]),
+                float(impulse_vector[2]),
+            ),
+            False,
+        )
 
-    return (float(impulse[0]), float(impulse[1]), float(impulse[2])), capped
+    reference_impulse = float(np.linalg.norm(force_vector)) * coordinate_dt
+    maximum_impulse = max_impulse_fraction * reference_impulse
+    impulse_norm = float(np.linalg.norm(impulse_vector))
+    if maximum_impulse > 0.0 and impulse_norm > maximum_impulse:
+        impulse_vector *= maximum_impulse / impulse_norm
+        return (
+            (
+                float(impulse_vector[0]),
+                float(impulse_vector[1]),
+                float(impulse_vector[2]),
+            ),
+            True,
+        )
+    return (
+        (
+            float(impulse_vector[0]),
+            float(impulse_vector[1]),
+            float(impulse_vector[2]),
+        ),
+        False,
+    )
 
 
 def _derive_relativistic_kinematics_from_force(
@@ -1593,6 +1688,8 @@ def retarded_equations_of_motion(
     current_state = trajectory[index_traj]
     result = _initialize_result_state(current_state)
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
+    if radiation_mode == "medina_lad":
+        _initialize_medina_step_state(result)
 
     num_particles = len(current_state["x"])
     pseudo_grid_sc_charge_matrix = None
@@ -3135,7 +3232,7 @@ def retarded_equations_of_motion(
                     * C_MMNS
                     * current_state["bz"][particle_idx]
                 )
-                if coordinate_dt > 0.0:
+                if coordinate_dt > 0.0 and force_particle_charge != 0.0:
                     external_force = (
                         float(
                             (physical_mechanical_px - previous_mechanical_px)
@@ -3150,34 +3247,115 @@ def retarded_equations_of_motion(
                             / coordinate_dt
                         ),
                     )
-                    medina_beta_dot_t, dgamma_dt = (
-                        _derive_relativistic_kinematics_from_force(
-                            external_force,
-                            beta_tuple,
-                            float(result["gamma"][particle_idx]),
-                            float(particle_mass),
+                    current_force_sample_time = float(
+                        current_state["t"][particle_idx] + 0.5 * coordinate_dt
+                    )
+                    result["medina_external_force_x"][particle_idx] = external_force[0]
+                    result["medina_external_force_y"][particle_idx] = external_force[1]
+                    result["medina_external_force_z"][particle_idx] = external_force[2]
+                    result["medina_external_force_sample_time"][
+                        particle_idx
+                    ] = current_force_sample_time
+
+                    external_force_time_derivative, derivative_ready = (
+                        _accepted_medina_force_derivative(
+                            current_state=current_state,
+                            particle_idx=particle_idx,
+                            current_force=external_force,
+                            current_sample_time=current_force_sample_time,
                         )
                     )
-                    medina_impulse, medina_capped = (
-                        _compute_medina_radiation_reaction_impulse(
+                    result["medina_force_derivative_ready"][
+                        particle_idx
+                    ] = derivative_ready
+
+                    medina_beta_dot_t, _ = _derive_relativistic_kinematics_from_force(
+                        external_force,
+                        beta_tuple,
+                        float(result["gamma"][particle_idx]),
+                        float(particle_mass),
+                    )
+                    medina_acceleration = tuple(
+                        C_MMNS * component for component in medina_beta_dot_t
+                    )
+                    medina_result: MedinaRadiationReactionResult = (
+                        compute_medina_radiation_reaction(
                             external_force=external_force,
+                            external_force_time_derivative=(
+                                external_force_time_derivative
+                                if derivative_ready
+                                else (0.0, 0.0, 0.0)
+                            ),
                             beta=beta_tuple,
-                            beta_dot_t=medina_beta_dot_t,
+                            acceleration=medina_acceleration,
                             gamma=float(result["gamma"][particle_idx]),
-                            dgamma_dt=dgamma_dt,
                             mass=float(particle_mass),
                             charge=float(force_particle_charge),
                             coordinate_dt=float(coordinate_dt),
                         )
                     )
+                    # Far radiation and the instantaneous cross-field energy do
+                    # not require dF_ext/dt, so they remain valid while the
+                    # first accepted force sample primes the derivative.
+                    result["radiation_power"][
+                        particle_idx
+                    ] = medina_result.far_radiated_power
+                    result["radiation_energy"][
+                        particle_idx
+                    ] = medina_result.far_radiated_energy
+                    result["medina_cross_field_energy"][
+                        particle_idx
+                    ] = medina_result.cross_field_energy
+
+                    if not derivative_ready:
+                        medina_impulse = (0.0, 0.0, 0.0)
+                        medina_capped = False
+                    else:
+                        result["medina_cross_field_energy_change"][
+                            particle_idx
+                        ] = medina_result.cross_field_energy_change
+                        medina_impulse, medina_capped = (
+                            _cap_medina_radiation_reaction_impulse(
+                                impulse=medina_result.radiation_reaction_impulse,
+                                external_force=external_force,
+                                coordinate_dt=float(coordinate_dt),
+                            )
+                        )
+                        result["medina_impulse_capped"][particle_idx] = medina_capped
+                        uncapped_impulse_norm = float(
+                            np.linalg.norm(
+                                np.asarray(
+                                    medina_result.radiation_reaction_impulse,
+                                    dtype=float,
+                                )
+                            )
+                        )
+                        applied_impulse_norm = float(
+                            np.linalg.norm(np.asarray(medina_impulse, dtype=float))
+                        )
+                        impulse_scale = (
+                            applied_impulse_norm / uncapped_impulse_norm
+                            if uncapped_impulse_norm > 0.0
+                            else 1.0
+                        )
+                        signed_reaction_work = float(
+                            impulse_scale * medina_result.reaction_work
+                        )
+                        result["radiation_reaction_work"][
+                            particle_idx
+                        ] = signed_reaction_work
+                        result["radiation_energy_applied"][particle_idx] = max(
+                            0.0,
+                            -signed_reaction_work,
+                        )
+
                     if medina_capped and sc_verbosity >= 2:
                         print(
                             "      Medina radiation-reaction impulse capped "
                             "by numerical guard"
                         )
                     impulse_vec = np.asarray(medina_impulse, dtype=float)
-                    if float(np.linalg.norm(impulse_vec)) > 0.0:
-                        gamma_before_medina = float(result["gamma"][particle_idx])
+                    if derivative_ready and float(np.linalg.norm(impulse_vec)) > 0.0:
                         mechanical_px = float(mechanical_px + impulse_vec[0])
                         mechanical_py = float(mechanical_py + impulse_vec[1])
                         mechanical_pz = float(mechanical_pz + impulse_vec[2])
@@ -3208,16 +3386,6 @@ def retarded_equations_of_motion(
                             medina_gamma * particle_mass * C_MMNS
                             + scalar_potential_contribution
                         )
-                        removed_energy = max(
-                            0.0,
-                            (gamma_before_medina - medina_gamma)
-                            * particle_mass
-                            * C_MMNS**2,
-                        )
-                        result["radiation_energy_applied"][
-                            particle_idx
-                        ] = removed_energy
-
                         beta_denom = medina_gamma * particle_mass * C_MMNS
                         if beta_denom > 0.0:
                             beta_x_limited = float(mechanical_px / beta_denom)

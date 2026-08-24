@@ -795,6 +795,15 @@ class TrajectoryArrays:
     radiation_power: np.ndarray
     radiation_energy: np.ndarray
     radiation_energy_applied: np.ndarray
+    radiation_reaction_work: np.ndarray
+    medina_cross_field_energy: np.ndarray
+    medina_cross_field_energy_change: np.ndarray
+    medina_force_derivative_ready: np.ndarray
+    medina_impulse_capped: np.ndarray
+    medina_external_force_x: np.ndarray
+    medina_external_force_y: np.ndarray
+    medina_external_force_z: np.ndarray
+    medina_external_force_sample_time: np.ndarray
     origin_x: np.ndarray
     origin_y: np.ndarray
     origin_z: np.ndarray
@@ -892,6 +901,26 @@ class TrajectoryArrays:
         pseudo_grid_schedule = self.pseudo_grid_schedule[step]
         if pseudo_grid_schedule is not None:
             s["_pseudo_grid_schedule"] = pseudo_grid_schedule
+        if np.any(np.isfinite(self.medina_external_force_sample_time[step])):
+            s.update(
+                {
+                    "radiation_reaction_work": self.radiation_reaction_work[step],
+                    "medina_cross_field_energy": self.medina_cross_field_energy[step],
+                    "medina_cross_field_energy_change": (
+                        self.medina_cross_field_energy_change[step]
+                    ),
+                    "medina_force_derivative_ready": (
+                        self.medina_force_derivative_ready[step]
+                    ),
+                    "medina_impulse_capped": self.medina_impulse_capped[step],
+                    "medina_external_force_x": self.medina_external_force_x[step],
+                    "medina_external_force_y": self.medina_external_force_y[step],
+                    "medina_external_force_z": self.medina_external_force_z[step],
+                    "medina_external_force_sample_time": (
+                        self.medina_external_force_sample_time[step]
+                    ),
+                }
+            )
         if np.any(self.magnetic_dipole_active):
             s.update(
                 {
@@ -1041,6 +1070,36 @@ class IndexedTrajectoryArrays:
         pseudo_grid_schedule = self.base.pseudo_grid_schedule[global_step]
         if pseudo_grid_schedule is not None:
             state["_pseudo_grid_schedule"] = pseudo_grid_schedule
+        if np.any(np.isfinite(self.row("medina_external_force_sample_time", step))):
+            state.update(
+                {
+                    "radiation_reaction_work": self.row(
+                        "radiation_reaction_work", step
+                    ),
+                    "medina_cross_field_energy": self.row(
+                        "medina_cross_field_energy", step
+                    ),
+                    "medina_cross_field_energy_change": self.row(
+                        "medina_cross_field_energy_change", step
+                    ),
+                    "medina_force_derivative_ready": self.row(
+                        "medina_force_derivative_ready", step
+                    ),
+                    "medina_impulse_capped": self.row("medina_impulse_capped", step),
+                    "medina_external_force_x": self.row(
+                        "medina_external_force_x", step
+                    ),
+                    "medina_external_force_y": self.row(
+                        "medina_external_force_y", step
+                    ),
+                    "medina_external_force_z": self.row(
+                        "medina_external_force_z", step
+                    ),
+                    "medina_external_force_sample_time": self.row(
+                        "medina_external_force_sample_time", step
+                    ),
+                }
+            )
         if self.base.halted_early[global_step]:
             metadata = cast(Dict[str, object], state)
             metadata["_halted_early"] = bool(self.base.halted_early[global_step])
@@ -1121,6 +1180,19 @@ class TrajectoryBuilder:
         "local_magnetic_field_y_t",
         "local_magnetic_field_z_t",
     )
+    _MEDINA_FLOAT_FIELDS: tuple = (
+        "radiation_reaction_work",
+        "medina_cross_field_energy",
+        "medina_cross_field_energy_change",
+        "medina_external_force_x",
+        "medina_external_force_y",
+        "medina_external_force_z",
+        "medina_external_force_sample_time",
+    )
+    _MEDINA_BOOL_FIELDS: tuple = (
+        "medina_force_derivative_ready",
+        "medina_impulse_capped",
+    )
     _PARTICLE_CONST_FIELDS: tuple = (
         "q",
         "q_species",
@@ -1145,6 +1217,7 @@ class TrajectoryBuilder:
         self._n_steps = n_steps
         self._n_particles = n_particles
         self._magnetic_arrays_allocated = bool(magnetic_dipole)
+        self._medina_arrays_allocated = False
 
         self._arrays: dict = {
             field_name: np.zeros((n_steps, n_particles), dtype=np.float64)
@@ -1160,6 +1233,19 @@ class TrajectoryBuilder:
                     np.array(0.0, dtype=np.float64), (n_steps, n_particles)
                 )
             self._arrays[field_name] = magnetic_array
+        for field_name in self._MEDINA_FLOAT_FIELDS:
+            default = (
+                np.nan if field_name == "medina_external_force_sample_time" else 0.0
+            )
+            self._arrays[field_name] = np.broadcast_to(
+                np.array(default, dtype=np.float64),
+                (n_steps, n_particles),
+            )
+        for field_name in self._MEDINA_BOOL_FIELDS:
+            self._arrays[field_name] = np.broadcast_to(
+                np.array(False, dtype=bool),
+                (n_steps, n_particles),
+            )
         self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
 
         for field_name in self._PARTICLE_CONST_FIELDS:
@@ -1182,7 +1268,32 @@ class TrajectoryBuilder:
                 )
             self._magnetic_arrays_allocated = True
 
-        for field_name in self._KINEMATIC_FIELDS + self._MAGNETIC_KINEMATIC_FIELDS:
+        medina_fields = self._MEDINA_FLOAT_FIELDS + self._MEDINA_BOOL_FIELDS
+        if not self._medina_arrays_allocated and any(
+            field_name in state for field_name in medina_fields
+        ):
+            for field_name in self._MEDINA_FLOAT_FIELDS:
+                if field_name == "medina_external_force_sample_time":
+                    self._arrays[field_name] = np.full(
+                        (self._n_steps, self._n_particles),
+                        np.nan,
+                        dtype=np.float64,
+                    )
+                else:
+                    self._arrays[field_name] = np.zeros(
+                        (self._n_steps, self._n_particles),
+                        dtype=np.float64,
+                    )
+            for field_name in self._MEDINA_BOOL_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles),
+                    dtype=bool,
+                )
+            self._medina_arrays_allocated = True
+
+        for field_name in (
+            self._KINEMATIC_FIELDS + self._MAGNETIC_KINEMATIC_FIELDS + medina_fields
+        ):
             if field_name in state:
                 self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
@@ -1254,6 +1365,21 @@ class TrajectoryBuilder:
             radiation_power=self._arrays["radiation_power"][:s],
             radiation_energy=self._arrays["radiation_energy"][:s],
             radiation_energy_applied=self._arrays["radiation_energy_applied"][:s],
+            radiation_reaction_work=self._arrays["radiation_reaction_work"][:s],
+            medina_cross_field_energy=self._arrays["medina_cross_field_energy"][:s],
+            medina_cross_field_energy_change=self._arrays[
+                "medina_cross_field_energy_change"
+            ][:s],
+            medina_force_derivative_ready=self._arrays["medina_force_derivative_ready"][
+                :s
+            ],
+            medina_impulse_capped=self._arrays["medina_impulse_capped"][:s],
+            medina_external_force_x=self._arrays["medina_external_force_x"][:s],
+            medina_external_force_y=self._arrays["medina_external_force_y"][:s],
+            medina_external_force_z=self._arrays["medina_external_force_z"][:s],
+            medina_external_force_sample_time=self._arrays[
+                "medina_external_force_sample_time"
+            ][:s],
             origin_x=self._arrays["origin_x"][:s],
             origin_y=self._arrays["origin_y"][:s],
             origin_z=self._arrays["origin_z"][:s],
@@ -1311,6 +1437,19 @@ class TrajectoryBuilder:
             radiation_power=self._arrays["radiation_power"],
             radiation_energy=self._arrays["radiation_energy"],
             radiation_energy_applied=self._arrays["radiation_energy_applied"],
+            radiation_reaction_work=self._arrays["radiation_reaction_work"],
+            medina_cross_field_energy=self._arrays["medina_cross_field_energy"],
+            medina_cross_field_energy_change=self._arrays[
+                "medina_cross_field_energy_change"
+            ],
+            medina_force_derivative_ready=self._arrays["medina_force_derivative_ready"],
+            medina_impulse_capped=self._arrays["medina_impulse_capped"],
+            medina_external_force_x=self._arrays["medina_external_force_x"],
+            medina_external_force_y=self._arrays["medina_external_force_y"],
+            medina_external_force_z=self._arrays["medina_external_force_z"],
+            medina_external_force_sample_time=self._arrays[
+                "medina_external_force_sample_time"
+            ],
             origin_x=self._arrays["origin_x"],
             origin_y=self._arrays["origin_y"],
             origin_z=self._arrays["origin_z"],

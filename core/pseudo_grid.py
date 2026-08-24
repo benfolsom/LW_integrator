@@ -172,6 +172,21 @@ PSEUDO_GRID_PASSIVE_DELTA_FIELDS: tuple[str, ...] = (
     "radiation_power",
     "radiation_energy",
     "radiation_energy_applied",
+    "radiation_reaction_work",
+    "medina_cross_field_energy",
+    "medina_cross_field_energy_change",
+)
+
+MEDINA_STEP_FIELDS: tuple[str, ...] = (
+    "radiation_reaction_work",
+    "medina_cross_field_energy",
+    "medina_cross_field_energy_change",
+    "medina_force_derivative_ready",
+    "medina_impulse_capped",
+    "medina_external_force_x",
+    "medina_external_force_y",
+    "medina_external_force_z",
+    "medina_external_force_sample_time",
 )
 
 
@@ -1196,6 +1211,25 @@ def reconstruct_full_state_from_active_result(
         dtype=bool,
     )
 
+    full_particle_count = len(np.asarray(previous_full_state.get("x", [])))
+    if any(field_name in active_result_state for field_name in MEDINA_STEP_FIELDS):
+        for field_name in MEDINA_STEP_FIELDS:
+            if field_name in full_state:
+                continue
+            if field_name in {
+                "medina_force_derivative_ready",
+                "medina_impulse_capped",
+            }:
+                full_state[field_name] = np.zeros(full_particle_count, dtype=bool)
+            elif field_name == "medina_external_force_sample_time":
+                full_state[field_name] = np.full(
+                    full_particle_count,
+                    np.nan,
+                    dtype=float,
+                )
+            else:
+                full_state[field_name] = np.zeros(full_particle_count, dtype=float)
+
     for key, value in active_result_state.items():
         if key.startswith("_") or key == "dummy" or not isinstance(value, np.ndarray):
             continue
@@ -1240,6 +1274,14 @@ def reconstruct_full_state_from_active_result(
     passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
     if passive_indices.size == 0:
         return full_state
+    # Weighted/frozen passive particles have no freshly evaluated accepted
+    # external-force sample.  Invalidate their derivative history so a later
+    # promotion to the active set must re-prime Medina instead of differencing
+    # against stale force data.
+    if "medina_external_force_sample_time" in full_state:
+        full_state["medina_external_force_sample_time"][passive_indices] = np.nan
+        full_state["medina_force_derivative_ready"][passive_indices] = False
+        full_state["medina_impulse_capped"][passive_indices] = False
     if passive_update_mode == "frozen":
         return full_state
     if passive_update_mode in {"ballistic", "external_interbunch"}:

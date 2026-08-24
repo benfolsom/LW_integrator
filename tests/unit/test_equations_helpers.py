@@ -361,7 +361,9 @@ def test_b2b_cold_start_applies_external_force_without_observer_travel(
     assert updated["Pz"][0] > trajectory[1]["Pz"][0]
 
 
-def test_self_consistency_nonconvergence_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_self_consistency_nonconvergence_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     trajectory = [
         _make_state(x=[0.0], z=[0.0], t=[0.0], gamma=[2.0], charge=[1.0], mass=[1.0]),
         _make_state(x=[0.0], z=[0.5], t=[0.1], gamma=[2.0], charge=[1.0], mass=[1.0]),
@@ -844,14 +846,19 @@ def test_medina_kinematics_preserve_longitudinal_cancellation() -> None:
     assert beta_dot_t[2] == pytest.approx(force_z / (gamma**3 * mass * C_MMNS))
     assert dgamma_dt == pytest.approx(beta_z * force_z / (mass * C_MMNS))
 
-    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+    medina_result = equations.compute_medina_radiation_reaction(
         external_force=(0.0, 0.0, force_z),
+        external_force_time_derivative=(0.0, 0.0, 0.0),
         beta=(0.0, 0.0, beta_z),
-        beta_dot_t=beta_dot_t,
+        acceleration=tuple(C_MMNS * value for value in beta_dot_t),
         gamma=gamma,
-        dgamma_dt=dgamma_dt,
         mass=mass,
         charge=charge,
+        coordinate_dt=1.0,
+    )
+    impulse, capped = equations._cap_medina_radiation_reaction_impulse(
+        impulse=medina_result.radiation_reaction_impulse,
+        external_force=(0.0, 0.0, force_z),
         coordinate_dt=1.0,
         max_impulse_fraction=0.0,
     )
@@ -873,14 +880,19 @@ def test_medina_kinematics_give_transverse_synchrotron_damping() -> None:
         gamma,
         mass,
     )
-    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+    medina_result = equations.compute_medina_radiation_reaction(
         external_force=(force_x, 0.0, 0.0),
+        external_force_time_derivative=(0.0, 0.0, 0.0),
         beta=(0.0, 0.0, beta_z),
-        beta_dot_t=beta_dot_t,
+        acceleration=tuple(C_MMNS * value for value in beta_dot_t),
         gamma=gamma,
-        dgamma_dt=dgamma_dt,
         mass=mass,
         charge=charge,
+        coordinate_dt=1.0,
+    )
+    impulse, capped = equations._cap_medina_radiation_reaction_impulse(
+        impulse=medina_result.radiation_reaction_impulse,
+        external_force=(force_x, 0.0, 0.0),
         coordinate_dt=1.0,
         max_impulse_fraction=0.0,
     )
@@ -891,6 +903,53 @@ def test_medina_kinematics_give_transverse_synchrotron_damping() -> None:
     assert impulse[0] == pytest.approx(0.0)
     assert impulse[1] == pytest.approx(0.0)
     assert impulse[2] < 0.0
+
+
+def test_medina_force_derivative_uses_accepted_midpoint_samples() -> None:
+    accepted_state = {
+        "t": np.array([2.0]),
+        "medina_external_force_x": np.array([1.0]),
+        "medina_external_force_y": np.array([-2.0]),
+        "medina_external_force_z": np.array([4.0]),
+        "medina_external_force_sample_time": np.array([1.5]),
+    }
+
+    derivative, ready = equations._accepted_medina_force_derivative(
+        current_state=accepted_state,
+        particle_idx=0,
+        current_force=(3.0, 2.0, -2.0),
+        current_sample_time=2.5,
+    )
+
+    assert ready is True
+    assert derivative == pytest.approx((2.0, 4.0, -6.0))
+
+
+def test_medina_force_derivative_rejects_unprimed_or_future_history() -> None:
+    derivative, ready = equations._accepted_medina_force_derivative(
+        current_state={"t": np.array([2.0])},
+        particle_idx=0,
+        current_force=(3.0, 2.0, -2.0),
+        current_sample_time=2.5,
+    )
+    assert ready is False
+    assert derivative == (0.0, 0.0, 0.0)
+
+    stale_state = {
+        "t": np.array([2.0]),
+        "medina_external_force_x": np.array([1.0]),
+        "medina_external_force_y": np.array([2.0]),
+        "medina_external_force_z": np.array([3.0]),
+        "medina_external_force_sample_time": np.array([2.25]),
+    }
+    derivative, ready = equations._accepted_medina_force_derivative(
+        current_state=stale_state,
+        particle_idx=0,
+        current_force=(3.0, 2.0, -2.0),
+        current_sample_time=2.5,
+    )
+    assert ready is False
+    assert derivative == (0.0, 0.0, 0.0)
 
 
 def test_running_average_helper_matches_closed_form() -> None:
@@ -1431,9 +1490,7 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
     # Pt_kinetic=2mc vs P_mech=10 → large error, so the post-loop projection
     # fires and resets gamma to sqrt(1+(10/mc)^2) and Pt accordingly.
     expected_mechanical_px = 10.0
-    expected_gamma = float(
-        np.sqrt(1.0 + (expected_mechanical_px / C_MMNS) ** 2)
-    )
+    expected_gamma = float(np.sqrt(1.0 + (expected_mechanical_px / C_MMNS) ** 2))
     expected_pt = float(
         np.sqrt(expected_mechanical_px**2 + C_MMNS**2) + scalar_potential_momentum
     )

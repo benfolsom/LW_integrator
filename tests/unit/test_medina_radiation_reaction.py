@@ -160,8 +160,8 @@ def test_force_pulse_recovers_larmor_after_boundary_accounting() -> None:
         radiated_powers[index] = result.far_radiated_power
         cross_energies[index] = result.cross_field_energy
 
-    reaction_work = float(np.trapz(reaction_powers, times))
-    radiated_energy = float(np.trapz(radiated_powers, times))
+    reaction_work = float(np.trapezoid(reaction_powers, times))
+    radiated_energy = float(np.trapezoid(radiated_powers, times))
     larmor_energy = float(
         2.0
         * ELEMENTARY_CHARGE**2

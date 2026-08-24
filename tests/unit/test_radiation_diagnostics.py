@@ -7,7 +7,7 @@ from core import diagnostics
 from core import equations
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 from core.integration_runner import retarded_integrator
-from core.types import SimulationType, StartupMode
+from core.types import ExternalFieldConfig, SimulationType, StartupMode
 
 
 def _make_integrator_state() -> dict:
@@ -36,6 +36,32 @@ def _make_integrator_state() -> dict:
         "q": np.array([ELEMENTARY_CHARGE]),
         "m": np.array([ELECTRON_MASS_AMU]),
         "char_time": np.array([1.0e-3]),
+    }
+
+
+def _empty_driver_state() -> dict:
+    return {
+        key: np.array([], dtype=float)
+        for key in (
+            "x",
+            "y",
+            "z",
+            "t",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+            "bdotx",
+            "bdoty",
+            "bdotz",
+            "q",
+            "m",
+            "char_time",
+        )
     }
 
 
@@ -153,11 +179,7 @@ def test_lienard_power_parallel_acceleration_uses_gamma6_scaling() -> None:
     )
 
     expected = (
-        2.0
-        * ELEMENTARY_CHARGE**2
-        / (3.0 * C_MMNS)
-        * gamma**6
-        * beta_dot_t[0] ** 2
+        2.0 * ELEMENTARY_CHARGE**2 / (3.0 * C_MMNS) * gamma**6 * beta_dot_t[0] ** 2
     )
     assert power == pytest.approx(expected)
 
@@ -175,11 +197,7 @@ def test_lienard_power_transverse_acceleration_uses_synchrotron_scaling() -> Non
     )
 
     expected = (
-        2.0
-        * ELEMENTARY_CHARGE**2
-        / (3.0 * C_MMNS)
-        * gamma**4
-        * beta_dot_t[1] ** 2
+        2.0 * ELEMENTARY_CHARGE**2 / (3.0 * C_MMNS) * gamma**4 * beta_dot_t[1] ** 2
     )
     assert power == pytest.approx(expected)
 
@@ -268,14 +286,28 @@ def test_power_matched_damping_removes_energy_from_mechanical_momentum() -> None
 
 
 def test_medina_impulse_damps_velocity_for_transverse_force() -> None:
-    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
-        external_force=(2.0, 0.0, 0.0),
-        beta=(0.0, 0.0, 0.9),
-        beta_dot_t=(3.0, 0.0, 0.0),
-        gamma=4.0,
-        dgamma_dt=0.0,
+    force = (2.0, 0.0, 0.0)
+    beta = (0.0, 0.0, 0.9)
+    gamma = 1.0 / np.sqrt(1.0 - beta[2] ** 2)
+    beta_dot_t, _ = equations._derive_relativistic_kinematics_from_force(
+        force,
+        beta,
+        gamma,
+        ELECTRON_MASS_AMU,
+    )
+    medina_result = equations.compute_medina_radiation_reaction(
+        external_force=force,
+        external_force_time_derivative=(0.0, 0.0, 0.0),
+        beta=beta,
+        acceleration=tuple(C_MMNS * value for value in beta_dot_t),
+        gamma=gamma,
         mass=ELECTRON_MASS_AMU,
         charge=ELEMENTARY_CHARGE,
+        coordinate_dt=1.0e-6,
+    )
+    impulse, capped = equations._cap_medina_radiation_reaction_impulse(
+        impulse=medina_result.radiation_reaction_impulse,
+        external_force=force,
         coordinate_dt=1.0e-6,
         max_impulse_fraction=0.0,
     )
@@ -287,18 +319,30 @@ def test_medina_impulse_damps_velocity_for_transverse_force() -> None:
 
 
 def test_medina_impulse_cancels_ultrarelativistic_longitudinal_force() -> None:
-    gamma = 1.0e12
+    gamma = 1.0e6
     beta_z = np.sqrt(1.0 - 1.0 / gamma**2)
     force_z = 2.5e5
-
-    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
-        external_force=(0.0, 0.0, force_z),
-        beta=(0.0, 0.0, beta_z),
-        beta_dot_t=(0.0, 0.0, force_z / (gamma**3 * ELECTRON_MASS_AMU * C_MMNS)),
+    force = (0.0, 0.0, force_z)
+    beta = (0.0, 0.0, beta_z)
+    beta_dot_t, _ = equations._derive_relativistic_kinematics_from_force(
+        force,
+        beta,
+        gamma,
+        ELECTRON_MASS_AMU,
+    )
+    medina_result = equations.compute_medina_radiation_reaction(
+        external_force=force,
+        external_force_time_derivative=(0.0, 0.0, 0.0),
+        beta=beta,
+        acceleration=tuple(C_MMNS * value for value in beta_dot_t),
         gamma=gamma,
-        dgamma_dt=beta_z * force_z / (ELECTRON_MASS_AMU * C_MMNS),
         mass=ELECTRON_MASS_AMU,
         charge=ELEMENTARY_CHARGE,
+        coordinate_dt=1.0e-3,
+    )
+    impulse, capped = equations._cap_medina_radiation_reaction_impulse(
+        impulse=medina_result.radiation_reaction_impulse,
+        external_force=force,
         coordinate_dt=1.0e-3,
         max_impulse_fraction=0.25,
     )
@@ -308,20 +352,102 @@ def test_medina_impulse_cancels_ultrarelativistic_longitudinal_force() -> None:
 
 
 def test_medina_impulse_applies_numerical_cap() -> None:
-    impulse, capped = equations._compute_medina_radiation_reaction_impulse(
+    impulse, capped = equations._cap_medina_radiation_reaction_impulse(
+        impulse=(0.0, 0.0, -1.0e12),
         external_force=(2.0e12, 0.0, 0.0),
-        beta=(0.0, 0.0, 0.9),
-        beta_dot_t=(0.0, 0.0, 0.0),
-        gamma=4.0,
-        dgamma_dt=0.0,
-        mass=ELECTRON_MASS_AMU,
-        charge=ELEMENTARY_CHARGE,
         coordinate_dt=1.0e-6,
         max_impulse_fraction=0.25,
     )
 
     assert capped is True
     assert np.linalg.norm(impulse) == pytest.approx(0.25 * 2.0e6)
+
+
+def test_production_medina_primes_before_applying_complete_derivative() -> None:
+    field = ExternalFieldConfig(magnetic_field_native=(0.0, 1.0e7, 0.0))
+    common_kwargs = dict(
+        steps=5,
+        h_step=1.0e-6,
+        wall_z=0.0,
+        aperture_radius=1.0e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=_make_integrator_state(),
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1.0e9,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        use_numba=False,
+        external_field=field,
+    )
+
+    off_trajectory, _, _, _, *_ = retarded_integrator(
+        **common_kwargs,
+        radiation_reaction_mode="off",
+    )
+    medina_trajectory, _, medina_soa, _, *_ = retarded_integrator(
+        **common_kwargs,
+        radiation_reaction_mode="medina_lad",
+    )
+
+    assert medina_soa is not None
+    np.testing.assert_array_equal(
+        medina_soa.medina_force_derivative_ready[:, 0],
+        (False, False, True, True, True),
+    )
+    assert np.isnan(medina_soa.medina_external_force_sample_time[0, 0])
+    assert np.all(np.isfinite(medina_soa.medina_external_force_sample_time[1:, 0]))
+    # Row 1 is the unprimed first physical step: far radiation is diagnosed,
+    # but no incomplete dF/dt=0 impulse is applied.
+    assert medina_soa.radiation_energy[1, 0] > 0.0
+    assert medina_soa.radiation_reaction_work[1, 0] == pytest.approx(0.0)
+    np.testing.assert_array_equal(
+        medina_trajectory[1]["Pz"],
+        off_trajectory[1]["Pz"],
+    )
+
+    assert np.all(medina_soa.radiation_reaction_work[2:, 0] < 0.0)
+    assert not np.any(medina_soa.medina_impulse_capped[:, 0])
+    balance = (
+        medina_soa.radiation_reaction_work[2:, 0]
+        + medina_soa.radiation_energy[2:, 0]
+        + medina_soa.medina_cross_field_energy_change[2:, 0]
+    )
+    np.testing.assert_allclose(
+        balance,
+        0.0,
+        rtol=0.0,
+        atol=2.0e-6 * float(np.max(medina_soa.radiation_energy[2:, 0])),
+    )
+
+
+def test_production_medina_is_noop_for_neutral_particle() -> None:
+    neutral_state = _make_integrator_state()
+    neutral_state["q"] = np.array([0.0])
+    _, _, medina_soa, _, *_ = retarded_integrator(
+        steps=4,
+        h_step=1.0e-6,
+        wall_z=0.0,
+        aperture_radius=1.0e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=neutral_state,
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1.0e9,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        use_numba=False,
+        external_field=ExternalFieldConfig(electric_field_native=(1.0e8, 0.0, 0.0)),
+        radiation_reaction_mode="medina_lad",
+    )
+
+    assert medina_soa is not None
+    assert not np.any(medina_soa.medina_force_derivative_ready)
+    assert not np.any(medina_soa.medina_impulse_capped)
+    assert np.all(np.isnan(medina_soa.medina_external_force_sample_time))
+    np.testing.assert_array_equal(medina_soa.radiation_reaction_work, 0.0)
+    np.testing.assert_array_equal(medina_soa.radiation_power, 0.0)
+    np.testing.assert_array_equal(medina_soa.radiation_energy_applied, 0.0)
 
 
 def test_power_matched_damping_does_not_cross_rest_energy() -> None:
