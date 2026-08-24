@@ -152,6 +152,50 @@ def test_uniform_motion_newton_root_needs_few_interpolated_samples(
     assert abs(field.light_cone_residual_m[0]) <= 1.0e-18
 
 
+@pytest.mark.parametrize(
+    "derivative",
+    (float("nan"), 0.0, 1.0, -1.0e-300),
+)
+def test_safeguarded_newton_bisects_for_unusable_or_near_kappa_derivative(
+    derivative: float,
+) -> None:
+    decision = retarded_fields._next_safeguarded_root_trial(
+        trial_time_s=0.5,
+        residual_m=0.25,
+        derivative_m_per_s=derivative,
+        lower_time_s=0.5,
+        upper_time_s=1.0,
+    )
+
+    assert decision.time_s == 0.75
+    assert decision.used_bisection
+    assert not decision.used_nextafter
+
+
+def test_safeguarded_newton_retains_valid_step_and_breaks_rounding_stall() -> None:
+    newton = retarded_fields._next_safeguarded_root_trial(
+        trial_time_s=0.5,
+        residual_m=0.25,
+        derivative_m_per_s=-1.0,
+        lower_time_s=0.5,
+        upper_time_s=1.0,
+    )
+    stalled = retarded_fields._next_safeguarded_root_trial(
+        trial_time_s=0.5,
+        residual_m=float(np.nextafter(0.0, 1.0)),
+        derivative_m_per_s=-1.0,
+        lower_time_s=0.5,
+        upper_time_s=1.0,
+    )
+
+    assert newton.time_s == 0.75
+    assert not newton.used_bisection
+    assert not newton.used_nextafter
+    assert stalled.time_s == np.nextafter(0.5, 1.0)
+    assert not stalled.used_bisection
+    assert stalled.used_nextafter
+
+
 def test_complete_gradient_matches_static_coulomb_jacobian() -> None:
     radius_m = 1.0e-3
     result = evaluate_retarded_charge_field_gradient_si(

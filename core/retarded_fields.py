@@ -131,6 +131,15 @@ class _RetardedSample:
     separation_m: float
 
 
+@dataclass(frozen=True)
+class _RootTrialDecision:
+    """One safeguarded Newton step and how its bracket protection was used."""
+
+    time_s: float
+    used_bisection: bool
+    used_nextafter: bool
+
+
 def _legacy_matrix(history: Trajectory, field_name: str) -> np.ndarray:
     return np.stack(
         [np.asarray(state[field_name], dtype=float) for state in history],
@@ -359,6 +368,53 @@ def _prepare_history(
     return _PreparedHistory(arrays=arrays, sources=sources)
 
 
+def _next_safeguarded_root_trial(
+    *,
+    trial_time_s: float,
+    residual_m: float,
+    derivative_m_per_s: float,
+    lower_time_s: float,
+    upper_time_s: float,
+) -> _RootTrialDecision:
+    """Take an in-bracket Newton step, or bisect when that step is unsafe."""
+
+    available_time = (
+        upper_time_s - trial_time_s if residual_m > 0.0 else trial_time_s - lower_time_s
+    )
+    maximum_newton_residual = -derivative_m_per_s * available_time
+    if (
+        np.isfinite(derivative_m_per_s)
+        and derivative_m_per_s < 0.0
+        and np.isfinite(maximum_newton_residual)
+        and abs(residual_m) < maximum_newton_residual
+    ):
+        next_trial = trial_time_s - residual_m / derivative_m_per_s
+    else:
+        next_trial = float("nan")
+    if next_trial == trial_time_s:
+        target = upper_time_s if residual_m > 0.0 else lower_time_s
+        return _RootTrialDecision(
+            time_s=float(np.nextafter(trial_time_s, target)),
+            used_bisection=False,
+            used_nextafter=True,
+        )
+    if (
+        not np.isfinite(next_trial)
+        or next_trial <= lower_time_s
+        or next_trial >= upper_time_s
+    ):
+        return _RootTrialDecision(
+            time_s=0.5 * (lower_time_s + upper_time_s),
+            used_bisection=True,
+            used_nextafter=False,
+        )
+    return _RootTrialDecision(
+        time_s=next_trial,
+        used_bisection=False,
+        used_nextafter=False,
+    )
+
+
 def _solve_retarded_sample(
     source: _PreparedSourceHistory,
     *,
@@ -416,20 +472,14 @@ def _solve_retarded_sample(
         if separation > 0.0:
             direction = (observer_position_m - source_position) / separation
             derivative = -SPEED_OF_LIGHT_M_S * (1.0 - float(direction @ source_beta))
-        if np.isfinite(derivative) and derivative < 0.0:
-            next_trial = trial_time - residual / derivative
-        else:
-            next_trial = float("nan")
-        if next_trial == trial_time:
-            target = upper_time if residual > 0.0 else lower_time
-            next_trial = float(np.nextafter(trial_time, target))
-        elif (
-            not np.isfinite(next_trial)
-            or next_trial <= lower_time
-            or next_trial >= upper_time
-        ):
-            next_trial = 0.5 * (lower_time + upper_time)
-        trial_time = next_trial
+        decision = _next_safeguarded_root_trial(
+            trial_time_s=trial_time,
+            residual_m=residual,
+            derivative_m_per_s=derivative,
+            lower_time_s=lower_time,
+            upper_time_s=upper_time,
+        )
+        trial_time = decision.time_s
 
     retarded_time = 0.5 * (lower_time + upper_time)
     source_position, source_beta, source_beta_dot = _quintic_worldline_sample(

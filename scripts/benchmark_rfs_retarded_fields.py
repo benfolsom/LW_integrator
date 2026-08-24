@@ -365,18 +365,42 @@ def _count_interpolated_samples(
     sample_function = getattr(retarded_fields, "_quintic_worldline_sample", None)
     if sample_function is None:
         return None
+    decision_function = getattr(retarded_fields, "_next_safeguarded_root_trial", None)
     sample_count = 0
+    decision_count = 0
+    bisection_count = 0
+    nextafter_count = 0
 
     def counted_sample(*args: Any, **kwargs: Any) -> Any:
         nonlocal sample_count
         sample_count += 1
         return sample_function(*args, **kwargs)
 
+    def counted_decision(*args: Any, **kwargs: Any) -> Any:
+        nonlocal decision_count, bisection_count, nextafter_count
+        decision_count += 1
+        decision = decision_function(*args, **kwargs)
+        bisection_count += int(decision.used_bisection)
+        nextafter_count += int(decision.used_nextafter)
+        return decision
+
     setattr(retarded_fields, "_quintic_worldline_sample", counted_sample)
+    if decision_function is not None:
+        setattr(
+            retarded_fields,
+            "_next_safeguarded_root_trial",
+            counted_decision,
+        )
     try:
         results = operation()
     finally:
         setattr(retarded_fields, "_quintic_worldline_sample", sample_function)
+        if decision_function is not None:
+            setattr(
+                retarded_fields,
+                "_next_safeguarded_root_trial",
+                decision_function,
+            )
     root_count = root_counter(results)
     if root_count == 0:
         mean_samples = 0.0
@@ -389,6 +413,12 @@ def _count_interpolated_samples(
         "interpolated_samples": sample_count,
         "mean_samples_per_root": mean_samples,
         "mean_iterations_per_root": mean_iterations,
+        "safeguarded_decisions": decision_count,
+        "bisection_fallbacks": bisection_count,
+        "bisection_fallback_fraction": (
+            bisection_count / decision_count if decision_count else 0.0
+        ),
+        "nextafter_stall_steps": nextafter_count,
     }
 
 
