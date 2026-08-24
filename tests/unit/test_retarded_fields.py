@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import core.retarded_fields as retarded_fields
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.retarded_fields import (
     ObserverEvent,
@@ -164,6 +165,27 @@ def test_gradient_stencil_resolves_a_new_retarded_event_at_every_point() -> None
         result.stencil_retarded_time_ns[1, 0, 0]
         != result.stencil_retarded_time_ns[1, 1, 0]
     )
+
+
+def test_gradient_extracts_and_prepares_shared_history_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = retarded_fields._extract_history
+    extraction_count = 0
+
+    def counted_extract(history):
+        nonlocal extraction_count
+        extraction_count += 1
+        return original(history)
+
+    monkeypatch.setattr(retarded_fields, "_extract_history", counted_extract)
+
+    evaluate_retarded_charge_field_gradient_si(
+        _stationary_history(),
+        ObserverEvent(time_ns=0.0, position_mm=(1.0, 0.0, 0.0)),
+    )
+
+    assert extraction_count == 1
 
 
 def test_uniform_motion_complete_gradient_matches_heaviside_field() -> None:
