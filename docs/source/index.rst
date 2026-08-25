@@ -56,6 +56,8 @@ If you are new to the project, start with the **Overview** and **Quick start** p
 
    validation
    rfs_m5_optimization
+   metal_gpu_kernel_study
+   metal_gpu_capture_root_study
    notebooks
 
 .. toctree::
