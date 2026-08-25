@@ -235,7 +235,7 @@ is active only when magnetic-dipole dynamics are enabled.  The advanced
 ``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
 boundary.  It does not soften the point field.
 
-The exact retarded charge and dipole providers share three explicit backend
+The exact retarded charge and dipole providers share four explicit backend
 choices.  ``python`` is the default and remains the reference on every
 platform.  The canonical JSON setting is
 ``magnetic_dipole.exact_retarded_backend`` and the direct CLI option is
@@ -273,6 +273,19 @@ compilation fails; it never silently changes the recorded backend.  The
 selection covers the exact charge one-event field, exact charge nine-event
 gradient, dipole nine-event accepted-endpoint potential, and full dipole
 gradient.  The finite-difference centers remain Python-reference evaluations.
+
+``metal_certified_full_strict`` is an explicit Apple-silicon accelerator
+option for large dipole batches.  Metal receives float32 history and observer
+data and proposes light-cone segment indices only.  Each proposal must pass an
+original-float64 two-endpoint check backed by a strict timelike-chord proof.
+The strict CPU kernel then computes the float64 root and all field physics;
+ambiguous proposals and runtime GPU failures use the exact CPU search.  The
+raw proposal/root crossover begins near 1,024 observer events, but float64
+certification and complete strict field work move the production crossover to
+about 8,192 events per uploaded source-history batch. Smaller calls stay on
+``numba_full_strict_serial`` without dispatching Metal.  There is no automatic
+Metal selection, and float32 Hertz tensors or field gradients are explicitly
+outside this backend because they do not meet the numerical contract.
 
 ``null`` selects the cited species value.  A custom species must provide both a
 signed moment in J/T and its spin quantum number.  ``rest_spin`` is normalized

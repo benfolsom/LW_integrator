@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import platform
 
 import numpy as np
 import pytest
@@ -231,6 +232,17 @@ def test_explicit_metal_returns_only_validated_candidate_backend() -> None:
     assert resolution.backend is backend
     assert resolution.backend.capabilities.approximate_candidates_only is True
     assert resolution.backend.capabilities.exact_float64 is False
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin" or platform.machine() != "arm64",
+    reason="real Metal adapter requires Apple-silicon macOS",
+)
+def test_real_metal_adapter_passes_startup_certification() -> None:
+    resolution = resolve_knot_scan_backend("metal")
+
+    assert resolution.selected is ComputeBackendName.METAL
+    assert resolution.backend.self_test().passed is True
 
 
 def test_invalid_selection_and_batch_shapes_fail_clearly() -> None:

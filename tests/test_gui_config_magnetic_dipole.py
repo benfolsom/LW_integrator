@@ -371,6 +371,7 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
             "Python reference",
             "Numba roots-exact CPU",
             "Numba full strict CPU",
+            "Metal-certified roots + strict CPU",
         )
         assert app.magnetic_dipole_source_cutoff_label.cget("text") == (
             "Minimum separation abort (mm):"

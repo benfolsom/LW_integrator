@@ -24,6 +24,7 @@ from .retarded_dipole_numba_roots import (
     _STATUS_VALID,
     _solve_retarded_sample,
     evaluate_source_events_full_strict_serial,
+    evaluate_source_events_full_strict_from_segments_serial,
     evaluate_source_roots_exact_serial,
     jit,
 )
@@ -201,5 +202,6 @@ __all__ = [
     "_STATUS_VALID",
     "evaluate_charge_source_events_full_strict_serial",
     "evaluate_source_events_full_strict_serial",
+    "evaluate_source_events_full_strict_from_segments_serial",
     "evaluate_source_roots_exact_serial",
 ]

@@ -309,6 +309,13 @@ class TestCliConfigParsing:
 
         assert args.exact_retarded_backend == "numba_full_strict_serial"
 
+    def test_parse_args_accepts_certified_metal_exact_retarded_backend(self):
+        args = cli.parse_args(
+            ["--exact-retarded-backend", "metal_certified_full_strict"]
+        )
+
+        assert args.exact_retarded_backend == "metal_certified_full_strict"
+
     def test_magnetic_dipole_help_names_rfs_defaults(self, capsys):
         with pytest.raises(SystemExit) as exc_info:
             cli.parse_args(["--help"])
@@ -1934,6 +1941,28 @@ class TestCliMain:
         }
         assert report["exact_retarded"] == {
             "backend": "numba_full_strict_serial",
+        }
+
+    def test_metal_report_records_certification_and_fallback_counts(self, monkeypatch):
+        from core.metal_certified_roots import MetalCertifiedRootDiagnostics
+
+        monkeypatch.setattr(
+            "core.metal_certified_roots.metal_certified_root_diagnostics",
+            lambda: MetalCertifiedRootDiagnostics(7, 5, 2, 2047, 1, 0),
+        )
+
+        report = cli._exact_retarded_report("metal_certified_full_strict")
+
+        assert report == {
+            "backend": "metal_certified_full_strict",
+            "metal_certified_roots": {
+                "calls": 7,
+                "below_threshold_calls": 5,
+                "dispatches": 2,
+                "accepted_proposals": 2047,
+                "cpu_fallbacks": 1,
+                "dispatch_failures": 0,
+            },
         }
 
     def test_main_writes_driver_summary_to_output_json(

@@ -141,6 +141,8 @@ class _PreparedSourceHistory:
     _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _coefficient_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _maximum_capacity: int | None = dataclass_field(default=None, repr=False)
+    _metal_timelike_count: int = dataclass_field(default=0, repr=False)
+    _metal_timelike_proof: bool = dataclass_field(default=True, repr=False)
 
 
 @dataclass(frozen=True)
@@ -1480,7 +1482,10 @@ def _evaluate_prepared_charge_batch(
             root_tolerance_mm=root_tolerance_mm,
             max_root_iterations=max_root_iterations,
         )
-    if backend == "numba_full_strict_serial":
+    if backend in {
+        "numba_full_strict_serial",
+        "metal_certified_full_strict",
+    }:
         return _evaluate_prepared_charge_batch_numba_full_strict_serial(
             prepared,
             observer_events,

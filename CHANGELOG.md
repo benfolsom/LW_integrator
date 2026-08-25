@@ -12,8 +12,20 @@ All notable changes and updates to the LW Integrator project are documented in t
   ``magnetic_dipole.source.backend`` key remains an input-only compatibility
   alias when the canonical key is absent or has the same value; conflicting
   values are rejected, and saved configurations emit only the canonical key.
-  The choices remain ``python`` (the reference/default),
-  ``numba_roots_exact_serial``, and ``numba_full_strict_serial``.
+  The choices are ``python`` (the reference/default),
+  ``numba_roots_exact_serial``, ``numba_full_strict_serial``, and the explicit
+  Apple-silicon option ``metal_certified_full_strict``.
+- Added a real optional Metal adapter for large dipole light-cone batches.
+  Metal performs only safe-math float32 bracket proposals. Every proposal is
+  checked with the original float64 endpoint residuals; the strict serial CPU
+  kernel still computes the root, worldline, Hertz tensor, field, and all
+  reductions. Invalid or failed proposals fall back to the exact CPU search.
+  Raw bracket proposals cross the CPU root near 1,024 observer events, while
+  float64 certification plus complete strict field work moves the production
+  crossover to roughly 8,192 events per uploaded source-history batch. Smaller
+  batches stay on the CPU. ``auto`` never selects Metal, and unsupported platforms fail
+  clearly without importing Metal code. The electron--proton capture run is
+  intentionally below the threshold and does not dispatch to the GPU.
 - Extended the two opt-in Numba backends to the exact charge one-event field,
   exact charge nine-event gradient, and dipole nine-event endpoint-potential
   paths. Charge and dipole stencil centers remain on the Python reference

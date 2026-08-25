@@ -147,6 +147,7 @@ def _solve_retarded_sample(
     root_tolerance_mm: float,
     max_root_iterations: int,
     ended_by_loss: bool,
+    certified_segment: int = -2,
 ) -> Tuple[
     int,
     float,
@@ -239,21 +240,50 @@ def _solve_retarded_sample(
             nan,
         )
 
-    while upper_index - lower_index > 1:
-        middle_index = lower_index + (upper_index - lower_index) // 2
-        middle_residual = _knot_light_cone_residual_mm(
+    hint_is_valid = False
+    if 0 <= certified_segment < knot_count - 1:
+        hint_lower = _knot_light_cone_residual_mm(
             time_ns,
             position_mm,
-            middle_index,
+            certified_segment,
             observer_time_ns,
             observer_x_mm,
             observer_y_mm,
             observer_z_mm,
         )
-        if middle_residual >= 0.0:
-            lower_index = middle_index
-        else:
-            upper_index = middle_index
+        hint_upper = _knot_light_cone_residual_mm(
+            time_ns,
+            position_mm,
+            certified_segment + 1,
+            observer_time_ns,
+            observer_x_mm,
+            observer_y_mm,
+            observer_z_mm,
+        )
+        hint_is_valid = (
+            hint_lower >= 0.0
+            and hint_upper <= 0.0
+            and (hint_upper < 0.0 or certified_segment + 1 == knot_count - 1)
+        )
+        if hint_is_valid:
+            lower_index = certified_segment
+            upper_index = certified_segment + 1
+    if not hint_is_valid:
+        while upper_index - lower_index > 1:
+            middle_index = lower_index + (upper_index - lower_index) // 2
+            middle_residual = _knot_light_cone_residual_mm(
+                time_ns,
+                position_mm,
+                middle_index,
+                observer_time_ns,
+                observer_x_mm,
+                observer_y_mm,
+                observer_z_mm,
+            )
+            if middle_residual >= 0.0:
+                lower_index = middle_index
+            else:
+                upper_index = middle_index
 
     segment_index = lower_index
     lower_time_ns = time_ns[segment_index]
@@ -474,9 +504,7 @@ def _moment_hertz_tensor_strict(
     invariant_retarded_distance_mm = gamma * separation_mm * kappa
 
     projection = (
-        source_beta_x * spin_x
-        + source_beta_y * spin_y
-        + source_beta_z * spin_z
+        source_beta_x * spin_x + source_beta_y * spin_y + source_beta_z * spin_z
     )
     boost_coefficient = gamma * gamma / (gamma + 1.0) * projection
     moment_four = np.empty(4, dtype=np.float64)
@@ -540,6 +568,7 @@ def _evaluate_one_full_strict_event(
     minimum_separation_mm: float,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    certified_segment: int = -2,
 ) -> Tuple[int, np.ndarray, float, float, float, bool]:
     (
         status,
@@ -567,6 +596,7 @@ def _evaluate_one_full_strict_event(
         root_tolerance_mm,
         max_root_iterations,
         ended_by_loss,
+        certified_segment,
     )
     empty = np.zeros((4, 4), dtype=np.float64)
     if status == _STATUS_TERMINATED_SOURCE:
@@ -674,6 +704,65 @@ def evaluate_source_events_full_strict_serial(
 
 
 @jit(nopython=True, fastmath=False, nogil=True, cache=True)
+def evaluate_source_events_full_strict_from_segments_serial(
+    time_ns: np.ndarray,
+    position_mm: np.ndarray,
+    segment_duration_ns: np.ndarray,
+    position_coefficients_mm: np.ndarray,
+    rest_spin: np.ndarray,
+    rest_spin_derivative_per_ns: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+    magnetic_moment_native: float,
+    ended_by_loss: bool,
+    observer_time_ns: np.ndarray,
+    observer_position_mm: np.ndarray,
+    minimum_separation_mm: float,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+    certified_segments: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate strict events from certified brackets, with CPU fallback."""
+
+    event_count = observer_time_ns.size
+    status = np.empty(event_count, dtype=np.int64)
+    hertz = np.zeros((event_count, 4, 4), dtype=np.float64)
+    retarded_time_ns = np.full(event_count, np.nan, dtype=np.float64)
+    residual_mm = np.full(event_count, np.nan, dtype=np.float64)
+    separation_mm = np.full(event_count, np.nan, dtype=np.float64)
+    valid = np.zeros(event_count, dtype=np.bool_)
+    for event_index in range(event_count):
+        (
+            status[event_index],
+            hertz[event_index],
+            retarded_time_ns[event_index],
+            residual_mm[event_index],
+            separation_mm[event_index],
+            valid[event_index],
+        ) = _evaluate_one_full_strict_event(
+            time_ns,
+            position_mm,
+            segment_duration_ns,
+            position_coefficients_mm,
+            rest_spin,
+            rest_spin_derivative_per_ns,
+            preserve_magnitude,
+            preserved_magnitude,
+            magnetic_moment_native,
+            ended_by_loss,
+            observer_time_ns[event_index],
+            observer_position_mm[event_index, 0],
+            observer_position_mm[event_index, 1],
+            observer_position_mm[event_index, 2],
+            minimum_separation_mm,
+            root_tolerance_mm,
+            max_root_iterations,
+            int(certified_segments[event_index]),
+        )
+    return status, hertz, retarded_time_ns, residual_mm, separation_mm, valid
+
+
+@jit(nopython=True, fastmath=False, nogil=True, cache=True)
 def evaluate_source_roots_exact_serial(
     time_ns: np.ndarray,
     position_mm: np.ndarray,
@@ -727,5 +816,6 @@ def evaluate_source_roots_exact_serial(
 __all__ = [
     "NUMBA_AVAILABLE",
     "evaluate_source_events_full_strict_serial",
+    "evaluate_source_events_full_strict_from_segments_serial",
     "evaluate_source_roots_exact_serial",
 ]

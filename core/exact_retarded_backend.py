@@ -6,6 +6,7 @@ EXACT_RETARDED_BACKENDS = (
     "python",
     "numba_roots_exact_serial",
     "numba_full_strict_serial",
+    "metal_certified_full_strict",
 )
 
 
@@ -38,6 +39,20 @@ def require_exact_retarded_backend(backend: str) -> str:
             "Numba is not available; install the configured Numba runtime or select "
             "backend 'python'"
         )
+    if selected == "metal_certified_full_strict":
+        from .compute_backends import (
+            ComputeBackendUnavailableError,
+            resolve_knot_scan_backend,
+        )
+
+        try:
+            resolve_knot_scan_backend("metal")
+        except ComputeBackendUnavailableError as exc:
+            raise ExactRetardedBackendUnavailableError(
+                "exact retarded backend 'metal_certified_full_strict' was "
+                "explicitly selected, but the certified Metal proposal backend "
+                f"is unavailable: {exc}"
+            ) from exc
     return selected
 
 

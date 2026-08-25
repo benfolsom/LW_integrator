@@ -5,9 +5,9 @@ study seam for one bounded accelerator candidate: finding light-cone knot
 brackets in large batches.  It does not dispatch the RFS force, root solve,
 quintic interpolation, field construction, or reduction to a GPU.
 
-``auto`` intentionally resolves to ``cpu`` in this first stage.  Requesting
+``auto`` intentionally resolves to ``cpu``.  Requesting
 ``metal`` explicitly requires a detected Apple-silicon macOS host and a
-separately installed adapter.  The optional adapter is imported only after
+packaged native adapter.  The optional adapter is imported only after
 those checks, so Linux, Windows, and unsupported Macs never import Metal-only
 packages during normal module import or CPU selection.
 
@@ -28,6 +28,7 @@ import importlib
 import platform
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import Callable, Protocol, Sequence, cast
 
 import numpy as np
@@ -364,11 +365,11 @@ def _default_metal_backend_loader() -> KnotScanBackend:
     """Load the optional adapter; called only after macOS/arm64 checks."""
 
     try:
-        module = importlib.import_module("lw_integrator_metal_backend")
+        module = importlib.import_module("core.metal_knot_scan_adapter")
     except ImportError as exc:
         raise ComputeBackendUnavailableError(
             "Metal was requested on a supported Mac, but the optional "
-            "'lw_integrator_metal_backend' adapter is not installed"
+            "native adapter could not be imported"
         ) from exc
     factory = getattr(module, "create_knot_scan_backend", None)
     if not callable(factory):
@@ -406,6 +407,13 @@ def _validated_metal_backend(loader: MetalBackendLoader) -> KnotScanBackend:
             f"Metal backend self-test failed: {self_test.detail}"
         )
     return backend
+
+
+@lru_cache(maxsize=1)
+def _default_validated_metal_backend() -> KnotScanBackend:
+    """Validate the process-wide native adapter and self-test exactly once."""
+
+    return _validated_metal_backend(_default_metal_backend_loader)
 
 
 def resolve_knot_scan_backend(
@@ -462,8 +470,10 @@ def resolve_knot_scan_backend(
             "this prototype Metal backend is validated only on Apple silicon "
             "(arm64); no Metal adapter was imported"
         )
-    backend = _validated_metal_backend(
-        _default_metal_backend_loader if metal_loader is None else metal_loader
+    backend = (
+        _default_validated_metal_backend()
+        if metal_loader is None
+        else _validated_metal_backend(metal_loader)
     )
     return BackendResolution(
         requested=selection,

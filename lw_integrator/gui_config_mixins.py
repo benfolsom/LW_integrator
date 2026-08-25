@@ -270,7 +270,8 @@ class IntegratorGUIConfigMixin:
         if exact_retarded_backend not in _EXACT_RETARDED_LABEL_BY_BACKEND:
             raise ValueError(
                 "Select Python reference, Numba roots-exact CPU, or Numba full "
-                "strict CPU for the exact-retarded backend."
+                "strict CPU, or Metal-certified roots + strict CPU for the "
+                "exact-retarded backend."
             )
         source_minimum_separation = _parse_gui_float(
             self.magnetic_dipole_source_minimum_separation_var.get(),

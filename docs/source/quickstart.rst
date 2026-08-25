@@ -151,7 +151,12 @@ simulation, and confirm that the regression tooling works on your machine.
    ``numba_full_strict_serial`` additionally compiles the strict per-source
    charge and Hertz event paths.  It is faster but tolerance-validated rather
    than bitwise-identical.  Charge and dipole stencil centers stay on the
-   Python reference path.  There is no automatic platform dispatch.  Neutral
+   Python reference path.  On Apple silicon,
+   ``metal_certified_full_strict`` may accelerate sufficiently large dipole
+   root batches, but only as float32 bracket proposals certified against the
+   original float64 data; the strict CPU root and fields remain authoritative.
+   Small calls stay on the CPU and there is no automatic platform dispatch.
+   Neutral
    particles and prescribed gradients are best configured in a saved JSON.
    See :doc:`magnetic_dipole_moments` for the numerical contract, all hard
    scope guards, the diagnostic legacy models, and retarded-source limits.

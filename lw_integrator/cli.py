@@ -713,13 +713,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "python",
             "numba_roots_exact_serial",
             "numba_full_strict_serial",
+            "metal_certified_full_strict",
         ),
         help=(
             "Exact-retarded evaluator shared by charge and intrinsic-dipole "
             "fields: the Python reference (default) or a strict serial Numba "
-            "roots-only/full-Hertz kernel. Source and finite-difference "
-            "reductions remain deterministic. Explicit Numba selection fails "
-            "if Numba is unavailable."
+            "roots-only/full-Hertz kernel. The explicit Metal option proposes "
+            "only float32 dipole root brackets; original-float64 certification "
+            "and the strict CPU root/field remain authoritative. Source and "
+            "finite-difference reductions remain deterministic."
         ),
     )
     parser.add_argument(
@@ -1294,9 +1296,9 @@ def _build_testbed_report(
         report["magnetic_dipole_source"] = {
             "model": str(options.magnetic_dipole_source_model),
         }
-        report["exact_retarded"] = {
-            "backend": str(options.magnetic_dipole_exact_retarded_backend),
-        }
+        report["exact_retarded"] = _exact_retarded_report(
+            str(options.magnetic_dipole_exact_retarded_backend)
+        )
     return report
 
 
@@ -3003,8 +3005,27 @@ def build_report(
         report["magnetic_dipole_source"] = {
             "model": magnetic_dipole.source.model,
         }
-        report["exact_retarded"] = {
-            "backend": magnetic_dipole.exact_retarded_backend,
+        report["exact_retarded"] = _exact_retarded_report(
+            magnetic_dipole.exact_retarded_backend
+        )
+    return report
+
+
+def _exact_retarded_report(backend: str) -> dict[str, Any]:
+    """Record the selected evaluator and any certified-Metal fallback counts."""
+
+    report: dict[str, Any] = {"backend": str(backend)}
+    if str(backend) == "metal_certified_full_strict":
+        from core.metal_certified_roots import metal_certified_root_diagnostics
+
+        diagnostics = metal_certified_root_diagnostics()
+        report["metal_certified_roots"] = {
+            "calls": diagnostics.calls,
+            "below_threshold_calls": diagnostics.below_threshold_calls,
+            "dispatches": diagnostics.dispatches,
+            "accepted_proposals": diagnostics.accepted_proposals,
+            "cpu_fallbacks": diagnostics.cpu_fallbacks,
+            "dispatch_failures": diagnostics.dispatch_failures,
         }
     return report
 

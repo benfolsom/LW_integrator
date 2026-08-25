@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 from typing import cast
 
 import numpy as np
@@ -17,8 +18,13 @@ from core.retarded_dipole_fields import (
 )
 from core.exact_retarded_numba import (
     evaluate_source_events_full_strict_serial,
+    evaluate_source_events_full_strict_from_segments_serial,
 )
 from core.retarded_fields import ObserverEvent
+from core.metal_certified_roots import (
+    metal_certified_root_diagnostics,
+    reset_metal_certified_root_diagnostics,
+)
 
 numba = pytest.importorskip("numba")
 
@@ -148,6 +154,76 @@ def test_full_strict_event_hertz_is_deterministic_and_within_one_ulp() -> None:
     for left, right in zip(first, second):
         np.testing.assert_array_equal(left, right)
     assert _maximum_ulp(reference, first[1]) <= 1.0
+
+
+def test_certified_segment_hints_preserve_full_strict_results() -> None:
+    prepared = _prepare_dipole_history(
+        _dynamic_history(),
+        source_identities=("source",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+    )
+    event_times, event_positions = _event_arrays(
+        ObserverEvent(-1.0e-5, (0.1, 0.2, 0.3)),
+        3.0e-4,
+    )
+    arguments = _full_kernel_arguments(prepared, event_times, event_positions)
+    reference = evaluate_source_events_full_strict_serial(*arguments)
+    source = prepared.sources[0].worldline
+    segments = np.searchsorted(source.time_ns, reference[2], side="right") - 1
+    segments = np.clip(segments, 0, source.time_ns.size - 2).astype(np.int64)
+
+    hinted = evaluate_source_events_full_strict_from_segments_serial(
+        *arguments, segments
+    )
+    bad_hints = evaluate_source_events_full_strict_from_segments_serial(
+        *arguments, np.full(event_times.size, -2, dtype=np.int64)
+    )
+
+    for expected, actual, fallback in zip(reference, hinted, bad_hints):
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(fallback, expected)
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin" or platform.machine() != "arm64",
+    reason="real Metal adapter requires Apple-silicon macOS",
+)
+def test_small_metal_selection_stays_on_full_strict_cpu() -> None:
+    history = _dynamic_history(source_count=8)
+    event = ObserverEvent(-1.0e-5, (0.1, 0.2, 0.3))
+    kwargs = {
+        "source_identities": tuple(range(8)),
+        "stencil_step_mm": 3.0e-4,
+    }
+    reference = evaluate_retarded_dipole_field_gradient_native(
+        history, event, backend="numba_full_strict_serial", **kwargs
+    )
+    reset_metal_certified_root_diagnostics()
+
+    candidate = evaluate_retarded_dipole_field_gradient_native(
+        history, event, backend="metal_certified_full_strict", **kwargs
+    )
+
+    for name in (
+        "four_potential",
+        "partial_a",
+        "electric_field_native",
+        "magnetic_field_native",
+        "field_tensor",
+        "partial_f",
+        "stencil_offsets",
+        "stencil_retarded_time_ns",
+        "stencil_light_cone_residual_mm",
+    ):
+        np.testing.assert_array_equal(
+            getattr(candidate, name), getattr(reference, name)
+        )
+    diagnostics = metal_certified_root_diagnostics()
+    assert diagnostics.below_threshold_calls == 1
+    assert diagnostics.dispatches == 0
+    assert diagnostics.accepted_proposals == 0
+    assert diagnostics.cpu_fallbacks == 0
 
 
 def test_full_strict_provider_obeys_derivative_amplification_contract() -> None:

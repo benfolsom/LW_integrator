@@ -958,6 +958,7 @@ def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
     minimum_separation_mm: float,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    use_metal_certified_segments: bool = False,
 ) -> tuple[RetardedDipoleHertzResult, ...]:
     """Compile complete source events while retaining reference reductions."""
 
@@ -971,6 +972,7 @@ def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
         _STATUS_TERMINATED_SOURCE,
         _STATUS_VALID,
         evaluate_source_events_full_strict_serial,
+        evaluate_source_events_full_strict_from_segments_serial,
     )
 
     event_count = len(observer_events)
@@ -987,38 +989,61 @@ def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
     if event_position_mm.shape != (event_count, 3):
         raise ValueError("retarded dipole observer events must have shape [events, 3]")
 
+    certified_segments: dict[int, np.ndarray] | None = None
+    if use_metal_certified_segments:
+        from .metal_certified_roots import certified_metal_segments
+
+        certified_segments = certified_metal_segments(
+            prepared.sources,
+            event_time_ns,
+            event_position_mm,
+        )
+
     source_batches: dict[int, tuple[np.ndarray, ...]] = {}
     for source_index, source in prepared.sources.items():
         worldline = source.worldline
         preserved = source.preserved_rest_spin_magnitude
+        event_evaluator = (
+            evaluate_source_events_full_strict_from_segments_serial
+            if certified_segments is not None
+            else evaluate_source_events_full_strict_serial
+        )
         compiling_initial_signature = not bool(
-            getattr(evaluate_source_events_full_strict_serial, "signatures", ())
+            getattr(event_evaluator, "signatures", ())
         )
         try:
+            arguments = (
+                worldline.time_ns,
+                worldline.position_mm,
+                worldline.segment_duration_ns,
+                worldline.position_coefficients_mm,
+                source.rest_spin,
+                source.rest_spin_derivative_per_ns,
+                preserved is not None,
+                0.0 if preserved is None else float(preserved),
+                float(source.magnetic_moment_native),
+                bool(worldline.ended_by_loss),
+                event_time_ns,
+                event_position_mm,
+                float(minimum_separation_mm),
+                float(root_tolerance_mm),
+                int(max_root_iterations),
+            )
+            if certified_segments is not None:
+                arguments = arguments + (certified_segments[source_index],)
             source_batches[source_index] = cast(
                 tuple[np.ndarray, ...],
-                evaluate_source_events_full_strict_serial(
-                    worldline.time_ns,
-                    worldline.position_mm,
-                    worldline.segment_duration_ns,
-                    worldline.position_coefficients_mm,
-                    source.rest_spin,
-                    source.rest_spin_derivative_per_ns,
-                    preserved is not None,
-                    0.0 if preserved is None else float(preserved),
-                    float(source.magnetic_moment_native),
-                    bool(worldline.ended_by_loss),
-                    event_time_ns,
-                    event_position_mm,
-                    float(minimum_separation_mm),
-                    float(root_tolerance_mm),
-                    int(max_root_iterations),
-                ),
+                event_evaluator(*arguments),
             )
         except NUMBA_COMPILATION_ERRORS as exc:
             if compiling_initial_signature:
+                selected_name = (
+                    "metal_certified_full_strict"
+                    if use_metal_certified_segments
+                    else "numba_full_strict_serial"
+                )
                 raise RetardedDipoleBackendUnavailableError(
-                    "exact retarded backend 'numba_full_strict_serial' failed "
+                    f"exact retarded backend {selected_name!r} failed "
                     "during initial JIT compilation; select backend 'python' or "
                     "inspect the chained Numba error"
                 ) from exc
@@ -1284,6 +1309,9 @@ def evaluate_retarded_dipole_potential_native(
                 minimum_separation_mm=minimum_separation,
                 root_tolerance_mm=tolerance,
                 max_root_iterations=iterations,
+                use_metal_certified_segments=(
+                    selected_backend == "metal_certified_full_strict"
+                ),
             )
         evaluated.update(zip(displaced_offsets, displaced_results))
 
@@ -1472,6 +1500,9 @@ def evaluate_retarded_dipole_field_gradient_native(
                 minimum_separation_mm=minimum_separation,
                 root_tolerance_mm=tolerance,
                 max_root_iterations=iterations,
+                use_metal_certified_segments=(
+                    selected_backend == "metal_certified_full_strict"
+                ),
             )
         precomputed_hertz = dict(zip(batch_offsets, batch_results))
 

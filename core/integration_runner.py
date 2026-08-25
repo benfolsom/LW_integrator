@@ -2736,6 +2736,10 @@ def retarded_integrator(
     particle_loss = particle_loss or ParticleLossConfig()
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
+    if magnetic_dipole.exact_retarded_backend == "metal_certified_full_strict":
+        from .metal_certified_roots import reset_metal_certified_root_diagnostics
+
+        reset_metal_certified_root_diagnostics()
     rfs_active = bool(
         magnetic_dipole.enabled
         and magnetic_dipole.spin_model == "rfs_minimal_2021"

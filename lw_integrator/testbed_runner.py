@@ -81,6 +81,7 @@ EXACT_RETARDED_BACKEND_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Python reference", "python"),
     ("Numba roots-exact CPU", "numba_roots_exact_serial"),
     ("Numba full strict CPU", "numba_full_strict_serial"),
+    ("Metal-certified roots + strict CPU", "metal_certified_full_strict"),
 )
 
 PARAM_LABELS: Dict[str, str] = {
