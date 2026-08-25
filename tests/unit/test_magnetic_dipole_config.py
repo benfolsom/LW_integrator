@@ -13,8 +13,9 @@ def test_magnetic_dipole_defaults_to_disabled_rfs_pair() -> None:
     assert config.enabled is False
     assert config.spin_model == "rfs_minimal_2021"
     assert config.stern_gerlach_model == "rfs_full_g"
+    assert config.exact_retarded_backend == "python"
     assert config.source.model == "off"
-    assert config.source.backend == "python"
+    assert not hasattr(config.source, "backend")
     assert config.source.active is False
 
 
@@ -74,9 +75,9 @@ def test_magnetic_dipole_rejects_unknown_models(
 def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
     config = MagneticDipoleConfig(
         enabled=True,
+        exact_retarded_backend="numba_roots_exact_serial",
         source={
             "model": "full-retarded-point",
-            "backend": "numba_roots_exact_serial",
             "minimum_separation_mm": 3.0e-9,
             "relative_stencil_step": 5.0e-4,
         },
@@ -84,23 +85,27 @@ def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
 
     assert isinstance(config.source, DipoleSourceConfig)
     assert config.source.model == "covariant_retarded_point"
-    assert config.source.backend == "numba_roots_exact_serial"
+    assert config.exact_retarded_backend == "numba_roots_exact_serial"
     assert config.source.active is True
     assert config.source.minimum_separation_mm == 3.0e-9
     assert config.source.relative_stencil_step == 5.0e-4
 
 
-def test_retarded_dipole_source_accepts_full_strict_backend() -> None:
-    config = DipoleSourceConfig(backend="numba_full_strict_serial")
+def test_magnetic_dipole_accepts_full_strict_exact_retarded_backend() -> None:
+    config = MagneticDipoleConfig(exact_retarded_backend="numba_full_strict_serial")
 
-    assert config.backend == "numba_full_strict_serial"
+    assert config.exact_retarded_backend == "numba_full_strict_serial"
+
+
+def test_magnetic_dipole_rejects_unknown_exact_retarded_backend() -> None:
+    with pytest.raises(ValueError, match="exact_retarded_backend"):
+        MagneticDipoleConfig(exact_retarded_backend="auto")
 
 
 @pytest.mark.parametrize(
     ("overrides", "message"),
     (
         ({"model": "quasistatic"}, "model"),
-        ({"backend": "auto"}, "backend"),
         ({"minimum_separation_mm": 0.0}, "minimum_separation"),
         ({"relative_stencil_step": 0.05}, "relative_stencil_step"),
         ({"minimum_stencil_step_mm": float("nan")}, "minimum_stencil"),

@@ -47,8 +47,8 @@ from .gui_tab_mixins import IntegratorGUITabMixin
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
-    DIPOLE_SOURCE_BACKEND_OPTIONS,
     DIPOLE_SOURCE_MODEL_OPTIONS,
+    EXACT_RETARDED_BACKEND_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SPECIES_OPTIONS,
     SimulationOptions,
@@ -323,15 +323,19 @@ class IntegratorGUI(
         self.magnetic_dipole_source_model_var = tk.StringVar(
             value=dipole_source_label_by_model.get(dipole_source_model, "Off")
         )
-        dipole_backend_label_by_name = {
-            backend: label for label, backend in DIPOLE_SOURCE_BACKEND_OPTIONS
+        exact_retarded_backend_label_by_name = {
+            backend: label for label, backend in EXACT_RETARDED_BACKEND_OPTIONS
         }
-        dipole_source_backend = str(
-            getattr(self.options, "magnetic_dipole_source_backend", "python")
+        exact_retarded_backend = str(
+            getattr(
+                self.options,
+                "magnetic_dipole_exact_retarded_backend",
+                "python",
+            )
         )
-        self.magnetic_dipole_source_backend_var = tk.StringVar(
-            value=dipole_backend_label_by_name.get(
-                dipole_source_backend, "Python reference"
+        self.magnetic_dipole_exact_retarded_backend_var = tk.StringVar(
+            value=exact_retarded_backend_label_by_name.get(
+                exact_retarded_backend, "Python reference"
             )
         )
         self.magnetic_dipole_source_minimum_separation_var = tk.StringVar(

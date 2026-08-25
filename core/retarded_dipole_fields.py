@@ -57,6 +57,12 @@ from typing import Hashable, Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .exact_retarded_backend import (
+    EXACT_RETARDED_BACKENDS,
+    ExactRetardedBackendUnavailableError,
+    require_exact_retarded_backend,
+    validate_exact_retarded_backend,
+)
 from .magnetic_dipole import boost_rest_polarization
 from .prepared_history_cache import (
     AppendAwarePreparedHistoryCache,
@@ -95,19 +101,15 @@ _DEFAULT_STENCIL_RELATIVE_STEP = 1.0e-3
 _DEFAULT_STENCIL_MINIMUM_STEP_MM = 1.0e-15
 _DEFAULT_MINIMUM_SEPARATION_MM = 1.0e-15
 _CONTRAVARIANT_DERIVATIVE_SIGNS = np.array((1.0, -1.0, -1.0, -1.0))
-RETARDED_DIPOLE_BACKENDS = (
-    "python",
-    "numba_roots_exact_serial",
-    "numba_full_strict_serial",
-)
+RETARDED_DIPOLE_BACKENDS = EXACT_RETARDED_BACKENDS
 
 
 class DipoleSourceSingularityError(ValueError):
     """Raised when an observer/stencil event approaches a point dipole too far."""
 
 
-class RetardedDipoleBackendUnavailableError(RuntimeError):
-    """Raised when an explicitly selected source backend cannot run."""
+# Compatibility alias for callers of the alpha-stage dipole-only API.
+RetardedDipoleBackendUnavailableError = ExactRetardedBackendUnavailableError
 
 
 @dataclass(frozen=True)
@@ -249,27 +251,11 @@ def _full_gradient_stencil_offsets() -> tuple[tuple[int, int, int, int], ...]:
 
 
 def _validated_retarded_dipole_backend(backend: str) -> str:
-    selected = str(backend).strip().lower()
-    if selected not in RETARDED_DIPOLE_BACKENDS:
-        choices = ", ".join(RETARDED_DIPOLE_BACKENDS)
-        raise ValueError(f"retarded dipole backend must be one of: {choices}")
-    return selected
+    return validate_exact_retarded_backend(backend)
 
 
 def _require_retarded_dipole_backend(backend: str) -> str:
-    selected = _validated_retarded_dipole_backend(backend)
-    if selected == "python":
-        return selected
-
-    from .retarded_dipole_numba_roots import NUMBA_AVAILABLE
-
-    if not NUMBA_AVAILABLE:
-        raise RetardedDipoleBackendUnavailableError(
-            f"retarded dipole backend {selected!r} was explicitly selected, but "
-            "Numba is not available; install the optional Numba runtime or select "
-            "backend 'python'"
-        )
-    return selected
+    return require_exact_retarded_backend(backend)
 
 
 def _validate_source_identities(
@@ -813,7 +799,7 @@ def _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
 ) -> tuple[RetardedDipoleHertzResult, ...]:
     """Compile roots while preserving the Python Hertz and addition order."""
 
-    from .retarded_dipole_numba_roots import (
+    from .exact_retarded_numba import (
         NUMBA_COMPILATION_ERRORS,
         _STATUS_MISSING_HISTORY,
         _STATUS_TERMINATED_SOURCE,
@@ -859,7 +845,7 @@ def _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
         except NUMBA_COMPILATION_ERRORS as exc:
             if compiling_initial_signature:
                 raise RetardedDipoleBackendUnavailableError(
-                    "retarded dipole backend 'numba_roots_exact_serial' failed "
+                    "exact retarded backend 'numba_roots_exact_serial' failed "
                     "during initial JIT compilation; select backend 'python' or "
                     "inspect the chained Numba error"
                 ) from exc
@@ -975,7 +961,7 @@ def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
 ) -> tuple[RetardedDipoleHertzResult, ...]:
     """Compile complete source events while retaining reference reductions."""
 
-    from .retarded_dipole_numba_roots import (
+    from .exact_retarded_numba import (
         NUMBA_COMPILATION_ERRORS,
         _STATUS_MINIMUM_SEPARATION,
         _STATUS_MISSING_HISTORY,
@@ -1032,7 +1018,7 @@ def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
         except NUMBA_COMPILATION_ERRORS as exc:
             if compiling_initial_signature:
                 raise RetardedDipoleBackendUnavailableError(
-                    "retarded dipole backend 'numba_full_strict_serial' failed "
+                    "exact retarded backend 'numba_full_strict_serial' failed "
                     "during initial JIT compilation; select backend 'python' or "
                     "inspect the chained Numba error"
                 ) from exc
@@ -1186,6 +1172,7 @@ def evaluate_retarded_dipole_potential_native(
     minimum_separation_mm: float = _DEFAULT_MINIMUM_SEPARATION_MM,
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    backend: str = "python",
 ) -> RetardedDipolePotentialResult:
     """Return the full-retarded ordinary dipole four-potential efficiently.
 
@@ -1200,8 +1187,15 @@ def evaluate_retarded_dipole_potential_native(
     ``max(minimum_step_mm, relative_step * nearest_retarded_separation)``.
     Every displaced event performs its own light-cone solve; source state and
     retarded time are never frozen across the stencil.
+
+    The center evaluation remains on the Python reference path for every
+    backend because it selects the adaptive stencil step and supplies the
+    archived center diagnostics. Explicit Numba backends batch only the eight
+    displaced events, then retain the Python reference finite-difference and
+    source-reduction order.
     """
 
+    selected_backend = _require_retarded_dipole_backend(backend)
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
@@ -1248,6 +1242,50 @@ def evaluate_retarded_dipole_potential_native(
     evaluated: dict[tuple[int, int, int, int], RetardedDipoleHertzResult] = {
         (0, 0, 0, 0): center
     }
+
+    if selected_backend != "python":
+        displaced_offsets: list[tuple[int, int, int, int]] = []
+        displaced_events: list[ObserverEvent] = []
+        for derivative_index in range(4):
+            for sign in (-1, 1):
+                offset = [0, 0, 0, 0]
+                offset[derivative_index] = sign
+                event_offset = cast(tuple[int, int, int, int], tuple(offset))
+                displaced_position = center_position + step * np.asarray(
+                    event_offset[1:], dtype=float
+                )
+                displaced_offsets.append(event_offset)
+                displaced_events.append(
+                    ObserverEvent(
+                        time_ns=(
+                            float(observer_event.time_ns)
+                            + event_offset[0] * step / C_MMNS
+                        ),
+                        position_mm=cast(
+                            tuple[float, float, float],
+                            tuple(float(value) for value in displaced_position),
+                        ),
+                    )
+                )
+        if selected_backend == "numba_roots_exact_serial":
+            displaced_results = _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
+                prepared,
+                displaced_events,
+                require_complete_history=require_complete_history,
+                minimum_separation_mm=minimum_separation,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+            )
+        else:
+            displaced_results = _evaluate_prepared_hertz_batch_numba_full_strict_serial(
+                prepared,
+                displaced_events,
+                require_complete_history=require_complete_history,
+                minimum_separation_mm=minimum_separation,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+            )
+        evaluated.update(zip(displaced_offsets, displaced_results))
 
     def hertz_at_offset(
         offset: tuple[int, int, int, int],

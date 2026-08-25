@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from scripts import benchmark_dipole_source_backends as benchmark
+from scripts import benchmark_exact_retarded_backends as benchmark
 
 
 @dataclass
@@ -13,6 +13,7 @@ class _FakeTrajectory:
     halted: np.ndarray
     notes: list[str | None]
     mass_shell_projection_energy: np.ndarray
+    local_magnetic_field_z_t: np.ndarray | None = None
     _storage_state: object | None = None
     _storage_array_revision: int | None = None
 
@@ -108,3 +109,34 @@ def test_projection_difference_uses_physical_energy_budget() -> None:
     nonfinite_mismatch = benchmark._compare_trajectories(reference, candidate)
 
     assert nonfinite_mismatch["tolerance_passed"] is False
+
+
+def test_saved_local_magnetic_field_uses_named_absolute_diagnostic_budget() -> None:
+    reference = _FakeTrajectory(
+        x=np.zeros(1),
+        halted=np.asarray((False,)),
+        notes=[None],
+        mass_shell_projection_energy=np.zeros(1),
+        local_magnetic_field_z_t=np.ones(1),
+    )
+    candidate = _FakeTrajectory(
+        x=reference.x.copy(),
+        halted=reference.halted.copy(),
+        notes=list(reference.notes),
+        mass_shell_projection_energy=reference.mass_shell_projection_energy.copy(),
+        local_magnetic_field_z_t=np.asarray((1.0 + 9.0e-13,)),
+    )
+
+    accepted = benchmark._compare_trajectories(reference, candidate)
+    detail = accepted["array_mismatch_details"]["local_magnetic_field_z_t"]
+
+    assert accepted["tolerance_passed"] is True
+    assert detail["diagnostic_absolute_tolerance"] == 1.0e-12
+    assert detail["diagnostic_relative_tolerance"] == 0.0
+    assert detail["diagnostic_units"] == "T"
+    assert detail["force_path_validation"] is False
+
+    candidate.local_magnetic_field_z_t[0] = 1.0 + 1.1e-12
+    rejected = benchmark._compare_trajectories(reference, candidate)
+
+    assert rejected["tolerance_passed"] is False

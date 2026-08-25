@@ -8,8 +8,8 @@ from tkinter import ttk
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
     CORE_PARAM_LABELS,
-    DIPOLE_SOURCE_BACKEND_OPTIONS,
     DIPOLE_SOURCE_MODEL_OPTIONS,
+    EXACT_RETARDED_BACKEND_OPTIONS,
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
     RADIATION_REACTION_MODE_CHOICES,
@@ -213,27 +213,28 @@ class IntegratorGUITabMixin:
             "Full retarded point includes near, induction, and radiation fields.",
         )
 
-        self.magnetic_dipole_source_backend_label = ttk.Label(
-            magnetic_frame, text="Evaluation backend:"
+        self.magnetic_dipole_exact_retarded_backend_label = ttk.Label(
+            magnetic_frame, text="Exact-retarded backend:"
         )
-        self.magnetic_dipole_source_backend_label.grid(
+        self.magnetic_dipole_exact_retarded_backend_label.grid(
             row=4, column=0, sticky="w", padx=(20, 8), pady=2
         )
-        self.magnetic_dipole_source_backend_combo = ttk.Combobox(
+        self.magnetic_dipole_exact_retarded_backend_combo = ttk.Combobox(
             magnetic_frame,
-            textvariable=self.magnetic_dipole_source_backend_var,
-            values=[label for label, _backend in DIPOLE_SOURCE_BACKEND_OPTIONS],
+            textvariable=self.magnetic_dipole_exact_retarded_backend_var,
+            values=[label for label, _backend in EXACT_RETARDED_BACKEND_OPTIONS],
             state="readonly",
             width=34,
         )
-        self.magnetic_dipole_source_backend_combo.grid(
+        self.magnetic_dipole_exact_retarded_backend_combo.grid(
             row=4, column=1, columnspan=2, sticky="ew", pady=2
         )
         Tooltip(
-            self.magnetic_dipole_source_backend_combo,
+            self.magnetic_dipole_exact_retarded_backend_combo,
             "Roots-exact compiles only light-cone roots. Full strict also "
             "compiles spin, moment, Hodge, and Hertz arithmetic. Both are "
-            "serial and keep deterministic source/stencil reduction order.",
+            "shared by charge and intrinsic-dipole exact-retarded fields, are "
+            "serial, and keep deterministic source/stencil reduction order.",
         )
 
         self.magnetic_dipole_source_cutoff_label = ttk.Label(
@@ -316,9 +317,9 @@ class IntegratorGUITabMixin:
             (self.magnetic_dipole_precession_check, "normal"),
             (self.magnetic_dipole_stern_gerlach_check, "normal"),
             (self.magnetic_dipole_source_model_combo, "readonly"),
+            (self.magnetic_dipole_exact_retarded_backend_combo, "readonly"),
         ]
         self._magnetic_dipole_source_controls = [
-            (self.magnetic_dipole_source_backend_combo, "readonly"),
             (self.magnetic_dipole_source_cutoff_entry, "normal"),
         ]
         self._magnetic_dipole_rider_controls = [
@@ -333,9 +334,9 @@ class IntegratorGUITabMixin:
             self.magnetic_species_label,
             *self.magnetic_spin_labels,
             self.magnetic_dipole_source_model_label,
+            self.magnetic_dipole_exact_retarded_backend_label,
         ]
         self._magnetic_dipole_source_labels = [
-            self.magnetic_dipole_source_backend_label,
             self.magnetic_dipole_source_cutoff_label,
         ]
         self._magnetic_dipole_rider_labels = [self.magnetic_rider_heading_label]

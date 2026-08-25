@@ -970,6 +970,7 @@ def _preflight_inertial_exact_histories(
                         if source_options.active
                         else 96
                     ),
+                    backend=magnetic_dipole.exact_retarded_backend,
                 )
                 potential_offsets[
                     particle_idx
@@ -986,7 +987,7 @@ def _preflight_inertial_exact_histories(
                     minimum_separation_mm=float(source_options.minimum_separation_mm),
                     root_tolerance_mm=float(source_options.root_tolerance_mm),
                     max_root_iterations=int(source_options.max_root_iterations),
-                    backend=source_options.backend,
+                    backend=magnetic_dipole.exact_retarded_backend,
                 )
                 potential_offsets[
                     particle_idx
@@ -1068,6 +1069,7 @@ def _evaluate_exact_endpoint_four_potential(
             require_complete_history=True,
             root_tolerance_mm=charge_root_tolerance_mm,
             max_root_iterations=charge_max_root_iterations,
+            backend=magnetic_dipole.exact_retarded_backend,
         )
         potentials[particle_idx] += charge_field.four_potential
         if include_dipole_source:
@@ -1080,6 +1082,7 @@ def _evaluate_exact_endpoint_four_potential(
                 minimum_separation_mm=float(source_options.minimum_separation_mm),
                 root_tolerance_mm=float(source_options.root_tolerance_mm),
                 max_root_iterations=int(source_options.max_root_iterations),
+                backend=magnetic_dipole.exact_retarded_backend,
             )
             potentials[particle_idx] += dipole_potential.four_potential
     if not np.all(np.isfinite(potentials)):

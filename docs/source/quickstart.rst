@@ -144,12 +144,14 @@ simulation, and confirm that the regression tooling works on your machine.
    complete RFS evolution.  To add the ordinary non-self field of each moment,
    also select ``--dipole-source full-retarded-point``.  The optional
    ``--dipole-source-cutoff-mm`` value is a strict point-singularity abort
-   boundary, not softening.  ``--dipole-source-backend
-   numba_roots_exact_serial`` opts into a cross-platform serial CPU root
-   kernel while preserving Python source and stencil assembly; ``python`` is
-   the default.  ``numba_full_strict_serial`` additionally compiles the full
-   per-source Hertz event path.  It is faster but tolerance-validated rather
-   than bitwise-identical.  There is no automatic platform dispatch.  Neutral
+   boundary, not softening.  ``--exact-retarded-backend
+   numba_roots_exact_serial`` opts the exact charge and dipole providers into a
+   cross-platform serial CPU root kernel while preserving Python source and
+   stencil assembly; ``python`` is the default.
+   ``numba_full_strict_serial`` additionally compiles the strict per-source
+   charge and Hertz event paths.  It is faster but tolerance-validated rather
+   than bitwise-identical.  Charge and dipole stencil centers stay on the
+   Python reference path.  There is no automatic platform dispatch.  Neutral
    particles and prescribed gradients are best configured in a saved JSON.
    See :doc:`magnetic_dipole_moments` for the numerical contract, all hard
    scope guards, the diagnostic legacy models, and retarded-source limits.

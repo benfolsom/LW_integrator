@@ -15,7 +15,7 @@ from core.retarded_dipole_fields import (
     _prepare_dipole_history,
     evaluate_retarded_dipole_field_gradient_native,
 )
-from core.retarded_dipole_numba_roots import (
+from core.exact_retarded_numba import (
     evaluate_source_events_full_strict_serial,
 )
 from core.retarded_fields import ObserverEvent
@@ -232,9 +232,7 @@ def test_full_strict_provider_is_independent_of_numba_thread_setting() -> None:
         "backend": "numba_full_strict_serial",
     }
     original_threads = numba.get_num_threads()
-    reference = evaluate_retarded_dipole_field_gradient_native(
-        history, event, **kwargs
-    )
+    reference = evaluate_retarded_dipole_field_gradient_native(history, event, **kwargs)
     python_reference = evaluate_retarded_dipole_field_gradient_native(
         history,
         event,

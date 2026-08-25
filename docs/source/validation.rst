@@ -62,37 +62,44 @@ failure when exact source history is missing.  They also require
 :math:`P-p=q(A_q+A_{\rm dip})/c` at evolved endpoints and preserve append-only
 retarded-history preparation across the representation update.
 
-The optional ``numba_roots_exact_serial`` source backend is checked against
-the complete Python provider result, not only against isolated roots.  Its
-tests vary the configured Numba thread count and require identical source
-addition and finite-difference results.  For a representative full-state
+The optional ``numba_roots_exact_serial`` exact-retarded backend is checked
+against the complete Python charge and dipole provider results, not only
+against isolated roots.  Its tests vary the configured Numba thread count and
+require identical source addition and finite-difference results.  The shared
+canonical setting is ``magnetic_dipole.exact_retarded_backend`` and the CLI
+option is ``--exact-retarded-backend``.  For a representative full-state
 comparison, run the maintained 300-sample benchmark with a flyby testbed
 configuration::
 
-   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
-      --steps 300 --output /tmp/dipole-source-backends.json --quiet
+   python scripts/benchmark_exact_retarded_backends.py CONFIG.json \
+      --steps 300 --output /tmp/exact-retarded-backends.json --quiet
 
 The report compares every public trajectory array and side channel for rider
 and driver, records cold and warm timings separately, and leaves the input
 configuration unchanged.
 
 The explicit ``numba_full_strict_serial`` backend uses a physical tolerance
-contract because nested finite differences amplify event-level last-bit
-changes.  Its unit suite requires deterministic strict-serial execution,
-at-most-one-ULP Hertz events in the audited probe, reference event/source
-ordering, bounded provider differences, and a short trajectory below the
-``0.025 meV`` cumulative projection-energy budget.  Run the full 300-sample
-comparison with::
+contract because finite differences amplify event-level last-bit changes.  Its
+unit suite requires deterministic strict-serial execution, bounded charge and
+Hertz provider differences, reference event/source ordering, and a short
+trajectory below the ``0.025 meV`` cumulative projection-energy budget.
+Charge and dipole stencil centers remain Python reference evaluations;
+source reduction and finite-difference assembly also remain in reference-order
+Python.  Run the full 300-sample comparison with::
 
-   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
+   python scripts/benchmark_exact_retarded_backends.py CONFIG.json \
       --backend numba_full_strict_serial \
-      --steps 300 --output /tmp/dipole-source-full-strict.json --quiet
+      --steps 300 --output /tmp/exact-retarded-full-strict.json --quiet
 
 The JSON records both bitwise equality and ``tolerance_passed``.  A full
 backend result is acceptable only when both cold and warm comparisons pass the
 tolerance contract and run status is unchanged.  Provider-level derivative
 differences should additionally be checked across force, spin, and stencil
 convergence before merging or using the backend for a production study.
+Saved ``local_magnetic_field_*`` visualization arrays have a separate absolute
+``1e-12 T`` comparison budget, while ordinary state arrays use ``2e-12``
+relative tolerance.  The local-field arrays are not force-path validation;
+force-center fields and the dynamics must pass their own comparisons.
 
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``

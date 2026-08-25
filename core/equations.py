@@ -2886,6 +2886,11 @@ def retarded_equations_of_motion(
                                 and magnetic_dipole.source.active
                                 else 96
                             ),
+                            backend=(
+                                magnetic_dipole.exact_retarded_backend
+                                if magnetic_dipole is not None
+                                else "python"
+                            ),
                         )
                         if sc_convergence_mode == "fixed_geometry":
                             exact_charge_field_cache = exact_charge_field
@@ -3015,7 +3020,7 @@ def retarded_equations_of_motion(
                                 max_root_iterations=(
                                     magnetic_dipole.source.max_root_iterations
                                 ),
-                                backend=magnetic_dipole.source.backend,
+                                backend=magnetic_dipole.exact_retarded_backend,
                             )
                         )
                         if sc_convergence_mode == "fixed_geometry":
@@ -3151,6 +3156,7 @@ def retarded_equations_of_motion(
                                 time_ns=float(current_state["t"][particle_idx]),
                                 position_mm=rfs_position,
                             ),
+                            backend=magnetic_dipole.exact_retarded_backend,
                         )
                     except RetardedHistoryError:
                         if startup_mode is StartupMode.INERTIAL_PREHISTORY:
@@ -4360,6 +4366,7 @@ def retarded_equations_of_motion(
                                 float(result["z"][particle_idx]),
                             ),
                         ),
+                        backend=magnetic_dipole.exact_retarded_backend,
                     )
                 except RetardedHistoryError:
                     diagnostic_charge_field = None

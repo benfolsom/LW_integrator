@@ -6,6 +6,32 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Unified the exact retarded charge and dipole CPU selection under
+  ``magnetic_dipole.exact_retarded_backend`` and the direct CLI option
+  ``--exact-retarded-backend``. The former
+  ``magnetic_dipole.source.backend`` key remains an input-only compatibility
+  alias when the canonical key is absent or has the same value; conflicting
+  values are rejected, and saved configurations emit only the canonical key.
+  The choices remain ``python`` (the reference/default),
+  ``numba_roots_exact_serial``, and ``numba_full_strict_serial``.
+- Extended the two opt-in Numba backends to the exact charge one-event field,
+  exact charge nine-event gradient, and dipole nine-event endpoint-potential
+  paths. Charge and dipole stencil centers remain on the Python reference
+  path, while source accumulation and finite-difference assembly retain
+  reference-order Python arithmetic. The compiled kernels remain strict
+  serial binary64 with ``fastmath=False``: no ``prange``, automatic dispatch,
+  operating-system selection, or worker-count control is introduced.
+- Defined a separate ``1e-12 T`` absolute comparison budget for the saved
+  ``local_magnetic_field_*`` visualization diagnostics. Ordinary physical
+  state arrays retain the ``2e-12`` relative comparison budget. The saved
+  local-field arrays are not force-path validation; force-center fields and
+  the audited dynamical trajectory remained reference exact in the completion
+  probe. A fresh-cache 300-step check passed the named tolerance contract and
+  reduced the all-Python exact-retarded wall time from 10.8230 s to 2.53882 s
+  warm (4.263x). The corresponding roots-exact run was bitwise identical and
+  reduced 10.7346 s to 6.26003 s warm (1.7148x). The opt-in backends remain
+  subject to independent review before merge or capture-study use.
+
 - Added ``numba_full_strict_serial`` as a third explicit full-retarded source
   backend. It compiles the serial light-cone, worldline, spin-interpolation,
   moment, Hodge-dual, and per-source Hertz path with ``fastmath=False`` and no

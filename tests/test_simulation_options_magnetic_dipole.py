@@ -16,7 +16,7 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
         magnetic_dipole_spin_precession_enabled=True,
         magnetic_dipole_stern_gerlach_force_enabled=True,
         magnetic_dipole_source_model="covariant_retarded_point",
-        magnetic_dipole_source_backend="numba_roots_exact_serial",
+        magnetic_dipole_exact_retarded_backend="numba_roots_exact_serial",
         magnetic_dipole_source_minimum_separation_mm=7.0e-9,
         magnetic_dipole_source_relative_stencil_step=2.0e-3,
         magnetic_dipole_source_minimum_stencil_step_mm=3.0e-15,
@@ -45,7 +45,7 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     assert config.spin_model == "rfs_minimal_2021"
     assert config.stern_gerlach_model == "rfs_full_g"
     assert config.source.model == "covariant_retarded_point"
-    assert config.source.backend == "numba_roots_exact_serial"
+    assert config.exact_retarded_backend == "numba_roots_exact_serial"
     assert config.source.minimum_separation_mm == pytest.approx(7.0e-9)
     assert config.source.relative_stencil_step == pytest.approx(2.0e-3)
     assert config.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
@@ -53,13 +53,15 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     assert config.source.max_root_iterations == 80
     assert restored.to_dict()["magnetic_dipole"]["source"] == {
         "model": "covariant_retarded_point",
-        "backend": "numba_roots_exact_serial",
         "minimum_separation_mm": 7.0e-9,
         "relative_stencil_step": 2.0e-3,
         "minimum_stencil_step_mm": 3.0e-15,
         "root_tolerance_mm": 4.0e-21,
         "max_root_iterations": 80,
     }
+    assert restored.to_dict()["magnetic_dipole"]["exact_retarded_backend"] == (
+        "numba_roots_exact_serial"
+    )
     assert config.rider.species == "neutron"
     assert config.rider.polarization == pytest.approx(0.75)
     assert config.rider.rest_spin == pytest.approx(
@@ -84,36 +86,62 @@ def test_old_config_defaults_magnetic_dipoles_off() -> None:
     assert options.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert magnetic_payload["spin_model"] == "rfs_minimal_2021"
     assert magnetic_payload["stern_gerlach_model"] == "rfs_full_g"
+    assert magnetic_payload["exact_retarded_backend"] == "python"
     assert magnetic_payload["source"]["model"] == "off"
-    assert magnetic_payload["source"]["backend"] == "python"
+    assert "backend" not in magnetic_payload["source"]
     assert magnetic_payload["source"]["minimum_separation_mm"] == pytest.approx(2.0e-9)
     assert build_magnetic_dipole_config(options).enabled is False
     assert build_magnetic_dipole_config(options).source.active is False
 
 
-def test_full_strict_backend_round_trips_through_testbed_config() -> None:
+def test_legacy_source_backend_alias_serializes_to_canonical_location() -> None:
+    options = SimulationOptions.from_dict(
+        {"magnetic_dipole": {"source": {"backend": "numba_full_strict_serial"}}}
+    )
+
+    assert options.magnetic_dipole_exact_retarded_backend == (
+        "numba_full_strict_serial"
+    )
+    assert build_magnetic_dipole_config(options).exact_retarded_backend == (
+        "numba_full_strict_serial"
+    )
+    magnetic_payload = options.to_dict()["magnetic_dipole"]
+    assert magnetic_payload["exact_retarded_backend"] == ("numba_full_strict_serial")
+    assert "backend" not in magnetic_payload["source"]
+
+
+def test_matching_canonical_and_legacy_backends_are_accepted() -> None:
     options = SimulationOptions.from_dict(
         {
             "magnetic_dipole": {
-                "source": {"backend": "numba_full_strict_serial"}
+                "exact_retarded_backend": "numba_roots_exact_serial",
+                "source": {"backend": "numba_roots_exact_serial"},
             }
         }
     )
 
-    assert options.magnetic_dipole_source_backend == "numba_full_strict_serial"
-    assert build_magnetic_dipole_config(options).source.backend == (
-        "numba_full_strict_serial"
+    assert options.magnetic_dipole_exact_retarded_backend == (
+        "numba_roots_exact_serial"
     )
-    assert options.to_dict()["magnetic_dipole"]["source"]["backend"] == (
-        "numba_full_strict_serial"
-    )
+
+
+def test_conflicting_canonical_and_legacy_backends_are_rejected() -> None:
+    with pytest.raises(ValueError, match="conflicts with legacy"):
+        SimulationOptions.from_dict(
+            {
+                "magnetic_dipole": {
+                    "exact_retarded_backend": "python",
+                    "source": {"backend": "numba_full_strict_serial"},
+                }
+            }
+        )
 
 
 def test_flat_testbed_source_fields_are_preserved_for_legacy_serializers() -> None:
     options = SimulationOptions.from_dict(
         {
             "magnetic_dipole_source_model": "full_retarded_point",
-            "magnetic_dipole_source_backend": "numba_roots_exact_serial",
+            "magnetic_dipole_exact_retarded_backend": ("numba_roots_exact_serial"),
             "magnetic_dipole_source_minimum_separation_mm": 5.0e-9,
             "magnetic_dipole_source_relative_stencil_step": 1.5e-3,
             "magnetic_dipole_source_minimum_stencil_step_mm": 2.0e-15,
@@ -126,7 +154,7 @@ def test_flat_testbed_source_fields_are_preserved_for_legacy_serializers() -> No
     config = build_magnetic_dipole_config(restored)
 
     assert config.source.model == "covariant_retarded_point"
-    assert config.source.backend == "numba_roots_exact_serial"
+    assert config.exact_retarded_backend == "numba_roots_exact_serial"
     assert config.source.minimum_separation_mm == pytest.approx(5.0e-9)
     assert config.source.relative_stencil_step == pytest.approx(1.5e-3)
     assert config.source.minimum_stencil_step_mm == pytest.approx(2.0e-15)

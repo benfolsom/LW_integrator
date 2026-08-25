@@ -28,6 +28,7 @@ from typing import Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .exact_retarded_backend import require_exact_retarded_backend
 from .prepared_history_cache import (
     AppendAwarePreparedHistoryCache,
     history_prepared_buffer_capacity,
@@ -1184,6 +1185,321 @@ def _evaluate_prepared_charge_field_native(
     )
 
 
+def _charge_batch_event_arrays(
+    observer_events: Sequence[ObserverEvent],
+) -> tuple[np.ndarray, np.ndarray]:
+    event_count = len(observer_events)
+    event_time_ns = np.asarray(
+        [float(event.time_ns) for event in observer_events], dtype=float
+    )
+    event_position_mm = np.asarray(
+        [
+            tuple(float(value) for value in event.position_mm)
+            for event in observer_events
+        ],
+        dtype=float,
+    )
+    if event_position_mm.shape != (event_count, 3):
+        raise ValueError("retarded charge observer events must have shape [events, 3]")
+    return event_time_ns, event_position_mm
+
+
+def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
+    prepared: _PreparedHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+) -> tuple[RetardedChargeFieldResult, ...]:
+    """Compile roots while retaining exact Python field and reduction order."""
+
+    from .exact_retarded_numba import (
+        NUMBA_COMPILATION_ERRORS,
+        _STATUS_MISSING_HISTORY,
+        _STATUS_TERMINATED_SOURCE,
+        _STATUS_VALID,
+        evaluate_source_roots_exact_serial,
+    )
+
+    event_time_ns, event_position_mm = _charge_batch_event_arrays(observer_events)
+    source_batches: dict[int, tuple[np.ndarray, ...]] = {}
+    for source_index, source in prepared.sources.items():
+        compiling_initial_signature = not bool(
+            getattr(evaluate_source_roots_exact_serial, "signatures", ())
+        )
+        try:
+            source_batches[source_index] = cast(
+                tuple[np.ndarray, ...],
+                evaluate_source_roots_exact_serial(
+                    source.time_ns,
+                    source.position_mm,
+                    source.segment_duration_ns,
+                    source.position_coefficients_mm,
+                    bool(source.ended_by_loss),
+                    event_time_ns,
+                    event_position_mm,
+                    float(root_tolerance_mm),
+                    int(max_root_iterations),
+                ),
+            )
+        except NUMBA_COMPILATION_ERRORS as exc:
+            if compiling_initial_signature:
+                from .exact_retarded_backend import (
+                    ExactRetardedBackendUnavailableError,
+                )
+
+                raise ExactRetardedBackendUnavailableError(
+                    "exact retarded backend 'numba_roots_exact_serial' failed "
+                    "during initial JIT compilation; select backend 'python' or "
+                    "inspect the chained Numba error"
+                ) from exc
+            raise
+
+    results: list[RetardedChargeFieldResult] = []
+    arrays = prepared.arrays
+    for event_index in range(len(observer_events)):
+        electric_total = np.zeros(3, dtype=float)
+        magnetic_total = np.zeros(3, dtype=float)
+        potential_total = np.zeros(4, dtype=float)
+        retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
+        residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        valid_sources = np.zeros(arrays.n_sources, dtype=bool)
+        missing_sources: list[int] = []
+
+        for source_index, source in prepared.sources.items():
+            batch = source_batches[source_index]
+            status = int(batch[0][event_index])
+            if status == _STATUS_TERMINATED_SOURCE:
+                continue
+            if status == _STATUS_MISSING_HISTORY:
+                missing_sources.append(source_index)
+                continue
+            if status != _STATUS_VALID:
+                raise RuntimeError(f"unknown retarded charge root status {status}")
+
+            source_time_ns = float(batch[2][event_index])
+            segment_index = int(
+                np.searchsorted(source.time_ns, source_time_ns, side="right") - 1
+            )
+            segment_index = min(max(segment_index, 0), int(source.time_ns.size) - 2)
+            source_position_mm, source_beta, source_beta_prime = (
+                _quintic_worldline_sample(source, segment_index, source_time_ns)
+            )
+            source_residual_mm, source_separation_mm = _light_cone_residual_mm(
+                observer_time_ns=float(event_time_ns[event_index]),
+                observer_position_mm=event_position_mm[event_index],
+                source_time_ns=source_time_ns,
+                source_position_mm=source_position_mm,
+            )
+            electric, magnetic = lienard_wiechert_charge_field_native(
+                charge_native=float(arrays.charge_native[source_index]),
+                separation_vector_mm=(
+                    event_position_mm[event_index] - source_position_mm
+                ),
+                source_beta=source_beta,
+                source_beta_prime_per_mm=source_beta_prime,
+            )
+            potential = lienard_wiechert_charge_potential_native(
+                charge_native=float(arrays.charge_native[source_index]),
+                separation_vector_mm=(
+                    event_position_mm[event_index] - source_position_mm
+                ),
+                source_beta=source_beta,
+            )
+            electric_total += electric
+            magnetic_total += magnetic
+            potential_total += potential
+            retarded_time_ns[source_index] = source_time_ns
+            residual_mm[source_index] = source_residual_mm
+            separation_mm[source_index] = source_separation_mm
+            valid_sources[source_index] = True
+
+        if require_complete_history and missing_sources:
+            raise RetardedHistoryError(
+                "source history does not bracket the observer light cone for source "
+                f"indices {missing_sources}"
+            )
+        results.append(
+            RetardedChargeFieldResult(
+                electric_field_native=electric_total,
+                magnetic_field_native=magnetic_total,
+                field_tensor=electromagnetic_field_tensor_native(
+                    tuple(float(value) for value in electric_total),
+                    tuple(float(value) for value in magnetic_total),
+                ),
+                retarded_time_ns=retarded_time_ns,
+                light_cone_residual_mm=residual_mm,
+                separation_mm=separation_mm,
+                valid_sources=valid_sources,
+                four_potential=potential_total,
+            )
+        )
+    return tuple(results)
+
+
+def _evaluate_prepared_charge_batch_numba_full_strict_serial(
+    prepared: _PreparedHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+) -> tuple[RetardedChargeFieldResult, ...]:
+    """Compile complete source events while retaining reference reductions."""
+
+    from .exact_retarded_numba import (
+        NUMBA_COMPILATION_ERRORS,
+        _STATUS_CHARGE_SINGULAR_KAPPA,
+        _STATUS_CHARGE_SUPERLUMINAL_SOURCE,
+        _STATUS_CHARGE_ZERO_SEPARATION,
+        _STATUS_MISSING_HISTORY,
+        _STATUS_TERMINATED_SOURCE,
+        _STATUS_VALID,
+        evaluate_charge_source_events_full_strict_serial,
+    )
+
+    event_time_ns, event_position_mm = _charge_batch_event_arrays(observer_events)
+    source_batches: dict[int, tuple[np.ndarray, ...]] = {}
+    for source_index, source in prepared.sources.items():
+        compiling_initial_signature = not bool(
+            getattr(
+                evaluate_charge_source_events_full_strict_serial,
+                "signatures",
+                (),
+            )
+        )
+        try:
+            source_batches[source_index] = cast(
+                tuple[np.ndarray, ...],
+                evaluate_charge_source_events_full_strict_serial(
+                    source.time_ns,
+                    source.position_mm,
+                    source.segment_duration_ns,
+                    source.position_coefficients_mm,
+                    float(prepared.arrays.charge_native[source_index]),
+                    bool(source.ended_by_loss),
+                    event_time_ns,
+                    event_position_mm,
+                    float(root_tolerance_mm),
+                    int(max_root_iterations),
+                ),
+            )
+        except NUMBA_COMPILATION_ERRORS as exc:
+            if compiling_initial_signature:
+                from .exact_retarded_backend import (
+                    ExactRetardedBackendUnavailableError,
+                )
+
+                raise ExactRetardedBackendUnavailableError(
+                    "exact retarded backend 'numba_full_strict_serial' failed "
+                    "during initial JIT compilation; select backend 'python' or "
+                    "inspect the chained Numba error"
+                ) from exc
+            raise
+
+    results: list[RetardedChargeFieldResult] = []
+    arrays = prepared.arrays
+    for event_index in range(len(observer_events)):
+        electric_total = np.zeros(3, dtype=float)
+        magnetic_total = np.zeros(3, dtype=float)
+        potential_total = np.zeros(4, dtype=float)
+        retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
+        residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        valid_sources = np.zeros(arrays.n_sources, dtype=bool)
+        missing_sources: list[int] = []
+
+        for source_index, _source in prepared.sources.items():
+            batch = source_batches[source_index]
+            status = int(batch[0][event_index])
+            if status == _STATUS_TERMINATED_SOURCE:
+                continue
+            if status == _STATUS_MISSING_HISTORY:
+                missing_sources.append(source_index)
+                continue
+            if status == _STATUS_CHARGE_ZERO_SEPARATION:
+                raise ValueError(
+                    "the observer cannot coincide with a point-charge source"
+                )
+            if status == _STATUS_CHARGE_SUPERLUMINAL_SOURCE:
+                raise ValueError("source beta magnitude must be less than one")
+            if status == _STATUS_CHARGE_SINGULAR_KAPPA:
+                raise ValueError(
+                    "retarded field is singular because 1 - n.beta is too small"
+                )
+            if status != _STATUS_VALID:
+                raise RuntimeError(f"unknown strict charge event status {status}")
+
+            electric_total += batch[1][event_index]
+            magnetic_total += batch[2][event_index]
+            potential_total += batch[3][event_index]
+            retarded_time_ns[source_index] = float(batch[4][event_index])
+            residual_mm[source_index] = float(batch[5][event_index])
+            separation_mm[source_index] = float(batch[6][event_index])
+            valid_sources[source_index] = bool(batch[7][event_index])
+
+        if require_complete_history and missing_sources:
+            raise RetardedHistoryError(
+                "source history does not bracket the observer light cone for source "
+                f"indices {missing_sources}"
+            )
+        results.append(
+            RetardedChargeFieldResult(
+                electric_field_native=electric_total,
+                magnetic_field_native=magnetic_total,
+                field_tensor=electromagnetic_field_tensor_native(
+                    tuple(float(value) for value in electric_total),
+                    tuple(float(value) for value in magnetic_total),
+                ),
+                retarded_time_ns=retarded_time_ns,
+                light_cone_residual_mm=residual_mm,
+                separation_mm=separation_mm,
+                valid_sources=valid_sources,
+                four_potential=potential_total,
+            )
+        )
+    return tuple(results)
+
+
+def _evaluate_prepared_charge_batch(
+    prepared: _PreparedHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    backend: str,
+    require_complete_history: bool,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+) -> tuple[RetardedChargeFieldResult, ...]:
+    if backend == "numba_roots_exact_serial":
+        return _evaluate_prepared_charge_batch_numba_roots_exact_serial(
+            prepared,
+            observer_events,
+            require_complete_history=require_complete_history,
+            root_tolerance_mm=root_tolerance_mm,
+            max_root_iterations=max_root_iterations,
+        )
+    if backend == "numba_full_strict_serial":
+        return _evaluate_prepared_charge_batch_numba_full_strict_serial(
+            prepared,
+            observer_events,
+            require_complete_history=require_complete_history,
+            root_tolerance_mm=root_tolerance_mm,
+            max_root_iterations=max_root_iterations,
+        )
+    return tuple(
+        _evaluate_prepared_charge_field_native(
+            prepared,
+            event,
+            require_complete_history=require_complete_history,
+            root_tolerance_mm=root_tolerance_mm,
+            max_root_iterations=max_root_iterations,
+        )
+        for event in observer_events
+    )
+
+
 def evaluate_retarded_charge_field_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
@@ -1192,20 +1508,23 @@ def evaluate_retarded_charge_field_native(
     require_complete_history: bool = True,
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    backend: str = "python",
 ) -> RetardedChargeFieldResult:
     """Evaluate the summed native Gaussian charge field at one event."""
 
+    selected_backend = require_exact_retarded_backend(backend)
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
     prepared = _prepare_history(history, excluded_source_indices)
-    return _evaluate_prepared_charge_field_native(
+    return _evaluate_prepared_charge_batch(
         prepared,
-        observer_event,
+        (observer_event,),
+        backend=selected_backend,
         require_complete_history=require_complete_history,
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
-    )
+    )[0]
 
 
 def evaluate_retarded_charge_field_gradient_native(
@@ -1218,6 +1537,7 @@ def evaluate_retarded_charge_field_gradient_native(
     minimum_step_mm: float = _DEFAULT_GRADIENT_MINIMUM_STEP_MM,
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    backend: str = "python",
 ) -> RetardedChargeFieldGradientResult:
     """Evaluate F and its complete centered spacetime derivative.
 
@@ -1226,6 +1546,7 @@ def evaluate_retarded_charge_field_gradient_native(
     every source light cone.
     """
 
+    selected_backend = require_exact_retarded_backend(backend)
     relative = float(relative_step)
     minimum = float(minimum_step_mm)
     if not np.isfinite(relative) or relative <= 0.0 or relative >= 0.1:
@@ -1253,10 +1574,9 @@ def evaluate_retarded_charge_field_gradient_native(
     partial_a = np.zeros((4, 4), dtype=float)
     retarded_times = np.full((4, 2, center.retarded_time_ns.size), np.nan, dtype=float)
     center_position = np.asarray(observer_event.position_mm, dtype=float)
+    displaced_events: list[ObserverEvent] = []
     for derivative_index in range(4):
-        fields = []
-        potentials = []
-        for sign_index, sign in enumerate((-1.0, 1.0)):
+        for sign in (-1.0, 1.0):
             if derivative_index == 0:
                 displaced = ObserverEvent(
                     time_ns=(
@@ -1275,18 +1595,25 @@ def evaluate_retarded_charge_field_gradient_native(
                     time_ns=float(observer_event.time_ns),
                     position_mm=displaced_position_tuple,
                 )
-            field = _evaluate_prepared_charge_field_native(
-                prepared,
-                displaced,
-                require_complete_history=require_complete_history,
-                root_tolerance_mm=tolerance,
-                max_root_iterations=iterations,
-            )
-            fields.append(field.field_tensor)
-            potentials.append(field.four_potential)
-            retarded_times[derivative_index, sign_index] = field.retarded_time_ns
-        partial_f[derivative_index] = (fields[1] - fields[0]) / (2.0 * stencil_step)
-        partial_a[derivative_index] = (potentials[1] - potentials[0]) / (
+            displaced_events.append(displaced)
+
+    displaced_fields = _evaluate_prepared_charge_batch(
+        prepared,
+        displaced_events,
+        backend=selected_backend,
+        require_complete_history=require_complete_history,
+        root_tolerance_mm=tolerance,
+        max_root_iterations=iterations,
+    )
+    for derivative_index in range(4):
+        lower = displaced_fields[2 * derivative_index]
+        upper = displaced_fields[2 * derivative_index + 1]
+        retarded_times[derivative_index, 0] = lower.retarded_time_ns
+        retarded_times[derivative_index, 1] = upper.retarded_time_ns
+        partial_f[derivative_index] = (upper.field_tensor - lower.field_tensor) / (
+            2.0 * stencil_step
+        )
+        partial_a[derivative_index] = (upper.four_potential - lower.four_potential) / (
             2.0 * stencil_step
         )
 

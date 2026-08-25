@@ -167,9 +167,9 @@ gradient-force switches.  Saved testbed configurations use a nested block:
        "stern_gerlach_force_enabled": true,
        "spin_model": "rfs_minimal_2021",
        "stern_gerlach_model": "rfs_full_g",
+       "exact_retarded_backend": "python",
        "source": {
          "model": "off",
-         "backend": "python",
          "minimum_separation_mm": 2e-9,
          "relative_stencil_step": 1e-3,
          "minimum_stencil_step_mm": 1e-15,
@@ -235,24 +235,31 @@ is active only when magnetic-dipole dynamics are enabled.  The advanced
 ``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
 boundary.  It does not soften the point field.
 
-The source evaluator has three explicit backend choices.  ``python`` is the
-default and remains the reference on every platform.
-``numba_roots_exact_serial`` is a cross-platform CPU opt-in, selected in JSON
-with ``magnetic_dipole.source.backend`` or on the direct CLI with
-``--dipole-source-backend numba_roots_exact_serial``.  It compiles only the
-independent light-cone root searches.  The final quintic worldline sample,
-light-cone residual, Hertz tensor, source accumulation, and finite-difference
-assembly retain the Python reference arithmetic and order, giving bitwise
-complete-provider parity in the maintained tests.
+The exact retarded charge and dipole providers share three explicit backend
+choices.  ``python`` is the default and remains the reference on every
+platform.  The canonical JSON setting is
+``magnetic_dipole.exact_retarded_backend`` and the direct CLI option is
+``--exact-retarded-backend``.  The former
+``magnetic_dipole.source.backend`` key is accepted only as an input
+compatibility alias when the canonical key is absent or has the same value;
+conflicting values are rejected, and saved configurations emit only the
+canonical key.
+
+``numba_roots_exact_serial`` is a cross-platform CPU opt-in.  It compiles only
+the independent light-cone root searches.  The final quintic worldline sample,
+light-cone residual, charge or Hertz event construction, source accumulation,
+and finite-difference assembly retain the Python reference arithmetic and
+order, giving complete-provider parity in the maintained tests.
 
 ``numba_full_strict_serial`` is the faster, tolerance-validated opt-in.  It
 also compiles the final worldline sample, spin interpolation, moment boost,
-Hodge dual, and per-source Hertz tensor with strict binary64 arithmetic and
-``fastmath=False``.  It is not a bitwise-parity mode: an event-level change of
-one binary64 ULP can be magnified by the nested first, second, and third finite
-differences.  Source accumulation and finite-difference construction therefore
-remain in Python and preserve the reference reduction order in this first
-production slice.  Acceptance requires matching run status, tightly matching
+Hodge dual, per-source Hertz tensor, and corresponding per-source charge-field
+event work with strict binary64 arithmetic and ``fastmath=False``.  It is not
+a bitwise-parity mode: an event-level change of one binary64 ULP can be
+magnified by finite differences.  Charge and dipole stencil centers remain on
+the Python reference path.  Source accumulation and finite-difference
+construction also remain in Python and preserve the reference request and
+reduction order.  Acceptance requires matching run status, tightly matching
 physical trajectory arrays, and cumulative projection-energy disagreement
 below ``0.025 meV``.  Raw derivative differences must be reported with their
 field scale and propagated force/spin effect rather than interpreted alone.
@@ -263,7 +270,9 @@ are serial: neither selects a worker count nor consumes multiple cores, and
 there is no automatic or operating-system-specific dispatch.  Explicit
 selection raises a capability error if Numba is unavailable or initial
 compilation fails; it never silently changes the recorded backend.  The
-dedicated nine-event accepted-endpoint potential remains on the Python path.
+selection covers the exact charge one-event field, exact charge nine-event
+gradient, dipole nine-event accepted-endpoint potential, and full dipole
+gradient.  The finite-difference centers remain Python-reference evaluations.
 
 ``null`` selects the cited species value.  A custom species must provide both a
 signed moment in J/T and its spin quantum number.  ``rest_spin`` is normalized
@@ -324,6 +333,12 @@ diagnostic unavailable even when the accepted start-of-step RFS force used a
 nonzero field.  ``INERTIAL_PREHISTORY`` instead requires every initial exact
 stencil to be ready before the run begins.  Treat these arrays as visualization
 aids, not as proof that a field was absent.
+
+Backend comparisons allow these saved visualization diagnostics a named
+absolute tolerance of ``1e-12 T``; ordinary physical state arrays retain the
+``2e-12`` relative tolerance.  This diagnostic allowance does not relax the
+force path: force-center fields and dynamical state are checked separately,
+and ``local_magnetic_field_*`` must not be used as force-path validation.
 
 The current saved local-field diagnostic does not yet add the intrinsic
 dipole-source field.  That field is present in the accepted canonical and RFS
@@ -415,8 +430,9 @@ start offset without changing mechanical momentum, position, spin, or Medina
 work.  This is bookkeeping, not an additional force.
 
 This first implementation remains a full-retarded finite-difference oracle.
-The optional roots-exact backend accelerates its light-cone searches without
-changing the oracle arithmetic.  ``relative_stencil_step``,
+The shared optional exact-retarded backends accelerate charge and dipole
+light-cone work without changing Python reference-order source or stencil
+assembly.  ``relative_stencil_step``,
 ``minimum_stencil_step_mm``, ``root_tolerance_mm``, and
 ``max_root_iterations`` are advanced convergence controls preserved by the
 CLI, GUI, and testbed JSON round trip.  A validation study should repeat the

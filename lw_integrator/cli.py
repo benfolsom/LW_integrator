@@ -160,9 +160,9 @@ DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
     "stern_gerlach_force_enabled": False,
     "spin_model": "rfs_minimal_2021",
     "stern_gerlach_model": "rfs_full_g",
+    "exact_retarded_backend": "python",
     "source": {
         "model": "off",
-        "backend": "python",
         "minimum_separation_mm": 2.0e-9,
         "relative_stencil_step": 1.0e-3,
         "minimum_stencil_step_mm": 1.0e-15,
@@ -707,18 +707,19 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--dipole-source-backend",
-        dest="dipole_source_backend",
+        "--exact-retarded-backend",
+        dest="exact_retarded_backend",
         choices=(
             "python",
             "numba_roots_exact_serial",
             "numba_full_strict_serial",
         ),
         help=(
-            "Full-gradient source evaluator: the Python reference (default) "
-            "or a strict serial Numba roots-only/full-Hertz kernel. Source and "
-            "finite-difference reductions remain deterministic. Explicit Numba "
-            "selection fails if Numba is unavailable."
+            "Exact-retarded evaluator shared by charge and intrinsic-dipole "
+            "fields: the Python reference (default) or a strict serial Numba "
+            "roots-only/full-Hertz kernel. Source and finite-difference "
+            "reductions remain deterministic. Explicit Numba selection fails "
+            "if Numba is unavailable."
         ),
     )
     parser.add_argument(
@@ -1292,7 +1293,9 @@ def _build_testbed_report(
     if options is not None:
         report["magnetic_dipole_source"] = {
             "model": str(options.magnetic_dipole_source_model),
-            "backend": str(options.magnetic_dipole_source_backend),
+        }
+        report["exact_retarded"] = {
+            "backend": str(options.magnetic_dipole_exact_retarded_backend),
         }
     return report
 
@@ -1315,10 +1318,10 @@ def _print_testbed_summary(report: Mapping[str, Any]) -> None:
         lines.append(f"  Halt Reason: {report['halt_reason']}")
     magnetic_source = report.get("magnetic_dipole_source")
     if isinstance(magnetic_source, Mapping):
-        lines.append(
-            "  Magnetic Dipole Source: "
-            f"{magnetic_source.get('model')} / {magnetic_source.get('backend')}"
-        )
+        lines.append(f"  Magnetic Dipole Source: {magnetic_source.get('model')}")
+    exact_retarded = report.get("exact_retarded")
+    if isinstance(exact_retarded, Mapping):
+        lines.append(f"  Exact Retarded Backend: {exact_retarded.get('backend')}")
     saved_paths = report.get("saved_paths")
     if isinstance(saved_paths, Mapping) and saved_paths:
         lines.append(f"  Saved Artifacts: {len(saved_paths)}")
@@ -1421,6 +1424,22 @@ def _merge_simulation_payload(
                     "'magnetic_dipole.source' must be an object"
                 )
             result["magnetic_dipole"]["source"].update(source_payload)
+            if "backend" in source_payload:
+                legacy_backend = source_payload["backend"]
+                canonical_backend = file_magnetic_dipole.get("exact_retarded_backend")
+                if (
+                    canonical_backend is not None
+                    and str(canonical_backend).strip().lower()
+                    != str(legacy_backend).strip().lower()
+                ):
+                    raise SimulationConfigError(
+                        "magnetic_dipole.exact_retarded_backend conflicts with "
+                        "legacy magnetic_dipole.source.backend"
+                    )
+                result["magnetic_dipole"]["exact_retarded_backend"] = (
+                    legacy_backend if canonical_backend is None else canonical_backend
+                )
+                result["magnetic_dipole"]["source"].pop("backend", None)
         for role in ("rider", "driver"):
             if role not in file_magnetic_dipole:
                 continue
@@ -1737,8 +1756,8 @@ def _merge_simulation_payload(
     dipole_source = magnetic_dipole["source"]
     if getattr(args, "dipole_source_model", None) is not None:
         dipole_source["model"] = args.dipole_source_model
-    if getattr(args, "dipole_source_backend", None) is not None:
-        dipole_source["backend"] = args.dipole_source_backend
+    if getattr(args, "exact_retarded_backend", None) is not None:
+        magnetic_dipole["exact_retarded_backend"] = args.exact_retarded_backend
     if getattr(args, "dipole_source_minimum_separation_mm", None) is not None:
         dipole_source["minimum_separation_mm"] = (
             args.dipole_source_minimum_separation_mm
@@ -1900,8 +1919,26 @@ def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
     source_payload = payload.get("source", {})
     if not isinstance(source_payload, Mapping):
         raise SimulationConfigError("magnetic_dipole.source must be a JSON object")
+    source_payload = dict(source_payload)
+    legacy_backend = source_payload.pop("backend", None)
+    canonical_backend = payload.get("exact_retarded_backend")
+    if (
+        canonical_backend is not None
+        and legacy_backend is not None
+        and str(canonical_backend).strip().lower()
+        != str(legacy_backend).strip().lower()
+    ):
+        raise SimulationConfigError(
+            "magnetic_dipole.exact_retarded_backend conflicts with legacy "
+            "magnetic_dipole.source.backend"
+        )
+    exact_retarded_backend = (
+        canonical_backend if canonical_backend is not None else legacy_backend
+    )
+    if exact_retarded_backend is None:
+        exact_retarded_backend = "python"
     try:
-        source_config = DipoleSourceConfig(**dict(source_payload))
+        source_config = DipoleSourceConfig(**source_payload)
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
             f"Invalid magnetic_dipole.source configuration: {exc}"
@@ -1971,6 +2008,7 @@ def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
             ),
             spin_model=payload.get("spin_model", "rfs_minimal_2021"),
             stern_gerlach_model=payload.get("stern_gerlach_model", "rfs_full_g"),
+            exact_retarded_backend=exact_retarded_backend,
             source=source_config,
             rider=_particle_config("rider", "electron"),
             driver=_particle_config("driver", "proton"),
@@ -2939,10 +2977,10 @@ def print_summary(summary: Mapping[str, Any]) -> None:
             )
     magnetic_source = summary.get("magnetic_dipole_source")
     if isinstance(magnetic_source, Mapping):
-        lines.append(
-            "  Magnetic Dipole Source: "
-            f"{magnetic_source.get('model')} / {magnetic_source.get('backend')}"
-        )
+        lines.append(f"  Magnetic Dipole Source: {magnetic_source.get('model')}")
+    exact_retarded = summary.get("exact_retarded")
+    if isinstance(exact_retarded, Mapping):
+        lines.append(f"  Exact Retarded Backend: {exact_retarded.get('backend')}")
     print("\n".join(lines))
 
 
@@ -2964,7 +3002,9 @@ def build_report(
     if magnetic_dipole is not None:
         report["magnetic_dipole_source"] = {
             "model": magnetic_dipole.source.model,
-            "backend": magnetic_dipole.source.backend,
+        }
+        report["exact_retarded"] = {
+            "backend": magnetic_dipole.exact_retarded_backend,
         }
     return report
 

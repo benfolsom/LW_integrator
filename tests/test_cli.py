@@ -66,7 +66,7 @@ def _make_args(**overrides) -> argparse.Namespace:
         "radiation_reaction_mode": None,
         "magnetic_dipole_enabled": None,
         "dipole_source_model": None,
-        "dipole_source_backend": None,
+        "exact_retarded_backend": None,
         "dipole_source_minimum_separation_mm": None,
         "rider_magnetic_species": None,
         "driver_magnetic_species": None,
@@ -278,7 +278,7 @@ class TestCliConfigParsing:
                 "--stern-gerlach",
                 "--dipole-source",
                 "full-retarded-point",
-                "--dipole-source-backend",
+                "--exact-retarded-backend",
                 "numba_roots_exact_serial",
                 "--dipole-source-cutoff-mm",
                 "2e-9",
@@ -292,7 +292,7 @@ class TestCliConfigParsing:
         assert args.driver_spin == [1.0, 0.0, 0.0]
         assert args.stern_gerlach_force_enabled is True
         assert args.dipole_source_model == "full-retarded-point"
-        assert args.dipole_source_backend == "numba_roots_exact_serial"
+        assert args.exact_retarded_backend == "numba_roots_exact_serial"
         assert args.dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
 
     def test_parse_args_accepts_disabling_magnetic_dipole_options(self):
@@ -304,12 +304,10 @@ class TestCliConfigParsing:
         assert args.stern_gerlach_force_enabled is False
         assert args.spin_precession_enabled is False
 
-    def test_parse_args_accepts_full_strict_dipole_backend(self):
-        args = cli.parse_args(
-            ["--dipole-source-backend", "numba_full_strict_serial"]
-        )
+    def test_parse_args_accepts_full_strict_exact_retarded_backend(self):
+        args = cli.parse_args(["--exact-retarded-backend", "numba_full_strict_serial"])
 
-        assert args.dipole_source_backend == "numba_full_strict_serial"
+        assert args.exact_retarded_backend == "numba_full_strict_serial"
 
     def test_magnetic_dipole_help_names_rfs_defaults(self, capsys):
         with pytest.raises(SystemExit) as exc_info:
@@ -770,9 +768,9 @@ class TestCliBuildRequest:
                 "magnetic_dipole": {
                     "enabled": True,
                     "stern_gerlach_force_enabled": True,
+                    "exact_retarded_backend": "python",
                     "source": {
                         "model": "covariant_retarded_point",
-                        "backend": "python",
                         "minimum_separation_mm": 4.0e-9,
                         "relative_stencil_step": 2.0e-3,
                         "minimum_stencil_step_mm": 3.0e-15,
@@ -794,7 +792,7 @@ class TestCliBuildRequest:
                 stern_gerlach_force_enabled=False,
                 spin_precession_enabled=False,
                 dipole_source_model="off",
-                dipole_source_backend="numba_roots_exact_serial",
+                exact_retarded_backend="numba_roots_exact_serial",
                 dipole_source_minimum_separation_mm=8.0e-9,
             ),
         )
@@ -803,9 +801,9 @@ class TestCliBuildRequest:
         assert magnetic["enabled"] is False
         assert magnetic["stern_gerlach_force_enabled"] is False
         assert magnetic["spin_precession_enabled"] is False
+        assert magnetic["exact_retarded_backend"] == "numba_roots_exact_serial"
         assert magnetic["source"] == {
             "model": "off",
-            "backend": "numba_roots_exact_serial",
             "minimum_separation_mm": 8.0e-9,
             "relative_stencil_step": 2.0e-3,
             "minimum_stencil_step_mm": 3.0e-15,
@@ -817,6 +815,28 @@ class TestCliBuildRequest:
         assert magnetic["rider"]["magnetic_moment_j_per_t"] == pytest.approx(-1.0e-23)
         assert magnetic["driver"]["species"] == "antiproton"
         assert magnetic["driver"]["rest_spin"] == [1.0, 0.0, 0.0]
+
+    def test_merge_simulation_payload_canonicalizes_legacy_backend_alias(self):
+        payload = cli._merge_simulation_payload(
+            {"magnetic_dipole": {"source": {"backend": "numba_full_strict_serial"}}},
+            _make_args(),
+        )
+
+        magnetic = payload["magnetic_dipole"]
+        assert magnetic["exact_retarded_backend"] == "numba_full_strict_serial"
+        assert "backend" not in magnetic["source"]
+
+    def test_merge_simulation_payload_rejects_conflicting_backend_alias(self):
+        with pytest.raises(cli.SimulationConfigError, match="conflicts with legacy"):
+            cli._merge_simulation_payload(
+                {
+                    "magnetic_dipole": {
+                        "exact_retarded_backend": "python",
+                        "source": {"backend": "numba_full_strict_serial"},
+                    }
+                },
+                _make_args(),
+            )
 
     def test_merge_simulation_payload_applies_cavity_exit_mode_override(self):
         payload = cli._merge_simulation_payload(
@@ -884,8 +904,8 @@ class TestCliBuildRequest:
         assert request.config.magnetic_dipole.enabled is False
         assert request.config.magnetic_dipole.spin_model == "rfs_minimal_2021"
         assert request.config.magnetic_dipole.stern_gerlach_model == "rfs_full_g"
+        assert request.config.magnetic_dipole.exact_retarded_backend == "python"
         assert request.config.magnetic_dipole.source.model == "off"
-        assert request.config.magnetic_dipole.source.backend == "python"
         assert request.config.magnetic_dipole.source.minimum_separation_mm == (
             pytest.approx(2.0e-9)
         )
@@ -906,32 +926,51 @@ class TestCliBuildRequest:
     def test_direct_config_preserves_full_retarded_source_controls(self):
         magnetic = cli._build_magnetic_dipole_config(
             {
+                "exact_retarded_backend": "numba_roots_exact_serial",
                 "source": {
                     "model": "full_retarded_point",
-                    "backend": "numba_roots_exact_serial",
                     "minimum_separation_mm": 7.0e-9,
                     "relative_stencil_step": 2.0e-3,
                     "minimum_stencil_step_mm": 3.0e-15,
                     "root_tolerance_mm": 4.0e-21,
                     "max_root_iterations": 80,
-                }
+                },
             }
         )
 
         assert magnetic.source.model == "covariant_retarded_point"
-        assert magnetic.source.backend == "numba_roots_exact_serial"
+        assert magnetic.exact_retarded_backend == "numba_roots_exact_serial"
         assert magnetic.source.minimum_separation_mm == pytest.approx(7.0e-9)
         assert magnetic.source.relative_stencil_step == pytest.approx(2.0e-3)
         assert magnetic.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
         assert magnetic.source.root_tolerance_mm == pytest.approx(4.0e-21)
         assert magnetic.source.max_root_iterations == 80
 
-    def test_direct_config_accepts_full_strict_dipole_backend(self):
+    def test_direct_config_accepts_legacy_source_backend_alias(self):
         magnetic = cli._build_magnetic_dipole_config(
             {"source": {"backend": "numba_full_strict_serial"}}
         )
 
-        assert magnetic.source.backend == "numba_full_strict_serial"
+        assert magnetic.exact_retarded_backend == "numba_full_strict_serial"
+
+    def test_direct_config_accepts_matching_backend_alias(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "exact_retarded_backend": "numba_roots_exact_serial",
+                "source": {"backend": "numba_roots_exact_serial"},
+            }
+        )
+
+        assert magnetic.exact_retarded_backend == "numba_roots_exact_serial"
+
+    def test_direct_config_rejects_conflicting_backend_alias(self):
+        with pytest.raises(cli.SimulationConfigError, match="conflicts with legacy"):
+            cli._build_magnetic_dipole_config(
+                {
+                    "exact_retarded_backend": "python",
+                    "source": {"backend": "numba_full_strict_serial"},
+                }
+            )
 
     def test_direct_config_rejects_non_object_dipole_source(self):
         with pytest.raises(
@@ -974,7 +1013,7 @@ class TestCliBuildRequest:
                 driver_spin=[1.0, 0.0, 0.0],
                 stern_gerlach_force_enabled=True,
                 dipole_source_model="full-retarded-point",
-                dipole_source_backend="numba_roots_exact_serial",
+                exact_retarded_backend="numba_roots_exact_serial",
                 dipole_source_minimum_separation_mm=6.0e-9,
             )
         )
@@ -987,7 +1026,7 @@ class TestCliBuildRequest:
         assert magnetic.driver.species == "antiproton"
         assert magnetic.driver.rest_spin == pytest.approx((1.0, 0.0, 0.0))
         assert magnetic.source.model == "covariant_retarded_point"
-        assert magnetic.source.backend == "numba_roots_exact_serial"
+        assert magnetic.exact_retarded_backend == "numba_roots_exact_serial"
         assert magnetic.source.minimum_separation_mm == pytest.approx(6.0e-9)
         assert request.config.radiation_reaction_mode == "off"
 
@@ -1839,7 +1878,7 @@ class TestCliMain:
         assert report["driver_summary"]["steps_completed"] == 1
         assert report["driver_summary"]["initial_z_mm"] == pytest.approx(5.0)
 
-    def test_build_report_records_effective_dipole_source_backend(self):
+    def test_build_report_records_source_model_and_exact_retarded_backend(self):
         trajectory = [
             {
                 "t": np.array([0.0]),
@@ -1850,10 +1889,10 @@ class TestCliMain:
         ]
         magnetic = cli._build_magnetic_dipole_config(
             {
+                "exact_retarded_backend": "numba_roots_exact_serial",
                 "source": {
                     "model": "covariant_retarded_point",
-                    "backend": "numba_roots_exact_serial",
-                }
+                },
             }
         )
 
@@ -1861,7 +1900,40 @@ class TestCliMain:
 
         assert report["magnetic_dipole_source"] == {
             "model": "covariant_retarded_point",
+        }
+        assert report["exact_retarded"] == {
             "backend": "numba_roots_exact_serial",
+        }
+
+    def test_testbed_report_records_source_model_and_exact_retarded_backend(
+        self, tmp_path: Path
+    ):
+        result = SimpleNamespace(
+            duration_s=1.25,
+            filename_base="capture",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.0,
+            rider_gamma_initial=1.0,
+            rider_gamma_final=1.0,
+            driver_gamma_initial=1.0,
+            driver_gamma_final=1.0,
+            energy_ledger_metrics={},
+            saved_paths={},
+        )
+        options = SimulationOptions(
+            magnetic_dipole_source_model="covariant_retarded_point",
+            magnetic_dipole_exact_retarded_backend="numba_full_strict_serial",
+        )
+
+        report = cli._build_testbed_report(result, tmp_path / "capture.json", options)
+
+        assert report["magnetic_dipole_source"] == {
+            "model": "covariant_retarded_point",
+        }
+        assert report["exact_retarded"] == {
+            "backend": "numba_full_strict_serial",
         }
 
     def test_main_writes_driver_summary_to_output_json(

@@ -551,7 +551,6 @@ class DipoleSourceConfig:
     """
 
     model: str = "off"
-    backend: str = "python"
     minimum_separation_mm: float = 2.0e-9
     relative_stencil_step: float = 1.0e-3
     minimum_stencil_step_mm: float = 1.0e-15
@@ -571,17 +570,6 @@ class DipoleSourceConfig:
             raise ValueError(
                 "dipole source model must be one of: off, " "covariant_retarded_point"
             )
-        self.backend = str(self.backend).strip().lower()
-        if self.backend not in {
-            "python",
-            "numba_roots_exact_serial",
-            "numba_full_strict_serial",
-        }:
-            raise ValueError(
-                "dipole source backend must be one of: python, "
-                "numba_roots_exact_serial, numba_full_strict_serial"
-            )
-
         for name in (
             "minimum_separation_mm",
             "relative_stencil_step",
@@ -621,6 +609,7 @@ class MagneticDipoleConfig:
     stern_gerlach_force_enabled: bool = False
     spin_model: str = "rfs_minimal_2021"
     stern_gerlach_model: str = "rfs_full_g"
+    exact_retarded_backend: str = "python"
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -635,6 +624,7 @@ class MagneticDipoleConfig:
         self.stern_gerlach_force_enabled = bool(self.stern_gerlach_force_enabled)
         self.spin_model = str(self.spin_model).strip().lower()
         self.stern_gerlach_model = str(self.stern_gerlach_model).strip().lower()
+        self.exact_retarded_backend = str(self.exact_retarded_backend).strip().lower()
         valid_spin_models = {"bmt_frenkel", "rfs_minimal_2021"}
         if self.spin_model not in valid_spin_models:
             raise ValueError(
@@ -655,6 +645,15 @@ class MagneticDipoleConfig:
                 "magnetic-dipole stern_gerlach_model "
                 f"'{self.stern_gerlach_model}' requires spin_model "
                 f"'{required_spin_model}'"
+            )
+        if self.exact_retarded_backend not in {
+            "python",
+            "numba_roots_exact_serial",
+            "numba_full_strict_serial",
+        }:
+            raise ValueError(
+                "magnetic-dipole exact_retarded_backend must be one of: python, "
+                "numba_roots_exact_serial, numba_full_strict_serial"
             )
         if isinstance(self.source, dict):
             self.source = DipoleSourceConfig(**self.source)

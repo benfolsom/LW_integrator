@@ -1,7 +1,7 @@
-"""Compare the Python and one explicit dipole-source backend end to end.
+"""Compare Python and one explicit exact-retarded backend end to end.
 
 The input is an ordinary testbed/GUI JSON configuration.  The script changes
-only the stored-sample count and source backend in memory, disables every
+only the stored-sample count and exact-retarded backend in memory, disables every
 plot/file export, and runs three trajectories in one process:
 
 1. the authoritative Python backend;
@@ -49,6 +49,12 @@ _NUMBA_BACKENDS = (
 _PROJECTION_ENERGY_BUDGET_MEV = 0.025
 _STATE_RELATIVE_TOLERANCE = 2.0e-12
 _STATE_ABSOLUTE_TOLERANCE = 1.0e-24
+_LOCAL_MAGNETIC_FIELD_ABSOLUTE_TOLERANCE_T = 1.0e-12
+_LOCAL_MAGNETIC_FIELD_NAMES = {
+    "local_magnetic_field_x_t",
+    "local_magnetic_field_y_t",
+    "local_magnetic_field_z_t",
+}
 
 
 def _native_energy_to_mev(value: float) -> float:
@@ -186,6 +192,24 @@ def _compare_trajectories(
                             equal_nan=True,
                         )
                     )
+                    if name in _LOCAL_MAGNETIC_FIELD_NAMES:
+                        state_tolerance_passed = bool(
+                            np.allclose(
+                                left,
+                                right,
+                                rtol=0.0,
+                                atol=_LOCAL_MAGNETIC_FIELD_ABSOLUTE_TOLERANCE_T,
+                                equal_nan=True,
+                            )
+                        )
+                        detail.update(
+                            diagnostic_units="T",
+                            diagnostic_absolute_tolerance=(
+                                _LOCAL_MAGNETIC_FIELD_ABSOLUTE_TOLERANCE_T
+                            ),
+                            diagnostic_relative_tolerance=0.0,
+                            force_path_validation=False,
+                        )
                     detail.update(
                         bitwise_mismatch_elements=int(np.count_nonzero(bit_mismatch)),
                         numeric_mismatch_elements=int(
@@ -205,9 +229,7 @@ def _compare_trajectories(
                             and np.array_equal(np.isposinf(left), np.isposinf(right))
                             and np.array_equal(np.isneginf(left), np.isneginf(right))
                         )
-                        cumulative_absolute_native = float(
-                            np.sum(absolute_difference)
-                        )
+                        cumulative_absolute_native = float(np.sum(absolute_difference))
                         maximum_absolute_mev = _native_energy_to_mev(
                             0.0 if maximum_absolute is None else maximum_absolute
                         )
@@ -215,8 +237,7 @@ def _compare_trajectories(
                             cumulative_absolute_native
                         )
                         state_tolerance_passed = nonfinite_pattern_matches and (
-                            cumulative_absolute_mev
-                            <= _PROJECTION_ENERGY_BUDGET_MEV
+                            cumulative_absolute_mev <= _PROJECTION_ENERGY_BUDGET_MEV
                         )
                         detail.update(
                             maximum_absolute_difference_mev=maximum_absolute_mev,
@@ -250,7 +271,7 @@ def _compare_trajectories(
 
 def _run_backend(options: Any, backend: str) -> dict[str, Any]:
     run_options = copy.deepcopy(options)
-    run_options.magnetic_dipole_source_backend = backend
+    run_options.magnetic_dipole_exact_retarded_backend = backend
     run_result, integrator_result, wall_seconds = _run_once(run_options)
     if len(integrator_result) < 4:
         raise RuntimeError("core integrator did not return SOA trajectories")
@@ -323,8 +344,7 @@ def run_benchmark(
             )
             and candidate["run_status"] == python_run["run_status"],
             "tolerance_passed": all(
-                comparison["tolerance_passed"]
-                for comparison in role_parity.values()
+                comparison["tolerance_passed"] for comparison in role_parity.values()
             )
             and candidate["run_status"] == python_run["run_status"],
             "run_status_equal": candidate["run_status"] == python_run["run_status"],
@@ -335,7 +355,7 @@ def run_benchmark(
     cold_seconds = float(numba_cold_run["wall_seconds"])
     warm_seconds = float(numba_warm_run["wall_seconds"])
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "config_path": str(config_path.resolve()),
         "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
         "parameters": {
@@ -346,6 +366,10 @@ def run_benchmark(
             "tolerance_contract": {
                 "ordinary_state_rtol": _STATE_RELATIVE_TOLERANCE,
                 "ordinary_state_atol": _STATE_ABSOLUTE_TOLERANCE,
+                "saved_local_magnetic_field_atol_t": (
+                    _LOCAL_MAGNETIC_FIELD_ABSOLUTE_TOLERANCE_T
+                ),
+                "saved_local_magnetic_field_is_force_path_validation": False,
                 "projection_energy_cumulative_budget_mev": (
                     _PROJECTION_ENERGY_BUDGET_MEV
                 ),

@@ -113,6 +113,7 @@ def evaluate_retarded_charge_source_interaction_native(
     minimum_step_mm: float = 1.0e-15,
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
+    backend: str = "python",
 ) -> RetardedChargeSourceInteraction:
     """Evaluate exact non-self charge fields and ordinary responses once.
 
@@ -131,6 +132,7 @@ def evaluate_retarded_charge_source_interaction_native(
         minimum_step_mm=minimum_step_mm,
         root_tolerance_mm=root_tolerance_mm,
         max_root_iterations=max_root_iterations,
+        backend=backend,
     )
     return charge_source_interaction_from_field_native(
         field=field,

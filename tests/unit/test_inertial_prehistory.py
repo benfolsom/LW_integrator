@@ -16,6 +16,7 @@ from core.integration_runner import (
     _evaluate_exact_endpoint_four_potential,
     _initialize_magnetic_dipole_state,
     _maximum_beta_magnitude,
+    _preflight_inertial_exact_histories,
     retarded_integrator,
 )
 from core.charge_source_interactions import (
@@ -285,6 +286,7 @@ def _independent_total_canonical_offset(
         minimum_step_mm=max(1.0e-15, source.minimum_stencil_step_mm),
         root_tolerance_mm=source.root_tolerance_mm,
         max_root_iterations=source.max_root_iterations,
+        backend=magnetic.exact_retarded_backend,
     )
     dipole = evaluate_retarded_dipole_source_interaction_native(
         source_history,
@@ -297,6 +299,7 @@ def _independent_total_canonical_offset(
         minimum_separation_mm=source.minimum_separation_mm,
         root_tolerance_mm=source.root_tolerance_mm,
         max_root_iterations=source.max_root_iterations,
+        backend=magnetic.exact_retarded_backend,
     )
     return charge.canonical_potential_momentum + dipole.canonical_potential_momentum
 
@@ -640,6 +643,7 @@ def test_endpoint_charge_root_options_match_start_and_preflight_policy(
     inactive = MagneticDipoleConfig(
         enabled=True,
         spin_precession_enabled=True,
+        exact_retarded_backend="numba_roots_exact_serial",
         source=DipoleSourceConfig(
             model="off",
             root_tolerance_mm=7.0e-17,
@@ -656,11 +660,13 @@ def test_endpoint_charge_root_options_match_start_and_preflight_policy(
     )
     assert charge_calls[-1]["root_tolerance_mm"] == 1.0e-21
     assert charge_calls[-1]["max_root_iterations"] == 96
+    assert charge_calls[-1]["backend"] == "numba_roots_exact_serial"
     assert not dipole_calls
 
     active = MagneticDipoleConfig(
         enabled=True,
         spin_precession_enabled=True,
+        exact_retarded_backend="numba_full_strict_serial",
         source=DipoleSourceConfig(
             model="covariant_retarded_point",
             root_tolerance_mm=7.0e-17,
@@ -678,6 +684,61 @@ def test_endpoint_charge_root_options_match_start_and_preflight_policy(
     for calls in (charge_calls, dipole_calls):
         assert calls[-1]["root_tolerance_mm"] == 7.0e-17
         assert calls[-1]["max_root_iterations"] == 41
+        assert calls[-1]["backend"] == "numba_full_strict_serial"
+
+
+def test_inertial_preflight_forwards_shared_exact_retarded_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.charge_source_interactions as charge_interactions
+    import core.dipole_source_interactions as dipole_interactions
+
+    observed: dict[str, list[str]] = {"charge": [], "dipole": []}
+
+    def fake_charge(*args, **kwargs):
+        del args
+        observed["charge"].append(str(kwargs["backend"]))
+        return SimpleNamespace(canonical_potential_momentum=np.zeros(4))
+
+    def fake_dipole(*args, **kwargs):
+        del args
+        observed["dipole"].append(str(kwargs["backend"]))
+        return SimpleNamespace(canonical_potential_momentum=np.zeros(4))
+
+    monkeypatch.setattr(
+        charge_interactions,
+        "evaluate_retarded_charge_source_interaction_native",
+        fake_charge,
+    )
+    monkeypatch.setattr(
+        dipole_interactions,
+        "evaluate_retarded_dipole_source_interaction_native",
+        fake_dipole,
+    )
+    rider = _state(position_mm=(-1.0, 0.0, 0.0), observer_charge=-1.0)
+    driver = _state(
+        position_mm=(1.0, 0.0, 0.0),
+        observer_charge=1.0,
+        magnetic_moment_native=0.1,
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_backend="numba_full_strict_serial",
+        source=DipoleSourceConfig(model="covariant_retarded_point"),
+    )
+
+    _preflight_inertial_exact_histories(
+        [rider],
+        [driver],
+        magnetic_dipole=magnetic,
+        charge_field_required=True,
+        dipole_field_required=True,
+    )
+
+    assert observed == {
+        "charge": ["numba_full_strict_serial", "numba_full_strict_serial"],
+        "dipole": ["numba_full_strict_serial", "numba_full_strict_serial"],
+    }
 
 
 def test_inertial_prefix_does_not_prime_medina_force_derivative() -> None:

@@ -73,9 +73,9 @@ def _source_config(
         enabled=True,
         spin_precession_enabled=False,
         stern_gerlach_force_enabled=coupled_moment_force,
+        exact_retarded_backend=source_backend,
         source=DipoleSourceConfig(
             model=source_model,
-            backend=source_backend,
             minimum_separation_mm=2.0e-9,
             relative_stencil_step=5.0e-4,
         ),
@@ -245,6 +245,52 @@ def test_source_off_does_not_enter_provider_or_change_kinematics(
         coupled_moment_force=False,
         source_model="off",
     )
+
+    _, _, rider_soa, _, *_ = _run(
+        rider,
+        driver,
+        magnetic,
+        steps=6,
+        h_step=1.0e-7,
+    )
+
+    assert rider_soa is not None
+    np.testing.assert_array_equal(rider_soa.Py[:, 0], 0.0)
+    np.testing.assert_array_equal(rider_soa.by[:, 0], 0.0)
+
+
+def test_disabled_magnetic_feature_keeps_stored_numba_backend_dormant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.exact_retarded_numba as compiled
+    import core.retarded_fields as charge_fields
+
+    def _unexpected_provider_call(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("disabled magnetic dynamics must keep providers cold")
+
+    monkeypatch.setattr(compiled, "NUMBA_AVAILABLE", False)
+    monkeypatch.setattr(
+        charge_fields,
+        "evaluate_retarded_charge_field_native",
+        _unexpected_provider_call,
+    )
+    rider = _particle_state(
+        "electron",
+        position_mm=(1.0e-4, 0.0, 0.0),
+        beta=(0.01, 0.0, 0.0),
+    )
+    driver = _particle_state("neutron", position_mm=(0.0, 0.0, 0.0))
+    magnetic = _source_config(
+        rider_species="electron",
+        driver_species="neutron",
+        rider_polarization=0.0,
+        driver_polarization=1.0,
+        coupled_moment_force=False,
+        source_model="off",
+        source_backend="numba_full_strict_serial",
+    )
+    magnetic.enabled = False
 
     _, _, rider_soa, _, *_ = _run(
         rider,

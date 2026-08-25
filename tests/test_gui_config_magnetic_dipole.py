@@ -52,7 +52,7 @@ class _MagneticHarness(IntegratorGUIConfigMixin):
         self.magnetic_dipole_spin_precession_enabled_var = _Var()
         self.magnetic_dipole_stern_gerlach_force_enabled_var = _Var()
         self.magnetic_dipole_source_model_var = _Var()
-        self.magnetic_dipole_source_backend_var = _Var()
+        self.magnetic_dipole_exact_retarded_backend_var = _Var()
         self.magnetic_dipole_source_minimum_separation_var = _Var()
         self.rider_magnetic_species_var = _Var()
         self.driver_magnetic_species_var = _Var()
@@ -83,9 +83,9 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
                 "enabled": True,
                 "spin_precession_enabled": False,
                 "stern_gerlach_force_enabled": True,
+                "exact_retarded_backend": "numba_roots_exact_serial",
                 "source": {
                     "model": "covariant_retarded_point",
-                    "backend": "numba_roots_exact_serial",
                     "minimum_separation_mm": 7.0e-9,
                     "relative_stencil_step": 2.0e-3,
                     "minimum_stencil_step_mm": 3.0e-15,
@@ -119,12 +119,16 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert harness.magnetic_dipole_source_model_var.get() == (
         "Full retarded point (experimental)"
     )
-    assert harness.magnetic_dipole_source_backend_var.get() == ("Numba roots-exact CPU")
+    assert harness.magnetic_dipole_exact_retarded_backend_var.get() == (
+        "Numba roots-exact CPU"
+    )
     assert float(harness.magnetic_dipole_source_minimum_separation_var.get()) == (
         pytest.approx(7.0e-9)
     )
     assert rebuilt.magnetic_dipole_source_model == "covariant_retarded_point"
-    assert rebuilt.magnetic_dipole_source_backend == "numba_roots_exact_serial"
+    assert rebuilt.magnetic_dipole_exact_retarded_backend == (
+        "numba_roots_exact_serial"
+    )
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(7.0e-9)
     assert rebuilt.magnetic_dipole_source_relative_stencil_step == pytest.approx(2.0e-3)
     assert rebuilt.magnetic_dipole_source_minimum_stencil_step_mm == pytest.approx(
@@ -141,17 +145,19 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
 
 def test_full_strict_backend_round_trips_through_gui_label() -> None:
     source = SimulationOptions(
-        magnetic_dipole_source_backend="numba_full_strict_serial"
+        magnetic_dipole_exact_retarded_backend="numba_full_strict_serial"
     )
     harness = _MagneticHarness()
 
     harness.apply(source)
     rebuilt = SimulationOptions(**harness.build())
 
-    assert harness.magnetic_dipole_source_backend_var.get() == (
+    assert harness.magnetic_dipole_exact_retarded_backend_var.get() == (
         "Numba full strict CPU"
     )
-    assert rebuilt.magnetic_dipole_source_backend == "numba_full_strict_serial"
+    assert rebuilt.magnetic_dipole_exact_retarded_backend == (
+        "numba_full_strict_serial"
+    )
 
 
 def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
@@ -167,7 +173,7 @@ def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     assert rebuilt.magnetic_dipole_spin_model == "rfs_minimal_2021"
     assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert rebuilt.magnetic_dipole_source_model == "off"
-    assert rebuilt.magnetic_dipole_source_backend == "python"
+    assert rebuilt.magnetic_dipole_exact_retarded_backend == "python"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
     assert rebuilt.rider_magnetic_species == "electron"
     assert rebuilt.driver_magnetic_species == "proton"
@@ -356,7 +362,12 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
             "Off",
             "Full retarded point (experimental)",
         )
-        assert tuple(app.magnetic_dipole_source_backend_combo.cget("values")) == (
+        assert app.magnetic_dipole_exact_retarded_backend_label.cget("text") == (
+            "Exact-retarded backend:"
+        )
+        assert tuple(
+            app.magnetic_dipole_exact_retarded_backend_combo.cget("values")
+        ) == (
             "Python reference",
             "Numba roots-exact CPU",
             "Numba full strict CPU",
@@ -377,7 +388,7 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     driver_combo = _Widget()
     driver_spin = _Widget()
     driver_label = _Widget()
-    source_combo = _Widget()
+    exact_backend_combo = _Widget()
     source_cutoff = _Widget()
     source_label = _Widget()
     harness = type(
@@ -390,7 +401,7 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     harness.sim_type_var = _Var("BUNCH_TO_BUNCH")
     harness._magnetic_dipole_common_controls = [
         (common, "normal"),
-        (source_combo, "readonly"),
+        (exact_backend_combo, "readonly"),
     ]
     harness._magnetic_dipole_source_controls = [(source_cutoff, "normal")]
     harness._magnetic_dipole_source_labels = [source_label]
@@ -409,7 +420,7 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     assert common.config["state"] == "disabled"
     assert rider_combo.config["state"] == "disabled"
     assert driver_combo.config["state"] == "disabled"
-    assert source_combo.config["state"] == "disabled"
+    assert exact_backend_combo.config["state"] == "disabled"
     assert source_cutoff.config["state"] == "disabled"
 
     harness.magnetic_dipole_enabled_var.set(True)
@@ -421,7 +432,7 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     assert driver_combo.config["state"] == "readonly"
     assert driver_spin.config["state"] == "normal"
     assert driver_label.config["foreground"] == "black"
-    assert source_combo.config["state"] == "readonly"
+    assert exact_backend_combo.config["state"] == "readonly"
     assert source_cutoff.config["state"] == "disabled"
 
     harness.magnetic_dipole_source_model_var.set("Full retarded point (experimental)")
@@ -434,6 +445,7 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
     harness._toggle_magnetic_dipole_controls()
 
     assert rider_combo.config["state"] == "readonly"
+    assert exact_backend_combo.config["state"] == "readonly"
     assert driver_combo.config["state"] == "disabled"
     assert driver_spin.config["state"] == "disabled"
     assert driver_label.config["foreground"] == "gray"

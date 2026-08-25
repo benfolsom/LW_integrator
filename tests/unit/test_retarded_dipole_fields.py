@@ -128,6 +128,78 @@ def test_endpoint_potential_matches_full_oracle_for_representative_histories() -
         assert np.nanmax(np.abs(endpoint.stencil_light_cone_residual_mm)) < 1.0e-14
 
 
+@pytest.mark.parametrize(
+    "backend",
+    ("numba_roots_exact_serial", "numba_full_strict_serial"),
+)
+def test_endpoint_potential_numba_backends_preserve_reference_contract(
+    backend: str,
+) -> None:
+    pytest.importorskip("numba")
+
+    def rotating_spin(time_ns: float) -> np.ndarray:
+        angle = 29.0 * time_ns
+        return np.array((0.8 * np.cos(angle), 0.8 * np.sin(angle), 0.6))
+
+    history = _dipole_history(
+        beta=(0.13, -0.06, 0.04),
+        moment_native=-1.7,
+        spin_function=rotating_spin,
+    )
+    event = ObserverEvent(-1.0e-5, (0.9, 1.1, -0.5))
+    kwargs = {
+        "source_identities": ("rotating-source",),
+        "stencil_step_mm": 7.0e-4,
+    }
+    reference = evaluate_retarded_dipole_potential_native(history, event, **kwargs)
+    candidate = evaluate_retarded_dipole_potential_native(
+        history, event, backend=backend, **kwargs
+    )
+
+    np.testing.assert_array_equal(candidate.stencil_offsets, reference.stencil_offsets)
+    for name in (
+        "hertz_tensor",
+        "retarded_time_ns",
+        "light_cone_residual_mm",
+        "separation_mm",
+        "valid_sources",
+    ):
+        np.testing.assert_array_equal(
+            getattr(candidate.hertz, name), getattr(reference.hertz, name)
+        )
+    if backend == "numba_roots_exact_serial":
+        np.testing.assert_array_equal(
+            candidate.four_potential, reference.four_potential
+        )
+        np.testing.assert_array_equal(
+            candidate.stencil_retarded_time_ns,
+            reference.stencil_retarded_time_ns,
+        )
+        np.testing.assert_array_equal(
+            candidate.stencil_light_cone_residual_mm,
+            reference.stencil_light_cone_residual_mm,
+        )
+    else:
+        np.testing.assert_allclose(
+            candidate.four_potential,
+            reference.four_potential,
+            rtol=3.0e-12,
+            atol=1.0e-12,
+        )
+        np.testing.assert_allclose(
+            candidate.stencil_retarded_time_ns,
+            reference.stencil_retarded_time_ns,
+            rtol=0.0,
+            atol=2.0e-18,
+        )
+        np.testing.assert_allclose(
+            candidate.stencil_light_cone_residual_mm,
+            reference.stencil_light_cone_residual_mm,
+            rtol=0.0,
+            atol=2.0e-15,
+        )
+
+
 def test_endpoint_potential_has_static_gaussian_sign_and_native_units() -> None:
     moment_native = 2.3
     position = np.array((1.2, -0.7, 0.9))
@@ -524,11 +596,24 @@ def test_python_backend_is_default_and_never_dispatches_numba(monkeypatch) -> No
         ObserverEvent(0.0, (1.0, 0.4, -0.7)),
         stencil_step_mm=8.0e-4,
     )
+    endpoint = fields.evaluate_retarded_dipole_potential_native(
+        _dipole_history(beta=(0.07, -0.02, 0.03)),
+        ObserverEvent(0.0, (1.0, 0.4, -0.7)),
+        stencil_step_mm=8.0e-4,
+    )
 
     assert result.stencil_offsets.shape == (129, 4)
+    assert endpoint.stencil_offsets.shape == (9, 4)
 
 
-def test_numba_backend_preserves_first_displaced_history_failure() -> None:
+@pytest.mark.parametrize(
+    "provider",
+    (
+        evaluate_retarded_dipole_potential_native,
+        evaluate_retarded_dipole_field_gradient_native,
+    ),
+)
+def test_numba_backend_preserves_first_displaced_history_failure(provider) -> None:
     pytest.importorskip("numba")
     history = []
     for time_ns in np.linspace(-0.01, 0.002, 121):
@@ -558,7 +643,7 @@ def test_numba_backend_preserves_first_displaced_history_failure() -> None:
 
     def capture_failure(backend: str) -> tuple[type[Exception], str]:
         try:
-            evaluate_retarded_dipole_field_gradient_native(
+            provider(
                 history,
                 ObserverEvent(0.0, (0.0, 0.0, 0.0)),
                 source_identities=("a", "b"),
@@ -622,7 +707,7 @@ def test_numba_backend_recomputes_final_worldline_sample_in_python(
     monkeypatch,
 ) -> None:
     pytest.importorskip("numba")
-    import core.retarded_dipole_numba_roots as compiled_roots
+    import core.exact_retarded_numba as compiled_roots
 
     history = _dipole_history(beta=(0.11, -0.04, 0.02))
     event = ObserverEvent(0.0, (0.8, 1.0, -0.6))
@@ -654,7 +739,7 @@ def test_numba_backend_recomputes_final_worldline_sample_in_python(
 def test_explicit_numba_backend_fails_when_capability_is_unavailable(
     monkeypatch,
 ) -> None:
-    import core.retarded_dipole_numba_roots as compiled_roots
+    import core.exact_retarded_numba as compiled_roots
 
     monkeypatch.setattr(compiled_roots, "NUMBA_AVAILABLE", False)
 
@@ -686,7 +771,7 @@ def test_initial_numba_compilation_failure_has_named_capability_error(
     backend: str,
 ) -> None:
     numba = pytest.importorskip("numba")
-    import core.retarded_dipole_numba_roots as compiled_roots
+    import core.exact_retarded_numba as compiled_roots
 
     def failed_compilation(*args, **kwargs):
         del args, kwargs
@@ -726,7 +811,7 @@ def test_numba_dispatch_does_not_wrap_non_compilation_failures(
     backend: str,
 ) -> None:
     pytest.importorskip("numba")
-    import core.retarded_dipole_numba_roots as compiled_roots
+    import core.exact_retarded_numba as compiled_roots
 
     def runtime_failure(*args, **kwargs):
         del args, kwargs

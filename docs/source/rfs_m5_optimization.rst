@@ -134,9 +134,9 @@ run and also found exact identity.  The benchmark report is
 
 Reproduce the same comparison with an ordinary testbed configuration::
 
-   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
+   python scripts/benchmark_exact_retarded_backends.py CONFIG.json \
       --steps 300 \
-      --output /tmp/dipole-source-backends.json \
+      --output /tmp/exact-retarded-backends.json \
       --quiet
 
 Use a fresh ``NUMBA_CACHE_DIR`` when the cold-compilation number matters.
@@ -187,7 +187,7 @@ The report is ``/tmp/lw-numba-full-strict-300-final.json`` with SHA-256
 ``990f669f3b2de5bcfa07be9707377a71c87d4e2c1a86562f43ca32e80178c7ac``.
 Reproduce it with::
 
-   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
+   python scripts/benchmark_exact_retarded_backends.py CONFIG.json \
       --backend numba_full_strict_serial \
       --steps 300 \
       --output /tmp/lw-numba-full-strict-300.json \
@@ -197,3 +197,69 @@ This trajectory check does not by itself authorize a production merge.  The
 remaining independent gate compares applied force, spin right-hand side,
 stencil convergence, and trajectory observables before the backend is used for
 the capture study.
+
+Shared exact-retarded backend completion
+----------------------------------------
+
+The next completion slice makes the backend a property of all exact retarded
+field work, rather than of the intrinsic dipole source alone.  Its canonical
+JSON key is ``magnetic_dipole.exact_retarded_backend`` and its direct CLI
+option is ``--exact-retarded-backend``.  The legacy
+``magnetic_dipole.source.backend`` key is input-only: it is accepted when the
+canonical key is absent or agrees, conflicts are rejected, and serialized
+configurations contain only the canonical key.
+
+The three choices remain ``python`` (reference/default),
+``numba_roots_exact_serial``, and ``numba_full_strict_serial``.  The opt-in
+kernels now cover both charge and dipole exact providers, including the charge
+one-event endpoint/diagnostic path, the charge nine-event gradient, the dipole
+nine-event endpoint potential, and the existing full dipole gradient.  Charge
+and dipole stencil centers stay on the Python reference path.  Source
+accumulation and finite-difference assembly also stay in reference-order
+Python.  The Numba work is strict serial binary64 with ``fastmath=False`` and
+no ``prange``, automatic/platform dispatch, or worker-count selection.
+
+On the archived 19,137-knot trajectory, the measured warm per-call seam
+timings were:
+
+================================== =========== =========== =======
+Seam                               Before      Completed   Speedup
+================================== =========== =========== =======
+Charge one-event field             0.1030 ms   0.01054 ms    9.77x
+Charge nine-event gradient         0.9467 ms   0.1728 ms     5.48x
+Dipole nine-event endpoint         0.8281 ms   0.1034 ms     8.01x
+================================== =========== =========== =======
+
+The pre-implementation in-memory probe projected a warm reduction from
+``3.56805 s`` for the merged dipole-only full-strict backend to ``2.40692 s``.
+The isolated new charge JIT cost about ``1.001 s`` on first use.  The completed
+fresh-cache 300-step benchmark then measured ``10.8230 s`` for the all-Python
+exact-retarded reference, ``6.21228 s`` for the cold full-strict run, and
+``2.53882 s`` warm.  The warm backend was therefore ``4.263x`` faster than the
+all-Python reference; the full fresh-cache cold surcharge was ``3.67346 s``.
+
+The probe kept force-center fields and all dynamical trajectory arrays
+reference exact.  Only projection bookkeeping at negligible scale and saved
+``local_magnetic_field_*`` visualization values moved at roundoff.  The
+comparison contract therefore gives those saved visualization arrays a named
+absolute budget of ``1e-12 T`` while ordinary state arrays retain ``2e-12``
+relative tolerance.  This diagnostic budget does not validate or relax the
+force path; local-field visualization output must be reported separately from
+force-center and dynamical comparisons.
+
+Both cold and warm 300-step comparisons passed that contract with unchanged
+run status.  Every dynamical trajectory array was bitwise identical.  The
+largest saved local-field difference was ``1.943e-13 T`` and the largest
+cumulative projection-energy difference was ``3.358e-13 meV``, compared with
+budgets of ``1e-12 T`` and ``0.025 meV``.  The report is
+``/tmp/lw-exact-retarded-complete-300.json`` with SHA-256
+``8d7461b5de531940e2a777adaf46f059ba8cedf0506022ff1f4b95878447f7cc``.
+This implementation check does not by itself authorize a merge or a long
+capture run; those remain independent decisions.
+
+The corresponding fresh-cache roots-exact run was bitwise identical to the
+all-Python reference across every public rider and driver array and side
+channel, both cold and warm.  It measured ``10.7346 s`` for Python,
+``7.23290 s`` cold, and ``6.26003 s`` warm, or ``1.7148x`` warm speedup.  Its
+report is ``/tmp/lw-exact-retarded-roots-300.json`` with SHA-256
+``79e148c334de5885bf0617173b12af9a2eb34fa5803479a263867fb358edad41``.
